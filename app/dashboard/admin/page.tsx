@@ -54,7 +54,7 @@ export default function AdminPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "24px" }}>
           {[
             { label: "Total Users", value: stats.totalUsers, color: T.accent },
-            { label: "Pro Users", value: stats.proUsers, color: T.blue },
+            { label: "Pro Users", value: stats.proUsers, color: T.accent },
             { label: "Elite Users", value: stats.eliteUsers, color: T.yellow },
             { label: "30d AI Cost", value: "$" + (stats.totalCost ?? 0).toFixed(2), color: T.green },
           ].map(s => (
