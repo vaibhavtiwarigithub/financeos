@@ -1,14 +1,176 @@
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; }
-body { font-family: 'Inter', sans-serif; background: #0D0F14; color: #ECEDEF; -webkit-font-smoothing: antialiased; }
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #252836; border-radius: 4px; }
-input, textarea, select, button { font-family: inherit; }
-a { text-decoration: none; color: inherit; }
-@keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-.animate-slide-up { animation: slideUp 0.3s ease; }
-.animate-fade-in { animation: fadeIn 0.3s ease; }
-.animate-pulse { animation: pulse 2s infinite; }
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+@variant dark (&:where(.dark, .dark *));
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SHADCN BASE TOKENS  (HSL format — used by hsl(var(--*)) inside components)
+   FinanceOS is dark-first: :root = dark theme
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  :root {
+    /* shadcn dark tokens */
+    --background:          229 18% 7%;      /* #0D0F14 */
+    --foreground:          220 9% 94%;      /* #ECEDEF */
+    --card:                227 17% 11%;     /* #1A1D27 */
+    --card-foreground:     220 9% 94%;
+    --popover:             227 17% 11%;
+    --popover-foreground:  220 9% 94%;
+    --primary:             239 84% 67%;     /* #6366F1 — trading purple */
+    --primary-foreground:  0 0% 100%;
+    --secondary:           226 18% 13%;     /* #13151C */
+    --secondary-foreground:220 9% 94%;
+    --muted:               226 18% 13%;
+    --muted-foreground:    218 7% 55%;      /* #9B9EA8 */
+    --accent:              226 18% 13%;
+    --accent-foreground:   220 9% 94%;
+    --destructive:         0 84% 70%;       /* #F87171 */
+    --destructive-foreground:0 0% 100%;
+    --border:              224 23% 17%;     /* #252836 */
+    --input:               224 23% 17%;
+    --ring:                239 84% 67%;
+    --radius:              0.75rem;
+
+    /* ── fo-* tokens · FinanceOS design system ── */
+    --fo-bg-primary:       #0D0F14;
+    --fo-bg-surface:       #13151C;
+    --fo-bg-card:          #1A1D27;
+    --fo-bg-elevated:      #1A1D27;
+    --fo-bg-nav:           #13151C;
+
+    --fo-text-primary:     #ECEDEF;
+    --fo-text-secondary:   #9B9EA8;
+    --fo-text-muted:       #6B7280;
+
+    /* Trading purple — primary brand accent */
+    --fo-accent:           #6366F1;
+    --fo-accent-hover:     #5154CC;
+    --fo-accent-dim:       rgba(99,102,241,0.12);
+    --fo-accent-border:    rgba(99,102,241,0.25);
+    --fo-accent-soft:      rgba(99,102,241,0.08);
+
+    /* Green — stock up / positive */
+    --fo-green:            #34D399;
+    --fo-green-hover:      #10B981;
+    --fo-green-dim:        rgba(52,211,153,0.12);
+    --fo-green-border:     rgba(52,211,153,0.25);
+
+    /* Red — stock down / negative */
+    --fo-red:              #F87171;
+    --fo-red-hover:        #EF4444;
+    --fo-red-dim:          rgba(248,113,113,0.12);
+    --fo-red-border:       rgba(248,113,113,0.25);
+
+    /* Amber — warning / hold */
+    --fo-amber:            #FBBF24;
+    --fo-amber-dim:        rgba(251,191,36,0.12);
+    --fo-amber-border:     rgba(251,191,36,0.25);
+
+    /* Blue — info / macro signals */
+    --fo-blue:             #60A5FA;
+    --fo-blue-dim:         rgba(96,165,250,0.12);
+
+    /* Borders */
+    --fo-border:           rgba(255,255,255,0.06);
+    --fo-border-hover:     rgba(255,255,255,0.10);
+    --fo-border-solid:     #252836;
+
+    /* Skeleton shimmer */
+    --fo-skeleton:         #1F2230;
+    --fo-skeleton-shine:   #252836;
+
+    /* Gradients */
+    --fo-gradient-cta:     linear-gradient(135deg, #6366F1, #8B5CF6);
+    --fo-gradient-text:    linear-gradient(135deg, #6366F1, #A78BFA);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   GLOBAL BASE STYLES
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-font-smoothing:  antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering:          optimizeLegibility;
+    scroll-behavior:         smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Slim scrollbar */
+  ::-webkit-scrollbar              { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track        { background: transparent; }
+  ::-webkit-scrollbar-thumb        { background: var(--fo-border-hover); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover  { background: var(--fo-text-muted); }
+
+  /* Selection — purple tint */
+  ::selection {
+    background: var(--fo-accent-dim);
+    color:      var(--fo-accent);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   UTILITY CLASSES
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@layer utilities {
+  /* Card surface */
+  .fo-card {
+    background:    var(--fo-bg-card);
+    border:        1px solid var(--fo-border);
+    border-radius: 12px;
+    transition:    background 0.15s ease, border-color 0.15s ease;
+  }
+  .fo-card:hover {
+    border-color: var(--fo-border-hover);
+  }
+
+  /* Purple accent glow (hero metrics, agent status) */
+  .fo-glow-accent {
+    box-shadow: 0 0 20px var(--fo-accent-dim), 0 0 40px rgba(99,102,241,0.06);
+  }
+
+  /* Green glow (profit / positive signal) */
+  .fo-glow-green {
+    box-shadow: 0 0 20px var(--fo-green-dim), 0 0 40px rgba(52,211,153,0.06);
+  }
+
+  /* Gradient text */
+  .fo-gradient-text {
+    background:              var(--fo-gradient-text);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip:         text;
+  }
+
+  /* Delayed-fade for skeleton loading screens */
+  @keyframes fo-loading-reveal {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  .fo-loading-root {
+    animation: fo-loading-reveal 220ms ease 300ms both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .fo-loading-root { animation: none; opacity: 1; }
+  }
+
+  @keyframes slideUp  { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes fadeIn   { from { opacity: 0; } to { opacity: 1; } }
+  .animate-slide-up   { animation: slideUp 0.3s ease; }
+  .animate-fade-in    { animation: fadeIn 0.3s ease; }
+
+  .text-balance { text-wrap: balance; }
+  .text-pretty  { text-wrap: pretty; }
+}

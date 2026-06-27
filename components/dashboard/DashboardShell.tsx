@@ -1,34 +1,26 @@
 "use client";
-import { useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
 
-const T = {
-  bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
-  text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280",
-  accent: "#6366F1", green: "#34D399", red: "#F87171", yellow: "#FBBF24",
-};
-
 const NAV = [
-  { href: "/dashboard", label: "Home", icon: "⌂" },
-  { href: "/dashboard/portfolio", label: "Portfolio", icon: "◈" },
-  { href: "/dashboard/markets", label: "Markets", icon: "◉" },
+  { href: "/dashboard",              label: "Home",         icon: "⌂" },
+  { href: "/dashboard/portfolio",    label: "Portfolio",    icon: "◈" },
+  { href: "/dashboard/markets",      label: "Markets",      icon: "◉" },
   { href: "/dashboard/intelligence", label: "Intelligence", icon: "◆" },
-  { href: "/dashboard/calendar", label: "Calendar", icon: "▦" },
-  { href: "/dashboard/you", label: "You", icon: "◎" },
-  { href: "/dashboard/settings", label: "Settings", icon: "⚙" },
+  { href: "/dashboard/agents",       label: "Agents",       icon: "◐" },
+  { href: "/dashboard/trading",      label: "Trading",      icon: "◑" },
+  { href: "/dashboard/calendar",     label: "Calendar",     icon: "▦" },
+  { href: "/dashboard/you",          label: "You",          icon: "◎" },
+  { href: "/dashboard/settings",     label: "Settings",     icon: "⚙" },
 ];
 
 const ADMIN_NAV = { href: "/dashboard/admin", label: "Admin", icon: "★" };
 
-const TIER_COLORS: Record<string, string> = { free: T.muted, pro: T.accent, elite: T.yellow };
-
 export default function DashboardShell({ profile, children }: { profile: Profile; children: React.ReactNode }) {
-  const router = useRouter();
+  const router   = useRouter();
   const pathname = usePathname();
   const supabase = createClient();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -36,70 +28,88 @@ export default function DashboardShell({ profile, children }: { profile: Profile
   }
 
   const navItems = [...NAV, ...(["admin", "superadmin"].includes(profile.role) ? [ADMIN_NAV] : [])];
+  const tierColor = profile.subscription_tier === "elite"
+    ? "var(--fo-amber)"
+    : profile.subscription_tier === "pro"
+    ? "var(--fo-accent)"
+    : "var(--fo-text-muted)";
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: "'Inter', sans-serif", color: T.text }}>
+    <div className="flex min-h-screen" style={{ background: "var(--fo-bg-primary)", color: "var(--fo-text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
 
       {/* Sidebar */}
-      <aside style={{ width: "220px", background: T.surface, borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", flexShrink: 0 }}>
+      <aside
+        className="w-[220px] shrink-0 flex flex-col sticky top-0 h-screen"
+        style={{ background: "var(--fo-bg-surface)", borderRight: "1px solid var(--fo-border-solid)" }}
+      >
         {/* Logo */}
-        <div style={{ padding: "20px 20px 16px", borderBottom: `1px solid ${T.border}` }}>
-          <div style={{ fontSize: "17px", fontWeight: 700, letterSpacing: "-0.02em" }}>
-            Finance<span style={{ color: T.accent }}>OS</span>
+        <div className="px-5 pt-5 pb-4" style={{ borderBottom: "1px solid var(--fo-border-solid)" }}>
+          <div className="text-[17px] font-bold tracking-tight">
+            Finance<span style={{ color: "var(--fo-accent)" }}>OS</span>
           </div>
-          <div style={{ fontSize: "10px", color: T.muted, marginTop: "2px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          <div className="text-[10px] mt-0.5 uppercase tracking-widest" style={{ color: "var(--fo-text-muted)" }}>
             Intelligence Platform
           </div>
         </div>
 
         {/* Nav */}
-        <nav style={{ flex: 1, padding: "12px 10px", overflowY: "auto" }}>
+        <nav className="flex-1 px-2.5 py-3 overflow-y-auto">
           {navItems.map(item => {
             const active = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
             return (
-              <button key={item.href} onClick={() => router.push(item.href)} style={{
-                width: "100%", display: "flex", alignItems: "center", gap: "10px",
-                padding: "9px 12px", borderRadius: "8px", border: "none",
-                background: active ? T.accent + "18" : "none",
-                color: active ? T.accent : T.textSub,
-                fontSize: "14px", fontWeight: active ? 500 : 400,
-                cursor: "pointer", textAlign: "left", marginBottom: "2px",
-                borderLeft: active ? `2px solid ${T.accent}` : "2px solid transparent",
-              }}>
-                <span style={{ fontSize: "14px", width: "18px", textAlign: "center" }}>{item.icon}</span>
+              <button
+                key={item.href}
+                onClick={() => router.push(item.href)}
+                className="w-full flex items-center gap-2.5 px-3 py-[9px] rounded-lg text-[14px] mb-0.5 text-left cursor-pointer transition-colors"
+                style={{
+                  background:      active ? "rgba(99,102,241,0.10)" : "transparent",
+                  color:           active ? "var(--fo-accent)" : "var(--fo-text-secondary)",
+                  fontWeight:      active ? 500 : 400,
+                  border:          "none",
+                  borderLeft:      `2px solid ${active ? "var(--fo-accent)" : "transparent"}`,
+                }}
+              >
+                <span className="w-[18px] text-center text-[14px]">{item.icon}</span>
                 {item.label}
               </button>
             );
           })}
         </nav>
 
-        {/* User profile */}
-        <div style={{ padding: "14px", borderTop: `1px solid ${T.border}` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+        {/* User */}
+        <div className="p-3.5" style={{ borderTop: "1px solid var(--fo-border-solid)" }}>
+          <div className="flex items-center gap-2.5 mb-2.5">
             {profile.avatar_url ? (
-              <img src={profile.avatar_url} alt="" style={{ width: "32px", height: "32px", borderRadius: "50%", objectFit: "cover" }} />
+              <img src={profile.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover" />
             ) : (
-              <div style={{ width: "32px", height: "32px", borderRadius: "50%", background: T.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 600 }}>
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-[13px] font-semibold text-white shrink-0"
+                style={{ background: "var(--fo-accent)" }}
+              >
                 {(profile.full_name || profile.email)[0].toUpperCase()}
               </div>
             )}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: "13px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-medium truncate" style={{ color: "var(--fo-text-primary)" }}>
                 {profile.full_name || profile.email.split("@")[0]}
               </div>
-              <div style={{ fontSize: "10px", color: TIER_COLORS[profile.subscription_tier], textTransform: "uppercase", fontWeight: 600 }}>
+              <div className="text-[10px] uppercase font-semibold" style={{ color: tierColor }}>
                 {profile.subscription_tier}
               </div>
             </div>
           </div>
-          <button onClick={signOut} style={{ width: "100%", background: "none", border: `1px solid ${T.border}`, borderRadius: "6px", color: T.muted, padding: "7px", fontSize: "12px", cursor: "pointer" }}>
+          <button
+            onClick={signOut}
+            className="w-full rounded text-xs py-1.5 cursor-pointer transition-colors hover:opacity-80"
+            style={{ background: "none", border: "1px solid var(--fo-border-solid)", color: "var(--fo-text-muted)" }}
+          >
             Sign out
           </button>
         </div>
       </aside>
 
       {/* Main content */}
-      <main style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
+      <main className="flex-1 overflow-y-auto min-w-0">
         {children}
       </main>
     </div>
