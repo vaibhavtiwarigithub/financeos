@@ -22,11 +22,12 @@ export async function execClaude(prompt: string, timeoutMs = 60000): Promise<str
     // Pipe via stdin — avoids all Windows command-line escaping issues with quotes/newlines
     const psCommand = `Get-Content -Raw "${promptPath}" | & claude.cmd --dangerously-skip-permissions --output-format json`;
 
-    const { stdout } = await execFileAsync(
+    const { stdout, stderr } = await execFileAsync(
       "powershell.exe",
       ["-Command", psCommand],
       { timeout: timeoutMs, windowsHide: true }
     );
+    if (stderr) console.error(`[execClaude] stderr for prompt:`, stderr.slice(0, 300));
     return stdout;
   } finally {
     await unlink(promptPath).catch(() => {});
