@@ -1,6 +1,7 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
+const StockModal = lazy(() => import("@/components/charts/StockModal"));
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -32,6 +33,7 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
   const [running, setRunning] = useState(false);
   const [runLog, setRunLog] = useState<string[]>([]);
   const [tab, setTab] = useState<"signals" | "history">("signals");
+  const [chartSymbol, setChartSymbol] = useState<string | null>(null);
 
   const nav = portfolio?.nav ?? 10000;
   const cash = portfolio?.cash_balance ?? 10000;
@@ -125,7 +127,7 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
             </div>
           ) : pendingSignals.map((s: any) => (
             <div key={s.id} style={{ background: T.card, border: `1px solid ${s.analyst_score >= 60 && s.direction === "long" ? T.accent + "44" : T.border}`, borderRadius: "12px", padding: "16px 20px", display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr 1fr", gap: "12px", alignItems: "center" }}>
-              <div style={{ fontWeight: 800, fontSize: "16px" }}>{s.symbol}</div>
+              <div style={{ fontWeight: 800, fontSize: "16px", cursor: "pointer", color: T.accent }} onClick={() => setChartSymbol(s.symbol)}>{s.symbol} ↗</div>
               <div>
                 <div style={{ fontSize: "10px", color: T.muted, marginBottom: "4px" }}>DIRECTION</div>
                 <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: s.direction === "long" ? T.greenBg : T.amberBg, color: s.direction === "long" ? T.green : T.amber }}>
@@ -149,6 +151,12 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
             </div>
           ))}
         </div>
+      )}
+
+      {chartSymbol && (
+        <Suspense fallback={null}>
+          <StockModal symbol={chartSymbol} onClose={() => setChartSymbol(null)} />
+        </Suspense>
       )}
 
       {/* Trade history */}

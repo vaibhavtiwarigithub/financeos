@@ -1,5 +1,9 @@
 "use client";
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
+const BenchmarkChart = lazy(() => import("@/components/charts/BenchmarkChart"));
+const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
+const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
+const StockModal = lazy(() => import("@/components/charts/StockModal"));
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -33,6 +37,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
   portfolio: any; positions: any[]; trades: any[]; perf: any[]; signals: any[];
 }) {
   const [tab, setTab] = useState<"positions" | "trades" | "signals">("positions");
+  const [chartSymbol, setChartSymbol] = useState<string | null>(null);
 
   const startingNAV = 10000;
   const nav = portfolio?.nav ?? startingNAV;
@@ -69,15 +74,23 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
         {statCard("Win Rate", winRate !== null ? winRate + "%" : "—", `${wins}W/${closedTrades.length - wins}L of ${closedTrades.length}`, winRate !== null ? (winRate >= 60 ? T.green : winRate >= 40 ? T.amber : T.red) : T.muted)}
       </div>
 
-      {/* NAV chart */}
-      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "20px" }}>
-        <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "12px" }}>NAV History</div>
-        <MiniChart perf={perf} />
-        {perf.length === 0 && (
-          <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "12px 0" }}>
-            NAV chart builds as paper trades close. Run ResearchAgent + PaperTrader to start.
-          </div>
-        )}
+      {/* Charts row */}
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "16px", marginBottom: "20px" }}>
+        <Suspense fallback={<div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", height: "280px", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: "13px" }}>Loading chart…</div>}>
+          <BenchmarkChart perfRows={perf} />
+        </Suspense>
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <Suspense fallback={null}>
+            <AllocationDonut positions={positions} cash={portfolio?.cash_balance ?? 10000} />
+          </Suspense>
+        </div>
+      </div>
+
+      {/* P&L bar */}
+      <div style={{ marginBottom: "20px" }}>
+        <Suspense fallback={null}>
+          <PnlBarChart trades={trades} />
+        </Suspense>
       </div>
 
       {/* Tabs */}
@@ -112,7 +125,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
                   const pnlPct = ((cur - p.avg_cost) / p.avg_cost) * 100;
                   return (
                     <tr key={p.id} style={{ borderTop: `1px solid ${T.border}` }}>
-                      <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}>{p.symbol}</td>
+                      <td style={{ padding: "10px 12px 10px 0", fontWeight: 700, cursor: "pointer", color: T.accent }} onClick={() => setChartSymbol(p.symbol)}>{p.symbol} ↗</td>
                       <td style={{ padding: "10px 12px 10px 0" }}>{p.qty}</td>
                       <td style={{ padding: "10px 12px 10px 0" }}>${p.avg_cost.toFixed(2)}</td>
                       <td style={{ padding: "10px 12px 10px 0" }}>{p.current_price ? "$" + p.current_price.toFixed(2) : <span style={{ color: T.muted }}>—</span>}</td>
@@ -172,6 +185,13 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
             </table>
           )}
         </div>
+      )}
+
+      {/* Stock chart modal */}
+      {chartSymbol && (
+        <Suspense fallback={null}>
+          <StockModal symbol={chartSymbol} onClose={() => setChartSymbol(null)} />
+        </Suspense>
       )}
 
       {/* Signals tab */}

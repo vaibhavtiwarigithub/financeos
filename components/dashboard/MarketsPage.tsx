@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
+const SectorTreemap = lazy(() => import("@/components/charts/SectorTreemap"));
+const PriceChart = lazy(() => import("@/components/charts/PriceChart"));
 
 const T = {
   bg: "#0D0F14",
@@ -177,6 +179,7 @@ export default function MarketsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastFetch, setLastFetch] = useState<string | null>(null);
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 
   async function fetchMarkets() {
     setLoading(true);
@@ -262,14 +265,31 @@ export default function MarketsPage() {
       {data && (
         <>
           {/* Index bar */}
-          <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
             {data.indices.map(q => (
-              <IndexCard key={q.symbol} q={q} />
+              <div
+                key={q.symbol}
+                onClick={() => setSelectedSymbol(selectedSymbol === q.symbol ? null : q.symbol)}
+                style={{ cursor: "pointer" }}
+              >
+                <IndexCard q={q} />
+              </div>
             ))}
           </div>
 
-          {/* Sector heatmap */}
-          <SectorHeatmap sectors={data.sectors} />
+          {/* Inline price chart for selected index */}
+          {selectedSymbol && (
+            <div style={{ background: "#1A1D27", border: "1px solid #252836", borderRadius: "12px", padding: "20px", marginBottom: "16px" }}>
+              <Suspense fallback={<div style={{ color: "#6B7280", fontSize: "13px" }}>Loading chart…</div>}>
+                <PriceChart symbol={selectedSymbol} height={260} />
+              </Suspense>
+            </div>
+          )}
+
+          {/* Sector treemap */}
+          <Suspense fallback={<div style={{ background: "#1A1D27", border: "1px solid #252836", borderRadius: "12px", padding: "20px", height: "320px", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280", fontSize: "13px" }}>Loading heatmap…</div>}>
+            <SectorTreemap sectors={data.sectors} />
+          </Suspense>
 
           {/* Footer note */}
           <div style={{ marginTop: "16px", fontSize: "11px", color: T.muted, textAlign: "right" }}>

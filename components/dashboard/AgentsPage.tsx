@@ -1,7 +1,9 @@
 "use client";
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+const SignalCharts = lazy(() => import("@/components/charts/SignalChartsWrapper"));
+const StockModal = lazy(() => import("@/components/charts/StockModal"));
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -38,6 +40,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<string | null>(null);
+  const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   const [tab, setTab] = useState<"signals" | "paper" | "weights" | "log">("paper");
 
   async function toggleTrading() {
@@ -299,6 +302,12 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
 
       {/* Signals tab */}
       {tab === "signals" && (
+        <>
+          {signals.length > 0 && (
+            <Suspense fallback={null}>
+              <SignalCharts signals={signals} />
+            </Suspense>
+          )}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
           {signals.length === 0 ? (
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "30px 0" }}>No signals yet. Run ResearchAgent first.</div>
@@ -314,7 +323,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
               <tbody>
                 {signals.map(s => (
                   <tr key={s.id} style={{ borderTop: `1px solid ${T.border}` }}>
-                    <td style={{ padding: "9px 12px 9px 0", fontWeight: 700 }}>{s.symbol}</td>
+                    <td style={{ padding: "9px 12px 9px 0", fontWeight: 700, cursor: "pointer", color: T.accent }} onClick={() => setChartSymbol(s.symbol)}>{s.symbol} ↗</td>
                     <td style={{ padding: "9px 12px 9px 0" }}>{dirBadge(s.direction)}</td>
                     <td style={{ padding: "9px 12px 9px 0", fontWeight: 600, color: (s.analyst_score ?? 0) >= 75 ? T.green : (s.analyst_score ?? 0) >= 50 ? T.amber : T.red }}>{s.analyst_score ?? "—"}</td>
                     <td style={{ padding: "9px 12px 9px 0" }}>
@@ -330,6 +339,12 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
             </table>
           )}
         </div>
+        {chartSymbol && (
+          <Suspense fallback={null}>
+            <StockModal symbol={chartSymbol} onClose={() => setChartSymbol(null)} />
+          </Suspense>
+        )}
+        </>
       )}
 
       {/* Weights tab */}
