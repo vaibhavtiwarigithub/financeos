@@ -24,8 +24,9 @@ function calcPortfolio(holdings: Holding[]) {
   });
 }
 
-export default function DashboardHome({ profile, holdings, predictions }: {
+export default function DashboardHome({ profile, holdings, predictions, signals, paperPortfolio }: {
   profile: Profile; holdings: Holding[]; predictions: Prediction[];
+  signals?: any[]; paperPortfolio?: any;
 }) {
   const portfolio = calcPortfolio(holdings);
   const totalValue = portfolio.reduce((s, p) => s + p.mktVal, 0);
@@ -117,6 +118,34 @@ export default function DashboardHome({ profile, holdings, predictions }: {
           ))}
         </div>
       </div>
+
+      {/* Agent signals widget */}
+      {signals && signals.length > 0 && (
+        <div style={{ marginTop: "16px", background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+            <div style={{ fontSize: "12px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              Latest Agent Signals
+            </div>
+            {paperPortfolio && (
+              <div style={{ fontSize: "12px", color: T.muted }}>
+                Paper NAV: <span style={{ color: T.green, fontWeight: 700 }}>${(paperPortfolio.nav ?? 10000).toFixed(0)}</span>
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+            {signals.map((s: any) => (
+              <div key={s.id} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", minWidth: "120px" }}>
+                <div style={{ fontWeight: 800, fontSize: "14px", marginBottom: "3px" }}>{s.symbol}</div>
+                <div style={{ fontSize: "11px", marginBottom: "2px" }}>
+                  <span style={{ color: s.direction === "long" ? T.green : T.yellow, fontWeight: 600 }}>{s.direction?.toUpperCase()}</span>
+                  <span style={{ color: T.muted }}> · {s.analyst_score}</span>
+                </div>
+                <div style={{ fontSize: "10px", color: s.status === "paper_traded" ? T.green : T.muted }}>{s.status}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
     </div>
   );
