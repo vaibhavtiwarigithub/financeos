@@ -4,11 +4,23 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
 
 function buildPrompt(symbol: string) {
-  return `Research ${symbol}. Use any available tools to gather data. Then output your final answer as ONLY a JSON object with EXACTLY these keys (no other keys, no prose, no markdown):
+  return `You are a professional equity analyst. Research ${symbol} using all available data sources:
 
-{"symbol":"${symbol}","fundamental_score":75,"technical_score":70,"sentiment_score":72,"macro_score":65,"insider_score":60,"direction":"long","conviction":70,"summary":"thesis here","key_risks":["risk1","risk2"],"catalysts":["cat1","cat2"]}
+1. Use get_stock_price or get_financial_metrics_snapshot to get current price and fundamentals (P/E, revenue growth, margins)
+2. Use NEWS_SENTIMENT tool with tickers=${symbol} to get recent news sentiment score and top headlines
+3. Use get_insider_trades or INSIDER_TRANSACTIONS to check recent Form 4 insider buying/selling
+4. Use get_earnings to check recent earnings beats/misses
+5. Assess macro context: sector trends, interest rate sensitivity, geopolitical risk
 
-Replace every value with your actual assessment. Scores are integers 0-100. direction must be exactly: long, short, or neutral. Your entire response is the JSON object above with real values filled in.`;
+After gathering data, synthesize into a research score. Output ONLY a JSON object (no markdown, no prose):
+
+{"symbol":"${symbol}","fundamental_score":75,"technical_score":70,"sentiment_score":72,"macro_score":65,"insider_score":60,"direction":"long","conviction":70,"summary":"2-3 sentence thesis with specific data points","key_risks":["specific risk 1","specific risk 2"],"catalysts":["specific catalyst 1","specific catalyst 2"]}
+
+Rules:
+- All scores 0-100 integers based on actual data
+- direction: long (bullish), short (bearish), or neutral
+- summary must cite actual numbers (e.g. "P/E of 28x, 40% YoY revenue growth")
+- Do NOT fabricate data — if a tool fails, use your training data and note uncertainty in summary`;
 }
 
 function extractParsed(claudeRaw: string): any {

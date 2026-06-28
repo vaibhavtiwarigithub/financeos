@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "supabase-financeos": {
+      "command": "npx",
+      "args": ["-y", "@supabase/mcp-server-supabase@latest", "--access-token", "sbp_85ef1b96cf26cdc73fc82249aca179495ec23c90", "--project-ref", "dionkikgdmlaotvtbnfr"]
+    }
+  }
+}

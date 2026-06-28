@@ -32,8 +32,34 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
   const router = useRouter();
   const [running, setRunning] = useState(false);
   const [runLog, setRunLog] = useState<string[]>([]);
-  const [tab, setTab] = useState<"signals" | "history">("signals");
+  const [tab, setTab] = useState<"queue" | "signals" | "history">("queue");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
+  const [queueItems, setQueueItems] = useState<any[]>(queue);
+  const [actionLog, setActionLog] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
+
+  async function approveTradeItem(tradeId: string) {
+    setActionLog(null);
+    const res = await fetch("/api/agents/trade/approve", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tradeId }),
+    });
+    const data = await res.json();
+    setActionLog({ id: tradeId, msg: data.message ?? data.error ?? "Done", ok: !!data.success });
+    setQueueItems(items => items.map(i => i.id === tradeId ? { ...i, status: "approved" } : i));
+    router.refresh();
+  }
+
+  async function rejectTradeItem(tradeId: string) {
+    setActionLog(null);
+    const res = await fetch("/api/agents/trade/reject", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tradeId, reason: "Rejected by user" }),
+    });
+    const data = await res.json();
+    setActionLog({ id: tradeId, msg: data.message ?? data.error ?? "Done", ok: !!data.success });
+    setQueueItems(items => items.filter(i => i.id !== tradeId));
+    router.refresh();
+  }
 
   const nav = portfolio?.nav ?? 10000;
   const cash = portfolio?.cash_balance ?? 10000;
@@ -111,12 +137,68 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: "4px", marginBottom: "16px" }}>
-        {(["signals", "history"] as const).map(t => (
+        {(["queue", "signals", "history"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === t ? T.accent : T.card, color: tab === t ? "#fff" : T.muted, textTransform: "capitalize" }}>
-            {t === "signals" ? `Pending Signals (${pendingSignals.length})` : `Trade History (${tradeLog.length})`}
+            {t === "queue" ? `Trade Queue (${queueItems.length})` : t === "signals" ? `Paper Signals (${pendingSignals.length})` : `Paper History (${tradeLog.length})`}
           </button>
         ))}
       </div>
+
+      {/* Trade queue — real Robinhood approval flow */}
+      {tab === "queue" && (
+        <div>
+          {actionLog && (
+            <div style={{ background: T.surface, border: `1px solid ${actionLog.ok ? T.green : T.red}`, borderRadius: "10px", padding: "12px 16px", marginBottom: "16px", fontSize: "13px", color: actionLog.ok ? T.green : T.red }}>
+              {actionLog.msg}
+            </div>
+          )}
+          {queueItems.length === 0 ? (
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "32px", textAlign: "center", color: T.muted, fontSize: "13px" }}>
+              No pending trades. Run TraderAgent from the Agents page to propose real Robinhood trades.
+            </div>
+          ) : queueItems.map((q: any) => (
+            <div key={q.id} style={{ background: T.card, border: `1px solid ${q.status === "pending_approval" ? T.amber + "60" : T.border}`, borderRadius: "12px", padding: "18px 20px", marginBottom: "10px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr auto", gap: "12px", alignItems: "center" }}>
+                <div style={{ fontWeight: 800, fontSize: "16px", color: T.accent, cursor: "pointer" }} onClick={() => setChartSymbol(q.symbol)}>
+                  {q.symbol} ↗
+                </div>
+                <div>
+                  <div style={{ fontSize: "10px", color: T.muted, marginBottom: "3px" }}>ORDER</div>
+                  <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: T.greenBg, color: T.green }}>
+                    BUY {q.qty} shares
+                  </span>
+                </div>
+                <div>
+                  <div style={{ fontSize: "10px", color: T.muted, marginBottom: "3px" }}>LIMIT PRICE</div>
+                  <span style={{ fontSize: "14px", fontWeight: 600 }}>${q.limit_price?.toFixed(2)}</span>
+                </div>
+                <div>
+                  <div style={{ fontSize: "10px", color: T.muted, marginBottom: "3px" }}>SCORE / STATUS</div>
+                  <span style={{ fontSize: "12px", color: T.accent, fontWeight: 600 }}>{q.analyst_score}/100</span>
+                  <span style={{ fontSize: "11px", color: T.muted, marginLeft: "8px" }}>{q.status}</span>
+                </div>
+                {q.status === "pending_approval" ? (
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button onClick={() => approveTradeItem(q.id)} style={{ padding: "8px 16px", background: T.green, border: "none", borderRadius: "7px", color: "#000", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
+                      Approve
+                    </button>
+                    <button onClick={() => rejectTradeItem(q.id)} style={{ padding: "8px 14px", background: T.redBg, border: `1px solid ${T.red}40`, borderRadius: "7px", color: T.red, fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+                      Reject
+                    </button>
+                  </div>
+                ) : (
+                  <span style={{ fontSize: "11px", color: T.green, fontWeight: 600 }}>Approved</span>
+                )}
+              </div>
+              {q.rationale && (
+                <div style={{ marginTop: "10px", fontSize: "11px", color: T.muted, borderTop: `1px solid ${T.border}`, paddingTop: "10px" }}>
+                  {q.rationale.slice(0, 200)}{q.rationale.length > 200 ? "…" : ""}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Signals */}
       {tab === "signals" && (

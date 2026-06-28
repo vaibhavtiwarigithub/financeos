@@ -143,7 +143,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           <button
             onClick={toggleTrading}
             disabled={saving}
-            style={{ padding: "10px 22px", borderRadius: "10px", fontWeight: 700, fontSize: "13px", cursor: saving ? "default" : "pointer", border: "none", background: tradingEnabled ? "#34D39922" : "#F8717122", color: tradingEnabled ? T.green : T.red, border: `1px solid ${tradingEnabled ? T.green : T.red}40` } as any}
+            style={{ padding: "10px 22px", borderRadius: "10px", fontWeight: 700, fontSize: "13px", cursor: saving ? "default" : "pointer", border: `1px solid ${tradingEnabled ? T.green : T.red}40`, background: tradingEnabled ? "#34D39922" : "#F8717122", color: tradingEnabled ? T.green : T.red } as any}
           >
             {saving ? "..." : tradingEnabled ? "⚡ Live Trading ON — Kill Switch" : "🔴 Live Trading PAUSED — Enable"}
           </button>

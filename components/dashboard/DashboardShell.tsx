@@ -11,6 +11,7 @@ const NAV = [
   { href: "/dashboard/intelligence", label: "Intelligence", icon: "◆" },
   { href: "/dashboard/agents",       label: "Agents",       icon: "◐" },
   { href: "/dashboard/trading",      label: "Trading",      icon: "◑" },
+  { href: "/dashboard/learning",     label: "Learning",     icon: "◫" },
   { href: "/dashboard/calendar",     label: "Calendar",     icon: "▦" },
   { href: "/dashboard/you",          label: "You",          icon: "◎" },
   { href: "/dashboard/settings",     label: "Settings",     icon: "⚙" },

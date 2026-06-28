@@ -82,8 +82,8 @@ Keep it under 400 words. Specific, not generic.`;
     setBriefLoading(false);
   }
 
-  const tier = profile?.subscription_tier ?? "free";
-  const limit = tier === "free" ? 5 : tier === "pro" ? 50 : 9999;
+  const tier = profile?.subscription_tier ?? "elite";
+  const limit = 9999;
   const inp: React.CSSProperties = { width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", padding: "11px 14px", outline: "none" };
 
   return (
@@ -137,27 +137,12 @@ Keep it under 400 words. Specific, not generic.`;
             </div>
           )}
 
-          {tier === "free" && dailyCount >= 5 && (
-            <div style={{ background: T.accentBg, border: `1px solid ${T.accent}40`, borderRadius: "12px", padding: "20px", textAlign: "center" }}>
-              <div style={{ fontWeight: 600, marginBottom: "8px" }}>Daily limit reached</div>
-              <div style={{ fontSize: "13px", color: T.textSub, marginBottom: "14px" }}>Upgrade to Pro for 50 queries/day</div>
-              <a href="/dashboard/settings?tab=billing" style={{ background: T.accent, color: "#fff", borderRadius: "8px", padding: "10px 24px", fontSize: "14px", fontWeight: 600 }}>Upgrade to Pro</a>
-            </div>
-          )}
         </div>
       )}
 
       {tab === "brief" && (
         <div>
-          {tier === "free" ? (
-            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "40px", textAlign: "center" }}>
-              <div style={{ fontSize: "24px", marginBottom: "12px" }}>📰</div>
-              <div style={{ fontWeight: 600, marginBottom: "8px" }}>Morning Brief is a Pro feature</div>
-              <div style={{ fontSize: "13px", color: T.textSub, marginBottom: "20px" }}>Get a personalized AI-generated market brief every day</div>
-              <a href="/dashboard/settings?tab=billing" style={{ background: T.accent, color: "#fff", borderRadius: "8px", padding: "10px 24px", fontSize: "14px", fontWeight: 600, textDecoration: "none" }}>Upgrade to Pro — $29/mo</a>
-            </div>
-          ) : (
-            <div>
+          <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
                 <div style={{ fontSize: "15px", fontWeight: 600 }}>Morning Brief</div>
                 <button onClick={genBrief} disabled={briefLoading} style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "10px 22px", fontSize: "14px", fontWeight: 600, cursor: "pointer", opacity: briefLoading ? 0.7 : 1 }}>
@@ -174,7 +159,6 @@ Keep it under 400 words. Specific, not generic.`;
                 </div>
               )}
             </div>
-          )}
         </div>
       )}
 
@@ -182,9 +166,7 @@ Keep it under 400 words. Specific, not generic.`;
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "40px", textAlign: "center" }}>
           <div style={{ fontSize: "24px", marginBottom: "12px" }}>✉️</div>
           <div style={{ fontWeight: 600, marginBottom: "8px" }}>Custom Newsletter</div>
-          <div style={{ fontSize: "13px", color: T.textSub }}>
-            {tier === "pro" || tier === "elite" ? "Generate your personalized financial newsletter" : "Upgrade to Pro to access the newsletter feature"}
-          </div>
+          <div style={{ fontSize: "13px", color: T.textSub }}>Generate your personalized financial newsletter</div>
         </div>
       )}
     </div>
