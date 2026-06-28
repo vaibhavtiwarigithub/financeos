@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
 
 function buildPrompt(symbol: string) {
@@ -89,10 +90,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // Auth check via user client; writes use service client (bypasses RLS)
+  const userClient = await createClient();
+  const { data: { user } } = await userClient.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const supabase = createServiceClient();
   const batch = symbols.slice(0, 5);
   const enc = new TextEncoder();
   const results: any[] = [];

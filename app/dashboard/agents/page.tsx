@@ -1,10 +1,10 @@
-import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import AgentsPage from "@/components/dashboard/AgentsPage";
 
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   const [
     { data: signals },
