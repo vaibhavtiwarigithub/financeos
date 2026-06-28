@@ -52,9 +52,54 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
     if (!apiPath) { setRunResult("Not yet implemented."); return; }
     setRunning(id);
     setRunResult(null);
+
+    if (id === "research") {
+      // SSE streaming: show per-symbol progress live
+      try {
+        const res = await fetch(apiPath, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbols: DEFAULT_WATCHLIST }),
+        });
+        if (!res.ok || !res.body) {
+          setRunResult(`Error: HTTP ${res.status}`);
+          setRunning(null);
+          return;
+        }
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        const lines: string[] = [];
+        let buf = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split("\n\n");
+          buf = parts.pop() ?? "";
+          for (const chunk of parts) {
+            for (const line of chunk.split("\n")) {
+              if (!line.startsWith("data: ")) continue;
+              try {
+                const evt = JSON.parse(line.slice(6));
+                if (evt.type === "progress") lines.push(`Analyzing ${evt.symbol}...`);
+                else if (evt.type === "result") lines.push(`${evt.symbol}: ${evt.direction?.toUpperCase()} score=${evt.analystScore} conviction=${evt.conviction}`);
+                else if (evt.type === "error") lines.push(`${evt.symbol}: ERROR — ${evt.error}`);
+                else if (evt.type === "done") { lines.push(`Done — ${evt.processed} symbol(s).`); router.refresh(); }
+                setRunResult(lines.join("\n"));
+              } catch {}
+            }
+          }
+        }
+      } catch (e: any) {
+        setRunResult("Error: " + e.message);
+      }
+      setRunning(null);
+      return;
+    }
+
+    // All other agents: normal JSON POST
     try {
-      const body = id === "research" ? { symbols: DEFAULT_WATCHLIST } : {};
-      const res = await fetch(apiPath, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const res = await fetch(apiPath, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
       const data = await res.json();
       if (data.error) {
         setRunResult(`Error: ${data.error}${data.detail ? "\n" + data.detail : ""}`);
