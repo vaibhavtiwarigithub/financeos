@@ -42,6 +42,25 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [runResult, setRunResult] = useState<string | null>(null);
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   const [tab, setTab] = useState<"signals" | "paper" | "weights" | "log">("paper");
+  const [minScore, setMinScore] = useState<number>(strategy?.min_analyst_score ?? 70);
+  const [maxPos, setMaxPos] = useState<number>(strategy?.max_position_pct ?? 5);
+  const [maxTrades, setMaxTrades] = useState<number>(strategy?.max_daily_trades ?? 3);
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configToast, setConfigToast] = useState("");
+
+  async function saveStrategyConfig() {
+    if (!strategy?.id) return;
+    setConfigSaving(true);
+    await supabase.from("strategy_config").update({
+      min_analyst_score: minScore,
+      max_position_pct: maxPos,
+      max_daily_trades: maxTrades,
+    } as any).eq("id", strategy.id);
+    setConfigSaving(false);
+    setConfigToast("Saved!");
+    setTimeout(() => setConfigToast(""), 2000);
+    router.refresh();
+  }
 
   async function toggleTrading() {
     setSaving(true);
@@ -379,22 +398,44 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           </div>
 
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
-            <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "16px" }}>Strategy Config</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div style={{ fontWeight: 600, fontSize: "14px" }}>Strategy Config</div>
+              {configToast && <span style={{ fontSize: "12px", color: T.green }}>{configToast}</span>}
+            </div>
             {strategy ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
+                  <span style={{ color: T.textSub }}>Mode</span>
+                  <span style={{ fontWeight: 500 }}>{strategy.mode}</span>
+                </div>
                 {[
-                  { label: "Mode", value: strategy.mode },
-                  { label: "Max position", value: strategy.max_position_pct + "%" },
-                  { label: "Max trades/day", value: strategy.max_daily_trades },
-                  { label: "Min score to trade", value: strategy.min_analyst_score },
-                  { label: "Target accuracy", value: (strategy.target_30d_accuracy * 100).toFixed(0) + "%" },
-                  { label: "Max drawdown", value: strategy.max_drawdown_pct + "%" },
-                ].map(r => (
-                  <div key={r.label} style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
-                    <span style={{ color: T.textSub }}>{r.label}</span>
-                    <span style={{ fontWeight: 500 }}>{r.value}</span>
+                  { label: "Min score to trade", val: minScore, set: setMinScore, min: 0, max: 100 },
+                  { label: "Max position %", val: maxPos, set: setMaxPos, min: 1, max: 25 },
+                  { label: "Max trades/day", val: maxTrades, set: setMaxTrades, min: 1, max: 10 },
+                ].map(f => (
+                  <div key={f.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "13px" }}>
+                    <span style={{ color: T.textSub }}>{f.label}</span>
+                    <input
+                      type="number"
+                      value={f.val}
+                      min={f.min}
+                      max={f.max}
+                      onChange={e => f.set(Number(e.target.value))}
+                      style={{ width: "64px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", color: T.text, fontSize: "13px", padding: "4px 8px", outline: "none", textAlign: "right" }}
+                    />
                   </div>
                 ))}
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
+                  <span style={{ color: T.textSub }}>Target accuracy</span>
+                  <span style={{ fontWeight: 500 }}>{(strategy.target_30d_accuracy * 100).toFixed(0)}%</span>
+                </div>
+                <button
+                  onClick={saveStrategyConfig}
+                  disabled={configSaving}
+                  style={{ marginTop: "4px", width: "100%", padding: "8px", background: T.accent, border: "none", borderRadius: "8px", color: "#fff", fontSize: "12px", fontWeight: 600, cursor: configSaving ? "not-allowed" : "pointer", opacity: configSaving ? 0.7 : 1 }}
+                >
+                  {configSaving ? "Saving..." : "Save Config"}
+                </button>
               </div>
             ) : <div style={{ color: T.muted, fontSize: "13px" }}>No config.</div>}
           </div>

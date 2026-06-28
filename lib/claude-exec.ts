@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 // Problem: execFile('claude.cmd') → EINVAL (Windows can't exec .cmd without shell)
 //          execFile with shell:true → shell interprets | < > " in prompt as operators
 // Solution: write prompt to temp file, pipe via PowerShell (a real .exe, no escaping needed)
-export async function execClaude(prompt: string, timeoutMs = 60000): Promise<string> {
+export async function execClaude(prompt: string, timeoutMs = 90000): Promise<string> {
   const promptPath = join(
     tmpdir(),
     `fos_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`
@@ -18,20 +18,26 @@ export async function execClaude(prompt: string, timeoutMs = 60000): Promise<str
 
   await writeFile(promptPath, prompt, "utf8");
 
-  try {
-    // Pipe via stdin — avoids all Windows command-line escaping issues with quotes/newlines
-    const psCommand = `Get-Content -Raw "${promptPath}" | & claude.cmd --dangerously-skip-permissions --output-format json`;
+  const psCommand = `Get-Content -Raw "${promptPath}" | & claude.cmd --dangerously-skip-permissions --output-format json`;
+  const psArgs = ["-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", psCommand];
+  const opts = { timeout: timeoutMs, windowsHide: true, maxBuffer: 10 * 1024 * 1024 };
 
-    const { stdout, stderr } = await execFileAsync(
-      "powershell.exe",
-      ["-Command", psCommand],
-      { timeout: timeoutMs, windowsHide: true }
-    );
-    if (stderr) console.error(`[execClaude] stderr for prompt:`, stderr.slice(0, 300));
-    return stdout;
-  } finally {
-    await unlink(promptPath).catch(() => {});
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const { stdout, stderr } = await execFileAsync("powershell.exe", psArgs, opts);
+      if (stderr) console.error(`[execClaude] stderr:`, stderr.slice(0, 300));
+      await unlink(promptPath).catch(() => {});
+      return stdout;
+    } catch (err) {
+      lastErr = err;
+      // Cold-start: claude.cmd takes ~10s to init MCP on first call — retry after brief wait
+      if (attempt < 2) await new Promise(r => setTimeout(r, 5000));
+    }
   }
+
+  await unlink(promptPath).catch(() => {});
+  throw lastErr;
 }
 
 // Parse Claude CLI JSON output → extract result text
