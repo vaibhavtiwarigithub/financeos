@@ -15,6 +15,11 @@ export async function POST(req: NextRequest) {
     // All DB ops use service client — bypasses RLS on agent/paper tables
     const supabase = createServiceClient();
 
+    const { data: runRow } = await supabase.from("agent_runs").insert({
+      agent_type: "paper_trader", status: "running",
+    } as any).select().single();
+    const runId = (runRow as any)?.id ?? null;
+
     // Get paper portfolio
     const { data: portfolioArr } = await supabase.from("paper_portfolio").select("*").limit(1);
     let portfolio = portfolioArr?.[0];
@@ -41,6 +46,7 @@ export async function POST(req: NextRequest) {
       .limit(5);
 
     if (!signals || signals.length === 0) {
+      if (runId) await supabase.from("agent_runs").update({ status: "done", signals_written: 0, result_summary: "No qualifying long signals (score ≥ 60, direction = long)", completed_at: new Date().toISOString() } as any).eq("id", runId);
       return NextResponse.json({ skipped: true, reason: "No qualifying long signals (score ≥ 60, direction = long)" });
     }
 
@@ -175,6 +181,17 @@ export async function POST(req: NextRequest) {
     );
 
     await supabase.from("paper_portfolio").update({ nav }).eq("id", portfolio.id);
+
+    if (runId) {
+      const tradedSymbols = filled.map((f: any) => f.symbol);
+      await supabase.from("agent_runs").update({
+        status: "done",
+        symbols: tradedSymbols,
+        signals_written: filled.length,
+        result_summary: `${filled.length} trades filled, ${skipped.length} skipped. NAV: $${nav.toFixed(2)}`,
+        completed_at: new Date().toISOString(),
+      } as any).eq("id", runId);
+    }
 
     return NextResponse.json({ success: true, filled: filled.length, skipped: skipped.length, trades: filled, nav });
   } catch (err: unknown) {

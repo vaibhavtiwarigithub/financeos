@@ -15,6 +15,11 @@ export async function POST(req: NextRequest) {
 
     const supabase = createServiceClient();
 
+    const { data: runRow } = await supabase.from("agent_runs").insert({
+      agent_type: "learner", status: "running",
+    } as any).select().single();
+    const runId = (runRow as any)?.id ?? null;
+
     // Get open paper trades older than 7 market days
     const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data: openTrades } = await supabase
@@ -97,6 +102,17 @@ export async function POST(req: NextRequest) {
       weight_snapshot: null,
       trades_evaluated: outcomes.length,
     });
+
+    if (runId) {
+      const closedSymbols = outcomes.map(o => o.symbol);
+      await supabase.from("agent_runs").update({
+        status: "done",
+        symbols: closedSymbols,
+        signals_written: outcomes.length,
+        result_summary: `Closed ${outcomes.length} trades: ${wins}W/${losses}L. ${priceFailures.length} price failures.`,
+        completed_at: new Date().toISOString(),
+      } as any).eq("id", runId);
+    }
 
     return NextResponse.json({
       success: true,

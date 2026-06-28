@@ -30,9 +30,20 @@ function dirBadge(d: string) {
   return <span style={{ fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "4px", background: up ? T.greenBg : T.redBg, color: up ? T.green : T.red }}>{d.toUpperCase()}</span>;
 }
 
-export default function AgentsPage({ signals, weights, strategy, learningLog, paperPortfolio, paperPositions, paperTrades, paperPerf }: {
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+export default function AgentsPage({ signals, weights, strategy, learningLog, paperPortfolio, paperPositions, paperTrades, paperPerf, agentRuns }: {
   signals: any[]; weights: any; strategy: any; learningLog: any[];
   paperPortfolio: any; paperPositions: any[]; paperTrades: any[]; paperPerf: any[];
+  agentRuns?: Record<string, any[]>;
 }) {
   const supabase = createClient();
   const router = useRouter();
@@ -47,6 +58,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [maxTrades, setMaxTrades] = useState<number>(strategy?.max_daily_trades ?? 3);
   const [configSaving, setConfigSaving] = useState(false);
   const [configToast, setConfigToast] = useState("");
+  const [expandedRuns, setExpandedRuns] = useState<string | null>(null);
 
   async function saveStrategyConfig() {
     if (!strategy?.id) return;
@@ -200,20 +212,60 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
 
       {/* Agent runner cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "20px" }}>
-        {AGENTS.map(a => (
-          <div key={a.id} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px" }}>
-            <div style={{ fontSize: "20px", marginBottom: "6px" }}>{a.icon}</div>
-            <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "3px" }}>{a.label}</div>
-            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "12px" }}>{a.desc}</div>
-            <button
-              onClick={() => runAgent(a.id, a.apiPath)}
-              disabled={!!running}
-              style={{ width: "100%", padding: "7px", background: running === a.id ? T.border : T.accent + "18", border: `1px solid ${T.accent}35`, borderRadius: "7px", color: running === a.id ? T.muted : T.accent, fontSize: "12px", fontWeight: 600, cursor: running ? "default" : "pointer" }}
-            >
-              {running === a.id ? "Running..." : "▶ Run"}
-            </button>
-          </div>
-        ))}
+        {AGENTS.map(a => {
+          const runKey = a.id === "paper-trade" ? "paper_trader" : a.id;
+          const runs = agentRuns?.[runKey] ?? [];
+          const lastRun = runs[0];
+          const isExpanded = expandedRuns === a.id;
+          return (
+            <div key={a.id} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px" }}>
+              <div style={{ fontSize: "20px", marginBottom: "6px" }}>{a.icon}</div>
+              <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "3px" }}>{a.label}</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "10px" }}>{a.desc}</div>
+              <button
+                onClick={() => runAgent(a.id, a.apiPath)}
+                disabled={!!running}
+                style={{ width: "100%", padding: "7px", background: running === a.id ? T.border : T.accent + "18", border: `1px solid ${T.accent}35`, borderRadius: "7px", color: running === a.id ? T.muted : T.accent, fontSize: "12px", fontWeight: 600, cursor: running ? "default" : "pointer" }}
+              >
+                {running === a.id ? "Running..." : "▶ Run"}
+              </button>
+              {/* Run history */}
+              <div style={{ marginTop: "10px", borderTop: `1px solid ${T.border}`, paddingTop: "8px" }}>
+                {lastRun ? (
+                  <>
+                    <div
+                      onClick={() => setExpandedRuns(isExpanded ? null : a.id)}
+                      style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", fontSize: "11px", color: T.textSub }}
+                    >
+                      <span>
+                        <span style={{ color: lastRun.status === "error" ? T.red : T.green }}>●</span>
+                        {" "}{timeAgo(lastRun.started_at)}
+                        {lastRun.symbols?.length ? ` — ${lastRun.symbols.slice(0,3).join(", ")}${lastRun.symbols.length > 3 ? ` +${lastRun.symbols.length - 3}` : ""}` : ""}
+                      </span>
+                      <span style={{ color: T.muted }}>{isExpanded ? "▲" : "▼"}</span>
+                    </div>
+                    {isExpanded && (
+                      <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                        {runs.map((r: any) => (
+                          <div key={r.id} style={{ fontSize: "10px", color: T.muted, background: T.surface, borderRadius: "6px", padding: "6px 8px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between" }}>
+                              <span style={{ color: r.status === "error" ? T.red : r.status === "running" ? T.amber : T.green, fontWeight: 600 }}>{r.status.toUpperCase()}</span>
+                              <span>{timeAgo(r.started_at)}</span>
+                            </div>
+                            {r.symbols?.length > 0 && <div style={{ marginTop: "2px", color: T.textSub }}>{r.symbols.join(", ")}</div>}
+                            {r.result_summary && <div style={{ marginTop: "2px" }}>{r.result_summary}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div style={{ fontSize: "11px", color: T.muted }}>Never run</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Run result */}

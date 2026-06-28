@@ -112,6 +112,14 @@ export async function POST(req: NextRequest) {
   const enc = new TextEncoder();
   const results: any[] = [];
 
+  // Log run start
+  const { data: runRow } = await supabase.from("agent_runs").insert({
+    agent_type: "research",
+    status: "running",
+    symbols: batch,
+  } as any).select().single();
+  const runId = (runRow as any)?.id ?? null;
+
   const stream = new ReadableStream({
     async start(controller) {
       const send = (obj: object) =>
@@ -128,6 +136,17 @@ export async function POST(req: NextRequest) {
           results.push({ symbol, error });
           send({ type: "error", symbol, error });
         }
+      }
+
+      const ok = results.filter(r => !r.error).length;
+      const errs = results.filter(r => r.error).length;
+      if (runId) {
+        await supabase.from("agent_runs").update({
+          status: "done",
+          signals_written: ok,
+          result_summary: `${ok} signals written, ${errs} failed`,
+          completed_at: new Date().toISOString(),
+        } as any).eq("id", runId);
       }
 
       send({ type: "done", processed: results.length, results });
