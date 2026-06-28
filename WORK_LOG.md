@@ -20,6 +20,14 @@
 
 ---
 
+## 🟣 Review
+
+| Task | Agent/Model | Status | Date | Notes |
+|---|---|---|---|---|
+| Governed agentic quant platform architecture | Codex (Architect) | review | 2026-06-27 | Canonical spec written; awaiting Vaibhav review before implementation planning |
+
+---
+
 ## 🟡 Planned (Approved, Ready to Build)
 
 | Task | Assigned To | Status | Date | Notes |
@@ -114,4 +122,4 @@ Full details in `PROJECT_DECISIONS.md`. Summary here:
 
 ---
 
-*Last updated: 2026-06-01 by Claude (Anthropic)*
+*Last updated: 2026-06-27 by Codex (OpenAI)*

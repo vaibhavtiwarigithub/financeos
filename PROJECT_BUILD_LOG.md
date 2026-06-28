@@ -8,7 +8,7 @@ Goal: prevent random building. Compare workflow against best-practice product de
 
 ## Current Build Discipline Summary
 
-**Status:** Unknown — to be assessed after first few sessions.
+**Status:** Architecture-first. The governed agentic quant platform target is approved; implementation remains gated behind a reviewed phased plan.
 
 Claude should update this summary periodically with:
 - Is the project being built architecturally?
@@ -39,11 +39,22 @@ Notes: Claude's assessment
 
 ---
 
-*No entries yet. Log starts when project work begins.*
+### Entry 1 — 2026-06-27
+
+Instruction: Design a self-improving agentic quant platform that continuously researches markets, runs shadow experiments, teaches the user, and can eventually trade through the Robinhood agentic account.
+Classification: Approved decision
+Affected area: Agent architecture, market data, evidence, validation, paper execution, Robinhood execution, risk, dividends, tax, explainability, and operations
+Impact: High
+Architecture impact: Major
+Risk: Complexity
+Decision status: Approved
+Notes: Approved as a governed multi-agent platform. Long-only 2-20 market-day swing trading; Robinhood-supported US equities and ETFs subject to quality filters; dynamic statistical eligibility plus manual promotion; approval required for every initial live order; free-first data; layered daily briefing and decision journal. Canonical specification: `features/agentic-quant-platform/FEATURE_ARCHITECTURE.md`. Production implementation is not yet authorized.
 
 ## Drift Warnings
 
-*Track anything that may cause product drift.*
+- Current prototype routes use LLM-generated prices and direct weight mutation, which conflict with the approved architecture.
+- `PRD.md`, `WORK_LOG.md`, local migrations, and live connection state have diverged and must be reconciled during stabilization.
+- Auto-live execution, options, shorts, leverage, crypto, and intraday trading are outside approved scope.
 
 ## Repeated Patterns
 
@@ -59,10 +70,10 @@ Notes: Claude's assessment
 | 1. Problem definition | Not started |
 | 2. Target user | Not started |
 | 3. Core use cases | Not started |
-| 4. Information architecture | Not started |
-| 5. Feature architecture | Not started |
-| 6. Data architecture | Not started |
-| 7. UI states | Not started |
+| 4. Information architecture | Approved for governed agentic quant platform |
+| 5. Feature architecture | Approved; written specification awaiting user file review |
+| 6. Data architecture | Approved at contract level |
+| 7. UI states | Defined at architecture level |
 | 8. Implementation plan | Not started |
 | 9. Build | Not started |
 | 10. QA | Not started |
