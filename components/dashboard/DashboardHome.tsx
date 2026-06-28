@@ -33,7 +33,8 @@ export default function DashboardHome({ profile, holdings, predictions }: {
   const totalCost = totalValue - totalPnl;
 
   const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  const dnaAvg = Math.round([profile.dna_macro, profile.dna_equities, profile.dna_technical, profile.dna_risk_mgmt].reduce((s, v) => s + v, 0) / 4);
+  const dnaVals = [profile.dna_macro, profile.dna_equities, profile.dna_technical, profile.dna_risk_mgmt].filter(v => v != null) as number[];
+  const dnaAvg = dnaVals.length ? Math.round(dnaVals.reduce((s, v) => s + v, 0) / dnaVals.length) : 0;
 
   return (
     <div style={{ padding: "28px", animation: "slideUp 0.3s ease" }}>
@@ -117,18 +118,6 @@ export default function DashboardHome({ profile, holdings, predictions }: {
         </div>
       </div>
 
-      {/* Tier upgrade prompt for free users */}
-      {profile.subscription_tier === "free" && (
-        <div style={{ marginTop: "24px", background: T.accentBg, border: `1px solid ${T.accent}40`, borderRadius: "12px", padding: "20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div style={{ fontWeight: 600, marginBottom: "4px" }}>Unlock Pro — $29/month</div>
-            <div style={{ fontSize: "13px", color: T.textSub }}>50 AI queries/day, India markets, morning brief, unlimited portfolio tracking</div>
-          </div>
-          <a href="/dashboard/settings?tab=billing" style={{ background: T.accent, color: "#fff", borderRadius: "8px", padding: "10px 22px", fontSize: "14px", fontWeight: 600, whiteSpace: "nowrap", textDecoration: "none" }}>
-            Upgrade
-          </a>
-        </div>
-      )}
     </div>
   );
 }

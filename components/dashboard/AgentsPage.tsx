@@ -174,6 +174,8 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
       {/* Paper trades tab */}
       {tab === "paper" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+
+          {/* Open positions */}
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
             <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "14px" }}>Open Positions</div>
             {paperPositions.length === 0 ? (
@@ -207,6 +209,8 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
             )}
           </div>
 
+
+          {/* Closed trades */}
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
             <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "14px" }}>Trade History</div>
             {paperTrades.length === 0 ? (

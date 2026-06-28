@@ -2,6 +2,7 @@
 import { useRouter, usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
+import StatusBar from "./StatusBar";
 
 const NAV = [
   { href: "/dashboard",              label: "Home",         icon: "⌂" },
@@ -109,9 +110,11 @@ export default function DashboardShell({ profile, children }: { profile: Profile
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto min-w-0">
+      <main className="flex-1 overflow-y-auto min-w-0" style={{ paddingBottom: "32px" }}>
         {children}
       </main>
+
+      <StatusBar />
     </div>
   );
 }
