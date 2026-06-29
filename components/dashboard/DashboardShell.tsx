@@ -53,7 +53,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
     router.push("/login");
   }
 
-  const groups = [...NAV_GROUPS];
+  const groups = NAV_GROUPS.map(g => ({ ...g, items: [...g.items] }));
   if (["admin", "superadmin"].includes(profile.role)) {
     groups[groups.length - 1].items.push(ADMIN_NAV);
   }
