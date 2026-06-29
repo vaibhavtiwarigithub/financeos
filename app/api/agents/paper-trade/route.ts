@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchQuote, fetchQuotes } from "@/lib/market-data";
+import { checkKillSwitches } from "@/lib/kill-switches";
 
 // PaperTrader: fills virtual long-only trades from qualifying signals.
 // Prices come from Robinhood MCP via fetchQuote — never from LLM estimation.
@@ -20,6 +21,12 @@ export async function POST(req: NextRequest) {
 
     // All DB ops use service client — bypasses RLS on agent/paper tables
     const supabase = createServiceClient();
+
+    // §4 kill-switch check before any trade execution
+    const ks = await checkKillSwitches(supabase);
+    if (!ks.safe) {
+      return NextResponse.json({ skipped: true, reason: ks.reason, tripped: ks.tripped });
+    }
 
     const { data: runRow } = await supabase.from("agent_runs").insert({
       agent_type: "paper_trader", status: "running",

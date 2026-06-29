@@ -160,12 +160,29 @@ export async function gatherSymbols(
   return Array.from(result.values()).slice(0, cap);
 }
 
+const DOCTRINE_PREAMBLE = `## Reasoning doctrine (non-negotiable)
+
+§1 — You are a REASONER, not a data source. You do not know prices, P&L, fills, balances, fundamentals, or RSI values. Every number that drives a decision MUST trace to a tool call made in THIS run. If you find yourself recalling a number, stop — that is hallucination. Plausible-sounding analysis that moves money on unverified figures is the most dangerous output you can produce.
+
+§3 — Humility prior: active trading underperforms low-cost index funds for most participants (Barber & Odean). The DEFAULT answer is "neutral" (no trade). A position must clear a HIGH bar. Conviction is not evidence. A thesis you "really like" is a warning sign.
+
+§8 — ABSTAIN if ANY of these cannot be filled from sourced tool data:
+  • Thesis: one falsifiable claim + source + timestamp
+  • Bucket: momentum (RSI>60, price>50MA, revenue acceleration) OR value (P/E<sector median, high FCF, insider buying)
+  • Direction with specific evidence from fetched data
+  • Key risks: sourced, not invented
+  If data is missing or stale → output direction:"neutral", conviction:0, and explain why in summary.
+
+Scope: long-only US equities/ETFs, 2–20 market-day swing. Never propose options, crypto, shorting, leverage, or intraday.`;
+
 function buildStockPrompt(symbol: string, isHeld: boolean): string {
   const heldNote = isHeld
     ? `\nIMPORTANT: This is a CURRENTLY HELD position. If analysis is bearish, set direction to "short" as an exit signal. Do NOT override to neutral.`
     : `\nNew candidate position. Only output direction "long" or "neutral" — never "short".`;
 
-  return `You are a professional equity analyst. Research ${symbol} using these tools in order:
+  return `${DOCTRINE_PREAMBLE}
+
+You are a professional equity analyst. Research ${symbol} using these tools in order:
 
 1. Call get_financial_metrics_snapshot (FinancialDatasets) for fundamentals: P/E, revenue growth, margins, FCF yield, ROE
 2. Call RSI (Alpha Vantage) with symbol=${symbol}, interval=daily — check if RSI > 60 (momentum) or < 40 (oversold)
@@ -200,7 +217,9 @@ function buildEtfPrompt(symbol: string, isHeld: boolean): string {
     ? `This is a CURRENTLY HELD position. If conclusion is bearish for this ETF (accounting for bear/bull direction above), set direction="short" as an exit signal.`
     : `Not currently held. Use direction "long" or "neutral" only.`;
 
-  return `Analyze the ETF/fund ${symbol}.
+  return `${DOCTRINE_PREAMBLE}
+
+Analyze the ETF/fund ${symbol}.
 
 First identify what it tracks:
 SOXL/SOXS=3x semiconductors, TQQQ/SQQQ=3x Nasdaq, SPXL/SPXS=3x S&P500, SMH=VanEck semis, BOTZ=robotics/AI, ICLN=clean energy, NLR=nuclear/uranium, XLK/XLF/XLE/XLI/XLV/XLU/XLRE/XLB/XLC/XLP/XLY=SPDR sectors, GLD=gold, USO=oil, TLT=20yr treasuries

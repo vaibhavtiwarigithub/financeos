@@ -9,6 +9,11 @@ Knowledge entries: 6 files | Predictions resolved: 0 | Avg confidence: —
 
 ## Index
 
+### Doctrine (governs ALL agent reasoning — load before any trade decision)
+| File | Topic | Confidence | Last Updated |
+|---|---|---|---|
+| [agent-knowledge-doctrine.md](agent-knowledge-doctrine.md) | Reasoning rules: no hallucinated prices, abstain policy, humility prior, kill-switches, decision output contract (§8) | LOCKED — policy, not opinion | 2026-06-28 |
+
 ### Foundational (read first, always)
 | File | Topic | Confidence | Last Updated |
 |---|---|---|---|
