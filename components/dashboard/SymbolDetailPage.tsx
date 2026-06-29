@@ -68,6 +68,84 @@ function LivePrice({ symbol }: { symbol: string }) {
   );
 }
 
+interface SocialSentimentData {
+  symbol: string;
+  stocktwits_bullish_pct: number | null;
+  stocktwits_bearish_pct: number | null;
+  stocktwits_message_count: number | null;
+  av_news_sentiment: number | null;
+  av_news_articles: number | null;
+  overall_sentiment: "Bullish" | "Bearish" | "Neutral";
+  fetched_at: string;
+}
+
+function SentimentWidget({ symbol }: { symbol: string }) {
+  const [data, setData] = useState<SocialSentimentData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`/api/social/sentiment?symbol=${symbol}`)
+      .then(r => r.json())
+      .then((d: SocialSentimentData) => setData(d))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [symbol]);
+
+  if (loading) {
+    return (
+      <div style={{ fontSize: "12px", color: T.muted, padding: "6px 0" }}>
+        Loading sentiment…
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  const chipColor =
+    data.overall_sentiment === "Bullish" ? T.green :
+    data.overall_sentiment === "Bearish" ? T.red :
+    T.muted;
+  const chipBg =
+    data.overall_sentiment === "Bullish" ? T.greenBg :
+    data.overall_sentiment === "Bearish" ? T.redBg :
+    "#1A1D27";
+
+  const stPart = data.stocktwits_bullish_pct !== null
+    ? `StockTwits: ${data.stocktwits_bullish_pct}% Bullish`
+    : "StockTwits: n/a";
+
+  const newsPart = data.av_news_sentiment !== null
+    ? `News: ${data.av_news_sentiment.toFixed(2)}`
+    : "News: n/a";
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "6px 0" }}>
+      <span style={{
+        fontSize: "11px", fontWeight: 700, padding: "3px 10px", borderRadius: "20px",
+        color: chipColor, background: chipBg,
+        border: `1px solid ${chipColor}30`,
+        letterSpacing: "0.02em",
+      }}>
+        {data.overall_sentiment}
+      </span>
+      <span style={{ fontSize: "12px", color: T.textSub }}>
+        {stPart}
+      </span>
+      <span style={{ fontSize: "12px", color: T.muted }}>·</span>
+      <span style={{ fontSize: "12px", color: T.textSub }}>
+        {newsPart}
+      </span>
+      {data.stocktwits_message_count !== null && (
+        <>
+          <span style={{ fontSize: "12px", color: T.muted }}>·</span>
+          <span style={{ fontSize: "11px", color: T.muted }}>
+            {data.stocktwits_message_count} msgs
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
 function SignalsTab({ signals, trades }: { signals: any[]; trades: any[] }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
@@ -253,6 +331,7 @@ export default function SymbolDetailPage({
             {symbol}
           </div>
           <LivePrice symbol={symbol} />
+          <SentimentWidget symbol={symbol} />
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: "8px", alignItems: "center" }}>
           {signals.length > 0 && (

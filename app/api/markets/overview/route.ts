@@ -28,7 +28,7 @@ const INDEX_META: Record<string, string> = {
   SPY: "S&P 500",
   QQQ: "Nasdaq 100",
   DIA: "Dow Jones",
-  VIXY: "VIX",
+  VIXY: "VIX Proxy (VIXY)",
 };
 
 const SECTOR_META: Record<string, string> = {

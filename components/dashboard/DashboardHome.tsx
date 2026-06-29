@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -43,6 +44,47 @@ function StatRow({ label, value, color, sub }: { label: string; value: string | 
       <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "1px" }}>
         <span style={{ fontSize: "13px", fontWeight: 600, color: color ?? T.text }}>{value}</span>
         {sub && <span style={{ fontSize: "10px", color: T.muted }}>{sub}</span>}
+      </span>
+    </div>
+  );
+}
+
+function ExpandableStatRow({ label, value, color, sub, children }: {
+  label: string; value: string | number; color?: string; sub?: string; children?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const hasDetail = !!children;
+  return (
+    <div>
+      <div
+        onClick={() => hasDetail && setOpen(o => !o)}
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "7px 0", borderBottom: `1px solid ${T.border}44`, cursor: hasDetail ? "pointer" : "default", userSelect: "none" }}
+      >
+        <span style={{ fontSize: "13px", color: T.textSub, display: "flex", alignItems: "center", gap: "5px" }}>
+          {hasDetail && <span style={{ fontSize: "9px", color: T.muted, transition: "transform 0.15s", display: "inline-block", transform: open ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>}
+          {label}
+        </span>
+        <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "1px" }}>
+          <span style={{ fontSize: "13px", fontWeight: 600, color: color ?? T.text }}>{value}</span>
+          {sub && <span style={{ fontSize: "10px", color: T.muted }}>{sub}</span>}
+        </span>
+      </div>
+      {open && hasDetail && (
+        <div style={{ background: T.dim, borderRadius: "8px", margin: "4px 0 6px", padding: "8px 10px", maxHeight: "240px", overflowY: "auto" }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailItem({ left, right, color, sub }: { left: string; right: string; color?: string; sub?: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: `1px solid ${T.border}33`, fontSize: "11px" }}>
+      <span style={{ color: T.textSub }}>{left}</span>
+      <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+        <span style={{ color: color ?? T.text, fontWeight: 600 }}>{right}</span>
+        {sub && <span style={{ color: T.muted, fontSize: "10px" }}>{sub}</span>}
       </span>
     </div>
   );
@@ -177,11 +219,21 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
             </div>
           ) : (
             <>
-              <StatRow
+              <ExpandableStatRow
                 label="Closed trades"
                 value={closedTrades.length > 0 ? `${wins}W / ${losses}L / ${be}BE` : "—"}
                 color={wins > losses ? T.green : losses > wins ? T.red : T.muted}
-              />
+              >
+                {closedTrades.length > 0 ? closedTrades.map((t: any) => (
+                  <DetailItem
+                    key={t.id}
+                    left={`${t.symbol} · ${new Date(t.closed_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
+                    right={t.realized_pnl != null ? fmt$(t.realized_pnl) : "—"}
+                    color={t.outcome === "win" ? T.green : t.outcome === "loss" ? T.red : T.muted}
+                    sub={t.pnl_pct != null ? fmtPct(t.pnl_pct) : t.outcome}
+                  />
+                )) : <span style={{ color: T.muted, fontSize: "11px" }}>No closed trades yet</span>}
+              </ExpandableStatRow>
               {closedTrades.length > 0 && (
                 <StatRow
                   label="Realized P&L"
@@ -190,17 +242,42 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
                 />
               )}
               {bestTrade && (
-                <StatRow
-                  label="Best trade"
-                  value={bestTrade.symbol}
-                  color={T.green}
-                  sub={fmtPct(bestTrade.pnl_pct ?? 0)}
-                />
+                <StatRow label="Best trade" value={bestTrade.symbol} color={T.green} sub={fmtPct(bestTrade.pnl_pct ?? 0)} />
               )}
-              <StatRow label="Research runs" value={researchRuns} />
-              <StatRow label="Paper fills" value={paperFills} />
+              <ExpandableStatRow label="Research runs" value={researchRuns}>
+                {recentRuns.filter((r: any) => r.agent_type === "research").map((r: any) => (
+                  <DetailItem
+                    key={r.id}
+                    left={new Date(r.created_at).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    right={r.signals_written != null ? `${r.signals_written} signals` : r.status}
+                    color={r.status === "done" ? T.green : T.amber}
+                    sub={r.symbols?.slice(0, 5).join(", ") + (r.symbols?.length > 5 ? "…" : "")}
+                  />
+                ))}
+              </ExpandableStatRow>
+              <ExpandableStatRow label="Paper fills" value={paperFills}>
+                {recentTrades.filter((t: any) => !t.closed_at).slice(0, 15).map((t: any) => (
+                  <DetailItem
+                    key={t.id}
+                    left={`${t.symbol} · ${t.direction?.toUpperCase()} · ${new Date(t.opened_at ?? t.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
+                    right={t.entry_price != null ? `$${Number(t.entry_price).toFixed(2)}` : "—"}
+                    color={t.direction === "long" ? T.green : T.red}
+                    sub={`${t.qty ?? "?"} shares · score ${t.conviction ?? "?"}`}
+                  />
+                ))}
+              </ExpandableStatRow>
               {learnerRuns > 0 && <StatRow label="Learner runs" value={learnerRuns} />}
-              <StatRow label="New signals" value={newSignals} />
+              <ExpandableStatRow label="New signals" value={newSignals}>
+                {recentSignals.slice(0, 20).map((s: any) => (
+                  <DetailItem
+                    key={s.id}
+                    left={`${s.symbol} · ${s.direction?.toUpperCase() ?? s.action}`}
+                    right={s.analyst_score != null ? `Score ${s.analyst_score}` : "—"}
+                    color={s.direction === "long" ? T.green : s.direction === "short" ? T.red : T.muted}
+                    sub={new Date(s.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  />
+                ))}
+              </ExpandableStatRow>
               {recentLog.length > 0 && (
                 <div style={{ marginTop: "12px", padding: "10px 12px", background: T.dim, borderRadius: "8px", fontSize: "12px", color: T.textSub, fontStyle: "italic", lineHeight: "1.5" }}>
                   "{recentLog[0].note?.slice(0, 120)}{(recentLog[0].note?.length ?? 0) > 120 ? "…" : ""}"

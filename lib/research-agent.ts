@@ -1,4 +1,5 @@
 import { execClaude, parseClaudeOutput, parseTokenUsage } from "@/lib/claude-exec";
+import { fetchSocialSentiment, SocialSentiment } from "@/lib/social-sentiment";
 
 const KNOWN_ETFS = new Set([
   // Broad market
@@ -175,19 +176,29 @@ const DOCTRINE_PREAMBLE = `## Reasoning doctrine (non-negotiable)
 
 Scope: long-only US equities/ETFs, 2–20 market-day swing. Never propose options, crypto, shorting, leverage, or intraday.`;
 
-function buildStockPrompt(symbol: string, isHeld: boolean): string {
+function buildStockPrompt(symbol: string, isHeld: boolean, social: SocialSentiment | null): string {
   const heldNote = isHeld
     ? `\nIMPORTANT: This is a CURRENTLY HELD position. If analysis is bearish, set direction to "short" as an exit signal. Do NOT override to neutral.`
     : `\nNew candidate position. Only output direction "long" or "neutral" — never "short".`;
 
-  return `${DOCTRINE_PREAMBLE}
+  const socialBlock = social
+    ? `
+## Pre-fetched social sentiment (already gathered — do NOT call NEWS_SENTIMENT again for this data)
+- StockTwits: ${social.overall_sentiment} · ${social.stocktwits_bullish_pct ?? "n/a"}% bullish, ${social.stocktwits_bearish_pct ?? "n/a"}% bearish (${social.stocktwits_message_count ?? 0} messages)
+- Alpha Vantage news sentiment score: ${social.av_news_sentiment !== null ? social.av_news_sentiment.toFixed(3) : "n/a"} (${social.av_news_articles ?? 0} articles, scale -1 to +1)
+- Combined signal: ${social.overall_sentiment}
+Use this to inform sentiment_score (scale 0–100: Bullish≈70+, Neutral≈50, Bearish≈30-).
+`
+    : "";
 
+  return `${DOCTRINE_PREAMBLE}
+${socialBlock}
 You are a professional equity analyst. Research ${symbol} using these tools in order:
 
 1. Call get_financial_metrics_snapshot (FinancialDatasets) for fundamentals: P/E, revenue growth, margins, FCF yield, ROE
 2. Call RSI (Alpha Vantage) with symbol=${symbol}, interval=daily — check if RSI > 60 (momentum) or < 40 (oversold)
 3. Call EMA (Alpha Vantage) with symbol=${symbol}, interval=daily, time_period=50 — compare to current price for trend direction
-4. Call NEWS_SENTIMENT (Alpha Vantage) with tickers=${symbol} — get overall sentiment score and top 3 headlines
+4. Call NEWS_SENTIMENT (Alpha Vantage) with tickers=${symbol} — get top 3 headlines (sentiment score already provided above)
 5. Call INSIDER_TRANSACTIONS (Alpha Vantage) with symbol=${symbol} — note recent insider buying or selling
 6. Call get_earnings (FinancialDatasets) — last 2 quarters: beat or miss vs estimates?
 
@@ -198,14 +209,14 @@ After gathering data, synthesize all signals. Output ONLY a JSON object (no mark
 Scoring guide:
 - fundamental_score: based on P/E vs sector, revenue growth, margins, FCF yield
 - technical_score: based on RSI + price vs 50-day EMA
-- sentiment_score: based on NEWS_SENTIMENT score (scale 0-1 → 0-100)
+- sentiment_score: blend of pre-fetched social sentiment + NEWS_SENTIMENT headlines (scale 0–100)
 - macro_score: sector tailwinds, interest rate sensitivity, geopolitical exposure
 - insider_score: 80+ if net buying, 20- if heavy selling, 50 if neutral
 - conviction: your overall confidence 0-100
 - direction must cite which signals drove it${heldNote}`;
 }
 
-function buildEtfPrompt(symbol: string, isHeld: boolean): string {
+function buildEtfPrompt(symbol: string, isHeld: boolean, social: SocialSentiment | null): string {
   const sym = symbol.toUpperCase();
   const isBear = LEVERAGED_BEAR_ETFS.has(sym);
 
@@ -217,8 +228,18 @@ function buildEtfPrompt(symbol: string, isHeld: boolean): string {
     ? `This is a CURRENTLY HELD position. If conclusion is bearish for this ETF (accounting for bear/bull direction above), set direction="short" as an exit signal.`
     : `Not currently held. Use direction "long" or "neutral" only.`;
 
-  return `${DOCTRINE_PREAMBLE}
+  const socialBlock = social
+    ? `
+## Pre-fetched social sentiment
+- StockTwits: ${social.overall_sentiment} · ${social.stocktwits_bullish_pct ?? "n/a"}% bullish (${social.stocktwits_message_count ?? 0} messages)
+- News sentiment score: ${social.av_news_sentiment !== null ? social.av_news_sentiment.toFixed(3) : "n/a"} (${social.av_news_articles ?? 0} articles)
+- Combined: ${social.overall_sentiment}
+Use to inform sentiment_score (Bullish≈70+, Neutral≈50, Bearish≈30-).
+`
+    : "";
 
+  return `${DOCTRINE_PREAMBLE}
+${socialBlock}
 Analyze the ETF/fund ${symbol}.
 
 First identify what it tracks:
@@ -247,7 +268,12 @@ export async function processSymbol(
   const { symbol, isHeld, isEtf } = entry;
   const source: string = isHeld ? "holding" : "screener";
 
-  const prompt = isEtf ? buildEtfPrompt(symbol, isHeld) : buildStockPrompt(symbol, isHeld);
+  // Fetch social sentiment in parallel (non-blocking — failures are silenced)
+  const socialResult = await fetchSocialSentiment(symbol).catch(() => null);
+
+  const prompt = isEtf
+    ? buildEtfPrompt(symbol, isHeld, socialResult)
+    : buildStockPrompt(symbol, isHeld, socialResult);
 
   const stdout = await execClaude(prompt, 90000);
   const claudeRaw = parseClaudeOutput(stdout);
@@ -277,6 +303,7 @@ export async function processSymbol(
         ...parsed,
         _original_direction: rawDirection,
         _direction_override: rawDirection !== signalDirection,
+        _social_sentiment: socialResult ?? null,
       },
     })
     .select()
