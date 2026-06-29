@@ -62,7 +62,8 @@ export async function POST(req: NextRequest) {
       // Sizing from strategy config (% of paper portfolio), not hardcoded $10k
       const { data: portfolio } = await supabase.from("paper_portfolio").select("nav").limit(1).single();
       const portfolioNav = portfolio?.nav ?? 10000;
-      const maxSpend = portfolioNav * (strategy.max_position_pct / 100);
+      // max_position_pct is stored as a decimal (0.10 = 10%) — do NOT divide by 100
+      const maxSpend = portfolioNav * strategy.max_position_pct;
       const qty = Math.max(1, Math.floor(maxSpend / quote.price));
 
       const rationale = `${signal.rationale ?? ""} | score: ${signal.analyst_score} | price_source: ${quote.source} | price: ${quote.price}`;

@@ -177,13 +177,17 @@ function LoadingSkeleton() {
 export default function MarketsPage() {
   const [data, setData] = useState<MarketOverview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [slowFetch, setSlowFetch] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastFetch, setLastFetch] = useState<string | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 
   async function fetchMarkets() {
     setLoading(true);
+    setSlowFetch(false);
     setError(null);
+    // After 10s without data, surface a "fetching live data…" note instead of blank spinner
+    const slowTimer = setTimeout(() => setSlowFetch(true), 10_000);
     try {
       const res = await fetch("/api/markets/overview");
       if (!res.ok) {
@@ -196,7 +200,9 @@ export default function MarketsPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      clearTimeout(slowTimer);
       setLoading(false);
+      setSlowFetch(false);
     }
   }
 
@@ -258,8 +264,17 @@ export default function MarketsPage() {
         </div>
       )}
 
-      {/* Loading skeleton */}
-      {loading && !data && <LoadingSkeleton />}
+      {/* Loading skeleton — show slow-fetch note after 10s */}
+      {loading && !data && (
+        <>
+          <LoadingSkeleton />
+          {slowFetch && (
+            <div style={{ textAlign: "center", marginTop: "16px", fontSize: "12px", color: T.muted }}>
+              Fetching live quotes from Robinhood via AI subprocess — may take up to 90s on first load…
+            </div>
+          )}
+        </>
+      )}
 
       {/* Data loaded */}
       {data && (

@@ -2,9 +2,12 @@ import { createClient } from "@supabase/supabase-js";
 
 // Service role client — bypasses RLS. Only for server-side API routes.
 // Never expose this key to the browser.
-let _client: ReturnType<typeof createClient> | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _client: any = null;
 
-export function createServiceClient() {
+// Returns any — we don't use generated schema types; tables are added iteratively.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createServiceClient(): any {
   if (!_client) {
     _client = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

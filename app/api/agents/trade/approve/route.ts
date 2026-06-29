@@ -31,17 +31,33 @@ export async function POST(req: NextRequest) {
       user_decision_at: new Date().toISOString(),
     } as any).eq("id", tradeId);
 
-    // Attempt Robinhood execution via Claude subprocess
-    const robinhoodPrompt = `Use the Robinhood MCP to place a ${trade.order_type} ${trade.order_side} order.
-Order details:
-- Symbol: ${trade.symbol}
-- Quantity: ${trade.qty} shares
-- ${trade.order_type === "limit" ? `Limit price: $${trade.limit_price}` : "Order type: market"}
-- Account: use the agentic trading account
+    // Agentic account is the ONLY permitted account for order placement.
+    // Hardcoded — must not be overridable by environment or config.
+    // CONNECTIONS.md: 965848641 is NEVER used for orders (read-only positions only).
+    const AGENTIC_ACCOUNT = "605420660";
 
-Call place_equity_order with these parameters. After the call, output ONLY a JSON object:
+    // Attempt Robinhood execution via Claude subprocess.
+    // Step 1: review_equity_order (dry-run) — confirms symbol, qty, side, and current quote.
+    // Step 2: place_equity_order only if review succeeds.
+    const robinhoodPrompt = `You are executing a pre-approved trade on the Robinhood AGENTIC account only.
+AGENTIC ACCOUNT: ${AGENTIC_ACCOUNT}
+NEVER use any other account number.
+
+Trade to execute:
+- Symbol: ${trade.symbol}
+- Side: ${trade.order_side}
+- Quantity: ${trade.qty} shares
+- Order type: ${trade.order_type}
+${trade.order_type === "limit" ? `- Limit price: $${trade.limit_price}` : ""}
+
+Step 1: Call review_equity_order with account_number "${AGENTIC_ACCOUNT}", symbol "${trade.symbol}", side "${trade.order_side}", quantity ${trade.qty}, order_type "${trade.order_type}"${trade.limit_price ? `, price ${trade.limit_price}` : ""}.
+If review_equity_order returns an error or the reviewed payload does not match the trade details, STOP and output {"success": false, "error": "review_failed: <reason>"}.
+
+Step 2: Only if review succeeded, call place_equity_order with the exact same parameters and account_number "${AGENTIC_ACCOUNT}".
+
+Output ONLY a JSON object:
 {"success": true, "order_id": "...", "status": "...", "filled_price": 0.00}
-OR on failure:
+OR
 {"success": false, "error": "reason"}`;
 
     let robinhoodResult: any = null;

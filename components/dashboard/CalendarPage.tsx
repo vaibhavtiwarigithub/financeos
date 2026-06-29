@@ -62,6 +62,7 @@ function DaysChip({ days }: { days: number }) {
 export default function CalendarPage() {
   const [earnings, setEarnings] = useState<EarningsEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [slowFetch, setSlowFetch] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [source, setSource] = useState<string>("");
   const [tab, setTab] = useState<"earnings" | "econ">("earnings");
@@ -78,7 +79,13 @@ export default function CalendarPage() {
   }
 
   useEffect(() => {
-    loadEarnings().finally(() => setLoading(false));
+    const slowTimer = setTimeout(() => setSlowFetch(true), 10_000);
+    loadEarnings().finally(() => {
+      clearTimeout(slowTimer);
+      setLoading(false);
+      setSlowFetch(false);
+    });
+    return () => clearTimeout(slowTimer);
   }, []);
 
   async function refresh() {
@@ -135,7 +142,9 @@ export default function CalendarPage() {
       {tab === "earnings" && (
         <div>
           {loading ? (
-            <div style={{ color: T.muted, fontSize: "13px" }}>Loading earnings...</div>
+            <div style={{ color: T.muted, fontSize: "13px" }}>
+              Loading earnings…{slowFetch && " (fetching via AI subprocess, may take up to 90s…)"}
+            </div>
           ) : earnings.length === 0 ? (
             <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "40px", textAlign: "center", color: T.muted, fontSize: "14px" }}>
               No upcoming earnings found for watchlist

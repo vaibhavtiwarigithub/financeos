@@ -88,6 +88,14 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // Per-trade 1-sentence learning note
+      const noteOutcome = outcome === "win" ? `+$${pnl.toFixed(2)} (${pnlPct.toFixed(1)}%)` : `–$${Math.abs(pnl).toFixed(2)} (${pnlPct.toFixed(1)}%)`;
+      await supabase.from("learning_log").insert({
+        note: `${trade.symbol} ${outcome.toUpperCase()}: exited at $${exitPrice.toFixed(2)} vs entry $${trade.fill_price.toFixed(2)}, ${noteOutcome}. Held ${Math.round((Date.now() - new Date(trade.executed_at).getTime()) / 86400000)}d.`,
+        weight_snapshot: null,
+        trades_evaluated: 1,
+      });
+
       outcomes.push({ symbol: trade.symbol, outcome, pnl, pnlPct, exitPrice, priceSource: quote.source });
     }
 
@@ -98,7 +106,7 @@ export async function POST(req: NextRequest) {
     // Weight adjustment requires minimum 10 closed trades and champion/challenger
     // governance (FEATURE_ARCHITECTURE.md Phase 1). Logging outcomes only.
     await supabase.from("learning_log").insert({
-      note: `Closed ${outcomes.length} paper trades: ${wins}W / ${losses}L. ${priceFailures.length} skipped (price unavailable: ${priceFailures.join(", ") || "none"}). Weight mutation disabled in Phase 0.`,
+      note: `Batch summary: Closed ${outcomes.length} paper trades: ${wins}W / ${losses}L. ${priceFailures.length} skipped (price unavailable: ${priceFailures.join(", ") || "none"}). Weight mutation disabled in Phase 0.`,
       weight_snapshot: null,
       trades_evaluated: outcomes.length,
     });

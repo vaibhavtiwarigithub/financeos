@@ -1,5 +1,5 @@
 "use client";
-import { useState, lazy, Suspense } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 const BenchmarkChart = lazy(() => import("@/components/charts/BenchmarkChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
@@ -33,10 +33,117 @@ function MiniChart({ perf }: { perf: any[] }) {
   );
 }
 
+function LiveHoldingsTab() {
+  const [data, setData] = useState<{ positions: any[]; cached?: boolean; stale?: boolean } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/portfolio/live-holdings")
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const positions = data?.positions ?? [];
+
+  const totalValue = positions.reduce((sum, p) => sum + (p.qty * (p.current_price || p.avg_cost)), 0);
+  const totalPnl = positions.reduce((sum, p) => {
+    if (!p.current_price || !p.avg_cost) return sum;
+    return sum + (p.current_price - p.avg_cost) * p.qty;
+  }, 0);
+
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
+        <div style={{ fontSize: "13px", fontWeight: 600, color: T.text }}>Robinhood Live Positions</div>
+        {data?.stale && (
+          <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "4px", background: T.amberBg, color: T.amber, fontWeight: 600 }}>
+            STALE CACHE
+          </span>
+        )}
+        {data?.cached && !data?.stale && (
+          <span style={{ fontSize: "11px", color: T.muted }}>cached</span>
+        )}
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "40px 0" }}>
+          <div style={{ color: T.muted, fontSize: "13px", marginBottom: "8px" }}>Fetching positions…</div>
+          <div style={{ color: T.muted, fontSize: "11px" }}>
+            Fetching from Robinhood via AI subprocess — may take ~90s on first load
+          </div>
+        </div>
+      ) : positions.length === 0 ? (
+        <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>
+          No live positions found. Make sure the Robinhood MCP is connected.
+        </div>
+      ) : (
+        <>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+            <thead>
+              <tr style={{ color: T.muted }}>
+                {["Symbol", "Shares", "Avg Cost", "Current Price", "Market Value", "P&L", "P&L %"].map(h => (
+                  <th key={h} style={{ padding: "5px 12px 10px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {positions.map((p: any, i: number) => {
+                const cur = p.current_price || 0;
+                const pnl = cur && p.avg_cost ? (cur - p.avg_cost) * p.qty : 0;
+                const pnlPct = cur && p.avg_cost ? ((cur - p.avg_cost) / p.avg_cost) * 100 : 0;
+                const value = (cur || p.avg_cost) * p.qty;
+                return (
+                  <tr key={p.symbol + i} style={{ borderTop: `1px solid ${T.border}` }}>
+                    <td style={{ padding: "10px 12px 10px 0", fontWeight: 700, color: T.accent }}>
+                      {p.symbol}
+                      {p.name && p.name !== p.symbol && (
+                        <div style={{ fontSize: "11px", fontWeight: 400, color: T.muted, marginTop: "2px" }}>{p.name}</div>
+                      )}
+                    </td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{p.qty}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{p.avg_cost ? "$" + Number(p.avg_cost).toFixed(2) : <span style={{ color: T.muted }}>—</span>}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{cur ? "$" + Number(cur).toFixed(2) : <span style={{ color: T.muted }}>—</span>}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>${value.toFixed(0)}</td>
+                    <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: pnl >= 0 ? T.green : T.red }}>
+                      {cur && p.avg_cost ? (pnl >= 0 ? "+" : "") + "$" + Math.abs(pnl).toFixed(2) : <span style={{ color: T.muted }}>—</span>}
+                    </td>
+                    <td style={{ padding: "10px 0", color: pnlPct >= 0 ? T.green : T.red }}>
+                      {cur && p.avg_cost ? (pnlPct >= 0 ? "+" : "") + pnlPct.toFixed(2) + "%" : <span style={{ color: T.muted }}>—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          {/* Totals row */}
+          <div style={{ borderTop: `1px solid ${T.border}`, marginTop: "12px", paddingTop: "12px", display: "flex", gap: "32px" }}>
+            <div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Value</div>
+              <div style={{ fontSize: "18px", fontWeight: 700, color: T.text }}>${totalValue.toFixed(0)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total P&L</div>
+              <div style={{ fontSize: "18px", fontWeight: 700, color: totalPnl >= 0 ? T.green : T.red }}>
+                {(totalPnl >= 0 ? "+" : "") + "$" + Math.abs(totalPnl).toFixed(2)}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      <div style={{ marginTop: "16px", fontSize: "11px", color: T.muted }}>
+        Robinhood Trading account ••••8641 • non-agentic • read-only
+      </div>
+    </div>
+  );
+}
+
 export default function PortfolioPage({ portfolio, positions, trades, perf, signals }: {
   portfolio: any; positions: any[]; trades: any[]; perf: any[]; signals: any[];
 }) {
-  const [tab, setTab] = useState<"positions" | "trades" | "signals">("positions");
+  const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live">("positions");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
 
   const startingNAV = 10000;
@@ -100,6 +207,12 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
             {t}{t === "positions" ? ` (${positions.length})` : t === "trades" ? ` (${trades.length})` : ` (${signals.length})`}
           </button>
         ))}
+        <button onClick={() => setTab("live")} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === "live" ? T.accent : T.card, color: tab === "live" ? "#fff" : T.muted }}>
+          Live Holdings
+        </button>
+        <button onClick={() => setTab("opportunity" as any)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === ("opportunity" as any) ? T.accent : T.card, color: tab === ("opportunity" as any) ? "#fff" : T.muted }}>
+          Opportunity Cost
+        </button>
       </div>
 
       {/* Positions tab */}
@@ -194,6 +307,9 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
         </Suspense>
       )}
 
+      {/* Live Holdings tab */}
+      {tab === "live" && <LiveHoldingsTab />}
+
       {/* Signals tab */}
       {tab === "signals" && (
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
@@ -232,6 +348,83 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
           )}
         </div>
       )}
+
+      {/* Opportunity Cost tab — signals taken vs skipped */}
+      {tab === ("opportunity" as any) && (() => {
+        const taken = signals.filter(s => s.status === "paper_traded");
+        const skipped = signals.filter(s => s.status === "pending" || s.status === "neutral");
+        const takenPnl = trades.filter(t => t.closed_at && t.realized_pnl != null).reduce((s: number, t: any) => s + t.realized_pnl, 0);
+        const openTrades = trades.filter(t => !t.closed_at);
+        const rows = [
+          ...taken.map((s: any) => {
+            const trade = trades.find((t: any) => t.signal_id === s.id);
+            return { ...s, _type: "taken", trade };
+          }),
+          ...skipped.map((s: any) => ({ ...s, _type: "skipped", trade: null })),
+        ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+        return (
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+            {/* Summary row */}
+            <div style={{ display: "flex", gap: "24px", marginBottom: "20px", paddingBottom: "16px", borderBottom: `1px solid ${T.border}` }}>
+              <div>
+                <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Signals Taken</div>
+                <div style={{ fontSize: "22px", fontWeight: 700, color: T.green }}>{taken.length}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Signals Skipped</div>
+                <div style={{ fontSize: "22px", fontWeight: 700, color: T.amber }}>{skipped.length}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Realized P&L (taken)</div>
+                <div style={{ fontSize: "22px", fontWeight: 700, color: takenPnl >= 0 ? T.green : T.red }}>{takenPnl >= 0 ? "+" : ""}${takenPnl.toFixed(2)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Open Positions</div>
+                <div style={{ fontSize: "22px", fontWeight: 700 }}>{openTrades.length}</div>
+              </div>
+            </div>
+            {rows.length === 0 ? (
+              <div style={{ color: T.muted, textAlign: "center", padding: "24px 0", fontSize: "13px" }}>No signals yet. Run ResearchAgent to generate signals.</div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                <thead>
+                  <tr style={{ color: T.muted }}>
+                    {["Symbol", "Direction", "Score", "Status", "Result", "P&L", "Date"].map(h => (
+                      <th key={h} style={{ padding: "5px 12px 10px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r: any, i: number) => (
+                    <tr key={r.id + i} style={{ borderTop: `1px solid ${T.border}` }}>
+                      <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}>{r.symbol}</td>
+                      <td style={{ padding: "10px 12px 10px 0" }}>
+                        <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 7px", borderRadius: "4px", background: r.direction === "long" ? T.greenBg : r.direction === "short" ? T.redBg : T.amberBg, color: r.direction === "long" ? T.green : r.direction === "short" ? T.red : T.amber }}>
+                          {r.direction?.toUpperCase()}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px 10px 0", color: r.analyst_score >= 70 ? T.green : r.analyst_score >= 50 ? T.amber : T.red, fontWeight: 600 }}>{r.analyst_score}</td>
+                      <td style={{ padding: "10px 12px 10px 0" }}>
+                        <span style={{ fontSize: "11px", padding: "2px 7px", borderRadius: "4px", background: r._type === "taken" ? T.greenBg : T.amberBg, color: r._type === "taken" ? T.green : T.amber }}>
+                          {r._type === "taken" ? "TAKEN" : "SKIPPED"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px 10px 0", fontSize: "11px", color: T.muted }}>
+                        {r.trade ? (r.trade.closed_at ? r.trade.outcome?.toUpperCase() : "open") : "—"}
+                      </td>
+                      <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: r.trade?.realized_pnl != null ? (r.trade.realized_pnl >= 0 ? T.green : T.red) : T.muted }}>
+                        {r.trade?.realized_pnl != null ? (r.trade.realized_pnl >= 0 ? "+" : "") + "$" + Math.abs(r.trade.realized_pnl).toFixed(2) : "—"}
+                      </td>
+                      <td style={{ padding: "10px 0", color: T.muted, fontSize: "11px" }}>{new Date(r.created_at).toLocaleDateString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
     // Only qualifying LONG signals not yet paper-traded
     const { data: signals } = await supabase
       .from("agent_signals")
-      .select("*, research_packets(*)")
+      .select("*")
       .eq("status", "pending")
       .eq("direction", "long") // long-only enforcement
       .gte("analyst_score", 60)
@@ -102,10 +102,10 @@ export async function POST(req: NextRequest) {
         analyst_score: signal.analyst_score,
         direction: "long",
         rationale: `${signal.rationale ?? ""} [price_source: ${quote.source}, fetched_at: ${quote.fetchedAt}]`,
-        fundamental_score: signal.research_packets?.fundamental_score,
-        technical_score: signal.research_packets?.technical_score,
-        sentiment_score: signal.research_packets?.sentiment_score,
-        macro_score: signal.research_packets?.macro_score,
+        fundamental_score: null,
+        technical_score: null,
+        sentiment_score: null,
+        macro_score: null,
       });
 
       // Update or create paper position
@@ -146,11 +146,11 @@ export async function POST(req: NextRequest) {
 
     // Refresh prices for all open positions before NAV snapshot
     const { data: positions } = await supabase.from("paper_positions").select("*");
-    const openPositions = positions ?? [];
+    const openPositions: any[] = positions ?? [];
 
     if (openPositions.length > 0) {
       const { fetchQuotes } = await import("@/lib/market-data");
-      const symbols = [...new Set(openPositions.map((p: any) => p.symbol as string))];
+      const symbols: string[] = [...new Set(openPositions.map((p: any) => p.symbol as string))];
       const quotes = await fetchQuotes(symbols);
       for (const pos of openPositions) {
         const q = quotes[pos.symbol];

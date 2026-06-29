@@ -80,3 +80,32 @@ When implementing approved architecture:
 ### Vague Request Handling
 
 If user says "fix this", "improve this", "make it better", "clean this up", "refactor this" → do NOT code immediately. Produce architecture proposal first.
+
+---
+
+## Agent System Design Rules (locked decisions — push back if contradicted)
+
+### ResearchAgent scope
+1. **Always research existing Robinhood holdings first.** Pull positions via `get_equity_positions` on account `965848641` (Trading account — approved read-only per Option B, 2026-06-28; see CONNECTIONS.md). These are highest priority — agent must be able to say SELL on owned positions. `605420660` is the ONLY account permitted for order placement.
+2. **Holdings vs screener candidates are different.** Holdings → SELL signals allowed. Screener candidates → LONG only (long-only enforcement applies to NEW positions, not exits).
+3. **Screener target: 3 candidates/day** (not 5). With $10k NAV and 10% sizing, max 10 positions total. Daily churn of 5 new candidates = overtrading.
+
+### Screener design (approved architecture)
+- **Do NOT use Robinhood `run_scan` as primary.** Too shallow. Use FinancialDatasets `screen_stocks` for fundamentals + Alpha Vantage technicals.
+- **Dual-bucket always running (no explicit regime detection):**
+  - Momentum bucket: RSI > 60, price > 50-day MA, revenue acceleration, positive earnings revision
+  - Value bucket: P/E < sector median, high FCF yield, insider buying, recent analyst upgrades
+- Let ResearchAgent score both buckets. Top 3 by analyst_score win. Regime adaptation emerges from scoring, not hardcoded logic.
+- **Push back if user asks for explicit "bull/bear mode" switching.** The scoring naturally adapts — explicit regime detection is fragile and adds moving parts.
+
+### Learning
+- LearnerAgent runs **weekly batch** (not per-trade). Per-trade notes: write 1-sentence outcome summary per closed trade to `learning_log`.
+- Weight mutation locked in Phase 0. Requires 10+ closed trades before Phase 1 unlocks.
+
+### Push-back mandate
+Claude MUST push back on:
+- Adding more than 3 screener candidates/day
+- Explicit market regime detection logic
+- Removing SELL signal capability for existing holdings
+- Running real TraderAgent orders without approval_required mode
+- Any feature that adds agent complexity before the weekly learning loop has run at least once

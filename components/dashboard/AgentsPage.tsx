@@ -12,7 +12,6 @@ const T = {
   greenBg: "#052E16", redBg: "#3B0000", amberBg: "#2D1B00",
 };
 
-const DEFAULT_WATCHLIST = ["AAPL", "NVDA", "TSLA", "MSFT", "META"];
 
 const AGENTS = [
   { id: "research",    label: "ResearchAgent",  icon: "🔍", desc: "Analyzes stocks, writes signals",     apiPath: "/api/agents/research" },
@@ -93,7 +92,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         const res = await fetch(apiPath, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ symbols: DEFAULT_WATCHLIST }),
+          body: JSON.stringify({}),
         });
         if (!res.ok || !res.body) {
           setRunResult(`Error: HTTP ${res.status}`);
@@ -115,9 +114,10 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
               if (!line.startsWith("data: ")) continue;
               try {
                 const evt = JSON.parse(line.slice(6));
-                if (evt.type === "progress") lines.push(`Analyzing ${evt.symbol}...`);
-                else if (evt.type === "result") lines.push(`${evt.symbol}: ${evt.direction?.toUpperCase()} score=${evt.analystScore} conviction=${evt.conviction}`);
-                else if (evt.type === "error") lines.push(`${evt.symbol}: ERROR — ${evt.error}`);
+                if (evt.type === "symbols") lines.push(`Batch: ${evt.symbols?.join(", ")} (${evt.symbols?.length} symbols)`);
+                else if (evt.type === "progress") { const tag = evt.isHeld ? "[HELD]" : evt.isEtf ? "[ETF]" : "[SCAN]"; lines.push(`${tag} Analyzing ${evt.symbol}...`); }
+                else if (evt.type === "result") lines.push(`✓ ${evt.symbol}: ${evt.direction?.toUpperCase()} score=${evt.analystScore} (${evt.source})`);
+                else if (evt.type === "error") lines.push(`✗ ${evt.symbol}: ${evt.error?.slice(0, 80)}`);
                 else if (evt.type === "done") { lines.push(`Done — ${evt.processed} symbol(s).`); router.refresh(); }
                 setRunResult(lines.join("\n"));
               } catch {}

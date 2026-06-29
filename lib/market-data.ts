@@ -1,6 +1,6 @@
 import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
 
-export type PriceSource = "financial_datasets" | "unavailable";
+export type PriceSource = "robinhood" | "financial_datasets" | "unavailable";
 
 export type Quote = {
   symbol: string;
@@ -9,8 +9,9 @@ export type Quote = {
   fetchedAt: string;
 };
 
-// Fetch prices via FinancialDatasets MCP (API-key based, works in claude subprocess).
-// LLM MUST call get_stock_prices — no estimation.
+// Fetch prices via Robinhood MCP get_equity_quotes (works read-only in subprocess).
+// Falls back to FinancialDatasets get_stock_price if Robinhood fails.
+// LLM MUST call the tool — no estimation.
 export async function fetchQuotes(symbols: string[]): Promise<Record<string, Quote>> {
   if (symbols.length === 0) return {};
 
@@ -23,20 +24,21 @@ export async function fetchQuotes(symbols: string[]): Promise<Record<string, Quo
   const symbolList = symbols.map(s => `"${s}"`).join(", ");
   const exampleEntry = symbols.map(s => `"${s}": 123.45`).join(", ");
 
-  const prompt = `INSTRUCTIONS: Call the FinancialDatasets MCP tool get_stock_prices to get current prices.
+  const prompt = `INSTRUCTIONS: Get current stock prices for these symbols: ${symbolList}
 
-Tool call required:
-  get_stock_prices({ tickers: [${symbolList}], period: "annual", limit: 1 })
+Step 1: Call Robinhood MCP tool get_equity_quotes({ symbols: [${symbolList}] })
+  - From the result, use quote.last_non_reg_trade_price if available, else quote.last_trade_price
+  - Use the numeric value (strip quotes)
 
-After the tool returns, extract the most recent price for each symbol (use close or price field).
+Step 2: If Robinhood fails, fall back to FinancialDatasets get_stock_price for each symbol individually.
 
 Return ONLY this JSON object (no markdown, no explanation):
 {${exampleEntry}}
 
 Rules:
-- Values MUST come from the tool result only
-- Do NOT estimate or guess any price
-- If a symbol has no price in the tool result, set it to null`;
+- Values MUST come from tool results only — never estimate or fabricate
+- If a symbol price is unavailable after both attempts, set it to null
+- Return raw numbers only, no strings`;
 
   try {
     const stdout = await execClaude(prompt, 60000);
@@ -52,7 +54,7 @@ Rules:
       result[sym] = {
         symbol: sym,
         price: price != null && price > 0 ? price : 0,
-        source: price != null && price > 0 ? "financial_datasets" : "unavailable",
+        source: price != null && price > 0 ? "robinhood" : "unavailable",
         fetchedAt,
       };
     }

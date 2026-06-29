@@ -20,7 +20,7 @@
 | ••••2862 | 5QZ42862 | individual (margin) | — | ❌ | Primary — NEVER touch |
 | ••••9200 | 116781169200 | joint_tenancy | — | ❌ | Joint — NEVER touch |
 | ••••0481 | 181262410481 | individual (managed) | — | ❌ | Managed — NEVER touch |
-| ••••8641 | 965848641 | individual (cash) | Trading | ❌ | Manual trading — NEVER touch |
+| ••••8641 | 965848641 | individual (cash) | Trading | ❌ | Manual trading — **read-only** `get_equity_positions` only (approved Option B, 2026-06-28). NEVER place orders. |
 | ••••9781 | 991989781 | individual (cash) | Autopilot | ❌ | NEVER touch |
 | ••••0660 | 605420660 | individual (cash) | **Agentic** | ✅ | **ONLY account agents may use** |
 
@@ -71,7 +71,8 @@ Pending migrations: `002_agent_tables.sql` (not yet created — see PRD.md Secti
 ## Key Facts for Any New Agent Session
 
 1. Robinhood is authenticated and working right now
-2. Only use account `605420660` for any trade operations
+2. Only use account `605420660` for any trade operations (orders, quotes for sizing, portfolio reads)
+   - Exception: `get_equity_positions` on account `965848641` is permitted **read-only** to fetch existing holdings for ResearchAgent (Option B approved 2026-06-28)
 3. Before placing any order, call `review_equity_order` first
 4. `strategy_config.trading_enabled` must be `true` before TraderAgent acts
 5. All trades go to `trade_log` table in Supabase
