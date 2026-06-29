@@ -1,5 +1,5 @@
 // Route tasks to the right LLM. Claude for accuracy-critical, DeepSeek for cheap tasks.
-export type LLMTask = "research" | "chat" | "summarize" | "trade" | "evaluate" | "thesis"
+export type LLMTask = "research" | "chat" | "summarize" | "trade" | "evaluate" | "thesis" | "screen"
 
 export interface LLMCallOpts {
   task: LLMTask
@@ -21,24 +21,37 @@ export interface LLMResult {
   durationMs: number
 }
 
-// Routing table
+// Routing table — Groq Llama free for quick screening, Claude for accuracy-critical
 const MODEL_ROUTING: Record<LLMTask, string> = {
   research:  "claude-sonnet-4-6",
   trade:     "claude-sonnet-4-6",
   evaluate:  "claude-sonnet-4-6",
   thesis:    "claude-sonnet-4-6",
+  screen:    "llama-3.3-70b-versatile",  // Groq free — fast screener pre-filter
   chat:      "deepseek-chat",
   summarize: "deepseek-chat",
 }
 
-// Cost per 1M tokens [input, output] in USD
+// Cost per 1M tokens [input, output] in USD (Groq free tier = $0)
 const PRICING: Record<string, [number, number]> = {
-  "claude-sonnet-4-6":  [3.00, 15.00],
-  "claude-haiku-4-5":   [0.25,  1.25],
-  "deepseek-chat":      [0.07,  0.28],
-  "deepseek-reasoner":  [0.55,  2.19],
-  "gemini-2.5-flash":   [0.075, 0.30],
+  "claude-sonnet-4-6":         [3.00,  15.00],
+  "claude-haiku-4-5":          [0.25,   1.25],
+  "deepseek-chat":             [0.07,   0.28],
+  "deepseek-reasoner":         [0.55,   2.19],
+  "gemini-2.5-flash":          [0.075,  0.30],
+  "llama-3.3-70b-versatile":   [0,      0],
+  "llama-3.1-8b-instant":      [0,      0],
+  "mixtral-8x7b-32768":        [0,      0],
+  "deepseek-r1-distill-llama-70b": [0,  0],
 }
+
+const GROQ_MODELS = new Set([
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "mixtral-8x7b-32768",
+  "gemma2-9b-it",
+  "deepseek-r1-distill-llama-70b",
+])
 
 export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
   const model = opts.model ?? MODEL_ROUTING[opts.task] ?? "claude-sonnet-4-6"
@@ -53,6 +66,11 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
       tokensOut = result.tokensOut
     } else if (model.startsWith("deepseek")) {
       const result = await callDeepSeek(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
+      text = result.text
+      tokensIn = result.tokensIn
+      tokensOut = result.tokensOut
+    } else if (GROQ_MODELS.has(model)) {
+      const result = await callGroq(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
       text = result.text
       tokensIn = result.tokensIn
       tokensOut = result.tokensOut
@@ -150,6 +168,41 @@ async function callDeepSeek(
   if (!resp.ok) {
     const errText = await resp.text()
     throw new Error(`DeepSeek ${resp.status}: ${errText.slice(0, 200)}`)
+  }
+
+  const data = await resp.json()
+  return {
+    text: data.choices?.[0]?.message?.content ?? "",
+    tokensIn: data.usage?.prompt_tokens ?? 0,
+    tokensOut: data.usage?.completion_tokens ?? 0,
+  }
+}
+
+async function callGroq(
+  model: string,
+  prompt: string,
+  system?: string,
+  maxTokens = 4096
+): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+  const apiKey = process.env.GROQ_API_KEY
+  if (!apiKey) throw new Error("GROQ_API_KEY not set")
+
+  const messages: { role: string; content: string }[] = []
+  if (system) messages.push({ role: "system", content: system })
+  messages.push({ role: "user", content: prompt })
+
+  const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
+  })
+
+  if (!resp.ok) {
+    const errText = await resp.text()
+    throw new Error(`Groq ${resp.status}: ${errText.slice(0, 200)}`)
   }
 
   const data = await resp.json()
