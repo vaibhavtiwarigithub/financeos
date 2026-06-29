@@ -1,149 +1,300 @@
 "use client";
-import type { Profile, Holding, Prediction } from "@/types";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
   text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280", dim: "#1C1F26",
-  accent: "#6366F1", accentBg: "#1E1F3A", green: "#34D399", greenBg: "#052E16",
-  red: "#F87171", blue: "#60A5FA", yellow: "#FBBF24",
+  accent: "#6366F1", accentBg: "#1E1F3A",
+  green: "#34D399", greenBg: "#052E16",
+  red: "#F87171", redBg: "#3B0000",
+  amber: "#FBBF24", amberBg: "#2D1B00",
+  blue: "#60A5FA",
 };
 
-function fmtUSD(n: number) {
-  if (Math.abs(n) >= 1e6) return "$" + (n / 1e6).toFixed(2) + "M";
-  if (Math.abs(n) >= 1000) return "$" + (n / 1000).toFixed(1) + "k";
-  return "$" + n.toFixed(0);
+function fmt$(n: number) {
+  const abs = Math.abs(n);
+  const s = abs >= 1000 ? "$" + (abs / 1000).toFixed(1) + "k" : "$" + abs.toFixed(0);
+  return n < 0 ? "-" + s : s;
 }
 function fmtPct(n: number) { return (n >= 0 ? "+" : "") + n.toFixed(1) + "%"; }
 
-function calcPortfolio(holdings: Holding[]) {
-  return holdings.map(h => {
-    const mktVal = h.qty * h.current_price;
-    const cost = h.qty * h.avg_cost;
-    const pnl = mktVal - cost;
-    return { ...h, mktVal, cost, pnl, pnlPct: (pnl / cost) * 100 };
-  });
+function Badge({ label, color, bg }: { label: string; color: string; bg: string }) {
+  return (
+    <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "4px", background: bg, color, letterSpacing: "0.04em" }}>
+      {label}
+    </span>
+  );
 }
 
-export default function DashboardHome({ profile, holdings, predictions, signals, paperPortfolio }: {
-  profile: Profile; holdings: Holding[]; predictions: Prediction[];
-  signals?: any[]; paperPortfolio?: any;
+function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+      <div style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "16px" }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function StatRow({ label, value, color, sub }: { label: string; value: string | number; color?: string; sub?: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "7px 0", borderBottom: `1px solid ${T.border}44` }}>
+      <span style={{ fontSize: "13px", color: T.textSub }}>{label}</span>
+      <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "1px" }}>
+        <span style={{ fontSize: "13px", fontWeight: 600, color: color ?? T.text }}>{value}</span>
+        {sub && <span style={{ fontSize: "10px", color: T.muted }}>{sub}</span>}
+      </span>
+    </div>
+  );
+}
+
+function nextWeekdayLabel(): string {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun
+  const daysUntilMon = day === 0 ? 1 : day === 6 ? 2 : 1;
+  const next = new Date(now);
+  next.setDate(now.getDate() + daysUntilMon);
+  return next.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + " 9:00 AM ET";
+}
+
+function nextSundayLabel(): string {
+  const now = new Date();
+  const day = now.getDay();
+  const daysUntilSun = day === 0 ? 7 : 7 - day;
+  const next = new Date(now);
+  next.setDate(now.getDate() + daysUntilSun);
+  return next.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + " 8:00 PM ET";
+}
+
+export default function DashboardHome({ profile, paperPortfolio, positions, recentTrades, recentRuns, recentSignals, pendingSignals, recentLog }: {
+  profile: any;
+  paperPortfolio: any;
+  positions: any[];
+  recentTrades: any[];
+  recentRuns: any[];
+  recentSignals: any[];
+  pendingSignals: any[];
+  recentLog: any[];
 }) {
-  const portfolio = calcPortfolio(holdings);
-  const totalValue = portfolio.reduce((s, p) => s + p.mktVal, 0);
-  const totalPnl = portfolio.reduce((s, p) => s + p.pnl, 0);
-  const totalCost = totalValue - totalPnl;
+  const nav = paperPortfolio?.nav ?? 10000;
+  const cash = paperPortfolio?.cash_balance ?? 10000;
+  const totalPnl = nav - 10000;
+
+  // Last-week stats
+  const closedTrades = recentTrades.filter(t => t.closed_at);
+  const wins = closedTrades.filter(t => t.outcome === "win").length;
+  const losses = closedTrades.filter(t => t.outcome === "loss").length;
+  const be = closedTrades.filter(t => t.outcome === "breakeven").length;
+  const totalRealizedPnl = closedTrades.reduce((s, t) => s + (t.realized_pnl ?? 0), 0);
+  const bestTrade = closedTrades.length
+    ? closedTrades.reduce((best, t) => (t.pnl_pct ?? 0) > (best.pnl_pct ?? 0) ? t : best, closedTrades[0])
+    : null;
+  const researchRuns = recentRuns.filter(r => r.agent_type === "research").length;
+  const paperFills = recentRuns.filter(r => r.agent_type === "paper_trader").length;
+  const learnerRuns = recentRuns.filter(r => r.agent_type === "learner").length;
+  const newSignals = recentSignals.filter(s => {
+    const d = new Date(s.created_at);
+    return Date.now() - d.getTime() < 7 * 24 * 60 * 60 * 1000;
+  }).length;
+
+  // This-week stats
+  const positionsValue = positions.reduce((s, p) => s + p.qty * (p.current_price ?? p.avg_cost), 0);
+  const highConviction = pendingSignals.filter(s => s.analyst_score >= 60);
+  const watchList = pendingSignals.filter(s => s.analyst_score >= 55 && s.analyst_score < 60);
 
   const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  const dnaVals = [profile.dna_macro, profile.dna_equities, profile.dna_technical, profile.dna_risk_mgmt].filter(v => v != null) as number[];
-  const dnaAvg = dnaVals.length ? Math.round(dnaVals.reduce((s, v) => s + v, 0) / dnaVals.length) : 0;
 
   return (
-    <div style={{ padding: "28px", animation: "slideUp 0.3s ease" }}>
+    <div style={{ padding: "28px", color: T.text, fontFamily: "'Inter', sans-serif" }}>
 
       {/* Hero */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "28px", marginBottom: "24px", position: "relative", overflow: "hidden" }}>
-        <div style={{ position: "absolute", top: 0, right: 0, width: "300px", height: "100%", background: `linear-gradient(135deg, ${T.accent}06 0%, #A78BFA08 100%)`, pointerEvents: "none" }} />
-        <div style={{ fontSize: "12px", color: T.muted, marginBottom: "6px" }}>{dateStr}</div>
-        <div style={{ fontSize: "28px", fontWeight: 600, letterSpacing: "-0.02em", marginBottom: "4px" }}>
-          Good morning, {profile.full_name?.split(" ")[0] || "Investor"}
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "24px 28px", marginBottom: "20px", position: "relative", overflow: "hidden" }}>
+        <div style={{ position: "absolute", top: 0, right: 0, width: "280px", height: "100%", background: `linear-gradient(135deg, ${T.accent}08 0%, #A78BFA0A 100%)`, pointerEvents: "none" }} />
+        <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px" }}>{dateStr}</div>
+        <div style={{ fontSize: "26px", fontWeight: 700, letterSpacing: "-0.02em", marginBottom: "6px" }}>
+          Morning, {profile?.full_name?.split(" ")[0] || "Investor"}
         </div>
-        <div style={{ fontSize: "14px", color: T.textSub }}>
-          Portfolio: {fmtUSD(totalValue)} &middot; P&L:&nbsp;
-          <span style={{ color: totalPnl >= 0 ? T.green : T.red }}>{fmtUSD(totalPnl)} ({fmtPct(totalCost > 0 ? totalPnl / totalCost * 100 : 0)})</span>
-        </div>
-
-        {/* Stats row */}
-        <div style={{ display: "flex", gap: "28px", marginTop: "20px", flexWrap: "wrap" }}>
-          {[
-            { label: "XP", value: profile.xp, color: T.accent },
-            { label: "Streak", value: profile.streak_days + "d", color: T.green },
-            { label: "Analyses", value: profile.analysis_count, color: T.blue },
-            { label: "Knowledge", value: dnaAvg + "%", color: T.yellow },
-          ].map(s => (
-            <div key={s.label} style={{ textAlign: "center" }}>
-              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>{s.label}</div>
-              <div style={{ fontSize: "22px", fontWeight: 700, color: s.color, fontFamily: "'JetBrains Mono', monospace" }}>{s.value}</div>
+        <div style={{ display: "flex", gap: "28px", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>Paper NAV</div>
+            <div style={{ fontSize: "22px", fontWeight: 700 }}>{fmt$(nav)}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>Total P&L</div>
+            <div style={{ fontSize: "22px", fontWeight: 700, color: totalPnl >= 0 ? T.green : T.red }}>
+              {fmt$(totalPnl)} <span style={{ fontSize: "13px" }}>({fmtPct((totalPnl / 10000) * 100)})</span>
             </div>
-          ))}
+          </div>
+          <div>
+            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>Cash</div>
+            <div style={{ fontSize: "22px", fontWeight: 700 }}>{fmt$(cash)}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>Positions</div>
+            <div style={{ fontSize: "22px", fontWeight: 700 }}>{positions.length} <span style={{ fontSize: "13px", color: T.muted }}>({fmt$(positionsValue)})</span></div>
+          </div>
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+      {/* 3-col grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginBottom: "16px" }}>
 
-        {/* Portfolio summary */}
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
-          <div style={{ fontSize: "12px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "14px" }}>Portfolio</div>
-          {portfolio.slice(0, 5).map(p => (
-            <div key={p.id} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: `1px solid ${T.border}44` }}>
-              <span style={{ fontWeight: 500, fontFamily: "'JetBrains Mono', monospace", fontSize: "13px" }}>{p.symbol}</span>
-              <span style={{ color: p.pnl >= 0 ? T.green : T.red, fontSize: "13px", fontFamily: "'JetBrains Mono', monospace" }}>
-                {fmtPct(p.pnlPct ?? 0)}
-              </span>
+        {/* Last week */}
+        <SectionCard title="Last 7 Days">
+          {closedTrades.length === 0 && recentRuns.length === 0 ? (
+            <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "16px 0" }}>
+              No activity yet — first research run is {nextWeekdayLabel()}
             </div>
-          ))}
-          {holdings.length === 0 && (
-            <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "20px 0" }}>No holdings yet</div>
+          ) : (
+            <>
+              <StatRow
+                label="Closed trades"
+                value={closedTrades.length > 0 ? `${wins}W / ${losses}L / ${be}BE` : "—"}
+                color={wins > losses ? T.green : losses > wins ? T.red : T.muted}
+              />
+              {closedTrades.length > 0 && (
+                <StatRow
+                  label="Realized P&L"
+                  value={fmt$(totalRealizedPnl)}
+                  color={totalRealizedPnl >= 0 ? T.green : T.red}
+                />
+              )}
+              {bestTrade && (
+                <StatRow
+                  label="Best trade"
+                  value={bestTrade.symbol}
+                  color={T.green}
+                  sub={fmtPct(bestTrade.pnl_pct ?? 0)}
+                />
+              )}
+              <StatRow label="Research runs" value={researchRuns} />
+              <StatRow label="Paper fills" value={paperFills} />
+              {learnerRuns > 0 && <StatRow label="Learner runs" value={learnerRuns} />}
+              <StatRow label="New signals" value={newSignals} />
+              {recentLog.length > 0 && (
+                <div style={{ marginTop: "12px", padding: "10px 12px", background: T.dim, borderRadius: "8px", fontSize: "12px", color: T.textSub, fontStyle: "italic", lineHeight: "1.5" }}>
+                  "{recentLog[0].note?.slice(0, 120)}{(recentLog[0].note?.length ?? 0) > 120 ? "…" : ""}"
+                </div>
+              )}
+            </>
           )}
-        </div>
+        </SectionCard>
 
-        {/* Open predictions */}
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
-          <div style={{ fontSize: "12px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "14px" }}>Active Predictions</div>
-          {predictions.map(p => (
-            <div key={p.id} style={{ padding: "8px 0", borderBottom: `1px solid ${T.border}44` }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
-                <span style={{ fontWeight: 500, color: T.blue, fontSize: "13px" }}>{p.asset}</span>
-                <span style={{ fontSize: "11px", padding: "2px 6px", borderRadius: "4px", background: p.direction === "UP" ? T.green + "22" : T.red + "22", color: p.direction === "UP" ? T.green : T.red }}>{p.direction}</span>
+        {/* This week / now */}
+        <SectionCard title="Right Now">
+          {positions.length === 0 && highConviction.length === 0 ? (
+            <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "16px 0" }}>
+              No open positions or pending signals.<br />Next research: {nextWeekdayLabel()}
+            </div>
+          ) : (
+            <>
+              <StatRow label="Open positions" value={positions.length} sub={positions.length > 0 ? fmt$(positionsValue) + " deployed" : undefined} />
+              <StatRow label="Cash available" value={fmt$(cash)} sub={`${((cash / nav) * 100).toFixed(0)}% of NAV`} />
+              {highConviction.length > 0 && (
+                <>
+                  <div style={{ fontSize: "11px", color: T.muted, marginTop: "12px", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                    Pending signals (score ≥60)
+                  </div>
+                  {highConviction.map((s: any) => (
+                    <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0" }}>
+                      <span style={{ fontSize: "13px", fontWeight: 600, color: T.accent }}>{s.symbol}</span>
+                      <span style={{ fontSize: "12px", color: T.green }}>score {s.analyst_score}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+              {watchList.length > 0 && (
+                <>
+                  <div style={{ fontSize: "11px", color: T.muted, marginTop: "12px", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                    Watch (score 55–59)
+                  </div>
+                  {watchList.map((s: any) => (
+                    <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0" }}>
+                      <span style={{ fontSize: "13px", color: T.textSub }}>{s.symbol}</span>
+                      <span style={{ fontSize: "12px", color: T.amber }}>score {s.analyst_score}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+            </>
+          )}
+        </SectionCard>
+
+        {/* Upcoming */}
+        <SectionCard title="Pipeline">
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div style={{ padding: "12px", background: T.dim, borderRadius: "8px" }}>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px" }}>Next research run</div>
+              <div style={{ fontSize: "13px", fontWeight: 600, color: T.accent }}>◐ ResearchAgent</div>
+              <div style={{ fontSize: "12px", color: T.muted, marginTop: "2px" }}>{nextWeekdayLabel()}</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>Holdings-first → screener → paper fills</div>
+            </div>
+            <div style={{ padding: "12px", background: T.dim, borderRadius: "8px" }}>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px" }}>Next learning run</div>
+              <div style={{ fontSize: "13px", fontWeight: 600, color: T.blue }}>◫ LearnerAgent</div>
+              <div style={{ fontSize: "12px", color: T.muted, marginTop: "2px" }}>{nextSundayLabel()}</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>Closes trades older than 7d, writes outcomes</div>
+            </div>
+            <div style={{ padding: "12px", background: T.dim, borderRadius: "8px" }}>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px" }}>Phase 0 status</div>
+              <div style={{ fontSize: "13px", fontWeight: 600 }}>
+                {closedTrades.length + (recentTrades.filter(t => t.closed_at).length)}/10 trades closed
               </div>
-              <div style={{ fontSize: "12px", color: T.muted }}>{p.timeframe} &middot; {p.confidence}% conf</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>
+                {closedTrades.length >= 10
+                  ? "Phase 1 unlocked — weight mutation available"
+                  : `${10 - closedTrades.length} more to unlock weight adaptation (Phase 1)`}
+              </div>
             </div>
-          ))}
-          {predictions.length === 0 && (
-            <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "20px 0" }}>No open predictions</div>
-          )}
-        </div>
-
-        {/* Quick actions */}
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
-          <div style={{ fontSize: "12px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "14px" }}>Quick Actions</div>
-          {[
-            { label: "Run AI Analysis", href: "/dashboard/intelligence?tab=analysis", color: T.accent },
-            { label: "Morning Brief", href: "/dashboard/intelligence?tab=brief", color: T.blue },
-            { label: "Add Holding", href: "/dashboard/portfolio?tab=holdings", color: T.green },
-            { label: "New Prediction", href: "/dashboard/you?tab=predictions", color: T.yellow },
-          ].map(a => (
-            <a key={a.label} href={a.href} style={{ display: "block", padding: "9px 12px", borderRadius: "8px", background: T.dim, marginBottom: "6px", fontSize: "13px", color: a.color, fontWeight: 500, borderLeft: `3px solid ${a.color}` }}>
-              {a.label} →
-            </a>
-          ))}
-        </div>
+          </div>
+        </SectionCard>
       </div>
 
-      {/* Agent signals widget */}
-      {signals && signals.length > 0 && (
-        <div style={{ marginTop: "16px", background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+      {/* Latest signals strip */}
+      {recentSignals.length > 0 && (
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-            <div style={{ fontSize: "12px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            <div style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase" }}>
               Latest Agent Signals
             </div>
-            {paperPortfolio && (
-              <div style={{ fontSize: "12px", color: T.muted }}>
-                Paper NAV: <span style={{ color: T.green, fontWeight: 700 }}>${(paperPortfolio.nav ?? 10000).toFixed(0)}</span>
-              </div>
-            )}
+            <a href="/dashboard/activity" style={{ fontSize: "12px", color: T.accent, textDecoration: "none" }}>
+              View all →
+            </a>
           </div>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            {signals.map((s: any) => (
-              <div key={s.id} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", minWidth: "120px" }}>
-                <div style={{ fontWeight: 800, fontSize: "14px", marginBottom: "3px" }}>{s.symbol}</div>
-                <div style={{ fontSize: "11px", marginBottom: "2px" }}>
-                  <span style={{ color: s.direction === "long" ? T.green : T.yellow, fontWeight: 600 }}>{s.direction?.toUpperCase()}</span>
-                  <span style={{ color: T.muted }}> · {s.analyst_score}</span>
+            {recentSignals.map((s: any) => {
+              const scoreColor = s.analyst_score >= 70 ? T.green : s.analyst_score >= 60 ? T.amber : T.muted;
+              const dirColor = s.direction === "long" ? T.green : s.direction === "short" ? T.red : T.amber;
+              return (
+                <div key={s.id} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", minWidth: "120px" }}>
+                  <div style={{ fontWeight: 800, fontSize: "14px", marginBottom: "4px", color: T.text }}>{s.symbol}</div>
+                  <div style={{ fontSize: "11px", marginBottom: "3px" }}>
+                    <span style={{ color: dirColor, fontWeight: 600 }}>{s.direction?.toUpperCase()}</span>
+                    <span style={{ color: scoreColor, fontWeight: 700 }}> · {s.analyst_score}</span>
+                  </div>
+                  <div>
+                    {s.status === "paper_traded"
+                      ? <Badge label="FILLED" color={T.green} bg={T.greenBg} />
+                      : s.status === "pending"
+                      ? <Badge label="PENDING" color={T.muted} bg={T.dim} />
+                      : <Badge label={s.status?.toUpperCase()} color={T.muted} bg={T.dim} />}
+                  </div>
                 </div>
-                <div style={{ fontSize: "10px", color: s.status === "paper_traded" ? T.green : T.muted }}>{s.status}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
+        </div>
+      )}
+
+      {recentSignals.length === 0 && (
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "32px", textAlign: "center" }}>
+          <div style={{ fontSize: "15px", fontWeight: 600, marginBottom: "8px" }}>No signals yet</div>
+          <div style={{ fontSize: "13px", color: T.muted, marginBottom: "16px" }}>
+            Run ResearchAgent to generate the first signals. Next auto-run: {nextWeekdayLabel()}.
+          </div>
+          <a href="/dashboard/agents" style={{ display: "inline-block", padding: "9px 20px", borderRadius: "8px", background: T.accent, color: "#fff", fontSize: "13px", fontWeight: 600, textDecoration: "none" }}>
+            Go to Agents →
+          </a>
         </div>
       )}
 
