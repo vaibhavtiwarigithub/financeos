@@ -107,31 +107,61 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
   return (
     <div style={{ padding: "28px", color: T.text, fontFamily: "'Inter', sans-serif" }}>
 
-      {/* Hero */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "24px 28px", marginBottom: "20px", position: "relative", overflow: "hidden" }}>
-        <div style={{ position: "absolute", top: 0, right: 0, width: "280px", height: "100%", background: `linear-gradient(135deg, ${T.accent}08 0%, #A78BFA0A 100%)`, pointerEvents: "none" }} />
-        <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px" }}>{dateStr}</div>
-        <div style={{ fontSize: "26px", fontWeight: 700, letterSpacing: "-0.02em", marginBottom: "6px" }}>
-          Morning, {profile?.full_name?.split(" ")[0] || "Investor"}
-        </div>
-        <div style={{ display: "flex", gap: "28px", flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>Paper NAV</div>
-            <div style={{ fontSize: "22px", fontWeight: 700 }}>{fmt$(nav)}</div>
+      {/* Hero — two-section: paper left, live right */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "12px", marginBottom: "20px" }}>
+
+        {/* Paper portfolio */}
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "24px 28px", position: "relative", overflow: "hidden" }}>
+          <div style={{ position: "absolute", top: 0, right: 0, width: "280px", height: "100%", background: `linear-gradient(135deg, ${T.accent}08 0%, #A78BFA0A 100%)`, pointerEvents: "none" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
+            <div style={{ fontSize: "11px", color: T.muted }}>{dateStr}</div>
+            <span style={{ fontSize: "10px", fontWeight: 800, padding: "2px 8px", borderRadius: "4px", background: T.amberBg, color: T.amber, letterSpacing: "0.08em" }}>PAPER</span>
           </div>
-          <div>
-            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>Total P&L</div>
-            <div style={{ fontSize: "22px", fontWeight: 700, color: totalPnl >= 0 ? T.green : T.red }}>
-              {fmt$(totalPnl)} <span style={{ fontSize: "13px" }}>({fmtPct((totalPnl / 10000) * 100)})</span>
+          <div style={{ fontSize: "22px", fontWeight: 700, letterSpacing: "-0.02em", marginBottom: "14px" }}>
+            Morning, {profile?.full_name?.split(" ")[0] || "Investor"}
+          </div>
+          <div style={{ display: "flex", gap: "28px", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>NAV</div>
+              <div style={{ fontSize: "22px", fontWeight: 700 }}>{fmt$(nav)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>P&L</div>
+              <div style={{ fontSize: "22px", fontWeight: 700, color: totalPnl >= 0 ? T.green : T.red }}>
+                {fmt$(totalPnl)} <span style={{ fontSize: "13px" }}>({fmtPct((totalPnl / 10000) * 100)})</span>
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>Cash</div>
+              <div style={{ fontSize: "22px", fontWeight: 700 }}>{fmt$(cash)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>Positions</div>
+              <div style={{ fontSize: "22px", fontWeight: 700 }}>{positions.length} <span style={{ fontSize: "13px", color: T.muted }}>({fmt$(positionsValue)})</span></div>
             </div>
           </div>
-          <div>
-            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>Cash</div>
-            <div style={{ fontSize: "22px", fontWeight: 700 }}>{fmt$(cash)}</div>
+        </div>
+
+        {/* Live accounts panel */}
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "20px 22px", minWidth: "200px", display: "flex", flexDirection: "column", gap: "10px" }}>
+          <div style={{ fontSize: "10px", fontWeight: 800, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "4px" }}>Live Accounts</div>
+
+          <div style={{ padding: "10px 12px", background: T.dim, borderRadius: "10px", borderLeft: `3px solid ${T.blue}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "3px" }}>
+              <span style={{ fontSize: "11px", color: T.muted }}>••••8641</span>
+              <span style={{ fontSize: "10px", fontWeight: 700, color: T.blue }}>READ-ONLY</span>
+            </div>
+            <div style={{ fontSize: "12px", color: T.textSub }}>Positions visible</div>
+            <a href="/dashboard/portfolio" style={{ fontSize: "11px", color: T.accent, textDecoration: "none" }}>View holdings →</a>
           </div>
-          <div>
-            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>Positions</div>
-            <div style={{ fontSize: "22px", fontWeight: 700 }}>{positions.length} <span style={{ fontSize: "13px", color: T.muted }}>({fmt$(positionsValue)})</span></div>
+
+          <div style={{ padding: "10px 12px", background: T.dim, borderRadius: "10px", borderLeft: `3px solid ${T.red}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "3px" }}>
+              <span style={{ fontSize: "11px", color: T.muted }}>••••0660</span>
+              <span style={{ fontSize: "10px", fontWeight: 700, color: T.red }}>ORDERS</span>
+            </div>
+            <div style={{ fontSize: "12px", color: T.muted }}>TraderAgent disabled</div>
+            <div style={{ fontSize: "11px", color: T.muted }}>Enable in Settings</div>
           </div>
         </div>
       </div>
@@ -193,7 +223,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
               {highConviction.length > 0 && (
                 <>
                   <div style={{ fontSize: "11px", color: T.muted, marginTop: "12px", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                    Pending signals (score ≥60)
+                    Pending signals → <span style={{ color: T.amber }}>PAPER</span> (score ≥60)
                   </div>
                   {highConviction.map((s: any) => (
                     <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0" }}>
