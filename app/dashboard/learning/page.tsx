@@ -13,7 +13,7 @@ export default async function Page() {
   const supabase = createServiceClient();
 
   const [
-    { data: learningLog },
+    { data: fullLog },
     { data: performance },
     { data: weightsArr },
     { data: tradesArr },
@@ -31,7 +31,8 @@ export default async function Page() {
 
   return (
     <LearningPage
-      learningLog={learningLog ?? []}
+      learningLog={[]}
+      fullLog={fullLog ?? []}
       performance={performance ?? []}
       weights={weightsArr?.[0] ?? null}
       totalTrades={totalTrades}

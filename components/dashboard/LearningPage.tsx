@@ -49,6 +49,14 @@ interface WeightRow {
   created_at: string;
 }
 
+interface LearningLogRow {
+  id?: string;
+  note: string;
+  trades_evaluated: number | null;
+  weight_snapshot: any;
+  created_at: string;
+}
+
 interface PerfRow {
   date: string;
   nav: number;
@@ -67,12 +75,14 @@ interface WeightConfig {
 
 export default function LearningPage({
   learningLog,
+  fullLog,
   performance,
   weights,
   totalTrades,
   winRate,
 }: {
   learningLog: WeightRow[];
+  fullLog: LearningLogRow[];
   performance: PerfRow[];
   weights: WeightConfig | null;
   totalTrades: number;
@@ -103,6 +113,136 @@ export default function LearningPage({
       <div style={{ marginBottom: "24px" }}>
         <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "6px" }}>Agent Intelligence</div>
         <h1 style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.02em" }}>Learning</h1>
+      </div>
+
+      {/* Agent Pipeline Diagram */}
+      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "24px" }}>
+        <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>Agent Pipeline</div>
+        <svg viewBox="0 0 700 160" width="100%" style={{ display: "block", maxWidth: "700px" }} xmlns="http://www.w3.org/2000/svg">
+          {/* ── Data source: Holdings ── */}
+          <rect x="8" y="60" width="90" height="44" rx="6" fill="#1A1D27" stroke="#252836" strokeWidth="1.5" />
+          <text x="53" y="78" textAnchor="middle" fill="#9B9EA8" fontSize="9.5" fontFamily="Inter,sans-serif">Holdings</text>
+          <text x="53" y="91" textAnchor="middle" fill="#6B7280" fontSize="8.5" fontFamily="Inter,sans-serif">(read-only)</text>
+
+          {/* Arrow: Holdings → ResearchAgent */}
+          <line x1="98" y1="82" x2="126" y2="82" stroke="#4B5563" strokeWidth="1.5" markerEnd="url(#arr)" />
+
+          {/* ── Agent: ResearchAgent ── */}
+          <rect x="126" y="56" width="108" height="52" rx="8" fill="#6366F1" />
+          <text x="180" y="74" textAnchor="middle" fill="#ECEDEF" fontSize="10" fontWeight="600" fontFamily="Inter,sans-serif">ResearchAgent</text>
+          <text x="180" y="87" textAnchor="middle" fill="#C7D2FE" fontSize="8.5" fontFamily="Inter,sans-serif">9 AM weekdays</text>
+          <text x="180" y="99" textAnchor="middle" fill="#C7D2FE" fontSize="8.5" fontFamily="Inter,sans-serif">FinancialDatasets + AlphaVantage</text>
+
+          {/* Arrow: ResearchAgent → agent_signals */}
+          <line x1="234" y1="82" x2="262" y2="82" stroke="#4B5563" strokeWidth="1.5" markerEnd="url(#arr)" />
+
+          {/* ── Table: agent_signals ── */}
+          <rect x="262" y="62" width="90" height="40" rx="6" fill="#1A1D27" stroke="#252836" strokeWidth="1.5" />
+          <text x="307" y="78" textAnchor="middle" fill="#9B9EA8" fontSize="9.5" fontFamily="Inter,sans-serif">agent_signals</text>
+          <text x="307" y="92" textAnchor="middle" fill="#6B7280" fontSize="8.5" fontFamily="Inter,sans-serif">3 per day</text>
+
+          {/* Arrow: agent_signals → PaperTrader with label */}
+          <line x1="352" y1="82" x2="382" y2="82" stroke="#4B5563" strokeWidth="1.5" markerEnd="url(#arr)" />
+          <text x="367" y="75" textAnchor="middle" fill="#34D399" fontSize="8" fontFamily="Inter,sans-serif">score ≥ 60</text>
+
+          {/* ── Agent: PaperTrader ── */}
+          <rect x="382" y="58" width="96" height="48" rx="8" fill="#6366F1" />
+          <text x="430" y="79" textAnchor="middle" fill="#ECEDEF" fontSize="10" fontWeight="600" fontFamily="Inter,sans-serif">PaperTrader</text>
+          <text x="430" y="93" textAnchor="middle" fill="#C7D2FE" fontSize="8.5" fontFamily="Inter,sans-serif">approval_required</text>
+
+          {/* Arrow: PaperTrader → paper_trades */}
+          <line x1="478" y1="82" x2="506" y2="82" stroke="#4B5563" strokeWidth="1.5" markerEnd="url(#arr)" />
+
+          {/* ── Table: paper_trades ── */}
+          <rect x="506" y="62" width="84" height="40" rx="6" fill="#1A1D27" stroke="#252836" strokeWidth="1.5" />
+          <text x="548" y="78" textAnchor="middle" fill="#9B9EA8" fontSize="9.5" fontFamily="Inter,sans-serif">paper_trades</text>
+          <text x="548" y="92" textAnchor="middle" fill="#6B7280" fontSize="8.5" fontFamily="Inter,sans-serif">7-day horizon</text>
+
+          {/* Arrow: paper_trades → LearnerAgent */}
+          <line x1="590" y1="82" x2="612" y2="82" stroke="#4B5563" strokeWidth="1.5" markerEnd="url(#arr)" />
+
+          {/* ── Agent: LearnerAgent ── */}
+          <rect x="612" y="58" width="82" height="48" rx="8" fill="#6366F1" />
+          <text x="653" y="79" textAnchor="middle" fill="#ECEDEF" fontSize="10" fontWeight="600" fontFamily="Inter,sans-serif">LearnerAgent</text>
+          <text x="653" y="93" textAnchor="middle" fill="#C7D2FE" fontSize="8.5" fontFamily="Inter,sans-serif">Sunday 8 PM</text>
+
+          {/* Arrow: LearnerAgent → learning_log (below) */}
+          <line x1="653" y1="106" x2="653" y2="124" stroke="#4B5563" strokeWidth="1.5" markerEnd="url(#arr)" />
+          <rect x="614" y="124" width="78" height="28" rx="6" fill="#1A1D27" stroke="#252836" strokeWidth="1.5" />
+          <text x="653" y="141" textAnchor="middle" fill="#9B9EA8" fontSize="9.5" fontFamily="Inter,sans-serif">learning_log</text>
+
+          {/* Screener data source (below ResearchAgent) */}
+          <rect x="104" y="120" width="110" height="32" rx="6" fill="#1A1D27" stroke="#252836" strokeWidth="1.5" />
+          <text x="159" y="133" textAnchor="middle" fill="#9B9EA8" fontSize="9.5" fontFamily="Inter,sans-serif">Screener</text>
+          <text x="159" y="145" textAnchor="middle" fill="#6B7280" fontSize="8.5" fontFamily="Inter,sans-serif">3 candidates / day</text>
+          {/* Arrow: Screener → ResearchAgent (upward) */}
+          <line x1="159" y1="120" x2="180" y2="108" stroke="#4B5563" strokeWidth="1.5" markerEnd="url(#arr)" />
+
+          {/* Arrowhead marker */}
+          <defs>
+            <marker id="arr" markerWidth="6" markerHeight="6" refX="4" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#4B5563" />
+            </marker>
+          </defs>
+        </svg>
+      </div>
+
+      {/* How analyst_score works */}
+      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "24px" }}>
+        <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>How analyst_score works</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+          {/* Stocks */}
+          <div>
+            <div style={{ fontSize: "11px", fontWeight: 600, color: T.accent, marginBottom: "8px", letterSpacing: "0.05em" }}>STOCKS</div>
+            {[
+              "PE ratio vs sector median",
+              "Revenue growth acceleration",
+              "Free cash flow yield",
+              "RSI (momentum signal)",
+              "Price vs 50-day EMA",
+              "News sentiment score",
+              "Insider buying activity",
+              "Earnings revision direction",
+            ].map(item => (
+              <div key={item} style={{ fontSize: "12px", color: T.textSub, marginBottom: "4px", display: "flex", alignItems: "flex-start", gap: "6px" }}>
+                <span style={{ color: T.accent, marginTop: "2px", flexShrink: 0 }}>·</span>
+                <span>{item}</span>
+              </div>
+            ))}
+          </div>
+          {/* ETFs */}
+          <div>
+            <div style={{ fontSize: "11px", fontWeight: 600, color: T.green, marginBottom: "8px", letterSpacing: "0.05em" }}>ETFs</div>
+            {[
+              "Macro / sector momentum",
+              "RSI (overbought / oversold)",
+              "Price vs 50-day EMA",
+              "No PE / FCF — ETFs lack fundamentals",
+            ].map(item => (
+              <div key={item} style={{ fontSize: "12px", color: T.textSub, marginBottom: "4px", display: "flex", alignItems: "flex-start", gap: "6px" }}>
+                <span style={{ color: T.green, marginTop: "2px", flexShrink: 0 }}>·</span>
+                <span>{item}</span>
+              </div>
+            ))}
+          </div>
+          {/* Thresholds */}
+          <div>
+            <div style={{ fontSize: "11px", fontWeight: 600, color: T.amber, marginBottom: "8px", letterSpacing: "0.05em" }}>THRESHOLDS</div>
+            {[
+              { range: "0 – 59", label: "No action", color: T.muted },
+              { range: "60 – 69", label: "Paper trade", color: T.amber },
+              { range: "70+", label: "High conviction", color: T.green },
+            ].map(({ range, label, color }) => (
+              <div key={range} style={{ fontSize: "12px", marginBottom: "8px", display: "flex", justifyContent: "space-between", alignItems: "center", background: T.surface, borderRadius: "6px", padding: "6px 10px" }}>
+                <span style={{ color: T.textSub, fontVariantNumeric: "tabular-nums" }}>{range}</span>
+                <span style={{ color, fontWeight: 600 }}>{label}</span>
+              </div>
+            ))}
+            <div style={{ fontSize: "11px", color: T.muted, marginTop: "8px" }}>
+              Score is 0–100. Weights adjusted weekly by LearnerAgent after 10+ closed trades.
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Stat cards */}
@@ -249,6 +389,35 @@ export default function LearningPage({
             )}
         </Card>
       )}
+
+      {/* Full Learning Log */}
+      <div style={{ marginTop: "24px", background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+        <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>Learning Log</div>
+        {fullLog.length === 0 ? (
+          <Empty msg="LearnerAgent hasn't logged any outcomes yet. Runs Sunday 8 PM after trades close." />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            {fullLog.map((entry, i) => {
+              const d = new Date(entry.created_at);
+              const dateStr = d.toLocaleDateString("en-US", { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+              const timeStr = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+              return (
+                <div key={i} style={{ borderBottom: i < fullLog.length - 1 ? `1px solid ${T.border}` : "none", paddingBottom: i < fullLog.length - 1 ? "12px" : "0" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px", gap: "16px" }}>
+                    <div style={{ fontSize: "11px", color: T.muted }}>{dateStr} · {timeStr}</div>
+                    {entry.trades_evaluated != null && entry.trades_evaluated > 0 && (
+                      <div style={{ fontSize: "11px", color: T.accent, background: "#1E1B4B", borderRadius: "4px", padding: "2px 8px", flexShrink: 0 }}>
+                        {entry.trades_evaluated} trade{entry.trades_evaluated !== 1 ? "s" : ""} evaluated
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.6", wordBreak: "break-word" }}>{entry.note}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
