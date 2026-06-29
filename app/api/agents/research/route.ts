@@ -46,10 +46,17 @@ export async function POST(req: NextRequest) {
         sources: entries.map(e => ({ symbol: e.symbol, isHeld: e.isHeld, isEtf: e.isEtf })),
       });
 
+      let totalTokensIn = 0;
+      let totalTokensOut = 0;
+      let claudeCalls = 0;
+
       for (const entry of entries) {
         send({ type: "progress", symbol: entry.symbol, status: "analyzing", isHeld: entry.isHeld, isEtf: entry.isEtf });
         try {
           const result = await processSymbol(entry, supabase);
+          totalTokensIn += result.tokensIn ?? 0;
+          totalTokensOut += result.tokensOut ?? 0;
+          claudeCalls++;
           results.push(result);
           send({ type: "result", ...result });
         } catch (e) {
@@ -67,6 +74,9 @@ export async function POST(req: NextRequest) {
           signals_written: ok,
           result_summary: `${ok} signals written, ${errs} failed | ${batch.join(",")}`,
           completed_at: new Date().toISOString(),
+          tokens_input: totalTokensIn,
+          tokens_output: totalTokensOut,
+          claude_calls: claudeCalls,
         } as any).eq("id", runId);
       }
 

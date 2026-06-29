@@ -124,6 +124,9 @@ export async function POST(req: NextRequest) {
         signals_written: outcomes.length,
         result_summary: `Closed ${outcomes.length} trades: ${wins}W/${losses}L. ${priceFailures.length} price failures.`,
         completed_at: new Date().toISOString(),
+        tokens_input: 0,
+        tokens_output: 0,
+        claude_calls: 0,
       } as any).eq("id", runId);
     }
 

@@ -196,6 +196,9 @@ export async function POST(req: NextRequest) {
         signals_written: filled.length,
         result_summary: `${filled.length} trades filled, ${skipped.length} skipped. NAV: $${nav.toFixed(2)}`,
         completed_at: new Date().toISOString(),
+        tokens_input: 0,
+        tokens_output: 0,
+        claude_calls: 0,
       } as any).eq("id", runId);
     }
 

@@ -1,4 +1,4 @@
-import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
+import { execClaude, parseClaudeOutput, parseTokenUsage } from "@/lib/claude-exec";
 
 const KNOWN_ETFS = new Set([
   // Broad market
@@ -224,7 +224,7 @@ ${heldNote}`;
 export async function processSymbol(
   entry: SymbolEntry,
   supabase: any
-): Promise<{ symbol: string; analystScore: number; direction: string; conviction: number; source: string }> {
+): Promise<{ symbol: string; analystScore: number; direction: string; conviction: number; source: string; tokensIn: number; tokensOut: number }> {
   const { symbol, isHeld, isEtf } = entry;
   const source: string = isHeld ? "holding" : "screener";
 
@@ -232,6 +232,7 @@ export async function processSymbol(
 
   const stdout = await execClaude(prompt, 90000);
   const claudeRaw = parseClaudeOutput(stdout);
+  const tokenUsage = parseTokenUsage(stdout);
   const parsed = extractParsed(claudeRaw);
   if (!parsed) throw new Error(`JSON parse failed for ${symbol}. Raw: ${claudeRaw.slice(0, 200)}`);
 
@@ -295,5 +296,7 @@ export async function processSymbol(
     direction: signalDirection,
     conviction: parsed.conviction ?? 50,
     source,
+    tokensIn: tokenUsage.input,
+    tokensOut: tokenUsage.output,
   };
 }
