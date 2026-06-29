@@ -11,33 +11,28 @@ const NAV_GROUPS: NavGroup[] = [
   {
     section: "Monitor",
     items: [
-      { href: "/dashboard",             label: "Home",         icon: "⌂" },
-      { href: "/dashboard/activity",    label: "Activity",     icon: "◷" },
-      { href: "/dashboard/markets",     label: "Markets",      icon: "◉" },
+      { href: "/dashboard",          label: "Home",      icon: "⌂" },
+      { href: "/dashboard/markets",  label: "Markets",   icon: "◉" },
     ],
   },
   {
     section: "Agents",
     items: [
-      { href: "/dashboard/agents",       label: "Agents",      icon: "◐" },
-      { href: "/dashboard/intelligence", label: "Research",    icon: "◆" },
-      { href: "/dashboard/learning",     label: "Learning",    icon: "◫" },
-      { href: "/dashboard/mentor",       label: "Mentor",      icon: "◉" },
+      { href: "/dashboard/agents",   label: "Agents",    icon: "◐" },
+      { href: "/dashboard/mentor",   label: "Mentor",    icon: "◉" },
     ],
   },
   {
     section: "Portfolio",
     items: [
-      { href: "/dashboard/portfolio",   label: "Portfolio",    icon: "◈" },
-      { href: "/dashboard/trading",     label: "Trading",      icon: "◑" },
-      { href: "/dashboard/calendar",    label: "Calendar",     icon: "▦" },
+      { href: "/dashboard/portfolio", label: "Portfolio", icon: "◈" },
+      { href: "/dashboard/calendar",  label: "Calendar",  icon: "▦" },
     ],
   },
   {
     section: "",
     items: [
-      { href: "/dashboard/you",         label: "You",          icon: "◎" },
-      { href: "/dashboard/settings",    label: "Settings",     icon: "⚙" },
+      { href: "/dashboard/settings", label: "Settings",  icon: "⚙" },
     ],
   },
 ];

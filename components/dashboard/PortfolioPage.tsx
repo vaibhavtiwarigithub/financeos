@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, lazy, Suspense } from "react";
+import { useRouter } from "next/navigation";
 const BenchmarkChart = lazy(() => import("@/components/charts/BenchmarkChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
@@ -30,6 +31,233 @@ function MiniChart({ perf }: { perf: any[] }) {
     <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", height: "80px" }}>
       <polyline points={pts} fill="none" stroke={color} strokeWidth="2" />
     </svg>
+  );
+}
+
+function ScoreBar({ score }: { score: number }) {
+  const color = score >= 70 ? T.green : score >= 50 ? T.amber : T.red;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+      <div style={{ width: "80px", height: "5px", background: T.border, borderRadius: "3px", overflow: "hidden" }}>
+        <div style={{ width: score + "%", height: "100%", background: color, borderRadius: "3px" }} />
+      </div>
+      <span style={{ fontSize: "12px", fontWeight: 700, color }}>{score}</span>
+    </div>
+  );
+}
+
+function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
+  pendingSignals: any[]; strategy: any; tradeQueue: any[];
+}) {
+  const router = useRouter();
+  const [running, setRunning] = useState(false);
+  const [runLog, setRunLog] = useState<string[]>([]);
+  const [innerTab, setInnerTab] = useState<"queue" | "signals">("queue");
+  const [chartSymbol, setChartSymbol] = useState<string | null>(null);
+  const [queueItems, setQueueItems] = useState<any[]>(tradeQueue);
+  const [actionLog, setActionLog] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
+
+  async function approveTradeItem(tradeId: string) {
+    setActionLog(null);
+    const res = await fetch("/api/agents/trade/approve", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tradeId }),
+    });
+    const data = await res.json();
+    setActionLog({ id: tradeId, msg: data.message ?? data.error ?? "Done", ok: !!data.success });
+    setQueueItems(items => items.map(i => i.id === tradeId ? { ...i, status: "approved" } : i));
+    router.refresh();
+  }
+
+  async function rejectTradeItem(tradeId: string) {
+    setActionLog(null);
+    const res = await fetch("/api/agents/trade/reject", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tradeId, reason: "Rejected by user" }),
+    });
+    const data = await res.json();
+    setActionLog({ id: tradeId, msg: data.message ?? data.error ?? "Done", ok: !!data.success });
+    setQueueItems(items => items.filter(i => i.id !== tradeId));
+    router.refresh();
+  }
+
+  async function runPaperTrade() {
+    setRunning(true);
+    setRunLog(["Running PaperTrader..."]);
+    try {
+      const res = await fetch("/api/agents/paper-trade", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      const data = await res.json();
+      if (data.skipped) {
+        setRunLog(["Skipped: " + data.reason]);
+      } else if (data.error) {
+        setRunLog(["Error: " + data.error]);
+      } else {
+        const filled = data.trades ?? [];
+        setRunLog([
+          `Filled ${data.filled} trade(s), skipped ${data.skipped ?? 0}.`,
+          ...filled.map((t: any) => `${t.symbol}: ${t.qty} shares @ $${t.fillPrice?.toFixed(2)} (${t.priceSource})`),
+          `NAV: $${data.nav?.toFixed(0)}`,
+        ]);
+        router.refresh();
+      }
+    } catch (e: any) {
+      setRunLog(["Error: " + e.message]);
+    }
+    setRunning(false);
+  }
+
+  const longSignals = pendingSignals.filter(s => s.direction === "long" && s.analyst_score >= 60);
+
+  return (
+    <div>
+      {/* Strategy config card */}
+      {strategy && (
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px", marginBottom: "16px", display: "flex", gap: "32px", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Trading</div>
+            <span style={{ fontSize: "13px", fontWeight: 700, color: strategy.trading_enabled ? T.green : T.red }}>
+              {strategy.trading_enabled ? "Enabled" : "Disabled"}
+            </span>
+          </div>
+          <div>
+            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Max Daily Trades</div>
+            <span style={{ fontSize: "13px", fontWeight: 700 }}>{strategy.max_daily_trades ?? "—"}</span>
+          </div>
+          <div>
+            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Min Analyst Score</div>
+            <span style={{ fontSize: "13px", fontWeight: 700 }}>{strategy.min_analyst_score ?? "—"}</span>
+          </div>
+          <div>
+            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Mode</div>
+            <span style={{ fontSize: "13px", fontWeight: 700 }}>{strategy.mode ?? "paper"}</span>
+          </div>
+          <div style={{ marginLeft: "auto" }}>
+            <button
+              onClick={runPaperTrade}
+              disabled={running}
+              style={{ padding: "9px 20px", borderRadius: "9px", fontWeight: 700, fontSize: "12px", cursor: running ? "default" : "pointer", border: "none", background: running ? T.border : T.accent, color: "#fff", opacity: running ? 0.7 : 1 }}
+            >
+              {running ? "Running..." : "Run PaperTrader"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Run log */}
+      {runLog.length > 0 && (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 16px", marginBottom: "16px", fontFamily: "monospace", fontSize: "12px" }}>
+          {runLog.map((l, i) => <div key={i} style={{ color: l.startsWith("Error") ? T.red : l.startsWith("Skipped") ? T.amber : T.green }}>{l}</div>)}
+        </div>
+      )}
+
+      {/* Inner tabs */}
+      <div style={{ display: "flex", gap: "4px", marginBottom: "16px" }}>
+        {(["queue", "signals"] as const).map(t => (
+          <button key={t} onClick={() => setInnerTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: innerTab === t ? T.accent : T.card, color: innerTab === t ? "#fff" : T.muted, textTransform: "capitalize" }}>
+            {t === "queue" ? `Trade Queue (${queueItems.length})` : `Pending Signals (${pendingSignals.length})`}
+          </button>
+        ))}
+      </div>
+
+      {/* Trade queue — real Robinhood approval flow */}
+      {innerTab === "queue" && (
+        <div>
+          {actionLog && (
+            <div style={{ background: T.surface, border: `1px solid ${actionLog.ok ? T.green : T.red}`, borderRadius: "10px", padding: "12px 16px", marginBottom: "16px", fontSize: "13px", color: actionLog.ok ? T.green : T.red }}>
+              {actionLog.msg}
+            </div>
+          )}
+          {queueItems.length === 0 ? (
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "32px", textAlign: "center", color: T.muted, fontSize: "13px" }}>
+              No pending trades. Run TraderAgent from the Agents page to propose real Robinhood trades.
+            </div>
+          ) : queueItems.map((q: any) => (
+            <div key={q.id} style={{ background: T.card, border: `1px solid ${q.status === "pending_approval" ? T.amber + "60" : T.border}`, borderRadius: "12px", padding: "18px 20px", marginBottom: "10px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr auto", gap: "12px", alignItems: "center" }}>
+                <div style={{ fontWeight: 800, fontSize: "16px", color: T.accent, cursor: "pointer" }} onClick={() => setChartSymbol(q.symbol)}>
+                  {q.symbol} ↗
+                </div>
+                <div>
+                  <div style={{ fontSize: "10px", color: T.muted, marginBottom: "3px" }}>ORDER</div>
+                  <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: T.greenBg, color: T.green }}>
+                    BUY {q.qty} shares
+                  </span>
+                </div>
+                <div>
+                  <div style={{ fontSize: "10px", color: T.muted, marginBottom: "3px" }}>LIMIT PRICE</div>
+                  <span style={{ fontSize: "14px", fontWeight: 600 }}>${q.limit_price?.toFixed(2)}</span>
+                </div>
+                <div>
+                  <div style={{ fontSize: "10px", color: T.muted, marginBottom: "3px" }}>SCORE / STATUS</div>
+                  <span style={{ fontSize: "12px", color: T.accent, fontWeight: 600 }}>{q.analyst_score}/100</span>
+                  <span style={{ fontSize: "11px", color: T.muted, marginLeft: "8px" }}>{q.status}</span>
+                </div>
+                {q.status === "pending_approval" ? (
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button onClick={() => approveTradeItem(q.id)} style={{ padding: "8px 16px", background: T.green, border: "none", borderRadius: "7px", color: "#000", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
+                      Approve
+                    </button>
+                    <button onClick={() => rejectTradeItem(q.id)} style={{ padding: "8px 14px", background: T.redBg, border: `1px solid ${T.red}40`, borderRadius: "7px", color: T.red, fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+                      Reject
+                    </button>
+                  </div>
+                ) : (
+                  <span style={{ fontSize: "11px", color: T.green, fontWeight: 600 }}>Approved</span>
+                )}
+              </div>
+              {q.rationale && (
+                <div style={{ marginTop: "10px", fontSize: "11px", color: T.muted, borderTop: `1px solid ${T.border}`, paddingTop: "10px" }}>
+                  {q.rationale.slice(0, 200)}{q.rationale.length > 200 ? "…" : ""}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Pending signals */}
+      {innerTab === "signals" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+          {pendingSignals.length === 0 ? (
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "32px", textAlign: "center", color: T.muted, fontSize: "13px" }}>
+              No pending signals. Run ResearchAgent from the Agents page to generate signals.
+            </div>
+          ) : pendingSignals.map((s: any) => (
+            <div key={s.id} style={{ background: T.card, border: `1px solid ${s.analyst_score >= 60 && s.direction === "long" ? T.accent + "44" : T.border}`, borderRadius: "12px", padding: "16px 20px", display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr 1fr", gap: "12px", alignItems: "center" }}>
+              <div style={{ fontWeight: 800, fontSize: "16px", cursor: "pointer", color: T.accent }} onClick={() => setChartSymbol(s.symbol)}>{s.symbol} ↗</div>
+              <div>
+                <div style={{ fontSize: "10px", color: T.muted, marginBottom: "4px" }}>DIRECTION</div>
+                <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: s.direction === "long" ? T.greenBg : T.amberBg, color: s.direction === "long" ? T.green : T.amber }}>
+                  {s.direction?.toUpperCase()}
+                </span>
+              </div>
+              <div>
+                <div style={{ fontSize: "10px", color: T.muted, marginBottom: "4px" }}>ANALYST SCORE</div>
+                <ScoreBar score={s.analyst_score ?? 0} />
+              </div>
+              <div>
+                <div style={{ fontSize: "10px", color: T.muted, marginBottom: "4px" }}>CONVICTION</div>
+                <span style={{ fontSize: "14px", fontWeight: 600 }}>{s.conviction}/100</span>
+              </div>
+              <div>
+                <div style={{ fontSize: "10px", color: T.muted, marginBottom: "4px" }}>QUALIFIES</div>
+                {s.analyst_score >= 60 && s.direction === "long"
+                  ? <span style={{ color: T.green, fontSize: "12px", fontWeight: 600 }}>Yes — will fill</span>
+                  : <span style={{ color: T.muted, fontSize: "12px" }}>No ({s.analyst_score < 60 ? "score < 60" : "not long"})</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {chartSymbol && (
+        <Suspense fallback={null}>
+          <StockModal symbol={chartSymbol} onClose={() => setChartSymbol(null)} />
+        </Suspense>
+      )}
+    </div>
   );
 }
 
@@ -140,10 +368,11 @@ function LiveHoldingsTab() {
   );
 }
 
-export default function PortfolioPage({ portfolio, positions, trades, perf, signals }: {
+export default function PortfolioPage({ portfolio, positions, trades, perf, signals, pendingSignals, strategy, tradeQueue }: {
   portfolio: any; positions: any[]; trades: any[]; perf: any[]; signals: any[];
+  pendingSignals: any[]; strategy: any; tradeQueue: any[];
 }) {
-  const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live">("positions");
+  const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue">("positions");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   const [vooReturn, setVooReturn] = useState<{ pct: number | null; loading: boolean }>({ pct: null, loading: true });
 
@@ -240,6 +469,9 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
         </button>
         <button onClick={() => setTab("opportunity" as any)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === ("opportunity" as any) ? T.accent : T.card, color: tab === ("opportunity" as any) ? "#fff" : T.muted }}>
           Opportunity Cost
+        </button>
+        <button onClick={() => setTab("tradequeue")} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === "tradequeue" ? T.accent : T.card, color: tab === "tradequeue" ? "#fff" : T.muted }}>
+          Trade Queue {tradeQueue.length > 0 ? `(${tradeQueue.length})` : ""}
         </button>
       </div>
 
@@ -375,6 +607,15 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
             </table>
           )}
         </div>
+      )}
+
+      {/* Trade Queue tab */}
+      {tab === "tradequeue" && (
+        <TradeQueueTab
+          pendingSignals={pendingSignals}
+          strategy={strategy}
+          tradeQueue={tradeQueue}
+        />
       )}
 
       {/* Opportunity Cost tab — signals taken vs skipped */}

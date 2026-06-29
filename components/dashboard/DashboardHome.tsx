@@ -258,7 +258,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
               Latest Agent Signals
             </div>
             <a href="/dashboard/activity" style={{ fontSize: "12px", color: T.accent, textDecoration: "none" }}>
-              View all →
+              Full log →
             </a>
           </div>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
@@ -297,6 +297,56 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
           </a>
         </div>
       )}
+
+      {/* Activity feed */}
+      {(recentRuns.length > 0 || recentTrades.length > 0 || recentLog.length > 0) && (() => {
+        type AEvent = { ts: number; icon: string; label: string; sub: string; color: string };
+        const events: AEvent[] = [
+          ...recentRuns.map((r: any) => ({
+            ts: new Date(r.completed_at ?? r.created_at).getTime(),
+            icon: "◐",
+            label: `${r.agent_type === "research" ? "ResearchAgent" : r.agent_type === "paper_trader" ? "PaperTrader" : "LearnerAgent"} run`,
+            sub: r.status === "success" ? "completed" : r.status ?? "ran",
+            color: r.status === "success" ? T.green : T.muted,
+          })),
+          ...recentTrades.map((t: any) => ({
+            ts: new Date(t.executed_at).getTime(),
+            icon: "◈",
+            label: `${t.order_side?.toUpperCase() === "BUY" ? "Bought" : "Sold"} ${t.symbol}`,
+            sub: `${t.qty}sh @ $${t.fill_price?.toFixed(2)}${t.outcome ? ` · ${t.outcome} ${t.pnl_pct != null ? (t.pnl_pct >= 0 ? "+" : "") + t.pnl_pct.toFixed(1) + "%" : ""}` : ""}`,
+            color: t.outcome === "win" ? T.green : t.outcome === "loss" ? T.red : T.textSub,
+          })),
+          ...recentLog.map((l: any) => ({
+            ts: new Date(l.created_at).getTime(),
+            icon: "◫",
+            label: "Learner note",
+            sub: l.note?.slice(0, 100) + (l.note?.length > 100 ? "…" : ""),
+            color: T.blue,
+          })),
+        ].sort((a, b) => b.ts - a.ts).slice(0, 8);
+
+        return (
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginTop: "16px" }}>
+            <div style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "14px" }}>
+              Recent Activity
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+              {events.map((e, i) => (
+                <div key={i} style={{ display: "flex", gap: "12px", paddingBottom: i < events.length - 1 ? "12px" : "0", marginBottom: i < events.length - 1 ? "12px" : "0", borderBottom: i < events.length - 1 ? `1px solid ${T.border}44` : "none" }}>
+                  <div style={{ width: "20px", textAlign: "center", color: e.color, fontSize: "13px", paddingTop: "1px", flexShrink: 0 }}>{e.icon}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: "13px", fontWeight: 500, color: T.text }}>{e.label}</div>
+                    <div style={{ fontSize: "12px", color: T.muted, marginTop: "2px" }}>{e.sub}</div>
+                  </div>
+                  <div style={{ fontSize: "11px", color: T.muted, flexShrink: 0, paddingTop: "2px" }}>
+                    {new Date(e.ts).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

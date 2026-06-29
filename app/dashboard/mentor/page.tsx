@@ -15,8 +15,11 @@ export default async function Page() {
   const [
     { data: packets },
     { data: trades },
-    { data: log },
+    { data: fullLog },
     { data: signals },
+    { data: performance },
+    { data: weightsArr },
+    { data: allTradesArr },
   ] = await Promise.all([
     supabase
       .from("research_packets")
@@ -30,22 +33,30 @@ export default async function Page() {
       .limit(30),
     supabase
       .from("learning_log")
-      .select("id, note, trades_evaluated, created_at")
+      .select("*")
       .order("created_at", { ascending: false })
-      .limit(20),
+      .limit(50),
     supabase
       .from("agent_signals")
       .select("id, symbol, direction, analyst_score, rationale, status, conviction, created_at")
       .order("created_at", { ascending: false })
       .limit(20),
+    supabase.from("paper_performance").select("date, nav, win_rate, total_trades").order("date", { ascending: true }).limit(90),
+    supabase.from("signal_weights").select("*").limit(1),
+    supabase.from("paper_trades").select("outcome").not("outcome", "is", null),
   ]);
+
+  const allTrades = allTradesArr ?? [];
 
   return (
     <MentorPage
       packets={packets ?? []}
       trades={trades ?? []}
-      log={log ?? []}
+      fullLog={fullLog ?? []}
       signals={signals ?? []}
+      performance={performance ?? []}
+      weights={weightsArr?.[0] ?? null}
+      allTrades={allTrades}
     />
   );
 }
