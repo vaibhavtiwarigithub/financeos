@@ -51,7 +51,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [running, setRunning] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<string | null>(null);
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
-  const [tab, setTab] = useState<"signals" | "paper" | "weights" | "log">("paper");
+  const [tab, setTab] = useState<"signals" | "paper" | "weights" | "log" | "architecture">("paper");
   const [minScore, setMinScore] = useState<number>(strategy?.min_analyst_score ?? 70);
   const [maxPos, setMaxPos] = useState<number>(strategy?.max_position_pct ?? 5);
   const [maxTrades, setMaxTrades] = useState<number>(strategy?.max_daily_trades ?? 3);
@@ -282,6 +282,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           { key: "signals", label: `Signals (${signals.length})` },
           { key: "weights", label: "Weights" },
           { key: "log", label: "Learning Log" },
+          { key: "architecture", label: "Architecture" },
         ] as const).map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             style={{ padding: "7px 16px", borderRadius: "7px", border: "none", cursor: "pointer", fontSize: "12px", fontWeight: 500, background: tab === t.key ? T.card : "transparent", color: tab === t.key ? T.text : T.muted }}>
@@ -508,6 +509,177 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
               <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>{new Date(l.created_at).toLocaleString()}</div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Architecture tab */}
+      {tab === "architecture" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+
+          {/* Section 1: Agent Pipeline */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
+            <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "14px" }}>Section 1</div>
+            <div style={{ fontWeight: 700, fontSize: "16px", marginBottom: "20px" }}>Agent Pipeline</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+
+              {/* ResearchAgent */}
+              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "18px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+                  <span style={{ fontSize: "18px" }}>🔍</span>
+                  <span style={{ fontWeight: 700, fontSize: "14px" }}>ResearchAgent</span>
+                  <span style={{ fontSize: "11px", color: T.muted, background: T.card, border: `1px solid ${T.border}`, borderRadius: "4px", padding: "2px 8px" }}>Weekdays 9 AM</span>
+                </div>
+                <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7" }}>
+                  Gathers symbols from two sources:
+                </div>
+                <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <div style={{ fontSize: "13px", color: T.textSub, paddingLeft: "12px", borderLeft: `2px solid ${T.accent}` }}>
+                    <span style={{ fontWeight: 600, color: T.text }}>1. Live Robinhood holdings</span> — account ••••8641 (read-only). These are highest priority — agent can output SELL signals on owned positions.
+                  </div>
+                  <div style={{ fontSize: "13px", color: T.textSub, paddingLeft: "12px", borderLeft: `2px solid ${T.green}` }}>
+                    <span style={{ fontWeight: 600, color: T.text }}>2. Dual-bucket screener</span> — top 3 candidates/day:
+                    <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px", paddingLeft: "12px" }}>
+                      <div><span style={{ color: T.amber, fontWeight: 600 }}>Momentum:</span> RSI &gt; 60, price &gt; 50-day MA, revenue acceleration, positive earnings revision</div>
+                      <div><span style={{ color: T.green, fontWeight: 600 }}>Value:</span> P/E &lt; sector median, FCF yield, insider buying, analyst upgrades</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* PaperTrader */}
+              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "18px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+                  <span style={{ fontSize: "18px" }}>📄</span>
+                  <span style={{ fontWeight: 700, fontSize: "14px" }}>PaperTrader</span>
+                  <span style={{ fontSize: "11px", color: T.muted, background: T.card, border: `1px solid ${T.border}`, borderRadius: "4px", padding: "2px 8px" }}>Auto-chained after Research</span>
+                </div>
+                <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7", display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <div>Takes <code style={{ background: T.card, padding: "1px 5px", borderRadius: "3px", fontSize: "12px", color: T.accent }}>agent_signals</code> with <strong style={{ color: T.text }}>score &ge; 60</strong> and <strong style={{ color: T.text }}>direction = "long"</strong>.</div>
+                  <div>Sizes positions at <strong style={{ color: T.text }}>10% of paper NAV</strong> ($10k). Fetches real fill price from Robinhood.</div>
+                  <div>Long-only enforcement — no short positions on screener candidates.</div>
+                </div>
+              </div>
+
+              {/* LearnerAgent */}
+              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "18px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+                  <span style={{ fontSize: "18px" }}>🧠</span>
+                  <span style={{ fontWeight: 700, fontSize: "14px" }}>LearnerAgent</span>
+                  <span style={{ fontSize: "11px", color: T.muted, background: T.card, border: `1px solid ${T.border}`, borderRadius: "4px", padding: "2px 8px" }}>Sundays 8 PM</span>
+                </div>
+                <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7", display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <div>Closes paper trades older than 7 days. Calculates realized P&L vs benchmark.</div>
+                  <div>Writes 1-sentence outcome note per trade + batch summary to <code style={{ background: T.card, padding: "1px 5px", borderRadius: "3px", fontSize: "12px", color: T.accent }}>learning_log</code>.</div>
+                  <div><span style={{ color: T.amber, fontWeight: 600 }}>Phase 0:</span> records outcomes only — weight mutation locked until 10+ closed trades.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: Data Sources */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
+            <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "14px" }}>Section 2</div>
+            <div style={{ fontWeight: 700, fontSize: "16px", marginBottom: "20px" }}>Data Sources</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px" }}>
+              {[
+                {
+                  name: "FinancialDatasets MCP",
+                  icon: "📊",
+                  used: "Fundamentals: PE, revenue, FCF, earnings, insider trades, institutional holdings",
+                },
+                {
+                  name: "Alpha Vantage MCP",
+                  icon: "📈",
+                  used: "Technicals: RSI, EMA(50), news sentiment, earnings calendar",
+                },
+                {
+                  name: "Robinhood MCP",
+                  icon: "🏦",
+                  used: "Live quotes (fill prices), equity positions, order placement",
+                },
+              ].map(src => (
+                <div key={src.name} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "16px" }}>
+                  <div style={{ fontSize: "22px", marginBottom: "8px" }}>{src.icon}</div>
+                  <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "6px" }}>{src.name}</div>
+                  <div style={{ fontSize: "12px", color: T.textSub, lineHeight: "1.6" }}>{src.used}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Section 3: Scoring Formula */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
+            <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "14px" }}>Section 3</div>
+            <div style={{ fontWeight: 700, fontSize: "16px", marginBottom: "20px" }}>Scoring Formula</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "10px", color: T.textSub }}>analyst_score (0–100)</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "12px" }}>
+                    <div style={{ fontWeight: 600, fontSize: "12px", color: T.text, marginBottom: "6px" }}>Stocks</div>
+                    {["Fundamentals (PE, revenue growth, FCF yield)", "Technicals (RSI, EMA crossover)", "News sentiment", "Insider activity", "Earnings revision"].map(item => (
+                      <div key={item} style={{ fontSize: "12px", color: T.textSub, display: "flex", alignItems: "flex-start", gap: "6px", marginTop: "4px" }}>
+                        <span style={{ color: T.accent, flexShrink: 0, marginTop: "1px" }}>+</span>
+                        <span>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "12px" }}>
+                    <div style={{ fontWeight: 600, fontSize: "12px", color: T.text, marginBottom: "6px" }}>ETFs</div>
+                    {["Macro/sector momentum", "RSI/EMA crossover", "No fundamentals — ETFs don't have PE/FCF"].map(item => (
+                      <div key={item} style={{ fontSize: "12px", color: T.textSub, display: "flex", alignItems: "flex-start", gap: "6px", marginTop: "4px" }}>
+                        <span style={{ color: T.green, flexShrink: 0, marginTop: "1px" }}>+</span>
+                        <span>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "10px", color: T.textSub }}>Action Thresholds</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {[
+                    { range: "0 – 59", label: "No action", color: T.muted, bg: T.surface },
+                    { range: "60 – 69", label: "PaperTrader fills paper trade", color: T.amber, bg: T.amberBg },
+                    { range: "70+", label: "High conviction long", color: T.green, bg: T.greenBg },
+                  ].map(t => (
+                    <div key={t.range} style={{ background: t.bg, border: `1px solid ${t.color}30`, borderRadius: "8px", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontWeight: 700, fontSize: "14px", color: t.color, fontFamily: "monospace" }}>{t.range}</span>
+                      <span style={{ fontSize: "12px", color: t.color }}>{t.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 4: Phase 0 Constraints */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
+            <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "14px" }}>Section 4</div>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
+              <div style={{ fontWeight: 700, fontSize: "16px" }}>Phase 0 Constraints</div>
+              <span style={{ fontSize: "11px", fontWeight: 600, padding: "3px 10px", borderRadius: "20px", background: T.amberBg, color: T.amber, border: `1px solid ${T.amber}40` }}>LOCKED</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "10px" }}>
+              {[
+                { icon: "🔒", label: "Long-only", detail: "Only BUY signals — no shorts on screener candidates" },
+                { icon: "✅", label: "approval_required", detail: "All real trades need manual approval before execution" },
+                { icon: "3️⃣", label: "Max 3 screener candidates/day", detail: "With $10k NAV and 10% sizing, max 10 positions total" },
+                { icon: "⏳", label: "Weight mutation locked", detail: "Phase 1 unlocks only after 10+ closed paper trades" },
+                { icon: "⚡", label: "TraderAgent account", detail: "Order placement only on agentic account ••••0660" },
+                { icon: "🌊", label: "No explicit regime detection", detail: "Scoring adapts naturally — no bull/bear mode switching" },
+              ].map(c => (
+                <div key={c.label} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "14px", display: "flex", gap: "12px", alignItems: "flex-start" }}>
+                  <span style={{ fontSize: "16px", flexShrink: 0 }}>{c.icon}</span>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "3px" }}>{c.label}</div>
+                    <div style={{ fontSize: "12px", color: T.textSub }}>{c.detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
         </div>
       )}
     </div>

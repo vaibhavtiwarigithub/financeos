@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { gatherSymbols, processSymbol } from "@/lib/research-agent";
+import { prewarmPriceCache } from "@/lib/chart-data";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +62,11 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     paperTradeResult = { error: e instanceof Error ? e.message : String(e) };
   }
+
+  // Pre-warm price_cache for researched symbols + benchmark ETFs (fire async, don't block response)
+  const BENCHMARK_SYMBOLS = ["VOO", "QQQ", "SPY", "IWM", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLC"];
+  const prewarmSymbols = [...new Set([...batch, ...BENCHMARK_SYMBOLS])];
+  prewarmPriceCache(prewarmSymbols, supabase).catch(() => {});
 
   return NextResponse.json({
     success: true, processed: results.length, ok, errors: errs, symbols: batch,
