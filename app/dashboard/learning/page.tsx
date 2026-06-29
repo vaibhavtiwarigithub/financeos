@@ -1,15 +1,9 @@
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import LearningPage from "@/components/dashboard/LearningPage";
-import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) redirect("/login");
-
   const supabase = createServiceClient();
 
   const [

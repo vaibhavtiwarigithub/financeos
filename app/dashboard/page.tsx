@@ -6,9 +6,10 @@ import { redirect } from "next/navigation";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) redirect("/login");
+  // getSession() reads from cookie — no network round-trip unlike getUser()
+  const authClient = await createClient();
+  const { data: { session } } = await authClient.auth.getSession();
+  if (!session) redirect("/login");
 
   const supabase = createServiceClient();
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -23,7 +24,7 @@ export default async function DashboardPage() {
     { data: pendingSignals },
     { data: recentLog },
   ] = await Promise.all([
-    userClient.from("profiles").select("*").eq("id", user.id).single(),
+    supabase.from("profiles").select("*").eq("id", session.user.id).single(),
     supabase.from("paper_portfolio").select("*").limit(1),
     supabase.from("paper_positions").select("*"),
     supabase.from("paper_trades").select("*").gte("executed_at", sevenDaysAgo).order("executed_at", { ascending: false }),

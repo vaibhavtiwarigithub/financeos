@@ -1,15 +1,9 @@
 import { createServiceClient } from "@/lib/supabase/service";
-import { createClient } from "@/lib/supabase/server";
 import PortfolioPage from "@/components/dashboard/PortfolioPage";
-import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) redirect("/login");
-
   const supabase = createServiceClient();
 
   const [
@@ -20,7 +14,7 @@ export default async function Page() {
     { data: signals },
     { data: pendingSignals },
     { data: strategyArr },
-    { data: tradeQueue },
+    { data: tradeQueueArr },
   ] = await Promise.all([
     supabase.from("paper_portfolio").select("*").limit(1),
     supabase.from("paper_positions").select("*").order("opened_at", { ascending: false }),
@@ -29,7 +23,7 @@ export default async function Page() {
     supabase.from("agent_signals").select("*").order("created_at", { ascending: false }).limit(20),
     supabase.from("agent_signals").select("*, research_packets(*)").eq("status", "pending").order("created_at", { ascending: false }).limit(20),
     supabase.from("strategy_config").select("*").limit(1),
-    supabase.from("trade_queue").select("*").in("status", ["pending_approval", "approved"]).order("created_at", { ascending: false }).limit(20),
+    supabase.from("agent_signals").select("id, symbol, direction, analyst_score, conviction, rationale, created_at").eq("status", "pending").gte("analyst_score", 60).order("analyst_score", { ascending: false }).limit(20),
   ]);
 
   return (
@@ -41,7 +35,7 @@ export default async function Page() {
       signals={signals ?? []}
       pendingSignals={pendingSignals ?? []}
       strategy={strategyArr?.[0] ?? null}
-      tradeQueue={tradeQueue ?? []}
+      tradeQueue={tradeQueueArr ?? []}
     />
   );
 }

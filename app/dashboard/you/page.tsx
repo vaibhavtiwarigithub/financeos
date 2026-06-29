@@ -1,32 +1,24 @@
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { redirect } from "next/navigation";
 import YouPage from "@/components/dashboard/YouPage";
 
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const authClient = await createClient();
+  const { data: { session } } = await authClient.auth.getSession();
+  if (!session) redirect("/login");
 
-  const [
-    { data: profile },
-    { data: predictions },
-    { data: journal },
-    { data: quizHistory },
-  ] = await Promise.all([
-    supabase.from("profiles").select("*").eq("id", user.id).single(),
-    supabase.from("predictions").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(20),
-    supabase.from("journal_entries").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(10),
-    supabase.from("quiz_history").select("*").eq("user_id", user.id).order("completed_at", { ascending: false }).limit(5),
-  ]);
+  const supabase = createServiceClient();
+  const { data: profile } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
 
   return (
     <YouPage
       profile={profile}
-      predictions={predictions ?? []}
-      journal={journal ?? []}
-      quizHistory={quizHistory ?? []}
+      predictions={[]}
+      journal={[]}
+      quizHistory={[]}
     />
   );
 }
