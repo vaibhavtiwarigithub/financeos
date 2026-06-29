@@ -82,7 +82,7 @@ export default function SectorTreemap({ sectors }: { sectors: SectorQuote[] }) {
         )}
       </div>
       <ResponsiveContainer width="100%" height={280}>
-        <Treemap data={data} dataKey="size" content={renderContent} />
+        <Treemap data={data} dataKey="size" content={renderContent as any} />
       </ResponsiveContainer>
       <div style={{ marginTop: "10px", display: "flex", gap: "16px", fontSize: "11px", color: T.muted }}>
         <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>

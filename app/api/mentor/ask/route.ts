@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
       .select("symbol, summary, key_risks, catalysts, fundamental_score, technical_score, sentiment_score, macro_score, created_at")
       .order("created_at", { ascending: false })
       .limit(symbol ? 10 : 5)
-      .then(r => symbol ? supabase.from("research_packets").select("symbol, summary, key_risks, catalysts, fundamental_score, technical_score, sentiment_score, macro_score, created_at").eq("symbol", symbol.toUpperCase()).order("created_at", { ascending: false }).limit(5) : r),
+      .then((r: any) => symbol ? supabase.from("research_packets").select("symbol, summary, key_risks, catalysts, fundamental_score, technical_score, sentiment_score, macro_score, created_at").eq("symbol", symbol.toUpperCase()).order("created_at", { ascending: false }).limit(5) : r),
     supabase
       .from("paper_trades")
       .select("symbol, order_side, qty, fill_price, exit_price, realized_pnl, pnl_pct, outcome, executed_at, closed_at, rationale")

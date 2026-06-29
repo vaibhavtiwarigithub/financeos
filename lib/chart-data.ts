@@ -44,7 +44,7 @@ export async function fetchPriceHistory(symbol: string, days = 90): Promise<Cand
       .order("date", { ascending: true });
 
     if (rows && rows.length > 0 && isFresh(rows[rows.length - 1].date)) {
-      const candles: Candle[] = rows.map(r => ({
+      const candles: Candle[] = rows.map((r: any) => ({
         date: r.date,
         open: Number(r.open),
         high: Number(r.high),
