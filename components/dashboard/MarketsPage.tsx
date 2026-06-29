@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState, lazy, Suspense } from "react";
+import { useRouter } from "next/navigation";
 const SectorTreemap = lazy(() => import("@/components/charts/SectorTreemap"));
 const PriceChart = lazy(() => import("@/components/charts/PriceChart"));
 const SectorPerformanceChart = lazy(() => import("@/components/charts/SectorPerformanceChart"));
+const SectorLineChart = lazy(() => import("@/components/charts/SectorLineChart"));
 
 const T = {
   bg: "#0D0F14",
@@ -114,7 +116,7 @@ function IndexCard({ q }: { q: IndexQuote }) {
   );
 }
 
-function SectorHeatmap({ sectors }: { sectors: SectorQuote[] }) {
+function SectorHeatmap({ sectors, onSymbol }: { sectors: SectorQuote[]; onSymbol: (sym: string) => void }) {
   const sorted = [...sectors].sort((a, b) => b.changePct - a.changePct);
 
   return (
@@ -127,23 +129,27 @@ function SectorHeatmap({ sectors }: { sectors: SectorQuote[] }) {
       }}
     >
       <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>
-        Sector Performance
+        Sector Performance · click to view chart
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "8px" }}>
         {sorted.map(s => (
           <div
             key={s.symbol}
+            onClick={() => onSymbol(s.symbol)}
             style={{
               background: pctBg(s.changePct),
               border: `1px solid ${s.changePct >= 0 ? T.green : T.red}30`,
               borderRadius: "8px",
               padding: "12px 14px",
-              cursor: "default",
+              cursor: "pointer",
+              transition: "opacity 0.15s",
             }}
+            onMouseEnter={e => (e.currentTarget.style.opacity = "0.8")}
+            onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
           >
             <div style={{ fontSize: "11px", color: T.textSub, marginBottom: "4px" }}>{s.name}</div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "12px", fontWeight: 700, color: T.accent }}>{s.symbol}</span>
+              <span style={{ fontSize: "12px", fontWeight: 700, color: T.accent }}>{s.symbol} ↗</span>
               <span
                 style={{
                   fontSize: "13px",
@@ -176,6 +182,7 @@ function LoadingSkeleton() {
 }
 
 export default function MarketsPage() {
+  const router = useRouter();
   const [data, setData] = useState<MarketOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [slowFetch, setSlowFetch] = useState(false);
@@ -286,7 +293,7 @@ export default function MarketsPage() {
             {data.indices.map(q => (
               <div
                 key={q.symbol}
-                onClick={() => setSelectedSymbol(selectedSymbol === q.symbol ? null : q.symbol)}
+                onClick={() => router.push(`/dashboard/symbol/${q.symbol}`)}
                 style={{ cursor: "pointer" }}
               >
                 <IndexCard q={q} />
@@ -331,38 +338,33 @@ export default function MarketsPage() {
             <SectorTreemap sectors={data.sectors} />
           </Suspense>
 
-          {/* 90-day sector performance bar chart */}
-          <div style={{ marginTop: "16px" }}>
-            <Suspense
-              fallback={
-                <div
-                  style={{
-                    background: "#1A1D27",
-                    border: "1px solid #252836",
-                    borderRadius: "12px",
-                    padding: "20px",
-                    height: "420px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#6B7280",
-                    fontSize: "13px",
-                  }}
-                >
-                  Loading sector chart…
-                </div>
-              }
-            >
-              <SectorPerformanceChart />
-            </Suspense>
-          </div>
-
           {/* Footer note */}
           <div style={{ marginTop: "16px", fontSize: "11px", color: T.muted, textAlign: "right" }}>
             Data via FinancialDatasets · 15-min delay · Cached 5 min
           </div>
         </>
       )}
+
+      {/* Sector charts — render immediately from Supabase cache, no dependency on live quotes */}
+      <div style={{ marginTop: "16px" }}>
+        <Suspense fallback={
+          <div style={{ background: "#1A1D27", border: "1px solid #252836", borderRadius: "12px", padding: "20px", height: "420px", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280", fontSize: "13px" }}>
+            Loading sector performance…
+          </div>
+        }>
+          <SectorPerformanceChart />
+        </Suspense>
+      </div>
+
+      <div style={{ marginTop: "16px" }}>
+        <Suspense fallback={
+          <div style={{ height: "460px", background: T.surface, borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280", fontSize: "13px" }}>
+            Loading sector line chart…
+          </div>
+        }>
+          <SectorLineChart />
+        </Suspense>
+      </div>
     </div>
   );
 }

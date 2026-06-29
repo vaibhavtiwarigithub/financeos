@@ -78,3 +78,30 @@ Implementation must not begin until the relevant feature architecture file says:
 
 `Architecture approved: Yes`
 `Implementation allowed: Yes`
+
+---
+
+## FinRobot vs FinanceOS Comparison
+
+FinRobot (github.com/ai4finance-foundation/finrobot) is a Python/AutoGen research framework. Key differences:
+
+| Dimension | FinRobot | FinanceOS |
+|---|---|---|
+| Language | Python + AutoGen | TypeScript + Next.js |
+| Deployment | Research notebook / local | Production web app |
+| LLM coupling | Tightly coupled to OpenAI/AutoGen | LLM-agnostic (Claude/DeepSeek/Groq/Gemini swappable) |
+| Data source | Golden dataset for evaluation | Real paper trades for evaluation |
+| Agent hierarchy | Director → Analyst multi-agent | ResearchAgent → TraderAgent → LearnerAgent pipeline |
+| Social signals | News only | News + StockTwits + Alpha Vantage sentiment |
+| Scheduler | Smart scheduler (event-driven) | Cron + on-demand (7PM EST daily refresh) |
+| Safety gates | Limited | approval_required mode, agentic account isolation |
+| Learning loop | Per-run feedback | Weekly batch (min 10 trades before Phase 1) |
+| Real money | No | Robinhood paper → real (Phase 1) |
+| Multi-LLM comparison | No | Claude vs DeepSeek vs Groq P&L comparison built-in |
+
+### Our scheduler vs FinRobot's Smart Scheduler
+FinRobot's scheduler is event-driven (earnings, news). Ours is simpler but production-hardened:
+- 7PM EST daily: earnings calendar refresh (Massive API, no LLM)
+- Market open: ResearchAgent screener run (3 candidates/day max)
+- Per-signal: LearnerAgent records outcome after trade closes
+- Weekly batch: weight mutation after ≥10 closed trades

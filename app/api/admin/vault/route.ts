@@ -11,21 +11,26 @@ function maskKey(k: string): string {
   return k.slice(0, 4) + "•".repeat(Math.min(k.length - 8, 20)) + k.slice(-4)
 }
 
+async function getActivePin(svc: ReturnType<typeof createServiceClient>): Promise<string> {
+  // DB-stored PIN takes priority over env var (allows runtime change)
+  const { data } = await svc.from("app_settings").select("value").eq("key", "vault_pin").single()
+  return data?.value ?? process.env.VAULT_PIN ?? "fos-vault-2026"
+}
+
 export async function GET(req: NextRequest) {
-  // Auth: must be signed in as admin
   const sb = await createClient()
   const { data: { user } } = await sb.auth.getUser()
   if (!user || user.email !== process.env.ADMIN_EMAIL) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  // Extra: vault PIN check
+  const svc = createServiceClient()
   const pin = req.headers.get("x-vault-pin")
-  if (pin !== process.env.VAULT_PIN) {
+  const activePin = await getActivePin(svc)
+  if (pin !== activePin) {
     return NextResponse.json({ error: "Vault locked — PIN required" }, { status: 403 })
   }
 
-  const svc = createServiceClient()
   const { data, error } = await svc.from("api_key_vault").select("*").order("provider")
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
@@ -47,15 +52,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const pin = req.headers.get("x-vault-pin")
-  if (pin !== process.env.VAULT_PIN) {
-    return NextResponse.json({ error: "Vault locked" }, { status: 403 })
-  }
-
   const body = await req.json()
   const { action, ...fields } = body
 
   const svc = createServiceClient()
+  const pin = req.headers.get("x-vault-pin")
+  const activePin = await getActivePin(svc)
+  if (pin !== activePin) {
+    return NextResponse.json({ error: "Vault locked" }, { status: 403 })
+  }
 
   if (action === "upsert") {
     const { error } = await svc.from("api_key_vault").upsert({

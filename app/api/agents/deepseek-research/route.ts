@@ -1,20 +1,75 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-// import { runDeepSeekResearch } from "@/lib/deepseek-agent"; // uncomment when configured
+import { createServiceClient } from "@/lib/supabase/service";
+import { runDeepSeekResearch, ResearchResult } from "@/lib/deepseek-agent";
+
+export const dynamic = "force-dynamic";
+
+const ADMIN_EMAIL = "vterminater@gmail.com";
 
 // POST /api/agents/deepseek-research
-// Scaffold for DeepSeek-based research agent. Tags all signals with agent_label='deepseek'.
-// TODO: wire up lib/deepseek-agent.ts once DeepSeek API key + prompt are configured.
-export async function POST(_req: NextRequest) {
+// Body: { symbol: string }
+// Runs DeepSeek analysis for a single symbol, writes signal to DB, returns result.
+export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const userClient = await createClient();
-    const { data: { user } } = await userClient.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const {
+      data: { user },
+    } = await userClient.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (user.email !== ADMIN_EMAIL) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
-    return NextResponse.json({
-      message:
-        "DeepSeek research agent not yet configured — add DeepSeek prompt to lib/deepseek-agent.ts",
-    });
+    let body: { symbol?: string };
+    try {
+      body = (await req.json()) as { symbol?: string };
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+
+    const symbol = typeof body.symbol === "string" ? body.symbol.trim().toUpperCase() : "";
+    if (!symbol) {
+      return NextResponse.json({ error: "Missing required field: symbol" }, { status: 400 });
+    }
+
+    const result: ResearchResult = await runDeepSeekResearch(symbol);
+    return NextResponse.json({ ok: true, result });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+// GET /api/agents/deepseek-research
+// Returns the last 10 deepseek signals from agent_signals.
+export async function GET(): Promise<NextResponse> {
+  try {
+    const userClient = await createClient();
+    const {
+      data: { user },
+    } = await userClient.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const svc = createServiceClient();
+    const { data, error } = await svc
+      .from("agent_signals")
+      .select(
+        "id, symbol, direction, analyst_score, conviction, rationale, agent_label, agent_type, status, created_at"
+      )
+      .eq("agent_label", "deepseek")
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true, signals: data ?? [] });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 500 });

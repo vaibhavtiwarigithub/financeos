@@ -22,6 +22,12 @@ export async function POST(req: NextRequest) {
     // All DB ops use service client — bypasses RLS on agent/paper tables
     const supabase = createServiceClient();
 
+    // Pause check — skip if app is paused
+    const { data: cfg } = await supabase.from("strategy_config").select("app_paused").limit(1).single();
+    if ((cfg as any)?.app_paused) {
+      return NextResponse.json({ skipped: true, reason: "App is paused — paper trades disabled" });
+    }
+
     // §4 kill-switch check before any trade execution
     const ks = await checkKillSwitches(supabase);
     if (!ks.safe) {

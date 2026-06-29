@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -167,7 +168,7 @@ function getEventMeta(ev: TimelineEvent): EventMeta {
     icon: "🧠",
     dotColor: T.amber,
     label: "Learning note",
-    subtext: note.length > 100 ? note.slice(0, 100) + "…" : note,
+    subtext: note.length > 500 ? note.slice(0, 500) + "…" : note,
   };
 }
 
@@ -232,7 +233,7 @@ function ExpandedDetails({ ev }: { ev: TimelineEvent }) {
           <div><b>Side:</b> {raw.order_side?.toUpperCase()} | <b>Qty:</b> {raw.qty} | <b>Fill:</b> ${Number(raw.fill_price).toFixed(2)}</div>
           <div><b>Total cost:</b> ${(raw.qty * raw.fill_price).toFixed(2)}</div>
           {raw.exit_price && <div><b>Exit:</b> ${Number(raw.exit_price).toFixed(2)} | <b>P&L:</b> ${Number(raw.realized_pnl).toFixed(2)} ({raw.outcome})</div>}
-          {raw.rationale && <div style={{ marginTop: 6, fontStyle: "italic", maxWidth: 600 }}><b>Rationale:</b> {raw.rationale.slice(0, 300)}{raw.rationale.length > 300 ? "…" : ""}</div>}
+          {raw.rationale && <div style={{ marginTop: 6, fontSize: "13px", color: T.textSub, lineHeight: "1.6", whiteSpace: "pre-wrap" }}><b>Rationale:</b> {raw.rationale}</div>}
         </div>
       </div>
     );
@@ -254,8 +255,10 @@ function EventCard({ ev, expandedId, setExpandedId }: {
   expandedId: string | null;
   setExpandedId: (id: string | null) => void;
 }) {
+  const router = useRouter();
   const meta = getEventMeta(ev);
   const isExpanded = expandedId === ev.id;
+  const evSymbol: string | null = (ev.kind === "signal" || ev.kind === "paper_trade") ? (ev.raw.symbol ?? null) : null;
 
   return (
     <div style={{ display: "flex", gap: "0", alignItems: "flex-start", position: "relative" }}>
@@ -326,6 +329,14 @@ function EventCard({ ev, expandedId, setExpandedId }: {
               {ev.kind === "paper_trade" && (
                 <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#2D1B00", color: "#FBBF24", letterSpacing: "0.04em", flexShrink: 0 }}>
                   PAPER
+                </span>
+              )}
+              {evSymbol && (
+                <span
+                  onClick={e => { e.stopPropagation(); router.push(`/dashboard/symbol/${evSymbol}`); }}
+                  style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "4px", background: "#6366F118", color: "#6366F1", cursor: "pointer", flexShrink: 0 }}
+                >
+                  {evSymbol} ↗
                 </span>
               )}
             </div>

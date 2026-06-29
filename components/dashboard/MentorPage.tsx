@@ -114,8 +114,8 @@ function DecisionCard({ packet, signal, trade }: { packet: any; signal?: any; tr
                 {trade.realized_pnl != null ? ` · ${trade.realized_pnl >= 0 ? "+" : ""}$${trade.realized_pnl.toFixed(2)}` : ""}
               </div>
               {trade.rationale && (
-                <div style={{ fontSize: "12px", color: T.muted, marginTop: "6px", fontStyle: "italic" }}>
-                  {trade.rationale.slice(0, 200)}{trade.rationale.length > 200 ? "…" : ""}
+                <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.6", whiteSpace: "pre-wrap", marginTop: "6px" }}>
+                  {trade.rationale}
                 </div>
               )}
             </div>
@@ -479,13 +479,61 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
   packets: any[]; trades: any[]; fullLog: any[]; signals: any[];
   performance: any[]; weights: any; allTrades: any[];
 }) {
-  const [tab, setTab] = useState<"ask" | "decisions" | "learning">("ask");
+  const [tab, setTab] = useState<"ask" | "decisions" | "learning" | "journal">("ask");
   const [thesis, setThesis] = useState<string | null>(null);
   const [thesisLoading, setThesisLoading] = useState(true);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [asking, setAsking] = useState(false);
   const answerRef = useRef<HTMLDivElement>(null);
+
+  // Judgment Coach state
+  const [jSymbol, setJSymbol] = useState("");
+  const [jAction, setJAction] = useState<"buy" | "sell" | "watching">("buy");
+  const [jType, setJType] = useState<"pre_trade_thesis" | "post_trade">("pre_trade_thesis");
+  const [jReasoning, setJReasoning] = useState("");
+  const [jSubmitting, setJSubmitting] = useState(false);
+  const [jResult, setJResult] = useState<any>(null);
+  const [jError, setJError] = useState<string | null>(null);
+  const [jHistory, setJHistory] = useState<any[]>([]);
+  const [jHistoryLoading, setJHistoryLoading] = useState(false);
+  const [jHistoryLoaded, setJHistoryLoaded] = useState(false);
+
+  useEffect(() => {
+    if (tab !== "journal" || jHistoryLoaded) return;
+    setJHistoryLoading(true);
+    fetch("/api/mentor/journal")
+      .then(r => r.json())
+      .then(d => { setJHistory(d.entries ?? []); setJHistoryLoaded(true); setJHistoryLoading(false); })
+      .catch(() => setJHistoryLoading(false));
+  }, [tab, jHistoryLoaded]);
+
+  async function submitJudgment() {
+    if (jSubmitting || !jSymbol.trim() || jReasoning.trim().length < 50) return;
+    setJSubmitting(true);
+    setJResult(null);
+    setJError(null);
+    try {
+      const res = await fetch("/api/mentor/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol: jSymbol.trim().toUpperCase(),
+          action: jAction,
+          entry_type: jType,
+          user_reasoning: jReasoning.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.error) { setJError(data.error); return; }
+      setJResult(data.evaluation);
+      setJHistoryLoaded(false); // force reload history
+    } catch (e: any) {
+      setJError(e.message ?? "Unknown error");
+    } finally {
+      setJSubmitting(false);
+    }
+  }
 
   useEffect(() => {
     fetch("/api/mentor/thesis")
@@ -552,6 +600,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
     { key: "ask", label: "Ask the Agent" },
     { key: "decisions", label: "Decision Log" },
     { key: "learning", label: "Learning" },
+    { key: "journal", label: "Judgment Coach" },
   ] as const;
 
   return (
@@ -685,6 +734,205 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
           weights={weights}
           allTrades={allTrades}
         />
+      )}
+
+      {/* Judgment Coach tab */}
+      {tab === "journal" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+
+          {/* Explainer */}
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px" }}>
+            <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7" }}>
+              <strong style={{ color: T.text }}>Test your thesis</strong> — write out why you want to buy, sell, or watch a stock. AI pulls real market data to verify your claims and scores your reasoning 0–100. Use it before or after a trade to improve judgment over time.
+            </div>
+          </div>
+
+          {/* Input form */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
+            <div style={{ fontSize: "11px", color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "18px" }}>
+              Submit Your Thesis
+            </div>
+
+            {/* Symbol + action + type row */}
+            <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+              <div style={{ flex: "0 0 120px" }}>
+                <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px" }}>Symbol</div>
+                <input
+                  value={jSymbol}
+                  onChange={e => setJSymbol(e.target.value.toUpperCase())}
+                  placeholder="AAPL"
+                  style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "8px 12px", color: T.text, fontSize: "14px", fontWeight: 700, fontFamily: "monospace", outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
+              <div style={{ flex: "0 0 130px" }}>
+                <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px" }}>Action</div>
+                <select
+                  value={jAction}
+                  onChange={e => setJAction(e.target.value as any)}
+                  style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "8px 12px", color: T.text, fontSize: "13px", outline: "none" }}
+                >
+                  <option value="buy">Buy</option>
+                  <option value="sell">Sell</option>
+                  <option value="watching">Watching</option>
+                </select>
+              </div>
+              <div style={{ flex: "0 0 200px" }}>
+                <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px" }}>Entry Type</div>
+                <select
+                  value={jType}
+                  onChange={e => setJType(e.target.value as any)}
+                  style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "8px 12px", color: T.text, fontSize: "13px", outline: "none" }}
+                >
+                  <option value="pre_trade_thesis">Pre-trade (thinking about it)</option>
+                  <option value="post_trade">Post-trade (already acted)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Reasoning */}
+            <div style={{ marginBottom: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                <div style={{ fontSize: "11px", color: T.muted }}>Your reasoning <span style={{ color: T.red }}>*</span></div>
+                <div style={{ fontSize: "11px", color: jReasoning.length < 50 ? T.red : T.green }}>
+                  {jReasoning.length} / 50 min
+                </div>
+              </div>
+              <textarea
+                value={jReasoning}
+                onChange={e => setJReasoning(e.target.value)}
+                placeholder="Explain your thesis in detail — what data made you bullish/bearish, what catalysts you see, what would make you wrong, your price target or exit plan. The more specific, the better your score."
+                rows={6}
+                style={{ width: "100%", background: T.surface, border: `1px solid ${jReasoning.length > 0 && jReasoning.length < 50 ? T.red : T.border}`, borderRadius: "10px", padding: "12px 14px", color: T.text, fontSize: "13px", resize: "vertical", outline: "none", fontFamily: "'Inter', sans-serif", lineHeight: "1.6", boxSizing: "border-box" }}
+              />
+            </div>
+
+            <button
+              onClick={submitJudgment}
+              disabled={jSubmitting || !jSymbol.trim() || jReasoning.trim().length < 50}
+              style={{
+                padding: "10px 28px", borderRadius: "10px", fontWeight: 700, fontSize: "13px", cursor: (jSubmitting || !jSymbol.trim() || jReasoning.trim().length < 50) ? "not-allowed" : "pointer",
+                background: (jSubmitting || !jSymbol.trim() || jReasoning.trim().length < 50) ? T.dim : T.accent,
+                color: "#fff", border: "none",
+              }}
+            >
+              {jSubmitting ? "AI Evaluating… (30-90s)" : "Evaluate My Thesis →"}
+            </button>
+            {jSubmitting && (
+              <div style={{ marginTop: "10px", fontSize: "12px", color: T.muted }}>
+                AI is pulling real data on {jSymbol} and verifying your claims…
+              </div>
+            )}
+          </div>
+
+          {/* Error */}
+          {jError && (
+            <div style={{ background: T.redBg, border: `1px solid ${T.red}40`, borderRadius: "10px", padding: "14px 18px", color: T.red, fontSize: "13px" }}>
+              Error: {jError}
+            </div>
+          )}
+
+          {/* Result card */}
+          {jResult && (() => {
+            const score = jResult.score ?? 0;
+            const scoreColor = score >= 75 ? T.green : score >= 50 ? T.amber : T.red;
+            const verdictColors: Record<string, string> = { strong: T.green, sound: T.green, mixed: T.amber, flawed: T.red, emotional: T.red };
+            const vc = verdictColors[jResult.verdict] ?? T.muted;
+            return (
+              <div style={{ background: T.card, border: `2px solid ${scoreColor}40`, borderRadius: "12px", padding: "24px" }}>
+                {/* Score header */}
+                <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "20px", flexWrap: "wrap" }}>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: "52px", fontWeight: 800, color: scoreColor, lineHeight: 1, fontFamily: "monospace" }}>{score}</div>
+                    <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>/ 100</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Verdict</div>
+                    <span style={{ fontSize: "15px", fontWeight: 700, color: vc, textTransform: "uppercase" }}>{jResult.verdict}</span>
+                    {jResult.bias_flags?.length > 0 && (
+                      <div style={{ marginTop: "8px", display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {jResult.bias_flags.map((b: string) => (
+                          <span key={b} style={{ fontSize: "10px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: T.redBg, color: T.red, textTransform: "uppercase", letterSpacing: "0.04em" }}>{b.replace(/_/g, " ")}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {jResult.data_used && (
+                    <div style={{ marginLeft: "auto", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", fontSize: "11px", color: T.muted, maxWidth: "260px" }}>
+                      <div style={{ fontWeight: 600, color: T.textSub, marginBottom: "4px" }}>Data verified</div>
+                      {jResult.data_used}
+                    </div>
+                  )}
+                </div>
+
+                {/* Three-panel breakdown */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                  {[
+                    { label: "✓ What's Right", text: jResult.what_is_right, color: T.green, bg: T.greenBg },
+                    { label: "✗ What's Wrong", text: jResult.what_is_wrong, color: T.red, bg: T.redBg },
+                    { label: "Bear Case", text: jResult.bear_case, color: T.amber, bg: T.amberBg },
+                  ].map(p => p.text ? (
+                    <div key={p.label} style={{ background: p.bg, border: `1px solid ${p.color}30`, borderRadius: "8px", padding: "14px" }}>
+                      <div style={{ fontSize: "10px", fontWeight: 700, color: p.color, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>{p.label}</div>
+                      <div style={{ fontSize: "12px", color: T.textSub, lineHeight: "1.6" }}>{p.text}</div>
+                    </div>
+                  ) : null)}
+                </div>
+
+                {/* Suggestions */}
+                {jResult.suggestions && (
+                  <div style={{ background: T.accentBg, border: `1px solid ${T.accent}30`, borderRadius: "8px", padding: "14px" }}>
+                    <div style={{ fontSize: "10px", fontWeight: 700, color: T.accent, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>How to Improve</div>
+                    <div style={{ fontSize: "12px", color: T.textSub, lineHeight: "1.7", whiteSpace: "pre-wrap" }}>{jResult.suggestions}</div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* History */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+            <div style={{ fontSize: "11px", color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "14px" }}>
+              Past Evaluations
+            </div>
+            {jHistoryLoading ? (
+              <div style={{ color: T.muted, fontSize: "13px", padding: "20px 0", textAlign: "center" }}>Loading…</div>
+            ) : jHistory.length === 0 ? (
+              <div style={{ color: T.muted, fontSize: "13px", padding: "20px 0", textAlign: "center" }}>No evaluations yet. Submit your first thesis above.</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {jHistory.map((e: any) => {
+                  const sc = e.ai_score ?? 0;
+                  const scColor = sc >= 75 ? T.green : sc >= 50 ? T.amber : T.red;
+                  const vc: Record<string, string> = { strong: T.green, sound: T.green, mixed: T.amber, flawed: T.red, emotional: T.red };
+                  return (
+                    <div key={e.id} style={{ display: "flex", alignItems: "flex-start", gap: "14px", background: T.surface, borderRadius: "10px", padding: "14px 16px" }}>
+                      <div style={{ fontSize: "24px", fontWeight: 800, color: scColor, fontFamily: "monospace", minWidth: "42px", textAlign: "center" }}>{sc}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px", flexWrap: "wrap" }}>
+                          <span style={{ fontWeight: 700, color: T.accent }}>{e.symbol}</span>
+                          <span style={{ fontSize: "11px", fontWeight: 600, padding: "1px 6px", borderRadius: "4px", background: T.card, color: T.textSub }}>{e.action?.toUpperCase()}</span>
+                          {e.verdict && <span style={{ fontSize: "11px", fontWeight: 700, color: vc[e.verdict] ?? T.muted, textTransform: "uppercase" }}>{e.verdict}</span>}
+                          {e.bias_flags?.map((b: string) => (
+                            <span key={b} style={{ fontSize: "10px", padding: "1px 5px", borderRadius: "3px", background: T.redBg, color: T.red }}>{b.replace(/_/g, " ")}</span>
+                          ))}
+                          <span style={{ fontSize: "11px", color: T.muted, marginLeft: "auto" }}>{new Date(e.created_at).toLocaleDateString()}</span>
+                        </div>
+                        <div style={{ fontSize: "12px", color: T.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {e.user_reasoning?.slice(0, 120)}{(e.user_reasoning?.length ?? 0) > 120 ? "…" : ""}
+                        </div>
+                        {e.suggestions && (
+                          <div style={{ fontSize: "11px", color: T.accent, marginTop: "4px" }}>
+                            Tip: {e.suggestions?.slice(0, 100)}{(e.suggestions?.length ?? 0) > 100 ? "…" : ""}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

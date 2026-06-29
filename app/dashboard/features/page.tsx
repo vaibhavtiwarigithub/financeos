@@ -41,6 +41,7 @@ const CATEGORIES: Category[] = [
       { name: "3-candidate/day limit, long-only for new positions", date: "2026-06-01" },
       { name: "SELL signal allowed for existing Robinhood holdings", date: "2026-06-01" },
       { name: "Research cron: daily automated runs", date: "2026-06-01" },
+      { name: "Social sentiment: StockTwits + Alpha Vantage signals", date: "2026-06-29" },
     ],
   },
   {
@@ -78,10 +79,13 @@ const CATEGORIES: Category[] = [
     label: "Multi-LLM",
     color: "#34D399",
     features: [
-      { name: "LLM Router: Claude + DeepSeek routing by task", date: "2026-06-29" },
+      { name: "LLM Router: Claude + DeepSeek + Groq routing by task", date: "2026-06-29" },
       { name: "LLM call log: cost + token tracking per model", date: "2026-06-29" },
       { name: "DeepSeek R1 integration (cheaper chat/summarize)", date: "2026-06-29" },
+      { name: "Groq Llama 3.3 70B free-tier integration", date: "2026-06-29" },
+      { name: "DeepSeek research agent variant (parallel signal source)", date: "2026-06-29" },
       { name: "Agent labels: track which LLM produced each signal", date: "2026-06-29" },
+      { name: "API key vault (PIN protected, encrypted storage)", date: "2026-06-29" },
     ],
   },
   {

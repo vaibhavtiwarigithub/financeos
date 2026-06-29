@@ -417,7 +417,7 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
           ) : queueItems.map((q: any) => (
             <div key={q.id} style={{ background: T.card, border: `1px solid ${q.status === "pending_approval" ? T.amber + "60" : T.border}`, borderRadius: "12px", padding: "18px 20px", marginBottom: "10px" }}>
               <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr auto", gap: "12px", alignItems: "center" }}>
-                <div style={{ fontWeight: 800, fontSize: "16px", color: T.accent, cursor: "pointer" }} onClick={() => setChartSymbol(q.symbol)}>
+                <div style={{ fontWeight: 800, fontSize: "16px", color: T.accent, cursor: "pointer" }} onClick={() => router.push(`/dashboard/symbol/${q.symbol}`)}>
                   {q.symbol} ↗
                 </div>
                 <div>
@@ -449,8 +449,8 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
                 )}
               </div>
               {q.rationale && (
-                <div style={{ marginTop: "10px", fontSize: "11px", color: T.muted, borderTop: `1px solid ${T.border}`, paddingTop: "10px" }}>
-                  {q.rationale.slice(0, 200)}{q.rationale.length > 200 ? "…" : ""}
+                <div style={{ marginTop: "10px", fontSize: "13px", color: T.textSub, lineHeight: "1.6", whiteSpace: "pre-wrap", borderTop: `1px solid ${T.border}`, paddingTop: "10px" }}>
+                  {q.rationale}
                 </div>
               )}
             </div>
@@ -468,7 +468,7 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
           ) : pendingSignals.map((s: any) => (
             <div key={s.id} style={{ background: T.card, border: `1px solid ${s.analyst_score >= 60 && s.direction === "long" ? T.accent + "44" : T.border}`, borderRadius: "12px", padding: "16px 20px", display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr 1fr", gap: "12px", alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <div style={{ fontWeight: 800, fontSize: "16px", cursor: "pointer", color: T.accent }} onClick={() => setChartSymbol(s.symbol)}>{s.symbol} ↗</div>
+                <div style={{ fontWeight: 800, fontSize: "16px", cursor: "pointer", color: T.accent }} onClick={() => router.push(`/dashboard/symbol/${s.symbol}`)}>{s.symbol} ↗</div>
                 <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#2D1B00", color: "#FBBF24", letterSpacing: "0.04em" }}>PAPER</span>
               </div>
               <div>
@@ -666,6 +666,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
   portfolio: any; positions: any[]; trades: any[]; perf: any[]; signals: any[];
   pendingSignals: any[]; strategy: any; tradeQueue: any[];
 }) {
+  const router = useRouter();
   const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue">("positions");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   const [vooReturn, setVooReturn] = useState<{ pct: number | null; loading: boolean }>({ pct: null, loading: true });
@@ -766,7 +767,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               {positions.map((p: any) => (
-                <PositionCard key={p.id} p={p} onChart={setChartSymbol} />
+                <PositionCard key={p.id} p={p} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
               ))}
             </div>
           )}

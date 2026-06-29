@@ -3,17 +3,23 @@ import { createClient } from "@/lib/supabase/server";
 import DashboardShell from "@/components/dashboard/DashboardShell";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  // getSession() reads cookie — no network call. Middleware already validated the JWT.
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) redirect("/login");
 
-  const { data: profile } = await supabase
+  const svc = (await import("@/lib/supabase/service")).createServiceClient();
+  const { data: profile } = await svc
     .from("profiles")
     .select("*")
-    .eq("id", user.id)
+    .eq("id", session.user.id)
     .single();
 
   if (!profile) redirect("/login");
 
-  return <DashboardShell profile={profile}>{children}</DashboardShell>;
+  const { data: config } = await svc.from("strategy_config").select("app_paused, paused_reason").limit(1).single();
+  const appPaused = (config as any)?.app_paused ?? false;
+  const pausedReason = (config as any)?.paused_reason ?? null;
+
+  return <DashboardShell profile={profile} appPaused={appPaused} pausedReason={pausedReason}>{children}</DashboardShell>;
 }

@@ -14,6 +14,13 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createServiceClient();
+
+  // Pause check — skip if app is paused
+  const { data: cfg } = await supabase.from("strategy_config").select("app_paused").limit(1).single();
+  if ((cfg as any)?.app_paused) {
+    return NextResponse.json({ skipped: true, reason: "App is paused — research cron disabled" });
+  }
+
   const entries = await gatherSymbols(supabase);
   const batch = entries.map(e => e.symbol);
 
@@ -64,7 +71,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Pre-warm price_cache for researched symbols + benchmark ETFs (fire async, don't block response)
-  const BENCHMARK_SYMBOLS = ["VOO", "QQQ", "SPY", "IWM", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLC"];
+  const BENCHMARK_SYMBOLS = ["VOO", "QQQ", "SPY", "IWM", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLC", "XLP", "XLU", "XLRE", "XLB"];
   const prewarmSymbols = [...new Set([...batch, ...BENCHMARK_SYMBOLS])];
   prewarmPriceCache(prewarmSymbols, supabase).catch(() => {});
 

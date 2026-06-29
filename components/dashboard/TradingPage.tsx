@@ -191,8 +191,8 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
                 )}
               </div>
               {q.rationale && (
-                <div style={{ marginTop: "10px", fontSize: "11px", color: T.muted, borderTop: `1px solid ${T.border}`, paddingTop: "10px" }}>
-                  {q.rationale.slice(0, 200)}{q.rationale.length > 200 ? "…" : ""}
+                <div style={{ marginTop: "10px", fontSize: "13px", color: T.textSub, lineHeight: "1.6", whiteSpace: "pre-wrap", borderTop: `1px solid ${T.border}`, paddingTop: "10px" }}>
+                  {q.rationale}
                 </div>
               )}
             </div>
