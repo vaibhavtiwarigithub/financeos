@@ -3,9 +3,9 @@ import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
 
 export const dynamic = "force-dynamic";
 
-// Cache in-memory for 5 minutes
+// Cache in-memory for 15 minutes — sector/index moves slowly enough
 let cache: { data: MarketOverview; ts: number } | null = null;
-const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_MS = 15 * 60 * 1000;
 
 export interface IndexQuote {
   symbol: string;

@@ -4,21 +4,44 @@ import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
 import StatusBar from "./StatusBar";
 
-const NAV = [
-  { href: "/dashboard",              label: "Home",         icon: "⌂" },
-  { href: "/dashboard/portfolio",    label: "Portfolio",    icon: "◈" },
-  { href: "/dashboard/markets",      label: "Markets",      icon: "◉" },
-  { href: "/dashboard/intelligence", label: "Intelligence", icon: "◆" },
-  { href: "/dashboard/agents",       label: "Agents",       icon: "◐" },
-  { href: "/dashboard/trading",      label: "Trading",      icon: "◑" },
-  { href: "/dashboard/learning",     label: "Learning",     icon: "◫" },
-  { href: "/dashboard/calendar",     label: "Calendar",     icon: "▦" },
-  { href: "/dashboard/activity",      label: "Activity",     icon: "◷" },
-  { href: "/dashboard/you",          label: "You",          icon: "◎" },
-  { href: "/dashboard/settings",     label: "Settings",     icon: "⚙" },
+type NavItem = { href: string; label: string; icon: string };
+type NavGroup = { section: string; items: NavItem[] };
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    section: "Monitor",
+    items: [
+      { href: "/dashboard",             label: "Home",         icon: "⌂" },
+      { href: "/dashboard/activity",    label: "Activity",     icon: "◷" },
+      { href: "/dashboard/markets",     label: "Markets",      icon: "◉" },
+    ],
+  },
+  {
+    section: "Agents",
+    items: [
+      { href: "/dashboard/agents",       label: "Agents",      icon: "◐" },
+      { href: "/dashboard/intelligence", label: "Research",    icon: "◆" },
+      { href: "/dashboard/learning",     label: "Learning",    icon: "◫" },
+    ],
+  },
+  {
+    section: "Portfolio",
+    items: [
+      { href: "/dashboard/portfolio",   label: "Portfolio",    icon: "◈" },
+      { href: "/dashboard/trading",     label: "Trading",      icon: "◑" },
+      { href: "/dashboard/calendar",    label: "Calendar",     icon: "▦" },
+    ],
+  },
+  {
+    section: "",
+    items: [
+      { href: "/dashboard/you",         label: "You",          icon: "◎" },
+      { href: "/dashboard/settings",    label: "Settings",     icon: "⚙" },
+    ],
+  },
 ];
 
-const ADMIN_NAV = { href: "/dashboard/admin", label: "Admin", icon: "★" };
+const ADMIN_NAV: NavItem = { href: "/dashboard/admin", label: "Admin", icon: "★" };
 
 export default function DashboardShell({ profile, children }: { profile: Profile; children: React.ReactNode }) {
   const router   = useRouter();
@@ -30,7 +53,10 @@ export default function DashboardShell({ profile, children }: { profile: Profile
     router.push("/login");
   }
 
-  const navItems = [...NAV, ...(["admin", "superadmin"].includes(profile.role) ? [ADMIN_NAV] : [])];
+  const groups = [...NAV_GROUPS];
+  if (["admin", "superadmin"].includes(profile.role)) {
+    groups[groups.length - 1].items.push(ADMIN_NAV);
+  }
   const tierColor = profile.subscription_tier === "elite"
     ? "var(--fo-amber)"
     : profile.subscription_tier === "pro"
@@ -57,26 +83,42 @@ export default function DashboardShell({ profile, children }: { profile: Profile
 
         {/* Nav */}
         <nav className="flex-1 px-2.5 py-3 overflow-y-auto">
-          {navItems.map(item => {
-            const active = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
-            return (
-              <button
-                key={item.href}
-                onClick={() => router.push(item.href)}
-                className="w-full flex items-center gap-2.5 px-3 py-[9px] rounded-lg text-[14px] mb-0.5 text-left cursor-pointer transition-colors"
-                style={{
-                  background:      active ? "rgba(99,102,241,0.10)" : "transparent",
-                  color:           active ? "var(--fo-accent)" : "var(--fo-text-secondary)",
-                  fontWeight:      active ? 500 : 400,
-                  border:          "none",
-                  borderLeft:      `2px solid ${active ? "var(--fo-accent)" : "transparent"}`,
-                }}
-              >
-                <span className="w-[18px] text-center text-[14px]">{item.icon}</span>
-                {item.label}
-              </button>
-            );
-          })}
+          {groups.map((group, gi) => (
+            <div key={gi} style={{ marginBottom: "4px" }}>
+              {group.section && (
+                <div style={{
+                  fontSize: "9px", fontWeight: 700, letterSpacing: "0.12em",
+                  textTransform: "uppercase", color: "var(--fo-text-muted)",
+                  padding: "10px 12px 4px", opacity: 0.6,
+                }}>
+                  {group.section}
+                </div>
+              )}
+              {!group.section && gi > 0 && (
+                <div style={{ height: "1px", background: "var(--fo-border-solid)", margin: "8px 4px 10px" }} />
+              )}
+              {group.items.map(item => {
+                const active = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
+                return (
+                  <button
+                    key={item.href}
+                    onClick={() => router.push(item.href)}
+                    className="w-full flex items-center gap-2.5 px-3 py-[9px] rounded-lg text-[14px] mb-0.5 text-left cursor-pointer transition-colors"
+                    style={{
+                      background:  active ? "rgba(99,102,241,0.10)" : "transparent",
+                      color:       active ? "var(--fo-accent)" : "var(--fo-text-secondary)",
+                      fontWeight:  active ? 500 : 400,
+                      border:      "none",
+                      borderLeft:  `2px solid ${active ? "var(--fo-accent)" : "transparent"}`,
+                    }}
+                  >
+                    <span className="w-[18px] text-center text-[14px]">{item.icon}</span>
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* User */}
