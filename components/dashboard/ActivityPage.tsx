@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
   text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280",
@@ -189,8 +191,71 @@ function DayHeader({ dayKey }: { dayKey: string }) {
   );
 }
 
-function EventCard({ ev }: { ev: TimelineEvent }) {
+function ExpandedDetails({ ev }: { ev: TimelineEvent }) {
+  const raw = ev.raw;
+  const style: React.CSSProperties = {
+    borderTop: `1px solid ${T.border}`,
+    marginTop: 12,
+    paddingTop: 12,
+  };
+
+  if (ev.kind === "agent_run") {
+    return (
+      <div style={style}>
+        <div style={{ fontSize: "12px", color: T.textSub }}>
+          <div><b>Summary:</b> {raw.result_summary}</div>
+          <div style={{ marginTop: 6 }}><b>Symbols:</b> {raw.symbols?.join(", ") || "—"}</div>
+          <div><b>Signals written:</b> {raw.signals_written ?? 0}</div>
+          <div><b>Status:</b> {raw.status}</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (ev.kind === "signal") {
+    return (
+      <div style={style}>
+        <div style={{ fontSize: "12px", color: T.textSub }}>
+          <div><b>Direction:</b> {raw.direction} | <b>Score:</b> {raw.analyst_score} | <b>Conviction:</b> {raw.conviction}</div>
+          <div style={{ marginTop: 6 }}><b>Score explained:</b> Composite 0–100. ≥60 = PaperTrader fills. ≥70 = high conviction. Combines fundamentals (PE, revenue, FCF), technicals (RSI, EMA), news sentiment, insider activity, earnings revision.</div>
+          {raw.rationale && <div style={{ marginTop: 6, fontStyle: "italic" }}><b>Rationale:</b> {raw.rationale}</div>}
+          <div style={{ marginTop: 4 }}><b>Source:</b> {raw.source ?? "screener"} | <b>Status:</b> {raw.status}</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (ev.kind === "paper_trade") {
+    return (
+      <div style={style}>
+        <div style={{ fontSize: "12px", color: T.textSub }}>
+          <div><b>Side:</b> {raw.order_side?.toUpperCase()} | <b>Qty:</b> {raw.qty} | <b>Fill:</b> ${Number(raw.fill_price).toFixed(2)}</div>
+          <div><b>Total cost:</b> ${(raw.qty * raw.fill_price).toFixed(2)}</div>
+          {raw.exit_price && <div><b>Exit:</b> ${Number(raw.exit_price).toFixed(2)} | <b>P&L:</b> ${Number(raw.realized_pnl).toFixed(2)} ({raw.outcome})</div>}
+          {raw.rationale && <div style={{ marginTop: 6, fontStyle: "italic", maxWidth: 600 }}><b>Rationale:</b> {raw.rationale.slice(0, 300)}{raw.rationale.length > 300 ? "…" : ""}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  // learning_log
+  return (
+    <div style={style}>
+      <div style={{ fontSize: "12px", color: T.textSub }}>
+        <div style={{ fontStyle: "italic" }}>{raw.note}</div>
+        {raw.trades_evaluated != null && <div style={{ marginTop: 4 }}><b>Trades evaluated:</b> {raw.trades_evaluated}</div>}
+      </div>
+    </div>
+  );
+}
+
+function EventCard({ ev, expandedId, setExpandedId }: {
+  ev: TimelineEvent;
+  expandedId: string | null;
+  setExpandedId: (id: string | null) => void;
+}) {
   const meta = getEventMeta(ev);
+  const isExpanded = expandedId === ev.id;
 
   return (
     <div style={{ display: "flex", gap: "0", alignItems: "flex-start", position: "relative" }}>
@@ -217,70 +282,85 @@ function EventCard({ ev }: { ev: TimelineEvent }) {
       </div>
 
       {/* Card content */}
-      <div style={{
-        flex: 1,
-        background: T.card,
-        border: `1px solid ${T.border}`,
-        borderRadius: "8px",
-        padding: "10px 14px",
-        marginBottom: "8px",
-        display: "flex",
-        gap: "12px",
-        alignItems: "flex-start",
-        minWidth: 0,
-      }}>
-        {/* Icon */}
-        <span style={{
-          fontSize: "16px",
-          lineHeight: 1,
-          marginTop: "2px",
-          flexShrink: 0,
-          color: meta.dotColor,
-          fontStyle: "normal",
-        }}>
-          {meta.icon}
-        </span>
-
-        {/* Text */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize: "13px",
-            fontWeight: 500,
-            color: T.text,
-            lineHeight: "1.4",
-            wordBreak: "break-word",
+      <div
+        onClick={() => setExpandedId(isExpanded ? null : ev.id)}
+        style={{
+          flex: 1,
+          background: T.card,
+          border: `1px solid ${T.border}`,
+          borderRadius: "8px",
+          padding: "10px 14px",
+          marginBottom: "8px",
+          minWidth: 0,
+          cursor: "pointer",
+        }}
+      >
+        {/* Header row */}
+        <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+          {/* Icon */}
+          <span style={{
+            fontSize: "16px",
+            lineHeight: 1,
+            marginTop: "2px",
+            flexShrink: 0,
+            color: meta.dotColor,
+            fontStyle: "normal",
           }}>
-            {meta.label}
-          </div>
-          {meta.subtext && (
+            {meta.icon}
+          </span>
+
+          {/* Text */}
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{
-              fontSize: "11px",
-              color: T.textSub,
-              marginTop: "3px",
+              fontSize: "13px",
+              fontWeight: 500,
+              color: T.text,
               lineHeight: "1.4",
               wordBreak: "break-word",
             }}>
-              {meta.subtext}
+              {meta.label}
             </div>
-          )}
+            {meta.subtext && (
+              <div style={{
+                fontSize: "11px",
+                color: T.textSub,
+                marginTop: "3px",
+                lineHeight: "1.4",
+                wordBreak: "break-word",
+              }}>
+                {meta.subtext}
+              </div>
+            )}
+          </div>
+
+          {/* Time + toggle */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0, marginTop: "2px" }}>
+            <span style={{
+              fontSize: "11px",
+              color: T.muted,
+              whiteSpace: "nowrap",
+            }}>
+              {formatTime(ev.ts)}
+            </span>
+            <span style={{ fontSize: "11px", color: T.muted, userSelect: "none" }}>
+              {isExpanded ? "▾" : "▸"}
+            </span>
+          </div>
         </div>
 
-        {/* Time */}
-        <span style={{
-          fontSize: "11px",
-          color: T.muted,
-          flexShrink: 0,
-          marginTop: "2px",
-          whiteSpace: "nowrap",
-        }}>
-          {formatTime(ev.ts)}
-        </span>
+        {/* Expanded details */}
+        {isExpanded && <ExpandedDetails ev={ev} />}
       </div>
     </div>
   );
 }
 
-function DaySection({ dayKey, events }: { dayKey: string; events: TimelineEvent[] }) {
+function DaySection({ dayKey, events, expandedId, setExpandedId }: {
+  dayKey: string;
+  events: TimelineEvent[];
+  expandedId: string | null;
+  setExpandedId: (id: string | null) => void;
+}) {
   return (
     <div style={{ marginBottom: "28px" }}>
       <DayHeader dayKey={dayKey} />
@@ -308,7 +388,7 @@ function DaySection({ dayKey, events }: { dayKey: string; events: TimelineEvent[
         {/* Event cards stacked */}
         <div style={{ flex: 1, marginLeft: "-32px" }}>
           {events.map((ev) => (
-            <EventCard key={ev.id} ev={ev} />
+            <EventCard key={ev.id} ev={ev} expandedId={expandedId} setExpandedId={setExpandedId} />
           ))}
         </div>
       </div>
@@ -329,6 +409,7 @@ export default function ActivityPage({
   trades: any[];
   learningLog: any[];
 }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const events = buildEvents(runs, signals, trades, learningLog);
   const grouped = groupByDay(events);
 
@@ -381,7 +462,7 @@ export default function ActivityPage({
 
       {/* Timeline */}
       {grouped.map(([dayKey, dayEvents]) => (
-        <DaySection key={dayKey} dayKey={dayKey} events={dayEvents} />
+        <DaySection key={dayKey} dayKey={dayKey} events={dayEvents} expandedId={expandedId} setExpandedId={setExpandedId} />
       ))}
     </div>
   );

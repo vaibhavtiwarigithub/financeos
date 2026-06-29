@@ -145,6 +145,23 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
 }) {
   const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live">("positions");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
+  const [vooReturn, setVooReturn] = useState<{ pct: number | null; loading: boolean }>({ pct: null, loading: true });
+
+  useEffect(() => {
+    fetch("/api/charts/price-history?symbol=VOO&days=90")
+      .then(r => r.json())
+      .then(d => {
+        const candles = d.candles ?? [];
+        if (candles.length >= 2) {
+          const start = candles[0].close;
+          const end = candles[candles.length - 1].close;
+          setVooReturn({ pct: ((end - start) / start) * 100, loading: false });
+        } else {
+          setVooReturn({ pct: null, loading: false });
+        }
+      })
+      .catch(() => setVooReturn({ pct: null, loading: false }));
+  }, []);
 
   const startingNAV = 10000;
   const nav = portfolio?.nav ?? startingNAV;
@@ -173,12 +190,23 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
       </div>
 
       {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "16px", marginBottom: "24px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "16px", marginBottom: "24px" }}>
         {statCard("Paper NAV", "$" + nav.toFixed(0), "started $10,000")}
         {statCard("Total P&L", fmt(totalPnl), fmtPct(totalPnlPct), pnlColor(totalPnl))}
         {statCard("Cash", "$" + cash.toFixed(0), `${positions.length} position${positions.length !== 1 ? "s" : ""}`)}
         {statCard("Invested", "$" + posValue.toFixed(0), `${((posValue / nav) * 100).toFixed(1)}% deployed`)}
         {statCard("Win Rate", winRate !== null ? winRate + "%" : "—", `${wins}W/${closedTrades.length - wins}L of ${closedTrades.length}`, winRate !== null ? (winRate >= 60 ? T.green : winRate >= 40 ? T.amber : T.red) : T.muted)}
+        {(() => {
+          if (vooReturn.loading) return statCard("vs VOO (90d)", "…", "loading");
+          if (vooReturn.pct === null) return statCard("vs VOO (90d)", "—", "no data");
+          const alpha = totalPnlPct - vooReturn.pct;
+          return statCard(
+            "vs VOO (90d)",
+            (alpha >= 0 ? "+" : "") + alpha.toFixed(2) + "%",
+            `VOO: ${vooReturn.pct >= 0 ? "+" : ""}${vooReturn.pct.toFixed(2)}%`,
+            alpha >= 0 ? T.green : T.red
+          );
+        })()}
       </div>
 
       {/* Charts row */}

@@ -3,9 +3,9 @@ import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
 
 const WATCHLIST = ["AAPL", "NVDA", "TSLA", "MSFT", "META", "GOOGL", "AMZN", "NFLX", "AMD", "INTC", "UBER"];
 
-// Cache in memory for 1hr to avoid hammering claude.cmd
+// Cache in memory for 7 days — earnings dates don't change week-to-week
 let cache: { data: EarningsEvent[]; fetchedAt: number } | null = null;
-const CACHE_TTL = 60 * 60 * 1000;
+const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
 export type EarningsEvent = {
   symbol: string;

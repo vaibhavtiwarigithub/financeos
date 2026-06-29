@@ -13,12 +13,12 @@ const T = {
 
 const COLORS = {
   portfolio: "#6366F1",
-  SPY: "#34D399",
+  VOO: "#34D399",
   QQQ: "#60A5FA",
 };
 
 interface PerfRow { date: string; nav: number; }
-interface BenchmarkPoint { date: string; portfolio?: number; SPY?: number; QQQ?: number; }
+interface BenchmarkPoint { date: string; portfolio?: number; VOO?: number; QQQ?: number; }
 
 function normalize(rows: { date: string; value: number }[]): { date: string; pct: number }[] {
   if (!rows.length) return [];
@@ -41,7 +41,7 @@ function CustomTooltip({ active, payload, label }: any) {
 }
 
 export default function BenchmarkChart({ perfRows }: { perfRows: PerfRow[] }) {
-  const [spyCandles, setSpyCandles] = useState<any[]>([]);
+  const [vooCandles, setVooCandles] = useState<any[]>([]);
   const [qqqCandles, setQqqCandles] = useState<any[]>([]);
   const [loadingBench, setLoadingBench] = useState(false);
 
@@ -49,10 +49,10 @@ export default function BenchmarkChart({ perfRows }: { perfRows: PerfRow[] }) {
     if (perfRows.length === 0) return;
     setLoadingBench(true);
     Promise.all([
-      fetch("/api/charts/price-history?symbol=SPY&days=90").then(r => r.json()),
+      fetch("/api/charts/price-history?symbol=VOO&days=90").then(r => r.json()),
       fetch("/api/charts/price-history?symbol=QQQ&days=90").then(r => r.json()),
-    ]).then(([spy, qqq]) => {
-      setSpyCandles(spy.candles ?? []);
+    ]).then(([voo, qqq]) => {
+      setVooCandles(voo.candles ?? []);
       setQqqCandles(qqq.candles ?? []);
     }).finally(() => setLoadingBench(false));
   }, [perfRows.length]);
@@ -70,25 +70,24 @@ export default function BenchmarkChart({ perfRows }: { perfRows: PerfRow[] }) {
 
   // Align data by date
   const portfolioNorm = normalize(perfRows.map(r => ({ date: r.date, value: r.nav })));
-  const spyNorm = normalize(spyCandles.map((c: any) => ({ date: c.date, value: c.close })));
+  const vooNorm = normalize(vooCandles.map((c: any) => ({ date: c.date, value: c.close })));
   const qqqNorm = normalize(qqqCandles.map((c: any) => ({ date: c.date, value: c.close })));
 
-  const spyMap = new Map(spyNorm.map(r => [r.date, r.pct]));
+  const vooMap = new Map(vooNorm.map(r => [r.date, r.pct]));
   const qqqMap = new Map(qqqNorm.map(r => [r.date, r.pct]));
 
-  // Find closest spy/qqq dates for each portfolio date
-  const spyDates = spyNorm.map(r => r.date).sort();
+  const vooDates = vooNorm.map(r => r.date).sort();
 
   function closestDate(target: string): string {
-    let best = spyDates[0];
-    for (const d of spyDates) { if (d <= target) best = d; }
+    let best = vooDates[0];
+    for (const d of vooDates) { if (d <= target) best = d; }
     return best;
   }
 
   const chartData: BenchmarkPoint[] = portfolioNorm.map(r => ({
     date: r.date,
     portfolio: r.pct,
-    SPY: spyMap.get(closestDate(r.date)),
+    VOO: vooMap.get(closestDate(r.date)),
     QQQ: qqqMap.get(closestDate(r.date)),
   }));
 
@@ -112,7 +111,7 @@ export default function BenchmarkChart({ perfRows }: { perfRows: PerfRow[] }) {
           <ReferenceLine y={0} stroke={T.border} />
           <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }} />
           <Line type="monotone" dataKey="portfolio" name="Portfolio" stroke={COLORS.portfolio} strokeWidth={2.5} dot={false} />
-          {spyNorm.length > 0 && <Line type="monotone" dataKey="SPY" stroke={COLORS.SPY} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />}
+          {vooNorm.length > 0 && <Line type="monotone" dataKey="VOO" stroke={COLORS.VOO} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />}
           {qqqNorm.length > 0 && <Line type="monotone" dataKey="QQQ" stroke={COLORS.QQQ} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />}
         </LineChart>
       </ResponsiveContainer>
