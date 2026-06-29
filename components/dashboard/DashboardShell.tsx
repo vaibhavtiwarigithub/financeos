@@ -22,6 +22,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/dashboard/agents",       label: "Agents",      icon: "◐" },
       { href: "/dashboard/intelligence", label: "Research",    icon: "◆" },
       { href: "/dashboard/learning",     label: "Learning",    icon: "◫" },
+      { href: "/dashboard/mentor",       label: "Mentor",      icon: "◉" },
     ],
   },
   {
@@ -120,6 +121,25 @@ export default function DashboardShell({ profile, children }: { profile: Profile
             </div>
           ))}
         </nav>
+
+        {/* Account status */}
+        <div style={{ padding: "8px 12px", borderTop: "1px solid var(--fo-border-solid)", fontSize: "10px", color: "var(--fo-text-muted)" }}>
+          <div style={{ marginBottom: "4px", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.5 }}>Accounts</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>Paper portfolio</span>
+              <span style={{ color: "#FBBF24", fontWeight: 600 }}>PAPER</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>••••8641</span>
+              <span style={{ color: "#60A5FA", fontWeight: 600 }}>READ-ONLY</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>••••0660</span>
+              <span style={{ color: "#F87171", fontWeight: 600 }}>ORDERS</span>
+            </div>
+          </div>
+        </div>
 
         {/* User */}
         <div className="p-3.5" style={{ borderTop: "1px solid var(--fo-border-solid)" }}>
