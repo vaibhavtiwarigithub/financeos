@@ -2,6 +2,7 @@
 import { useState, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import AgentComparisonCard from "@/components/dashboard/AgentComparisonCard";
 const SignalCharts = lazy(() => import("@/components/charts/SignalChartsWrapper"));
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 
@@ -274,6 +275,11 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           {runResult}
         </div>
       )}
+
+      {/* Agent A/B Comparison */}
+      <div style={{ marginBottom: "20px" }}>
+        <AgentComparisonCard />
+      </div>
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: "4px", marginBottom: "16px", background: T.surface, padding: "4px", borderRadius: "10px", width: "fit-content" }}>

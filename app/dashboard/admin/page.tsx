@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import Link from "next/link";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -13,12 +14,9 @@ interface UserRow {
   xp: number; analysis_count: number; created_at: string;
 }
 
-interface TokenDay { date: string; input: number; output: number; calls: number; runs: number }
-
 export default function AdminPage() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [stats, setStats] = useState<{ totalUsers: number; proUsers: number; eliteUsers: number; totalCost: number } | null>(null);
-  const [tokenDays, setTokenDays] = useState<TokenDay[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
 
@@ -26,11 +24,9 @@ export default function AdminPage() {
     Promise.all([
       fetch("/api/admin?action=users").then(r => r.json()),
       fetch("/api/admin?action=stats").then(r => r.json()),
-      fetch("/api/admin?action=token_usage").then(r => r.json()),
-    ]).then(([u, s, t]) => {
+    ]).then(([u, s]) => {
       setUsers(u.users ?? []);
       setStats(s);
-      setTokenDays(t.days ?? []);
       setLoading(false);
     });
   }, []);
@@ -51,7 +47,13 @@ export default function AdminPage() {
 
   return (
     <div style={{ padding: "28px" }}>
-      <div style={{ fontSize: "20px", fontWeight: 600, marginBottom: "6px" }}>Admin Dashboard</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
+        <div style={{ fontSize: "20px", fontWeight: 600 }}>Admin Dashboard</div>
+        <Link href="/dashboard/admin/vault"
+          style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "#252836", border: "1px solid #363a4d", borderRadius: "8px", padding: "7px 14px", fontSize: "13px", fontWeight: 600, color: T.accent, textDecoration: "none" }}>
+          🔐 API Vault
+        </Link>
+      </div>
       <div style={{ fontSize: "13px", color: T.muted, marginBottom: "24px" }}>Manage users, roles, and subscriptions</div>
 
       {/* Stats */}
@@ -70,50 +72,6 @@ export default function AdminPage() {
           ))}
         </div>
       )}
-
-      {/* Token usage — 14-day bar chart */}
-      {tokenDays.length > 0 && (() => {
-        const maxTokens = Math.max(...tokenDays.map(d => d.input + d.output), 1);
-        const W = 600, H = 80, barW = Math.floor(W / 16), gap = 2;
-        const totalIn = tokenDays.reduce((s, d) => s + d.input, 0);
-        const totalOut = tokenDays.reduce((s, d) => s + d.output, 0);
-        const totalCalls = tokenDays.reduce((s, d) => s + d.calls, 0);
-        return (
-          <div style={{ ...card, marginBottom: "20px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <div style={{ fontSize: "14px", fontWeight: 600 }}>Claude Token Usage — Last 14 Days</div>
-              <div style={{ display: "flex", gap: "20px", fontSize: "12px", color: T.muted }}>
-                <span><span style={{ color: T.accent }}>■</span> {(totalIn + totalOut).toLocaleString()} total tokens</span>
-                <span><span style={{ color: T.green }}>■</span> {totalIn.toLocaleString()} in</span>
-                <span><span style={{ color: T.yellow }}>■</span> {totalOut.toLocaleString()} out</span>
-                <span>{totalCalls} Claude calls</span>
-              </div>
-            </div>
-            <svg viewBox={`0 0 ${W} ${H + 20}`} style={{ width: "100%", height: "auto" }}>
-              {tokenDays.map((d, i) => {
-                const total = d.input + d.output;
-                const barH = Math.max(2, Math.round((total / maxTokens) * H));
-                const inH = Math.round((d.input / maxTokens) * H);
-                const x = i * (barW + gap);
-                const label = d.date.slice(5); // MM-DD
-                return (
-                  <g key={d.date}>
-                    {/* output portion (top) */}
-                    <rect x={x} y={H - barH} width={barW} height={barH - inH} fill="#FBBF2444" rx="2" />
-                    {/* input portion (bottom) */}
-                    <rect x={x} y={H - inH} width={barW} height={inH} fill="#6366F166" rx="2" />
-                    <text x={x + barW / 2} y={H + 14} textAnchor="middle" fontSize="8" fill="#6B7280">{label}</text>
-                  </g>
-                );
-              })}
-            </svg>
-            <div style={{ fontSize: "11px", color: T.muted, marginTop: "8px" }}>
-              Claude Max plan — tokens tracked but not billed per-token. High usage = more subprocess calls = slower runs.
-              Optimization target: batch research symbols into 1 call instead of 1 call/symbol.
-            </div>
-          </div>
-        );
-      })()}
 
       {/* Users table */}
       <div style={card}>
