@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 
 async function requireAdmin(supabase: Awaited<ReturnType<typeof createClient>>) {
   const { data: { user } } = await supabase.auth.getUser();
@@ -36,6 +37,29 @@ export async function GET(req: NextRequest) {
     const { data: recentUsage } = await supabase.from("usage_logs").select("cost_usd").gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString());
     const totalCost = recentUsage?.reduce((s, r) => s + (r.cost_usd ?? 0), 0) ?? 0;
     return NextResponse.json({ totalUsers, proUsers, eliteUsers, totalCost });
+  }
+
+  if (action === "token_usage") {
+    const svc = createServiceClient();
+    const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: runs } = await svc
+      .from("agent_runs")
+      .select("agent_type, tokens_input, tokens_output, claude_calls, completed_at")
+      .gte("completed_at", since)
+      .not("tokens_input", "is", null)
+      .order("completed_at", { ascending: true });
+
+    // Group by date
+    const byDate: Record<string, { date: string; input: number; output: number; calls: number; runs: number }> = {};
+    for (const r of runs ?? []) {
+      const date = r.completed_at?.slice(0, 10) ?? "unknown";
+      if (!byDate[date]) byDate[date] = { date, input: 0, output: 0, calls: 0, runs: 0 };
+      byDate[date].input += r.tokens_input ?? 0;
+      byDate[date].output += r.tokens_output ?? 0;
+      byDate[date].calls += r.claude_calls ?? 0;
+      byDate[date].runs++;
+    }
+    return NextResponse.json({ days: Object.values(byDate), runs: runs ?? [] });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });

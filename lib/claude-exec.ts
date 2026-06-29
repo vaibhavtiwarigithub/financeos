@@ -49,3 +49,16 @@ export function parseClaudeOutput(stdout: string): string {
     return stdout;
   }
 }
+
+// Extract token usage from Claude CLI JSON output
+export function parseTokenUsage(stdout: string): { input: number; output: number } {
+  try {
+    const parsed = JSON.parse(stdout);
+    return {
+      input: parsed.usage?.input_tokens ?? 0,
+      output: parsed.usage?.output_tokens ?? 0,
+    };
+  } catch {
+    return { input: 0, output: 0 };
+  }
+}
