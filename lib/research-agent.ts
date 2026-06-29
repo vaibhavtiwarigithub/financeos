@@ -1,5 +1,6 @@
 import { execClaude, parseClaudeOutput, parseTokenUsage } from "@/lib/claude-exec";
 import { fetchSocialSentiment, SocialSentiment } from "@/lib/social-sentiment";
+import { fetchOptionsSignal, OptionsSignal } from "@/lib/options-signal";
 
 const KNOWN_ETFS = new Set([
   // Broad market
@@ -176,7 +177,7 @@ const DOCTRINE_PREAMBLE = `## Reasoning doctrine (non-negotiable)
 
 Scope: long-only US equities/ETFs, 2–20 market-day swing. Never propose options, crypto, shorting, leverage, or intraday.`;
 
-function buildStockPrompt(symbol: string, isHeld: boolean, social: SocialSentiment | null): string {
+function buildStockPrompt(symbol: string, isHeld: boolean, social: SocialSentiment | null, options: OptionsSignal | null): string {
   const heldNote = isHeld
     ? `\nIMPORTANT: This is a CURRENTLY HELD position. If analysis is bearish, set direction to "short" as an exit signal. Do NOT override to neutral.`
     : `\nNew candidate position. Only output direction "long" or "neutral" — never "short".`;
@@ -191,8 +192,21 @@ Use this to inform sentiment_score (scale 0–100: Bullish≈70+, Neutral≈50, 
 `
     : "";
 
+  const optionsBlock = options
+    ? `
+## Pre-fetched options flow (nearest expiry: ${options.nearestExpiry})
+${options.summary}
+Interpretation guide:
+- PCR < 0.7 = bullish (market buying calls). PCR > 1.2 = bearish (hedging with puts).
+- Unusual call volume (vol >> open interest) on OTM strikes = institutional bullish bet.
+- Unusual put volume on OTM strikes = hedging or directional bear bet.
+- High IV (>70th pct) = market pricing in a big move — be cautious entering before catalyst.
+Factor options flow into sentiment_score and conviction. Unusual call activity boosts conviction for longs; unusual put sweeps reduce it.
+`
+    : "";
+
   return `${DOCTRINE_PREAMBLE}
-${socialBlock}
+${socialBlock}${optionsBlock}
 You are a professional equity analyst. Research ${symbol} using these tools in order:
 
 1. Call get_financial_metrics_snapshot (FinancialDatasets) for fundamentals: P/E, revenue growth, margins, FCF yield, ROE
@@ -268,12 +282,15 @@ export async function processSymbol(
   const { symbol, isHeld, isEtf } = entry;
   const source: string = isHeld ? "holding" : "screener";
 
-  // Fetch social sentiment in parallel (non-blocking — failures are silenced)
-  const socialResult = await fetchSocialSentiment(symbol).catch(() => null);
+  // Fetch social sentiment + options flow in parallel (non-blocking — failures silenced)
+  const [socialResult, optionsResult] = await Promise.all([
+    fetchSocialSentiment(symbol).catch(() => null),
+    isEtf ? Promise.resolve(null) : fetchOptionsSignal(symbol).catch(() => null),
+  ]);
 
   const prompt = isEtf
     ? buildEtfPrompt(symbol, isHeld, socialResult)
-    : buildStockPrompt(symbol, isHeld, socialResult);
+    : buildStockPrompt(symbol, isHeld, socialResult, optionsResult);
 
   const stdout = await execClaude(prompt, 90000);
   const claudeRaw = parseClaudeOutput(stdout);
@@ -304,6 +321,7 @@ export async function processSymbol(
         _original_direction: rawDirection,
         _direction_override: rawDirection !== signalDirection,
         _social_sentiment: socialResult ?? null,
+        _options_signal: optionsResult ?? null,
       },
     })
     .select()
