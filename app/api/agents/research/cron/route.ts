@@ -54,6 +54,36 @@ export async function POST(req: NextRequest) {
     } as any).eq("id", runId);
   }
 
+  // Emit alerts for failures
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  if (errs > 0) {
+    const failedSymbols = results.filter(r => r.error).map(r => r.symbol).join(", ");
+    await fetch(`${appUrl}/api/alerts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        severity: errs === results.length ? "error" : "warn",
+        category: "cron",
+        title: `Research: ${errs} symbol${errs > 1 ? "s" : ""} failed`,
+        detail: `Failed: ${failedSymbols}. ${ok} succeeded.`,
+        auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+      }),
+    }).catch(() => {});
+  }
+  if (ok === 0 && batch.length > 0) {
+    await fetch(`${appUrl}/api/alerts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        severity: "error",
+        category: "cron",
+        title: "Research cron produced 0 signals",
+        detail: `Attempted ${batch.length} symbols, all failed. Check LLM keys and data APIs.`,
+        auto_expire_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+      }),
+    }).catch(() => {});
+  }
+
   // Chain PaperTrader automatically after research completes
   let paperTradeResult: any = null;
   try {
