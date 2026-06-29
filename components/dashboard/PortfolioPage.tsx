@@ -17,20 +17,263 @@ function pnlColor(n: number) { return n >= 0 ? T.green : T.red; }
 function fmt(n: number) { return (n >= 0 ? "+" : "") + "$" + Math.abs(n).toFixed(2); }
 function fmtPct(n: number) { return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
 
-function MiniChart({ perf }: { perf: any[] }) {
-  if (perf.length < 2) return <div style={{ color: T.muted, fontSize: "12px" }}>No chart data yet</div>;
+// ── Gauge helpers ─────────────────────────────────────────────────────────────
+const SEMI_R = 56;
+const SEMI_CX = 72;
+const SEMI_CY = 72;
+const SEMI_CIRC = Math.PI * SEMI_R; // ≈ 175.9
+
+function semiArcPath(cx: number, cy: number, r: number) {
+  return `M ${cx - r},${cy} A ${r},${r} 0 0,1 ${cx + r},${cy}`;
+}
+
+/** Semicircle gauge — 0-100% */
+function SemiGauge({
+  value, label, sublabel, color,
+}: { value: number | null; label: string; sublabel?: string; color: string }) {
+  const clamp = Math.max(0, Math.min(100, value ?? 0));
+  const filled = (clamp / 100) * SEMI_CIRC;
+  const track = semiArcPath(SEMI_CX, SEMI_CY, SEMI_R);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px" }}>
+      <svg viewBox="0 0 144 84" style={{ width: "144px", height: "84px", overflow: "visible" }}>
+        {/* Track */}
+        <path d={track} fill="none" stroke={T.border} strokeWidth="10" strokeLinecap="round" />
+        {/* Fill */}
+        {value !== null && (
+          <path
+            d={track} fill="none" stroke={color} strokeWidth="10" strokeLinecap="round"
+            strokeDasharray={`${filled} ${SEMI_CIRC}`}
+          />
+        )}
+        {/* Value text */}
+        <text x={SEMI_CX} y={SEMI_CY - 6} textAnchor="middle" fill={value !== null ? color : T.muted}
+          fontSize="22" fontWeight="700" fontFamily="Inter, sans-serif">
+          {value !== null ? Math.round(value) + "%" : "—"}
+        </text>
+      </svg>
+      <div style={{ fontSize: "10px", fontWeight: 600, color: T.textSub, textTransform: "uppercase", letterSpacing: "0.09em" }}>{label}</div>
+      {sublabel && <div style={{ fontSize: "10px", color: T.muted }}>{sublabel}</div>}
+    </div>
+  );
+}
+
+/** Needle gauge — alpha centred at 0, range ±maxVal */
+function NeedleGauge({
+  value, maxVal, label, sublabel, loading,
+}: { value: number; maxVal: number; label: string; sublabel?: string; loading?: boolean }) {
+  const cx = SEMI_CX, cy = SEMI_CY;
+  const r = SEMI_R;
+  const needleR = r - 10;
+  const track = semiArcPath(cx, cy, r);
+  // angle: 0=up(270°svg), +max=right(0°svg), -max=left(180°svg)
+  const clamped = Math.max(-maxVal, Math.min(maxVal, value));
+  const angleDeg = (clamped / maxVal) * 90; // -90..+90
+  const svgAngleRad = ((270 - angleDeg) * Math.PI) / 180;
+  const nx = cx + needleR * Math.cos(svgAngleRad);
+  const ny = cy + needleR * Math.sin(svgAngleRad);
+  const color = value >= 0 ? T.green : T.red;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px" }}>
+      <svg viewBox="0 0 144 84" style={{ width: "144px", height: "84px", overflow: "visible" }}>
+        {/* Track base */}
+        <path d={track} fill="none" stroke={T.border} strokeWidth="10" strokeLinecap="round" />
+        {/* Left half negative zone */}
+        <path d={track} fill="none" stroke="#3B0000" strokeWidth="10"
+          strokeDasharray={`${SEMI_CIRC / 2} ${SEMI_CIRC}`} strokeLinecap="butt" />
+        {/* Right half positive zone */}
+        <path d={track} fill="none" stroke="#052E16" strokeWidth="10"
+          strokeDasharray={`0 ${SEMI_CIRC / 2} ${SEMI_CIRC / 2} 0`} strokeLinecap="butt" />
+        {/* Centre tick */}
+        <line x1={cx} y1={cy - r + 12} x2={cx} y2={cy - r + 4} stroke={T.muted} strokeWidth="2" />
+        {/* Needle */}
+        {!loading && (
+          <>
+            <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={color} strokeWidth="2.5" strokeLinecap="round" />
+            <circle cx={cx} cy={cy} r="4" fill={color} />
+          </>
+        )}
+        {/* Value */}
+        <text x={cx} y={cy - 8} textAnchor="middle" fill={loading ? T.muted : color}
+          fontSize="17" fontWeight="700" fontFamily="Inter, sans-serif">
+          {loading ? "…" : (value >= 0 ? "+" : "") + value.toFixed(1) + "%"}
+        </text>
+      </svg>
+      <div style={{ fontSize: "10px", fontWeight: 600, color: T.textSub, textTransform: "uppercase", letterSpacing: "0.09em" }}>{label}</div>
+      {sublabel && <div style={{ fontSize: "10px", color: T.muted }}>{sublabel}</div>}
+    </div>
+  );
+}
+
+/** Cash vs deployed donut */
+function CashDonut({ cashPct }: { cashPct: number }) {
+  const deployedPct = 100 - cashPct;
+  const r = 40, cx = 52, cy = 52;
+  const circ = 2 * Math.PI * r;
+  const deployedArc = (deployedPct / 100) * circ;
+  const cashArc = (cashPct / 100) * circ;
+  // start at top (offset = circ*0.25 rotates start to 12 o'clock)
+  const offset = circ * 0.25;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px" }}>
+      <svg viewBox="0 0 104 72" style={{ width: "104px", height: "72px" }}>
+        {/* Cash (muted) */}
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={T.border} strokeWidth="11"
+          strokeDasharray={`${cashArc} ${circ}`}
+          strokeDashoffset={offset}
+          strokeLinecap="butt" />
+        {/* Deployed (accent) */}
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={T.accent} strokeWidth="11"
+          strokeDasharray={`${deployedArc} ${circ}`}
+          strokeDashoffset={offset - cashArc}
+          strokeLinecap="butt" />
+        {/* Centre */}
+        <text x={cx} y={cy - 4} textAnchor="middle" fill={T.accent}
+          fontSize="16" fontWeight="700" fontFamily="Inter, sans-serif">
+          {deployedPct.toFixed(0)}%
+        </text>
+        <text x={cx} y={cy + 10} textAnchor="middle" fill={T.muted}
+          fontSize="8" fontFamily="Inter, sans-serif">
+          deployed
+        </text>
+      </svg>
+      <div style={{ fontSize: "10px", fontWeight: 600, color: T.textSub, textTransform: "uppercase", letterSpacing: "0.09em" }}>Cash Allocation</div>
+      <div style={{ fontSize: "10px", color: T.muted }}>{cashPct.toFixed(0)}% cash · {deployedPct.toFixed(0)}% invested</div>
+    </div>
+  );
+}
+
+/** Thin full-width NAV sparkline with gradient fill */
+function NavSparkline({ perf }: { perf: any[] }) {
+  if (perf.length < 2) return null;
   const navs = perf.map(p => p.nav);
   const min = Math.min(...navs);
   const max = Math.max(...navs);
   const range = max - min || 1;
-  const w = 320, h = 80;
-  const pts = navs.map((v, i) => `${(i / (navs.length - 1)) * w},${h - ((v - min) / range) * (h - 8)}`).join(" ");
+  const W = 800, H = 52;
+  const PAD = 6;
+  const pts = navs.map((v, i) =>
+    `${(i / (navs.length - 1)) * W},${H - PAD - ((v - min) / range) * (H - PAD * 2)}`
+  ).join(" ");
   const isUp = navs[navs.length - 1] >= navs[0];
   const color = isUp ? T.green : T.red;
+  const area = `0,${H} ${pts} ${W},${H}`;
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", height: "80px" }}>
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="2" />
-    </svg>
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "14px 20px 10px", marginBottom: "20px" }}>
+      <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "8px" }}>
+        NAV History · {perf.length} days
+        <span style={{ marginLeft: "12px", color, fontWeight: 600 }}>
+          ${navs[navs.length - 1].toFixed(0)}
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: `${H}px` }} preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="navGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.22" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <polygon points={area} fill="url(#navGrad)" />
+        <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
+
+/** Rich gauge+stats header row */
+function PortfolioHeader({
+  nav, cash, totalPnl, totalPnlPct, posValue, positions, winRate, wins, closedTrades, vooReturn, perf,
+}: {
+  nav: number; cash: number; totalPnl: number; totalPnlPct: number; posValue: number;
+  positions: any[]; winRate: number | null; wins: number; closedTrades: any[];
+  vooReturn: { pct: number | null; loading: boolean }; perf: any[];
+}) {
+  const cashPct = (cash / nav) * 100;
+  const wr = winRate ?? 0;
+  const wrColor = winRate !== null ? (wr >= 60 ? T.green : wr >= 40 ? T.amber : T.red) : T.muted;
+  const alpha = vooReturn.pct !== null ? totalPnlPct - vooReturn.pct : 0;
+
+  return (
+    <>
+      {/* Gauge + stats panel */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "1fr auto", gap: "0",
+        background: T.card, border: `1px solid ${T.border}`, borderRadius: "16px",
+        overflow: "hidden", marginBottom: "16px",
+      }}>
+        {/* Left — gauge cluster */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-around",
+          padding: "24px 28px", borderRight: `1px solid ${T.border}`,
+          gap: "8px",
+        }}>
+          <SemiGauge
+            value={winRate}
+            label="Win Rate"
+            sublabel={winRate !== null ? `${wins}W / ${closedTrades.length - wins}L` : "no closed trades"}
+            color={wrColor}
+          />
+          <div style={{ width: "1px", height: "80px", background: T.border }} />
+          <NeedleGauge
+            value={vooReturn.pct !== null ? alpha : 0}
+            maxVal={20}
+            label="Alpha vs VOO"
+            sublabel={vooReturn.pct !== null ? `VOO ${vooReturn.pct >= 0 ? "+" : ""}${vooReturn.pct.toFixed(1)}%` : "loading…"}
+            loading={vooReturn.loading}
+          />
+          <div style={{ width: "1px", height: "80px", background: T.border }} />
+          <CashDonut cashPct={Math.max(0, Math.min(100, cashPct))} />
+        </div>
+
+        {/* Right — key numbers strip */}
+        <div style={{
+          display: "flex", flexDirection: "column", justifyContent: "center",
+          gap: "20px", padding: "24px 32px", minWidth: "260px",
+        }}>
+          {/* Paper NAV */}
+          <div>
+            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "4px" }}>Paper NAV</div>
+            <div style={{ fontSize: "32px", fontWeight: 800, letterSpacing: "-0.02em", color: T.text, lineHeight: 1 }}>
+              ${nav.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            </div>
+            <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>started $10,000</div>
+          </div>
+
+          {/* Total P&L */}
+          <div>
+            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "4px" }}>Total P&L</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>
+              <span style={{ fontSize: "22px", fontWeight: 700, color: pnlColor(totalPnl), letterSpacing: "-0.01em" }}>
+                {fmt(totalPnl)}
+              </span>
+              <span style={{
+                fontSize: "12px", fontWeight: 600,
+                color: pnlColor(totalPnl),
+                background: totalPnl >= 0 ? T.greenBg : T.redBg,
+                padding: "2px 7px", borderRadius: "5px",
+              }}>
+                {fmtPct(totalPnlPct)}
+              </span>
+            </div>
+          </div>
+
+          {/* Positions summary */}
+          <div>
+            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "4px" }}>Positions</div>
+            <div style={{ fontSize: "14px", fontWeight: 600, color: T.text }}>
+              {positions.length} open
+              <span style={{ color: T.muted, fontWeight: 400, marginLeft: "6px" }}>·</span>
+              <span style={{ color: T.textSub, fontWeight: 500, marginLeft: "6px" }}>
+                ${posValue.toLocaleString("en-US", { maximumFractionDigits: 0 })} deployed
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* NAV sparkline */}
+      <NavSparkline perf={perf} />
+    </>
   );
 }
 
@@ -108,8 +351,6 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
     setRunning(false);
   }
 
-  const longSignals = pendingSignals.filter(s => s.direction === "long" && s.analyst_score >= 60);
-
   return (
     <div>
       {/* Strategy config card */}
@@ -161,7 +402,7 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
         ))}
       </div>
 
-      {/* Trade queue — real Robinhood approval flow */}
+      {/* Trade queue */}
       {innerTab === "queue" && (
         <div>
           {actionLog && (
@@ -276,7 +517,6 @@ function LiveHoldingsTab() {
   }, []);
 
   const positions = data?.positions ?? [];
-
   const totalValue = positions.reduce((sum, p) => sum + (p.qty * (p.current_price || p.avg_cost)), 0);
   const totalPnl = positions.reduce((sum, p) => {
     if (!p.current_price || !p.avg_cost) return sum;
@@ -288,9 +528,7 @@ function LiveHoldingsTab() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
         <div style={{ fontSize: "13px", fontWeight: 600, color: T.text }}>Robinhood Live Positions</div>
         {data?.stale && (
-          <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "4px", background: T.amberBg, color: T.amber, fontWeight: 600 }}>
-            STALE CACHE
-          </span>
+          <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "4px", background: T.amberBg, color: T.amber, fontWeight: 600 }}>STALE CACHE</span>
         )}
         {data?.cached && !data?.stale && (
           <span style={{ fontSize: "11px", color: T.muted }}>cached</span>
@@ -300,9 +538,7 @@ function LiveHoldingsTab() {
       {loading ? (
         <div style={{ textAlign: "center", padding: "40px 0" }}>
           <div style={{ color: T.muted, fontSize: "13px", marginBottom: "8px" }}>Fetching positions…</div>
-          <div style={{ color: T.muted, fontSize: "11px" }}>
-            Fetching from Robinhood via AI subprocess — may take ~90s on first load
-          </div>
+          <div style={{ color: T.muted, fontSize: "11px" }}>Fetching from Robinhood via AI subprocess — may take ~90s on first load</div>
         </div>
       ) : positions.length === 0 ? (
         <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>
@@ -347,8 +583,6 @@ function LiveHoldingsTab() {
               })}
             </tbody>
           </table>
-
-          {/* Totals row */}
           <div style={{ borderTop: `1px solid ${T.border}`, marginTop: "12px", paddingTop: "12px", display: "flex", gap: "32px" }}>
             <div>
               <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Value</div>
@@ -363,9 +597,66 @@ function LiveHoldingsTab() {
           </div>
         </>
       )}
-
       <div style={{ marginTop: "16px", fontSize: "11px", color: T.muted }}>
         Robinhood Trading account ••••8641 • non-agentic • read-only
+      </div>
+    </div>
+  );
+}
+
+/** Rich position card — replaces plain table row */
+function PositionCard({ p, onChart }: { p: any; onChart: (sym: string) => void }) {
+  const cur = p.current_price ?? p.avg_cost;
+  const pnl = (cur - p.avg_cost) * p.qty;
+  const pnlPct = ((cur - p.avg_cost) / p.avg_cost) * 100;
+  const posValue = cur * p.qty;
+  const hasLive = !!p.current_price;
+  const pColor = pnlColor(pnl);
+  return (
+    <div style={{
+      background: T.surface, border: `1px solid ${T.border}`,
+      borderRadius: "12px", padding: "16px 20px",
+      display: "grid", gridTemplateColumns: "1fr auto",
+      gap: "12px", alignItems: "center",
+    }}>
+      {/* Left: symbol + price flow */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span
+            style={{ fontWeight: 800, fontSize: "18px", color: T.accent, cursor: "pointer", letterSpacing: "-0.01em" }}
+            onClick={() => onChart(p.symbol)}
+          >
+            {p.symbol} ↗
+          </span>
+          <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: T.amberBg, color: T.amber, letterSpacing: "0.05em" }}>
+            PAPER
+          </span>
+          <span style={{ fontSize: "12px", color: T.muted }}>{p.qty} shares</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: T.textSub }}>
+          <span>${p.avg_cost.toFixed(2)}</span>
+          <span style={{ color: T.muted }}>→</span>
+          <span style={{ color: hasLive ? T.text : T.muted, fontWeight: hasLive ? 600 : 400 }}>
+            {hasLive ? "$" + p.current_price.toFixed(2) : "—"}
+          </span>
+        </div>
+      </div>
+
+      {/* Right: P&L + value */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: "7px" }}>
+          <span style={{ fontSize: "17px", fontWeight: 700, color: pColor }}>
+            {fmt(pnl)}
+          </span>
+          <span style={{
+            fontSize: "11px", fontWeight: 600, color: pColor,
+            background: pnl >= 0 ? T.greenBg : T.redBg,
+            padding: "2px 6px", borderRadius: "4px",
+          }}>
+            {fmtPct(pnlPct)}
+          </span>
+        </div>
+        <div style={{ fontSize: "12px", color: T.muted }}>${posValue.toFixed(0)} value</div>
       </div>
     </div>
   );
@@ -405,41 +696,28 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
   const wins = closedTrades.filter(t => t.outcome === "win").length;
   const winRate = closedTrades.length ? Math.round((wins / closedTrades.length) * 100) : null;
 
-  const statCard = (label: string, value: string, sub?: string, color?: string) => (
-    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
-      <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>{label}</div>
-      <div style={{ fontSize: "24px", fontWeight: 700, color: color ?? T.text }}>{value}</div>
-      {sub && <div style={{ fontSize: "12px", color: T.muted, marginTop: "4px" }}>{sub}</div>}
-    </div>
-  );
-
   return (
     <div style={{ padding: "28px", color: T.text, fontFamily: "'Inter', sans-serif" }}>
 
-      <div style={{ marginBottom: "24px" }}>
+      <div style={{ marginBottom: "20px" }}>
         <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "6px" }}>Paper Trading Portfolio</div>
         <h1 style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.02em" }}>Portfolio</h1>
       </div>
 
-      {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "16px", marginBottom: "24px" }}>
-        {statCard("Paper NAV", "$" + nav.toFixed(0), "started $10,000")}
-        {statCard("Total P&L", fmt(totalPnl), fmtPct(totalPnlPct), pnlColor(totalPnl))}
-        {statCard("Cash", "$" + cash.toFixed(0), `${positions.length} position${positions.length !== 1 ? "s" : ""}`)}
-        {statCard("Invested", "$" + posValue.toFixed(0), `${((posValue / nav) * 100).toFixed(1)}% deployed`)}
-        {statCard("Win Rate", winRate !== null ? winRate + "%" : "—", `${wins}W/${closedTrades.length - wins}L of ${closedTrades.length}`, winRate !== null ? (winRate >= 60 ? T.green : winRate >= 40 ? T.amber : T.red) : T.muted)}
-        {(() => {
-          if (vooReturn.loading) return statCard("vs VOO (90d)", "…", "loading");
-          if (vooReturn.pct === null) return statCard("vs VOO (90d)", "—", "no data");
-          const alpha = totalPnlPct - vooReturn.pct;
-          return statCard(
-            "vs VOO (90d)",
-            (alpha >= 0 ? "+" : "") + alpha.toFixed(2) + "%",
-            `VOO: ${vooReturn.pct >= 0 ? "+" : ""}${vooReturn.pct.toFixed(2)}%`,
-            alpha >= 0 ? T.green : T.red
-          );
-        })()}
-      </div>
+      {/* Rich header: gauge cluster + key numbers + sparkline */}
+      <PortfolioHeader
+        nav={nav}
+        cash={cash}
+        totalPnl={totalPnl}
+        totalPnlPct={totalPnlPct}
+        posValue={posValue}
+        positions={positions}
+        winRate={winRate}
+        wins={wins}
+        closedTrades={closedTrades}
+        vooReturn={vooReturn}
+        perf={perf}
+      />
 
       {/* Charts row */}
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "16px", marginBottom: "20px" }}>
@@ -478,41 +756,19 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
         </button>
       </div>
 
-      {/* Positions tab */}
+      {/* Positions tab — rich cards */}
       {tab === "positions" && (
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+        <div>
           {positions.length === 0 ? (
-            <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "32px", color: T.muted, fontSize: "13px", textAlign: "center" }}>
               No open positions. Run ResearchAgent then PaperTrader to open positions.
             </div>
           ) : (
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-              <thead>
-                <tr style={{ color: T.muted }}>
-                  {["Symbol", "Qty", "Avg Cost", "Current", "Value", "P&L", "P&L %"].map(h => (
-                    <th key={h} style={{ padding: "5px 12px 10px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {positions.map((p: any) => {
-                  const cur = p.current_price ?? p.avg_cost;
-                  const pnl = (cur - p.avg_cost) * p.qty;
-                  const pnlPct = ((cur - p.avg_cost) / p.avg_cost) * 100;
-                  return (
-                    <tr key={p.id} style={{ borderTop: `1px solid ${T.border}` }}>
-                      <td style={{ padding: "10px 12px 10px 0", fontWeight: 700, cursor: "pointer", color: T.accent }} onClick={() => setChartSymbol(p.symbol)}>{p.symbol} ↗</td>
-                      <td style={{ padding: "10px 12px 10px 0" }}>{p.qty}</td>
-                      <td style={{ padding: "10px 12px 10px 0" }}>${p.avg_cost.toFixed(2)}</td>
-                      <td style={{ padding: "10px 12px 10px 0" }}>{p.current_price ? "$" + p.current_price.toFixed(2) : <span style={{ color: T.muted }}>—</span>}</td>
-                      <td style={{ padding: "10px 12px 10px 0" }}>${(cur * p.qty).toFixed(0)}</td>
-                      <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: pnlColor(pnl) }}>{fmt(pnl)}</td>
-                      <td style={{ padding: "10px 0", color: pnlColor(pnlPct) }}>{fmtPct(pnlPct)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {positions.map((p: any) => (
+                <PositionCard key={p.id} p={p} onChart={setChartSymbol} />
+              ))}
+            </div>
           )}
         </div>
       )}
@@ -626,7 +882,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
         />
       )}
 
-      {/* Opportunity Cost tab — signals taken vs skipped */}
+      {/* Opportunity Cost tab */}
       {tab === ("opportunity" as any) && (() => {
         const taken = signals.filter(s => s.status === "paper_traded");
         const skipped = signals.filter(s => s.status === "pending" || s.status === "neutral");
@@ -642,7 +898,6 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
 
         return (
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
-            {/* Summary row */}
             <div style={{ display: "flex", gap: "24px", marginBottom: "20px", paddingBottom: "16px", borderBottom: `1px solid ${T.border}` }}>
               <div>
                 <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Signals Taken</div>
