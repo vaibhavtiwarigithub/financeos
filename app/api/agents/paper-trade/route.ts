@@ -8,9 +8,15 @@ import { fetchQuote, fetchQuotes } from "@/lib/market-data";
 // Long-only enforcement: only processes direction="long" signals.
 export async function POST(req: NextRequest) {
   try {
-    const userClient = await createClient();
-    const { data: { user } } = await userClient.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Allow cron/service calls via x-cron-secret header (no browser session available)
+    const cronSecret = req.headers.get("x-cron-secret");
+    const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+
+    if (!isCron) {
+      const userClient = await createClient();
+      const { data: { user } } = await userClient.auth.getUser();
+      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     // All DB ops use service client — bypasses RLS on agent/paper tables
     const supabase = createServiceClient();

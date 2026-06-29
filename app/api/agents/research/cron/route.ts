@@ -46,5 +46,24 @@ export async function POST(req: NextRequest) {
     } as any).eq("id", runId);
   }
 
-  return NextResponse.json({ success: true, processed: results.length, ok, errors: errs, symbols: batch, results });
+  // Chain PaperTrader automatically after research completes
+  let paperTradeResult: any = null;
+  try {
+    const ptRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/agents/paper-trade`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // Service-to-service: pass cron secret so paper-trade can skip user auth if needed
+        "x-cron-secret": process.env.CRON_SECRET ?? "",
+      },
+    });
+    paperTradeResult = await ptRes.json();
+  } catch (e) {
+    paperTradeResult = { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  return NextResponse.json({
+    success: true, processed: results.length, ok, errors: errs, symbols: batch,
+    paperTrade: paperTradeResult,
+  });
 }
