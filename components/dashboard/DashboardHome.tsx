@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import WatchlistPanel from "@/components/dashboard/WatchlistPanel";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -404,6 +405,11 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
           </a>
         </div>
       )}
+
+      {/* Watchlist */}
+      <div style={{ marginBottom: "16px" }}>
+        <WatchlistPanel />
+      </div>
 
       {/* Activity feed */}
       {(recentRuns.length > 0 || recentTrades.length > 0 || recentLog.length > 0) && (() => {

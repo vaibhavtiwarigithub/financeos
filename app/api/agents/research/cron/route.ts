@@ -100,6 +100,12 @@ export async function POST(req: NextRequest) {
     paperTradeResult = { error: e instanceof Error ? e.message : String(e) };
   }
 
+  // Chain Theme Scout (fire async — don't block response, uses cheap Groq)
+  fetch(`${appUrl}/api/agents/theme-scout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET ?? "" },
+  }).catch(() => {});
+
   // Pre-warm price_cache for researched symbols + benchmark ETFs (fire async, don't block response)
   const BENCHMARK_SYMBOLS = ["VOO", "QQQ", "SPY", "IWM", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLC", "XLP", "XLU", "XLRE", "XLB"];
   const prewarmSymbols = [...new Set([...batch, ...BENCHMARK_SYMBOLS])];
