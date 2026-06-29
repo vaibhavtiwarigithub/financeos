@@ -2,8 +2,15 @@
 import { useState, useEffect } from "react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ReferenceLine,
+  Tooltip, ReferenceLine, ReferenceArea,
 } from "recharts";
+
+// Hard-coded major US recessions (NBER-dated)
+const RECESSIONS = [
+  { start: "2001-03-01", end: "2001-11-01", label: "Dot-com" },
+  { start: "2007-12-01", end: "2009-06-01", label: "GFC" },
+  { start: "2020-02-01", end: "2020-04-01", label: "COVID" },
+];
 
 const T = {
   card: "#1A1D27", border: "#252836", text: "#ECEDEF", muted: "#6B7280",
@@ -32,7 +39,15 @@ function CustomTooltip({ active, payload, label }: any) {
   );
 }
 
-export default function PriceChart({ symbol, height = 280 }: { symbol: string; height?: number }) {
+export default function PriceChart({
+  symbol,
+  height = 280,
+  showRecessions = false,
+}: {
+  symbol: string;
+  height?: number;
+  showRecessions?: boolean;
+}) {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [loading, setLoading] = useState(false);
   const [period, setPeriod] = useState(PERIODS[1]);
@@ -120,6 +135,27 @@ export default function PriceChart({ symbol, height = 280 }: { symbol: string; h
             />
             <Tooltip content={<CustomTooltip />} />
             <ReferenceLine y={firstClose} stroke={T.border} strokeDasharray="4 4" />
+            {/* Recession shading — only renders when the chart's date range overlaps a recession */}
+            {showRecessions && visible.length >= 2 && RECESSIONS.map(rec => {
+              const chartStart = visible[0].date;
+              const chartEnd = visible[visible.length - 1].date;
+              // Only include if recession overlaps the visible range
+              if (rec.end < chartStart || rec.start > chartEnd) return null;
+              const x1 = rec.start > chartStart ? rec.start : chartStart;
+              const x2 = rec.end < chartEnd ? rec.end : chartEnd;
+              return (
+                <ReferenceArea
+                  key={rec.label}
+                  x1={x1}
+                  x2={x2}
+                  fill="#F87171"
+                  fillOpacity={0.08}
+                  stroke="#F87171"
+                  strokeOpacity={0.15}
+                  label={{ value: rec.label, position: "insideTop", fontSize: 9, fill: "#F87171", opacity: 0.6 }}
+                />
+              );
+            })}
             <Line
               type="monotone"
               dataKey="close"

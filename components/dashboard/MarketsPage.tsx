@@ -3,6 +3,7 @@
 import { useEffect, useState, lazy, Suspense } from "react";
 const SectorTreemap = lazy(() => import("@/components/charts/SectorTreemap"));
 const PriceChart = lazy(() => import("@/components/charts/PriceChart"));
+const SectorPerformanceChart = lazy(() => import("@/components/charts/SectorPerformanceChart"));
 
 const T = {
   bg: "#0D0F14",
@@ -181,6 +182,7 @@ export default function MarketsPage() {
   const [error, setError] = useState<string | null>(null);
   const [lastFetch, setLastFetch] = useState<string | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+  const [showRecessions, setShowRecessions] = useState(false);
 
   async function fetchMarkets() {
     setLoading(true);
@@ -295,8 +297,31 @@ export default function MarketsPage() {
           {/* Inline price chart for selected index */}
           {selectedSymbol && (
             <div style={{ background: "#1A1D27", border: "1px solid #252836", borderRadius: "12px", padding: "20px", marginBottom: "16px" }}>
+              {/* Recession overlay toggle */}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "8px" }}>
+                <button
+                  onClick={() => setShowRecessions(r => !r)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: "5px 12px",
+                    borderRadius: "6px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    border: `1px solid ${showRecessions ? "#F87171" : "#252836"}`,
+                    background: showRecessions ? "#3B000080" : "#13151C",
+                    color: showRecessions ? "#F87171" : "#6B7280",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  <span style={{ fontSize: "9px" }}>■</span>
+                  Show Recessions
+                </button>
+              </div>
               <Suspense fallback={<div style={{ color: "#6B7280", fontSize: "13px" }}>Loading chart…</div>}>
-                <PriceChart symbol={selectedSymbol} height={260} />
+                <PriceChart symbol={selectedSymbol} height={260} showRecessions={showRecessions} />
               </Suspense>
             </div>
           )}
@@ -305,6 +330,32 @@ export default function MarketsPage() {
           <Suspense fallback={<div style={{ background: "#1A1D27", border: "1px solid #252836", borderRadius: "12px", padding: "20px", height: "320px", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280", fontSize: "13px" }}>Loading heatmap…</div>}>
             <SectorTreemap sectors={data.sectors} />
           </Suspense>
+
+          {/* 90-day sector performance bar chart */}
+          <div style={{ marginTop: "16px" }}>
+            <Suspense
+              fallback={
+                <div
+                  style={{
+                    background: "#1A1D27",
+                    border: "1px solid #252836",
+                    borderRadius: "12px",
+                    padding: "20px",
+                    height: "420px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#6B7280",
+                    fontSize: "13px",
+                  }}
+                >
+                  Loading sector chart…
+                </div>
+              }
+            >
+              <SectorPerformanceChart />
+            </Suspense>
+          </div>
 
           {/* Footer note */}
           <div style={{ marginTop: "16px", fontSize: "11px", color: T.muted, textAlign: "right" }}>
