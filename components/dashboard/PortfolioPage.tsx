@@ -226,7 +226,10 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
             </div>
           ) : pendingSignals.map((s: any) => (
             <div key={s.id} style={{ background: T.card, border: `1px solid ${s.analyst_score >= 60 && s.direction === "long" ? T.accent + "44" : T.border}`, borderRadius: "12px", padding: "16px 20px", display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr 1fr", gap: "12px", alignItems: "center" }}>
-              <div style={{ fontWeight: 800, fontSize: "16px", cursor: "pointer", color: T.accent }} onClick={() => setChartSymbol(s.symbol)}>{s.symbol} ↗</div>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <div style={{ fontWeight: 800, fontSize: "16px", cursor: "pointer", color: T.accent }} onClick={() => setChartSymbol(s.symbol)}>{s.symbol} ↗</div>
+                <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#2D1B00", color: "#FBBF24", letterSpacing: "0.04em" }}>PAPER</span>
+              </div>
               <div>
                 <div style={{ fontSize: "10px", color: T.muted, marginBottom: "4px" }}>DIRECTION</div>
                 <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: s.direction === "long" ? T.greenBg : T.amberBg, color: s.direction === "long" ? T.green : T.amber }}>
@@ -531,7 +534,12 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
               <tbody>
                 {trades.map((t: any) => (
                   <tr key={t.id} style={{ borderTop: `1px solid ${T.border}` }}>
-                    <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}>{t.symbol}</td>
+                    <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        {t.symbol}
+                        <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#2D1B00", color: "#FBBF24", letterSpacing: "0.04em" }}>PAPER</span>
+                      </div>
+                    </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>
                       <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 7px", borderRadius: "4px", background: t.order_side === "buy" ? T.greenBg : T.redBg, color: t.order_side === "buy" ? T.green : T.red }}>
                         {t.order_side.toUpperCase()}

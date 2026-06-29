@@ -53,6 +53,7 @@ function DecisionCard({ packet, signal, trade }: { packet: any; signal?: any; tr
               {signal.direction?.toUpperCase()} · score {signal.analyst_score}
             </span>
           )}
+          <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#2D1B00", color: "#FBBF24", letterSpacing: "0.04em" }}>PAPER</span>
           {trade && outcome && (
             <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px",
               background: outcome === "win" ? T.greenBg : outcome === "loss" ? T.redBg : T.amberBg,

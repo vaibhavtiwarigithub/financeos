@@ -317,8 +317,17 @@ function EventCard({ ev, expandedId, setExpandedId }: {
               color: T.text,
               lineHeight: "1.4",
               wordBreak: "break-word",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              flexWrap: "wrap",
             }}>
               {meta.label}
+              {ev.kind === "paper_trade" && (
+                <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#2D1B00", color: "#FBBF24", letterSpacing: "0.04em", flexShrink: 0 }}>
+                  PAPER
+                </span>
+              )}
             </div>
             {meta.subtext && (
               <div style={{

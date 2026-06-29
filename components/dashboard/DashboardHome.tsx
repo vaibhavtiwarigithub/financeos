@@ -330,7 +330,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
 
       {/* Activity feed */}
       {(recentRuns.length > 0 || recentTrades.length > 0 || recentLog.length > 0) && (() => {
-        type AEvent = { ts: number; icon: string; label: string; sub: string; color: string };
+        type AEvent = { ts: number; icon: string; label: string; sub: string; color: string; badge?: { label: string; color: string; bg: string } };
         const events: AEvent[] = [
           ...recentRuns.map((r: any) => ({
             ts: new Date(r.completed_at ?? r.created_at).getTime(),
@@ -345,6 +345,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
             label: `${t.order_side?.toUpperCase() === "BUY" ? "Bought" : "Sold"} ${t.symbol}`,
             sub: `${t.qty}sh @ $${t.fill_price?.toFixed(2)}${t.outcome ? ` · ${t.outcome} ${t.pnl_pct != null ? (t.pnl_pct >= 0 ? "+" : "") + t.pnl_pct.toFixed(1) + "%" : ""}` : ""}`,
             color: t.outcome === "win" ? T.green : t.outcome === "loss" ? T.red : T.textSub,
+            badge: { label: "PAPER", color: "#FBBF24", bg: "#2D1B00" },
           })),
           ...recentLog.map((l: any) => ({
             ts: new Date(l.created_at).getTime(),
@@ -365,7 +366,14 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
                 <div key={i} style={{ display: "flex", gap: "12px", paddingBottom: i < events.length - 1 ? "12px" : "0", marginBottom: i < events.length - 1 ? "12px" : "0", borderBottom: i < events.length - 1 ? `1px solid ${T.border}44` : "none" }}>
                   <div style={{ width: "20px", textAlign: "center", color: e.color, fontSize: "13px", paddingTop: "1px", flexShrink: 0 }}>{e.icon}</div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: "13px", fontWeight: 500, color: T.text }}>{e.label}</div>
+                    <div style={{ fontSize: "13px", fontWeight: 500, color: T.text, display: "flex", alignItems: "center", gap: "8px" }}>
+                      {e.label}
+                      {e.badge && (
+                        <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: e.badge.bg, color: e.badge.color, letterSpacing: "0.04em", flexShrink: 0 }}>
+                          {e.badge.label}
+                        </span>
+                      )}
+                    </div>
                     <div style={{ fontSize: "12px", color: T.muted, marginTop: "2px" }}>{e.sub}</div>
                   </div>
                   <div style={{ fontSize: "11px", color: T.muted, flexShrink: 0, paddingTop: "2px" }}>
