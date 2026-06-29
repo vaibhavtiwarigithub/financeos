@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import DashboardHome from "@/components/dashboard/DashboardHome";
 import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 30;
 
 export default async function DashboardPage() {
   // getSession() reads from cookie — no network round-trip unlike getUser()

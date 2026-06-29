@@ -1,7 +1,7 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import PortfolioPage from "@/components/dashboard/PortfolioPage";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 30;
 
 export default async function Page() {
   const supabase = createServiceClient();

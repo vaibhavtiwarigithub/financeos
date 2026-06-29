@@ -1,5 +1,6 @@
 "use client";
 import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
 import StatusBar from "./StatusBar";
@@ -96,21 +97,25 @@ export default function DashboardShell({ profile, children }: { profile: Profile
               {group.items.map(item => {
                 const active = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
                 return (
-                  <button
+                  <Link
                     key={item.href}
-                    onClick={() => router.push(item.href)}
+                    href={item.href}
+                    prefetch={true}
                     className="w-full flex items-center gap-2.5 px-3 py-[9px] rounded-lg text-[14px] mb-0.5 text-left cursor-pointer transition-colors"
                     style={{
                       background:  active ? "rgba(99,102,241,0.10)" : "transparent",
                       color:       active ? "var(--fo-accent)" : "var(--fo-text-secondary)",
                       fontWeight:  active ? 500 : 400,
-                      border:      "none",
+                      textDecoration: "none",
+                      display:     "flex",
+                      alignItems:  "center",
+                      gap:         "10px",
                       borderLeft:  `2px solid ${active ? "var(--fo-accent)" : "transparent"}`,
                     }}
                   >
                     <span className="w-[18px] text-center text-[14px]">{item.icon}</span>
                     {item.label}
-                  </button>
+                  </Link>
                 );
               })}
             </div>
