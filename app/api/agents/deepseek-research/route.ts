@@ -12,15 +12,21 @@ const ADMIN_EMAIL = "vterminater@gmail.com";
 // Runs DeepSeek analysis for a single symbol, writes signal to DB, returns result.
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    const userClient = await createClient();
-    const {
-      data: { user },
-    } = await userClient.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (user.email !== ADMIN_EMAIL) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // Allow cron/internal calls with secret header (skips user auth)
+    const cronSecret = req.headers.get("x-cron-secret");
+    const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+
+    if (!isCron) {
+      const userClient = await createClient();
+      const {
+        data: { user },
+      } = await userClient.auth.getUser();
+      if (!user) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+      if (user.email !== ADMIN_EMAIL) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     let body: { symbol?: string };

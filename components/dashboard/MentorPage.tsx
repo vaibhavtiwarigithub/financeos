@@ -4,6 +4,7 @@ import PageHeader from "@/components/dashboard/PageHeader";
 import {
   ResponsiveContainer, LineChart as LC, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine, Label,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from "recharts";
 
 const T = {
@@ -468,6 +469,16 @@ function LearningContent({
   );
 }
 
+const DIM_META: Record<string, { label: string; short: string; color: string; desc: string }> = {
+  sector_awareness:     { label: "Sector Awareness",     short: "Sector",    color: "#60A5FA", desc: "Picking sectors aligned with macro / rotation" },
+  emotional_discipline: { label: "Emotional Discipline", short: "Emotion",   color: "#F87171", desc: "Avoiding FOMO, panic, revenge trading" },
+  risk_management:      { label: "Risk Management",      short: "Risk Mgmt", color: "#34D399", desc: "Stop loss, sizing, concentration limits" },
+  thesis_quality:       { label: "Thesis Quality",       short: "Thesis",    color: "#A78BFA", desc: "Clear catalyst, falsifiable, data-backed" },
+  entry_timing:         { label: "Entry Timing",         short: "Timing",    color: "#FBBF24", desc: "Not chasing, not too early, logical setup" },
+  big_picture:          { label: "Big Picture",          short: "Macro",     color: "#F97316", desc: "Trading with macro regime, Fed, tape" },
+};
+const DIM_KEYS = Object.keys(DIM_META) as (keyof typeof DIM_META)[];
+
 const STARTER_QUESTIONS = [
   "What is your current market thesis and what assumptions are you making?",
   "Walk me through why you picked your top-scored symbol this week.",
@@ -504,11 +515,20 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
   const [scoreHistory, setScoreHistory] = useState<Array<{ date: string; score: number; count: number; topVerdict: string | null }>>([]);
   const [scoreLoading, setScoreLoading] = useState(true);
 
+  // Dimension state
+  const [dimData, setDimData] = useState<{ averages: Record<string, number>; timeSeries: any[]; weakest: string; strongest: string; latestObs: any[]; total: number } | null>(null);
+  const [dimLoading, setDimLoading] = useState(true);
+  const [dimTab, setDimTab] = useState<string>("sector_awareness");
+
   useEffect(() => {
     fetch("/api/mentor/scores")
       .then(r => r.json())
       .then(d => { setScoreHistory(d.scores ?? []); setScoreLoading(false); })
       .catch(() => setScoreLoading(false));
+    fetch("/api/mentor/dimensions")
+      .then(r => r.json())
+      .then(d => { setDimData(d); setDimLoading(false); })
+      .catch(() => setDimLoading(false));
   }, []);
 
   useEffect(() => {
@@ -613,6 +633,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
     { key: "decisions", label: "Decision Log" },
     { key: "learning", label: "Learning" },
     { key: "journal", label: "Judgment Coach" },
+    { key: "dimensions", label: "Behavior Profile" },
   ] as const;
 
   return (
@@ -841,6 +862,135 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
         </div>
       )}
 
+      {/* Behavior Profile tab */}
+      {tab === "dimensions" && (
+        <div>
+          {dimLoading ? (
+            <div style={{ color: T.muted, fontSize: "13px", padding: "40px", textAlign: "center" }}>Loading behavior data…</div>
+          ) : !dimData || dimData.total === 0 ? (
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "40px", textAlign: "center" }}>
+              <div style={{ fontSize: "15px", fontWeight: 600, marginBottom: "8px" }}>No behavior data yet</div>
+              <div style={{ fontSize: "13px", color: T.muted }}>Submit a thesis in <strong style={{ color: T.textSub }}>Judgment Coach</strong> to start tracking your behavior dimensions.</div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+
+              {/* Coach Panel */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div style={{ background: T.card, border: `1px solid ${T.red}40`, borderRadius: "12px", padding: "18px" }}>
+                  <div style={{ fontSize: "10px", fontWeight: 700, color: T.red, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>Weakest Area</div>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: T.text, marginBottom: "4px" }}>{DIM_META[dimData.weakest]?.label}</div>
+                  <div style={{ fontSize: "22px", fontWeight: 800, color: T.red, fontFamily: "monospace", marginBottom: "8px" }}>{dimData.averages[dimData.weakest]} / 100</div>
+                  <div style={{ fontSize: "12px", color: T.muted, marginBottom: "10px" }}>{DIM_META[dimData.weakest]?.desc}</div>
+                  {dimData.latestObs.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                      <div style={{ fontSize: "10px", color: T.muted, fontWeight: 600, textTransform: "uppercase" }}>Recent observations:</div>
+                      {dimData.latestObs.slice(0, 3).map((o, i) => (
+                        <div key={i} style={{ fontSize: "11px", color: T.textSub, background: T.surface, borderRadius: "6px", padding: "6px 8px", borderLeft: `2px solid ${T.red}` }}>
+                          <span style={{ color: T.accent, fontWeight: 600 }}>{o.symbol}</span> — {o.text}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{ background: T.card, border: `1px solid ${T.green}40`, borderRadius: "12px", padding: "18px" }}>
+                  <div style={{ fontSize: "10px", fontWeight: 700, color: T.green, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>Strongest Area</div>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: T.text, marginBottom: "4px" }}>{DIM_META[dimData.strongest]?.label}</div>
+                  <div style={{ fontSize: "22px", fontWeight: 800, color: T.green, fontFamily: "monospace", marginBottom: "8px" }}>{dimData.averages[dimData.strongest]} / 100</div>
+                  <div style={{ fontSize: "12px", color: T.muted }}>{DIM_META[dimData.strongest]?.desc}</div>
+                </div>
+              </div>
+
+              {/* Radar chart */}
+              <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+                <div style={{ fontSize: "11px", color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "4px" }}>Behavior Radar (last 30 days)</div>
+                <div style={{ fontSize: "12px", color: T.muted, marginBottom: "16px" }}>Average score per dimension — 100 is expert, 50 is baseline</div>
+                <ResponsiveContainer width="100%" height={320}>
+                  <RadarChart cx="50%" cy="50%" outerRadius="75%"
+                    data={DIM_KEYS.map(k => ({ subject: DIM_META[k].short, value: dimData.averages[k] ?? 50, fullMark: 100 }))}>
+                    <PolarGrid stroke={T.border} />
+                    <PolarAngleAxis dataKey="subject" tick={{ fill: T.textSub, fontSize: 11, fontWeight: 600 }} />
+                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: T.muted, fontSize: 9 }} />
+                    <Radar name="You" dataKey="value" stroke={T.accent} fill={T.accent} fillOpacity={0.25} strokeWidth={2} />
+                    <Tooltip
+                      content={({ payload }) => {
+                        if (!payload?.length) return null;
+                        const d = payload[0];
+                        const key = DIM_KEYS.find(k => DIM_META[k].short === (d.payload as any).subject);
+                        const v = d.value as number;
+                        return (
+                          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "8px 12px", fontSize: "12px" }}>
+                            <div style={{ fontWeight: 600, color: T.text, marginBottom: "2px" }}>{key ? DIM_META[key].label : d.name}</div>
+                            <div style={{ color: v >= 70 ? T.green : v >= 50 ? T.amber : T.red, fontWeight: 700, fontFamily: "monospace" }}>{v} / 100</div>
+                            {key && <div style={{ color: T.muted, marginTop: "2px", fontSize: "11px" }}>{DIM_META[key].desc}</div>}
+                          </div>
+                        );
+                      }}
+                    />
+                  </RadarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Dimension score bars */}
+              <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+                <div style={{ fontSize: "11px", color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>All Dimensions</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                  {DIM_KEYS.map(dim => {
+                    const v = dimData.averages[dim] ?? 50;
+                    const meta = DIM_META[dim];
+                    const col = v >= 70 ? T.green : v >= 50 ? T.amber : T.red;
+                    return (
+                      <div key={dim}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                          <div>
+                            <span style={{ fontSize: "13px", fontWeight: 600, color: T.text, marginRight: "8px" }}>{meta.label}</span>
+                            <span style={{ fontSize: "11px", color: T.muted }}>{meta.desc}</span>
+                          </div>
+                          <span style={{ fontSize: "14px", fontWeight: 800, color: col, fontFamily: "monospace" }}>{v}</span>
+                        </div>
+                        <div style={{ height: "6px", background: T.border, borderRadius: "3px" }}>
+                          <div style={{ height: "100%", width: `${v}%`, background: col, borderRadius: "3px", transition: "width 0.3s" }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Per-dimension history chart */}
+              {dimData.timeSeries.length >= 2 && (
+                <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+                  <div style={{ fontSize: "11px", color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "12px" }}>Dimension History</div>
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "16px" }}>
+                    {DIM_KEYS.map(dim => (
+                      <button key={dim} onClick={() => setDimTab(dim)}
+                        style={{ padding: "5px 12px", borderRadius: "6px", fontSize: "11px", fontWeight: 600, cursor: "pointer", border: "none",
+                          background: dimTab === dim ? DIM_META[dim].color : T.surface,
+                          color: dimTab === dim ? "#fff" : T.muted }}>
+                        {DIM_META[dim].short}
+                      </button>
+                    ))}
+                  </div>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LC data={dimData.timeSeries} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                      <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="date" tick={{ fontSize: 10, fill: T.muted }} tickLine={false} axisLine={false} />
+                      <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: T.muted }} tickLine={false} axisLine={false} width={28} />
+                      <Tooltip content={<LearningCustomTip />} />
+                      <ReferenceLine y={50} stroke={T.muted} strokeDasharray="4 3" strokeOpacity={0.4} />
+                      <ReferenceLine y={70} stroke={T.green} strokeDasharray="4 3" strokeOpacity={0.4} />
+                      <Line type="monotone" dataKey={dimTab} name={DIM_META[dimTab]?.label ?? dimTab}
+                        stroke={DIM_META[dimTab]?.color ?? T.accent} strokeWidth={2.5}
+                        dot={{ fill: DIM_META[dimTab]?.color ?? T.accent, strokeWidth: 0, r: 4 }} activeDot={{ r: 6 }} />
+                    </LC>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Learning tab */}
       {tab === "learning" && (
         <LearningContent
@@ -998,6 +1148,33 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
                   <div style={{ background: T.accentBg, border: `1px solid ${T.accent}30`, borderRadius: "8px", padding: "14px" }}>
                     <div style={{ fontSize: "10px", fontWeight: 700, color: T.accent, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>How to Improve</div>
                     <div style={{ fontSize: "12px", color: T.textSub, lineHeight: "1.7", whiteSpace: "pre-wrap" }}>{jResult.suggestions}</div>
+                  </div>
+                )}
+
+                {/* Dimension scores */}
+                {jResult.dimensions && (
+                  <div style={{ marginTop: "16px" }}>
+                    <div style={{ fontSize: "10px", fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "10px" }}>Behavior Dimensions</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                      {DIM_KEYS.map(dim => {
+                        const v = jResult.dimensions[dim] ?? 50;
+                        const meta = DIM_META[dim];
+                        const col = v >= 70 ? T.green : v >= 50 ? T.amber : T.red;
+                        const obs = jResult.dimension_observations?.[dim];
+                        return (
+                          <div key={dim} style={{ background: T.surface, borderRadius: "8px", padding: "10px 12px", borderLeft: `3px solid ${meta.color}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                              <span style={{ fontSize: "11px", fontWeight: 600, color: T.textSub }}>{meta.label}</span>
+                              <span style={{ fontSize: "13px", fontWeight: 800, color: col, fontFamily: "monospace" }}>{v}</span>
+                            </div>
+                            <div style={{ height: "3px", background: T.border, borderRadius: "2px", marginBottom: "6px" }}>
+                              <div style={{ height: "100%", width: `${v}%`, background: col, borderRadius: "2px" }} />
+                            </div>
+                            {obs && <div style={{ fontSize: "11px", color: T.muted, lineHeight: "1.4" }}>{obs}</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </div>

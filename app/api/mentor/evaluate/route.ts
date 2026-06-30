@@ -22,32 +22,66 @@ YOUR TASKS:
    - RSI, moving averages (50d/200d)
    - Recent news sentiment (last 30 days)
 
-2. Verify each factual claim in the user's reasoning against real data. Be specific about what checks out and what doesn't.
+2. Verify each factual claim in the user's reasoning against real data.
 
-3. Score the reasoning quality 0-100 using this exact rubric:
-   - Clarity & specificity (20pts): Is there a specific, falsifiable claim with concrete triggers?
-   - Factual accuracy (30pts): Do their facts match real data? Deduct 5pts per wrong claim.
-   - Risk awareness (20pts): Did they acknowledge the bear case or potential failure modes?
-   - Contrarian/independent thinking (15pts): Is this crowded consensus or genuine independent analysis?
-   - Exit strategy (15pts): Do they know when they'd be wrong and what their exit is?
+3. Score overall reasoning quality 0-100 using this rubric:
+   - Clarity & specificity (20pts): Specific, falsifiable claim with concrete triggers?
+   - Factual accuracy (30pts): Facts match real data? Deduct 5pts per wrong claim.
+   - Risk awareness (20pts): Bear case acknowledged?
+   - Contrarian thinking (15pts): Crowded consensus or independent analysis?
+   - Exit strategy (15pts): Know when they're wrong and what the exit is?
 
-4. Identify cognitive biases present (use exact names from this list):
-   fomo, anchoring, recency_bias, confirmation_bias, herd_mentality, overconfidence, loss_aversion, narrative_fallacy
+4. Score these 6 BEHAVIOR DIMENSIONS (each 0-100, honest assessment):
+   - sector_awareness: Choosing the right sector/industry for current macro environment? Aware of sector rotation? Does this stock fit its sector's relative strength?
+   - emotional_discipline: Evidence of FOMO, panic, revenge trading, or over-attachment? Or cool, systematic reasoning?
+   - risk_management: Proper position sizing mentioned? Stop loss defined? Not over-concentrating? Acknowledges max loss?
+   - thesis_quality: Entry catalyst clearly identified? Thesis is falsifiable and specific? Not vague? Based on data?
+   - entry_timing: Entry at a logical technical level? Not chasing? Not too early? Understands the setup?
+   - big_picture: Trading WITH the macro backdrop? Understands sector rotation, Fed policy, market regime? Not fighting the tape?
 
-5. Steelman the bear case — argue as convincingly as possible AGAINST this thesis even if it's good.
+5. Identify cognitive biases (from: fomo, anchoring, recency_bias, confirmation_bias, herd_mentality, overconfidence, loss_aversion, narrative_fallacy)
 
-IMPORTANT: Return ONLY valid JSON. No markdown code fences, no explanation before or after. Exactly this format:
+6. Write one specific 1-sentence observation per dimension (what you noticed, good or bad)
+
+7. Steelman the bear case (2-3 sentences against this thesis)
+
+IMPORTANT: Return ONLY valid JSON, no markdown fences, no text before or after:
 {
   "score": <integer 0-100>,
   "verdict": <"strong" | "sound" | "mixed" | "flawed" | "emotional">,
-  "bias_flags": [<bias names as strings, empty array if none>],
-  "what_is_right": "<specific things they got right, cite real data>",
-  "what_is_wrong": "<specific errors or gaps, cite real data that contradicts them>",
-  "bear_case": "<steelmanned bear thesis, 2-3 sentences>",
-  "suggestions": "<3 specific, actionable ways to improve this type of reasoning in the future>",
-  "data_used": "<key metrics you actually pulled: price, P/E, RSI, revenue growth trend etc.>"
+  "bias_flags": [<bias names>],
+  "what_is_right": "<specific things right, cite data>",
+  "what_is_wrong": "<specific errors/gaps, cite data>",
+  "bear_case": "<steelmanned bear thesis>",
+  "suggestions": "<3 actionable improvements>",
+  "data_used": "<key metrics pulled>",
+  "dimensions": {
+    "sector_awareness": <0-100>,
+    "emotional_discipline": <0-100>,
+    "risk_management": <0-100>,
+    "thesis_quality": <0-100>,
+    "entry_timing": <0-100>,
+    "big_picture": <0-100>
+  },
+  "dimension_observations": {
+    "sector_awareness": "<1 sentence observation>",
+    "emotional_discipline": "<1 sentence observation>",
+    "risk_management": "<1 sentence observation>",
+    "thesis_quality": "<1 sentence observation>",
+    "entry_timing": "<1 sentence observation>",
+    "big_picture": "<1 sentence observation>"
+  }
 }
 `.trim();
+
+interface DimensionScores {
+  sector_awareness: number;
+  emotional_discipline: number;
+  risk_management: number;
+  thesis_quality: number;
+  entry_timing: number;
+  big_picture: number;
+}
 
 interface EvalResult {
   score: number;
@@ -58,6 +92,13 @@ interface EvalResult {
   bear_case: string;
   suggestions: string;
   data_used: string;
+  dimensions?: DimensionScores;
+  dimension_observations?: Record<string, string>;
+}
+
+function clampDimension(v: unknown): number {
+  const n = typeof v === "number" ? v : parseInt(String(v ?? "50"), 10);
+  return Math.max(0, Math.min(100, isNaN(n) ? 50 : Math.round(n)));
 }
 
 function parseEval(raw: string): EvalResult | null {
@@ -130,6 +171,24 @@ export async function POST(req: NextRequest) {
   } as any).select().single();
 
   if (dbErr) console.error("[evaluate] DB error:", dbErr.message);
+
+  // Save dimension scores if present
+  if (evaluation.dimensions && (entry as any)?.id) {
+    const dim = evaluation.dimensions;
+    const obs = evaluation.dimension_observations ?? {};
+    await svc.from("mentor_dimension_logs").insert({
+      journal_entry_id: (entry as any).id,
+      trade_symbol: symbol,
+      evaluated_at: new Date().toISOString().slice(0, 10),
+      sector_awareness:     clampDimension(dim.sector_awareness),
+      emotional_discipline: clampDimension(dim.emotional_discipline),
+      risk_management:      clampDimension(dim.risk_management),
+      thesis_quality:       clampDimension(dim.thesis_quality),
+      entry_timing:         clampDimension(dim.entry_timing),
+      big_picture:          clampDimension(dim.big_picture),
+      observations: obs,
+    } as any);
+  }
 
   // Track token usage in agent_runs
   await svc.from("agent_runs").insert({

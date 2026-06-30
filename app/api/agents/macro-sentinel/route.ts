@@ -29,8 +29,14 @@ async function fetchIndicators(): Promise<Indicator[]> {
       avFetch("TREASURY_YIELD", "&interval=monthly&maturity=2year"),
       avFetch("TREASURY_YIELD", "&interval=monthly&maturity=10year"),
     ]);
-    const rate2 = parseFloat(y2?.data?.[0]?.value ?? "0");
-    const rate10 = parseFloat(y10?.data?.[0]?.value ?? "0");
+    // Skip if rate-limited (Note/Information key present) or data missing
+    if (y2?.Note || y2?.Information || y10?.Note || y10?.Information) throw new Error("rate_limited");
+    const raw2 = y2?.data?.[0]?.value;
+    const raw10 = y10?.data?.[0]?.value;
+    if (!raw2 || !raw10) throw new Error("no_data");
+    const rate2 = parseFloat(raw2);
+    const rate10 = parseFloat(raw10);
+    if (!rate2 || !rate10 || isNaN(rate2) || isNaN(rate10)) throw new Error("bad_values");
     const spread = rate10 - rate2;
     let signal: "green" | "yellow" | "orange" | "red" = "green";
     if (spread < -0.5) signal = "red";
@@ -214,6 +220,11 @@ function computeRegime(indicators: Indicator[]): {
     if (ind.signal !== "green") signals_triggered++;
   }
 
+  // Need at least 3 indicators to compute a meaningful regime
+  if (indicators.length < 3) {
+    return { danger_score: 0, regime: "green" as const, signals_triggered: 0 };
+  }
+
   const danger_score = totalWeight > 0 ? Math.round((weightedScore / totalWeight) * 100) : 0;
 
   let regime: "green" | "yellow" | "orange" | "red" = "green";
@@ -238,13 +249,21 @@ export async function POST() {
   const svc = createServiceClient();
   const weekOf = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
 
-  // Check if already ran this week
+  // Check if already ran this week with sufficient data
   const { data: existing } = await svc
     .from("macro_regime")
-    .select("id")
+    .select("id, signals_triggered")
     .eq("week_of", weekOf)
     .single();
-  if (existing) return NextResponse.json({ message: "Already ran this week", cached: true });
+  // Skip only if we have a good run (3+ indicators fetched)
+  if (existing && existing.signals_triggered > 0) {
+    return NextResponse.json({ message: "Already ran this week", cached: true });
+  }
+  // Delete bad/incomplete run so we can retry
+  if (existing) {
+    await svc.from("macro_regime").delete().eq("week_of", weekOf);
+    await svc.from("macro_signals").delete().eq("week_of", weekOf);
+  }
 
   const indicators = await fetchIndicators();
   const { danger_score, regime, signals_triggered } = computeRegime(indicators);
