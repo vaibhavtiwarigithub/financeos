@@ -1,8 +1,9 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
+import PageHeader from "@/components/dashboard/PageHeader";
 import {
   ResponsiveContainer, LineChart as LC, Line, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine,
+  XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine, Label,
 } from "recharts";
 
 const T = {
@@ -499,6 +500,17 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
   const [jHistoryLoading, setJHistoryLoading] = useState(false);
   const [jHistoryLoaded, setJHistoryLoaded] = useState(false);
 
+  // Score history state
+  const [scoreHistory, setScoreHistory] = useState<Array<{ date: string; score: number; count: number; topVerdict: string | null }>>([]);
+  const [scoreLoading, setScoreLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/mentor/scores")
+      .then(r => r.json())
+      .then(d => { setScoreHistory(d.scores ?? []); setScoreLoading(false); })
+      .catch(() => setScoreLoading(false));
+  }, []);
+
   useEffect(() => {
     if (tab !== "journal" || jHistoryLoaded) return;
     setJHistoryLoading(true);
@@ -604,14 +616,117 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
   ] as const;
 
   return (
-    <div style={{ padding: "28px", color: T.text, fontFamily: "'Inter', sans-serif" }}>
+    <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
 
-      {/* Header */}
-      <div style={{ marginBottom: "24px" }}>
-        <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "6px" }}>Agent Mentor</div>
-        <h1 style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.02em", margin: 0 }}>Why the Agent Does What It Does</h1>
-        <p style={{ fontSize: "13px", color: T.muted, margin: "6px 0 0" }}>Understand the reasoning behind every signal, trade, and outcome. Ask questions. Challenge the thesis.</p>
-      </div>
+      <PageHeader
+        title="Mentor"
+        subtitle="Why the agent does what it does"
+        cadence="as-needed"
+        whatItDoes="Explains the reasoning behind every agent signal and trade. Ask it anything about a position, a score, or the market thesis. Uses your real portfolio context for personalized answers."
+        whatToLookFor={[
+          "Current Market Thesis — updated daily by the agent. Challenge it if it looks wrong.",
+          "Ask about specific signals: 'Why did the agent buy NVDA?' or 'Why score 72?'",
+          "Learning packets show what the agent absorbed from past trade outcomes.",
+          "If answers seem generic, add more symbols to your watchlist for richer context.",
+        ]}
+      />
+      <div style={{ padding: "0 28px 32px" }}>
+
+      {/* ── Judgment Score History ───────────────────────────────────────── */}
+      {(() => {
+        const latest = scoreHistory[scoreHistory.length - 1];
+        const prev = scoreHistory[scoreHistory.length - 2];
+        const currentScore = latest?.score ?? null;
+        const trend = currentScore != null && prev ? currentScore - prev.score : null;
+        const scoreColor = currentScore == null ? T.muted : currentScore >= 70 ? T.green : currentScore >= 50 ? T.amber : T.red;
+
+        return (
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "24px" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
+              <div>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.10em", textTransform: "uppercase", marginBottom: "8px" }}>Your Judgment Score</div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
+                  {scoreLoading ? (
+                    <span style={{ fontSize: "42px", fontWeight: 800, color: T.muted }}>—</span>
+                  ) : currentScore == null ? (
+                    <span style={{ fontSize: "20px", color: T.muted }}>No evaluations yet</span>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: "52px", fontWeight: 800, color: scoreColor, lineHeight: 1, fontFamily: "monospace" }}>{currentScore}</span>
+                      <span style={{ fontSize: "16px", color: T.muted }}>/100</span>
+                      {trend != null && (
+                        <span style={{ fontSize: "14px", fontWeight: 700, color: trend > 0 ? T.green : trend < 0 ? T.red : T.muted }}>
+                          {trend > 0 ? `▲ +${trend}` : trend < 0 ? `▼ ${trend}` : "→ no change"}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+                {currentScore != null && (
+                  <div style={{ fontSize: "12px", color: T.muted, marginTop: "4px" }}>
+                    {currentScore >= 70 ? "Expert range — strong reasoning quality" : currentScore >= 50 ? "Proficient range — improving" : "Learning range — keep submitting theses"}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: "16px", fontSize: "11px", color: T.muted, alignItems: "center" }}>
+                <span><span style={{ color: T.red }}>●</span> Learning (&lt;50)</span>
+                <span><span style={{ color: T.amber }}>●</span> Proficient (50–70)</span>
+                <span><span style={{ color: T.green }}>●</span> Expert (70+)</span>
+              </div>
+            </div>
+
+            {scoreLoading ? (
+              <div style={{ color: T.muted, fontSize: "13px", padding: "20px 0", textAlign: "center" }}>Loading score history…</div>
+            ) : scoreHistory.length < 2 ? (
+              <div style={{ color: T.muted, fontSize: "13px", padding: "20px 0", textAlign: "center" }}>
+                Make 2+ judgments in the <strong style={{ color: T.textSub }}>Judgment Coach</strong> tab to see your progress chart.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <LC data={scoreHistory} margin={{ top: 8, right: 24, left: 0, bottom: 0 }}>
+                  <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: T.muted }} tickLine={false} axisLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: T.muted }} tickLine={false} axisLine={false} width={30} />
+                  <Tooltip
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload?.length) return null;
+                      const d = payload[0].payload;
+                      const sc = d.score;
+                      const c = sc >= 70 ? T.green : sc >= 50 ? T.amber : T.red;
+                      return (
+                        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", fontSize: "12px" }}>
+                          <div style={{ color: T.muted, marginBottom: "4px" }}>{label}</div>
+                          <div style={{ color: c, fontWeight: 700, fontSize: "16px", fontFamily: "monospace" }}>{sc} / 100</div>
+                          <div style={{ color: T.muted, marginTop: "2px" }}>{d.count} evaluation{d.count !== 1 ? "s" : ""} that day</div>
+                          {d.topVerdict && <div style={{ color: T.textSub, marginTop: "2px", textTransform: "capitalize" }}>Top verdict: {d.topVerdict}</div>}
+                        </div>
+                      );
+                    }}
+                  />
+                  <ReferenceLine y={50} stroke={T.red} strokeDasharray="4 3" strokeOpacity={0.6}>
+                    <Label value="Learning" position="right" fill={T.red} fontSize={9} />
+                  </ReferenceLine>
+                  <ReferenceLine y={70} stroke={T.amber} strokeDasharray="4 3" strokeOpacity={0.6}>
+                    <Label value="Proficient" position="right" fill={T.amber} fontSize={9} />
+                  </ReferenceLine>
+                  <ReferenceLine y={90} stroke={T.green} strokeDasharray="4 3" strokeOpacity={0.6}>
+                    <Label value="Expert" position="right" fill={T.green} fontSize={9} />
+                  </ReferenceLine>
+                  <Line
+                    type="monotone"
+                    dataKey="score"
+                    name="Score"
+                    stroke={T.accent}
+                    strokeWidth={2.5}
+                    dot={{ fill: T.accent, strokeWidth: 0, r: 4 }}
+                    activeDot={{ r: 6 }}
+                  />
+                </LC>
+              </ResponsiveContainer>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Current market thesis */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "24px" }}>
@@ -934,6 +1049,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

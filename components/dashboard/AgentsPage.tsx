@@ -3,6 +3,8 @@ import { useState, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import AgentComparisonCard from "@/components/dashboard/AgentComparisonCard";
+import PageHeader from "@/components/dashboard/PageHeader";
+import AgentDiagram from "@/components/dashboard/AgentDiagram";
 const SignalCharts = lazy(() => import("@/components/charts/SignalChartsWrapper"));
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 
@@ -15,10 +17,12 @@ const T = {
 
 
 const AGENTS = [
-  { id: "research",    label: "ResearchAgent",  icon: "🔍", desc: "Analyzes stocks, writes signals",     apiPath: "/api/agents/research" },
-  { id: "paper-trade", label: "PaperTrader",    icon: "📄", desc: "Shadow-trades signals on $10k virtual", apiPath: "/api/agents/paper-trade" },
-  { id: "trader",      label: "TraderAgent",    icon: "⚡", desc: "Proposes real trades for approval",   apiPath: "/api/agents/trade" },
-  { id: "learner",     label: "LearnerAgent",   icon: "🧠", desc: "Closes paper trades, adjusts weights", apiPath: "/api/agents/learner" },
+  { id: "research",     label: "ResearchAgent",  icon: "🔍", desc: "Analyzes stocks, writes signals",          apiPath: "/api/agents/research" },
+  { id: "paper-trade",  label: "PaperTrader",    icon: "📄", desc: "Shadow-trades signals on $10k virtual",    apiPath: "/api/agents/paper-trade" },
+  { id: "trader",       label: "TraderAgent",    icon: "⚡", desc: "Proposes real trades for approval",        apiPath: "/api/agents/trade" },
+  { id: "learner",      label: "LearnerAgent",   icon: "🧠", desc: "Closes paper trades, adjusts weights",     apiPath: "/api/agents/learner" },
+  { id: "theme-scout",  label: "ThemeScout",     icon: "🎯", desc: "Finds AI/thematic watchlist candidates",   apiPath: "/api/agents/theme-scout" },
+  { id: "deepseek",     label: "DeepSeek Research", icon: "🤖", desc: "Runs parallel research via DeepSeek LLM", apiPath: "/api/agents/deepseek-research" },
 ];
 
 function pnlColor(n: number) { return n >= 0 ? T.green : T.red; }
@@ -52,13 +56,14 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [running, setRunning] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<string | null>(null);
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
-  const [tab, setTab] = useState<"signals" | "paper" | "weights" | "log" | "architecture">("paper");
+  const [tab, setTab] = useState<"signals" | "paper" | "weights" | "log" | "architecture" | "backtest">("paper");
   const [minScore, setMinScore] = useState<number>(strategy?.min_analyst_score ?? 70);
   const [maxPos, setMaxPos] = useState<number>(strategy?.max_position_pct ?? 5);
   const [maxTrades, setMaxTrades] = useState<number>(strategy?.max_daily_trades ?? 3);
   const [configSaving, setConfigSaving] = useState(false);
   const [configToast, setConfigToast] = useState("");
   const [expandedRuns, setExpandedRuns] = useState<string | null>(null);
+  const [selectedDiagramAgent, setSelectedDiagramAgent] = useState("research-agent");
 
   async function saveStrategyConfig() {
     if (!strategy?.id) return;
@@ -165,22 +170,22 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const pendingSignals = signals.filter(s => s.status === "pending").length;
 
   return (
-    <div style={{ padding: "28px", color: T.text, fontFamily: "'Inter', sans-serif" }}>
+    <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
 
-      {/* Header */}
-      <div style={{ marginBottom: "24px" }}>
-        <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "6px" }}>Agent Control Center</div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <h1 style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.02em" }}>AI Agents</h1>
-          <button
-            onClick={toggleTrading}
-            disabled={saving}
-            style={{ padding: "10px 22px", borderRadius: "10px", fontWeight: 700, fontSize: "13px", cursor: saving ? "default" : "pointer", border: `1px solid ${tradingEnabled ? T.green : T.red}40`, background: tradingEnabled ? "#34D39922" : "#F8717122", color: tradingEnabled ? T.green : T.red } as any}
-          >
-            {saving ? "..." : tradingEnabled ? "⚡ Live Trading ON — Kill Switch" : "🔴 Live Trading PAUSED — Enable"}
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="AI Agents"
+        subtitle="Agent control center · research, trade, learn"
+        cadence="daily"
+        whatItDoes="Command center for all agents — ResearchAgent (screens and scores), PaperTrader (executes signals), LearnerAgent (updates weights weekly). Shows live status, paper portfolio, and trade queue."
+        whatToLookFor={[
+          "ResearchAgent runs daily at 9 AM — scores your watchlist. Check Intelligence for results.",
+          "PaperTrader acts on scores ≥60. It won't trade if Live Trading is disabled (default).",
+          "Kill Switch disables live trading immediately — use if agent behavior looks wrong.",
+          "Trade queue shows pending orders waiting for next PaperTrader cycle.",
+        ]}
+        actions={[{ label: saving ? "…" : tradingEnabled ? "⚡ Kill Switch" : "🔴 Enable Trading", onClick: toggleTrading }]}
+      />
+      <div style={{ padding: "0 28px 32px" }}>
 
       {/* Paper portfolio hero */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "24px", marginBottom: "20px", display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "24px" }}>
@@ -212,7 +217,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
       </div>
 
       {/* Agent runner cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "20px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px", marginBottom: "20px" }}>
         {AGENTS.map(a => {
           const runKey = a.id === "paper-trade" ? "paper_trader" : a.id;
           const runs = agentRuns?.[runKey] ?? [];
@@ -288,6 +293,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           { key: "signals", label: `Signals (${signals.length})` },
           { key: "weights", label: "Weights" },
           { key: "log", label: "Learning Log" },
+          { key: "backtest", label: "Backtest" },
           { key: "architecture", label: "Architecture" },
         ] as const).map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
@@ -518,6 +524,155 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         </div>
       )}
 
+      {/* Backtest tab */}
+      {tab === "backtest" && (() => {
+        if (signals.length === 0) {
+          return (
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "40px 20px", textAlign: "center" }}>
+              <div style={{ fontSize: "32px", marginBottom: "12px" }}>📊</div>
+              <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "6px", color: T.text }}>No signals yet</div>
+              <div style={{ fontSize: "13px", color: T.muted }}>Run ResearchAgent to generate signals. Backtest builds automatically.</div>
+            </div>
+          );
+        }
+
+        // Join signals with paper_trades by symbol + approximate date (within 3 days)
+        type BacktestRow = {
+          signalId: string;
+          symbol: string;
+          date: string;
+          direction: string;
+          score: number | null;
+          entryPrice: number | null;
+          targetPrice: number | null;
+          exitPrice: number | null;
+          actualPct: number | null;
+          status: "hit" | "miss" | "open";
+        };
+
+        const rows: BacktestRow[] = signals.map(sig => {
+          const sigDate = new Date(sig.created_at).getTime();
+          // Find matching paper trade: same symbol, opened within ±3 days of signal
+          const trade = paperTrades.find(t =>
+            t.symbol === sig.symbol &&
+            Math.abs(new Date(t.executed_at).getTime() - sigDate) < 3 * 86400000
+          );
+
+          const entryPrice = trade?.fill_price ?? null;
+          const exitPrice = trade?.exit_price ?? null;
+          const actualPct = entryPrice && exitPrice
+            ? ((exitPrice - entryPrice) / entryPrice) * 100
+            : null;
+
+          let status: "hit" | "miss" | "open" = "open";
+          if (trade?.outcome === "win") status = "hit";
+          else if (trade?.outcome === "loss") status = "miss";
+          else if (trade && trade.closed_at) status = actualPct !== null && actualPct > 0 ? "hit" : "miss";
+
+          // Estimate target: entry × 1.15 (15% upside) — PaperTrader default
+          const targetPrice = entryPrice ? entryPrice * 1.15 : null;
+
+          return {
+            signalId: sig.id,
+            symbol: sig.symbol,
+            date: sig.created_at,
+            direction: sig.direction,
+            score: sig.analyst_score ?? null,
+            entryPrice,
+            targetPrice,
+            exitPrice,
+            actualPct,
+            status,
+          };
+        });
+
+        const closed = rows.filter(r => r.status !== "open");
+        const hits = rows.filter(r => r.status === "hit").length;
+        const misses = rows.filter(r => r.status === "miss").length;
+        const open = rows.filter(r => r.status === "open").length;
+        const avgReturn = closed.length > 0 && closed.some(r => r.actualPct !== null)
+          ? closed.filter(r => r.actualPct !== null).reduce((s, r) => s + r.actualPct!, 0) / closed.filter(r => r.actualPct !== null).length
+          : null;
+
+        const statusColor = (s: string) => s === "hit" ? T.green : s === "miss" ? T.red : T.amber;
+        const statusBg = (s: string) => s === "hit" ? T.greenBg : s === "miss" ? T.redBg : T.amberBg;
+        const statusLabel = (s: string) => s === "hit" ? "✓ Target" : s === "miss" ? "✗ Stop" : "⏳ Open";
+
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            {/* Stats row */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px" }}>
+              {[
+                { label: "Hit Rate", value: closed.length ? `${hits}/${closed.length}` : "—", sub: closed.length ? `${Math.round((hits / closed.length) * 100)}%` : "no closed trades", color: hits > misses ? T.green : T.muted },
+                { label: "Misses", value: misses > 0 ? String(misses) : "0", sub: "hit stop or closed negative", color: misses > 0 ? T.red : T.muted },
+                { label: "Open", value: String(open), sub: "signals still running", color: open > 0 ? T.amber : T.muted },
+                { label: "Avg Return", value: avgReturn !== null ? (avgReturn >= 0 ? "+" : "") + avgReturn.toFixed(1) + "%" : "—", sub: "closed trades only", color: avgReturn !== null ? (avgReturn >= 0 ? T.green : T.red) : T.muted },
+              ].map(stat => (
+                <div key={stat.label} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 16px" }}>
+                  <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>{stat.label}</div>
+                  <div style={{ fontSize: "22px", fontWeight: 700, color: stat.color }}>{stat.value}</div>
+                  <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>{stat.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Signal accuracy table */}
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+              <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "4px" }}>Signal Accuracy · All Time</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "16px" }}>
+                Each signal matched to paper trade by symbol + date. Target estimated at entry ×1.15 (15% upside).
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", minWidth: "640px" }}>
+                  <thead>
+                    <tr style={{ color: T.muted }}>
+                      {["Symbol", "Date", "Direction", "Score", "Entry", "Target", "Exit", "Actual %", "Result"].map(h => (
+                        <th key={h} style={{ padding: "5px 12px 8px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left", whiteSpace: "nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(row => (
+                      <tr key={row.signalId} style={{ borderTop: `1px solid ${T.border}` }}>
+                        <td style={{ padding: "9px 12px 9px 0", fontWeight: 700 }}>{row.symbol}</td>
+                        <td style={{ padding: "9px 12px 9px 0", color: T.muted, whiteSpace: "nowrap" }}>
+                          {new Date(row.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                        </td>
+                        <td style={{ padding: "9px 12px 9px 0" }}>
+                          <span style={{ fontSize: "11px", fontWeight: 600, padding: "2px 7px", borderRadius: "4px", background: row.direction === "long" || row.direction === "buy" ? T.greenBg : T.redBg, color: row.direction === "long" || row.direction === "buy" ? T.green : T.red }}>
+                            {row.direction.toUpperCase()}
+                          </span>
+                        </td>
+                        <td style={{ padding: "9px 12px 9px 0", fontWeight: 600, color: (row.score ?? 0) >= 75 ? T.green : (row.score ?? 0) >= 60 ? T.amber : T.muted }}>
+                          {row.score ?? "—"}
+                        </td>
+                        <td style={{ padding: "9px 12px 9px 0", fontFamily: "monospace" }}>
+                          {row.entryPrice ? "$" + row.entryPrice.toFixed(2) : <span style={{ color: T.muted }}>—</span>}
+                        </td>
+                        <td style={{ padding: "9px 12px 9px 0", fontFamily: "monospace", color: T.muted }}>
+                          {row.targetPrice ? "$" + row.targetPrice.toFixed(2) : <span style={{ color: T.muted }}>—</span>}
+                        </td>
+                        <td style={{ padding: "9px 12px 9px 0", fontFamily: "monospace" }}>
+                          {row.exitPrice ? "$" + row.exitPrice.toFixed(2) : <span style={{ color: T.amber }}>—</span>}
+                        </td>
+                        <td style={{ padding: "9px 12px 9px 0", fontWeight: 600, color: row.actualPct !== null ? (row.actualPct >= 0 ? T.green : T.red) : T.muted }}>
+                          {row.actualPct !== null ? (row.actualPct >= 0 ? "+" : "") + row.actualPct.toFixed(1) + "%" : "—"}
+                        </td>
+                        <td style={{ padding: "9px 0" }}>
+                          <span style={{ fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "4px", background: statusBg(row.status), color: statusColor(row.status), whiteSpace: "nowrap" }}>
+                            {statusLabel(row.status)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Architecture tab */}
       {tab === "architecture" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -577,6 +732,34 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                   <div>Closes paper trades older than 7 days. Calculates realized P&L vs benchmark.</div>
                   <div>Writes 1-sentence outcome note per trade + batch summary to <code style={{ background: T.card, padding: "1px 5px", borderRadius: "3px", fontSize: "12px", color: T.accent }}>learning_log</code>.</div>
                   <div><span style={{ color: T.amber, fontWeight: 600 }}>Phase 0:</span> records outcomes only — weight mutation locked until 10+ closed trades.</div>
+                </div>
+              </div>
+
+              {/* ThemeScout */}
+              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "18px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+                  <span style={{ fontSize: "18px" }}>🎯</span>
+                  <span style={{ fontWeight: 700, fontSize: "14px" }}>ThemeScout</span>
+                  <span style={{ fontSize: "11px", color: T.muted, background: T.card, border: `1px solid ${T.border}`, borderRadius: "4px", padding: "2px 8px" }}>On-demand / cron</span>
+                </div>
+                <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7", display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <div>Identifies thematic investing opportunities (AI infrastructure, energy transition, biotech, etc.) using LLM analysis of market trends.</div>
+                  <div>Writes 3–5 symbol candidates with theme tag + rationale to watchlist. Symbols auto-expire after 7 days unless manually kept.</div>
+                  <div><span style={{ color: T.purple, fontWeight: 600 }}>AI Scout</span> badge in watchlist identifies ThemeScout additions.</div>
+                </div>
+              </div>
+
+              {/* DeepSeek */}
+              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "18px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+                  <span style={{ fontSize: "18px" }}>🤖</span>
+                  <span style={{ fontWeight: 700, fontSize: "14px" }}>DeepSeek Research</span>
+                  <span style={{ fontSize: "11px", color: T.muted, background: T.card, border: `1px solid ${T.border}`, borderRadius: "4px", padding: "2px 8px" }}>Parallel to Claude</span>
+                </div>
+                <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7", display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <div>Runs the same research prompt through DeepSeek-R1 in parallel with Claude. Enables A/B comparison of signal quality across LLMs.</div>
+                  <div>Results stored in <code style={{ background: T.card, padding: "1px 5px", borderRadius: "3px", fontSize: "12px", color: T.accent }}>agent_signals</code> with <code style={{ background: T.card, padding: "1px 5px", borderRadius: "3px", fontSize: "12px", color: T.accent }}>model = "deepseek"</code>.</div>
+                  <div><span style={{ color: T.amber, fontWeight: 600 }}>Goal:</span> determine which LLM produces more accurate signals before increasing position size.</div>
                 </div>
               </div>
             </div>
@@ -688,6 +871,42 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
 
         </div>
       )}
+
+      {/* Visual Agent Section */}
+      <div style={{ marginTop: 24, borderRadius: 12, border: "1px solid #1E2130", background: "#13151C", overflow: "hidden" }}>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid #1E2130", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#E2E8F0" }}>Visual Agent</span>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {[
+              { id: "research-agent", label: "Research" },
+              { id: "theme-scout", label: "ThemeScout" },
+              { id: "deepseek-agent", label: "DeepSeek" },
+              { id: "learner-agent", label: "LearnerAgent" },
+              { id: "paper-trader", label: "PaperTrader" },
+              { id: "position-monitor", label: "Position Monitor" },
+              { id: "macro-sentinel", label: "Macro Sentinel" },
+            ].map(a => (
+              <button
+                key={a.id}
+                onClick={() => setSelectedDiagramAgent(a.id)}
+                style={{
+                  padding: "4px 10px", fontSize: 11, fontWeight: 600, borderRadius: 5,
+                  cursor: "pointer", border: "1px solid",
+                  borderColor: selectedDiagramAgent === a.id ? "#6366F1" : "#1E2130",
+                  background: selectedDiagramAgent === a.id ? "#6366F122" : "transparent",
+                  color: selectedDiagramAgent === a.id ? "#6366F1" : "#64748B",
+                }}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ height: 600 }}>
+          <AgentDiagram agentId={selectedDiagramAgent} />
+        </div>
+      </div>
+      </div>
     </div>
   );
 }

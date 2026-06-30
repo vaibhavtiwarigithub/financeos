@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import PageHeader from "@/components/dashboard/PageHeader";
 
 const WATCHLIST = ["AAPL", "NVDA", "TSLA", "MSFT", "META", "GOOGL", "AMZN", "SPY"];
 
@@ -106,16 +107,23 @@ export default function CalendarPage() {
   };
 
   return (
-    <div style={{ padding: "28px", minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
-
+    <div style={{ minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <PageHeader
+        title="Earnings Calendar"
+        cadence="weekly"
+        whatItDoes="Shows upcoming earnings release dates for watchlist symbols. Pulled from Robinhood with fallback. Shows timing (BMO/AMC), EPS estimate vs actual."
+        whatToLookFor={[
+          "Symbols reporting in next 3 days — agent factors earnings risk into signals.",
+          "AMC (after close) reports usually gap next morning. Plan position size ahead.",
+          "EPS estimate vs last quarter shows whether analysts expect beat or miss.",
+          "Review every Monday — prep exits or hedges before big earnings week.",
+        ]}
+      />
+      <div style={{ padding: "4px 28px 28px" }}>
       {/* Header */}
-      <div style={{ marginBottom: "24px", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <div>
-          <div style={{ fontSize: "22px", fontWeight: 700, marginBottom: "4px" }}>Calendar</div>
-          <div style={{ fontSize: "13px", color: T.muted }}>
-            Earnings releases & macro events
-            {source && <span style={{ marginLeft: "8px", fontSize: "10px", color: "#4B5563" }}>· via Robinhood {source === "fallback" ? "(fallback)" : source === "cache" ? "(cached)" : "(live)"}</span>}
-          </div>
+      <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ fontSize: "11px", color: "#4B5563" }}>
+          {source ? `via Robinhood ${source === "fallback" ? "(fallback)" : source === "cache" ? "(cached)" : "(live)"}` : ""}
         </div>
         <button onClick={refresh} disabled={refreshing} style={{
           padding: "6px 14px", borderRadius: "6px", border: `1px solid ${T.border}`, background: "transparent",
@@ -201,6 +209,7 @@ export default function CalendarPage() {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

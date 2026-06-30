@@ -20,6 +20,26 @@
 
 ---
 
+## ✅ Session 2026-06-29 (latest)
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Dynamic exit price management | Claude | 2026-06-29 | migration 026; `price_target`, `stop_loss`, `highest_price`, `target_updated_at`, `exit_reason` on `paper_positions`; trailing stop = max(original_stop, highest_price × 0.93) |
+| Risk profile system | Claude | 2026-06-29 | migration 027; `risk_profile`, `score_threshold`, `position_size_pct`, `stop_loss_pct`, `target_pct` on `strategy_config`; Conservative/Balanced/Aggressive presets; `/api/settings/risk-profile` GET/PATCH; Settings → Agents tab card |
+| Visual Agent Mermaid diagrams | Claude | 2026-06-29 | `components/dashboard/AgentDiagram.tsx`; clickable flowcharts per agent; color-coded by node status; click → detail drawer; 7 JSON files in `public/agent-diagrams/` |
+| TradingView CSV watchlist import | Claude | 2026-06-29 | Import CSV button + modal in WatchlistPanel; `EXCHANGE:TICKER,Description` format; batch POST with progress |
+| Signal backtest tab | Claude | 2026-06-29 | AgentsPage backtest tab; joins agent_signals to paper_trades by symbol+date ±3 days; shows Hit Rate, Misses, Open, Avg Return |
+| Position Monitor | Claude | 2026-06-29 | `/api/agents/position-monitor/route.ts`; TradingPage card + Run button; scheduled weekdays 4:15PM |
+| Insider transactions in ResearchAgent | Claude | 2026-06-29 | `scoreInsider()` in `lib/research-agent.ts`; Alpha Vantage INSIDER_TRANSACTIONS; 90-day buy/sell ratio; injected as pre-fetched context in LLM prompt |
+| Smart Money Trades in MarketsPage | Claude | 2026-06-29 | `/api/markets/insider-trades/route.ts`; Alpha Vantage insiders + House Stock Watcher congressional trades; Insiders/Congress tabs |
+| LLM Cost Monitor | Claude | 2026-06-29 | `/api/admin/llm-costs/route.ts`; queries `llm_call_log`; burn rate, projected daily, per-model breakdown, 24-bar hourly chart; Settings → Agents tab; DashboardHome banner if projected daily > $2 |
+| Mentor nav + judgment score chart | Claude | 2026-06-29 | Mentor link restored in DashboardShell sidebar (🎓 under Learn); `/api/mentor/scores/route.ts`; MentorPage Recharts LineChart; reference lines at 50/70/90 |
+| MacroSentinel recession agent | Claude | 2026-06-29 | `/api/agents/macro-sentinel/route.ts`; 8 Alpha Vantage indicators; weighted danger score 0-100; GREEN/YELLOW/ORANGE/RED regimes; advisory-only; migrations 028; MarketsPage gauge + signal table; DashboardHome colored banner; Mondays 8AM |
+| Mermaid build fix | Claude | 2026-06-29 | Downgraded mermaid v11→v10; fixes ESM/webpack incompatibility with es-toolkit; build passes |
+| Windows Task Scheduler — 7 tasks | Claude | 2026-06-29 | ResearchAgent weekdays 9AM, PaperTrader 9:30AM, PositionMonitor 4:15PM, LearnerAgent Mondays 6AM, ThemeScout Sundays 8PM, DeepSeekAgent weekdays 9AM, MacroSentinel Mondays 8AM |
+
+---
+
 ## 🟣 Review
 
 | Task | Agent/Model | Status | Date | Notes |
@@ -32,11 +52,9 @@
 
 | Task | Assigned To | Status | Date | Notes |
 |---|---|---|---|---|
-| Earnings cron deployment | Builder | planned | — | Route exists at /api/agents/research/cron; needs pg_cron or edge function scheduler |
+| Earnings cron deployment | Builder | planned | — | Route exists at /api/agents/research/cron; migration 022 created; needs prod APP_URL |
 | Gemini API key + routing | Vaibhav | planned | — | Key not provided yet; slot reserved in LLM router |
 | Signal backtest validation | Builder | planned | — | Must validate signals before live trading |
-| Reddit direct sentiment | Builder | planned | — | StockTwits added; Reddit needs Apify key from Vaibhav |
-| pgvector memory (agent_memory table) | Builder | planned | — | pgvector not enabled in Supabase yet |
 | DeepSeek learning loop activation | Builder | planned | — | Needs 10+ closed trades first; currently locked in Phase 0 |
 
 ---
@@ -46,10 +64,9 @@
 | Task | Blocked By | Notes |
 |---|---|---|
 | Gemini routing | Gemini API key | Vaibhav to provide key |
-| Reddit sentiment | Apify key | Vaibhav to provide key |
-| pgvector memory | pgvector extension | Must enable in Supabase dashboard first |
 | Phase 1 weight mutation | 10+ closed trades | Learning loop cannot run yet; enforce Phase 0 gate |
-| Earnings cron auto-run | Scheduler infra | pg_cron or Vercel cron config not wired yet |
+| Earnings cron prod run | Real APP_URL | pg_cron migration 022 ready; blocked until prod domain set |
+| Supabase edge fn secrets | CLI access | Set GROQ_API_KEY, CRON_SECRET, APP_URL via supabase secrets set |
 
 ---
 
@@ -82,6 +99,24 @@
 | DB migration 010 (llm_call_log, agent_labels) | Claude + Vaibhav | 2026-06-29 | Applied to production Supabase |
 | DB migration 011 | Claude + Vaibhav | 2026-06-29 | Applied to production Supabase |
 | price_cache table (on-demand candle caching) | Claude | 2026-06-29 | Caches Massive API candle responses |
+| Bell dropdown fix (position: fixed) | Claude | 2026-06-29 | Sticky header stacking context — fixed to viewport |
+| Watchlist toggles (migration 020 + PATCH API) | Claude | 2026-06-29 | research_enabled, alert_on_signal, alert_on_earnings per symbol |
+| WatchlistPanel rewrite (quotes, source badges, settings) | Claude | 2026-06-29 | Price quotes via /api/markets/quote; per-item expand |
+| BriefingPage symbol auto-suggest | Claude | 2026-06-29 | Regex extraction of tickers from brief text; watchlist + Watch chips |
+| pgvector enabled + agent_memory table (migration 021) | Claude + Vaibhav | 2026-06-29 | Applied to production; vector(1536) + ivfflat index |
+| PageHeader on Strategies + Settings pages | Claude | 2026-06-29 | Consistent what/why/look-for on all dashboard pages |
+| Vault Change PIN button + API handler | Claude | 2026-06-29 | change_pin action updates app_settings.vault_pin; persists across restarts |
+| Vault Edit key button + preserve existing value | Claude | 2026-06-29 | Edit pre-fills form; blank key_value = keep existing; API skips update if blank |
+| PageHeader on Activity, Learning, You, Trading, Agents, Mentor | Claude | 2026-06-29 | All 8 dashboard pages now have consistent what/why/look-for header |
+| Options chain tab in SymbolDetailPage | Claude | 2026-06-29 | Chart/Signals/Options/Chat tabs; put-call ratio, avg IV, calls+puts table |
+| Options chain API route | Claude | 2026-06-29 | /api/options/chain?symbol=X; Alpha Vantage REALTIME_OPTIONS; revalidate 300s |
+| Batch quotes endpoint | Claude | 2026-06-29 | /api/markets/quotes?symbols=A,B,C; parallel fetch, max 20 symbols, 1 round-trip |
+| WatchlistPanel → batch quotes | Claude | 2026-06-29 | 15–20 serial calls replaced with 1 batch call; limit raised 15→20 |
+| Company name auto-fetch on watchlist add | Claude | 2026-06-29 | POST /api/watchlist calls Alpha Vantage COMPANY_OVERVIEW if name not provided |
+| Alpha Vantage API key added | Vaibhav + Claude | 2026-06-29 | In .env.local + vault DB; powers options, sentiment, company name |
+| Vault providers expanded | Claude | 2026-06-29 | Added massive, alphavantage, robinhood, supabase providers + market_data/sentiment/options tasks |
+| TypeScript error fixes | Claude | 2026-06-29 | theme-scout raw.text fix; tailwind darkMode array→string; supabase/functions excluded from tsconfig |
+| Grammarly hydration error suppressed | Claude | 2026-06-29 | suppressHydrationWarning on <body> in app/layout.tsx |
 
 ### Design System Migration (2026-06-27) — What was built
 - `app/globals.css` — full fo-* token system (trading-purple accent #6366F1, dark-first)

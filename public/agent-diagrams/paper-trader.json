@@ -1,0 +1,23 @@
+{
+  "agentId": "paper-trader",
+  "agentLabel": "PaperTrader",
+  "diagram": "flowchart TD\n  SIG_IN[\"📥 Receive agent_signal\"] --> CHECK_CASH[\"💰 Check Cash Balance\"]\n  CHECK_CASH --> SIZE_POS[\"📐 Size Position\\npositionSizePct% of NAV\"]\n  SIZE_POS --> FILL[\"✅ Fill at Market Price\"]\n  FILL --> SET_EXITS[\"🎯 Set price_target + stop_loss\"]\n  SET_EXITS --> LOG[\"💾 Write paper_positions\"]",
+  "nodes": {
+    "SIG_IN": { "label": "Receive agent_signal", "description": "Reads qualifying signals from agent_signals — direction=long, score >= scoreThreshold, not already held.", "addedAt": "2026-06-24", "addReason": "Entry point — signals from ResearchAgent or DeepSeek.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "CHECK_CASH": { "label": "Check Cash Balance", "description": "Reads paper_portfolio.cash_balance. Skips trade if insufficient cash.", "addedAt": "2026-06-24", "addReason": "Prevents overdraft.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "SIZE_POS": { "label": "Size Position", "description": "Position value = cash_balance × (position_size_pct / 100). Conservative 7%, Balanced 10%, Aggressive 15%.", "addedAt": "2026-06-24", "addReason": "Equal-dollar sizing per trade. Risk profile controls concentration.", "status": "changed", "changedAt": "2026-06-29", "changeReason": "Changed from hardcoded 10% to position_size_pct from risk profile", "removedAt": null, "removeReason": null },
+    "FILL": { "label": "Fill at Market Price", "description": "Current price from Robinhood quote or Polygon. Records fill_price, qty.", "addedAt": "2026-06-24", "addReason": "Paper fill simulates market order.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "SET_EXITS": { "label": "Set price_target + stop_loss", "description": "price_target = signal.price_target ?? fill × (1+target_pct/100). stop_loss = fill × (1-stop_loss_pct/100). highest_price = fill.", "addedAt": "2026-06-29", "addReason": "Previously no exit criteria except 7-day time limit. Now exits by target or stop with trailing.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "LOG": { "label": "Write paper_positions", "description": "Inserts: symbol, qty, avg_cost, price_target, stop_loss, highest_price, agent_label, signal_id. Deducts from cash.", "addedAt": "2026-06-24", "addReason": "Persists trade. Position monitor and LearnerAgent read from this table.", "status": "changed", "changedAt": "2026-06-29", "changeReason": "Now writes price_target, stop_loss, highest_price (migration 026)", "removedAt": null, "removeReason": null }
+  },
+  "history": [
+    { "date": "2026-06-24", "event": "add", "nodeId": "SIG_IN", "label": "Receive Signal", "reason": "Initial build" },
+    { "date": "2026-06-24", "event": "add", "nodeId": "CHECK_CASH", "label": "Check Cash", "reason": "Initial build" },
+    { "date": "2026-06-24", "event": "add", "nodeId": "SIZE_POS", "label": "Size Position", "reason": "Initial build — hardcoded 10%" },
+    { "date": "2026-06-24", "event": "add", "nodeId": "FILL", "label": "Fill at Market", "reason": "Initial build" },
+    { "date": "2026-06-24", "event": "add", "nodeId": "LOG", "label": "Write paper_positions", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "SET_EXITS", "label": "Set price_target + stop_loss", "reason": "Dynamic exit management" },
+    { "date": "2026-06-29", "event": "modify", "nodeId": "SIZE_POS", "label": "Size Position", "reason": "Reads position_size_pct from risk profile" },
+    { "date": "2026-06-29", "event": "modify", "nodeId": "LOG", "label": "Write paper_positions", "reason": "Writes price_target, stop_loss, highest_price" }
+  ]
+}

@@ -10,8 +10,8 @@ const T = {
   accent: "#6366F1", green: "#34D399", red: "#F87171", yellow: "#FBBF24",
 };
 
-const PROVIDERS = ["anthropic", "deepseek", "gemini", "openai", "groq", "other"] as const;
-const ALL_TASKS = ["research", "trade", "evaluate", "thesis", "chat", "summarize", "data", "embed"];
+const PROVIDERS = ["anthropic", "deepseek", "gemini", "openai", "groq", "massive", "alphavantage", "robinhood", "supabase", "other"] as const;
+const ALL_TASKS = ["research", "trade", "evaluate", "thesis", "chat", "summarize", "data", "embed", "market_data", "sentiment", "options"];
 
 interface VaultKey {
   id: string;
@@ -47,6 +47,10 @@ export default function VaultPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saveMsg, setSaveMsg] = useState("");
+  const [showChangePIN, setShowChangePIN] = useState(false);
+  const [newPIN, setNewPIN] = useState("");
+  const [changePINMsg, setChangePINMsg] = useState("");
+  const [changingPIN, setChangingPIN] = useState(false);
 
   const unlock = useCallback(async () => {
     if (!pin.trim()) return;
@@ -90,8 +94,9 @@ export default function VaultPage() {
   }
 
   async function saveKey() {
-    if (!form.key_name || !form.key_value || !form.display_name || !form.provider) {
-      setSaveMsg("Key name, value, display name, and provider are required.");
+    const isEdit = keys.some(k => k.key_name === form.key_name);
+    if (!form.key_name || (!form.key_value && !isEdit) || !form.display_name || !form.provider) {
+      setSaveMsg(isEdit ? "Display name and provider are required." : "Key name, value, display name, and provider are required.");
       return;
     }
     setSaving(true);
@@ -114,6 +119,45 @@ export default function VaultPage() {
       setKeys(listData.keys ?? []);
     }
     setSaving(false);
+  }
+
+  async function changePIN() {
+    if (!newPIN.trim()) return;
+    setChangingPIN(true);
+    setChangePINMsg("");
+    const res = await fetch("/api/admin/vault", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-vault-pin": pin },
+      body: JSON.stringify({ action: "change_pin", new_pin: newPIN }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      setChangePINMsg("Error: " + data.error);
+    } else {
+      setPin(newPIN);
+      setNewPIN("");
+      setShowChangePIN(false);
+      setChangePINMsg("PIN changed. Using new PIN for this session.");
+    }
+    setChangingPIN(false);
+  }
+
+  function editKey(k: VaultKey) {
+    setForm({
+      key_name: k.key_name,
+      key_value: "", // masked — user must re-enter to change
+      display_name: k.display_name,
+      provider: k.provider,
+      model_id: k.model_id ?? "",
+      tasks_suitable: k.tasks_suitable ?? [],
+      cost_per_1m_input: k.cost_per_1m_input,
+      cost_per_1m_output: k.cost_per_1m_output,
+      enabled: k.enabled,
+      notes: k.notes ?? "",
+    });
+    setSaveMsg("");
+    setShowAddForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function toggleTask(task: string) {
@@ -186,20 +230,54 @@ export default function VaultPage() {
 
   const providerColor: Record<string, string> = {
     anthropic: "#C084FC", deepseek: "#60A5FA", gemini: "#34D399",
-    openai: "#FBBF24", groq: "#F97316", other: T.muted, massive: "#A3E635",
+    openai: "#FBBF24", groq: "#F97316", massive: "#A3E635",
+    alphavantage: "#38BDF8", robinhood: "#00C805", supabase: "#3ECF8E",
+    other: T.muted,
   };
 
   return (
     <div style={{ padding: "28px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
         <div style={{ fontSize: "20px", fontWeight: 600 }}>API Key Vault</div>
-        <button onClick={() => setShowAddForm(v => !v)} style={btn(T.accent)}>
-          {showAddForm ? "Cancel" : "+ Add Key"}
-        </button>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button onClick={() => { setShowChangePIN(v => !v); setChangePINMsg(""); }} style={btn("#252836")}>
+            {showChangePIN ? "Cancel" : "Change PIN"}
+          </button>
+          <button onClick={() => { setShowAddForm(v => !v); setForm(emptyForm); setSaveMsg(""); }} style={btn(T.accent)}>
+            {showAddForm ? "Cancel" : "+ Add Key"}
+          </button>
+        </div>
       </div>
-      <div style={{ fontSize: "13px", color: T.muted, marginBottom: "24px" }}>
+      <div style={{ fontSize: "13px", color: T.muted, marginBottom: showChangePIN ? "12px" : "24px" }}>
         {keys.length} key{keys.length !== 1 ? "s" : ""} registered
       </div>
+
+      {showChangePIN && (
+        <div style={{ ...card, marginBottom: "20px", borderColor: T.yellow + "44" }}>
+          <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "10px", color: T.yellow }}>Change Vault PIN</div>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+            <input
+              type="password"
+              placeholder="New PIN"
+              value={newPIN}
+              onChange={e => setNewPIN(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && changePIN()}
+              style={{ ...inp, flex: 1 }}
+            />
+            <button onClick={changePIN} disabled={changingPIN || !newPIN} style={btn(T.yellow, "#000")}>
+              {changingPIN ? "Changing…" : "Set PIN"}
+            </button>
+          </div>
+          {changePINMsg && (
+            <div style={{ marginTop: "8px", fontSize: "12px", color: changePINMsg.startsWith("Error") ? T.red : T.green }}>
+              {changePINMsg}
+            </div>
+          )}
+          <div style={{ marginTop: "8px", fontSize: "11px", color: T.muted }}>
+            New PIN applies immediately. Update VAULT_PIN in .env.local to persist across server restarts.
+          </div>
+        </div>
+      )}
 
       {/* Security note */}
       <div style={{ ...card, borderColor: T.accent + "44", background: T.accent + "0D", marginBottom: "20px" }}>
@@ -210,10 +288,18 @@ export default function VaultPage() {
         </div>
       </div>
 
-      {/* Add Key Form */}
+      {/* Add / Edit Key Form */}
       {showAddForm && (
-        <div style={{ ...card, marginBottom: "20px" }}>
-          <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "16px" }}>Add / Update Key</div>
+        <div style={{ ...card, marginBottom: "20px", borderColor: form.key_name ? T.yellow + "44" : T.border }}>
+          <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "4px" }}>
+            {form.key_name ? `Editing: ${form.key_name}` : "Add New Key"}
+          </div>
+          {form.key_name && (
+            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "14px" }}>
+              Leave Key Value blank to keep existing value. Fill it to replace.
+            </div>
+          )}
+          {!form.key_name && <div style={{ marginBottom: "16px" }} />}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
             <div>
               <span style={label}>Provider</span>
@@ -304,7 +390,7 @@ export default function VaultPage() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-                {["Provider", "Display Name", "Key Name", "Vault Value", "Env Status", "Status", "$/1M in", "$/1M out", "Tasks", "Notes"].map(h => (
+                {["Provider", "Display Name", "Key Name", "Vault Value", "Env Status", "Status", "$/1M in", "$/1M out", "Tasks", "Notes", ""].map(h => (
                   <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: T.muted, fontSize: "10px", fontWeight: 500, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -371,6 +457,17 @@ export default function VaultPage() {
                   </td>
                   <td style={{ padding: "12px 10px", color: T.muted, fontSize: "11px", maxWidth: "180px" }}>
                     {k.notes ?? "—"}
+                  </td>
+                  <td style={{ padding: "12px 10px" }}>
+                    <button
+                      onClick={() => editKey(k)}
+                      style={{
+                        fontSize: "11px", padding: "3px 10px", borderRadius: "4px", cursor: "pointer",
+                        border: `1px solid ${T.accent}44`, background: T.accent + "15",
+                        color: T.accent, fontWeight: 600, whiteSpace: "nowrap",
+                      }}>
+                      Edit
+                    </button>
                   </td>
                 </tr>
               ))}

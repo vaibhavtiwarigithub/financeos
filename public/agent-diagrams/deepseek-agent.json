@@ -1,0 +1,21 @@
+{
+  "agentId": "deepseek-agent",
+  "agentLabel": "DeepSeek Research",
+  "diagram": "flowchart TD\n  TRIG[\"⚡ Parallel to ResearchAgent\"] --> SAME[\"🔍 Same Screener Input\"]\n  SAME --> DS[\"🤖 DeepSeek R1 LLM\"]\n  DS --> SIG[\"✍️ agent_signal\\nagent_label=deepseek\"]\n  SIG --> COMP[\"📊 A/B vs Claude\"]\n  COMP --> LEARN[\"🎓 LearnerAgent P&L by model\"]",
+  "nodes": {
+    "TRIG": { "label": "Parallel Trigger", "description": "Runs in parallel with ResearchAgent on same symbol set. Same data, different LLM — enables A/B comparison.", "addedAt": "2026-06-29", "addReason": "Need to know if cheaper DeepSeek produces comparable signals to Claude.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "SAME": { "label": "Same Screener Input", "description": "Identical screener output as ResearchAgent. Only LLM analysis differs.", "addedAt": "2026-06-29", "addReason": "Fair comparison — P&L difference must be LLM-caused, not screener-caused.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "DS": { "label": "DeepSeek R1 LLM", "description": "DeepSeek R1 API. ~80% cheaper than Claude. Routed via lib/llm-router.ts with model='deepseek'.", "addedAt": "2026-06-29", "addReason": "If signals comparable to Claude, switch primary to save ~80% LLM costs.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "SIG": { "label": "Write agent_signal", "description": "Writes to agent_signals with agent_label='deepseek'. Tagged for LearnerAgent comparison.", "addedAt": "2026-06-29", "addReason": "Must tag by source model to enable P&L comparison.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "COMP": { "label": "A/B Comparison", "description": "LearnerAgent compares win rate, avg return between Claude and DeepSeek. Results on Learning page.", "addedAt": "2026-06-29", "addReason": "Meaningful after 10+ closed trades per model. Unlocks Phase 1.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "LEARN": { "label": "LearnerAgent Tracking", "description": "Sunday batch includes per-model breakdown: Claude vs DeepSeek win rates, avg returns.", "addedAt": "2026-06-29", "addReason": "Data over time decides which model to use as primary.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null }
+  },
+  "history": [
+    { "date": "2026-06-29", "event": "add", "nodeId": "TRIG", "label": "Trigger", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "SAME", "label": "Same Input", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "DS", "label": "DeepSeek R1", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "SIG", "label": "Write Signal", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "COMP", "label": "A/B Comparison", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "LEARN", "label": "LearnerAgent", "reason": "Initial build" }
+  ]
+}

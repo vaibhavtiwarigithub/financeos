@@ -1,54 +1,164 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
-  text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280",
-  accent: "#6366F1", green: "#34D399", red: "#F87171", yellow: "#FBBF24",
+  text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280", dim: "#0F1117",
+  accent: "#6366F1", green: "#34D399", red: "#F87171", yellow: "#FBBF24", blue: "#60A5FA",
 };
 
-type Alert = { id: string; severity: "info" | "warn" | "error" | "success"; category: string; title: string; detail?: string; created_at: string };
-
-const SEV_COLORS: Record<string, { bg: string; border: string; text: string; dot: string }> = {
-  error: { bg: "#3B0000", border: "#F8717144", text: "#F87171", dot: "#F87171" },
-  warn:  { bg: "#2D1B00", border: "#FBBF2444", text: "#FBBF24", dot: "#FBBF24" },
-  info:  { bg: "#0F1A2E", border: "#60A5FA44", text: "#60A5FA", dot: "#60A5FA" },
-  success: { bg: "#052E16", border: "#34D39944", text: "#34D399", dot: "#34D399" },
+type Alert = {
+  id: string;
+  severity: "info" | "warn" | "error" | "success";
+  category: string;
+  title: string;
+  detail?: string;
+  created_at: string;
 };
 
-const NAV = [
-  { href: "/dashboard", label: "Home", icon: "⌂" },
-  { href: "/dashboard/portfolio", label: "Portfolio", icon: "◈" },
-  { href: "/dashboard/markets", label: "Markets", icon: "◉" },
-  { href: "/dashboard/intelligence", label: "Intelligence", icon: "◆" },
-  { href: "/dashboard/calendar", label: "Calendar", icon: "▦" },
-  { href: "/dashboard/strategies", label: "Strategies", icon: "⬡" },
-  { href: "/dashboard/you", label: "You", icon: "◎" },
-  { href: "/dashboard/settings", label: "Settings", icon: "⚙" },
+const SEV: Record<string, { color: string; dot: string; bg: string }> = {
+  error:   { color: T.red,    dot: T.red,    bg: "#3B000033" },
+  warn:    { color: T.yellow, dot: T.yellow, bg: "#2D1B0033" },
+  info:    { color: T.blue,   dot: T.blue,   bg: "#0F1A2E33" },
+  success: { color: T.green,  dot: T.green,  bg: "#052E1633" },
+};
+
+// ── Nav sections ────────────────────────────────────────────────────────────
+const NAV_SECTIONS = [
+  {
+    label: "Daily",
+    hint: "Check every trading day",
+    items: [
+      { href: "/dashboard",              label: "Morning Briefing", icon: "⌂", hint: "Portfolio snapshot + today's signals", alertCat: "home" },
+{ href: "/dashboard/markets",      label: "Markets",          icon: "◉", hint: "Indices, sectors, VIX proxy",         alertCat: "market" },
+      { href: "/dashboard/intelligence", label: "Intelligence",     icon: "◆", hint: "Agent signals + research runs",       alertCat: "cron" },
+      { href: "/dashboard/agents",       label: "Agents",           icon: "⬡", hint: "Run agents manually, view status",    alertCat: "" },
+    ],
+  },
+  {
+    label: "Weekly",
+    hint: "Review on Fridays or Mondays",
+    items: [
+      { href: "/dashboard/portfolio",  label: "Portfolio",        icon: "◈", hint: "Paper positions, P&L, open trades",  alertCat: "portfolio" },
+      { href: "/dashboard/calendar",   label: "Earnings Calendar",icon: "▦", hint: "Upcoming earnings for watchlist",     alertCat: "earnings" },
+      { href: "/dashboard/strategies", label: "Strategies",       icon: "⬡", hint: "7 strategy templates, fit scores",   alertCat: "strategy" },
+      { href: "/dashboard/watchlist",  label: "Watchlist",        icon: "◎", hint: "AI-curated + manual symbols to track",alertCat: "watchlist" },
+    ],
+  },
+  {
+    label: "Learn",
+    hint: "Improve your judgment",
+    items: [
+      { href: "/dashboard/mentor",     label: "Mentor",           icon: "🎓", hint: "Learn trading principles, get scored on your calls", alertCat: "" },
+    ],
+  },
+  {
+    label: "Settings",
+    hint: "",
+    items: [
+      { href: "/dashboard/settings",   label: "Settings",         icon: "⚙", hint: "App configuration",                 alertCat: "" },
+    ],
+  },
 ];
 
-const ADMIN_NAV = { href: "/dashboard/admin", label: "Admin", icon: "★" };
+const ADMIN_ITEM = { href: "/dashboard/admin", label: "Admin", icon: "★", hint: "API keys, vault, agent config", alertCat: "admin" };
+
+// ── Market status ─────────────────────────────────────────────────────────────
+function getMarketStatus(): { label: string; color: string; bg: string; detail: string } {
+  // Convert to ET (UTC-4 EDT / UTC-5 EST). We approximate: from mid-March to early Nov = EDT (UTC-4)
+  const now = new Date();
+  const utcH = now.getUTCHours(), utcM = now.getUTCMinutes();
+  const month = now.getUTCMonth() + 1; // 1-12
+  const day = now.getUTCDay(); // 0=Sun
+
+  // EDT Apr–Oct roughly, EST Nov–Mar. Close enough for market status.
+  const offsetH = (month >= 4 && month <= 10) ? 4 : 5; // hours behind UTC
+  let etH = utcH - offsetH;
+  if (etH < 0) etH += 24;
+  const etMin = utcM;
+  const etTotal = etH * 60 + etMin;
+
+  const isWeekend = day === 0 || day === 6;
+  const PRE  = 4 * 60;        // 4:00 AM ET
+  const OPEN = 9 * 60 + 30;   // 9:30 AM ET
+  const CLOSE = 16 * 60;      // 4:00 PM ET
+  const AH   = 20 * 60;       // 8:00 PM ET
+
+  if (isWeekend) return { label: "Closed", color: T.muted, bg: "#1A1D27", detail: "Markets closed — weekend" };
+  if (etTotal < PRE)   return { label: "Closed",       color: T.muted,   bg: "#1A1D27",     detail: `Opens pre-market at 4:00 AM ET` };
+  if (etTotal < OPEN)  return { label: "Pre-market",   color: T.yellow,  bg: "#2D1B0033",   detail: `Regular session opens at 9:30 AM ET` };
+  if (etTotal < CLOSE) return { label: "Market Open",  color: T.green,   bg: "#052E1633",   detail: `NYSE/Nasdaq close at 4:00 PM ET` };
+  if (etTotal < AH)    return { label: "After-hours",  color: T.blue,    bg: "#0F1A2E33",   detail: `Extended hours until 8:00 PM ET` };
+  return { label: "Closed", color: T.muted, bg: "#1A1D27", detail: "Opens pre-market tomorrow at 4:00 AM ET" };
+}
+
+function useMarketClock() {
+  const [tick, setTick] = useState(0);
+  const [timeStr, setTimeStr] = useState("");
+  useEffect(() => {
+    function update() {
+      const now = new Date();
+      setTimeStr(now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }));
+      setTick(t => t + 1);
+    }
+    update();
+    const id = setInterval(update, 30000);
+    return () => clearInterval(id);
+  }, []);
+  return { timeStr, status: getMarketStatus() };
+}
 
 const TIER_COLORS: Record<string, string> = { free: T.muted, pro: T.accent, elite: T.yellow };
+
+function fmtAlertTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+// ── Alert detail parser — splits on " · " delimiter ──────────────────────────
+function AlertDetail({ detail }: { detail: string }) {
+  const lines = detail.split(" · ").filter(Boolean);
+  if (lines.length <= 1) return <span style={{ fontSize: "11px", color: T.textSub }}>{detail}</span>;
+  return (
+    <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "3px" }}>
+      {lines.map((line, i) => (
+        <div key={i} style={{ fontSize: "11px", color: i === 0 ? T.textSub : T.muted, lineHeight: "1.4" }}>
+          {line}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function DashboardShell({ profile, children }: { profile: Profile; children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const supabase = createClient();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [alertsExpanded, setAlertsExpanded] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
+  const [expandedAlert, setExpandedAlert] = useState<string | null>(null);
+  const bellRef = useRef<HTMLDivElement>(null);
+  const { timeStr, status: mktStatus } = useMarketClock();
 
   useEffect(() => {
-    // Stale-cron check + fetch alerts on mount
     fetch("/api/alerts/stale-check").catch(() => {});
     fetch("/api/alerts")
       .then(r => r.json())
       .then(d => setAlerts(d.alerts ?? []))
       .catch(() => {});
+  }, []);
+
+  // Close bell dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (bellRef.current && !bellRef.current.contains(e.target as Node)) setBellOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
   function dismissAlert(id: string) {
@@ -58,6 +168,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
 
   function dismissAll() {
     setAlerts([]);
+    setBellOpen(false);
     fetch("/api/alerts", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resolve_all: true }) }).catch(() => {});
   }
 
@@ -66,114 +177,263 @@ export default function DashboardShell({ profile, children }: { profile: Profile
     router.push("/login");
   }
 
-  const topAlert = alerts[0];
-  const extraCount = alerts.length - 1;
+  const isAdmin = ["admin", "superadmin"].includes(profile.role);
+  const unreadCount = alerts.length;
 
-  const navItems = [...NAV, ...(["admin", "superadmin"].includes(profile.role) ? [ADMIN_NAV] : [])];
+  const worstSeverity = alerts.find(a => a.severity === "error") ? "error"
+    : alerts.find(a => a.severity === "warn") ? "warn"
+    : alerts.find(a => a.severity === "info") ? "info"
+    : null;
+  const bellColor = worstSeverity ? SEV[worstSeverity].dot : T.muted;
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: "'Inter', sans-serif", color: T.text }}>
 
-      {/* Sidebar */}
-      <aside style={{ width: "220px", background: T.surface, borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", flexShrink: 0 }}>
-        {/* Logo */}
-        <div style={{ padding: "20px 20px 16px", borderBottom: `1px solid ${T.border}` }}>
-          <div style={{ fontSize: "17px", fontWeight: 700, letterSpacing: "-0.02em" }}>
-            Finance<span style={{ color: T.accent }}>OS</span>
+      {/* ── Sidebar ── */}
+      <aside style={{ width: "224px", background: T.surface, borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", flexShrink: 0 }}>
+
+        {/* Logo + bell row */}
+        <div style={{ padding: "18px 16px 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: "17px", fontWeight: 700, letterSpacing: "-0.02em" }}>
+              Finance<span style={{ color: T.accent }}>OS</span>
+            </div>
+            <div style={{ fontSize: "9px", color: T.muted, marginTop: "2px", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+              Intelligence Platform
+            </div>
           </div>
-          <div style={{ fontSize: "10px", color: T.muted, marginTop: "2px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-            Intelligence Platform
+
+          {/* Bell icon with badge */}
+          <div ref={bellRef} style={{ position: "relative" }}>
+            <button
+              onClick={() => setBellOpen(o => !o)}
+              title={`${unreadCount} alert${unreadCount !== 1 ? "s" : ""}`}
+              style={{
+                background: bellOpen ? T.card : "none",
+                border: `1px solid ${bellOpen ? T.border : "transparent"}`,
+                borderRadius: "8px", padding: "6px 8px", cursor: "pointer",
+                color: unreadCount > 0 ? bellColor : T.muted, fontSize: "16px",
+                position: "relative", display: "flex", alignItems: "center",
+              }}
+            >
+              🔔
+              {unreadCount > 0 && (
+                <span style={{
+                  position: "absolute", top: "2px", right: "2px",
+                  width: "16px", height: "16px", borderRadius: "50%",
+                  background: worstSeverity === "error" ? T.red : worstSeverity === "warn" ? T.yellow : T.blue,
+                  color: "#000", fontSize: "9px", fontWeight: 700,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  border: `2px solid ${T.surface}`,
+                }}>
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+
+            {/* Alert dropdown — fixed so sidebar stacking context doesn't clip it */}
+            {bellOpen && (
+              <div style={{
+                position: "fixed", top: "64px", left: "8px",
+                width: "360px", background: T.card, border: `1px solid ${T.border}`,
+                borderRadius: "12px", boxShadow: "0 12px 40px #000000AA",
+                zIndex: 9999, overflow: "hidden",
+              }}>
+                {/* Dropdown header */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderBottom: `1px solid ${T.border}` }}>
+                  <span style={{ fontSize: "12px", fontWeight: 700, color: T.text }}>
+                    Alerts {unreadCount > 0 && <span style={{ color: T.muted, fontWeight: 400 }}>({unreadCount})</span>}
+                  </span>
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={dismissAll}
+                      style={{ fontSize: "11px", color: T.muted, background: "none", border: `1px solid ${T.border}`, borderRadius: "5px", padding: "2px 8px", cursor: "pointer" }}
+                    >
+                      Dismiss all
+                    </button>
+                  )}
+                </div>
+
+                {/* Alert list */}
+                <div style={{ maxHeight: "420px", overflowY: "auto" }}>
+                  {alerts.length === 0 ? (
+                    <div style={{ padding: "24px", textAlign: "center", color: T.muted, fontSize: "12px" }}>
+                      No alerts · all systems normal
+                    </div>
+                  ) : alerts.map(a => {
+                    const s = SEV[a.severity] ?? SEV.info;
+                    const isExpanded = expandedAlert === a.id;
+                    return (
+                      <div
+                        key={a.id}
+                        style={{ padding: "11px 14px", borderBottom: `1px solid ${T.border}22`, background: isExpanded ? s.bg : "none" }}
+                      >
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                          {/* Severity dot */}
+                          <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: s.dot, flexShrink: 0, marginTop: "4px" }} />
+
+                          {/* Content */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
+                              <span style={{ fontSize: "9px", fontWeight: 700, color: s.color, background: s.bg, padding: "1px 5px", borderRadius: "3px", letterSpacing: "0.06em" }}>
+                                {a.category.toUpperCase()}
+                              </span>
+                              <span style={{ fontSize: "10px", color: T.muted }}>{fmtAlertTime(a.created_at)}</span>
+                            </div>
+                            <div style={{ fontSize: "12px", fontWeight: 600, color: T.text, lineHeight: "1.4" }}>{a.title}</div>
+                            {a.detail && (
+                              <>
+                                {!isExpanded && (
+                                  <button
+                                    onClick={() => setExpandedAlert(a.id)}
+                                    style={{ fontSize: "10px", color: T.muted, background: "none", border: "none", padding: "2px 0", cursor: "pointer", textDecoration: "underline" }}
+                                  >
+                                    Show details
+                                  </button>
+                                )}
+                                {isExpanded && <AlertDetail detail={a.detail} />}
+                                {isExpanded && (
+                                  <button
+                                    onClick={() => setExpandedAlert(null)}
+                                    style={{ fontSize: "10px", color: T.muted, background: "none", border: "none", padding: "3px 0 0", cursor: "pointer", textDecoration: "underline" }}
+                                  >
+                                    Hide
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+
+                          {/* Dismiss */}
+                          <button
+                            onClick={() => dismissAlert(a.id)}
+                            style={{ color: T.muted, background: "none", border: "none", cursor: "pointer", fontSize: "16px", flexShrink: 0, lineHeight: 1, paddingTop: "1px" }}
+                          >×</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Nav */}
-        <nav style={{ flex: 1, padding: "12px 10px", overflowY: "auto" }}>
-          {navItems.map(item => {
-            const active = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
-            return (
-              <button key={item.href} onClick={() => router.push(item.href)} style={{
-                width: "100%", display: "flex", alignItems: "center", gap: "10px",
-                padding: "9px 12px", borderRadius: "8px", border: "none",
-                background: active ? T.accent + "18" : "none",
-                color: active ? T.accent : T.textSub,
-                fontSize: "14px", fontWeight: active ? 500 : 400,
-                cursor: "pointer", textAlign: "left", marginBottom: "2px",
-                borderLeft: active ? `2px solid ${T.accent}` : "2px solid transparent",
-              }}>
-                <span style={{ fontSize: "14px", width: "18px", textAlign: "center" }}>{item.icon}</span>
-                {item.label}
-              </button>
-            );
-          })}
+        {/* Sectioned nav */}
+        <nav style={{ flex: 1, padding: "10px 8px", overflowY: "auto" }}>
+          {NAV_SECTIONS.map((section, si) => (
+            <div key={section.label} style={{ marginBottom: si < NAV_SECTIONS.length - 1 ? "16px" : "0" }}>
+              {/* Section label */}
+              <div style={{ fontSize: "9px", fontWeight: 700, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase", padding: "0 10px", marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px" }}>
+                {section.label}
+                {section.hint && <span style={{ fontWeight: 400, letterSpacing: 0, textTransform: "none", color: T.muted + "88", fontSize: "8px" }}>· {section.hint}</span>}
+              </div>
+
+              {/* Nav items */}
+              {section.items.map(item => {
+                const active = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
+                const catAlerts = item.alertCat ? alerts.filter(a => a.category === item.alertCat) : [];
+                const catWorst = catAlerts.find(a => a.severity === "error") ? "error"
+                  : catAlerts.find(a => a.severity === "warn") ? "warn"
+                  : catAlerts.length > 0 ? "info" : null;
+                const catDotColor = catWorst ? SEV[catWorst].dot : null;
+                return (
+                  <button
+                    key={item.href}
+                    onClick={() => router.push(item.href)}
+                    title={item.hint}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", gap: "9px",
+                      padding: "8px 10px", borderRadius: "7px", border: "none",
+                      background: active ? T.accent + "1A" : "none",
+                      color: active ? T.accent : T.textSub,
+                      fontSize: "13px", fontWeight: active ? 600 : 400,
+                      cursor: "pointer", textAlign: "left", marginBottom: "1px",
+                      borderLeft: active ? `2px solid ${T.accent}` : "2px solid transparent",
+                    }}
+                  >
+                    <span style={{ fontSize: "13px", width: "16px", textAlign: "center", flexShrink: 0 }}>{item.icon}</span>
+                    <span style={{ flex: 1 }}>{item.label}</span>
+                    {catDotColor && (
+                      <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: catDotColor, flexShrink: 0 }} title={`${catAlerts.length} alert${catAlerts.length !== 1 ? "s" : ""}`} />
+                    )}
+                  </button>
+                );
+              })}
+
+              {/* Admin item at end of Settings section */}
+              {section.label === "Settings" && isAdmin && (
+                <button
+                  key={ADMIN_ITEM.href}
+                  onClick={() => router.push(ADMIN_ITEM.href)}
+                  title={ADMIN_ITEM.hint}
+                  style={{
+                    width: "100%", display: "flex", alignItems: "center", gap: "9px",
+                    padding: "8px 10px", borderRadius: "7px", border: "none",
+                    background: pathname.startsWith(ADMIN_ITEM.href) ? T.accent + "1A" : "none",
+                    color: pathname.startsWith(ADMIN_ITEM.href) ? T.accent : T.textSub,
+                    fontSize: "13px", fontWeight: pathname.startsWith(ADMIN_ITEM.href) ? 600 : 400,
+                    cursor: "pointer", textAlign: "left", marginBottom: "1px",
+                    borderLeft: pathname.startsWith(ADMIN_ITEM.href) ? `2px solid ${T.accent}` : "2px solid transparent",
+                  }}
+                >
+                  <span style={{ fontSize: "13px", width: "16px", textAlign: "center", flexShrink: 0 }}>{ADMIN_ITEM.icon}</span>
+                  {ADMIN_ITEM.label}
+                </button>
+              )}
+            </div>
+          ))}
         </nav>
 
-        {/* User profile */}
-        <div style={{ padding: "14px", borderTop: `1px solid ${T.border}` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+        {/* User footer */}
+        <div style={{ padding: "12px 14px", borderTop: `1px solid ${T.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "9px", marginBottom: "9px" }}>
             {profile.avatar_url ? (
-              <img src={profile.avatar_url} alt="" style={{ width: "32px", height: "32px", borderRadius: "50%", objectFit: "cover" }} />
+              <img src={profile.avatar_url} alt="" style={{ width: "30px", height: "30px", borderRadius: "50%", objectFit: "cover" }} />
             ) : (
-              <div style={{ width: "32px", height: "32px", borderRadius: "50%", background: T.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 600 }}>
+              <div style={{ width: "30px", height: "30px", borderRadius: "50%", background: T.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700 }}>
                 {(profile.full_name || profile.email)[0].toUpperCase()}
               </div>
             )}
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: "13px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <div style={{ fontSize: "12px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {profile.full_name || profile.email.split("@")[0]}
               </div>
-              <div style={{ fontSize: "10px", color: TIER_COLORS[profile.subscription_tier], textTransform: "uppercase", fontWeight: 600 }}>
+              <div style={{ fontSize: "9px", color: TIER_COLORS[profile.subscription_tier] ?? T.muted, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>
                 {profile.subscription_tier}
               </div>
             </div>
           </div>
-          <button onClick={signOut} style={{ width: "100%", background: "none", border: `1px solid ${T.border}`, borderRadius: "6px", color: T.muted, padding: "7px", fontSize: "12px", cursor: "pointer" }}>
+          <button onClick={signOut} style={{ width: "100%", background: "none", border: `1px solid ${T.border}`, borderRadius: "6px", color: T.muted, padding: "6px", fontSize: "11px", cursor: "pointer" }}>
             Sign out
           </button>
         </div>
       </aside>
 
-      {/* Main content */}
+      {/* ── Main content ── */}
       <main style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
-        {/* Alert banner */}
-        {topAlert && (() => {
-          const c = SEV_COLORS[topAlert.severity] ?? SEV_COLORS.warn;
-          return (
-            <div style={{ background: c.bg, borderBottom: `1px solid ${c.border}`, padding: "0 20px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "8px 0", maxWidth: "100%" }}>
-                <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: c.dot, flexShrink: 0 }} />
-                <span style={{ fontSize: "12px", fontWeight: 600, color: c.text, flexShrink: 0 }}>{topAlert.category.toUpperCase()}</span>
-                <span style={{ fontSize: "12px", color: c.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {topAlert.title}{topAlert.detail ? ` — ${topAlert.detail}` : ""}
-                </span>
-                {extraCount > 0 && (
-                  <button
-                    onClick={() => setAlertsExpanded(e => !e)}
-                    style={{ fontSize: "11px", color: c.text, background: c.border, border: "none", borderRadius: "4px", padding: "2px 7px", cursor: "pointer", flexShrink: 0 }}
-                  >
-                    +{extraCount} more
-                  </button>
-                )}
-                <button onClick={() => dismissAll()} style={{ fontSize: "10px", color: c.text, background: "none", border: `1px solid ${c.border}`, borderRadius: "4px", padding: "2px 7px", cursor: "pointer", flexShrink: 0 }}>
-                  Dismiss all
-                </button>
-                <button onClick={() => dismissAlert(topAlert.id)} style={{ fontSize: "14px", color: c.text, background: "none", border: "none", cursor: "pointer", flexShrink: 0, lineHeight: 1 }}>
-                  ×
-                </button>
-              </div>
-              {alertsExpanded && alerts.slice(1).map(a => {
-                const ac = SEV_COLORS[a.severity] ?? SEV_COLORS.warn;
-                return (
-                  <div key={a.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "5px 0", borderTop: `1px solid ${T.border}22` }}>
-                    <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: ac.dot, flexShrink: 0 }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: ac.text, flexShrink: 0 }}>{a.category.toUpperCase()}</span>
-                    <span style={{ fontSize: "11px", color: ac.text, flex: 1 }}>{a.title}{a.detail ? ` — ${a.detail}` : ""}</span>
-                    <button onClick={() => dismissAlert(a.id)} style={{ fontSize: "13px", color: ac.text, background: "none", border: "none", cursor: "pointer" }}>×</button>
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })()}
+        {/* Sticky market status bar */}
+        <div style={{
+          position: "sticky", top: 0, zIndex: 100,
+          background: T.surface, borderBottom: `1px solid ${T.border}`,
+          padding: "7px 28px", display: "flex", alignItems: "center", gap: "16px",
+        }}>
+          {/* Market status pill */}
+          <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+            <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: mktStatus.color, flexShrink: 0 }} />
+            <span style={{ fontSize: "12px", fontWeight: 700, color: mktStatus.color }}>{mktStatus.label}</span>
+            <span style={{ fontSize: "11px", color: T.muted }}>· {mktStatus.detail}</span>
+          </div>
+
+          {/* Spacer */}
+          <div style={{ flex: 1 }} />
+
+          {/* Date + time ET */}
+          <div style={{ fontSize: "11px", color: T.muted, display: "flex", gap: "10px", alignItems: "center" }}>
+            <span>{new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}</span>
+            <span style={{ color: T.textSub, fontVariantNumeric: "tabular-nums" }}>{timeStr} ET</span>
+          </div>
+        </div>
         {children}
       </main>
     </div>

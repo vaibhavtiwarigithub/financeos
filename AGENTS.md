@@ -190,3 +190,79 @@ Robinhood MCP is configured in `.claude.json` (local only, not in repo).
 | Types | Centralized | `@/types` |
 | Styling | Inline styles + T tokens | Define `T` object in each file |
 | Charts | Recharts | `recharts` |
+
+---
+
+## Live Agent Registry (as of 2026-06-29)
+
+### ResearchAgent
+- **Endpoint:** `/api/agents/research/route.ts`
+- **Schedule:** Weekdays 9AM (Windows Task Scheduler)
+- **Inputs:** watchlist symbols, Massive API fundamentals, Alpha Vantage technicals, StockTwits/Alpha Vantage sentiment
+- **Outputs:** `agent_signals` table rows (score 0-100, recommendation, signal_breakdown)
+- **Updates (2026-06-29):**
+  - Insider scoring: `scoreInsider()` fetches Alpha Vantage INSIDER_TRANSACTIONS, computes 90-day buy/sell ratio, injects as pre-fetched context in LLM prompt (advisory, not hardcoded score override)
+  - Risk profile integration: reads `strategy_config.risk_profile`, applies `PROFILE_WEIGHTS` multiplier, uses `score_threshold` from strategy_config as the buy signal cutoff
+  - Screener target remains 3 candidates/day max
+
+### DeepSeekAgent
+- **Endpoint:** `/api/agents/deepseek/route.ts`
+- **Schedule:** Weekdays 9AM (Windows Task Scheduler)
+- **Inputs:** same watchlist as ResearchAgent
+- **Outputs:** `agent_signals` rows tagged `agent_label = 'deepseek'`; enables LLM P&L comparison vs Claude
+
+### PaperTrader
+- **Endpoint:** `/api/agents/paper-trader/route.ts`
+- **Schedule:** Weekdays 9:30AM (Windows Task Scheduler)
+- **Inputs:** `agent_signals` with score >= `strategy_config.score_threshold`
+- **Outputs:** `paper_positions` rows; respects `position_size_pct` from risk profile
+
+### PositionMonitor
+- **Endpoint:** `/api/agents/position-monitor/route.ts`
+- **Schedule:** Weekdays 4:15PM (Windows Task Scheduler, after market close)
+- **Inputs:** open `paper_positions` with `price_target`, `stop_loss`, `highest_price`
+- **Behavior:**
+  - Trailing stop: `max(original_stop_loss, highest_price × 0.93)`
+  - Updates `highest_price` if current price is new high
+  - Closes position (sets `exit_reason`) if price hits stop or target
+  - Returns cash to buying power on close
+- **Outputs:** updated `paper_positions` rows; closed positions get `exit_reason` set
+
+### LearnerAgent
+- **Endpoint:** `/api/agents/learner/route.ts`
+- **Schedule:** Mondays 6AM (Windows Task Scheduler)
+- **Inputs:** `paper_trades`, `learning_log`, closed positions
+- **Outputs:** `learning_log` entries; 1-sentence outcome summary per closed trade
+- **Updates (2026-06-29):** Weekly reassessment of open positions added — flags `llm_exit` if LLM recommends closing based on updated thesis
+- **Gate:** Weight mutation locked until 10+ closed trades (Phase 0)
+
+### ThemeScout
+- **Endpoint:** `/api/agents/theme-scout/route.ts` (also Supabase edge function)
+- **Schedule:** Sundays 8PM (Windows Task Scheduler)
+- **Inputs:** Alpha Vantage news sentiment by sector
+- **Outputs:** dynamic watchlist additions tagged by theme
+
+### MacroSentinel
+- **Endpoint:** `/api/agents/macro-sentinel/route.ts`
+- **Schedule:** Mondays 8AM (Windows Task Scheduler)
+- **Inputs:** 8 Alpha Vantage macroeconomic indicators:
+  1. Yield Curve (10Y-2Y spread)
+  2. Sahm Rule proxy (unemployment rate delta)
+  3. Real GDP (QoQ growth)
+  4. Nonfarm Payrolls (MoM change)
+  5. CPI (YoY inflation)
+  6. Retail Sales (MoM change)
+  7. Federal Funds Rate
+  8. Durable Goods Orders (MoM)
+- **Behavior:** Computes weighted danger score 0-100. Assigns regime: GREEN (<25), YELLOW (25-49), ORANGE (50-74), RED (≥75). Advisory-only — does NOT auto-throttle agents or halt trading.
+- **Outputs:**
+  - `macro_regime` table row (current regime + score)
+  - `macro_signals` table rows (per-indicator breakdown)
+  - MarketsPage gauge card + signal breakdown table
+  - DashboardHome colored banner when regime != GREEN
+- **Why advisory-only:** Agent auto-throttle without user seeing first run creates surprising behavior. User reviews regime first, then decides whether to act.
+
+### Agent Diagrams
+- **Component:** `components/dashboard/AgentDiagram.tsx`
+- **Data:** `public/agent-diagrams/*.json` (7 files: research-agent, learner-agent, theme-scout, deepseek-agent, position-monitor, paper-trader, macro-sentinel)
+- **Features:** Mermaid v10 flowcharts (v11 broken with webpack), color-coded by node status (active=green, new=blue, changed=red, removed=gray), click node → detail drawer with why-added and change history

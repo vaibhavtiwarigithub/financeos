@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
+import PageHeader from "@/components/dashboard/PageHeader";
 const BenchmarkChart = lazy(() => import("@/components/charts/BenchmarkChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
@@ -698,7 +699,20 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
   const winRate = closedTrades.length ? Math.round((wins / closedTrades.length) * 100) : null;
 
   return (
-    <div style={{ padding: "28px", color: T.text, fontFamily: "'Inter', sans-serif" }}>
+    <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
+      <PageHeader
+        title="Portfolio"
+        subtitle={`NAV $${nav.toFixed(0)} · ${positions.length} open position${positions.length !== 1 ? "s" : ""}`}
+        cadence="weekly"
+        whatItDoes="Your paper trading portfolio — all open positions, closed trades, P&L history, and pending signals queue. Agent executes paper trades automatically each morning."
+        whatToLookFor={[
+          "Positions tab: check unrealized P&L on open trades. Exit if signal flips to 'short'.",
+          "Trade Queue tab: signals the agent wants to act on — approve or reject before next cron run.",
+          "Win rate should trend above 50% after 20+ trades. Below = prompt/screener adjustment needed.",
+          "Compare NAV vs VOO benchmark — are you beating the index?",
+        ]}
+      />
+      <div style={{ padding: "4px 28px 28px" }}>
 
       <div style={{ marginBottom: "20px" }}>
         <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "6px" }}>Paper Trading Portfolio</div>
@@ -958,6 +972,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
           </div>
         );
       })()}
+      </div>
     </div>
   );
 }

@@ -82,6 +82,90 @@ Impact: Introduces Strategy Registry, experiment artifacts, eligibility reports,
 Files/features affected: Agent learning, validation worker, strategy persistence, paper engine, and review UI.
 Reversal cost: High
 
+### Decision 6: MacroSentinel — Advisory-Only Regime
+
+Date: 2026-06-29
+Status: Approved
+Category: Product / Architecture
+
+Context: MacroSentinel computes a recession danger score and regime (GREEN/YELLOW/ORANGE/RED) from 8 macro indicators. The question was whether to auto-throttle agents or halt trading when regime worsens.
+Decision: Advisory-only. MacroSentinel reports regime and shows it on the dashboard. It does NOT auto-throttle agents, reduce position sizes, or halt PaperTrader.
+Reason: Auto-throttle without the user first observing a live run creates surprising behavior. Vaibhav reviews the regime card and decides whether to act — e.g., manually tightening the risk profile or pausing trading.
+Alternatives considered: Auto-throttle on ORANGE/RED; auto-reduce position_size_pct when score > 50.
+Impact: MarketsPage gauge + DashboardHome banner are display-only. No agent behavior changes automatically based on macro regime.
+Files/features affected: `/api/agents/macro-sentinel`, `macro_regime`, `macro_signals`, MarketsPage, DashboardHome
+Reversal cost: Low (adding auto-throttle later is additive)
+
+---
+
+### Decision 7: Mermaid v10 (not v11)
+
+Date: 2026-06-29
+Status: Approved
+Category: Technical
+
+Context: AgentDiagram.tsx uses Mermaid to render flowcharts. Mermaid v11 was installed initially.
+Decision: Pin mermaid to v10.
+Reason: Mermaid v11 depends on es-toolkit, which is ESM-only and incompatible with Next.js webpack bundler. Build failed with module resolution errors. v10 does not have this dependency and builds cleanly.
+Alternatives considered: Dynamic import workaround for v11 (fragile, not worth it).
+Impact: Agent diagrams render correctly. No feature difference between v10 and v11 for our use case.
+Files/features affected: `package.json`, `components/dashboard/AgentDiagram.tsx`
+Reversal cost: Low
+
+---
+
+### Decision 8: Insider Scoring as LLM Context Injection (Not Score Override)
+
+Date: 2026-06-29
+Status: Approved
+Category: Architecture
+
+Context: ResearchAgent needed to incorporate insider transaction signals (Form 4-equivalent via Alpha Vantage INSIDER_TRANSACTIONS).
+Decision: `scoreInsider()` computes a 90-day buy/sell ratio from insider transactions and injects the result as pre-fetched context text in the LLM prompt. The LLM weighs it alongside other signals. It is NOT added as a hardcoded numeric score component.
+Reason: LLM can weigh insider data contextually (e.g., a CEO buy during market panic is more meaningful than a routine RSU sale). Hardcoding it as a fixed weight component removes that nuance.
+Alternatives considered: Add `insider_buying` as a fixed-weight signal in the signal_breakdown JSON.
+Impact: Insider data informs every ResearchAgent run without locking a specific weight.
+Files/features affected: `lib/research-agent.ts`
+Reversal cost: Low
+
+---
+
+### Decision 9: Risk Profile Presets (Conservative / Balanced / Aggressive)
+
+Date: 2026-06-29
+Status: Approved
+Category: Product / Data
+
+Context: Strategy config needed user-selectable risk modes to control score thresholds, position sizing, stops, and targets.
+Decision: Three named presets stored in `strategy_config`:
+- Conservative: score_threshold=72, position_size_pct=7, stop_loss_pct=5, target_pct=12
+- Balanced: score_threshold=60, position_size_pct=10, stop_loss_pct=7, target_pct=20
+- Aggressive: score_threshold=52, position_size_pct=15, stop_loss_pct=10, target_pct=35
+User can select a preset or edit fields individually.
+Reason: Named presets make risk configuration intuitive. Per-field override preserves flexibility.
+Alternatives considered: Single numeric "risk tolerance" slider; no presets (all manual).
+Impact: ResearchAgent reads `score_threshold` from strategy_config; PaperTrader reads `position_size_pct` and `stop_loss_pct`.
+Files/features affected: migration 027, `/api/settings/risk-profile`, Settings page, `lib/research-agent.ts`, PaperTrader
+Reversal cost: Low
+
+---
+
+### Decision 10: House Stock Watcher for Congressional Trades (not Quiver Quant)
+
+Date: 2026-06-29
+Status: Approved
+Category: Data / Technical
+
+Context: Smart Money Trades feature needed congressional stock disclosure data.
+Decision: Use House Stock Watcher public S3 endpoint (free, no auth, public domain data).
+Reason: Free and publicly maintained. Quiver Quant charges for the same underlying public disclosure data. No auth token management needed.
+Alternatives considered: Quiver Quant API (paid), SEC EDGAR EDGAR-Online (complex parsing).
+Impact: Congressional trades tab in MarketsPage powered by House Stock Watcher JSON feed.
+Files/features affected: `/api/markets/insider-trades/route.ts`
+Reversal cost: Low (drop-in replacement if Quiver Quant becomes preferable)
+
+---
+
 ### Decision 5: Explainability and Evolving Rule Governance
 
 Date: 2026-06-27

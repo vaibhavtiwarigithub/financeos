@@ -17,9 +17,5 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   if (!profile) redirect("/login");
 
-  const { data: config } = await svc.from("strategy_config").select("app_paused, paused_reason").limit(1).single();
-  const appPaused = (config as any)?.app_paused ?? false;
-  const pausedReason = (config as any)?.paused_reason ?? null;
-
-  return <DashboardShell profile={profile} appPaused={appPaused} pausedReason={pausedReason}>{children}</DashboardShell>;
+  return <DashboardShell profile={profile}>{children}</DashboardShell>;
 }

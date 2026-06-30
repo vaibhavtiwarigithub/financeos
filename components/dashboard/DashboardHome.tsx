@@ -1,6 +1,7 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import WatchlistPanel from "@/components/dashboard/WatchlistPanel";
+import BriefingSection from "@/components/dashboard/BriefingSection";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -91,6 +92,17 @@ function DetailItem({ left, right, color, sub }: { left: string; right: string; 
   );
 }
 
+function safeDate(v: string | null | undefined): Date | null {
+  if (!v) return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+function fmtDate(v: string | null | undefined, opts?: Intl.DateTimeFormatOptions): string {
+  const d = safeDate(v);
+  if (!d) return "—";
+  return d.toLocaleString("en-US", opts ?? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function nextWeekdayLabel(): string {
   const now = new Date();
   const day = now.getDay(); // 0=Sun
@@ -109,7 +121,7 @@ function nextSundayLabel(): string {
   return next.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + " 8:00 PM ET";
 }
 
-export default function DashboardHome({ profile, paperPortfolio, positions, recentTrades, recentRuns, recentSignals, pendingSignals, recentLog }: {
+export default function DashboardHome({ profile, paperPortfolio, positions, recentTrades, recentRuns, recentSignals, pendingSignals, recentLog, liveSnap, latestBriefing }: {
   profile: any;
   paperPortfolio: any;
   positions: any[];
@@ -118,10 +130,47 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
   recentSignals: any[];
   pendingSignals: any[];
   recentLog: any[];
+  liveSnap: any | null;
+  latestBriefing: any | null;
 }) {
   const nav = paperPortfolio?.nav ?? 10000;
   const cash = paperPortfolio?.cash_balance ?? 10000;
   const totalPnl = nav - 10000;
+
+  // LLM burn rate banner
+  const [llmAlert, setLlmAlert] = useState(false);
+  const [burnRate, setBurnRate] = useState("0.0000");
+  const [projected, setProjected] = useState("0.00");
+
+  useEffect(() => {
+    fetch("/api/admin/llm-costs")
+      .then(r => r.json())
+      .then(d => {
+        if (d.projectedDaily > 2) {
+          setLlmAlert(true);
+          setBurnRate(String(d.burnRateHourly.toFixed(4)));
+          setProjected(String(d.projectedDaily.toFixed(2)));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Macro regime banner
+  const [macroRegime, setMacroRegime] = useState<string | null>(null);
+  const [macroSummary, setMacroSummary] = useState<string>("");
+
+  useEffect(() => {
+    fetch("/api/agents/macro-sentinel/history")
+      .then(r => r.json())
+      .then(d => {
+        const top = d?.regimes?.[0];
+        if (top?.regime && top.regime !== "green") {
+          setMacroRegime(top.regime);
+          setMacroSummary(top.summary ?? "");
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Last-week stats
   const closedTrades = recentTrades.filter(t => t.closed_at);
@@ -186,28 +235,90 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
         </div>
 
         {/* Live accounts panel */}
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "20px 22px", minWidth: "200px", display: "flex", flexDirection: "column", gap: "10px" }}>
-          <div style={{ fontSize: "10px", fontWeight: 800, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "4px" }}>Live Accounts</div>
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "20px 22px", minWidth: "220px", display: "flex", flexDirection: "column", gap: "10px" }}>
+          <div style={{ fontSize: "10px", fontWeight: 800, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "4px" }}>Live Robinhood</div>
 
           <div style={{ padding: "10px 12px", background: T.dim, borderRadius: "10px", borderLeft: `3px solid ${T.blue}` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "3px" }}>
-              <span style={{ fontSize: "11px", color: T.muted }}>••••8641</span>
-              <span style={{ fontSize: "10px", fontWeight: 700, color: T.blue }}>READ-ONLY</span>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+              <span style={{ fontSize: "11px", color: T.muted }}>••••8641 · READ-ONLY</span>
+              <span style={{ fontSize: "10px", fontWeight: 700, color: T.blue }}>VIEW</span>
             </div>
-            <div style={{ fontSize: "12px", color: T.textSub }}>Positions visible</div>
-            <a href="/dashboard/portfolio" style={{ fontSize: "11px", color: T.accent, textDecoration: "none" }}>View holdings →</a>
+            {liveSnap ? (
+              <>
+                <div style={{ display: "flex", gap: "16px", marginBottom: "5px" }}>
+                  <div>
+                    <div style={{ fontSize: "9px", color: T.muted, marginBottom: "1px" }}>Portfolio</div>
+                    <div style={{ fontSize: "14px", fontWeight: 700 }}>${Number(liveSnap.equity ?? liveSnap.portfolio_value ?? 0).toFixed(0)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "9px", color: T.muted, marginBottom: "1px" }}>Buying Power</div>
+                    <div style={{ fontSize: "14px", fontWeight: 700, color: T.green }}>${Number(liveSnap.buying_power ?? 0).toFixed(0)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "9px", color: T.muted, marginBottom: "1px" }}>Positions</div>
+                    <div style={{ fontSize: "14px", fontWeight: 700 }}>{liveSnap.position_count ?? "—"}</div>
+                  </div>
+                </div>
+                {Array.isArray(liveSnap.positions_json) && liveSnap.positions_json.length > 0 && (
+                  <div style={{ fontSize: "10px", color: T.muted, marginBottom: "4px" }}>
+                    {liveSnap.positions_json.slice(0, 4).map((p: any) => p.symbol).join(" · ")}
+                    {liveSnap.positions_json.length > 4 ? ` +${liveSnap.positions_json.length - 4}` : ""}
+                  </div>
+                )}
+                <div style={{ fontSize: "9px", color: T.muted, marginTop: "3px" }}>
+                  Synced {fmtDate(liveSnap.captured_at, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  {" · "}
+                  <span style={{ color: T.muted + "88" }}>updates each research run</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: "12px", color: T.textSub, marginBottom: "3px" }}>Not yet synced</div>
+                <div style={{ fontSize: "11px", color: T.muted }}>Syncs automatically on next research run (daily 9 AM)</div>
+              </>
+            )}
           </div>
 
           <div style={{ padding: "10px 12px", background: T.dim, borderRadius: "10px", borderLeft: `3px solid ${T.red}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "3px" }}>
-              <span style={{ fontSize: "11px", color: T.muted }}>••••0660</span>
-              <span style={{ fontSize: "10px", fontWeight: 700, color: T.red }}>ORDERS</span>
+              <span style={{ fontSize: "11px", color: T.muted }}>••••0660 · AGENTIC</span>
+              <span style={{ fontSize: "10px", fontWeight: 700, color: T.red }}>DISABLED</span>
             </div>
-            <div style={{ fontSize: "12px", color: T.muted }}>TraderAgent disabled</div>
-            <div style={{ fontSize: "11px", color: T.muted }}>Enable in Settings</div>
+            <div style={{ fontSize: "12px", color: T.muted }}>TraderAgent real orders off</div>
+            <div style={{ fontSize: "11px", color: T.muted }}>Enable trading_enabled in Settings → Strategy</div>
           </div>
         </div>
       </div>
+
+      {/* Briefing section */}
+      <div style={{ marginBottom: "16px" }}>
+        <BriefingSection initialBriefing={latestBriefing} />
+      </div>
+
+      {/* Macro regime banner — only shows when regime != green */}
+      {macroRegime && macroRegime !== "green" && (
+        <div style={{ padding: "8px 14px", borderRadius: 8,
+          background: macroRegime === "red" ? "#2a0000" : macroRegime === "orange" ? "#2a1000" : "#1a1500",
+          border: `1px solid ${macroRegime === "red" ? "#7f1d1d" : macroRegime === "orange" ? "#7c2d12" : "#78350f"}`,
+          display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <span style={{ fontSize: 14 }}>📊</span>
+          <span style={{ fontSize: 12, color: macroRegime === "red" ? "#F87171" : macroRegime === "orange" ? "#FB923C" : "#FBBF24" }}>
+            Macro Sentinel: {macroRegime.toUpperCase()} — {macroSummary}
+          </span>
+        </div>
+      )}
+
+      {/* LLM burn rate banner — only shows when projected daily > $2 */}
+      {llmAlert && (
+        <div style={{ padding: "8px 14px", borderRadius: 8, background: "#2a1f00",
+          border: "1px solid #92400e", display: "flex", alignItems: "center", gap: 10,
+          marginBottom: 12 }}>
+          <span style={{ fontSize: 14 }}>💸</span>
+          <span style={{ fontSize: 12, color: "#FBBF24" }}>
+            LLM burn rate: ${burnRate}/hr · projected today: ${projected}
+          </span>
+        </div>
+      )}
 
       {/* 3-col grid */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginBottom: "16px" }}>
@@ -246,24 +357,27 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
                 <StatRow label="Best trade" value={bestTrade.symbol} color={T.green} sub={fmtPct(bestTrade.pnl_pct ?? 0)} />
               )}
               <ExpandableStatRow label="Research runs" value={researchRuns}>
-                {recentRuns.filter((r: any) => r.agent_type === "research").map((r: any) => (
-                  <DetailItem
-                    key={r.id}
-                    left={new Date(r.created_at).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                    right={r.signals_written != null ? `${r.signals_written} signals` : r.status}
-                    color={r.status === "done" ? T.green : T.amber}
-                    sub={r.symbols?.slice(0, 5).join(", ") + (r.symbols?.length > 5 ? "…" : "")}
-                  />
-                ))}
+                {recentRuns.filter((r: any) => r.agent_type === "research").map((r: any) => {
+                  const syms = Array.isArray(r.symbols) ? r.symbols : [];
+                  return (
+                    <DetailItem
+                      key={r.id}
+                      left={fmtDate(r.completed_at ?? r.created_at)}
+                      right={r.signals_written != null ? `${r.signals_written} signal${r.signals_written !== 1 ? "s" : ""}` : r.status ?? "ran"}
+                      color={r.status === "done" || r.status === "success" ? T.green : T.amber}
+                      sub={syms.length > 0 ? `Researched: ${syms.slice(0, 5).join(", ")}${syms.length > 5 ? ` +${syms.length - 5} more` : ""}` : r.result_summary?.slice(0, 80) ?? ""}
+                    />
+                  );
+                })}
               </ExpandableStatRow>
               <ExpandableStatRow label="Paper fills" value={paperFills}>
                 {recentTrades.filter((t: any) => !t.closed_at).slice(0, 15).map((t: any) => (
                   <DetailItem
                     key={t.id}
-                    left={`${t.symbol} · ${t.direction?.toUpperCase()} · ${new Date(t.opened_at ?? t.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
-                    right={t.entry_price != null ? `$${Number(t.entry_price).toFixed(2)}` : "—"}
-                    color={t.direction === "long" ? T.green : T.red}
-                    sub={`${t.qty ?? "?"} shares · score ${t.conviction ?? "?"}`}
+                    left={`${t.symbol} · ${(t.order_side ?? t.direction ?? "BUY").toUpperCase()} · ${fmtDate(t.executed_at ?? t.created_at, { month: "short", day: "numeric" })}`}
+                    right={t.fill_price != null ? `$${Number(t.fill_price).toFixed(2)}` : t.entry_price != null ? `$${Number(t.entry_price).toFixed(2)}` : "—"}
+                    color={t.direction === "long" || t.order_side === "buy" ? T.green : T.red}
+                    sub={`${t.qty ?? "?"} shares · analyst score ${t.analyst_score ?? t.conviction ?? "?"}`}
                   />
                 ))}
               </ExpandableStatRow>
@@ -272,10 +386,10 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
                 {recentSignals.slice(0, 20).map((s: any) => (
                   <DetailItem
                     key={s.id}
-                    left={`${s.symbol} · ${s.direction?.toUpperCase() ?? s.action}`}
+                    left={`${s.symbol} · ${(s.direction ?? s.action ?? "neutral").toUpperCase()}`}
                     right={s.analyst_score != null ? `Score ${s.analyst_score}` : "—"}
                     color={s.direction === "long" ? T.green : s.direction === "short" ? T.red : T.muted}
-                    sub={new Date(s.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    sub={[fmtDate(s.created_at, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }), s.conviction ? `conviction: ${s.conviction}` : null, s.status].filter(Boolean).join(" · ")}
                   />
                 ))}
               </ExpandableStatRow>
@@ -342,6 +456,18 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
               <div style={{ fontSize: "13px", fontWeight: 600, color: T.blue }}>◫ LearnerAgent</div>
               <div style={{ fontSize: "12px", color: T.muted, marginTop: "2px" }}>{nextSundayLabel()}</div>
               <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>Closes trades older than 7d, writes outcomes</div>
+            </div>
+            <div style={{ padding: "12px", background: T.dim, borderRadius: "8px" }}>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px" }}>ThemeScout</div>
+              <div style={{ fontSize: "13px", fontWeight: 600, color: "#A78BFA" }}>🎯 ThemeScout</div>
+              <div style={{ fontSize: "12px", color: T.muted, marginTop: "2px" }}>On-demand · run manually in Agents</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>Finds 3–5 thematic candidates → watchlist (AI Scout, 7-day expiry)</div>
+            </div>
+            <div style={{ padding: "12px", background: T.dim, borderRadius: "8px" }}>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px" }}>DeepSeek Research</div>
+              <div style={{ fontSize: "13px", fontWeight: 600, color: T.amber }}>🤖 DeepSeek</div>
+              <div style={{ fontSize: "12px", color: T.muted, marginTop: "2px" }}>Parallel to Claude · same signals, different LLM</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>A/B vs Claude — determines which LLM scores better before scaling</div>
             </div>
             <div style={{ padding: "12px", background: T.dim, borderRadius: "8px" }}>
               <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px" }}>Phase 0 status</div>
@@ -413,54 +539,112 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
 
       {/* Activity feed */}
       {(recentRuns.length > 0 || recentTrades.length > 0 || recentLog.length > 0) && (() => {
-        type AEvent = { ts: number; icon: string; label: string; sub: string; color: string; badge?: { label: string; color: string; bg: string } };
+        type AEvent = {
+          ts: number; icon: string; label: string;
+          detail: string;  // what happened
+          why: string;     // why / context / what to do
+          color: string;
+          badge?: { label: string; color: string; bg: string };
+        };
+
         const events: AEvent[] = [
-          ...recentRuns.map((r: any) => ({
-            ts: new Date(r.completed_at ?? r.created_at).getTime(),
-            icon: "◐",
-            label: `${r.agent_type === "research" ? "ResearchAgent" : r.agent_type === "paper_trader" ? "PaperTrader" : "LearnerAgent"} run`,
-            sub: r.status === "success" ? "completed" : r.status ?? "ran",
-            color: r.status === "success" ? T.green : T.muted,
-          })),
-          ...recentTrades.map((t: any) => ({
-            ts: new Date(t.executed_at).getTime(),
-            icon: "◈",
-            label: `${t.order_side?.toUpperCase() === "BUY" ? "Bought" : "Sold"} ${t.symbol}`,
-            sub: `${t.qty}sh @ $${t.fill_price?.toFixed(2)}${t.outcome ? ` · ${t.outcome} ${t.pnl_pct != null ? (t.pnl_pct >= 0 ? "+" : "") + t.pnl_pct.toFixed(1) + "%" : ""}` : ""}`,
-            color: t.outcome === "win" ? T.green : t.outcome === "loss" ? T.red : T.textSub,
-            badge: { label: "PAPER", color: "#FBBF24", bg: "#2D1B00" },
-          })),
+          ...recentRuns.map((r: any) => {
+            const syms: string[] = Array.isArray(r.symbols) ? r.symbols : [];
+            const sigCount = r.signals_written ?? 0;
+            const isResearch = r.agent_type === "research";
+            const isPaper = r.agent_type === "paper_trader";
+            const isThemeScout = r.agent_type === "theme_scout";
+            const isDeepSeek = r.agent_type === "deepseek";
+            const ts = safeDate(r.completed_at ?? r.created_at)?.getTime() ?? 0;
+            const detail = isResearch
+              ? `Researched ${syms.length > 0 ? syms.join(", ") : "watchlist"} → ${sigCount} signal${sigCount !== 1 ? "s" : ""} written`
+              : isPaper
+              ? `Checked pending signals → ${r.result_summary ?? "no fills this run"}`
+              : isThemeScout
+              ? `ThemeScout: ${r.result_summary ?? "scanned for thematic opportunities"}`
+              : isDeepSeek
+              ? `DeepSeek: ${r.result_summary ?? "parallel research run completed"}`
+              : `LearnerAgent: ${r.result_summary ?? "evaluated recent trades"}`;
+            const why = isResearch
+              ? sigCount >= 3
+                ? `Signals ≥60 score go to paper trade queue. Check Intelligence → Signals for details.`
+                : sigCount > 0
+                ? `Only ${sigCount} signal(s) hit threshold. Markets may be uncertain or watchlist thin.`
+                : `No signals passed threshold (score ≥60). Research ran but found no high-conviction setups.`
+              : isPaper
+              ? `PaperTrader runs after ResearchAgent. It places paper orders for signals with analyst_score ≥60.`
+              : isThemeScout
+              ? `ThemeScout found thematic candidates and added them to watchlist with 7-day expiry. Review in Watchlist.`
+              : isDeepSeek
+              ? `DeepSeek ran the same research as Claude in parallel. Compare signal quality in Intelligence → A/B Comparison.`
+              : `LearnerAgent closes trades older than 7 days and writes outcome notes. Phase 1 unlocks at 10 trades.`;
+            return {
+              ts,
+              icon: isThemeScout ? "🎯" : isDeepSeek ? "🤖" : "◐",
+              label: isResearch ? "ResearchAgent" : isPaper ? "PaperTrader" : isThemeScout ? "ThemeScout" : isDeepSeek ? "DeepSeek" : "LearnerAgent",
+              detail,
+              why,
+              color: r.status === "done" || r.status === "success" ? T.green : T.amber,
+            };
+          }),
+          ...recentTrades.map((t: any) => {
+            const ts = safeDate(t.executed_at)?.getTime() ?? 0;
+            const side = (t.order_side ?? "buy").toLowerCase();
+            const isBuy = side === "buy";
+            const price = t.fill_price != null ? `$${Number(t.fill_price).toFixed(2)}` : "—";
+            const score = t.analyst_score ?? t.conviction;
+            const detail = `Paper ${isBuy ? "BUY" : "SELL"} ${t.qty ?? "?"} share${t.qty !== 1 ? "s" : ""} ${t.symbol} @ ${price}${score != null ? ` · score ${score}` : ""}`;
+            const why = isBuy
+              ? `Agent bought because analyst_score ≥60. Position will be evaluated after 7 days or if SELL signal fires.`
+              : t.outcome === "win"
+              ? `Sold for profit${t.pnl_pct != null ? ` (${t.pnl_pct >= 0 ? "+" : ""}${Number(t.pnl_pct).toFixed(1)}%)` : ""}. Position closed on SELL signal or 7-day rule.`
+              : `Closed position${t.realized_pnl != null ? ` — P&L: $${Number(t.realized_pnl).toFixed(2)}` : ""}.`;
+            return {
+              ts,
+              icon: "◈",
+              label: `${isBuy ? "Bought" : "Sold"} ${t.symbol}`,
+              detail,
+              why,
+              color: t.outcome === "win" ? T.green : t.outcome === "loss" ? T.red : T.textSub,
+              badge: { label: "PAPER", color: "#FBBF24", bg: "#2D1B00" },
+            };
+          }),
           ...recentLog.map((l: any) => ({
-            ts: new Date(l.created_at).getTime(),
+            ts: safeDate(l.created_at)?.getTime() ?? 0,
             icon: "◫",
-            label: "Learner note",
-            sub: l.note?.slice(0, 100) + (l.note?.length > 100 ? "…" : ""),
+            label: "Learning note",
+            detail: l.note?.slice(0, 160) + ((l.note?.length ?? 0) > 160 ? "…" : ""),
+            why: `LearnerAgent wrote this after evaluating ${l.trades_evaluated ?? "recent"} trades. These notes feed back into next week's scoring weights.`,
             color: T.blue,
           })),
-        ].sort((a, b) => b.ts - a.ts).slice(0, 8);
+        ].filter(e => e.ts > 0).sort((a, b) => b.ts - a.ts).slice(0, 10);
 
         return (
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginTop: "16px" }}>
-            <div style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "14px" }}>
-              Recent Activity
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+              <div style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+                Recent Activity
+              </div>
+              <a href="/dashboard/activity" style={{ fontSize: "11px", color: T.accent, textDecoration: "none" }}>Full log →</a>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
               {events.map((e, i) => (
-                <div key={i} style={{ display: "flex", gap: "12px", paddingBottom: i < events.length - 1 ? "12px" : "0", marginBottom: i < events.length - 1 ? "12px" : "0", borderBottom: i < events.length - 1 ? `1px solid ${T.border}44` : "none" }}>
-                  <div style={{ width: "20px", textAlign: "center", color: e.color, fontSize: "13px", paddingTop: "1px", flexShrink: 0 }}>{e.icon}</div>
+                <div key={i} style={{ display: "flex", gap: "12px", paddingBottom: i < events.length - 1 ? "14px" : "0", marginBottom: i < events.length - 1 ? "14px" : "0", borderBottom: i < events.length - 1 ? `1px solid ${T.border}44` : "none" }}>
+                  <div style={{ width: "20px", textAlign: "center", color: e.color, fontSize: "14px", paddingTop: "1px", flexShrink: 0 }}>{e.icon}</div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: "13px", fontWeight: 500, color: T.text, display: "flex", alignItems: "center", gap: "8px" }}>
+                    <div style={{ fontSize: "13px", fontWeight: 600, color: T.text, display: "flex", alignItems: "center", gap: "8px", marginBottom: "3px" }}>
                       {e.label}
                       {e.badge && (
-                        <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: e.badge.bg, color: e.badge.color, letterSpacing: "0.04em", flexShrink: 0 }}>
+                        <span style={{ fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: e.badge.bg, color: e.badge.color, letterSpacing: "0.04em", flexShrink: 0 }}>
                           {e.badge.label}
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: "12px", color: T.muted, marginTop: "2px" }}>{e.sub}</div>
+                    <div style={{ fontSize: "12px", color: T.textSub, marginBottom: "3px", lineHeight: "1.4" }}>{e.detail}</div>
+                    <div style={{ fontSize: "11px", color: T.muted, lineHeight: "1.5", fontStyle: "italic" }}>{e.why}</div>
                   </div>
-                  <div style={{ fontSize: "11px", color: T.muted, flexShrink: 0, paddingTop: "2px" }}>
-                    {new Date(e.ts).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                  <div style={{ fontSize: "11px", color: T.muted, flexShrink: 0, paddingTop: "2px", textAlign: "right" }}>
+                    {e.ts ? fmtDate(new Date(e.ts).toISOString(), { month: "short", day: "numeric" }) : "—"}
                   </div>
                 </div>
               ))}

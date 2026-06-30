@@ -27,12 +27,35 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     try {
       body = (await req.json()) as { symbol?: string };
     } catch {
-      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+      // Empty or missing body is fine — treated as batch mode below
+      body = {};
     }
 
     const symbol = typeof body.symbol === "string" ? body.symbol.trim().toUpperCase() : "";
+
+    // Batch mode: no symbol provided → run on watchlist top 3
     if (!symbol) {
-      return NextResponse.json({ error: "Missing required field: symbol" }, { status: 400 });
+      const svc = createServiceClient();
+      const { data: wl } = await svc
+        .from("watchlist")
+        .select("symbol")
+        .order("added_at", { ascending: false })
+        .limit(3);
+
+      if (!wl || wl.length === 0) {
+        return NextResponse.json({ error: "No symbols in watchlist to analyze" }, { status: 400 });
+      }
+
+      const results = [];
+      for (const item of wl) {
+        try {
+          const result = await runDeepSeekResearch(item.symbol);
+          results.push({ symbol: item.symbol, ok: true, result });
+        } catch (e) {
+          results.push({ symbol: item.symbol, ok: false, error: String(e) });
+        }
+      }
+      return NextResponse.json({ ok: true, batch: true, results, processed: results.length });
     }
 
     const result: ResearchResult = await runDeepSeekResearch(symbol);

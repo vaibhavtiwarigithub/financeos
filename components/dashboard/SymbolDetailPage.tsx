@@ -1,8 +1,9 @@
 "use client";
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-
-const SymbolChart = lazy(() => import("@/components/charts/SymbolChart"));
+import TradingViewChart from "@/components/charts/TradingViewChart";
+import SymbolFundamentals from "@/components/dashboard/SymbolFundamentals";
+import SymbolPeers from "@/components/dashboard/SymbolPeers";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -11,7 +12,7 @@ const T = {
   greenBg: "#052E16", redBg: "#3B0000", amberBg: "#2D1B00",
 };
 
-type Tab = "chart" | "signals" | "chat";
+type Tab = "chart" | "signals" | "options" | "chat" | "peers";
 
 function dirColor(dir: string) {
   const d = (dir ?? "").toLowerCase();
@@ -219,6 +220,103 @@ function SignalsTab({ signals, trades }: { signals: any[]; trades: any[] }) {
   );
 }
 
+function OptionsTab({ symbol }: { symbol: string }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/options/chain?symbol=${symbol}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.error) setError(d.error);
+        else setData(d);
+      })
+      .catch(() => setError("Failed to load options data"))
+      .finally(() => setLoading(false));
+  }, [symbol]);
+
+  if (loading) return <div style={{ color: T.muted, fontSize: "13px", padding: "20px 0" }}>Loading options chain…</div>;
+  if (error) return <div style={{ color: T.red, fontSize: "13px", padding: "20px 0" }}>{error}</div>;
+  if (!data?.calls?.length && !data?.puts?.length) return <div style={{ color: T.muted, fontSize: "13px" }}>No options data available.</div>;
+
+  const putCallRatio = data.put_call_ratio;
+  const impliedVolatility = data.avg_iv;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      {/* Summary row */}
+      <div style={{ display: "flex", gap: "16px" }}>
+        {putCallRatio != null && (
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 18px" }}>
+            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Put/Call Ratio</div>
+            <div style={{ fontSize: "20px", fontWeight: 700, color: putCallRatio > 1 ? T.red : putCallRatio < 0.7 ? T.green : T.amber }}>
+              {putCallRatio.toFixed(2)}
+            </div>
+            <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>
+              {putCallRatio > 1 ? "Bearish lean" : putCallRatio < 0.7 ? "Bullish lean" : "Neutral"}
+            </div>
+          </div>
+        )}
+        {impliedVolatility != null && (
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 18px" }}>
+            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Avg IV</div>
+            <div style={{ fontSize: "20px", fontWeight: 700, color: impliedVolatility > 60 ? T.red : T.amber }}>
+              {(impliedVolatility * 100).toFixed(1)}%
+            </div>
+            <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>
+              {impliedVolatility > 0.6 ? "High volatility" : "Normal range"}
+            </div>
+          </div>
+        )}
+        {data.expiry && (
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 18px" }}>
+            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Nearest Expiry</div>
+            <div style={{ fontSize: "16px", fontWeight: 700, color: T.text }}>{data.expiry}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Calls + Puts tables */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+        {[
+          { label: "Calls", rows: data.calls ?? [], color: T.green },
+          { label: "Puts", rows: data.puts ?? [], color: T.red },
+        ].map(({ label, rows, color }) => (
+          <div key={label} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", overflow: "hidden" }}>
+            <div style={{ padding: "10px 14px", borderBottom: `1px solid ${T.border}`, fontSize: "11px", fontWeight: 700, color, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              {label} ({rows.length})
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px" }}>
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                    {["Strike", "Bid", "Ask", "IV", "OI", "Vol"].map(h => (
+                      <th key={h} style={{ padding: "6px 10px", textAlign: "right", color: T.muted, fontWeight: 500, whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.slice(0, 10).map((r: any, i: number) => (
+                    <tr key={i} style={{ borderBottom: `1px solid ${T.border}22` }}>
+                      <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: T.text }}>${r.strike}</td>
+                      <td style={{ padding: "6px 10px", textAlign: "right", color: T.textSub }}>{r.bid ?? "—"}</td>
+                      <td style={{ padding: "6px 10px", textAlign: "right", color: T.textSub }}>{r.ask ?? "—"}</td>
+                      <td style={{ padding: "6px 10px", textAlign: "right", color: T.amber }}>{r.implied_volatility != null ? (r.implied_volatility * 100).toFixed(0) + "%" : "—"}</td>
+                      <td style={{ padding: "6px 10px", textAlign: "right", color: T.muted }}>{r.open_interest?.toLocaleString() ?? "—"}</td>
+                      <td style={{ padding: "6px 10px", textAlign: "right", color: T.muted }}>{r.volume?.toLocaleString() ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ChatTab({ symbol }: { symbol: string }) {
   const [messages, setMessages] = useState<{ role: "user" | "ai"; text: string }[]>([]);
   const [input, setInput] = useState("");
@@ -352,14 +450,17 @@ export default function SymbolDetailPage({
         <button style={tabStyle(tab === "signals")} onClick={() => setTab("signals")}>
           Signals {signals.length > 0 ? `(${signals.length})` : ""}
         </button>
+        <button style={tabStyle(tab === "options")} onClick={() => setTab("options")}>Options</button>
         <button style={tabStyle(tab === "chat")} onClick={() => setTab("chat")}>AI Chat</button>
+        <button style={tabStyle(tab === "peers")} onClick={() => setTab("peers")}>Peers</button>
       </div>
 
       {/* Tab content */}
       {tab === "chart" && (
-        <Suspense fallback={<div style={{ height: "480px", background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted }}>Loading chart…</div>}>
-          <SymbolChart symbol={symbol} />
-        </Suspense>
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <TradingViewChart symbol={symbol} height={520} />
+          <SymbolFundamentals symbol={symbol} />
+        </div>
       )}
 
       {tab === "signals" && (
@@ -368,9 +469,21 @@ export default function SymbolDetailPage({
         </div>
       )}
 
+      {tab === "options" && (
+        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px 24px" }}>
+          <OptionsTab symbol={symbol} />
+        </div>
+      )}
+
       {tab === "chat" && (
         <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px 24px" }}>
           <ChatTab symbol={symbol} />
+        </div>
+      )}
+
+      {tab === "peers" && (
+        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px 24px" }}>
+          <SymbolPeers symbol={symbol} />
         </div>
       )}
     </div>

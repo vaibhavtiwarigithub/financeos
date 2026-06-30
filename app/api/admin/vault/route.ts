@@ -63,19 +63,22 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === "upsert") {
-    const { error } = await svc.from("api_key_vault").upsert({
+    const row: Record<string, unknown> = {
       key_name: fields.key_name,
-      key_value: fields.key_value,
       display_name: fields.display_name,
       provider: fields.provider,
-      model_id: fields.model_id,
+      model_id: fields.model_id || null,
       tasks_suitable: fields.tasks_suitable ?? [],
       cost_per_1m_input: fields.cost_per_1m_input ?? 0,
       cost_per_1m_output: fields.cost_per_1m_output ?? 0,
       enabled: fields.enabled ?? true,
-      notes: fields.notes ?? null,
+      notes: fields.notes || null,
       updated_at: new Date().toISOString(),
-    }, { onConflict: "key_name" })
+    }
+    // Only update key_value if provided (blank = keep existing)
+    if (fields.key_value) row.key_value = fields.key_value
+
+    const { error } = await svc.from("api_key_vault").upsert(row, { onConflict: "key_name" })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ ok: true })
   }
@@ -84,6 +87,19 @@ export async function POST(req: NextRequest) {
     const { error } = await svc.from("api_key_vault")
       .update({ enabled: fields.enabled })
       .eq("key_name", fields.key_name)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true })
+  }
+
+  if (action === "change_pin") {
+    const newPin = fields.new_pin?.trim()
+    if (!newPin || newPin.length < 6) {
+      return NextResponse.json({ error: "PIN must be at least 6 characters" }, { status: 400 })
+    }
+    const { error } = await svc.from("app_settings").upsert(
+      { key: "vault_pin", value: newPin, updated_at: new Date().toISOString() },
+      { onConflict: "key" }
+    )
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ ok: true })
   }

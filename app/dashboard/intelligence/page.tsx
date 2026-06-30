@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
+import PageHeader from "@/components/dashboard/PageHeader";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -87,9 +88,22 @@ Keep it under 400 words. Specific, not generic.`;
   const inp: React.CSSProperties = { width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", padding: "11px 14px", outline: "none" };
 
   return (
-    <div style={{ padding: "28px" }}>
+    <div>
+      <PageHeader
+        title="Intelligence"
+        subtitle={`${dailyCount}/${limit === 9999 ? "∞" : limit} queries used today`}
+        cadence="daily"
+        whatItDoes="AI research hub — view today's agent signals, run ad-hoc symbol analysis, read the morning market brief, and compare Claude vs DeepSeek calls."
+        whatToLookFor={[
+          "Signals tab: high analyst_score (≥70) + direction='long' = strong buy candidate.",
+          "Morning Brief: generated each day from portfolio + market context — read before trading.",
+          "Analysis tab: type any symbol or question for instant LLM research.",
+          "LLM Comparison: check if Claude and DeepSeek agree — consensus = higher conviction.",
+        ]}
+      />
+      <div style={{ padding: "0 28px 28px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-        <div style={{ fontSize: "20px", fontWeight: 600 }}>Intelligence</div>
+        <div />
         <div style={{ fontSize: "12px", color: T.muted }}>
           {dailyCount}/{limit === 9999 ? "∞" : limit} queries today
         </div>
@@ -169,6 +183,7 @@ Keep it under 400 words. Specific, not generic.`;
           <div style={{ fontSize: "13px", color: T.textSub }}>Generate your personalized financial newsletter</div>
         </div>
       )}
+      </div>
     </div>
   );
 }

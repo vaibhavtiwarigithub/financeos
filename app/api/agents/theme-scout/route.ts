@@ -115,7 +115,7 @@ Rules:
     });
 
     // Parse JSON from response
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    const jsonMatch = raw.text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("No JSON in response");
     const parsed = JSON.parse(jsonMatch[0]);
     themes = parsed.themes ?? [];

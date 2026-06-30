@@ -1,0 +1,31 @@
+{
+  "agentId": "position-monitor",
+  "agentLabel": "Position Monitor",
+  "diagram": "flowchart TD\n  SCHED[\"⏰ Weekdays 4:15PM\"] --> FETCH[\"📋 Fetch Open Positions\"]\n  FETCH --> PRICES[\"💲 Batch Fetch Prices\"]\n  PRICES --> LLM_EXIT{\"exit_reason=llm_exit?\"}\n  LLM_EXIT -->|Yes| FORCE_CLOSE[\"🔒 Force Close\"]\n  LLM_EXIT -->|No| UPDATE_HIGH[\"📈 Update highest_price\"]\n  UPDATE_HIGH --> TRAIL[\"📐 Compute trailing_stop\\nmax(stop, high×0.93)\"]\n  TRAIL --> CHECK{\"Stop or Target hit?\"}\n  CHECK -->|Yes| CLOSE[\"🔒 Close + Record\"]\n  CHECK -->|No| UPDATE_STOP[\"💾 Update stop_loss\"]\n  CLOSE --> CASH[\"💰 Return Cash to Portfolio\"]",
+  "nodes": {
+    "SCHED": { "label": "Weekdays 4:15PM", "description": "After market close via Claude Code scheduled task. After-hours prices are final for the day.", "addedAt": "2026-06-29", "addReason": "Daily price check without LLM cost. Market close is right time — intraday swings don't trigger stops.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "FETCH": { "label": "Fetch Open Positions", "description": "Fetches all paper_positions where closed_at IS NULL.", "addedAt": "2026-06-29", "addReason": "Need all open positions to check each one.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "PRICES": { "label": "Batch Fetch Prices", "description": "Fetches prev-day close prices for all open symbols via Polygon API. Parallel requests.", "addedAt": "2026-06-29", "addReason": "Need current price to compare against stop_loss and price_target.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "LLM_EXIT": { "label": "LLM Exit Flag Check", "description": "LearnerAgent may have flagged exit_reason='llm_exit' if thesis broke. Closes immediately.", "addedAt": "2026-06-29", "addReason": "LearnerAgent flags; position monitor executes. Clean separation.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "FORCE_CLOSE": { "label": "Force Close", "description": "Closes llm_exit positions at current price regardless of stop/target levels.", "addedAt": "2026-06-29", "addReason": "Thesis broken — exit regardless of price.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "UPDATE_HIGH": { "label": "Update highest_price", "description": "highest_price = max(current highest_price, current price). Ratchets up, never down.", "addedAt": "2026-06-29", "addReason": "Trailing stop anchors to all-time high since entry.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "TRAIL": { "label": "Compute trailing_stop", "description": "trailing_stop = max(original stop_loss, highest_price × 0.93). 7% below peak.", "addedAt": "2026-06-29", "addReason": "Trailing stop locks in gains. Once stock +20%, stop trails up to guarantee minimum profit.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "CHECK": { "label": "Stop/Target Check", "description": "price <= trailing_stop → close LOSS (or profit if trailed). price >= price_target → close WIN.", "addedAt": "2026-06-29", "addReason": "Binary exit. No LLM needed.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "CLOSE": { "label": "Close + Record", "description": "Sets closed_at, exit_price, realized_pnl, pnl_pct, outcome, exit_reason on paper_positions.", "addedAt": "2026-06-29", "addReason": "Full close record for LearnerAgent analysis.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "UPDATE_STOP": { "label": "Update stop_loss", "description": "Writes new trailing_stop to paper_positions.stop_loss. Used on next run.", "addedAt": "2026-06-29", "addReason": "Trailing stop must persist daily.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "CASH": { "label": "Return Cash to Portfolio", "description": "Adds exit_price × qty to paper_portfolio.cash_balance. Updates open_positions count.", "addedAt": "2026-06-29", "addReason": "Closed positions release capital for new trades.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null }
+  },
+  "history": [
+    { "date": "2026-06-29", "event": "add", "nodeId": "SCHED", "label": "Weekdays 4:15PM", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "FETCH", "label": "Fetch Positions", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "PRICES", "label": "Batch Fetch Prices", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "LLM_EXIT", "label": "LLM Exit Check", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "FORCE_CLOSE", "label": "Force Close", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "UPDATE_HIGH", "label": "Update Highest Price", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "TRAIL", "label": "Trailing Stop", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "CHECK", "label": "Stop/Target Check", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "CLOSE", "label": "Close + Record", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "UPDATE_STOP", "label": "Update Stop", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "CASH", "label": "Return Cash", "reason": "Initial build" }
+  ]
+}

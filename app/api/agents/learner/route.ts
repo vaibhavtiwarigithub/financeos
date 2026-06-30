@@ -25,6 +25,66 @@ export async function POST(req: NextRequest) {
     } as any).select().single();
     const runId = (runRow as any)?.id ?? null;
 
+    // ── Weekly LLM reassessment of held positions ──────────────────────────────
+    // For positions older than 7 days where target hasn't been reassessed in 6+ days:
+    // - Score < 40 or direction flipped short → flag exit_reason="llm_exit" (position-monitor closes it)
+    // - Score >= 65 → raise price_target by 5% (extend winner)
+    // Reads latest agent_signals only — does NOT spawn new research.
+    const { data: openPositions } = await supabase
+      .from("paper_positions")
+      .select("*")
+      .is("closed_at", null);
+
+    const positionReassessments: string[] = [];
+
+    if (openPositions && openPositions.length > 0) {
+      for (const pos of openPositions) {
+        // Only reassess positions at least 7 days old
+        const ageMs = Date.now() - new Date(pos.created_at ?? pos.opened_at ?? 0).getTime();
+        if (ageMs < 7 * 24 * 60 * 60 * 1000) continue;
+
+        // Only reassess if target_updated_at is null or > 6 days ago
+        const daysSinceTargetUpdate = pos.target_updated_at
+          ? (Date.now() - new Date(pos.target_updated_at).getTime()) / 86400000
+          : 999;
+        if (daysSinceTargetUpdate < 6) continue;
+
+        // Check for the latest signal for this symbol
+        const { data: latestSignal } = await supabase
+          .from("agent_signals")
+          .select("analyst_score, price_target, direction")
+          .eq("symbol", pos.symbol)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .single();
+
+        if (!latestSignal) continue;
+
+        if (latestSignal.analyst_score < 40 || latestSignal.direction === "short") {
+          // Thesis broken — flag for position-monitor to close
+          await supabase.from("paper_positions").update({
+            exit_reason: "llm_exit",
+            target_updated_at: new Date().toISOString(),
+          }).eq("id", pos.id);
+          positionReassessments.push(`${pos.symbol}: flagged llm_exit (score=${latestSignal.analyst_score}, direction=${latestSignal.direction})`);
+        } else if (latestSignal.analyst_score >= 65 && pos.price_target) {
+          // Conviction still high — raise target by 5%
+          const newTarget = parseFloat((pos.price_target * 1.05).toFixed(2));
+          await supabase.from("paper_positions").update({
+            price_target: newTarget,
+            target_updated_at: new Date().toISOString(),
+          }).eq("id", pos.id);
+          positionReassessments.push(`${pos.symbol}: target raised $${pos.price_target}→$${newTarget} (score=${latestSignal.analyst_score})`);
+        } else {
+          // No action, but record that we checked
+          await supabase.from("paper_positions").update({
+            target_updated_at: new Date().toISOString(),
+          }).eq("id", pos.id);
+        }
+      }
+    }
+    // ── End reassessment ───────────────────────────────────────────────────────
+
     // Get open paper trades older than 7 market days
     const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data: openTrades } = await supabase
@@ -111,7 +171,7 @@ export async function POST(req: NextRequest) {
     // Weight adjustment requires minimum 10 closed trades and champion/challenger
     // governance (FEATURE_ARCHITECTURE.md Phase 1). Logging outcomes only.
     await supabase.from("learning_log").insert({
-      note: `Batch summary: Closed ${outcomes.length} paper trades: ${wins}W / ${losses}L. ${priceFailures.length} skipped (price unavailable: ${priceFailures.join(", ") || "none"}). Weight mutation disabled in Phase 0.`,
+      note: `Batch summary: Closed ${outcomes.length} paper trades: ${wins}W / ${losses}L. ${priceFailures.length} skipped (price unavailable: ${priceFailures.join(", ") || "none"}). Position reassessments: ${positionReassessments.length > 0 ? positionReassessments.join("; ") : "none"}. Weight mutation disabled in Phase 0.`,
       weight_snapshot: null,
       trades_evaluated: outcomes.length,
     });
@@ -135,6 +195,7 @@ export async function POST(req: NextRequest) {
       closed: outcomes.length,
       priceFailures: priceFailures.length,
       outcomes,
+      positionReassessments,
       weightsAdjusted: false,
       note: "Weight mutation disabled in Phase 0 — requires champion/challenger governance",
     });

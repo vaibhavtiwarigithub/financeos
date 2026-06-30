@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import PageHeader from "@/components/dashboard/PageHeader";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -49,21 +50,19 @@ export default function YouPage({ profile, predictions, journal, quizHistory }: 
   const accuracy = closedPredictions.length ? Math.round((correctPredictions.length / closedPredictions.length) * 100) : null;
 
   return (
-    <div style={{ padding: "28px", color: T.text, fontFamily: "'Inter', sans-serif" }}>
-
-      <div style={{ marginBottom: "24px" }}>
-        <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "6px" }}>Your Profile</div>
-        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <div>
-            <h1 style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.02em" }}>
-              {profile?.full_name || "Investor"}
-            </h1>
-            <div style={{ fontSize: "13px", color: T.muted, marginTop: "2px" }}>
-              {profile?.xp ?? 0} XP · {profile?.streak_days ?? 0} day streak · {profile?.analysis_count ?? 0} analyses
-            </div>
-          </div>
-        </div>
-      </div>
+    <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
+      <PageHeader
+        title={profile?.full_name || "Investor"}
+        subtitle={`${profile?.xp ?? 0} XP · ${profile?.streak_days ?? 0} day streak · ${profile?.analysis_count ?? 0} analyses`}
+        cadence="as-needed"
+        whatItDoes="Your investor profile — knowledge level, market focus, XP progress, and learning history. Mentor uses this to calibrate how it explains concepts to you."
+        whatToLookFor={[
+          "XP increases when you complete quizzes, review signals, and interact with the Mentor.",
+          "Streak resets if you miss a day — check in daily to maintain it.",
+          "Knowledge level affects Mentor explanation depth — update it in Settings if it feels off.",
+        ]}
+      />
+      <div style={{ padding: "0 28px 32px" }}>
 
       {/* Stats row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "20px" }}>
@@ -222,6 +221,7 @@ export default function YouPage({ profile, predictions, journal, quizHistory }: 
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }

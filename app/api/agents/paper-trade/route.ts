@@ -22,11 +22,21 @@ export async function POST(req: NextRequest) {
     // All DB ops use service client — bypasses RLS on agent/paper tables
     const supabase = createServiceClient();
 
-    // Pause check — skip if app is paused
-    const { data: cfg } = await supabase.from("strategy_config").select("app_paused").limit(1).single();
+    // Pause check + risk profile params (single fetch)
+    const { data: cfg } = await supabase
+      .from("strategy_config")
+      .select("app_paused, score_threshold, position_size_pct, stop_loss_pct, target_pct")
+      .limit(1)
+      .single();
     if ((cfg as any)?.app_paused) {
       return NextResponse.json({ skipped: true, reason: "App is paused — paper trades disabled" });
     }
+
+    // Risk profile parameters (fall back to balanced defaults)
+    const scoreThreshold  = (cfg as any)?.score_threshold   ?? 60;
+    const positionSizePct = (cfg as any)?.position_size_pct ?? 10;
+    const stopLossPctCfg  = (cfg as any)?.stop_loss_pct     ?? 7;
+    const targetPctCfg    = (cfg as any)?.target_pct        ?? 20;
 
     // §4 kill-switch check before any trade execution
     const ks = await checkKillSwitches(supabase);
@@ -54,19 +64,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No paper portfolio found" }, { status: 500 });
     }
 
-    // Only qualifying LONG signals not yet paper-traded
+    // Only qualifying LONG signals not yet paper-traded (threshold from risk profile)
     const { data: signals } = await supabase
       .from("agent_signals")
       .select("*")
       .eq("status", "pending")
       .eq("direction", "long") // long-only enforcement
-      .gte("analyst_score", 60)
+      .gte("analyst_score", scoreThreshold)
       .order("analyst_score", { ascending: false })
       .limit(5);
 
     if (!signals || signals.length === 0) {
-      if (runId) await supabase.from("agent_runs").update({ status: "done", signals_written: 0, result_summary: "No qualifying long signals (score ≥ 60, direction = long)", completed_at: new Date().toISOString() } as any).eq("id", runId);
-      return NextResponse.json({ skipped: true, reason: "No qualifying long signals (score ≥ 60, direction = long)" });
+      if (runId) await supabase.from("agent_runs").update({ status: "done", signals_written: 0, result_summary: `No qualifying long signals (score ≥ ${scoreThreshold}, direction = long)`, completed_at: new Date().toISOString() } as any).eq("id", runId);
+      return NextResponse.json({ skipped: true, reason: `No qualifying long signals (score ≥ ${scoreThreshold}, direction = long)` });
     }
 
     const filled: any[] = [];
@@ -95,8 +105,17 @@ export async function POST(req: NextRequest) {
 
       const fillPrice = quote.price;
 
-      // Size: max 10% of current NAV, whole shares only
-      const maxSpend = portfolio.cash_balance * 0.10;
+      // Compute exit management levels at entry using risk profile params
+      // Use price_target / stop_loss from signal if ResearchAgent already computed them
+      const priceTarget = signal.price_target != null
+        ? signal.price_target
+        : parseFloat((fillPrice * (1 + targetPctCfg / 100)).toFixed(2));
+      const stopLoss = signal.stop_loss != null
+        ? signal.stop_loss
+        : parseFloat((fillPrice * (1 - stopLossPctCfg / 100)).toFixed(2));
+
+      // Size: positionSizePct% of current NAV (from risk profile), whole shares only
+      const maxSpend = portfolio.cash_balance * (positionSizePct / 100);
       const qty = Math.floor(maxSpend / fillPrice);
       if (qty < 1) {
         await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
@@ -144,7 +163,15 @@ export async function POST(req: NextRequest) {
       } else {
         await supabase
           .from("paper_positions")
-          .insert({ symbol: signal.symbol, qty, avg_cost: fillPrice, current_price: fillPrice });
+          .insert({
+            symbol: signal.symbol,
+            qty,
+            avg_cost: fillPrice,
+            current_price: fillPrice,
+            price_target: priceTarget,
+            stop_loss: stopLoss,
+            highest_price: fillPrice,
+          });
       }
 
       // Deduct from cash

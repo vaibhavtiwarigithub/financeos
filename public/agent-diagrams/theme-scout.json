@@ -1,0 +1,25 @@
+{
+  "agentId": "theme-scout",
+  "agentLabel": "ThemeScout",
+  "diagram": "flowchart TD\n  TRIG[\"⚡ On-Demand or After Research\"] --> THEME[\"🎯 Identify Active Themes\"]\n  THEME --> CAND[\"🔍 Find Thematic Candidates\"]\n  CAND --> SCORE[\"📊 Theme Score\"]\n  SCORE --> FILTER{\"Score >= 60?\"}\n  FILTER -->|Yes| ADD[\"➕ Add to Watchlist\"]\n  FILTER -->|No| DROP[\"❌ Drop\"]\n  ADD --> EXPIRE[\"⏳ 7-day Auto-Expiry\"]",
+  "nodes": {
+    "TRIG": { "label": "On-Demand Trigger", "description": "Runs manually from Agents page or chained after ResearchAgent. No fixed daily schedule — themes last weeks.", "addedAt": "2026-06-29", "addReason": "Thematic scanning doesn't need daily cadence. Themes last weeks to months.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "THEME": { "label": "Identify Active Themes", "description": "LLM identifies 3-5 active market themes (AI infrastructure, robotics, nuclear, GLP-1) based on news and momentum.", "addedAt": "2026-06-29", "addReason": "Pure fundamental screening misses narrative-driven moves.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "CAND": { "label": "Find Thematic Candidates", "description": "Searches stocks matching themes via Alpha Vantage sector data + FinancialDatasets by industry.", "addedAt": "2026-06-29", "addReason": "Translates abstract themes into specific tickers.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "SCORE": { "label": "Theme Score", "description": "Scores on momentum (RSI, price vs MA), narrative fit (LLM assessment), sector strength.", "addedAt": "2026-06-29", "addReason": "Not every stock in a theme deserves watchlist. Score filters highest conviction.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "FILTER": { "label": "Score Filter", "description": "Score >= 60 passes. Failed candidates logged but not added.", "addedAt": "2026-06-29", "addReason": "Quality filter — avoid polluting watchlist with weak bets.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "ADD": { "label": "Add to Watchlist", "description": "Adds with source='theme_scout', theme tag, expiry. Shows 🎯 badge in Watchlist panel.", "addedAt": "2026-06-29", "addReason": "Watchlist staging area before ResearchAgent deep-analyzes.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "DROP": { "label": "Drop Candidate", "description": "Below-threshold candidates discarded.", "addedAt": "2026-06-29", "addReason": "Explicit drop prevents noise.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "EXPIRE": { "label": "7-Day Auto-Expiry", "description": "ThemeScout additions auto-expire after 7 days if ResearchAgent hasn't traded them.", "addedAt": "2026-06-29", "addReason": "Themes time-sensitive. Stale picks clutter watchlist.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null }
+  },
+  "history": [
+    { "date": "2026-06-29", "event": "add", "nodeId": "TRIG", "label": "Trigger", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "THEME", "label": "Identify Themes", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "CAND", "label": "Find Candidates", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "SCORE", "label": "Theme Score", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "FILTER", "label": "Score Filter", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "ADD", "label": "Add to Watchlist", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "DROP", "label": "Drop", "reason": "Initial build" },
+    { "date": "2026-06-29", "event": "add", "nodeId": "EXPIRE", "label": "7-Day Expiry", "reason": "Initial build" }
+  ]
+}

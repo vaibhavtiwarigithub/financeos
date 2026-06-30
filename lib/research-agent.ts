@@ -2,6 +2,47 @@ import { execClaude, parseClaudeOutput, parseTokenUsage } from "@/lib/claude-exe
 import { fetchSocialSentiment, SocialSentiment } from "@/lib/social-sentiment";
 import { fetchOptionsSignal, OptionsSignal } from "@/lib/options-signal";
 
+// Insider scoring: fetch from Alpha Vantage INSIDER_TRANSACTIONS
+async function scoreInsider(symbol: string, avKey: string): Promise<{ score: number; summary: string }> {
+  try {
+    const url = `https://www.alphavantage.co/query?function=INSIDER_TRANSACTIONS&symbol=${symbol}&apikey=${avKey}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const transactions: any[] = data?.data ?? [];
+
+    if (!transactions.length) return { score: 50, summary: "No insider transaction data available." };
+
+    // Score based on recent 90 days
+    const cutoff = Date.now() - 90 * 86400000;
+    const recent = transactions.filter((t: any) =>
+      new Date(t.transactionDate ?? t.transaction_date ?? "").getTime() > cutoff
+    );
+
+    if (!recent.length) return { score: 50, summary: "No insider transactions in past 90 days." };
+
+    let buyValue = 0, sellValue = 0, buyCount = 0, sellCount = 0;
+    for (const t of recent) {
+      const shares = Math.abs(parseFloat(t.shares ?? t.numberOfShares ?? "0"));
+      const price = parseFloat(t.price ?? t.transactionPrice ?? "0");
+      const value = shares * price;
+      const type = (t.transactionType ?? t.transaction_type ?? "").toUpperCase();
+      if (type.includes("BUY") || type === "P") { buyValue += value; buyCount++; }
+      if (type.includes("SELL") || type === "S") { sellValue += value; sellCount++; }
+    }
+
+    const total = buyValue + sellValue;
+    if (total === 0) return { score: 50, summary: `${recent.length} insider transactions found but no buy/sell value calculable.` };
+    const buyRatio = buyValue / total;
+    // 100% buying = score 90, 100% selling = score 10, balanced = 50
+    const score = Math.round(10 + buyRatio * 80);
+    const fmtVal = (v: number) => v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `$${(v / 1_000).toFixed(0)}K` : `$${v.toFixed(0)}`;
+    const summary = `${buyCount} buys (${fmtVal(buyValue)}) vs ${sellCount} sells (${fmtVal(sellValue)}) in past 90 days. Buy ratio: ${(buyRatio * 100).toFixed(0)}%.`;
+    return { score, summary };
+  } catch {
+    return { score: 50, summary: "Insider data fetch failed." };
+  }
+}
+
 const KNOWN_ETFS = new Set([
   // Broad market
   "SPY","VOO","QQQ","IWM","VTI","DIA","RSP",
@@ -74,6 +115,51 @@ If the tool fails or returns no positions, return: []`;
   }
 }
 
+// Phase 1B — fetch account snapshot (equity, buying power, positions) and cache it
+export async function fetchAndStoreAccountSnapshot(): Promise<void> {
+  const prompt = `Call the Robinhood MCP tool get_equity_positions with account_number: "${TRADING_ACCOUNT}"
+Then call get_accounts to get buying_power and portfolio_value for that account.
+
+Return ONLY a JSON object (no markdown):
+{
+  "equity": 12345.67,
+  "buying_power": 5000.00,
+  "portfolio_value": 12345.67,
+  "position_count": 5,
+  "positions": [
+    {"symbol": "AAPL", "qty": 10, "avg_price": 175.00, "current_price": 182.00},
+    {"symbol": "NVDA", "qty": 5, "avg_price": 490.00, "current_price": 510.00}
+  ]
+}
+
+If any field is unavailable, use null.`;
+
+  try {
+    const stdout = await execClaude(prompt, 90000);
+    const text = parseClaudeOutput(stdout);
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return;
+    const snap = JSON.parse(match[0]);
+
+    // POST to our own API to store the snapshot
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    await fetch(`${baseUrl}/api/live-account/snapshot`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET ?? "" },
+      body: JSON.stringify({
+        account_id: TRADING_ACCOUNT,
+        equity: snap.equity,
+        buying_power: snap.buying_power,
+        portfolio_value: snap.portfolio_value,
+        position_count: snap.position_count,
+        positions_json: snap.positions ?? null,
+      }),
+    }).catch(() => {});
+  } catch {
+    // Non-critical — don't fail research run
+  }
+}
+
 // Phase 1C — dual-bucket screener: momentum + value
 export async function runScreener(): Promise<string[]> {
   const prompt = `Run TWO stock screening passes using the FinancialDatasets screen_stocks tool.
@@ -135,6 +221,7 @@ export async function gatherSymbols(
     fetchHoldings(),
     supabase.from("watchlist").select("symbol"),
     runScreener(),
+    fetchAndStoreAccountSnapshot(), // fire-and-forget alongside holdings fetch
   ]);
 
   const watchlistSymbols: string[] =
@@ -177,7 +264,7 @@ const DOCTRINE_PREAMBLE = `## Reasoning doctrine (non-negotiable)
 
 Scope: long-only US equities/ETFs, 2–20 market-day swing. Never propose options, crypto, shorting, leverage, or intraday.`;
 
-function buildStockPrompt(symbol: string, isHeld: boolean, social: SocialSentiment | null, options: OptionsSignal | null): string {
+function buildStockPrompt(symbol: string, isHeld: boolean, social: SocialSentiment | null, options: OptionsSignal | null, insider: { score: number; summary: string } | null = null): string {
   const heldNote = isHeld
     ? `\nIMPORTANT: This is a CURRENTLY HELD position. If analysis is bearish, set direction to "short" as an exit signal. Do NOT override to neutral.`
     : `\nNew candidate position. Only output direction "long" or "neutral" — never "short".`;
@@ -205,15 +292,24 @@ Factor options flow into sentiment_score and conviction. Unusual call activity b
 `
     : "";
 
+  const insiderBlock = insider
+    ? `
+## Pre-fetched insider transactions (past 90 days — do NOT call INSIDER_TRANSACTIONS again)
+- Pre-computed insider_score: ${insider.score}/100
+- Summary: ${insider.summary}
+Use this score directly as insider_score in your output. Do not override it unless you have strong contradictory evidence from another sourced tool call.
+`
+    : "";
+
   return `${DOCTRINE_PREAMBLE}
-${socialBlock}${optionsBlock}
+${socialBlock}${optionsBlock}${insiderBlock}
 You are a professional equity analyst. Research ${symbol} using these tools in order:
 
 1. Call get_financial_metrics_snapshot (FinancialDatasets) for fundamentals: P/E, revenue growth, margins, FCF yield, ROE
 2. Call RSI (Alpha Vantage) with symbol=${symbol}, interval=daily — check if RSI > 60 (momentum) or < 40 (oversold)
 3. Call EMA (Alpha Vantage) with symbol=${symbol}, interval=daily, time_period=50 — compare to current price for trend direction
 4. Call NEWS_SENTIMENT (Alpha Vantage) with tickers=${symbol} — get top 3 headlines (sentiment score already provided above)
-5. Call INSIDER_TRANSACTIONS (Alpha Vantage) with symbol=${symbol} — note recent insider buying or selling
+5. ${insider ? `SKIP INSIDER_TRANSACTIONS — already pre-fetched above (insider_score: ${insider.score})` : `Call INSIDER_TRANSACTIONS (Alpha Vantage) with symbol=${symbol} — note recent insider buying or selling`}
 6. Call get_earnings (FinancialDatasets) — last 2 quarters: beat or miss vs estimates?
 
 After gathering data, synthesize all signals. Output ONLY a JSON object (no markdown, no prose):
@@ -278,19 +374,21 @@ ${heldNote}`;
 export async function processSymbol(
   entry: SymbolEntry,
   supabase: any
-): Promise<{ symbol: string; analystScore: number; direction: string; conviction: number; source: string; tokensIn: number; tokensOut: number }> {
+): Promise<{ symbol: string; analystScore: number; direction: string; conviction: number; source: string; tokensIn: number; tokensOut: number; currentPrice: number | null; priceTarget: number | null; stopLoss: number | null; scoreThreshold: number }> {
   const { symbol, isHeld, isEtf } = entry;
   const source: string = isHeld ? "holding" : "screener";
 
-  // Fetch social sentiment + options flow in parallel (non-blocking — failures silenced)
-  const [socialResult, optionsResult] = await Promise.all([
+  // Fetch social sentiment + options flow + insider data in parallel (non-blocking — failures silenced)
+  const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
+  const [socialResult, optionsResult, insiderResult] = await Promise.all([
     fetchSocialSentiment(symbol).catch(() => null),
     isEtf ? Promise.resolve(null) : fetchOptionsSignal(symbol).catch(() => null),
+    isEtf ? Promise.resolve(null) : scoreInsider(symbol, avKey).catch(() => null),
   ]);
 
   const prompt = isEtf
     ? buildEtfPrompt(symbol, isHeld, socialResult)
-    : buildStockPrompt(symbol, isHeld, socialResult, optionsResult);
+    : buildStockPrompt(symbol, isHeld, socialResult, optionsResult, insiderResult);
 
   const stdout = await execClaude(prompt, 90000);
   const claudeRaw = parseClaudeOutput(stdout);
@@ -322,17 +420,34 @@ export async function processSymbol(
         _direction_override: rawDirection !== signalDirection,
         _social_sentiment: socialResult ?? null,
         _options_signal: optionsResult ?? null,
+        _insider_prefetch: insiderResult ?? null,
       },
     })
     .select()
     .single();
 
-  const { data: weights } = await supabase.from("signal_weights").select("*").single();
-  const fw = weights?.fundamental_weight ?? 0.30;
-  const tw = weights?.technical_weight  ?? 0.25;
-  const sw = weights?.sentiment_weight  ?? 0.20;
-  const mw = weights?.macro_weight      ?? 0.15;
-  const iw = weights?.insider_weight    ?? 0.10;
+  const [{ data: weights }, { data: strategy }] = await Promise.all([
+    supabase.from("signal_weights").select("*").single(),
+    supabase.from("strategy_config").select("risk_profile, score_threshold, min_analyst_score, position_size_pct, stop_loss_pct, target_pct").single(),
+  ]);
+
+  // Risk profile weight overrides — aggressive shifts weight toward technical/sentiment,
+  // conservative shifts weight toward fundamental/macro
+  const PROFILE_WEIGHTS: Record<string, Record<string, number>> = {
+    conservative: { fundamental: 0.40, technical: 0.20, sentiment: 0.15, macro: 0.15, insider: 0.10 },
+    balanced:     { fundamental: 0.30, technical: 0.25, sentiment: 0.20, macro: 0.15, insider: 0.10 },
+    aggressive:   { fundamental: 0.20, technical: 0.30, sentiment: 0.25, macro: 0.15, insider: 0.10 },
+  };
+
+  const profileKey = (strategy?.risk_profile ?? "balanced") as string;
+  const profileWeights = PROFILE_WEIGHTS[profileKey] ?? PROFILE_WEIGHTS.balanced;
+
+  // Profile weights take priority; fall back to DB signal_weights; then hardcoded defaults
+  const fw = profileWeights.fundamental ?? weights?.fundamental_weight ?? 0.30;
+  const tw = profileWeights.technical   ?? weights?.technical_weight  ?? 0.25;
+  const sw = profileWeights.sentiment   ?? weights?.sentiment_weight  ?? 0.20;
+  const mw = profileWeights.macro       ?? weights?.macro_weight      ?? 0.15;
+  const iw = profileWeights.insider     ?? weights?.insider_weight    ?? 0.10;
 
   const analystScore = Math.round(
     (parsed.fundamental_score ?? 50) * fw +
@@ -341,6 +456,24 @@ export async function processSymbol(
     (parsed.macro_score       ?? 50) * mw +
     (parsed.insider_score     ?? 50) * iw
   );
+
+  // Score threshold from risk profile (strategy_config.score_threshold > min_analyst_score > 60)
+  const scoreThreshold = strategy?.score_threshold ?? strategy?.min_analyst_score ?? 60;
+  // Stop loss and target from risk profile
+  const stopLossPct  = strategy?.stop_loss_pct ?? 7;
+  const targetPct    = strategy?.target_pct    ?? 20;
+
+  // Extract current price from raw_data (Claude may embed it in the JSON response)
+  // Fall back to null — PaperTrader will use its own fetchQuote price
+  const currentPrice: number | null = parsed.current_price ?? null;
+
+  // price_target and stop_loss use risk-profile targetPct / stopLossPct
+  const priceTarget = currentPrice != null && currentPrice > 0
+    ? parseFloat((currentPrice * (1 + targetPct / 100)).toFixed(2))
+    : null;
+  const stopLoss = currentPrice != null && currentPrice > 0
+    ? parseFloat((currentPrice * (1 - stopLossPct / 100)).toFixed(2))
+    : null;
 
   await supabase.from("agent_signals").insert({
     symbol: parsed.symbol ?? symbol,
@@ -352,6 +485,8 @@ export async function processSymbol(
     status: "pending",
     source,
     rationale: (parsed.summary ?? "") + directionNote,
+    price_target: priceTarget,
+    stop_loss: stopLoss,
   });
 
   return {
@@ -362,5 +497,9 @@ export async function processSymbol(
     source,
     tokensIn: tokenUsage.input,
     tokensOut: tokenUsage.output,
+    currentPrice,
+    priceTarget,
+    stopLoss,
+    scoreThreshold,
   };
 }

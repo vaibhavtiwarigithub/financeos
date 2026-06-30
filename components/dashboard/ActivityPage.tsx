@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import PageHeader from "@/components/dashboard/PageHeader";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -439,29 +440,22 @@ export default function ActivityPage({
       background: T.bg,
       color: T.text,
       fontFamily: "'Inter', system-ui, sans-serif",
-      padding: "32px 24px",
       maxWidth: "760px",
       margin: "0 auto",
     }}>
-      {/* Page header */}
-      <div style={{ marginBottom: "32px" }}>
-        <h1 style={{
-          fontSize: "22px",
-          fontWeight: 700,
-          color: T.text,
-          margin: 0,
-          letterSpacing: "-0.02em",
-        }}>
-          Activity
-        </h1>
-        <p style={{
-          fontSize: "13px",
-          color: T.textSub,
-          margin: "6px 0 0 0",
-        }}>
-          All agent runs, signals, trades, and learning notes — newest first.
-        </p>
-      </div>
+      <PageHeader
+        title="Activity"
+        subtitle="Agent runs, signals, trades, and learning notes"
+        cadence="daily"
+        whatItDoes="Real-time feed of everything the agent system did — research runs, signals generated, paper trades executed, and what the LearnerAgent noted after each outcome."
+        whatToLookFor={[
+          "Red signals = agent passed. Yellow = agent researched but no trade. Green = trade executed.",
+          "Learning notes appear after paper trades close — they're what the agent learned.",
+          "Agent runs show which LLM was used and how long it took.",
+          "If runs stopped appearing, check that pg_cron is scheduled and CRON_SECRET is set.",
+        ]}
+      />
+      <div style={{ padding: "0 28px 32px" }}>
 
       {/* Empty state */}
       {events.length === 0 && (
@@ -484,6 +478,7 @@ export default function ActivityPage({
       {grouped.map(([dayKey, dayEvents]) => (
         <DaySection key={dayKey} dayKey={dayKey} events={dayEvents} expandedId={expandedId} setExpandedId={setExpandedId} />
       ))}
+      </div>
     </div>
   );
 }

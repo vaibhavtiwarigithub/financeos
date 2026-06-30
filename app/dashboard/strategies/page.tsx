@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import PageHeader from "@/components/dashboard/PageHeader";
 
 interface TopSymbol {
   symbol: string;
@@ -171,40 +172,21 @@ export default function StrategiesPage() {
   const hasClassifications = strategies.some(s => s.top_symbols.length > 0);
 
   return (
-    <div style={{ padding: "32px", maxWidth: "1400px" }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "28px" }}>
-        <div>
-          <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#ECEDEF", margin: 0 }}>
-            Strategy Intelligence
-          </h1>
-          <p style={{ fontSize: "13px", color: "#9B9EA8", margin: "4px 0 0" }}>
-            7 strategies · classify symbols to see fit scores
-          </p>
-        </div>
-        <button
-          onClick={() => setShowModal(true)}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            padding: "10px 20px",
-            borderRadius: "10px",
-            background: "#6366F1",
-            border: "none",
-            color: "#fff",
-            fontSize: "13px",
-            fontWeight: 600,
-            cursor: "pointer",
-            transition: "opacity 0.15s",
-          }}
-          onMouseEnter={e => (e.currentTarget.style.opacity = "0.85")}
-          onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
-        >
-          <span style={{ fontSize: "15px" }}>◈</span>
-          Run Classifier
-        </button>
-      </div>
+    <div style={{ maxWidth: "1400px" }}>
+      <PageHeader
+        title="Strategy Intelligence"
+        subtitle="7 strategies · classify symbols to see fit scores"
+        cadence="as-needed"
+        whatItDoes="Classifies any symbol against 7 investment strategies (Momentum, GARP, Value, Dividend, Growth, Macro, Contrarian) and shows fit scores so you know which stocks match your thesis."
+        whatToLookFor={[
+          "Green fit score (≥70%) = strong match for that strategy.",
+          "Run Classifier with your watchlist symbols to see which strategies they belong to.",
+          "Click any ticker chip to open full symbol analysis.",
+          "Use this before adding new positions — confirms the strategy rationale.",
+        ]}
+        actions={[{ label: "Run Classifier", onClick: () => setShowModal(true), primary: true }]}
+      />
+      <div style={{ padding: "0 28px 32px" }}>
 
       {/* Grid */}
       {loading ? (
@@ -378,6 +360,7 @@ export default function StrategiesPage() {
         @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 0.7; } }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
+      </div>
     </div>
   );
 }

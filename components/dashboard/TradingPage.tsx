@@ -2,6 +2,11 @@
 import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
+import PageHeader from "@/components/dashboard/PageHeader";
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip as RechartsTooltip,
+} from "recharts";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -13,6 +18,274 @@ const T = {
 function fmt(n: number) { return (n >= 0 ? "+" : "") + "$" + Math.abs(n).toFixed(2); }
 function fmtPct(n: number) { return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
 function pnlColor(n: number) { return n >= 0 ? T.green : T.red; }
+
+// ── Paper Performance Panel ──────────────────────────────────────────────────
+
+interface PerfData {
+  navHistory: { date: string; nav: number }[];
+  trades: any[];
+  winRate: number;
+  avgReturn: number;
+  totalPnl: number;
+  spyReturn: number;
+  paperReturn: number;
+  closedCount: number;
+  gates: { minTrades: boolean; winRate: boolean; positiveReturn: boolean; beatsSpy: boolean };
+  allGatesPassed: boolean;
+  nav: number;
+  cash: number;
+}
+
+function NavChartTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", fontSize: "12px" }}>
+      <div style={{ color: T.muted, marginBottom: "6px" }}>{label}</div>
+      {payload.map((p: any) => (
+        <div key={p.name} style={{ color: p.color, fontWeight: 600, marginBottom: "2px" }}>
+          {p.name}: ${Number(p.value).toFixed(0)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PaperPerformancePanel({ strategy }: { strategy: any }) {
+  const [perf, setPerf] = useState<PerfData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [snapshotting, setSnapshotting] = useState(false);
+  const [snapshotMsg, setSnapshotMsg] = useState<string | null>(null);
+  const [enablingLive, setEnablingLive] = useState(false);
+  const router = useRouter();
+
+  async function loadPerf() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/agents/performance");
+      const data = await res.json();
+      setPerf(data);
+    } catch {
+      // silently ignore
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => { loadPerf(); }, []);
+
+  async function snapshotNav() {
+    setSnapshotting(true);
+    setSnapshotMsg(null);
+    try {
+      const res = await fetch("/api/agents/performance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "snapshot" }),
+      });
+      const data = await res.json();
+      if (data.snapshotted) {
+        setSnapshotMsg(`Snapshotted NAV $${Number(data.nav).toFixed(0)} for ${data.date}`);
+        await loadPerf();
+      } else {
+        setSnapshotMsg(data.error ?? "Snapshot failed");
+      }
+    } catch (e: any) {
+      setSnapshotMsg("Error: " + e.message);
+    }
+    setSnapshotting(false);
+  }
+
+  async function enableLiveTrading() {
+    if (!strategy?.id) return;
+    setEnablingLive(true);
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      await supabase.from("strategy_config").update({ trading_enabled: true }).eq("id", strategy.id);
+      router.refresh();
+    } catch {
+      // silently ignore
+    }
+    setEnablingLive(false);
+  }
+
+  if (loading) {
+    return (
+      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "24px", marginBottom: "20px" }}>
+        <div style={{ color: T.muted, fontSize: "13px" }}>Loading performance data…</div>
+      </div>
+    );
+  }
+
+  if (!perf) return null;
+
+  const { navHistory, winRate, avgReturn, totalPnl, spyReturn, paperReturn, closedCount, gates, allGatesPassed } = perf;
+  const tradingActive = strategy?.trading_enabled === true;
+
+  // Build chart data: paper NAV + SPY rescaled to $10,000 start
+  const firstNav = navHistory.length > 0 ? navHistory[0].nav : 10000;
+  const spyBase = firstNav; // SPY rescaled to same start
+  // We only have nav history here — SPY line uses the spyReturn we have (linear interpolation as proxy)
+  // Build a two-line dataset: paper line from navHistory, SPY estimated line
+  const chartData = navHistory.map((row, i) => {
+    // SPY line: linear interpolation from base to final spyReturn over the history window
+    const progress = navHistory.length > 1 ? i / (navHistory.length - 1) : 0;
+    const spyVal = spyBase * (1 + (spyReturn / 100) * progress);
+    return {
+      date: row.date,
+      paper: Number(row.nav),
+      spy: parseFloat(spyVal.toFixed(2)),
+    };
+  });
+
+  const gateRows: { label: string; pass: boolean; detail: string }[] = [
+    { label: "10+ closed paper trades", pass: gates.minTrades, detail: `(${closedCount} so far)` },
+    { label: "Win rate ≥ 55%", pass: gates.winRate, detail: `(currently ${winRate.toFixed(1)}%)` },
+    { label: "Net positive return", pass: gates.positiveReturn, detail: `(${paperReturn >= 0 ? "+" : ""}${paperReturn.toFixed(2)}%)` },
+    { label: "Outperforming SPY", pass: gates.beatsSpy, detail: `(paper ${paperReturn >= 0 ? "+" : ""}${paperReturn.toFixed(2)}% vs SPY ${spyReturn >= 0 ? "+" : ""}${spyReturn.toFixed(2)}%)` },
+  ];
+
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "24px", marginBottom: "20px" }}>
+
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+        <div>
+          <div style={{ fontSize: "14px", fontWeight: 700, color: T.text }}>Agent Performance · Paper Track Record</div>
+          <div style={{ fontSize: "12px", color: T.muted, marginTop: "3px" }}>
+            {closedCount} closed trade{closedCount !== 1 ? "s" : ""} · gates must pass before live trading unlocks
+          </div>
+        </div>
+        <button
+          onClick={snapshotNav}
+          disabled={snapshotting}
+          style={{ padding: "8px 16px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.textSub, fontSize: "12px", fontWeight: 600, cursor: snapshotting ? "not-allowed" : "pointer" }}
+        >
+          {snapshotting ? "Snapshotting…" : "Snapshot NAV"}
+        </button>
+      </div>
+
+      {snapshotMsg && (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: snapshotMsg.startsWith("Error") ? T.red : T.green }}>
+          {snapshotMsg}
+        </div>
+      )}
+
+      {/* NAV Chart */}
+      {chartData.length < 2 ? (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "40px", textAlign: "center", color: T.muted, fontSize: "13px", marginBottom: "20px" }}>
+          Run paper trades to build history — snapshot NAV daily after each PaperTrader run
+        </div>
+      ) : (
+        <div style={{ marginBottom: "20px" }}>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+              <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 10, fill: T.muted }}
+                tickLine={false}
+                axisLine={false}
+                interval="preserveStartEnd"
+                tickFormatter={(d: string) => {
+                  const dt = new Date(d);
+                  return `${dt.getMonth() + 1}/${dt.getDate()}`;
+                }}
+              />
+              <YAxis
+                tick={{ fontSize: 10, fill: T.muted }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v: number) => "$" + v.toFixed(0)}
+                width={56}
+              />
+              <RechartsTooltip content={<NavChartTooltip />} />
+              <Line type="monotone" dataKey="paper" name="Paper NAV" stroke={T.accent} strokeWidth={2.5} dot={false} />
+              <Line type="monotone" dataKey="spy" name="SPY (rescaled)" stroke={T.muted} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />
+            </LineChart>
+          </ResponsiveContainer>
+          <div style={{ display: "flex", gap: "16px", justifyContent: "flex-end", fontSize: "11px", color: T.muted, marginTop: "6px" }}>
+            <span><span style={{ color: T.accent, fontWeight: 700 }}>—</span> Paper NAV</span>
+            <span><span style={{ color: T.muted }}>- -</span> SPY baseline</span>
+          </div>
+        </div>
+      )}
+
+      {/* Stats row */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "20px" }}>
+        {[
+          {
+            label: "Win Rate",
+            value: winRate.toFixed(1) + "%",
+            color: winRate >= 55 ? T.green : T.red,
+          },
+          {
+            label: "Avg Return",
+            value: (avgReturn >= 0 ? "+" : "") + avgReturn.toFixed(2) + "%",
+            color: avgReturn >= 0 ? T.green : T.red,
+          },
+          {
+            label: "Total P&L",
+            value: (totalPnl >= 0 ? "+$" : "-$") + Math.abs(totalPnl).toFixed(0),
+            color: totalPnl >= 0 ? T.green : T.red,
+          },
+          {
+            label: "vs SPY",
+            value: (paperReturn - spyReturn >= 0 ? "+" : "") + (paperReturn - spyReturn).toFixed(2) + "%",
+            color: paperReturn > spyReturn ? T.green : T.red,
+          },
+        ].map(s => (
+          <div key={s.label} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 16px" }}>
+            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "6px" }}>{s.label}</div>
+            <div style={{ fontSize: "20px", fontWeight: 700, color: s.color }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Gate checklist */}
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "16px", marginBottom: "20px" }}>
+        <div style={{ fontSize: "12px", fontWeight: 600, color: T.textSub, marginBottom: "12px", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+          Live Trading Gates
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {gateRows.map(g => (
+            <div key={g.label} style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px" }}>
+              <span style={{ fontSize: "15px" }}>{g.pass ? "✅" : "❌"}</span>
+              <span style={{ color: g.pass ? T.text : T.muted }}>{g.label}</span>
+              <span style={{ color: T.muted, fontSize: "12px" }}>{g.detail}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Enable Real Trading / Live badge */}
+      {tradingActive ? (
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 18px", background: "#052E16", border: `1px solid ${T.green}40`, borderRadius: "10px" }}>
+          <span style={{ fontSize: "16px" }}>⚡</span>
+          <span style={{ color: T.green, fontWeight: 700, fontSize: "14px" }}>LIVE TRADING ACTIVE</span>
+          <span style={{ color: T.muted, fontSize: "12px", marginLeft: "auto" }}>Toggle off in Agents → Strategy Config</span>
+        </div>
+      ) : (
+        <button
+          onClick={allGatesPassed ? enableLiveTrading : undefined}
+          disabled={!allGatesPassed || enablingLive}
+          style={{
+            width: "100%", padding: "14px", borderRadius: "10px", fontSize: "14px", fontWeight: 700,
+            cursor: allGatesPassed ? "pointer" : "not-allowed",
+            border: "none",
+            background: allGatesPassed ? T.green : T.surface,
+            color: allGatesPassed ? "#000" : T.muted,
+            opacity: allGatesPassed ? 1 : 0.6,
+            transition: "opacity 0.2s",
+          }}
+        >
+          {enablingLive ? "Enabling…" : allGatesPassed ? "Enable Real Trading" : "Enable Real Trading (gates not yet passed)"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 
 function ScoreBar({ score }: { score: number }) {
   const color = score >= 70 ? T.green : score >= 50 ? T.amber : T.red;
@@ -32,6 +305,8 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
   const router = useRouter();
   const [running, setRunning] = useState(false);
   const [runLog, setRunLog] = useState<string[]>([]);
+  const [monitorRunning, setMonitorRunning] = useState(false);
+  const [monitorResult, setMonitorResult] = useState<{ checked: number; closed: number; closedDetails: string[]; updated: number } | null>(null);
   const [tab, setTab] = useState<"queue" | "signals" | "history">("queue");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   const [queueItems, setQueueItems] = useState<any[]>(queue);
@@ -66,6 +341,24 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
   const pnl = nav - 10000;
   const longSignals = pendingSignals.filter(s => s.direction === "long" && s.analyst_score >= 60);
 
+  async function runPositionMonitor() {
+    setMonitorRunning(true);
+    setMonitorResult(null);
+    try {
+      const res = await fetch("/api/agents/position-monitor", { method: "POST" });
+      const data = await res.json();
+      if (data.error) {
+        setMonitorResult({ checked: 0, closed: 0, closedDetails: [`Error: ${data.error}`], updated: 0 });
+      } else {
+        setMonitorResult({ checked: data.checked ?? 0, closed: data.closed ?? 0, closedDetails: data.closedDetails ?? [], updated: data.updated ?? 0 });
+        router.refresh();
+      }
+    } catch (e: any) {
+      setMonitorResult({ checked: 0, closed: 0, closedDetails: [`Error: ${e.message}`], updated: 0 });
+    }
+    setMonitorRunning(false);
+  }
+
   async function runPaperTrade() {
     setRunning(true);
     setRunLog(["Running PaperTrader..."]);
@@ -94,23 +387,25 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
   }
 
   return (
-    <div style={{ padding: "28px", color: T.text, fontFamily: "'Inter', sans-serif" }}>
+    <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
 
-      <div style={{ marginBottom: "24px" }}>
-        <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "6px" }}>Agent Trading</div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <h1 style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.02em" }}>Trading</h1>
-          <div style={{ display: "flex", gap: "10px" }}>
-            <button
-              onClick={runPaperTrade}
-              disabled={running}
-              style={{ padding: "10px 22px", borderRadius: "10px", fontWeight: 700, fontSize: "13px", cursor: running ? "default" : "pointer", border: "none", background: running ? T.border : T.accent, color: "#fff", opacity: running ? 0.7 : 1 }}
-            >
-              {running ? "Running..." : "Run PaperTrader"}
-            </button>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title="Trading"
+        subtitle="Paper trading · agent executes signals automatically"
+        cadence="daily"
+        whatItDoes="PaperTrader runs daily after ResearchAgent — buys if signal score ≥60, sells if score drops. All trades are paper (simulated) on the agentic Robinhood account. Real trading requires explicit enable."
+        whatToLookFor={[
+          "Score ≥60 = agent may enter. Score <40 on existing position = agent may exit.",
+          "P&L is paper — no real money moves until Live Trading is explicitly enabled.",
+          "Run PaperTrader manually to force a cycle right now with current signals.",
+          "Live Trading toggle is a kill switch — off by default, enable only when ready.",
+        ]}
+        actions={[{ label: running ? "Running…" : "Run PaperTrader", onClick: runPaperTrade, primary: true }]}
+      />
+      <div style={{ padding: "0 28px 32px" }}>
+
+      {/* Paper Performance Panel */}
+      <PaperPerformancePanel strategy={strategy} />
 
       {/* Stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "20px" }}>
@@ -134,6 +429,32 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
           {runLog.map((l, i) => <div key={i} style={{ color: l.startsWith("Error") ? T.red : l.startsWith("Skipped") ? T.amber : T.green }}>{l}</div>)}
         </div>
       )}
+
+      {/* Position Monitor */}
+      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px 20px", marginBottom: "20px", display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: "160px" }}>
+          <div style={{ fontSize: "13px", fontWeight: 600, color: T.text, marginBottom: "3px" }}>Position Monitor</div>
+          <div style={{ fontSize: "12px", color: T.muted }}>
+            {monitorResult
+              ? `${monitorResult.checked} checked · ${monitorResult.closed} closed · ${monitorResult.updated} updated`
+              : "Checks stop-loss and price targets on open positions. Run daily after market close."}
+          </div>
+          {monitorResult && monitorResult.closedDetails.length > 0 && (
+            <div style={{ marginTop: "6px", fontSize: "11px", fontFamily: "monospace" }}>
+              {monitorResult.closedDetails.map((d, i) => (
+                <div key={i} style={{ color: d.startsWith("Error") ? T.red : T.amber }}>{d}</div>
+              ))}
+            </div>
+          )}
+        </div>
+        <button
+          onClick={runPositionMonitor}
+          disabled={monitorRunning}
+          style={{ padding: "9px 18px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: monitorRunning ? T.muted : T.textSub, fontSize: "12px", fontWeight: 600, cursor: monitorRunning ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}
+        >
+          {monitorRunning ? "Checking…" : "Run Position Monitor"}
+        </button>
+      </div>
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: "4px", marginBottom: "16px" }}>
@@ -281,6 +602,7 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }

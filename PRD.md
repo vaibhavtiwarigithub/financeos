@@ -538,7 +538,134 @@ User clicks → Modal opens:
 
 ---
 
-## 9. Open Decisions
+## 9. Features Built (2026-06-29 Session)
+
+### 9.1 Risk Profile System
+
+Three preset risk profiles stored in `strategy_config`:
+
+| Profile | score_threshold | position_size_pct | stop_loss_pct | target_pct |
+|---|---|---|---|---|
+| Conservative | 72 | 7 | 5 | 12 |
+| Balanced | 60 | 10 | 7 | 20 |
+| Aggressive | 52 | 15 | 10 | 35 |
+
+- **API:** `GET /api/settings/risk-profile` returns current profile. `PATCH /api/settings/risk-profile` updates `strategy_config` row.
+- **UI:** Settings page → Agents tab → Risk Profile card. User selects preset or edits per-field.
+- **ResearchAgent integration:** Reads `risk_profile` from `strategy_config`, applies `PROFILE_WEIGHTS` multiplier to signal scoring, uses `score_threshold` as the minimum score for a buy signal.
+
+### 9.2 Position Monitor (Dynamic Exit Price Management)
+
+Runs daily after market close (weekdays 4:15PM). Manages trailing stops and target exits for all open `paper_positions`.
+
+**New columns added to `paper_positions` (migration 026):**
+- `price_target` — target exit price
+- `stop_loss` — initial stop loss price
+- `highest_price` — highest price seen since entry (trail anchor)
+- `target_updated_at` — last time target was updated
+- `exit_reason` — `'stop'`, `'target'`, or `'llm_exit'`
+
+**Trailing stop logic:** `new_stop = max(original_stop_loss, highest_price × 0.93)`
+
+On each run:
+1. Fetch current prices for all open positions
+2. Update `highest_price` if current price > previous highest
+3. Recompute trailing stop
+4. If `current_price <= stop` → close position, set `exit_reason = 'stop'`
+5. If `current_price >= price_target` → close position, set `exit_reason = 'target'`
+6. Closed positions return cash to buying power
+
+**UI:** TradingPage has PositionMonitor card with "Run Now" button and last-run timestamp.
+
+### 9.3 MacroSentinel (Recession Risk Agent)
+
+Weekly macro regime scoring agent. Runs Mondays 8AM.
+
+**Indicators fetched from Alpha Vantage (8 total):**
+1. Yield Curve (10Y-2Y spread) — inverted = danger
+2. Sahm Rule proxy (unemployment rate delta)
+3. Real GDP (QoQ growth rate)
+4. Nonfarm Payrolls (MoM change)
+5. CPI (YoY inflation)
+6. Retail Sales (MoM change)
+7. Federal Funds Rate
+8. Durable Goods Orders (MoM)
+
+**Regime classification (weighted danger score 0-100):**
+- GREEN: score < 25 — expansion
+- YELLOW: 25-49 — caution
+- ORANGE: 50-74 — slowdown
+- RED: ≥75 — recession risk
+
+**Advisory-only:** MacroSentinel reports regime; it does not auto-throttle agents or halt trading. User decides how to act.
+
+**Storage (migration 028):**
+- `macro_regime` — current regime + score + timestamp
+- `macro_signals` — per-indicator readings and contribution
+
+**UI:** MarketsPage → MacroSentinel card with danger gauge + signal breakdown table. DashboardHome shows colored regime banner (hidden when GREEN).
+
+### 9.4 Smart Money Trades (MarketsPage)
+
+**API:** `/api/markets/insider-trades/route.ts`
+
+**Two data sources:**
+1. **Insiders tab:** Alpha Vantage `INSIDER_TRANSACTIONS` — corporate insider buy/sell filings
+2. **Congress tab:** House Stock Watcher public S3 data — congressional stock trade disclosures (free, no auth required)
+
+UI in MarketsPage with tabbed Insiders/Congress view, showing symbol, insider name, transaction type, shares, and date.
+
+### 9.5 LLM Cost Monitor
+
+**API:** `/api/admin/llm-costs/route.ts` — queries `llm_call_log` table.
+
+**Metrics computed:**
+- Total spend (last 24h, 7d, 30d)
+- Burn rate ($/hour)
+- Projected daily cost
+- Per-model breakdown (Claude / DeepSeek / Groq)
+- 24-bar hourly cost chart (Recharts BarChart)
+
+**UI:**
+- Settings → Agents tab → LLM Cost Monitor card
+- DashboardHome shows 💸 banner if `projected_daily > $2`
+
+### 9.6 Mentor System (Judgment Score Chart)
+
+**Mentor nav link** restored in DashboardShell sidebar (🎓 icon, under "Learn" section).
+
+**API:** `/api/mentor/scores/route.ts` — groups `trade_journal` scores by date, returns time series.
+
+**MentorPage:** Recharts LineChart showing judgment score over time with reference lines:
+- 50 = Learning
+- 70 = Proficient
+- 90 = Expert
+
+### 9.7 Visual Agent Mermaid Diagrams
+
+**Component:** `components/dashboard/AgentDiagram.tsx`
+- Renders clickable Mermaid v10 flowcharts per agent (v11 incompatible with webpack/es-toolkit)
+- Nodes color-coded: active=green, new=blue, changed=red, removed=gray
+- Click any node → detail drawer showing why-added and change history
+
+**Data files in `public/agent-diagrams/` (7 JSON files):**
+- `research-agent.json`, `learner-agent.json`, `theme-scout.json`, `deepseek-agent.json`, `position-monitor.json`, `paper-trader.json`, `macro-sentinel.json`
+
+### 9.8 TradingView CSV Watchlist Import
+
+WatchlistPanel now has an "Import CSV" button. Modal accepts paste of TradingView export format (`EXCHANGE:TICKER,Description`). Parses tickers, batch POSTs to `/api/watchlist` with progress indicator.
+
+### 9.9 Signal Backtest Tab (AgentsPage)
+
+New "Backtest" tab in AgentsPage. Joins `agent_signals` to `paper_trades` by symbol + date (±3-day window). Displays:
+- Hit Rate (signals that became profitable trades)
+- Misses (signals with no matching trade or negative outcome)
+- Open (signals still in open positions)
+- Avg Return (%)
+
+---
+
+## 10. Open Decisions
 
 | Decision | Options | Notes |
 |---|---|---|
