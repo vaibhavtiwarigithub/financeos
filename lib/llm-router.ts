@@ -1,4 +1,6 @@
 // Route tasks to the right LLM. Claude for accuracy-critical, DeepSeek for cheap tasks.
+// Langfuse observability: enabled when LANGFUSE_SECRET_KEY + LANGFUSE_PUBLIC_KEY are set in .env.local.
+// No-ops gracefully if keys are absent — zero runtime impact.
 export type LLMTask = "research" | "chat" | "summarize" | "trade" | "evaluate" | "thesis" | "screen" | "optimize"
 
 export interface LLMCallOpts {
@@ -54,10 +56,40 @@ const GROQ_MODELS = new Set([
   "deepseek-r1-distill-llama-70b",
 ])
 
+// Lazy Langfuse singleton — created once per process, reused across calls.
+// Returns null if keys not configured (graceful no-op).
+let _langfuse: unknown = null
+function getLangfuse() {
+  if (_langfuse) return _langfuse as any
+  const sk = process.env.LANGFUSE_SECRET_KEY
+  const pk = process.env.LANGFUSE_PUBLIC_KEY
+  if (!sk || !pk) return null
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Langfuse } = require("langfuse")
+    _langfuse = new Langfuse({ secretKey: sk, publicKey: pk, flushAt: 5, flushInterval: 10_000 })
+  } catch { return null }
+  return _langfuse as any
+}
+
 export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
   const model = opts.model ?? MODEL_ROUTING[opts.task] ?? "claude-sonnet-4-6"
   const start = Date.now()
   let tokensIn = 0, tokensOut = 0, text = "", success = true, errorMsg = ""
+
+  const lf = getLangfuse()
+  const trace = lf?.trace({
+    name: `llm-${opts.task}`,
+    userId: opts.agentLabel ?? "kairos",
+    metadata: { symbol: opts.symbol, runId: opts.runId, task: opts.task },
+  })
+  const generation = trace?.generation({
+    name: opts.task,
+    model,
+    input: opts.systemPrompt
+      ? [{ role: "system", content: opts.systemPrompt }, { role: "user", content: opts.prompt }]
+      : [{ role: "user", content: opts.prompt }],
+  })
 
   try {
     if (model.startsWith("claude")) {
@@ -81,11 +113,20 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
   } catch (err) {
     success = false
     errorMsg = String(err)
+    generation?.end({ level: "ERROR", statusMessage: errorMsg })
     throw err
   } finally {
     const durationMs = Date.now() - start
     const [inRate, outRate] = PRICING[model] ?? [0, 0]
     const costUsd = (tokensIn / 1_000_000 * inRate) + (tokensOut / 1_000_000 * outRate)
+    if (success) {
+      generation?.end({
+        output: text,
+        usage: { inputTokens: tokensIn, outputTokens: tokensOut },
+        metadata: { costUsd, durationMs },
+      })
+    }
+    lf?.flushAsync?.().catch?.(() => {})
     await logCall({
       model,
       task: opts.task,

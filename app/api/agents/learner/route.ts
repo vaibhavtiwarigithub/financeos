@@ -276,28 +276,45 @@ export async function POST(req: NextRequest) {
             const { data: current } = await svc.from("signal_weights").select("*").single();
             const currentVal = (current as any)?.[dimension] ?? 0.25;
             const clamped = Math.max(0.05, Math.min(0.60, Math.max(currentVal - 0.05, Math.min(currentVal + 0.05, newWeight))));
+            const proposedWeights = { ...(current as any), [dimension]: clamped };
 
-            // Save snapshot BEFORE mutation (enables rollback)
-            const winRateNow = outcomes.length > 0 ? Math.round((outcomes.filter((o: any) => o.outcome === "win").length / outcomes.length) * 100) : null;
-            await svc.from("signal_weights_history").insert({
-              run_date: today,
-              trigger: "learner_mutation",
-              fundamental_weight: (current as any)?.fundamental_weight,
-              technical_weight: (current as any)?.technical_weight,
-              sentiment_weight: (current as any)?.sentiment_weight,
-              macro_weight: (current as any)?.macro_weight,
-              insider_weight: (current as any)?.insider_weight,
-              win_rate_at_time: winRateNow,
-              notes: `Pre-mutation snapshot. About to change ${dimension}: ${currentVal}→${clamped}. Reason: ${reason}`,
-            });
+            // CHALLENGER LIFECYCLE: Do NOT mutate signal_weights directly.
+            // Create an immutable strategy_versions challenger row. It must be
+            // promoted through the Strategy Registry before it takes effect.
+            // This is the architecture gate that prevents learning from immediately
+            // overwriting the champion strategy without human review.
+            const { data: champion } = await svc.from("strategy_versions")
+              .select("id, version, weights_snapshot")
+              .eq("is_champion", true)
+              .order("created_at", { ascending: false })
+              .limit(1).maybeSingle();
 
-            await svc.from("signal_weights").update({ [dimension]: clamped } as any).eq("id", (current as any).id);
+            const nextVersion = champion
+              ? `${champion.version ?? "0.0"}.learner-${today}`
+              : `0.1.learner-${today}`;
+
+            const { data: challengerRow } = await svc.from("strategy_versions").insert({
+              version:           nextVersion,
+              name:              `Challenger — ${dimension} ${currentVal.toFixed(3)}→${clamped.toFixed(3)}`,
+              description:       `LearnerAgent proposed weight change. Reason: ${reason}`,
+              state:             "challenger",
+              parent_version_id: (champion as any)?.id ?? null,
+              is_champion:       false,
+              weights_snapshot:  proposedWeights,
+              notes:             `Proposed by LearnerAgent on ${today}. N=${nTrades} trades, confidence=${Math.round(confidence * 100)}%. NOT active until promoted.`,
+            }).select("id").single();
+
             await svc.from("learning_log").insert({
-              note: `WEIGHT MUTATION: ${dimension} ${currentVal.toFixed(3)}→${clamped.toFixed(3)} | Reason: ${reason} | N=${nTrades} trades | Confidence=${Math.round(confidence * 100)}%`,
-              weight_snapshot: { ...(current as any), [dimension]: clamped },
+              note: `CHALLENGER CREATED (not live): ${dimension} ${currentVal.toFixed(3)}→${clamped.toFixed(3)} | Reason: ${reason} | N=${nTrades} trades | Confidence=${Math.round(confidence * 100)}% | Promote via Strategy Registry to make active`,
+              weight_snapshot: proposedWeights,
               trades_evaluated: nTrades,
             });
-            return JSON.stringify({ updated: true, dimension, old: currentVal, new: clamped, reason, snapshotSaved: true });
+            return JSON.stringify({
+              challenger_created: true,
+              challenger_id: (challengerRow as any)?.id,
+              dimension, old: currentVal, new: clamped, reason,
+              note: "Weight NOT applied yet. Promoted to champion via /dashboard/strategies to take effect.",
+            });
           }
 
           case "query_trade_decisions": {
@@ -344,6 +361,44 @@ export async function POST(req: NextRequest) {
             });
           }
 
+          case "semantic_search_decisions": {
+            const queryText = call.arguments.query as string;
+            const topK = Math.min((call.arguments.top_k as number) ?? 8, 20);
+            const voyageKey = process.env.VOYAGE_API_KEY;
+            if (!voyageKey) return JSON.stringify({ error: "VOYAGE_API_KEY not set — semantic search unavailable" });
+
+            // Embed the query via Voyage AI
+            const embedRes = await fetch("https://api.voyageai.com/v1/embeddings", {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${voyageKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ model: "voyage-finance-2", input: [queryText], input_type: "query" }),
+              signal: AbortSignal.timeout(20_000),
+            });
+            if (!embedRes.ok) return JSON.stringify({ error: `Voyage embed failed: ${embedRes.status}` });
+            const embedData = await embedRes.json();
+            const vec: number[] = embedData.data?.[0]?.embedding ?? [];
+            if (!vec.length) return JSON.stringify({ error: "Empty embedding returned" });
+
+            // Cosine ANN search via pgvector
+            const pgVec = `[${vec.join(",")}]`;
+            const { data: rows, error: sqlErr } = await svc.rpc("semantic_search_trade_decisions" as any, {
+              query_embedding: pgVec,
+              match_count: topK,
+            } as any);
+
+            if (sqlErr) {
+              // Fallback: raw SQL if RPC not available
+              const { data: fallback } = await (svc as any).from("trade_decision_embeddings")
+                .select("trade_decision_id, content_text")
+                .order(`embedding <=> '${pgVec}'::vector`)
+                .limit(topK);
+              if (!fallback?.length) return JSON.stringify({ error: "No embeddings found. Run POST /api/live-portfolio/embed first.", query: queryText });
+              return JSON.stringify({ results: fallback, note: "Content text only — RPC not available" });
+            }
+
+            return JSON.stringify({ query: queryText, top_k: topK, results: rows ?? [] });
+          }
+
           case "finish": {
             return JSON.stringify(call.arguments);
           }
@@ -379,8 +434,9 @@ AVAILABLE TOOLS:
 6. read_past_learnings — your previous hypotheses and weight changes
 7. query_trade_decisions — REAL historical trades (10 years of CSV history + Robinhood MCP). Returns outcome_score per decision, regime breakdown, behavioral win/loss patterns. Use this to find what the user does right/wrong across market regimes.
 8. write_hypothesis — save a finding (include category: "fundamental"|"technical"|"macro"|"insider"|"general")
-9. update_signal_weight — mutate a weight (gated: phase gate + per-dim config + auto-guard)
-10. finish — complete run with summary, hypotheses array, and Mermaid diagram
+9. update_signal_weight — propose a weight change. Creates an immutable CHALLENGER in strategy_versions. NOT applied until user promotes it via Strategy Registry. Gated: phase gate + per-dim config + auto-guard.
+10. semantic_search_decisions — vector similarity search over enriched trade decisions (RAG). Find past trades matching a situation ("rate-hike sell-off", "earnings miss hold", "momentum break"). Returns top-K decisions with outcome_score. Use AFTER query_trade_decisions to drill into specific scenarios.
+11. finish — complete run with summary, hypotheses array, and Mermaid diagram
 
 MERMAID DIAGRAM REQUIREMENTS — the finish.mermaid MUST follow this structure:
 flowchart TD
@@ -399,6 +455,7 @@ REASONING APPROACH:
 4. Run query_score_correlation for each ENABLED dimension
 5. Check query_macro_context — does macro explain wins/losses?
 6. Call query_trade_decisions — analyze real historical trade patterns across ALL regimes. Look for: regime-specific win rates, buy vs sell accuracy, stocks the user consistently loses on, macro periods where decisions were best/worst.
+6b. Use semantic_search_decisions for drill-down: if you see a pattern (e.g. losses during rate hikes), run semantic_search to find semantically similar past decisions and check if they share a common failure mode.
 7. Read past learnings to avoid repeating old hypotheses
 8. Form hypotheses with evidence + confidence (ground in both paper trades AND real trade history)
 9. Mutate weights only if: N≥10 trades + confidence ≥ dim_min_confidence + not auto-guarded
@@ -414,8 +471,9 @@ REASONING APPROACH:
         { name: "query_macro_context", description: "Get recent macro signals (rates, geopolitical events, sector rotations) from MacroSentinel", parameters: { type: "object", properties: { days: { type: "number" } } } },
         { name: "read_past_learnings", description: "Read past learning log and previous learner run summaries", parameters: { type: "object", properties: { limit: { type: "number" } } } },
         { name: "write_hypothesis", description: "Save a finding or hypothesis", parameters: { type: "object", properties: { claim: { type: "string" }, evidence: { type: "string" }, confidence: { type: "number" }, action_taken: { type: "string" }, category: { type: "string", enum: ["fundamental", "technical", "macro", "insider", "general"] } }, required: ["claim", "evidence", "confidence"] } },
-        { name: "update_signal_weight", description: "Mutate a signal weight. Gated by phase gate, per-dimension config, and auto-guard.", parameters: { type: "object", properties: { dimension: { type: "string", enum: ["fundamental_weight", "technical_weight", "sentiment_weight", "macro_weight", "insider_weight"] }, new_weight: { type: "number" }, reason: { type: "string" }, n_trades: { type: "number" }, confidence: { type: "number" } }, required: ["dimension", "new_weight", "reason", "n_trades", "confidence"] } },
+        { name: "update_signal_weight", description: "Propose a weight change — creates an immutable challenger in strategy_versions. NOT applied until promoted via Strategy Registry. Gated by phase gate, per-dim config, and auto-guard.", parameters: { type: "object", properties: { dimension: { type: "string", enum: ["fundamental_weight", "technical_weight", "sentiment_weight", "macro_weight", "insider_weight"] }, new_weight: { type: "number" }, reason: { type: "string" }, n_trades: { type: "number" }, confidence: { type: "number" } }, required: ["dimension", "new_weight", "reason", "n_trades", "confidence"] } },
         { name: "query_trade_decisions", description: "Query enriched real trade history (CSV imports + Robinhood MCP). Returns outcome_score per trade (positive=good decision), regime breakdown, win/loss counts. Use to find behavioral patterns in the user's actual trading history.", parameters: { type: "object", properties: { limit: { type: "number", description: "Max trades to return (default 50)" }, action: { type: "string", enum: ["buy", "sell"], description: "Filter by buy or sell" }, regime: { type: "string", description: "Filter by macro regime name (partial match)" }, min_outcome_score: { type: "number", description: "Filter decisions with outcome_score >= this" }, max_outcome_score: { type: "number", description: "Filter decisions with outcome_score <= this" } } } },
+        { name: "semantic_search_decisions", description: "Vector similarity search over enriched trade decisions using Voyage AI embeddings. Use to find trades similar to a situation ('tech sell-off Q4', 'rate hike momentum trade', 'earnings miss hold'), or to answer 'what did I do when X happened'. Returns top-K decisions with outcome data. Only works if embeddings have been built (POST /api/live-portfolio/embed).", parameters: { type: "object", properties: { query: { type: "string", description: "Natural language query describing the trade situation to search for" }, top_k: { type: "number", description: "Number of results to return (default 8, max 20)" } }, required: ["query"] } },
         { name: "finish", description: "Complete the run. Must include summary, hypotheses array, and structured Mermaid diagram with inputs node.", parameters: { type: "object", properties: { summary: { type: "string" }, mermaid: { type: "string" }, hypotheses: { type: "array", items: { type: "object" } } }, required: ["summary", "mermaid", "hypotheses"] } },
       ];
 
