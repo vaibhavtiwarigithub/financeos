@@ -701,7 +701,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
       <PageHeader
-        title="Portfolio"
+        title="Paper Portfolio"
         subtitle={`NAV $${nav.toFixed(0)} · ${positions.length} open position${positions.length !== 1 ? "s" : ""}`}
         cadence="weekly"
         whatItDoes="Your paper trading portfolio — all open positions, closed trades, P&L history, and pending signals queue. Agent executes paper trades automatically each morning."
@@ -716,7 +716,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
 
       <div style={{ marginBottom: "20px" }}>
         <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "6px" }}>Paper Trading Portfolio</div>
-        <h1 style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.02em" }}>Portfolio</h1>
+        <h1 style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.02em" }}>Paper Portfolio</h1>
       </div>
 
       {/* Rich header: gauge cluster + key numbers + sparkline */}

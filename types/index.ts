@@ -10,7 +10,7 @@ export interface Profile {
   subscription_tier: SubscriptionTier;
   subscription_status: string;
   stripe_customer_id: string | null;
-  market_focus: "US" | "India" | "Both";
+  market_focus: string; // comma-separated: "US", "India", "Europe", "Asia", "Global"
   knowledge_level: "Beginner" | "Intermediate" | "Advanced";
   theme: "dark" | "light" | "midnight";
   ai_model: string;

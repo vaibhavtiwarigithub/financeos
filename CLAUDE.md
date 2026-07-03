@@ -1,4 +1,4 @@
-# FinanceOS — Claude Operating Rules
+﻿# Kairos â€” Claude Operating Rules
 
 ## Project Intelligence Layer
 
@@ -11,9 +11,9 @@ Before responding to any substantial instruction, Claude must:
    - Technical implementation rule | Bug fix | Random idea | Scope creep
    - Contradiction to prior rule | Approved decision
 
-2. **Check** `PROJECT_RULES.md` — does this conflict with existing rules?
+2. **Check** `PROJECT_RULES.md` â€” does this conflict with existing rules?
 
-3. **Check** `PROJECT_DECISIONS.md` — does this change an approved decision?
+3. **Check** `PROJECT_DECISIONS.md` â€” does this change an approved decision?
 
 4. **Log** meaningful instructions in `PROJECT_BUILD_LOG.md`.
 
@@ -23,13 +23,13 @@ Before responding to any substantial instruction, Claude must:
 
 7. **Update** `PROJECT_SCORECARD.md` after major architecture or implementation milestones.
 
-### Required Reading — Every Session Start
+### Required Reading â€” Every Session Start
 
 Read these files before responding to any substantial project instruction:
-- `AGENTS.md` ← **READ FIRST. Multi-agent coordination layer.**
-- `WORK_LOG.md` ← what's in progress, what's claimed, what's next
-- `PRD.md` ← full product spec, coding conventions, DB schema
-- `knowledge/KNOWLEDGE_INDEX.md` ← market knowledge base
+- `AGENTS.md` â† **READ FIRST. Multi-agent coordination layer.**
+- `WORK_LOG.md` â† what's in progress, what's claimed, what's next
+- `PRD.md` â† full product spec, coding conventions, DB schema
+- `knowledge/KNOWLEDGE_INDEX.md` â† market knowledge base
 - `PROJECT_DECISIONS.md`
 - `ARCHITECTURE.md`
 - Relevant `features/<feature-name>/FEATURE_ARCHITECTURE.md`
@@ -60,12 +60,12 @@ For every feature, screen, API, data model, workflow, integration, or infrastruc
 Only proceed to implementation when user says one of:
 - "Approved" | "Proceed" | "Code it" | "Implement this" | "Yes, build it" | "Apply this architecture" | "Approved, implement"
 
-If user says "next", "show me", "what do you think", "explain", "refine" — stay in architecture mode.
+If user says "next", "show me", "what do you think", "explain", "refine" â€” stay in architecture mode.
 
 ### Bug Fix Exception
 
-Small bug fix with no product/UX/data/API/architecture impact → proceed after short explanation.
-If fix affects product behavior, data flow, UI, navigation, state, persistence, security, or API contracts → architecture gate applies.
+Small bug fix with no product/UX/data/API/architecture impact â†’ proceed after short explanation.
+If fix affects product behavior, data flow, UI, navigation, state, persistence, security, or API contracts â†’ architecture gate applies.
 
 ### Drift Prevention
 
@@ -79,15 +79,15 @@ When implementing approved architecture:
 
 ### Vague Request Handling
 
-If user says "fix this", "improve this", "make it better", "clean this up", "refactor this" → do NOT code immediately. Produce architecture proposal first.
+If user says "fix this", "improve this", "make it better", "clean this up", "refactor this" â†’ do NOT code immediately. Produce architecture proposal first.
 
 ---
 
-## Agent System Design Rules (locked decisions — push back if contradicted)
+## Agent System Design Rules (locked decisions â€” push back if contradicted)
 
 ### ResearchAgent scope
-1. **Always research existing Robinhood holdings first.** Pull positions via `get_equity_positions` on account `965848641` (Trading account — approved read-only per Option B, 2026-06-28; see CONNECTIONS.md). These are highest priority — agent must be able to say SELL on owned positions. `605420660` is the ONLY account permitted for order placement.
-2. **Holdings vs screener candidates are different.** Holdings → SELL signals allowed. Screener candidates → LONG only (long-only enforcement applies to NEW positions, not exits).
+1. **Always research existing Robinhood holdings first.** Pull positions via `get_equity_positions` on account `965848641` (Trading account â€” approved read-only per Option B, 2026-06-28; see CONNECTIONS.md). These are highest priority â€” agent must be able to say SELL on owned positions. `605420660` is the ONLY account permitted for order placement.
+2. **Holdings vs screener candidates are different.** Holdings â†’ SELL signals allowed. Screener candidates â†’ LONG only (long-only enforcement applies to NEW positions, not exits).
 3. **Screener target: 3 candidates/day** (not 5). With $10k NAV and 10% sizing, max 10 positions total. Daily churn of 5 new candidates = overtrading.
 
 ### Screener design (approved architecture)
@@ -96,7 +96,7 @@ If user says "fix this", "improve this", "make it better", "clean this up", "ref
   - Momentum bucket: RSI > 60, price > 50-day MA, revenue acceleration, positive earnings revision
   - Value bucket: P/E < sector median, high FCF yield, insider buying, recent analyst upgrades
 - Let ResearchAgent score both buckets. Top 3 by analyst_score win. Regime adaptation emerges from scoring, not hardcoded logic.
-- **Push back if user asks for explicit "bull/bear mode" switching.** The scoring naturally adapts — explicit regime detection is fragile and adds moving parts.
+- **Push back if user asks for explicit "bull/bear mode" switching.** The scoring naturally adapts â€” explicit regime detection is fragile and adds moving parts.
 
 ### Learning
 - LearnerAgent runs **weekly batch** (not per-trade). Per-trade notes: write 1-sentence outcome summary per closed trade to `learning_log`.

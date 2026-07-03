@@ -1,30 +1,30 @@
-# FinanceOS — Deployment Guide
+﻿# Kairos â€” Deployment Guide
 
 ## STEP 1: Rotate your Anthropic API key (URGENT)
-The key you shared is compromised. Go to console.anthropic.com → API Keys → delete old key → create new one.
+The key you shared is compromised. Go to console.anthropic.com â†’ API Keys â†’ delete old key â†’ create new one.
 
 ---
 
 ## STEP 2: Set up Supabase
 
-1. Go to supabase.com → your project (BeAnyOne) → restart it if inactive
-2. Go to Settings → API → copy your anon key and URL
-3. Go to SQL Editor → paste the entire contents of `supabase/migrations/001_initial_schema.sql` → Run
-4. Go to Authentication → Providers → Enable **Google**
+1. Go to supabase.com â†’ your project (BeAnyOne) â†’ restart it if inactive
+2. Go to Settings â†’ API â†’ copy your anon key and URL
+3. Go to SQL Editor â†’ paste the entire contents of `supabase/migrations/001_initial_schema.sql` â†’ Run
+4. Go to Authentication â†’ Providers â†’ Enable **Google**
    - Add your Google OAuth credentials (get from console.cloud.google.com)
    - Authorized redirect URI: `https://mbnjblsqqnhgfrrpzefy.supabase.co/auth/v1/callback`
-5. Authentication → Email → Enable email confirmations
+5. Authentication â†’ Email â†’ Enable email confirmations
 
 ---
 
 ## STEP 3: Push to GitHub
 
 ```bash
-cd financeos
+cd Kairos
 git init
 git add .
-git commit -m "Initial FinanceOS commit"
-git remote add origin https://github.com/vaibhavtiwarigithub/financeos
+git commit -m "Initial Kairos commit"
+git remote add origin https://github.com/vaibhavtiwarigithub/Kairos
 git push -u origin main
 ```
 
@@ -32,7 +32,7 @@ git push -u origin main
 
 ## STEP 4: Deploy on Vercel
 
-1. Go to vercel.com → New Project → Import your GitHub repo
+1. Go to vercel.com â†’ New Project â†’ Import your GitHub repo
 2. Add these Environment Variables:
    ```
    NEXT_PUBLIC_SUPABASE_URL=https://mbnjblsqqnhgfrrpzefy.supabase.co
@@ -47,10 +47,10 @@ git push -u origin main
 
 ## STEP 5: Set up Stripe (for subscriptions)
 
-1. Go to stripe.com → create account
+1. Go to stripe.com â†’ create account
 2. Create 2 products:
-   - "FinanceOS Pro" — $29/month recurring → copy Price ID
-   - "FinanceOS Elite" — $99/month recurring → copy Price ID
+   - "Kairos Pro" â€” $29/month recurring â†’ copy Price ID
+   - "Kairos Elite" â€” $99/month recurring â†’ copy Price ID
 3. Add to Vercel env vars:
    ```
    STRIPE_SECRET_KEY=sk_live_...
@@ -58,28 +58,28 @@ git push -u origin main
    STRIPE_PRO_PRICE_ID=price_...
    STRIPE_ELITE_PRICE_ID=price_...
    ```
-4. Stripe → Webhooks → Add endpoint: `https://your-domain.com/api/webhooks/stripe`
+4. Stripe â†’ Webhooks â†’ Add endpoint: `https://your-domain.com/api/webhooks/stripe`
    - Events: `checkout.session.completed`, `customer.subscription.deleted`, `customer.subscription.updated`
-   - Copy webhook secret → add as `STRIPE_WEBHOOK_SECRET`
+   - Copy webhook secret â†’ add as `STRIPE_WEBHOOK_SECRET`
 
 ---
 
 ## STEP 6: Google OAuth setup
 
-1. Go to console.cloud.google.com → New Project → "FinanceOS"
-2. APIs & Services → OAuth consent screen → fill in details
-3. Credentials → Create OAuth 2.0 Client ID
+1. Go to console.cloud.google.com â†’ New Project â†’ "Kairos"
+2. APIs & Services â†’ OAuth consent screen â†’ fill in details
+3. Credentials â†’ Create OAuth 2.0 Client ID
    - Type: Web application
    - Authorized redirect URIs:
      - `https://mbnjblsqqnhgfrrpzefy.supabase.co/auth/v1/callback`
      - `https://your-domain.com/auth/callback`
-4. Copy Client ID + Secret → paste into Supabase Auth → Google provider
+4. Copy Client ID + Secret â†’ paste into Supabase Auth â†’ Google provider
 
 ---
 
 ## STEP 7: Connect domain (optional)
 
-Vercel → your project → Settings → Domains → add your domain → update DNS as shown
+Vercel â†’ your project â†’ Settings â†’ Domains â†’ add your domain â†’ update DNS as shown
 
 ---
 

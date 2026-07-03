@@ -2,6 +2,73 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
 
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "vterminater@gmail.com";
+
+async function getResendKey(svc: any): Promise<string> {
+  try {
+    const { data } = await svc.from("api_key_vault").select("key_value").eq("key_name", "RESEND_API_KEY").single();
+    return (data as any)?.key_value ?? process.env.RESEND_API_KEY ?? "";
+  } catch { return process.env.RESEND_API_KEY ?? ""; }
+}
+
+function mdToHtml(md: string): string {
+  return md
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/^#{1,3} (.+)$/gm, "<h3 style='color:#ECEDEF;margin:16px 0 6px'>$1</h3>")
+    .replace(/^  • (.+)$/gm, "<li style='margin:3px 0;color:#9B9EA8'>$1</li>")
+    .replace(/^• (.+)$/gm, "<li style='margin:3px 0;color:#9B9EA8'>$1</li>")
+    .replace(/\n\n/g, "</p><p style='margin:10px 0;color:#9B9EA8;line-height:1.6'>")
+    .replace(/\n/g, "<br>");
+}
+
+async function sendBriefingEmail(svc: any, session: "morning" | "evening", dateStr: string, dayName: string, content: string): Promise<void> {
+  const resendKey = await getResendKey(svc);
+  if (!resendKey) return;
+
+  const icon = session === "morning" ? "☀️" : "🌙";
+  const label = session === "morning" ? "Morning Briefing" : "Evening Summary";
+  const subject = `${icon} Kairos ${label} — ${dayName}, ${dateStr}`;
+
+  const html = `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#0D0F14;font-family:'Inter',Arial,sans-serif">
+<div style="max-width:600px;margin:0 auto;padding:24px 16px">
+  <div style="background:#1A1D27;border:1px solid #252836;border-radius:16px;overflow:hidden">
+    <div style="background:linear-gradient(135deg,#6366F1,#4F46E5);padding:24px 28px">
+      <div style="font-size:11px;color:rgba(255,255,255,0.7);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:6px">Kairos</div>
+      <div style="font-size:22px;font-weight:700;color:#fff">${icon} ${label}</div>
+      <div style="font-size:13px;color:rgba(255,255,255,0.8);margin-top:4px">${dayName}, ${dateStr}</div>
+    </div>
+    <div style="padding:24px 28px;color:#9B9EA8;font-size:14px;line-height:1.7">
+      <p style="margin:0 0 12px;color:#9B9EA8;line-height:1.6">${mdToHtml(content)}</p>
+    </div>
+    <div style="padding:16px 28px;border-top:1px solid #252836;font-size:11px;color:#6B7280">
+      Kairos Agentic Quant Platform · <a href="http://localhost:3000/dashboard/briefing" style="color:#6366F1;text-decoration:none">View in app →</a>
+    </div>
+  </div>
+</div>
+</body></html>`;
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: "Kairos <onboarding@resend.dev>",
+        to: [ADMIN_EMAIL],
+        subject,
+        html,
+      }),
+    });
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      console.error(`[briefing-email] Resend ${res.status}: ${errBody}`);
+    }
+  } catch (e) {
+    console.error("[briefing-email] fetch error:", e);
+  }
+}
+
 export const dynamic = "force-dynamic";
 
 async function fetchIndexClose(ticker: string, apiKey: string): Promise<{ price: number; changePct: number } | null> {
@@ -101,6 +168,11 @@ export async function POST(req: NextRequest) {
     fmt(diaData, "Dow (DIA)"),
   ].join(" | ");
 
+  // /prev returns the PREVIOUS completed session close — label accordingly
+  const marketLabel = session === "morning"
+    ? "YESTERDAY'S CLOSE (prior session — /prev data, pre-market context)"
+    : "MOST RECENT CLOSE (prior session via /prev — today's final data may lag by ~15 min)";
+
   // Portfolio block
   const nav = portfolio?.nav ?? 10000;
   const cash = portfolio?.cash_balance ?? 10000;
@@ -146,7 +218,7 @@ export async function POST(req: NextRequest) {
 DATE: ${dayName}, ${dateStr}
 SESSION: ${sessionLabel}
 
-MARKET CLOSE (actual — these are real numbers, use them):
+${marketLabel}:
 ${marketBlock}
 
 PAPER PORTFOLIO:
@@ -215,5 +287,14 @@ Second person, past tense for today / future tense for tomorrow. No invented cat
     { onConflict: "date,session" }
   );
 
-  return NextResponse.json({ session, date: dateStr, content });
+  // Send email — fire and await (briefing is the email, not fire-and-forget)
+  await sendBriefingEmail(svc, session, dateStr, dayName, content);
+
+  // Mark email sent
+  await svc.from("briefings")
+    .update({ email_sent_at: new Date().toISOString() })
+    .eq("date", dateStr)
+    .eq("session", session);
+
+  return NextResponse.json({ session, date: dateStr, content, email_sent: true });
 }

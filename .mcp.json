@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "supabase-financeos": {
+    "supabase-Kairos": {
       "command": "npx",
-      "args": ["-y", "@supabase/mcp-server-supabase@latest", "--access-token", "sbp_85ef1b96cf26cdc73fc82249aca179495ec23c90", "--project-ref", "dionkikgdmlaotvtbnfr"]
+      "args": ["-y", "@supabase/mcp-server-supabase@latest", "--access-token", "sbp_c2ee5278d797a88f52f08783c2581fd8b51800d0", "--project-ref", "dionkikgdmlaotvtbnfr"]
     }
   }
 }

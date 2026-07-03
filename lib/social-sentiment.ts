@@ -79,7 +79,7 @@ export async function fetchSocialSentiment(symbol: string): Promise<SocialSentim
 async function fetchStockTwits(symbol: string): Promise<StockTwitsResult | null> {
   const res = await fetch(
     `https://api.stocktwits.com/api/2/streams/symbol/${symbol}.json`,
-    { headers: { "User-Agent": "FinanceOS/1.0" } }
+    { headers: { "User-Agent": "Kairos/1.0" } }
   );
   if (!res.ok) return null;
   const data: StockTwitsResponse = await res.json();

@@ -1,5 +1,5 @@
-# FinanceOS Task Scheduler Setup
-# Run as Administrator to register all FinanceOS scheduled tasks.
+﻿# Kairos Task Scheduler Setup
+# Run as Administrator to register all Kairos scheduled tasks.
 # Usage: powershell -ExecutionPolicy Bypass -File setup-tasks.ps1
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -19,14 +19,14 @@ function Register-FOSTask {
     -DontStopOnIdleEnd
 
   Register-ScheduledTask `
-    -TaskName "FinanceOS-$Name" `
+    -TaskName "Kairos-$Name" `
     -Action $action `
     -Trigger $Trigger `
     -Settings $settings `
     -RunLevel Limited `
     -Force | Out-Null
 
-  Write-Host "Registered: FinanceOS-$Name"
+  Write-Host "Registered: Kairos-$Name"
 }
 
 # Research: weekdays 9:30 AM ET (after market open)
@@ -65,4 +65,4 @@ Register-FOSTask "StaleCheck" "stale-check" (
 )
 
 Write-Host ""
-Write-Host "All FinanceOS tasks registered. Run Get-ScheduledTask -TaskName 'FinanceOS-*' to verify."
+Write-Host "All Kairos tasks registered. Run Get-ScheduledTask -TaskName 'Kairos-*' to verify."

@@ -1,4 +1,4 @@
-# Project Scorecard — FinanceOS
+﻿# Project Scorecard â€” Kairos
 
 ## Purpose
 
@@ -32,19 +32,19 @@ Last assessed: 2026-06-29
 ## Claude Assessment (2026-06-29)
 
 **What is going well:**
-- Agent pipeline is now end-to-end: Research → Paper Trade → Position Monitor → Learner, all scheduled
+- Agent pipeline is now end-to-end: Research â†’ Paper Trade â†’ Position Monitor â†’ Learner, all scheduled
 - Risk management is meaningfully upgraded: trailing stops + risk profiles cover both entry sizing and exit mechanics
 - MacroSentinel adds macro context without adding fragile auto-behavior (advisory-only decision was correct)
 - Cost monitoring + DashboardHome banners create operational visibility
 
 **What is risky:**
 - 7 concurrent scheduled tasks with no health monitoring or dead-letter queue for failures
-- Signal backtest tab is useful but needs validation — the ±3-day join window is approximate and could count coincidental matches as true signals
+- Signal backtest tab is useful but needs validation â€” the Â±3-day join window is approximate and could count coincidental matches as true signals
 - LLM cost monitor depends on llm_call_log being populated correctly; if agents skip logging, burn rate will be understated
 
 **What is drifting:**
 - PRD.md still describes a March 2026 schema state in Section 3; the actual schema has grown substantially across 28+ migrations
-- Build flow steps (QA, launch) remain "Not started" — feature velocity is outpacing validation
+- Build flow steps (QA, launch) remain "Not started" â€” feature velocity is outpacing validation
 
 **What should be tightened next:**
 - Add a health check endpoint or scheduled-task failure alerting
@@ -57,7 +57,7 @@ Last assessed: 2026-06-29
 |---|---|
 | Problem definition | Done (single-user personal trading OS) |
 | Target user | Done (Vaibhav, vterminater@gmail.com) |
-| Core use cases | Done (research → paper trade → learn → real trade) |
+| Core use cases | Done (research â†’ paper trade â†’ learn â†’ real trade) |
 | Information architecture | Done (governed agentic quant platform, Decision 1) |
 | Feature architecture | Partial (AGENTS.md fully updated; ARCHITECTURE.md updated; feature-level files sparse) |
 | Data architecture | Done for current migrations (026, 027, 028 documented) |

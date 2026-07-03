@@ -4,6 +4,95 @@ import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
 import PageHeader from "@/components/dashboard/PageHeader";
 
+function NewsletterTab() {
+  const supabase = createClient();
+  const [newsletters, setNewsletters] = useState<any[]>([]);
+  const [selected, setSelected] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const T2 = {
+    bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
+    text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280",
+    accent: "#6366F1", green: "#34D399", red: "#F87171",
+  };
+
+  useEffect(() => {
+    supabase.from("newsletters")
+      .select("id, edition, subject, sent_at, nav_at_send, signals_count, positions_count, resend_id")
+      .order("sent_at", { ascending: false })
+      .limit(30)
+      .then(({ data }) => { setNewsletters(data ?? []); setLoading(false); });
+  }, []);
+
+  if (loading) return <div style={{ color: T2.muted, padding: "40px", textAlign: "center" }}>Loading newsletters...</div>;
+  if (newsletters.length === 0) return (
+    <div style={{ background: T2.card, border: `1px solid ${T2.border}`, borderRadius: "12px", padding: "40px", textAlign: "center" }}>
+      <div style={{ fontSize: "32px", marginBottom: "12px" }}>✉</div>
+      <div style={{ fontWeight: 600, marginBottom: "8px", color: T2.text }}>No newsletters yet</div>
+      <div style={{ fontSize: "13px", color: T2.textSub }}>Morning edition sends at 8:30 AM ET · Evening at 5:30 PM ET on weekdays</div>
+      <div style={{ fontSize: "12px", color: T2.muted, marginTop: "8px" }}>Delivered to vterminater@gmail.com</div>
+    </div>
+  );
+
+  if (selected) return (
+    <div>
+      <button onClick={() => setSelected(null)} style={{ background: "none", border: `1px solid ${T2.border}`, borderRadius: "6px", color: T2.textSub, padding: "6px 14px", fontSize: "13px", cursor: "pointer", marginBottom: "16px" }}>
+        ← Back to list
+      </button>
+      <div style={{ background: T2.card, border: `1px solid ${T2.border}`, borderRadius: "12px", overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: `1px solid ${T2.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontWeight: 600, color: T2.text, fontSize: "14px" }}>{selected.subject}</div>
+            <div style={{ color: T2.muted, fontSize: "11px", marginTop: "3px" }}>
+              {new Date(selected.sent_at).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+            </div>
+          </div>
+          <span style={{ background: selected.edition === "morning" ? "#6366F122" : "#34D39922", color: selected.edition === "morning" ? T2.accent : T2.green, border: `1px solid ${selected.edition === "morning" ? "#6366F144" : "#34D39944"}`, borderRadius: "4px", fontSize: "10px", fontWeight: 700, padding: "2px 8px" }}>
+            {selected.edition === "morning" ? "☀ MORNING" : "◑ EVENING"}
+          </span>
+        </div>
+        <iframe
+          srcDoc={selected.html_body}
+          style={{ width: "100%", border: "none", minHeight: "700px", background: "#0D0F14" }}
+          title="Newsletter preview"
+        />
+      </div>
+    </div>
+  );
+
+  const loadFull = async (id: string) => {
+    const { data } = await supabase.from("newsletters").select("*").eq("id", id).single();
+    if (data) setSelected(data);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <div style={{ fontSize: "13px", color: T2.muted }}>{newsletters.length} editions · sent to vterminater@gmail.com</div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        {newsletters.map(n => (
+          <button key={n.id} onClick={() => loadFull(n.id)} style={{ background: T2.card, border: `1px solid ${T2.border}`, borderRadius: "10px", padding: "14px 18px", cursor: "pointer", textAlign: "left", width: "100%" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 600, color: T2.text, fontSize: "13px" }}>{n.subject}</div>
+                <div style={{ color: T2.muted, fontSize: "11px", marginTop: "3px" }}>
+                  {new Date(n.sent_at).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                  {n.nav_at_send ? ` · NAV $${Number(n.nav_at_send).toFixed(0)}` : ""}
+                  {n.signals_count > 0 ? ` · ${n.signals_count} signals` : ""}
+                </div>
+              </div>
+              <span style={{ background: n.edition === "morning" ? "#6366F122" : "#34D39922", color: n.edition === "morning" ? T2.accent : T2.green, border: `1px solid ${n.edition === "morning" ? "#6366F144" : "#34D39944"}`, borderRadius: "4px", fontSize: "10px", fontWeight: 700, padding: "2px 8px", whiteSpace: "nowrap" }}>
+                {n.edition === "morning" ? "☀ MORNING" : "◑ EVENING"}
+              </span>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
   text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280",
@@ -177,11 +266,7 @@ Keep it under 400 words. Specific, not generic.`;
       )}
 
       {tab === "newsletter" && (
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "40px", textAlign: "center" }}>
-          <div style={{ fontSize: "24px", marginBottom: "12px" }}>✉️</div>
-          <div style={{ fontWeight: 600, marginBottom: "8px" }}>Custom Newsletter</div>
-          <div style={{ fontSize: "13px", color: T.textSub }}>Generate your personalized financial newsletter</div>
-        </div>
+        <NewsletterTab />
       )}
       </div>
     </div>

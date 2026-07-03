@@ -14,6 +14,7 @@ const SOURCE_META: Record<string, { label: string; color: string; bg: string }> 
   manual:             { label: "Manual",      color: T.muted,  bg: "#6B728018" },
   tradingview_import: { label: "TradingView", color: T.blue,   bg: "#60A5FA18" },
   robinhood_sync:     { label: "Robinhood",   color: T.green,  bg: "#34D39918" },
+  robinhood_holding:  { label: "Holdings",    color: T.green,  bg: "#34D39918" },
   briefing:           { label: "Briefing",    color: T.amber,  bg: "#FBBF2418" },
 };
 
@@ -220,8 +221,13 @@ export default function WatchlistPanel() {
               )}
             </div>
             {item.company_name && (
-              <div style={{ fontSize: "10px", color: T.muted, marginTop: "1px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <div style={{ fontSize: "10px", color: T.muted, marginTop: "1px", wordBreak: "break-word" }} title={item.company_name}>
                 {item.company_name}
+              </div>
+            )}
+            {(item.source === "llm_theme") && item.theme && (
+              <div style={{ fontSize: "9px", color: T.purple, marginTop: "2px", opacity: 0.85 }}>
+                {item.theme}{item.reason ? ` — ${item.reason.split("—")[0].trim().slice(0, 80)}` : ""}
               </div>
             )}
           </div>

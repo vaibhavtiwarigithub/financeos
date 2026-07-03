@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchQuote, fetchQuotes } from "@/lib/market-data";
+import { getQuote, getBatchQuotes, computeFillPrice } from "@/lib/data/quotes";
 import { checkKillSwitches } from "@/lib/kill-switches";
 
 // PaperTrader: fills virtual long-only trades from qualifying signals.
@@ -93,17 +93,18 @@ export async function POST(req: NextRequest) {
         .select("id");
       if (!claimed || claimed.length === 0) continue; // already claimed
 
-      // Fetch real price from Robinhood MCP — skip if unavailable
-      const quote = await fetchQuote(signal.symbol);
+      // Fetch real price: AV GLOBAL_QUOTE → price_cache (no MCP cold-start)
+      const quote = await getQuote(signal.symbol, supabase);
 
       if (quote.source === "unavailable" || quote.price <= 0) {
-        // Release claim so it can be retried later
         await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
         skipped.push({ symbol: signal.symbol, reason: "price_unavailable" });
         continue;
       }
 
-      const fillPrice = quote.price;
+      // Fill price = ask + 0.05% slippage (Phase 0 deterministic price model)
+      const fillPrice = computeFillPrice(quote);
+      const spreadApplied = fillPrice / quote.price - 1; // effective spread ratio
 
       // Compute exit management levels at entry using risk profile params
       // Use price_target / stop_loss from signal if ResearchAgent already computed them
@@ -130,20 +131,43 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // Record paper trade — always "buy" (long-only)
-      await supabase.from("paper_trades").insert({
-        symbol: signal.symbol,
-        order_side: "buy",
+      // Append-only audit event (paper_order_events is immutable after insert)
+      const { data: orderEvent } = await supabase.from("paper_order_events").insert({
+        event_type:         "fill",
+        symbol:             signal.symbol,
+        side:               "buy",
         qty,
-        fill_price: fillPrice,
-        signal_id: signal.id,
-        analyst_score: signal.analyst_score,
-        direction: "long",
-        rationale: `${signal.rationale ?? ""} [price_source: ${quote.source}, fetched_at: ${quote.fetchedAt}]`,
-        fundamental_score: null,
-        technical_score: null,
-        sentiment_score: null,
-        macro_score: null,
+        fill_price:         fillPrice,
+        total_value:        totalCost,
+        price_source:       quote.source,
+        price_retrieved_at: quote.retrievedAt,
+        bid_at_fill:        quote.bid,
+        ask_at_fill:        quote.ask,
+        spread_applied:     spreadApplied,
+        signal_id:          signal.id,
+        analyst_score:      signal.analyst_score,
+        strategy_id:        signal.source ?? "research",
+        notes:              signal.rationale?.slice(0, 500) ?? null,
+      }).select("id").single();
+
+      // Record paper trade with price provenance
+      await supabase.from("paper_trades").insert({
+        symbol:             signal.symbol,
+        order_side:         "buy",
+        qty,
+        fill_price:         fillPrice,
+        signal_id:          signal.id,
+        analyst_score:      signal.analyst_score,
+        direction:          "long",
+        rationale:          `${signal.rationale ?? ""} [source: ${quote.source}, at: ${quote.retrievedAt}]`,
+        fundamental_score:  null,
+        technical_score:    null,
+        sentiment_score:    null,
+        macro_score:        null,
+        price_source:       quote.source,
+        price_retrieved_at: quote.retrievedAt,
+        spread_applied:     spreadApplied,
+        paper_event_id:     (orderEvent as any)?.id ?? null,
       });
 
       // Update or create paper position
@@ -187,6 +211,20 @@ export async function POST(req: NextRequest) {
       // Mark signal as paper-traded
       await supabase.from("agent_signals").update({ status: "paper_traded" }).eq("id", signal.id);
 
+      // Phase 4: decision journal entry for this fill
+      void supabase.from("decision_journal").insert({
+        entry_type: "paper_fill",
+        symbol: signal.symbol,
+        signal_id: signal.id,
+        paper_event_id: (orderEvent as any)?.id ?? null,
+        summary: `Paper buy: ${qty} × ${signal.symbol} @ $${fillPrice.toFixed(2)} (score ${signal.analyst_score}, source: ${quote.source})`,
+        calculations: { qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spreadApplied, analyst_score: signal.analyst_score },
+        evidence_refs: [{ table: "agent_signals", id: signal.id, description: "qualifying signal" }],
+        has_verified_facts: true,
+        has_calculations: true,
+        resolved: false,
+      });
+
       filled.push({ symbol: signal.symbol, qty, fillPrice, totalCost, priceSource: quote.source });
     }
 
@@ -195,14 +233,13 @@ export async function POST(req: NextRequest) {
     const openPositions: any[] = positions ?? [];
 
     if (openPositions.length > 0) {
-      const { fetchQuotes } = await import("@/lib/market-data");
       const symbols: string[] = [...new Set(openPositions.map((p: any) => p.symbol as string))];
-      const quotes = await fetchQuotes(symbols);
+      const quotes = await getBatchQuotes(symbols, supabase);
       for (const pos of openPositions) {
         const q = quotes[pos.symbol];
         if (q?.price > 0) {
           await supabase.from("paper_positions").update({ current_price: q.price }).eq("id", pos.id);
-          pos.current_price = q.price; // update local ref for NAV calc below
+          pos.current_price = q.price;
         }
       }
     }
@@ -214,6 +251,26 @@ export async function POST(req: NextRequest) {
     const nav = portfolio.cash_balance + positionsValue;
     const today = new Date().toISOString().split("T")[0];
 
+    // Phase 3: SPY benchmark for alpha tracking
+    const spyQuote = await getQuote("SPY", supabase);
+    const spyNav = spyQuote.price > 0 ? spyQuote.price : null;
+
+    // First SPY price (from earliest paper_performance row) as benchmark start
+    const { data: firstPerf } = await supabase
+      .from("paper_performance")
+      .select("spy_nav, date")
+      .not("spy_nav", "is", null)
+      .order("date", { ascending: true })
+      .limit(1)
+      .single();
+
+    const spyStartNav = (firstPerf as any)?.spy_nav ?? spyNav;
+    const spyReturnPct = (spyNav && spyStartNav)
+      ? ((spyNav - spyStartNav) / spyStartNav) * 100
+      : null;
+    const paperReturnPct = ((nav - 10000) / 10000) * 100;
+    const alphaPct = spyReturnPct != null ? paperReturnPct - spyReturnPct : null;
+
     await supabase.from("paper_performance").upsert(
       {
         date: today,
@@ -221,7 +278,10 @@ export async function POST(req: NextRequest) {
         cash_balance: portfolio.cash_balance,
         positions_value: positionsValue,
         total_pnl: nav - 10000,
-        total_pnl_pct: ((nav - 10000) / 10000) * 100,
+        total_pnl_pct: paperReturnPct,
+        spy_nav: spyNav,
+        spy_return_pct: spyReturnPct,
+        alpha_pct: alphaPct,
       },
       { onConflict: "date" }
     );

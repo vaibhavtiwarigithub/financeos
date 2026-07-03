@@ -54,6 +54,11 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
 
+  // Trading + broker state
+  const [tradingMode, setTradingMode] = useState<"disabled" | "manual" | "auto">("manual");
+  const [broker, setBroker] = useState<"robinhood" | "alpaca_paper" | "alpaca_live">("robinhood");
+  const [savingTrading, setSavingTrading] = useState(false);
+
   // Risk profile state
   const [riskProfile, setRiskProfile] = useState<RiskProfileKey>("balanced");
   const [scoreThreshold, setScoreThreshold] = useState(60);
@@ -77,6 +82,8 @@ export default function SettingsPage() {
     fetch("/api/settings/risk-profile")
       .then(r => r.json())
       .then(d => {
+        if (d.trading_mode) setTradingMode(d.trading_mode as any);
+        if (d.broker) setBroker(d.broker as any);
         if (d.risk_profile) setRiskProfile(d.risk_profile as RiskProfileKey);
         if (d.score_threshold != null) setScoreThreshold(d.score_threshold);
         if (d.position_size_pct != null) setPositionSizePct(parseFloat(d.position_size_pct));
@@ -105,6 +112,19 @@ export default function SettingsPage() {
     setPositionSizePct(p.position_size_pct);
     setStopLossPct(p.stop_loss_pct);
     setTargetPct(p.target_pct);
+  }
+
+  async function saveTradingConfig() {
+    setSavingTrading(true);
+    try {
+      await fetch("/api/settings/risk-profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trading_mode: tradingMode, broker }),
+      });
+      setToast("Trading config saved!");
+      setTimeout(() => setToast(""), 2500);
+    } finally { setSavingTrading(false); }
   }
 
   async function saveRiskProfile() {
@@ -180,10 +200,30 @@ export default function SettingsPage() {
               <input value={profile.email} disabled style={{ ...inp, opacity: 0.6 }} />
             </div>
             <div style={{ marginBottom: "16px" }}>
-              <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>Market focus</label>
-              <select value={profile.market_focus} onChange={e => setProfile({ ...profile, market_focus: e.target.value as Profile["market_focus"] })} style={sel}>
-                <option>US</option><option>India</option><option>Both</option>
-              </select>
+              <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>Market focus <span style={{ color: T.muted, fontWeight: 400 }}>(select all that apply)</span></label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                {(["US", "India", "Europe", "Asia", "Crypto", "Global"] as const).map(m => {
+                  const active = (profile.market_focus ?? "US").split(",").map(s => s.trim()).includes(m);
+                  return (
+                    <button key={m} type="button"
+                      onClick={() => {
+                        const current = (profile.market_focus ?? "US").split(",").map(s => s.trim()).filter(Boolean);
+                        const next = active ? current.filter(x => x !== m) : [...current, m];
+                        setProfile({ ...profile, market_focus: next.length ? next.join(",") : "US" });
+                      }}
+                      style={{
+                        padding: "7px 16px", borderRadius: "20px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "none",
+                        background: active ? T.accent : T.surface,
+                        color: active ? "#fff" : T.textSub,
+                        outline: active ? `2px solid ${T.accent}` : `1px solid ${T.border}`,
+                      }}
+                    >{m}</button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: "11px", color: T.muted, marginTop: "6px" }}>
+                Selected: {profile.market_focus || "US"} — agents prioritize screener + signals for these regions
+              </div>
             </div>
             <div style={{ marginBottom: "24px" }}>
               <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>Knowledge level</label>
@@ -223,6 +263,81 @@ export default function SettingsPage() {
 
       {tab === "agents" && (
         <div style={{ maxWidth: "560px" }}>
+
+          {/* Trading Mode + Broker Card */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginBottom: "20px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Live Trading</div>
+            <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "20px" }}>Controls whether the agent generates and executes real orders, and which broker to use.</div>
+
+            {/* Trading mode */}
+            <div style={{ marginBottom: "20px" }}>
+              <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "10px" }}>Trading Mode</label>
+              <div style={{ display: "flex", gap: "8px" }}>
+                {([
+                  { key: "disabled", label: "Disabled", desc: "No proposals generated", icon: "⛔", color: T.red },
+                  { key: "manual",   label: "Manual",   desc: "Proposals require your approval", icon: "👁", color: T.yellow },
+                  { key: "auto",     label: "Auto",     desc: "Auto-approve — future feature", icon: "⚡", color: T.green },
+                ] as const).map(m => (
+                  <button
+                    key={m.key}
+                    onClick={() => setTradingMode(m.key)}
+                    disabled={m.key === "auto"}
+                    style={{
+                      flex: 1, padding: "12px 10px", borderRadius: "10px", cursor: m.key === "auto" ? "not-allowed" : "pointer",
+                      background: tradingMode === m.key ? m.color + "22" : T.surface,
+                      border: `2px solid ${tradingMode === m.key ? m.color : T.border}`,
+                      color: tradingMode === m.key ? m.color : T.textSub,
+                      textAlign: "left" as const, opacity: m.key === "auto" ? 0.5 : 1,
+                    }}
+                  >
+                    <div style={{ fontSize: "16px", marginBottom: "3px" }}>{m.icon}</div>
+                    <div style={{ fontSize: "13px", fontWeight: 700 }}>{m.label}</div>
+                    <div style={{ fontSize: "10px", opacity: 0.8, marginTop: "2px" }}>{m.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Broker */}
+            <div style={{ marginBottom: "20px" }}>
+              <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "10px" }}>Execution Broker</label>
+              <div style={{ display: "flex", flexDirection: "column" as const, gap: "8px" }}>
+                {([
+                  { key: "robinhood",    label: "Robinhood (via Claude MCP)", desc: "Official Robinhood MCP — requires Claude Code session. Slow (70-84s). No API key needed.", icon: "🐦" },
+                  { key: "alpaca_paper", label: "Alpaca Paper", desc: "Alpaca paper trading — fast REST API. Add ALPACA_PAPER_API_KEY to Admin → Vault.", icon: "🦙" },
+                  { key: "alpaca_live",  label: "Alpaca Live", desc: "Alpaca live trading — real money. Add ALPACA_API_KEY to Admin → Vault.", icon: "🦙💰" },
+                ] as const).map(b => (
+                  <button
+                    key={b.key}
+                    onClick={() => setBroker(b.key)}
+                    style={{
+                      padding: "12px 16px", borderRadius: "10px", cursor: "pointer", textAlign: "left" as const,
+                      background: broker === b.key ? T.accentBg : T.surface,
+                      border: `2px solid ${broker === b.key ? T.accent : T.border}`,
+                      color: broker === b.key ? T.accent : T.textSub,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <span style={{ fontSize: "18px" }}>{b.icon}</span>
+                      <div>
+                        <div style={{ fontSize: "13px", fontWeight: 700 }}>{b.label}</div>
+                        <div style={{ fontSize: "11px", opacity: 0.75, marginTop: "2px" }}>{b.desc}</div>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              onClick={saveTradingConfig}
+              disabled={savingTrading}
+              style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "11px 28px", fontSize: "14px", fontWeight: 600, cursor: "pointer", opacity: savingTrading ? 0.7 : 1 }}
+            >
+              {savingTrading ? "Saving..." : "Save Trading Config"}
+            </button>
+          </div>
+
           {/* Risk Profile Card */}
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginBottom: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Risk Profile</div>

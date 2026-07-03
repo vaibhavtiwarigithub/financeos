@@ -45,7 +45,7 @@ const config: Config = {
           DEFAULT:    "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        /* FinanceOS fo-* tokens */
+        /* Kairos fo-* tokens */
         "fo-green":        "var(--fo-green)",
         "fo-green-dim":    "var(--fo-green-dim)",
         "fo-red":          "var(--fo-red)",

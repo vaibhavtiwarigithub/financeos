@@ -1,5 +1,5 @@
-# FinanceOS — Product Requirements Document
-> **For LLMs:** This file is the single source of truth for this codebase. Read it fully before writing any code. It describes what exists, what conventions are in use, what is planned, and why decisions were made. Do not invent conventions — follow what is documented here.
+﻿# Kairos â€” Product Requirements Document
+> **For LLMs:** This file is the single source of truth for this codebase. Read it fully before writing any code. It describes what exists, what conventions are in use, what is planned, and why decisions were made. Do not invent conventions â€” follow what is documented here.
 
 Last updated: 2026-06-01
 
@@ -7,9 +7,9 @@ Last updated: 2026-06-01
 
 ## 0. Quick Context
 
-- **What:** Personal finance OS for one user (Vaibhav / `vterminater@gmail.com`). Helps learn markets, navigate economy, and trade autonomously via AI agents.
-- **Stack:** Next.js 15 App Router · Supabase · Anthropic Claude API · Tailwind v4 · Recharts · Stripe
-- **New capability (June 2026):** Robinhood Agentic Trading MCP — AI agents can place real stock trades via `https://agent.robinhood.com/mcp/trading`
+- **What:** Personal Kairos for one user (Vaibhav / `vterminater@gmail.com`). Helps learn markets, navigate economy, and trade autonomously via AI agents.
+- **Stack:** Next.js 15 App Router Â· Supabase Â· Anthropic Claude API Â· Tailwind v4 Â· Recharts Â· Stripe
+- **New capability (June 2026):** Robinhood Agentic Trading MCP â€” AI agents can place real stock trades via `https://agent.robinhood.com/mcp/trading`
 - **Single user.** No multi-tenancy concerns for agent features. Auth still required (Supabase).
 - **Superadmin email:** `vterminater@gmail.com` (auto-assigned in `handle_new_user()` trigger)
 
@@ -18,42 +18,42 @@ Last updated: 2026-06-01
 ## 1. Codebase Map
 
 ```
-FinanceOS/
-├── app/
-│   ├── api/
-│   │   ├── ai/route.ts              ← Claude API endpoint (POST)
-│   │   ├── admin/route.ts
-│   │   ├── stripe/checkout/route.ts
-│   │   └── webhooks/stripe/route.ts
-│   ├── auth/callback/route.ts       ← Supabase OAuth callback
-│   ├── dashboard/
-│   │   ├── layout.tsx               ← wraps all dashboard pages with DashboardShell
-│   │   ├── page.tsx                 ← home (server component, passes data to DashboardHome)
-│   │   ├── admin/page.tsx
-│   │   ├── calendar/page.tsx
-│   │   ├── intelligence/page.tsx
-│   │   ├── markets/page.tsx
-│   │   ├── portfolio/page.tsx
-│   │   ├── settings/page.tsx
-│   │   └── you/page.tsx
-│   ├── login/page.tsx
-│   ├── page.tsx                     ← landing page
-│   └── layout.tsx                   ← root layout
-├── components/
-│   └── dashboard/
-│       ├── DashboardHome.tsx        ← "use client", receives profile/holdings/predictions
-│       └── DashboardShell.tsx       ← "use client", sidebar nav + layout wrapper
-├── lib/
-│   └── supabase/
-│       ├── server.ts                ← createClient() for server components/routes
-│       └── client.ts               ← createClient() for "use client" components
-├── middleware.ts                    ← protects /dashboard/* and /admin/*
-├── types/index.ts                   ← all TypeScript types + TIER_LIMITS
-├── supabase/migrations/
-│   └── 001_initial_schema.sql      ← full DB schema (applied)
-├── next.config.ts
-├── package.json
-└── PRD.md                          ← this file
+Kairos/
+â”œâ”€â”€ app/
+â”‚   â”œâ”€â”€ api/
+â”‚   â”‚   â”œâ”€â”€ ai/route.ts              â† Claude API endpoint (POST)
+â”‚   â”‚   â”œâ”€â”€ admin/route.ts
+â”‚   â”‚   â”œâ”€â”€ stripe/checkout/route.ts
+â”‚   â”‚   â””â”€â”€ webhooks/stripe/route.ts
+â”‚   â”œâ”€â”€ auth/callback/route.ts       â† Supabase OAuth callback
+â”‚   â”œâ”€â”€ dashboard/
+â”‚   â”‚   â”œâ”€â”€ layout.tsx               â† wraps all dashboard pages with DashboardShell
+â”‚   â”‚   â”œâ”€â”€ page.tsx                 â† home (server component, passes data to DashboardHome)
+â”‚   â”‚   â”œâ”€â”€ admin/page.tsx
+â”‚   â”‚   â”œâ”€â”€ calendar/page.tsx
+â”‚   â”‚   â”œâ”€â”€ intelligence/page.tsx
+â”‚   â”‚   â”œâ”€â”€ markets/page.tsx
+â”‚   â”‚   â”œâ”€â”€ portfolio/page.tsx
+â”‚   â”‚   â”œâ”€â”€ settings/page.tsx
+â”‚   â”‚   â””â”€â”€ you/page.tsx
+â”‚   â”œâ”€â”€ login/page.tsx
+â”‚   â”œâ”€â”€ page.tsx                     â† landing page
+â”‚   â””â”€â”€ layout.tsx                   â† root layout
+â”œâ”€â”€ components/
+â”‚   â””â”€â”€ dashboard/
+â”‚       â”œâ”€â”€ DashboardHome.tsx        â† "use client", receives profile/holdings/predictions
+â”‚       â””â”€â”€ DashboardShell.tsx       â† "use client", sidebar nav + layout wrapper
+â”œâ”€â”€ lib/
+â”‚   â””â”€â”€ supabase/
+â”‚       â”œâ”€â”€ server.ts                â† createClient() for server components/routes
+â”‚       â””â”€â”€ client.ts               â† createClient() for "use client" components
+â”œâ”€â”€ middleware.ts                    â† protects /dashboard/* and /admin/*
+â”œâ”€â”€ types/index.ts                   â† all TypeScript types + TIER_LIMITS
+â”œâ”€â”€ supabase/migrations/
+â”‚   â””â”€â”€ 001_initial_schema.sql      â† full DB schema (applied)
+â”œâ”€â”€ next.config.ts
+â”œâ”€â”€ package.json
+â””â”€â”€ PRD.md                          â† this file
 ```
 
 ---
@@ -75,11 +75,11 @@ FinanceOS/
 ### 2.2 Server vs Client Components
 - **Server components** (no `"use client"`): fetch data from Supabase, pass as props to client components.
 - **Client components** (`"use client"` at top): all interactivity, event handlers, useState, useRouter.
-- Pattern: `page.tsx` (server) → fetches data → renders `<ComponentName data={data} />` (client).
+- Pattern: `page.tsx` (server) â†’ fetches data â†’ renders `<ComponentName data={data} />` (client).
 
 ### 2.3 Supabase
-- **Server:** `import { createClient } from "@/lib/supabase/server"` — async, uses cookies
-- **Client:** `import { createClient } from "@/lib/supabase/client"` — synchronous
+- **Server:** `import { createClient } from "@/lib/supabase/server"` â€” async, uses cookies
+- **Client:** `import { createClient } from "@/lib/supabase/client"` â€” synchronous
 - Auth check pattern in server components:
   ```ts
   const supabase = await createClient();
@@ -92,7 +92,7 @@ FinanceOS/
 - Request body: `{ prompt: string, systemPrompt?: string, model?: string }`
 - Response: `{ text: string, tokensUsed: number, costUsd: number }`
 - Default model: `claude-sonnet-4-20250514`
-- Rate limiting enforced per tier (5/50/∞ queries/day).
+- Rate limiting enforced per tier (5/50/âˆž queries/day).
 - Usage logged to `usage_logs` table automatically.
 
 ### 2.5 Types
@@ -105,12 +105,12 @@ FinanceOS/
 
 ### 2.7 New API Routes
 - Place under `app/api/<feature>/route.ts`.
-- Always check auth first: `supabase.auth.getUser()` → 401 if no user.
+- Always check auth first: `supabase.auth.getUser()` â†’ 401 if no user.
 - Return `NextResponse.json(...)`.
 
 ---
 
-## 3. Existing Database Schema (Applied — `001_initial_schema.sql`)
+## 3. Existing Database Schema (Applied â€” `001_initial_schema.sql`)
 
 ### Tables
 | Table | Key Columns | Purpose |
@@ -127,10 +127,10 @@ FinanceOS/
 | `announcements` | title, content, target_tier, active | Admin broadcasts |
 
 ### Key Functions
-- `handle_new_user()` — trigger: auto-creates profile on auth.users insert, assigns superadmin to `vterminater@gmail.com`
-- `get_daily_ai_count(user_id)` — returns today's AI query count
-- `get_ai_limit(tier)` — returns query limit by tier (5/50/9999)
-- `daily_usage` — view: today's usage counts grouped by user/action
+- `handle_new_user()` â€” trigger: auto-creates profile on auth.users insert, assigns superadmin to `vterminater@gmail.com`
+- `get_daily_ai_count(user_id)` â€” returns today's AI query count
+- `get_ai_limit(tier)` â€” returns query limit by tier (5/50/9999)
+- `daily_usage` â€” view: today's usage counts grouped by user/action
 
 ### Subscription Tiers
 | Tier | AI queries/day | Holdings | Markets |
@@ -148,9 +148,9 @@ FinanceOS/
 Four AI agents work in a self-improving loop to research stocks, score them, trade via Robinhood, and learn from outcomes.
 
 ```
-ResearchAgent ──► AnalystAgent ──► TraderAgent
-                       │                │
-                       └── LearnerAgent ◄┘
+ResearchAgent â”€â”€â–º AnalystAgent â”€â”€â–º TraderAgent
+                       â”‚                â”‚
+                       â””â”€â”€ LearnerAgent â—„â”˜
                            (weekly feedback loop)
 ```
 
@@ -214,13 +214,13 @@ Input:
 
 Behavior:
   - Only trades if score >= strategy_config.min_analyst_score (default: 70)
-  - Only uses Robinhood AGENTIC account (not primary — this is enforced by Robinhood)
+  - Only uses Robinhood AGENTIC account (not primary â€” this is enforced by Robinhood)
   - Respects max_position_pct and max_daily_trades from strategy_config
 
 Modes:
   approval_required (default):
     - Emits trade proposal to `trade_queue` table
-    - UI shows toast → modal with reasoning + risk → user approves/rejects
+    - UI shows toast â†’ modal with reasoning + risk â†’ user approves/rejects
     - On approve: executes via Robinhood MCP
   auto:
     - Executes immediately within hard position limits
@@ -240,8 +240,8 @@ Input:
 Process:
   1. Score prediction accuracy for completed trades
   2. Identify worst-performing signal
-  3. Adjust that signal's weight by ±0.02 (max ±0.05/cycle)
-  4. Store old → new weight with reason in learning_log
+  3. Adjust that signal's weight by Â±0.02 (max Â±0.05/cycle)
+  4. Store old â†’ new weight with reason in learning_log
   5. New weights become baseline for AnalystAgent
 
 Schedule: weekly (Railway cron, 3-day offset from ResearchAgent)
@@ -250,7 +250,7 @@ Schedule: weekly (Railway cron, 3-day offset from ResearchAgent)
 ### 4.3 New Database Tables (to be migrated)
 
 ```sql
--- Agent watchlist (extends existing watchlist table — add thesis_notes column)
+-- Agent watchlist (extends existing watchlist table â€” add thesis_notes column)
 -- OR use existing watchlist + new thesis_notes column via ALTER
 
 -- Research output
@@ -369,9 +369,9 @@ INSERT INTO strategy_config DEFAULT VALUES;
 - **Transport:** HTTP + OAuth
 - **Connected via:** `claude mcp add robinhood-trading --transport http https://agent.robinhood.com/mcp/trading`
 - **Auth:** OAuth flow via `mcp__robinhood-trading__authenticate` tool
-- **Scope:** Dedicated Robinhood Agentic Account only — agents CANNOT touch primary account (enforced by Robinhood)
+- **Scope:** Dedicated Robinhood Agentic Account only â€” agents CANNOT touch primary account (enforced by Robinhood)
 - **Supported assets (June 2026):** Equities only (options/crypto planned)
-- **Kill switch:** `strategy_config.trading_enabled = false` → TraderAgent no-ops all trade calls
+- **Kill switch:** `strategy_config.trading_enabled = false` â†’ TraderAgent no-ops all trade calls
 
 #### MCP Tool Capabilities (confirmed from Robinhood docs)
 - Query: portfolio value, buying power, positions, order history, P&L
@@ -383,14 +383,14 @@ INSERT INTO strategy_config DEFAULT VALUES;
 ### 4.5 New API Routes (to build)
 
 ```
-POST /api/agents/research          ← trigger ResearchAgent for ticker(s)
-POST /api/agents/analyze           ← trigger AnalystAgent for ticker(s)
-POST /api/agents/trade/propose     ← TraderAgent proposes trade (writes to trade_queue)
-POST /api/agents/trade/approve     ← user approves trade_queue item → executes via Robinhood MCP
-POST /api/agents/trade/reject      ← user rejects with optional reason
-GET  /api/agents/status            ← all agent run statuses
-POST /api/agents/learn             ← trigger LearnerAgent cycle
-GET  /api/portfolio/robinhood      ← read agentic account positions from Robinhood MCP
+POST /api/agents/research          â† trigger ResearchAgent for ticker(s)
+POST /api/agents/analyze           â† trigger AnalystAgent for ticker(s)
+POST /api/agents/trade/propose     â† TraderAgent proposes trade (writes to trade_queue)
+POST /api/agents/trade/approve     â† user approves trade_queue item â†’ executes via Robinhood MCP
+POST /api/agents/trade/reject      â† user rejects with optional reason
+GET  /api/agents/status            â† all agent run statuses
+POST /api/agents/learn             â† trigger LearnerAgent cycle
+GET  /api/portfolio/robinhood      â† read agentic account positions from Robinhood MCP
 ```
 
 ---
@@ -399,66 +399,66 @@ GET  /api/portfolio/robinhood      ← read agentic account positions from Robin
 
 ### 5.1 Existing Dashboard Nav (DashboardShell.tsx `NAV` array)
 ```
-/dashboard              → Home (4-panel overview)
-/dashboard/portfolio    → Holdings + P&L
-/dashboard/markets      → Watchlist + prices
-/dashboard/intelligence → AI research feed
-/dashboard/calendar     → Economic calendar
-/dashboard/you          → Profile + DNA + learning
-/dashboard/settings     → Preferences
-/dashboard/admin        → Admin only (role check)
+/dashboard              â†’ Home (4-panel overview)
+/dashboard/portfolio    â†’ Holdings + P&L
+/dashboard/markets      â†’ Watchlist + prices
+/dashboard/intelligence â†’ AI research feed
+/dashboard/calendar     â†’ Economic calendar
+/dashboard/you          â†’ Profile + DNA + learning
+/dashboard/settings     â†’ Preferences
+/dashboard/admin        â†’ Admin only (role check)
 ```
 
 ### 5.2 New Pages to Add
 ```
-/dashboard/agents       → Agent control panel (status, kill switch, run manually)
-/dashboard/trading      → Trade queue, approval UI, Robinhood agentic account
-/dashboard/learning     → Signal weight history, prediction accuracy charts
+/dashboard/agents       â†’ Agent control panel (status, kill switch, run manually)
+/dashboard/trading      â†’ Trade queue, approval UI, Robinhood agentic account
+/dashboard/learning     â†’ Signal weight history, prediction accuracy charts
 ```
 
 Add these to `NAV` array in `DashboardShell.tsx`:
 ```ts
-{ href: "/dashboard/agents",   label: "Agents",   icon: "⬡" },
-{ href: "/dashboard/trading",  label: "Trading",  icon: "◈" },
-{ href: "/dashboard/learning", label: "Learning", icon: "◫" },
+{ href: "/dashboard/agents",   label: "Agents",   icon: "â¬¡" },
+{ href: "/dashboard/trading",  label: "Trading",  icon: "â—ˆ" },
+{ href: "/dashboard/learning", label: "Learning", icon: "â—«" },
 ```
 
 ### 5.3 Design System
 Colors defined via `T` token object (see Section 2.1). All styling inline.
-Font: Inter. No icon libraries — uses Unicode symbols as icons (see NAV array).
+Font: Inter. No icon libraries â€” uses Unicode symbols as icons (see NAV array).
 
 ### 5.4 Trade Approval Flow (`/dashboard/trading`)
 ```
 TraderAgent writes to trade_queue (status: 'pending')
-         ↓
+         â†“
 UI polls trade_queue every 30s (or websocket)
-         ↓
-Toast appears: "Buy 10 NVDA @ ~$142 — Score: 83/100"
-         ↓
-User clicks → Modal opens:
+         â†“
+Toast appears: "Buy 10 NVDA @ ~$142 â€” Score: 83/100"
+         â†“
+User clicks â†’ Modal opens:
   - Why: top 3 signals that triggered
   - Risk: position size, % of account, estimated max loss
   - Chart: 30-day price + agent score history
-         ↓
-[Approve] → POST /api/agents/trade/approve → Robinhood MCP executes
-[Reject]  → POST /api/agents/trade/reject → logged, agent notes rejection
-[Modify]  → User edits qty/price → approves modified version
+         â†“
+[Approve] â†’ POST /api/agents/trade/approve â†’ Robinhood MCP executes
+[Reject]  â†’ POST /api/agents/trade/reject â†’ logged, agent notes rejection
+[Modify]  â†’ User edits qty/price â†’ approves modified version
 ```
 
 ### 5.5 Dashboard Home Layout (target)
 ```
-┌─────────────────┬──────────────────┐
-│   WATCHLIST     │   AGENT CHAT     │
-│  ticker + score │  natural lang    │
-│  signal bars    │  "Why buy NVDA?" │
-│  regime badge   │  "Show thesis"   │
-├─────────────────┼──────────────────┤
-│   TRADING       │   LEARNING FEED  │
-│  agentic acct   │  weight changes  │
-│  live P&L       │  accuracy delta  │
-│  trade queue    │  "momentum ↑0.02 │
-│  approve/reject │   +4% accuracy"  │
-└─────────────────┴──────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚   WATCHLIST     â”‚   AGENT CHAT     â”‚
+â”‚  ticker + score â”‚  natural lang    â”‚
+â”‚  signal bars    â”‚  "Why buy NVDA?" â”‚
+â”‚  regime badge   â”‚  "Show thesis"   â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚   TRADING       â”‚   LEARNING FEED  â”‚
+â”‚  agentic acct   â”‚  weight changes  â”‚
+â”‚  live P&L       â”‚  accuracy delta  â”‚
+â”‚  trade queue    â”‚  "momentum â†‘0.02 â”‚
+â”‚  approve/reject â”‚   +4% accuracy"  â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ---
@@ -467,15 +467,15 @@ User clicks → Modal opens:
 
 | Integration | Purpose | Status | Notes |
 |---|---|---|---|
-| Robinhood MCP | Trade execution + read portfolio | ✅ Connected, auth in progress | Agentic account only |
-| Anthropic Claude API | All agent intelligence | ✅ Active | Via `/api/ai/route.ts` |
-| Supabase | DB + auth + vector store | ✅ Active | pgvector needs enabling |
-| Puppeteer MCP | Web scraping (news, filings) | ✅ Connected | For ResearchAgent |
-| SEC EDGAR API | Form 4 insider trades, 10-K filings | 🔲 To add | Free, no key required |
-| Polygon.io | Price + volume + technicals | 🔲 To add | $29/mo — preferred over Yahoo Finance |
-| Reddit API | Sentiment from r/investing, r/wallstreetbets | 🔲 To add | Scrape via Puppeteer or official API |
-| Stripe | Subscriptions | ✅ Active | Webhooks at `/api/webhooks/stripe` |
-| Railway | 24/7 agent cron workers | 🔲 To add | ResearchAgent (30min) + LearnerAgent (weekly) |
+| Robinhood MCP | Trade execution + read portfolio | âœ… Connected, auth in progress | Agentic account only |
+| Anthropic Claude API | All agent intelligence | âœ… Active | Via `/api/ai/route.ts` |
+| Supabase | DB + auth + vector store | âœ… Active | pgvector needs enabling |
+| Puppeteer MCP | Web scraping (news, filings) | âœ… Connected | For ResearchAgent |
+| SEC EDGAR API | Form 4 insider trades, 10-K filings | ðŸ”² To add | Free, no key required |
+| Polygon.io | Price + volume + technicals | ðŸ”² To add | $29/mo â€” preferred over Yahoo Finance |
+| Reddit API | Sentiment from r/investing, r/wallstreetbets | ðŸ”² To add | Scrape via Puppeteer or official API |
+| Stripe | Subscriptions | âœ… Active | Webhooks at `/api/webhooks/stripe` |
+| Railway | 24/7 agent cron workers | ðŸ”² To add | ResearchAgent (30min) + LearnerAgent (weekly) |
 
 ---
 
@@ -485,16 +485,16 @@ User clicks → Modal opens:
 - Prediction accuracy > 60% over rolling 30 days
 - Sharpe ratio > 1.0
 - Max drawdown < 15%
-- Signal weights converge toward stable, accurate configuration over 8–12 weeks
+- Signal weights converge toward stable, accurate configuration over 8â€“12 weeks
 
 ### Failure (triggers pause + alert)
 - Prediction accuracy < 40% over 30 days
 - Drawdown > 20%
 - Any single day loss > 5% of agentic account
-→ `trading_enabled` flag set to false, user alerted
+â†’ `trading_enabled` flag set to false, user alerted
 
 ### Learning Guardrails
-- LearnerAgent adjusts max ±0.05 weight per cycle
+- LearnerAgent adjusts max Â±0.05 weight per cycle
 - Weights must always sum to 1.0
 - No weight may go below 0.02 (floor) or above 0.40 (ceiling)
 
@@ -502,16 +502,16 @@ User clicks → Modal opens:
 
 ## 8. Build Order (Phases)
 
-### Phase 1 — Foundation (current)
+### Phase 1 â€” Foundation (current)
 - [x] Robinhood MCP added
 - [ ] Complete Robinhood OAuth auth
 - [ ] Read live portfolio from Robinhood agentic account
 - [ ] Create new DB tables (migration 002)
 - [ ] Seed `signal_weights` + `strategy_config`
-- [ ] `/dashboard/agents` page — status + kill switch
+- [ ] `/dashboard/agents` page â€” status + kill switch
 - [ ] `/dashboard/trading` page skeleton
 
-### Phase 2 — Research + Analysis
+### Phase 2 â€” Research + Analysis
 - [ ] ResearchAgent: news scraping via Puppeteer MCP
 - [ ] SEC EDGAR Form 4 fetcher
 - [ ] Polygon.io or Yahoo Finance price data
@@ -519,18 +519,18 @@ User clicks → Modal opens:
 - [ ] Render scored watchlist on `/dashboard/markets`
 - [ ] `agent_memory` vector store wired up
 
-### Phase 3 — Trading
+### Phase 3 â€” Trading
 - [ ] TraderAgent in `approval_required` mode
-- [ ] Trade approval UI (toast → modal → execute)
+- [ ] Trade approval UI (toast â†’ modal â†’ execute)
 - [ ] Full trade logging
-- [ ] End-to-end test: research → score → propose → approve → execute
+- [ ] End-to-end test: research â†’ score â†’ propose â†’ approve â†’ execute
 
-### Phase 4 — Learning
+### Phase 4 â€” Learning
 - [ ] LearnerAgent: prediction scoring + weight adjustment
 - [ ] `/dashboard/learning` with weight history charts
 - [ ] Accuracy tracking over rolling 30-day window
 
-### Phase 5 — Automation
+### Phase 5 â€” Automation
 - [ ] `auto` mode with hard guards
 - [ ] Railway cron job deployment (30min research, weekly learn)
 - [ ] Push notifications for trade proposals
@@ -551,7 +551,7 @@ Three preset risk profiles stored in `strategy_config`:
 | Aggressive | 52 | 15 | 10 | 35 |
 
 - **API:** `GET /api/settings/risk-profile` returns current profile. `PATCH /api/settings/risk-profile` updates `strategy_config` row.
-- **UI:** Settings page → Agents tab → Risk Profile card. User selects preset or edits per-field.
+- **UI:** Settings page â†’ Agents tab â†’ Risk Profile card. User selects preset or edits per-field.
 - **ResearchAgent integration:** Reads `risk_profile` from `strategy_config`, applies `PROFILE_WEIGHTS` multiplier to signal scoring, uses `score_threshold` as the minimum score for a buy signal.
 
 ### 9.2 Position Monitor (Dynamic Exit Price Management)
@@ -559,20 +559,20 @@ Three preset risk profiles stored in `strategy_config`:
 Runs daily after market close (weekdays 4:15PM). Manages trailing stops and target exits for all open `paper_positions`.
 
 **New columns added to `paper_positions` (migration 026):**
-- `price_target` — target exit price
-- `stop_loss` — initial stop loss price
-- `highest_price` — highest price seen since entry (trail anchor)
-- `target_updated_at` — last time target was updated
-- `exit_reason` — `'stop'`, `'target'`, or `'llm_exit'`
+- `price_target` â€” target exit price
+- `stop_loss` â€” initial stop loss price
+- `highest_price` â€” highest price seen since entry (trail anchor)
+- `target_updated_at` â€” last time target was updated
+- `exit_reason` â€” `'stop'`, `'target'`, or `'llm_exit'`
 
-**Trailing stop logic:** `new_stop = max(original_stop_loss, highest_price × 0.93)`
+**Trailing stop logic:** `new_stop = max(original_stop_loss, highest_price Ã— 0.93)`
 
 On each run:
 1. Fetch current prices for all open positions
 2. Update `highest_price` if current price > previous highest
 3. Recompute trailing stop
-4. If `current_price <= stop` → close position, set `exit_reason = 'stop'`
-5. If `current_price >= price_target` → close position, set `exit_reason = 'target'`
+4. If `current_price <= stop` â†’ close position, set `exit_reason = 'stop'`
+5. If `current_price >= price_target` â†’ close position, set `exit_reason = 'target'`
 6. Closed positions return cash to buying power
 
 **UI:** TradingPage has PositionMonitor card with "Run Now" button and last-run timestamp.
@@ -582,7 +582,7 @@ On each run:
 Weekly macro regime scoring agent. Runs Mondays 8AM.
 
 **Indicators fetched from Alpha Vantage (8 total):**
-1. Yield Curve (10Y-2Y spread) — inverted = danger
+1. Yield Curve (10Y-2Y spread) â€” inverted = danger
 2. Sahm Rule proxy (unemployment rate delta)
 3. Real GDP (QoQ growth rate)
 4. Nonfarm Payrolls (MoM change)
@@ -592,32 +592,32 @@ Weekly macro regime scoring agent. Runs Mondays 8AM.
 8. Durable Goods Orders (MoM)
 
 **Regime classification (weighted danger score 0-100):**
-- GREEN: score < 25 — expansion
-- YELLOW: 25-49 — caution
-- ORANGE: 50-74 — slowdown
-- RED: ≥75 — recession risk
+- GREEN: score < 25 â€” expansion
+- YELLOW: 25-49 â€” caution
+- ORANGE: 50-74 â€” slowdown
+- RED: â‰¥75 â€” recession risk
 
 **Advisory-only:** MacroSentinel reports regime; it does not auto-throttle agents or halt trading. User decides how to act.
 
 **Storage (migration 028):**
-- `macro_regime` — current regime + score + timestamp
-- `macro_signals` — per-indicator readings and contribution
+- `macro_regime` â€” current regime + score + timestamp
+- `macro_signals` â€” per-indicator readings and contribution
 
-**UI:** MarketsPage → MacroSentinel card with danger gauge + signal breakdown table. DashboardHome shows colored regime banner (hidden when GREEN).
+**UI:** MarketsPage â†’ MacroSentinel card with danger gauge + signal breakdown table. DashboardHome shows colored regime banner (hidden when GREEN).
 
 ### 9.4 Smart Money Trades (MarketsPage)
 
 **API:** `/api/markets/insider-trades/route.ts`
 
 **Two data sources:**
-1. **Insiders tab:** Alpha Vantage `INSIDER_TRANSACTIONS` — corporate insider buy/sell filings
-2. **Congress tab:** House Stock Watcher public S3 data — congressional stock trade disclosures (free, no auth required)
+1. **Insiders tab:** Alpha Vantage `INSIDER_TRANSACTIONS` â€” corporate insider buy/sell filings
+2. **Congress tab:** House Stock Watcher public S3 data â€” congressional stock trade disclosures (free, no auth required)
 
 UI in MarketsPage with tabbed Insiders/Congress view, showing symbol, insider name, transaction type, shares, and date.
 
 ### 9.5 LLM Cost Monitor
 
-**API:** `/api/admin/llm-costs/route.ts` — queries `llm_call_log` table.
+**API:** `/api/admin/llm-costs/route.ts` â€” queries `llm_call_log` table.
 
 **Metrics computed:**
 - Total spend (last 24h, 7d, 30d)
@@ -627,14 +627,14 @@ UI in MarketsPage with tabbed Insiders/Congress view, showing symbol, insider na
 - 24-bar hourly cost chart (Recharts BarChart)
 
 **UI:**
-- Settings → Agents tab → LLM Cost Monitor card
-- DashboardHome shows 💸 banner if `projected_daily > $2`
+- Settings â†’ Agents tab â†’ LLM Cost Monitor card
+- DashboardHome shows ðŸ’¸ banner if `projected_daily > $2`
 
 ### 9.6 Mentor System (Judgment Score Chart)
 
-**Mentor nav link** restored in DashboardShell sidebar (🎓 icon, under "Learn" section).
+**Mentor nav link** restored in DashboardShell sidebar (ðŸŽ“ icon, under "Learn" section).
 
-**API:** `/api/mentor/scores/route.ts` — groups `trade_journal` scores by date, returns time series.
+**API:** `/api/mentor/scores/route.ts` â€” groups `trade_journal` scores by date, returns time series.
 
 **MentorPage:** Recharts LineChart showing judgment score over time with reference lines:
 - 50 = Learning
@@ -646,7 +646,7 @@ UI in MarketsPage with tabbed Insiders/Congress view, showing symbol, insider na
 **Component:** `components/dashboard/AgentDiagram.tsx`
 - Renders clickable Mermaid v10 flowcharts per agent (v11 incompatible with webpack/es-toolkit)
 - Nodes color-coded: active=green, new=blue, changed=red, removed=gray
-- Click any node → detail drawer showing why-added and change history
+- Click any node â†’ detail drawer showing why-added and change history
 
 **Data files in `public/agent-diagrams/` (7 JSON files):**
 - `research-agent.json`, `learner-agent.json`, `theme-scout.json`, `deepseek-agent.json`, `position-monitor.json`, `paper-trader.json`, `macro-sentinel.json`
@@ -657,7 +657,7 @@ WatchlistPanel now has an "Import CSV" button. Modal accepts paste of TradingVie
 
 ### 9.9 Signal Backtest Tab (AgentsPage)
 
-New "Backtest" tab in AgentsPage. Joins `agent_signals` to `paper_trades` by symbol + date (±3-day window). Displays:
+New "Backtest" tab in AgentsPage. Joins `agent_signals` to `paper_trades` by symbol + date (Â±3-day window). Displays:
 - Hit Rate (signals that became profitable trades)
 - Misses (signals with no matching trade or negative outcome)
 - Open (signals still in open positions)
@@ -679,12 +679,12 @@ New "Backtest" tab in AgentsPage. Joins `agent_signals` to `paper_trades` by sym
 
 ## 10. Security & Risk Controls
 
-> **CRITICAL:** TraderAgent ONLY operates on Robinhood agentic account. This is enforced structurally by Robinhood — the MCP cannot access the primary account. Do not attempt to add primary account access.
+> **CRITICAL:** TraderAgent ONLY operates on Robinhood agentic account. This is enforced structurally by Robinhood â€” the MCP cannot access the primary account. Do not attempt to add primary account access.
 
-- Kill switch: `strategy_config.trading_enabled = false` — check this before every TraderAgent action
+- Kill switch: `strategy_config.trading_enabled = false` â€” check this before every TraderAgent action
 - `approval_required` mode is default and must be explicitly changed to `auto`
 - All agent actions stored in `trade_log` with full reasoning snapshot (non-deletable by design)
-- LearnerAgent weight changes bounded: ±0.05/cycle, weights floor 0.02, ceiling 0.40
+- LearnerAgent weight changes bounded: Â±0.05/cycle, weights floor 0.02, ceiling 0.40
 - Robinhood ToS: user (Vaibhav) is fully responsible for all agent-executed trades
 - Never log or expose Robinhood OAuth tokens anywhere in the codebase
 

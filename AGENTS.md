@@ -1,4 +1,4 @@
-# AGENTS.md — Universal Agent Entrypoint
+﻿# AGENTS.md â€” Universal Agent Entrypoint
 
 > **EVERY AI agent (Claude, Codex, ChatGPT, Gemini, etc.) reads this file FIRST before doing anything.**
 > This is the coordination layer for a multi-model development team.
@@ -8,7 +8,7 @@
 
 ## What This Project Is (30-Second Context)
 
-FinanceOS is a personal AI-powered trading OS for one user (Vaibhav, `vterminater@gmail.com`).
+Kairos is a personal AI-powered trading OS for one user (Vaibhav, `vterminater@gmail.com`).
 It is a Next.js 15 app + Supabase backend + Anthropic Claude API, extended with a Robinhood MCP
 agentic trading integration. Four AI agents (ResearchAgent, AnalystAgent, TraderAgent, LearnerAgent)
 research stocks, score them, trade via Robinhood, and self-improve from outcomes.
@@ -23,10 +23,10 @@ Market knowledge: `knowledge/KNOWLEDGE_INDEX.md`
 
 ## Read Order (Do Not Skip)
 
-1. `AGENTS.md` ← you are here
-2. `WORK_LOG.md` ← what's in progress, what's next, what's blocked
-3. `PRD.md` ← full product spec and coding conventions
-4. `knowledge/KNOWLEDGE_INDEX.md` ← market knowledge base
+1. `AGENTS.md` â† you are here
+2. `WORK_LOG.md` â† what's in progress, what's next, what's blocked
+3. `PRD.md` â† full product spec and coding conventions
+4. `knowledge/KNOWLEDGE_INDEX.md` â† market knowledge base
 5. Only then: read files relevant to your assigned task
 
 ---
@@ -42,7 +42,7 @@ Market knowledge: `knowledge/KNOWLEDGE_INDEX.md`
 | Reviewer | TBD | Code review, security, correctness checks |
 | Researcher | Claude (Anthropic) | Knowledge base population, signal validation |
 
-**If your role is not listed or unclear → stop and ask Vaibhav before writing any code.**
+**If your role is not listed or unclear â†’ stop and ask Vaibhav before writing any code.**
 
 ---
 
@@ -62,7 +62,7 @@ Market knowledge: `knowledge/KNOWLEDGE_INDEX.md`
 
 ### Reviewer
 - **Can:** Read any file, flag issues, suggest fixes
-- **Cannot:** Directly edit production code — creates a PR or comments only
+- **Cannot:** Directly edit production code â€” creates a PR or comments only
 
 ### Researcher
 - **Can:** Add/update files in `knowledge/` directory
@@ -70,11 +70,11 @@ Market knowledge: `knowledge/KNOWLEDGE_INDEX.md`
 
 ---
 
-## Work Claiming Protocol (CRITICAL — Prevents Conflicts)
+## Work Claiming Protocol (CRITICAL â€” Prevents Conflicts)
 
 Before starting ANY task:
 
-1. Read `WORK_LOG.md` — is this task already claimed? If yes, stop.
+1. Read `WORK_LOG.md` â€” is this task already claimed? If yes, stop.
 2. Add your claim to `WORK_LOG.md`:
    ```
    | Task name | YOUR_MODEL_NAME | in_progress | YYYY-MM-DD |
@@ -94,29 +94,29 @@ Before starting ANY task:
 | New API routes | Architect + Vaibhav approval | `PROJECT_DECISIONS.md` |
 | Signal weight changes | LearnerAgent only | `knowledge/signal-library/proven-signals.md` |
 | Regime model changes | Architect + Vaibhav approval | `knowledge/market-mechanics/regime-detection.md` |
-| Style/UI changes | Builder, must follow `PRD.md` Section 2 | — |
+| Style/UI changes | Builder, must follow `PRD.md` Section 2 | â€” |
 | Adding npm packages | Architect + Vaibhav approval | `PROJECT_DECISIONS.md` |
 | Trade execution | TraderAgent only, always logs to `trade_log` | Supabase `trade_log` table |
 
 ---
 
-## FinNudge — Absolute Rule
+## FinNudge â€” Absolute Rule
 
 `C:\Users\vaibh\OneDrive\Documents\Startup\FinNudge\` is a **completely separate app (budgeting)**. 
 
 - **NEVER edit any file in FinNudge. Ever. For any reason.**
-- Read-only reference is allowed (to copy design patterns into FinanceOS)
-- All copied code lives in FinanceOS — never imported from FinNudge path
-- If a task requires touching FinNudge → stop immediately and tell Vaibhav
+- Read-only reference is allowed (to copy design patterns into Kairos)
+- All copied code lives in Kairos â€” never imported from FinNudge path
+- If a task requires touching FinNudge â†’ stop immediately and tell Vaibhav
 
 ---
 
 ## What NEVER to Do (Any Agent, Any Role)
 
-1. **Never re-litigate approved decisions.** If it's in `PROJECT_DECISIONS.md` as approved → implement it, don't redesign it.
+1. **Never re-litigate approved decisions.** If it's in `PROJECT_DECISIONS.md` as approved â†’ implement it, don't redesign it.
 2. **Never invent styling conventions.** Inline styles with `T` color tokens only. No Tailwind classes. No CSS modules. See `PRD.md` Section 2.1.
 3. **Never use Tailwind utility classes.** The codebase does not use them. Do not add them.
-4. **Never touch the primary Robinhood account.** Agentic account (`••••0660`) only.
+4. **Never touch the primary Robinhood account.** Agentic account (`â€¢â€¢â€¢â€¢0660`) only.
 5. **Never execute a trade without the LTCM check.** See `knowledge/market-mechanics/risk-management.md`.
 6. **Never add features beyond the current task scope.** No scope creep.
 7. **Never commit secrets.** No API keys, no Robinhood tokens, no Supabase service role keys in code.
@@ -126,7 +126,7 @@ Before starting ANY task:
 
 ## Handoff Protocol
 
-When passing work between models (e.g., Claude architects → Codex builds):
+When passing work between models (e.g., Claude architects â†’ Codex builds):
 
 1. **Architect creates:** `features/<feature-name>/FEATURE_ARCHITECTURE.md` with:
    - What to build (precise)
@@ -147,12 +147,12 @@ When passing work between models (e.g., Claude architects → Codex builds):
 
 ### Claude (Anthropic)
 - Strong at: Architecture, analysis, reasoning, writing knowledge base entries
-- Weakness: Can drift into scope creep — stick to approved architecture
+- Weakness: Can drift into scope creep â€” stick to approved architecture
 - Use for: Designing agent systems, writing FEATURE_ARCHITECTURE.md, knowledge research
 
 ### Codex / OpenAI models
 - Strong at: Fast code generation, boilerplate, implementing clear specs
-- Weakness: May invent conventions if spec is ambiguous — be very explicit in architecture files
+- Weakness: May invent conventions if spec is ambiguous â€” be very explicit in architecture files
 - Use for: Building out pages, components, API routes from approved specs
 
 ### ChatGPT (GPT-4+)
@@ -161,7 +161,7 @@ When passing work between models (e.g., Claude architects → Codex builds):
 
 ### General rule
 The more explicit the `FEATURE_ARCHITECTURE.md`, the better any model performs.
-Vague instructions → any model invents its own patterns → inconsistency.
+Vague instructions â†’ any model invents its own patterns â†’ inconsistency.
 
 ---
 
@@ -184,7 +184,7 @@ Robinhood MCP is configured in `.claude.json` (local only, not in repo).
 
 | Layer | Tech | Import path pattern |
 |---|---|---|
-| Framework | Next.js 15 App Router | — |
+| Framework | Next.js 15 App Router | â€” |
 | DB + Auth | Supabase | `@/lib/supabase/server` or `@/lib/supabase/client` |
 | AI | Anthropic Claude | `@anthropic-ai/sdk` via `/api/ai/route.ts` |
 | Types | Centralized | `@/types` |
@@ -222,7 +222,7 @@ Robinhood MCP is configured in `.claude.json` (local only, not in repo).
 - **Schedule:** Weekdays 4:15PM (Windows Task Scheduler, after market close)
 - **Inputs:** open `paper_positions` with `price_target`, `stop_loss`, `highest_price`
 - **Behavior:**
-  - Trailing stop: `max(original_stop_loss, highest_price × 0.93)`
+  - Trailing stop: `max(original_stop_loss, highest_price Ã— 0.93)`
   - Updates `highest_price` if current price is new high
   - Closes position (sets `exit_reason`) if price hits stop or target
   - Returns cash to buying power on close
@@ -233,7 +233,7 @@ Robinhood MCP is configured in `.claude.json` (local only, not in repo).
 - **Schedule:** Mondays 6AM (Windows Task Scheduler)
 - **Inputs:** `paper_trades`, `learning_log`, closed positions
 - **Outputs:** `learning_log` entries; 1-sentence outcome summary per closed trade
-- **Updates (2026-06-29):** Weekly reassessment of open positions added — flags `llm_exit` if LLM recommends closing based on updated thesis
+- **Updates (2026-06-29):** Weekly reassessment of open positions added â€” flags `llm_exit` if LLM recommends closing based on updated thesis
 - **Gate:** Weight mutation locked until 10+ closed trades (Phase 0)
 
 ### ThemeScout
@@ -254,7 +254,7 @@ Robinhood MCP is configured in `.claude.json` (local only, not in repo).
   6. Retail Sales (MoM change)
   7. Federal Funds Rate
   8. Durable Goods Orders (MoM)
-- **Behavior:** Computes weighted danger score 0-100. Assigns regime: GREEN (<25), YELLOW (25-49), ORANGE (50-74), RED (≥75). Advisory-only — does NOT auto-throttle agents or halt trading.
+- **Behavior:** Computes weighted danger score 0-100. Assigns regime: GREEN (<25), YELLOW (25-49), ORANGE (50-74), RED (â‰¥75). Advisory-only â€” does NOT auto-throttle agents or halt trading.
 - **Outputs:**
   - `macro_regime` table row (current regime + score)
   - `macro_signals` table rows (per-indicator breakdown)
@@ -265,4 +265,4 @@ Robinhood MCP is configured in `.claude.json` (local only, not in repo).
 ### Agent Diagrams
 - **Component:** `components/dashboard/AgentDiagram.tsx`
 - **Data:** `public/agent-diagrams/*.json` (7 files: research-agent, learner-agent, theme-scout, deepseek-agent, position-monitor, paper-trader, macro-sentinel)
-- **Features:** Mermaid v10 flowcharts (v11 broken with webpack), color-coded by node status (active=green, new=blue, changed=red, removed=gray), click node → detail drawer with why-added and change history
+- **Features:** Mermaid v10 flowcharts (v11 broken with webpack), color-coded by node status (active=green, new=blue, changed=red, removed=gray), click node â†’ detail drawer with why-added and change history

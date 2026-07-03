@@ -567,10 +567,9 @@ function SmartMoneyTrades() {
                   color: T.text,
                   fontWeight: 500,
                   flex: "1 1 140px",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  wordBreak: "break-word",
                 }}
+                title={t.filer || t.name || ""}
               >
                 {t.filer || t.name || "—"}
               </span>
@@ -581,11 +580,10 @@ function SmartMoneyTrades() {
                   style={{
                     fontSize: "11px",
                     color: T.muted,
-                    flex: "0 1 100px",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    flex: "0 1 120px",
+                    wordBreak: "break-word",
                   }}
+                  title={t.title}
                 >
                   {t.title}
                 </span>

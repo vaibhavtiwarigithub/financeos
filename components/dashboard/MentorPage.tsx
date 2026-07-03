@@ -1209,12 +1209,12 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
                           ))}
                           <span style={{ fontSize: "11px", color: T.muted, marginLeft: "auto" }}>{new Date(e.created_at).toLocaleDateString()}</span>
                         </div>
-                        <div style={{ fontSize: "12px", color: T.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {e.user_reasoning?.slice(0, 120)}{(e.user_reasoning?.length ?? 0) > 120 ? "…" : ""}
+                        <div style={{ fontSize: "12px", color: T.muted, lineHeight: "1.5" }}>
+                          {e.user_reasoning}
                         </div>
                         {e.suggestions && (
-                          <div style={{ fontSize: "11px", color: T.accent, marginTop: "4px" }}>
-                            Tip: {e.suggestions?.slice(0, 100)}{(e.suggestions?.length ?? 0) > 100 ? "…" : ""}
+                          <div style={{ fontSize: "11px", color: T.accent, marginTop: "4px", lineHeight: "1.5" }}>
+                            Tip: {e.suggestions}
                           </div>
                         )}
                       </div>

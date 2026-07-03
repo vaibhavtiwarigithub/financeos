@@ -213,6 +213,119 @@ async function callGroq(
   }
 }
 
+// ── Tool-use agent loop ──────────────────────────────────────────────────────
+
+export interface ToolDef {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+export interface ToolCall {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+}
+
+export interface AgentLoopResult {
+  text: string
+  steps: number
+  tokensIn: number
+  tokensOut: number
+  toolCalls: { name: string; args: Record<string, unknown>; result: string }[]
+}
+
+/**
+ * Run a tool-use agent loop via DeepSeek (OpenAI-compatible tool calling).
+ * The LLM can call tools in any order, multiple times, until it calls "finish" or stop reason = "stop".
+ */
+export async function runAgentLoop(opts: {
+  model?: string
+  systemPrompt: string
+  initialMessage: string
+  tools: ToolDef[]
+  toolExecutor: (call: ToolCall) => Promise<string>
+  maxIterations?: number
+  task?: LLMTask
+  agentLabel?: string
+}): Promise<AgentLoopResult> {
+  const model = opts.model ?? "deepseek-chat"
+  const maxIter = opts.maxIterations ?? 12
+  const apiKey = process.env.DEEPSEEK_API_KEY
+  if (!apiKey) throw new Error("DEEPSEEK_API_KEY not set — runAgentLoop requires DeepSeek")
+
+  const openAITools = opts.tools.map(t => ({
+    type: "function" as const,
+    function: { name: t.name, description: t.description, parameters: t.parameters },
+  }))
+
+  const messages: { role: string; content: string | null; tool_call_id?: string; tool_calls?: unknown[] }[] = [
+    { role: "system", content: opts.systemPrompt },
+    { role: "user", content: opts.initialMessage },
+  ]
+
+  let totalIn = 0, totalOut = 0, steps = 0
+  const callLog: AgentLoopResult["toolCalls"] = []
+
+  for (let i = 0; i < maxIter; i++) {
+    const resp = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify({ model, messages, tools: openAITools, tool_choice: "auto", max_tokens: 2048 }),
+    })
+
+    if (!resp.ok) {
+      const err = await resp.text()
+      throw new Error(`DeepSeek tool-use ${resp.status}: ${err.slice(0, 300)}`)
+    }
+
+    const data = await resp.json()
+    totalIn += data.usage?.prompt_tokens ?? 0
+    totalOut += data.usage?.completion_tokens ?? 0
+    steps++
+
+    const choice = data.choices?.[0]
+    const msg = choice?.message
+
+    // Add assistant message to history
+    messages.push({ role: "assistant", content: msg?.content ?? null, tool_calls: msg?.tool_calls })
+
+    // If no tool calls or stop → done
+    if (!msg?.tool_calls || msg.tool_calls.length === 0 || choice?.finish_reason === "stop") {
+      return { text: msg?.content ?? "", steps, tokensIn: totalIn, tokensOut: totalOut, toolCalls: callLog }
+    }
+
+    // Execute each tool call and feed results back
+    for (const tc of msg.tool_calls) {
+      const fnName = tc.function?.name ?? ""
+      let args: Record<string, unknown> = {}
+      try { args = JSON.parse(tc.function?.arguments ?? "{}") } catch { args = {} }
+
+      const toolCall: ToolCall = { id: tc.id, name: fnName, arguments: args }
+      let result = ""
+      try {
+        result = await opts.toolExecutor(toolCall)
+      } catch (e) {
+        result = `Error executing ${fnName}: ${String(e)}`
+      }
+
+      callLog.push({ name: fnName, args, result: result.slice(0, 500) })
+      messages.push({ role: "tool", content: result, tool_call_id: tc.id })
+
+      // "finish" tool = agent is done
+      if (fnName === "finish") {
+        return { text: result, steps, tokensIn: totalIn, tokensOut: totalOut, toolCalls: callLog }
+      }
+    }
+  }
+
+  // Max iterations hit — return last content
+  const lastMsg = messages.findLast(m => m.role === "assistant")
+  return { text: String(lastMsg?.content ?? "max iterations reached"), steps, tokensIn: totalIn, tokensOut: totalOut, toolCalls: callLog }
+}
+
+// ── End tool-use loop ────────────────────────────────────────────────────────
+
 async function logCall(d: {
   model: string
   task: string

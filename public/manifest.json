@@ -1,0 +1,19 @@
+{
+  "name": "Kairos — Agentic Quant Platform",
+  "short_name": "Kairos",
+  "description": "AI-driven signals, paper trading, and learning agents",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#0D0F14",
+  "theme_color": "#6366F1",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Trading",    "url": "/dashboard/trading",    "description": "Trade proposals" },
+    { "name": "Markets",    "url": "/dashboard/markets",    "description": "Market overview" },
+    { "name": "Briefing",   "url": "/dashboard/briefing",   "description": "Daily briefing" }
+  ]
+}

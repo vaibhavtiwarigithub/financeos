@@ -26,25 +26,31 @@ const SEV: Record<string, { color: string; dot: string; bg: string }> = {
   success: { color: T.green,  dot: T.green,  bg: "#052E1633" },
 };
 
-// ── Nav sections ────────────────────────────────────────────────────────────
+// â"€â"€ Nav sections â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 const NAV_SECTIONS = [
   {
     label: "Daily",
     hint: "Check every trading day",
     items: [
       { href: "/dashboard",              label: "Morning Briefing", icon: "⌂", hint: "Portfolio snapshot + today's signals", alertCat: "home" },
-{ href: "/dashboard/markets",      label: "Markets",          icon: "◉", hint: "Indices, sectors, VIX proxy",         alertCat: "market" },
+      { href: "/dashboard/markets",      label: "Markets",          icon: "◉", hint: "Indices, sectors, VIX proxy",         alertCat: "market" },
       { href: "/dashboard/intelligence", label: "Intelligence",     icon: "◆", hint: "Agent signals + research runs",       alertCat: "cron" },
       { href: "/dashboard/agents",       label: "Agents",           icon: "⬡", hint: "Run agents manually, view status",    alertCat: "" },
+      { href: "/dashboard/smart-money",  label: "Smart Money",      icon: "🦊", hint: "Trade queue, insider flow, multi-asset signals", alertCat: "" },
     ],
   },
   {
     label: "Weekly",
     hint: "Review on Fridays or Mondays",
     items: [
-      { href: "/dashboard/portfolio",  label: "Portfolio",        icon: "◈", hint: "Paper positions, P&L, open trades",  alertCat: "portfolio" },
+      { href: "/dashboard/live-portfolio", label: "Live Portfolio",   icon: "◉", hint: "Live Robinhood holdings, P&L, performance charts, transaction history", alertCat: "" },
+      { href: "/dashboard/portfolio",  label: "Paper Portfolio",  icon: "◈", hint: "Paper positions, P&L, open trades",  alertCat: "portfolio" },
+      { href: "/dashboard/risk",       label: "Risk Analytics",   icon: "⚠", hint: "Beta, VaR, sector concentration across all accounts", alertCat: "" },
       { href: "/dashboard/calendar",   label: "Earnings Calendar",icon: "▦", hint: "Upcoming earnings for watchlist",     alertCat: "earnings" },
-      { href: "/dashboard/strategies", label: "Strategies",       icon: "⬡", hint: "7 strategy templates, fit scores",   alertCat: "strategy" },
+      { href: "/dashboard/strategies",         label: "Strategies",       icon: "⬡", hint: "7 strategy templates, fit scores",   alertCat: "strategy" },
+      { href: "/dashboard/strategies/library",label: "Strategy Library",  icon: "◉", hint: "8 algo strategies: edge, regime fit, Sharpe range, failure modes", alertCat: "" },
+      { href: "/dashboard/scanner",            label: "Scanner",           icon: "⟐", hint: "Screen stocks by technical + fundamental conditions", alertCat: "" },
+      { href: "/dashboard/backtest",           label: "Backtest",          icon: "⏮", hint: "Replay signals against historical prices — win rate, Sharpe, alpha", alertCat: "" },
       { href: "/dashboard/watchlist",  label: "Watchlist",        icon: "◎", hint: "AI-curated + manual symbols to track",alertCat: "watchlist" },
     ],
   },
@@ -64,9 +70,9 @@ const NAV_SECTIONS = [
   },
 ];
 
-const ADMIN_ITEM = { href: "/dashboard/admin", label: "Admin", icon: "★", hint: "API keys, vault, agent config", alertCat: "admin" };
+const ADMIN_ITEM = { href: "/dashboard/admin", label: "Admin", icon: "☆", hint: "API keys, vault, agent config", alertCat: "admin" };
 
-// ── Market status ─────────────────────────────────────────────────────────────
+// â"€â"€ Market status â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 function getMarketStatus(): { label: string; color: string; bg: string; detail: string } {
   // Convert to ET (UTC-4 EDT / UTC-5 EST). We approximate: from mid-March to early Nov = EDT (UTC-4)
   const now = new Date();
@@ -74,7 +80,7 @@ function getMarketStatus(): { label: string; color: string; bg: string; detail: 
   const month = now.getUTCMonth() + 1; // 1-12
   const day = now.getUTCDay(); // 0=Sun
 
-  // EDT Apr–Oct roughly, EST Nov–Mar. Close enough for market status.
+  // EDT Apr—Oct roughly, EST Nov—Mar. Close enough for market status.
   const offsetH = (month >= 4 && month <= 10) ? 4 : 5; // hours behind UTC
   let etH = utcH - offsetH;
   if (etH < 0) etH += 24;
@@ -118,7 +124,7 @@ function fmtAlertTime(iso: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-// ── Alert detail parser — splits on " · " delimiter ──────────────────────────
+// â"€â"€ Alert detail parser — splits on " · " delimiter â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 function AlertDetail({ detail }: { detail: string }) {
   const lines = detail.split(" · ").filter(Boolean);
   if (lines.length <= 1) return <span style={{ fontSize: "11px", color: T.textSub }}>{detail}</span>;
@@ -141,7 +147,9 @@ export default function DashboardShell({ profile, children }: { profile: Profile
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [bellOpen, setBellOpen] = useState(false);
   const [expandedAlert, setExpandedAlert] = useState<string | null>(null);
+  const [pauseState, setPauseState] = useState<{ paused: boolean; paused_at: string | null; paused_reason: string | null } | null>(null);
   const bellRef = useRef<HTMLDivElement>(null);
+  const seenProposalIds = useRef<Set<string>>(new Set());
   const { timeStr, status: mktStatus } = useMarketClock();
 
   useEffect(() => {
@@ -150,6 +158,58 @@ export default function DashboardShell({ profile, children }: { profile: Profile
       .then(r => r.json())
       .then(d => setAlerts(d.alerts ?? []))
       .catch(() => {});
+
+    supabase
+      .from("strategy_config")
+      .select("app_paused, paused_at, paused_reason")
+      .limit(1)
+      .single()
+      .then(({ data }) => {
+        if (data) setPauseState({ paused: !!data.app_paused, paused_at: data.paused_at, paused_reason: data.paused_reason });
+      })
+      .catch(() => {});
+  }, []);
+
+  // â"€â"€ Browser push: proposal watcher â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+
+    // Request permission silently (won't prompt if already granted/denied)
+    if (Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+
+    async function checkProposals() {
+      if (Notification.permission !== "granted") return;
+      try {
+        const { data } = await supabase
+          .from("trade_proposals")
+          .select("id, symbol, order_side, qty, limit_price, analyst_score, created_at")
+          .eq("status", "pending_review")
+          .order("created_at", { ascending: false })
+          .limit(10);
+
+        for (const p of data ?? []) {
+          if (seenProposalIds.current.has(p.id)) continue;
+          seenProposalIds.current.add(p.id);
+          const n = new Notification("Kairos — Trade Proposal Ready", {
+            body: `${p.order_side?.toUpperCase()} ${p.qty} ${p.symbol} @ $${Number(p.limit_price).toFixed(2)} · Score ${p.analyst_score} · Awaiting your approval`,
+            icon: "/favicon.ico",
+            tag: `proposal-${p.id}`,
+            requireInteraction: true,
+          });
+          n.onclick = () => {
+            window.focus();
+            window.location.href = "/dashboard/smart-money";
+          };
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    checkProposals();
+    const id = setInterval(checkProposals, 60_000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Close bell dropdown on outside click
@@ -189,17 +249,17 @@ export default function DashboardShell({ profile, children }: { profile: Profile
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: "'Inter', sans-serif", color: T.text }}>
 
-      {/* ── Sidebar ── */}
+      {/* â"€â"€ Sidebar â"€â"€ */}
       <aside style={{ width: "224px", background: T.surface, borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", flexShrink: 0 }}>
 
         {/* Logo + bell row */}
         <div style={{ padding: "18px 16px 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontSize: "17px", fontWeight: 700, letterSpacing: "-0.02em" }}>
-              Finance<span style={{ color: T.accent }}>OS</span>
+            <div style={{ fontSize: "18px", fontWeight: 800, letterSpacing: "-0.03em" }}>
+              <span style={{ color: T.accent }}>K</span>airos
             </div>
-            <div style={{ fontSize: "9px", color: T.muted, marginTop: "2px", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-              Intelligence Platform
+            <div style={{ fontSize: "9px", color: T.muted, marginTop: "2px", letterSpacing: "0.06em" }}>
+              Right signal. Right moment.
             </div>
           </div>
 
@@ -216,7 +276,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
                 position: "relative", display: "flex", alignItems: "center",
               }}
             >
-              🔔
+              ðŸ""
               {unreadCount > 0 && (
                 <span style={{
                   position: "absolute", top: "2px", right: "2px",
@@ -308,7 +368,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
                           <button
                             onClick={() => dismissAlert(a.id)}
                             style={{ color: T.muted, background: "none", border: "none", cursor: "pointer", fontSize: "16px", flexShrink: 0, lineHeight: 1, paddingTop: "1px" }}
-                          >×</button>
+                          >Ã—</button>
                         </div>
                       </div>
                     );
@@ -318,6 +378,35 @@ export default function DashboardShell({ profile, children }: { profile: Profile
             )}
           </div>
         </div>
+
+        {/* Pause banner — shown in sidebar when app is paused */}
+        {pauseState?.paused && (
+          <div style={{
+            margin: "8px 10px 0",
+            background: "#2D1B0066",
+            border: `1px solid ${T.yellow}55`,
+            borderRadius: "8px",
+            padding: "8px 10px",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span style={{ fontSize: "13px" }}>â¸</span>
+              <span style={{ fontSize: "11px", fontWeight: 700, color: T.yellow, letterSpacing: "0.06em" }}>APP PAUSED</span>
+            </div>
+            <div style={{ fontSize: "10px", color: T.muted, marginTop: "3px", lineHeight: "1.4" }}>
+              All agents stopped · no AI calls
+            </div>
+            {pauseState.paused_at && (
+              <div style={{ fontSize: "10px", color: T.muted, marginTop: "2px" }}>
+                Since {new Date(pauseState.paused_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </div>
+            )}
+            {pauseState.paused_reason && (
+              <div style={{ fontSize: "10px", color: T.textSub, marginTop: "2px", fontStyle: "italic" }}>
+                {pauseState.paused_reason}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Sectioned nav */}
         <nav style={{ flex: 1, padding: "10px 8px", overflowY: "auto" }}>
@@ -410,7 +499,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
         </div>
       </aside>
 
-      {/* ── Main content ── */}
+      {/* â"€â"€ Main content â"€â"€ */}
       <main style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
         {/* Sticky market status bar */}
         <div style={{
@@ -424,6 +513,23 @@ export default function DashboardShell({ profile, children }: { profile: Profile
             <span style={{ fontSize: "12px", fontWeight: 700, color: mktStatus.color }}>{mktStatus.label}</span>
             <span style={{ fontSize: "11px", color: T.muted }}>· {mktStatus.detail}</span>
           </div>
+
+          {/* Pause chip — top bar */}
+          {pauseState?.paused && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: "5px",
+              background: "#2D1B0066", border: `1px solid ${T.yellow}55`,
+              borderRadius: "6px", padding: "3px 10px",
+            }}>
+              <span style={{ fontSize: "11px" }}>â¸</span>
+              <span style={{ fontSize: "11px", fontWeight: 700, color: T.yellow }}>PAUSED</span>
+              {pauseState.paused_at && (
+                <span style={{ fontSize: "10px", color: T.muted }}>
+                  · since {new Date(pauseState.paused_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Spacer */}
           <div style={{ flex: 1 }} />

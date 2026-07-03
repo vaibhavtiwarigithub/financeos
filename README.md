@@ -1,2 +1,2 @@
-# FinanceOS - Production Architecture Plan
+﻿# Kairos - Production Architecture Plan
 Generated: 2026-03-06

@@ -211,7 +211,7 @@ export default function SymbolPeers({ symbol }: { symbol: string }) {
 
                       {/* Name */}
                       <td style={{ padding: "10px 12px", textAlign: "left", color: T.textSub, maxWidth: "180px" }}>
-                        <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ display: "block", wordBreak: "break-word" }} title={peer.name ?? ""}>
                           {peer.name ?? "—"}
                         </span>
                       </td>

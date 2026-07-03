@@ -20,7 +20,81 @@
 
 ---
 
-## ✅ Session 2026-06-29 (latest)
+## ✅ Session 2026-07-01 (latest — Kairos rename + wiring)
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Platform rename FinanceOS → Kairos | Claude | 2026-07-01 | layout.tsx title, package.json, DashboardShell sidebar brand + tagline "Right signal. Right moment." |
+| BOM + encoding corruption fix | Claude | 2026-07-01 | PS5.1 corruption fixed across 14+ files; curly quotes, em dashes, emoji sequences all cleaned; build restored clean |
+| market_focus wired to ResearchAgent | Claude | 2026-07-01 | `gatherSymbols()` queries profiles.market_focus; non-US regions append region ETFs (India/Europe/Asia/Crypto/Global); marketFocus passed to thesis LLM prompt |
+| Learner schedule: weekly (Fridays only) | Claude | 2026-07-01 | Cron-triggered learner now skips Mon–Thu; only runs Fri 5 PM; manual triggers unrestricted |
+| Cron script updated: trader + schedule | Claude | 2026-07-01 | Added `trader` endpoint; corrected schedule comments (08:00 brief → 09:00 research → 09:45 trader → 16:15 pos-monitor → 16:30 brief → 17:00 nav → Fri learner) |
+| market_focus multi-select chip UI | Claude | 2026-07-01 | Settings page: chip buttons US/India/Europe/Asia/Crypto/Global; comma-separated text in DB |
+| Weekend + holiday skip in research cron | Claude | 2026-07-01 | research/cron and learner routes skip weekends + 2026 US holidays |
+| Newsletter wired: EDGAR, proposals, weights | Claude | 2026-07-01 | 3 new data queries + 3 new email sections; deployed as v4 |
+| ARCHITECTURE.md + WORK_LOG updated | Claude | 2026-07-01 | Full session 2026-07-01 documented |
+
+---
+
+## ⚠️ Known Pending
+
+| Item | Priority | Notes |
+|---|---|---|
+| Server restart required | HIGH | Running `npm start` with old build. `Ctrl+C` then `npm start` to apply Kairos rename + all July 2026 changes |
+| TraderAgent → Robinhood place_equity_order wire | HIGH | Approve button in SmartMoney updates DB status but does NOT call `place_equity_order` on account 605420650 |
+| InfoTooltip wiring across dashboard pages | MED | `components/dashboard/InfoTooltip.tsx` exists but not wired to individual cards |
+| Schedule: Task Scheduler tasks need creating | MED | Windows Task Scheduler tasks documented in `scripts/run-agents.ps1` but not yet created as scheduled tasks |
+
+---
+
+## ✅ Session 2026-07-01 (continued)
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Apply migration 035 — evidence_records | Vaibhav + Claude | 2026-07-01 | Applied. evidence_records (immutable), corporate_actions, macro_signals (vintage_at, indicators_json) |
+| Apply migration 036 — strategy_registry | Vaibhav + Claude | 2026-07-01 | Applied. strategy_versions, experiment_runs, agent_signals←version_id, paper_performance←spy_nav/alpha; seeds v1.0.0 champion |
+| Apply migration 037 — trader_proposals | Vaibhav + Claude | 2026-07-01 | Applied. trade_proposals (HARDCODED 605420660), decision_journal |
+| SEC EDGAR Form 4 insider trades | Claude | 2026-07-01 | `/api/markets/edgar-insiders` — SEC.gov CIK lookup + Form 4 XML parse; writes notable buys to evidence_records; SmartMoneyPage "Form 4 (EDGAR)" tab with lazy-load table |
+| knowledge/event-patterns/ population | Claude | 2026-07-01 | Created `event-patterns/macro-events.md` (Fed/CPI/NFP/ISM/auctions + agent scoring adjustments), `event-patterns/earnings-patterns.md` (PEAD/SUE/red flags/sector patterns), `signal-library/proven-signals.md` (10 signals + anti-signals + correlation matrix); KNOWLEDGE_INDEX updated |
+
+---
+
+## ✅ Session 2026-07-01 (latest)
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Phase 0: `lib/data/quotes.ts` — deterministic quote adapter | Claude | 2026-07-01 | AV GLOBAL_QUOTE → price_cache fallback; freshness/stale detection; `computeFillPrice` (ask + 0.05% slippage) |
+| Phase 0: `lib/data/technicals.ts` — RSI/EMA from candles | Claude | 2026-07-01 | Pure-math RSI(14), EMA(20/50) from OHLCV; `scoreTechnicals()` → 0-100 |
+| Phase 0: `lib/data/scores.ts` — `computeScores()` | Claude | 2026-07-01 | All 5 scores deterministic: fundamental from AV OVERVIEW, technical from candles, sentiment from social, macro from macro_signals table, insider from AV transactions |
+| Phase 0: `lib/data/evidence.ts` — evidence write helpers | Claude | 2026-07-01 | `writeEvidence`, `writeBatchEvidence`; SOURCE_TIERS map; fire-and-forget inserts to evidence_records |
+| Phase 0: Migration 034 — paper_order_events | Claude + Vaibhav | 2026-07-01 | **Applied.** Append-only immutable event log; UPDATE/DELETE blocked by trigger; price provenance columns on paper_trades |
+| Phase 0: `processSymbol` rewrite in research-agent | Claude | 2026-07-01 | LLM no longer generates scores; fetches AV OVERVIEW + candles → computeScores() → LLM writes thesis+direction only (512 tokens, Groq) |
+| Phase 0: paper-trade route price upgrade | Claude | 2026-07-01 | Replaces execClaude/MCP price fetch with `getQuote()` + `computeFillPrice()`; writes immutable fill event to paper_order_events; SPY benchmark alpha tracking; decision journal entries |
+| Phase 1: `lib/data/evidence.ts` + Migration 035 — evidence_records | Claude | 2026-07-01 | Migration **NOT YET APPLIED**. evidence_records table (append-only immutable); corporate_actions table; macro_signals altered (vintage_at, indicators_json) |
+| Phase 1: `/api/agents/corporate-actions` — splits/dividends sync | Claude | 2026-07-01 | AV SPLITS + DIVIDENDS for held + watchlist symbols; upserts corporate_actions; GET filters by symbol/type/since |
+| Phase 2: Migration 036 — strategy_registry | Claude | 2026-07-01 | **NOT YET APPLIED.** strategy_versions table; experiment_runs table; agent_signals ← strategy_version_id; paper_performance ← spy_nav/spy_return_pct/alpha_pct; seeds v1.0.0 Phase0-Baseline as champion |
+| Phase 2: `/api/agents/backtest` — JS backtest engine | Claude | 2026-07-01 | Replays agent_signals vs price_cache candles; eligibility gate (Sharpe≥0.5, win_rate≥40%, drawdown<25%, min 20 trades, expectancy>0); persists to experiment_runs; SPY alpha |
+| Phase 2: `/api/strategies/versions` — champion/challenger governance | Claude | 2026-07-01 | GET: list versions + nested runs; POST: promote_champion, retire, reject, or create new version |
+| Phase 4: `/api/journal` — decision journal CRUD | Claude | 2026-07-01 | GET: filter by symbol/type/resolved; POST: create entry or resolve with outcome; links signal→fill→outcome |
+| Phase 5: Migration 037 — trader_proposals | Claude | 2026-07-01 | **NOT YET APPLIED.** trade_proposals table (30-min expiry); decision_journal table; account_number default 605420650 |
+| Phase 5: `/api/agents/trader` — TraderAgent proposals + approval | Claude | 2026-07-01 | HARDCODED AGENTIC_ACCOUNT=605420650; builds proposals from qualifying signals; approve/reject; expiry check; account mismatch safety block; kill-switch re-check at approval |
+| AgentsPage — Experiments tab (🔬) | Claude | 2026-07-01 | Strategy versions list (champion badge, state, experiment metrics); Run Backtest button → /api/agents/backtest; results grid with gate pass/fail and failure reasons |
+| AgentsPage — Proposals tab (⚡) | Claude | 2026-07-01 | Pending proposals list; Approve/Reject buttons; price drift warning (>3%); expiry countdown; risk check badges; "Generate Proposals" trigger |
+
+## ✅ Session 2026-06-30
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Migration 032 — asset_class on agent_signals | Claude + Vaibhav | 2026-06-30 | `asset_class` column; seeds ETF/metal symbols; index |
+| Migration 033 — learner controls | Claude + Vaibhav | 2026-06-30 | `learning_priors` (15 Bayesian priors), `learner_config` (per-dimension toggles), `signal_weights_history` (rollback snapshots); `mutations_paused`/`pause_reason` on `learner_runs` |
+| LearnerAgent full rewrite — true DeepSeek tool-use agent | Claude | 2026-06-30 | 9 tools: read_priors, query_learner_config, query_signals_with_outcomes, query_score_correlation, query_macro_context, read_past_learnings, write_hypothesis, update_signal_weight, finish; auto-guard blocks mutation if last 3 runs win_rate < 35%; phase gate: requires 10+ closed trades |
+| Learner Controls tab + Weight History tab in AgentsPage | Claude | 2026-06-30 | Per-dimension learn_from/allow_mutation toggles + min_confidence; weight history table with rollback + factory reset |
+| `/api/agents/learner-controls` route (GET/PATCH/POST) | Claude | 2026-06-30 | GET: config + last 30 snapshots; PATCH: update dimension config; POST: rollback or factory_reset |
+| Metals basket cap fix in research-agent | Claude | 2026-06-30 | Metals (GLD/SLV/GDX/IAU) were cut by 10-symbol cap; fixed to append unconditionally after cap |
+
+---
+
+## ✅ Session 2026-06-29
 
 | Task | Agent | Completed | Notes |
 |---|---|---|---|
@@ -52,10 +126,9 @@
 
 | Task | Assigned To | Status | Date | Notes |
 |---|---|---|---|---|
-| Earnings cron deployment | Builder | planned | — | Route exists at /api/agents/research/cron; migration 022 created; needs prod APP_URL |
-| Gemini API key + routing | Vaibhav | planned | — | Key not provided yet; slot reserved in LLM router |
-| Signal backtest validation | Builder | planned | — | Must validate signals before live trading |
-| DeepSeek learning loop activation | Builder | planned | — | Needs 10+ closed trades first; currently locked in Phase 0 |
+| Signal backtest validation | Builder | planned | — | Run `/api/agents/backtest` after signals accumulate; verify gate metrics |
+| knowledge/event-patterns/ population | Builder | planned | — | Fed decision patterns, earnings behavior feeds LearnerAgent |
+| Mobile push notifications for proposals | Builder | planned | — | Phase 5; low priority until proposals flow is exercised |
 
 ---
 
@@ -63,10 +136,10 @@
 
 | Task | Blocked By | Notes |
 |---|---|---|
-| Gemini routing | Gemini API key | Vaibhav to provide key |
-| Phase 1 weight mutation | 10+ closed trades | Learning loop cannot run yet; enforce Phase 0 gate |
-| Earnings cron prod run | Real APP_URL | pg_cron migration 022 ready; blocked until prod domain set |
-| Supabase edge fn secrets | CLI access | Set GROQ_API_KEY, CRON_SECRET, APP_URL via supabase secrets set |
+| LearnerAgent weight mutation (Phase 1 gate) | 10+ closed paper trades | Auto-guard + phase gate built; waiting on paper trading data |
+| Experiments tab metrics | Migration 036 not applied | spy_nav/spy_return_pct/alpha_pct columns missing until 036 applied |
+| Proposals tab | Migration 037 not applied | trade_proposals + decision_journal tables missing until 037 applied |
+| TraderAgent actual Robinhood order | Proposals tab approved proposal | Route is built; Robinhood MCP call must be triggered from UI after user approves |
 
 ---
 

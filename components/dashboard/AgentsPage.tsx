@@ -1,12 +1,14 @@
 "use client";
-import { useState, lazy, Suspense } from "react";
+import { useState, lazy, Suspense, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import AgentComparisonCard from "@/components/dashboard/AgentComparisonCard";
 import PageHeader from "@/components/dashboard/PageHeader";
 import AgentDiagram from "@/components/dashboard/AgentDiagram";
+import InfoTooltip from "@/components/dashboard/InfoTooltip";
 const SignalCharts = lazy(() => import("@/components/charts/SignalChartsWrapper"));
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
+const MermaidChart = lazy(() => import("@/components/dashboard/MermaidChart"));
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -56,7 +58,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [running, setRunning] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<string | null>(null);
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
-  const [tab, setTab] = useState<"signals" | "paper" | "weights" | "log" | "architecture" | "backtest">("paper");
+  const [tab, setTab] = useState<"signals" | "paper" | "weights" | "log" | "architecture" | "backtest" | "brain" | "llm-config" | "learner-ctrl" | "weight-history" | "experiments" | "proposals">("paper");
   const [minScore, setMinScore] = useState<number>(strategy?.min_analyst_score ?? 70);
   const [maxPos, setMaxPos] = useState<number>(strategy?.max_position_pct ?? 5);
   const [maxTrades, setMaxTrades] = useState<number>(strategy?.max_daily_trades ?? 3);
@@ -64,6 +66,75 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [configToast, setConfigToast] = useState("");
   const [expandedRuns, setExpandedRuns] = useState<string | null>(null);
   const [selectedDiagramAgent, setSelectedDiagramAgent] = useState("research-agent");
+  const [learnerRuns, setLearnerRuns] = useState<any[]>([]);
+  const [learnerRunIdx, setLearnerRunIdx] = useState(0);
+  const [agentConfigs, setAgentConfigs] = useState<any[]>([]);
+  const [configUpdating, setConfigUpdating] = useState<string | null>(null);
+  const [configUpdateToast, setConfigUpdateToast] = useState("");
+  const [learnerConfig, setLearnerConfig] = useState<any[]>([]);
+  const [weightHistory, setWeightHistory] = useState<any[]>([]);
+  const [learnerCtrlSaving, setLearnerCtrlSaving] = useState<string | null>(null);
+  const [learnerCtrlToast, setLearnerCtrlToast] = useState("");
+  const [strategyVersions, setStrategyVersions] = useState<any[]>([]);
+  const [proposals, setProposals] = useState<any[]>([]);
+  const [backtestRunning, setBacktestRunning] = useState(false);
+  const [backtestResult, setBacktestResult] = useState<any | null>(null);
+  const [proposalToast, setProposalToast] = useState("");
+
+  useEffect(() => {
+    fetch("/api/agents/learner-brain").then(r => r.json()).then(d => { if (d.runs) setLearnerRuns(d.runs); }).catch(() => {});
+    fetch("/api/agents/agent-config").then(r => r.json()).then(d => { if (d.configs) setAgentConfigs(d.configs); }).catch(() => {});
+    fetch("/api/agents/learner-controls").then(r => r.json()).then(d => {
+      if (d.config) setLearnerConfig(d.config);
+      if (d.history) setWeightHistory(d.history);
+    }).catch(() => {});
+    fetch("/api/strategies/versions").then(r => r.json()).then(d => { if (d.versions) setStrategyVersions(d.versions); }).catch(() => {});
+    fetch("/api/agents/trader").then(r => r.json()).then(d => { if (d.proposals) setProposals(d.proposals); }).catch(() => {});
+  }, []);
+
+  async function updateLearnerConfig(dimension: string, field: string, value: unknown) {
+    setLearnerCtrlSaving(dimension + "." + field);
+    try {
+      const r = await fetch("/api/agents/learner-controls", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dimension, [field]: value }) });
+      if (r.ok) {
+        setLearnerConfig(prev => prev.map(c => c.dimension === dimension ? { ...c, [field]: value } : c));
+        setLearnerCtrlToast("Saved!");
+        setTimeout(() => setLearnerCtrlToast(""), 2000);
+      }
+    } catch {}
+    setLearnerCtrlSaving(null);
+  }
+
+  async function rollbackWeights(historyId: number) {
+    if (!confirm("Roll back signal weights to this snapshot?")) return;
+    try {
+      const r = await fetch("/api/agents/learner-controls", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "rollback", history_id: historyId }) });
+      const d = await r.json();
+      if (d.success) { setLearnerCtrlToast("Weights rolled back!"); setTimeout(() => setLearnerCtrlToast(""), 3000); router.refresh(); }
+      else setLearnerCtrlToast("Error: " + d.error);
+    } catch {}
+  }
+
+  async function factoryResetWeights() {
+    if (!confirm("Reset ALL signal weights to equal 0.20 each? This cannot be undone (old values will be saved to history).")) return;
+    try {
+      const r = await fetch("/api/agents/learner-controls", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "factory_reset" }) });
+      const d = await r.json();
+      if (d.success) { setLearnerCtrlToast("Factory reset done!"); setTimeout(() => setLearnerCtrlToast(""), 3000); router.refresh(); }
+      else setLearnerCtrlToast("Error: " + d.error);
+    } catch {}
+  }
+
+  async function updateAgentConfig(agent_name: string, field: string, value: unknown) {
+    setConfigUpdating(agent_name);
+    try {
+      await fetch("/api/agents/agent-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent_name, [field]: value }) });
+      setAgentConfigs(prev => prev.map(c => c.agent_name === agent_name ? { ...c, [field]: value } : c));
+      setConfigUpdateToast("Saved!");
+      setTimeout(() => setConfigUpdateToast(""), 2000);
+    } catch {}
+    setConfigUpdating(null);
+  }
 
   async function saveStrategyConfig() {
     if (!strategy?.id) return;
@@ -295,6 +366,12 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           { key: "log", label: "Learning Log" },
           { key: "backtest", label: "Backtest" },
           { key: "architecture", label: "Architecture" },
+          { key: "brain", label: "🧠 Learner Brain" },
+          { key: "llm-config", label: "⚙ LLM Config" },
+          { key: "learner-ctrl", label: "🎛 Learner Controls" },
+          { key: "weight-history", label: "📜 Weight History" },
+          { key: "experiments", label: "🔬 Experiments" },
+          { key: "proposals", label: "⚡ Proposals" },
         ] as const).map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             style={{ padding: "7px 16px", borderRadius: "7px", border: "none", cursor: "pointer", fontSize: "12px", fontWeight: 500, background: tab === t.key ? T.card : "transparent", color: tab === t.key ? T.text : T.muted }}>
@@ -392,35 +469,87 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
               <SignalCharts signals={signals} />
             </Suspense>
           )}
+        {/* Screener parameters transparency card */}
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px 20px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+            <span style={{ fontWeight: 600, fontSize: "13px" }}>Screener Parameters</span>
+            <span style={{ fontSize: "10px", color: T.muted, background: T.surface, padding: "2px 7px", borderRadius: "4px" }}>Auto-runs before each research cycle</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+            <div>
+              <div style={{ fontSize: "9px", fontWeight: 700, color: T.amber, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: "6px" }}>Momentum Bucket (pass 1)</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+                {[
+                  ["Revenue growth", "> 15% YoY"],
+                  ["Earnings growth", "> 10% YoY"],
+                  ["RSI (checked per symbol)", "> 60 momentum"],
+                  ["Price vs 50-day MA", "Price > MA (uptrend)"],
+                  ["Market cap", "> $2B"],
+                  ["Max candidates", "3 symbols added"],
+                ].map(([k, v]) => (
+                  <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
+                    <span style={{ color: T.muted }}>{k}</span>
+                    <span style={{ color: T.text, fontFamily: "monospace", fontSize: "10px" }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: "9px", fontWeight: 700, color: T.accent, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: "6px" }}>Value Bucket (pass 2)</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+                {[
+                  ["P/E ratio", "0 < PE < 18"],
+                  ["Market cap", "> $2B"],
+                  ["FCF yield (checked)", "High FCF preference"],
+                  ["Insider buying (checked)", "AV Form 4 + EDGAR"],
+                  ["Total symbol cap", "10 per cycle (+4 metals)"],
+                  ["Always included", "GLD, SLV, GDX, IAU"],
+                ].map(([k, v]) => (
+                  <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
+                    <span style={{ color: T.muted }}>{k}</span>
+                    <span style={{ color: T.text, fontFamily: "monospace", fontSize: "10px" }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: "10px", fontSize: "10px", color: T.muted, borderTop: `1px solid ${T.border}`, paddingTop: "8px" }}>
+            Symbol sources in priority order: (1) Robinhood holdings → SELL signals allowed · (2) Active watchlist · (3) Screener candidates (long-only) · (4) Metals basket (always)
+          </div>
+        </div>
+
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+          <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "14px" }}>
+            Signals ({signals.length})
+          </div>
           {signals.length === 0 ? (
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "30px 0" }}>No signals yet. Run ResearchAgent first.</div>
           ) : (
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-              <thead>
-                <tr style={{ color: T.muted }}>
-                  {["Symbol", "Direction", "Score", "Status", "Rationale", "Date"].map(h => (
-                    <th key={h} style={{ padding: "5px 12px 8px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {signals.map(s => (
-                  <tr key={s.id} style={{ borderTop: `1px solid ${T.border}` }}>
-                    <td style={{ padding: "9px 12px 9px 0", fontWeight: 700, cursor: "pointer", color: T.accent }} onClick={() => setChartSymbol(s.symbol)}>{s.symbol} ↗</td>
-                    <td style={{ padding: "9px 12px 9px 0" }}>{dirBadge(s.direction)}</td>
-                    <td style={{ padding: "9px 12px 9px 0", fontWeight: 600, color: (s.analyst_score ?? 0) >= 75 ? T.green : (s.analyst_score ?? 0) >= 50 ? T.amber : T.red }}>{s.analyst_score ?? "—"}</td>
-                    <td style={{ padding: "9px 12px 9px 0" }}>
-                      <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "4px", background: s.status === "paper_traded" ? T.greenBg : s.status === "pending" ? T.amberBg : T.border, color: s.status === "paper_traded" ? T.green : s.status === "pending" ? T.amber : T.muted }}>
-                        {s.status}
-                      </span>
-                    </td>
-                    <td style={{ padding: "9px 12px 9px 0", color: T.textSub, maxWidth: "300px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.rationale ?? "—"}</td>
-                    <td style={{ padding: "9px 0", color: T.muted, fontSize: "11px" }}>{s.created_at ? new Date(s.created_at).toLocaleDateString() : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+              {signals.map(s => (
+                <div key={s.id} style={{ borderTop: `1px solid ${T.border}`, padding: "12px 0" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "6px" }}>
+                    <span style={{ fontWeight: 700, fontSize: "14px", cursor: "pointer", color: T.accent, minWidth: "52px" }} onClick={() => setChartSymbol(s.symbol)}>{s.symbol} ↗</span>
+                    {dirBadge(s.direction)}
+                    <span style={{ fontWeight: 600, fontSize: "13px", color: (s.analyst_score ?? 0) >= 75 ? T.green : (s.analyst_score ?? 0) >= 50 ? T.amber : T.red, display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                      Score: {s.analyst_score ?? "—"}
+                      <InfoTooltip title="Analyst Score" body="Composite 0–100 from 5 weighted dimensions. Threshold for proposal generation is set in Settings → Strategy." bullets={["≥ 75: strong buy candidate", "50–74: moderate — review thesis before approving", "< 50: no proposal generated"]} placement="right" />
+                    </span>
+                    <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "4px", background: s.status === "paper_traded" ? T.greenBg : s.status === "pending" ? T.amberBg : T.border, color: s.status === "paper_traded" ? T.green : s.status === "pending" ? T.amber : T.muted }}>
+                      {s.status}
+                    </span>
+                    <span style={{ marginLeft: "auto", color: T.muted, fontSize: "11px", whiteSpace: "nowrap" }}>
+                      {s.created_at ? new Date(s.created_at).toLocaleDateString() : "—"}
+                    </span>
+                  </div>
+                  {s.rationale && (
+                    <div style={{ fontSize: "12px", color: T.textSub, lineHeight: "1.6", paddingLeft: "62px" }}>
+                      {s.rationale}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </div>
         {chartSymbol && (
@@ -869,6 +998,551 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
             </div>
           </div>
 
+        </div>
+      )}
+
+      {/* Learner Brain tab — per-run Mermaid diagrams */}
+      {tab === "brain" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          {learnerRuns.length === 0 ? (
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "40px 20px", textAlign: "center" }}>
+              <div style={{ fontSize: "32px", marginBottom: "12px" }}>🧠</div>
+              <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "6px" }}>No learner runs yet</div>
+              <div style={{ fontSize: "13px", color: T.muted }}>Run LearnerAgent — it will store a per-run reasoning diagram here.</div>
+            </div>
+          ) : (
+            <>
+              {/* Run selector */}
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {learnerRuns.map((r, i) => (
+                  <button key={r.id} onClick={() => setLearnerRunIdx(i)}
+                    style={{ padding: "6px 14px", borderRadius: "8px", border: `1px solid ${learnerRunIdx === i ? T.accent : T.border}`, background: learnerRunIdx === i ? T.accent + "18" : "transparent", color: learnerRunIdx === i ? T.accent : T.muted, fontSize: "12px", cursor: "pointer", fontWeight: 500 }}>
+                    {r.run_date}
+                  </button>
+                ))}
+              </div>
+
+              {(() => {
+                const run = learnerRuns[learnerRunIdx];
+                if (!run) return null;
+                const hyps: any[] = run.hypotheses ?? [];
+                const wm: any[] = run.weight_mutations ?? [];
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    {/* Stats */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "12px" }}>
+                      {[
+                        { label: "Run Date", value: run.run_date, color: T.text },
+                        { label: "Signals Analyzed", value: run.signals_analyzed ?? 0, color: T.accent },
+                        { label: "Trades Closed", value: run.trades_analyzed ?? 0, color: T.text },
+                        { label: "Hypotheses", value: hyps.length, color: hyps.length > 0 ? T.amber : T.muted },
+                        { label: "Weight Mutations", value: wm.length, color: wm.length > 0 ? T.green : T.muted },
+                      ].map(s => (
+                        <div key={s.label} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 16px" }}>
+                          <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "5px" }}>{s.label}</div>
+                          <div style={{ fontSize: "22px", fontWeight: 700, color: s.color }}>{s.value}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Mermaid reasoning diagram */}
+                    {run.mermaid_per_run && (
+                      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+                        <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "14px" }}>Reasoning Diagram — {run.model_used ?? "DeepSeek"}</div>
+                        <div style={{ fontSize: "11px", color: T.muted, marginBottom: "14px" }}>Generated by LearnerAgent tool-use loop. Shows actual query steps, correlations found, and decision path.</div>
+                        <Suspense fallback={<div style={{ color: T.muted, fontSize: "12px" }}>Loading Mermaid…</div>}>
+                          <MermaidChart chart={run.mermaid_per_run} />
+                        </Suspense>
+                        <details style={{ marginTop: "12px" }}>
+                          <summary style={{ fontSize: "11px", color: T.muted, cursor: "pointer" }}>Raw Mermaid source</summary>
+                          <pre style={{ marginTop: "8px", fontSize: "11px", color: T.textSub, background: T.surface, padding: "10px", borderRadius: "6px", overflowX: "auto", whiteSpace: "pre-wrap" }}>{run.mermaid_per_run}</pre>
+                        </details>
+                      </div>
+                    )}
+
+                    {/* Hypotheses */}
+                    {hyps.length > 0 && (
+                      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+                        <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "14px" }}>Hypotheses ({hyps.length})</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                          {hyps.map((h: any, i: number) => (
+                            <div key={i} style={{ background: T.surface, borderRadius: "8px", padding: "12px 14px", borderLeft: `3px solid ${(h.confidence ?? 0) >= 0.7 ? T.green : T.amber}` }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                                <span style={{ fontWeight: 600, fontSize: "13px" }}>{h.claim}</span>
+                                <span style={{ fontSize: "11px", color: (h.confidence ?? 0) >= 0.7 ? T.green : T.amber, fontWeight: 600 }}>{Math.round((h.confidence ?? 0) * 100)}%</span>
+                              </div>
+                              {h.evidence && <div style={{ fontSize: "12px", color: T.textSub }}>{h.evidence}</div>}
+                              {h.action && <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>Action: {h.action}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Weight mutations */}
+                    {wm.length > 0 && (
+                      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+                        <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "14px" }}>Weight Mutations ({wm.length})</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                          {wm.map((m: any, i: number) => (
+                            <div key={i} style={{ background: T.surface, borderRadius: "8px", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <div>
+                                <span style={{ fontWeight: 600, fontSize: "13px", color: T.accent }}>{m.dimension}</span>
+                                <span style={{ fontSize: "12px", color: T.textSub, marginLeft: "8px" }}>{m.reason}</span>
+                              </div>
+                              <div style={{ fontSize: "12px", fontFamily: "monospace", color: T.green }}>{m.old?.toFixed(3) ?? "?"} → {m.new?.toFixed(3) ?? "?"}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* LLM Config tab — per-agent model selector */}
+      {tab === "llm-config" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: "14px" }}>Agent LLM Configuration</div>
+                <div style={{ fontSize: "12px", color: T.muted, marginTop: "3px" }}>Change which LLM each agent uses — no code deploy needed</div>
+              </div>
+              {configUpdateToast && <span style={{ fontSize: "12px", color: T.green }}>{configUpdateToast}</span>}
+            </div>
+            {agentConfigs.length === 0 ? (
+              <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "30px 0" }}>
+                Apply migration 031 in Supabase dashboard first — creates the agent_config table.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {agentConfigs.map(cfg => (
+                  <div key={cfg.agent_name} style={{ background: T.surface, borderRadius: "10px", padding: "14px 16px", display: "grid", gridTemplateColumns: "140px 1fr 80px 80px 100px", gap: "12px", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: "13px" }}>{cfg.agent_name}</div>
+                      {cfg.notes && <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>{cfg.notes}</div>}
+                    </div>
+                    <select
+                      value={cfg.model}
+                      onChange={e => updateAgentConfig(cfg.agent_name, "model", e.target.value)}
+                      disabled={configUpdating === cfg.agent_name}
+                      style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "6px", color: T.text, fontSize: "12px", padding: "5px 8px", outline: "none", cursor: "pointer" }}
+                    >
+                      <optgroup label="DeepSeek">
+                        <option value="deepseek-chat">deepseek-chat (V3 — cheap)</option>
+                        <option value="deepseek-reasoner">deepseek-reasoner (R1 — slower)</option>
+                      </optgroup>
+                      <optgroup label="Groq (Free)">
+                        <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
+                        <option value="llama-3.1-8b-instant">llama-3.1-8b-instant (fastest)</option>
+                        <option value="deepseek-r1-distill-llama-70b">deepseek-r1-distill-llama-70b</option>
+                      </optgroup>
+                      <optgroup label="Claude (Paid)">
+                        <option value="claude-haiku-4-5">claude-haiku-4-5 (fast/cheap)</option>
+                        <option value="claude-sonnet-4-6">claude-sonnet-4-6 (best)</option>
+                      </optgroup>
+                    </select>
+                    <div style={{ fontSize: "11px", color: T.muted, textAlign: "right" }}>
+                      <div>tokens</div>
+                      <input type="number" min={256} max={8192} step={256} value={cfg.max_tokens ?? 2048}
+                        onChange={e => updateAgentConfig(cfg.agent_name, "max_tokens", Number(e.target.value))}
+                        style={{ width: "72px", background: T.card, border: `1px solid ${T.border}`, borderRadius: "5px", color: T.text, fontSize: "12px", padding: "3px 6px", outline: "none", marginTop: "3px", textAlign: "right" }} />
+                    </div>
+                    <div style={{ fontSize: "11px", color: T.muted, textAlign: "right" }}>
+                      <div>temp</div>
+                      <input type="number" min={0} max={2} step={0.1} value={cfg.temperature ?? 0.3}
+                        onChange={e => updateAgentConfig(cfg.agent_name, "temperature", Number(e.target.value))}
+                        style={{ width: "56px", background: T.card, border: `1px solid ${T.border}`, borderRadius: "5px", color: T.text, fontSize: "12px", padding: "3px 6px", outline: "none", marginTop: "3px", textAlign: "right" }} />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span style={{ fontSize: "11px", color: T.muted }}>enabled</span>
+                      <div
+                        onClick={() => updateAgentConfig(cfg.agent_name, "enabled", !cfg.enabled)}
+                        style={{ width: "36px", height: "20px", borderRadius: "10px", background: cfg.enabled ? T.accent : T.border, cursor: "pointer", position: "relative", transition: "background 0.2s" }}>
+                        <div style={{ position: "absolute", top: "3px", left: cfg.enabled ? "18px" : "3px", width: "14px", height: "14px", borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Learner Controls tab */}
+      {tab === "learner-ctrl" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: "14px" }}>Learner Input Controls</div>
+                <div style={{ fontSize: "12px", color: T.muted, marginTop: "3px" }}>Toggle which score dimensions LearnerAgent analyzes and can mutate. Disable a dimension to freeze it.</div>
+              </div>
+              {learnerCtrlToast && <span style={{ fontSize: "12px", color: T.green }}>{learnerCtrlToast}</span>}
+            </div>
+            {learnerConfig.length === 0 ? (
+              <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "30px 0" }}>
+                Apply migration 033 in Supabase dashboard — creates learner_config table.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "180px 1fr 1fr 100px", gap: "10px", padding: "6px 12px", fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                  <div>Dimension</div><div>Learn From</div><div>Allow Mutation</div><div>Min Confidence</div>
+                </div>
+                {learnerConfig.map(cfg => (
+                  <div key={cfg.dimension} style={{ background: T.surface, borderRadius: "10px", padding: "12px 16px", display: "grid", gridTemplateColumns: "180px 1fr 1fr 100px", gap: "10px", alignItems: "center" }}>
+                    <div style={{ fontWeight: 600, fontSize: "13px", color: T.text }}>{cfg.dimension.replace("_score", "")}</div>
+                    {/* Learn From toggle */}
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <div onClick={() => updateLearnerConfig(cfg.dimension, "learn_from", !cfg.learn_from)}
+                        style={{ width: "36px", height: "20px", borderRadius: "10px", background: cfg.learn_from ? T.accent : T.border, cursor: "pointer", position: "relative" }}>
+                        <div style={{ position: "absolute", top: "3px", left: cfg.learn_from ? "18px" : "3px", width: "14px", height: "14px", borderRadius: "50%", background: "#fff", transition: "left 0.15s" }} />
+                      </div>
+                      <span style={{ fontSize: "12px", color: cfg.learn_from ? T.text : T.muted }}>{cfg.learn_from ? "On" : "Off"}</span>
+                    </div>
+                    {/* Allow Mutation toggle */}
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <div onClick={() => updateLearnerConfig(cfg.dimension, "allow_mutation", !cfg.allow_mutation)}
+                        style={{ width: "36px", height: "20px", borderRadius: "10px", background: cfg.allow_mutation ? T.green + "AA" : T.border, cursor: "pointer", position: "relative" }}>
+                        <div style={{ position: "absolute", top: "3px", left: cfg.allow_mutation ? "18px" : "3px", width: "14px", height: "14px", borderRadius: "50%", background: "#fff", transition: "left 0.15s" }} />
+                      </div>
+                      <span style={{ fontSize: "12px", color: cfg.allow_mutation ? T.green : T.muted }}>{cfg.allow_mutation ? "Allowed" : "Frozen"}</span>
+                    </div>
+                    {/* Min Confidence */}
+                    <input type="number" min={0.50} max={0.99} step={0.05} value={cfg.min_confidence ?? 0.70}
+                      onBlur={e => updateLearnerConfig(cfg.dimension, "min_confidence", parseFloat(e.target.value))}
+                      onChange={e => setLearnerConfig(prev => prev.map(c => c.dimension === cfg.dimension ? { ...c, min_confidence: parseFloat(e.target.value) } : c))}
+                      disabled={learnerCtrlSaving === cfg.dimension + ".min_confidence"}
+                      style={{ width: "80px", background: T.card, border: `1px solid ${T.border}`, borderRadius: "5px", color: T.text, fontSize: "12px", padding: "4px 8px", outline: "none", textAlign: "right" }} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Learning Priors */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+            <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "6px" }}>Bayesian Priors</div>
+            <div style={{ fontSize: "12px", color: T.muted, marginBottom: "14px" }}>Pre-seeded market principles that LearnerAgent reads as background context before analyzing any signals. Read-only — edit in Supabase if you want to add/remove.</div>
+            <div style={{ background: T.surface, borderRadius: "8px", padding: "12px 14px", fontSize: "12px", color: T.textSub, fontStyle: "italic" }}>
+              15 principles pre-seeded (insider buying reliability, RSI in downtrend, revenue acceleration, Fed rate / equity duration risk, yield curve inversion, momentum vs value regimes, etc.) from academic research (Seyhun 1986, Fama-French, O'Shaughnessy). Agent reads these as Bayesian context on every run — they bias initial hypotheses toward well-known market realities before empirical data accumulates.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Weight History tab */}
+      {tab === "weight-history" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: "14px" }}>Signal Weight History</div>
+                <div style={{ fontSize: "12px", color: T.muted, marginTop: "3px" }}>Snapshot saved before every mutation. Rollback to any prior state.</div>
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                {learnerCtrlToast && <span style={{ fontSize: "12px", color: T.green }}>{learnerCtrlToast}</span>}
+                <button onClick={factoryResetWeights}
+                  style={{ padding: "7px 14px", background: T.redBg, border: `1px solid ${T.red}40`, borderRadius: "7px", color: T.red, fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+                  ⚠ Factory Reset (0.20 each)
+                </button>
+              </div>
+            </div>
+            {weightHistory.length === 0 ? (
+              <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "30px 0" }}>
+                No weight history yet — LearnerAgent saves a snapshot before each mutation (migration 033 required).
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "110px 90px 80px 80px 80px 80px 80px 100px", gap: "8px", padding: "6px 12px", fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                  <div>Date</div><div>Trigger</div><div>Fund.</div><div>Tech.</div><div>Sent.</div><div>Macro</div><div>Insider</div><div>Action</div>
+                </div>
+                {weightHistory.map((h: any) => (
+                  <div key={h.id} style={{ background: T.surface, borderRadius: "9px", padding: "10px 14px", display: "grid", gridTemplateColumns: "110px 90px 80px 80px 80px 80px 80px 100px", gap: "8px", alignItems: "center", fontSize: "12px" }}>
+                    <div style={{ color: T.text, fontFamily: "monospace" }}>{h.run_date ?? h.snapshot_at?.slice(0, 10)}</div>
+                    <div style={{ fontSize: "10px", color: T.muted }}>{h.trigger}</div>
+                    <div style={{ fontFamily: "monospace", color: T.textSub }}>{h.fundamental_weight?.toFixed(3) ?? "—"}</div>
+                    <div style={{ fontFamily: "monospace", color: T.textSub }}>{h.technical_weight?.toFixed(3) ?? "—"}</div>
+                    <div style={{ fontFamily: "monospace", color: T.textSub }}>{h.sentiment_weight?.toFixed(3) ?? "—"}</div>
+                    <div style={{ fontFamily: "monospace", color: T.textSub }}>{h.macro_weight?.toFixed(3) ?? "—"}</div>
+                    <div style={{ fontFamily: "monospace", color: T.textSub }}>{h.insider_weight?.toFixed(3) ?? "—"}</div>
+                    <button onClick={() => rollbackWeights(h.id)}
+                      style={{ padding: "4px 10px", background: T.accent + "18", border: `1px solid ${T.accent}40`, borderRadius: "6px", color: T.accent, fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>
+                      ↩ Rollback
+                    </button>
+                  </div>
+                ))}
+                {weightHistory.length === 0 && (
+                  <div style={{ color: T.muted, fontSize: "12px", textAlign: "center", padding: "20px 0" }}>Nothing yet. Run LearnerAgent to generate history.</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Experiments tab */}
+      {tab === "experiments" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          {/* Strategy versions list */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: "14px" }}>Strategy Versions</div>
+                <div style={{ fontSize: "12px", color: T.muted, marginTop: "3px" }}>Champion/challenger governance — only one active champion at a time</div>
+              </div>
+              <button
+                onClick={async () => {
+                  setBacktestRunning(true);
+                  setBacktestResult(null);
+                  try {
+                    const r = await fetch("/api/agents/backtest", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        date_from: new Date(Date.now() - 90 * 86400000).toISOString().split("T")[0],
+                        date_to: new Date().toISOString().split("T")[0],
+                        score_threshold: strategy?.score_threshold ?? 60,
+                        target_pct: strategy?.target_pct ?? 20,
+                        stop_loss_pct: strategy?.stop_loss_pct ?? 7,
+                        max_hold_days: 30,
+                      }),
+                    });
+                    const d = await r.json();
+                    setBacktestResult(d);
+                  } catch (e: any) { setBacktestResult({ error: e.message }); }
+                  setBacktestRunning(false);
+                }}
+                disabled={backtestRunning}
+                style={{ padding: "7px 16px", background: backtestRunning ? T.border : T.accent + "18", border: `1px solid ${T.accent}35`, borderRadius: "7px", color: backtestRunning ? T.muted : T.accent, fontSize: "12px", fontWeight: 600, cursor: backtestRunning ? "default" : "pointer" }}
+              >
+                {backtestRunning ? "Running backtest…" : "▶ Run Backtest (90d)"}
+              </button>
+            </div>
+
+            {strategyVersions.length === 0 ? (
+              <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "30px 0" }}>
+                Apply migration <a href="supabase/migrations/036_strategy_registry.sql" style={{ color: T.accent }}>036_strategy_registry.sql</a> to enable strategy versioning.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {strategyVersions.map((v: any) => (
+                  <div key={v.id} style={{ background: T.surface, borderRadius: "10px", padding: "14px 16px", border: `1px solid ${v.is_champion ? T.accent + "50" : T.border}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <span style={{ fontWeight: 700, fontSize: "13px" }}>v{v.version}</span>
+                        <span style={{ fontSize: "12px", color: T.muted }}>{v.name}</span>
+                        {v.is_champion && <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: T.accent + "18", color: T.accent }}>CHAMPION</span>}
+                        <span style={{ fontSize: "10px", padding: "2px 8px", borderRadius: "4px", background: T.surface, border: `1px solid ${T.border}`, color: T.muted }}>{v.state}</span>
+                      </div>
+                      <div style={{ fontSize: "11px", color: T.muted }}>{v.direction} · {v.horizon_days_min}–{v.horizon_days_max}d hold</div>
+                    </div>
+                    {/* Experiment runs for this version */}
+                    {v.experiment_runs?.length > 0 && (
+                      <div style={{ marginTop: "10px", borderTop: `1px solid ${T.border}`, paddingTop: "10px", display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "8px" }}>
+                        {[
+                          { label: "Win Rate", val: v.experiment_runs[0]?.win_rate != null ? (v.experiment_runs[0].win_rate * 100).toFixed(0) + "%" : "—", color: (v.experiment_runs[0]?.win_rate ?? 0) >= 0.4 ? T.green : T.red },
+                          { label: "Avg Return", val: v.experiment_runs[0]?.avg_return_pct != null ? (v.experiment_runs[0].avg_return_pct >= 0 ? "+" : "") + v.experiment_runs[0].avg_return_pct.toFixed(1) + "%" : "—", color: (v.experiment_runs[0]?.avg_return_pct ?? 0) >= 0 ? T.green : T.red },
+                          { label: "Sharpe", val: v.experiment_runs[0]?.sharpe_ratio?.toFixed(2) ?? "—", color: (v.experiment_runs[0]?.sharpe_ratio ?? 0) >= 0.5 ? T.green : T.amber },
+                          { label: "Drawdown", val: v.experiment_runs[0]?.max_drawdown_pct != null ? v.experiment_runs[0].max_drawdown_pct.toFixed(1) + "%" : "—", color: (v.experiment_runs[0]?.max_drawdown_pct ?? 99) < 25 ? T.green : T.red },
+                          { label: "Gate", val: v.experiment_runs[0]?.gate_pass ? "✓ PASS" : "✗ FAIL", color: v.experiment_runs[0]?.gate_pass ? T.green : T.red },
+                        ].map(m => (
+                          <div key={m.label} style={{ textAlign: "center" }}>
+                            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "2px" }}>{m.label}</div>
+                            <div style={{ fontSize: "14px", fontWeight: 700, color: m.color }}>{m.val}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Backtest result */}
+          {backtestResult && (
+            <div style={{ background: T.card, border: `1px solid ${backtestResult.error ? T.red : T.border}`, borderRadius: "12px", padding: "20px" }}>
+              {backtestResult.error ? (
+                <div style={{ color: T.red, fontSize: "13px" }}>Error: {backtestResult.error}</div>
+              ) : (
+                <>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                    <div style={{ fontWeight: 600, fontSize: "14px" }}>Backtest Results</div>
+                    <span style={{ fontSize: "11px", fontWeight: 700, padding: "3px 10px", borderRadius: "20px", background: backtestResult.gate_pass ? T.greenBg : T.redBg, color: backtestResult.gate_pass ? T.green : T.red, border: `1px solid ${backtestResult.gate_pass ? T.green : T.red}40` }}>
+                      {backtestResult.gate_pass ? "✓ ELIGIBLE" : "✗ NOT ELIGIBLE"}
+                    </span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "12px" }}>
+                    {[
+                      { label: "Trades", val: backtestResult.total_trades ?? "—", color: T.text },
+                      { label: "Win Rate", val: backtestResult.win_rate != null ? (backtestResult.win_rate * 100).toFixed(0) + "%" : "—", color: (backtestResult.win_rate ?? 0) >= 0.4 ? T.green : T.red },
+                      { label: "Avg Return", val: backtestResult.avg_return_pct != null ? (backtestResult.avg_return_pct >= 0 ? "+" : "") + backtestResult.avg_return_pct.toFixed(1) + "%" : "—", color: (backtestResult.avg_return_pct ?? 0) >= 0 ? T.green : T.red },
+                      { label: "Sharpe", val: backtestResult.sharpe_ratio?.toFixed(2) ?? "—", color: (backtestResult.sharpe_ratio ?? 0) >= 0.5 ? T.green : T.amber },
+                      { label: "Drawdown", val: backtestResult.max_drawdown_pct != null ? backtestResult.max_drawdown_pct.toFixed(1) + "%" : "—", color: (backtestResult.max_drawdown_pct ?? 99) < 25 ? T.green : T.red },
+                      { label: "Alpha vs SPY", val: backtestResult.alpha_pct != null ? (backtestResult.alpha_pct >= 0 ? "+" : "") + backtestResult.alpha_pct.toFixed(1) + "%" : "—", color: (backtestResult.alpha_pct ?? 0) >= 0 ? T.green : T.red },
+                    ].map(m => (
+                      <div key={m.label} style={{ background: T.surface, borderRadius: "8px", padding: "12px 14px" }}>
+                        <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "4px" }}>{m.label}</div>
+                        <div style={{ fontSize: "20px", fontWeight: 700, color: m.color }}>{m.val}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {backtestResult.gate_reasons?.length > 0 && (
+                    <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "4px" }}>
+                      {backtestResult.gate_reasons.map((r: string, i: number) => (
+                        <div key={i} style={{ fontSize: "12px", color: T.red, paddingLeft: "8px", borderLeft: `2px solid ${T.red}` }}>{r}</div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Proposals tab */}
+      {tab === "proposals" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: "14px" }}>Trade Proposals</div>
+                <div style={{ fontSize: "12px", color: T.muted, marginTop: "3px" }}>Pending approval — expire 30 min from creation. Account ••••0650 only.</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                {proposalToast && <span style={{ fontSize: "12px", color: T.green }}>{proposalToast}</span>}
+                <button
+                  onClick={async () => {
+                    try {
+                      const r = await fetch("/api/agents/trader", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+                      const d = await r.json();
+                      if (d.proposals?.length) { setProposals(prev => [...d.proposals, ...prev]); setProposalToast(`${d.created} new proposal(s)`); setTimeout(() => setProposalToast(""), 3000); }
+                      else setProposalToast(d.reason ?? d.error ?? "No new proposals");
+                      setTimeout(() => setProposalToast(""), 3000);
+                    } catch {}
+                  }}
+                  style={{ padding: "7px 14px", background: T.accent + "18", border: `1px solid ${T.accent}35`, borderRadius: "7px", color: T.accent, fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+                >
+                  ＋ Generate Proposals
+                </button>
+              </div>
+            </div>
+
+            {proposals.length === 0 ? (
+              <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "40px 0" }}>
+                <div style={{ fontSize: "28px", marginBottom: "10px" }}>⚡</div>
+                No pending proposals. Click "Generate Proposals" or apply migration <a href="supabase/migrations/037_trader_proposals.sql" style={{ color: T.accent }}>037_trader_proposals.sql</a> first.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {proposals.map((p: any) => {
+                  const expiresAt = new Date(p.approval_expires_at);
+                  const expired = expiresAt < new Date();
+                  const minutesLeft = Math.max(0, Math.round((expiresAt.getTime() - Date.now()) / 60000));
+                  const priceDrift = p.current_price && p.price_at_proposal
+                    ? Math.abs(p.current_price - p.price_at_proposal) / p.price_at_proposal
+                    : 0;
+
+                  return (
+                    <div key={p.id} style={{ background: T.surface, borderRadius: "10px", padding: "16px", border: `1px solid ${expired ? T.muted : p.risk_check_pass ? T.border : T.red + "40"}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                            <span style={{ fontWeight: 700, fontSize: "16px" }}>{p.symbol}</span>
+                            {dirBadge(p.side)}
+                            <span style={{ fontWeight: 600, fontSize: "14px" }}>{p.qty} shares</span>
+                            <span style={{ fontSize: "13px", color: T.muted }}>@ ${p.price_at_proposal?.toFixed(2)}</span>
+                            <span style={{ fontSize: "12px", fontWeight: 600, padding: "2px 8px", borderRadius: "4px", background: p.status === "approved" ? T.greenBg : p.status === "pending_review" ? T.amberBg : T.border, color: p.status === "approved" ? T.green : p.status === "pending_review" ? T.amber : T.muted }}>
+                              {p.status}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: "12px", color: T.textSub, maxWidth: "500px", lineHeight: "1.5" }}>{p.thesis?.slice(0, 200) ?? "No thesis"}{p.thesis?.length > 200 ? "…" : ""}</div>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0, marginLeft: "16px" }}>
+                          <div style={{ fontSize: "12px", color: T.muted, display: "flex", alignItems: "center", gap: "4px", justifyContent: "flex-end" }}>Score: <span style={{ fontWeight: 700, color: (p.analyst_score ?? 0) >= 70 ? T.green : T.amber }}>{p.analyst_score ?? "—"}</span><InfoTooltip title="Analyst Score" body="Composite score 0–100. Proposals with score above your Settings threshold are submitted for approval." placement="left" /></div>
+                          <div style={{ fontSize: "11px", color: expired ? T.red : T.muted, marginTop: "2px" }}>
+                            {expired ? "EXPIRED" : `Expires in ${minutesLeft}m`}
+                          </div>
+                          <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>Est. ${p.estimated_value?.toFixed(0)} ({(p.pct_of_nav * 100).toFixed(1)}% NAV)</div>
+                        </div>
+                      </div>
+
+                      {/* Risk check badges */}
+                      {p.risk_check_reasons && (
+                        <div style={{ marginTop: "10px", display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                          {Object.entries(p.risk_check_reasons).map(([k, v]: [string, any]) => (
+                            <span key={k} style={{ fontSize: "10px", padding: "2px 7px", borderRadius: "4px", background: v.pass ? T.greenBg : T.redBg, color: v.pass ? T.green : T.red, fontWeight: 600 }}>
+                              {v.pass ? "✓" : "✗"} {k}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Price drift warning */}
+                      {priceDrift > 0.03 && (
+                        <div style={{ marginTop: "8px", fontSize: "11px", color: T.amber, background: T.amberBg, padding: "5px 10px", borderRadius: "5px" }}>
+                          ⚠ Price moved {(priceDrift * 100).toFixed(1)}% since proposal — review carefully before approving
+                        </div>
+                      )}
+
+                      {/* Approve / Reject buttons */}
+                      {p.status === "pending_review" && !expired && (
+                        <div style={{ marginTop: "12px", display: "flex", gap: "8px" }}>
+                          <button
+                            onClick={async () => {
+                              try {
+                                const r = await fetch("/api/agents/trader", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "approve", proposal_id: p.id }) });
+                                const d = await r.json();
+                                if (d.success) {
+                                  setProposals(prev => prev.map(pp => pp.id === p.id ? { ...pp, status: "approved" } : pp));
+                                  setProposalToast(d.price_drift_warning ?? "Approved — open Robinhood to submit order");
+                                } else setProposalToast("Error: " + (d.error ?? "unknown"));
+                                setTimeout(() => setProposalToast(""), 4000);
+                              } catch (e: any) { setProposalToast("Error: " + e.message); }
+                            }}
+                            style={{ padding: "7px 18px", background: T.greenBg, border: `1px solid ${T.green}40`, borderRadius: "7px", color: T.green, fontSize: "12px", fontWeight: 700, cursor: "pointer" }}
+                          >
+                            ✓ Approve
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                const r = await fetch("/api/agents/trader", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reject", proposal_id: p.id, reason: "Rejected by user" }) });
+                                const d = await r.json();
+                                if (d.success) {
+                                  setProposals(prev => prev.map(pp => pp.id === p.id ? { ...pp, status: "rejected" } : pp));
+                                  setProposalToast("Rejected");
+                                  setTimeout(() => setProposalToast(""), 2000);
+                                }
+                              } catch {}
+                            }}
+                            style={{ padding: "7px 14px", background: T.redBg, border: `1px solid ${T.red}40`, borderRadius: "7px", color: T.red, fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+                          >
+                            ✗ Reject
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Approved state — instruct user to submit via Robinhood */}
+                      {p.status === "approved" && (
+                        <div style={{ marginTop: "10px", fontSize: "12px", color: T.green, background: T.greenBg, padding: "8px 12px", borderRadius: "6px" }}>
+                          ✓ Approved — submit via Robinhood MCP: <code style={{ background: T.card, padding: "1px 5px", borderRadius: "3px" }}>place_equity_order</code> on account 605420650
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

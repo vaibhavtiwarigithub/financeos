@@ -55,6 +55,46 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid sector ETF" }, { status: 400 });
   }
 
+  // On weekends (Sat=6, Sun=0), markets are closed — serve most recent cached breadth
+  const dayOfWeek = new Date().getDay();
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    const supabase = createServiceClient();
+    const { data: cached } = await supabase
+      .from("sector_breadth_history")
+      .select("date, breadth_pct, advance_count, decline_count, unchanged_count, top_contributors")
+      .eq("sector", sector)
+      .order("date", { ascending: false })
+      .limit(1)
+      .single();
+
+    const { data: historyRows } = await supabase
+      .from("sector_breadth_history")
+      .select("date, breadth_pct")
+      .eq("sector", sector)
+      .order("date", { ascending: true })
+      .limit(30);
+
+    if (cached) {
+      const top = JSON.parse(cached.top_contributors ?? "[]") as Holding[];
+      return NextResponse.json({
+        sector,
+        holdings: top,
+        topContributors: top.slice(0, 5),
+        topDetractors: top.slice(-5).reverse(),
+        advanceCount: cached.advance_count ?? 0,
+        declineCount: cached.decline_count ?? 0,
+        unchangedCount: cached.unchanged_count ?? 0,
+        total: (cached.advance_count ?? 0) + (cached.decline_count ?? 0) + (cached.unchanged_count ?? 0),
+        breadthPct: parseFloat(cached.breadth_pct) || 0,
+        narrowTag: (parseFloat(cached.breadth_pct) < 40 ? "NARROW" : parseFloat(cached.breadth_pct) > 65 ? "BROAD" : "MIXED"),
+        breadthHistory: (historyRows || []).map(r => ({ date: r.date, breadth_pct: parseFloat(r.breadth_pct) || 0 })),
+        topExplainPct: 0,
+        _cached: true,
+        _cachedDate: cached.date,
+      });
+    }
+  }
+
   const avKey = process.env.ALPHA_VANTAGE_API_KEY;
   const massiveKey = process.env.MASSIVE_API_KEY;
 

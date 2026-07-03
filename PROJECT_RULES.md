@@ -1,4 +1,4 @@
-# Project Rules — FinanceOS
+﻿# Project Rules â€” Kairos
 
 ## Purpose
 

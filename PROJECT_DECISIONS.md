@@ -1,4 +1,4 @@
-# Project Decisions — FinanceOS
+﻿# Project Decisions â€” Kairos
 
 ## Purpose
 
@@ -32,7 +32,7 @@ Date: 2026-06-27
 Status: Approved
 Category: Product / Architecture / Security
 
-Context: FinanceOS needs to research continuously, run experiments, explain decisions, and eventually execute through the Robinhood agentic account without allowing probabilistic AI reasoning to bypass financial controls.
+Context: Kairos needs to research continuously, run experiments, explain decisions, and eventually execute through the Robinhood agentic account without allowing probabilistic AI reasoning to bypass financial controls.
 Decision: Separate Data, Research, Analyst, Validation, Strategy Registry, Paper Execution, Learner, Risk/Tax, Explainer, and Live Trade Gateway responsibilities. LLMs may propose and explain; deterministic services calculate prices, P&L, validation, risk, tax flags, and execution state.
 Reason: Reproducibility, fault isolation, auditability, and safety are required before paper evidence or live execution can be trusted.
 Alternatives considered: Single adaptive super-agent; batch-only quant laboratory.
@@ -82,7 +82,7 @@ Impact: Introduces Strategy Registry, experiment artifacts, eligibility reports,
 Files/features affected: Agent learning, validation worker, strategy persistence, paper engine, and review UI.
 Reversal cost: High
 
-### Decision 6: MacroSentinel — Advisory-Only Regime
+### Decision 6: MacroSentinel â€” Advisory-Only Regime
 
 Date: 2026-06-29
 Status: Approved
@@ -90,7 +90,7 @@ Category: Product / Architecture
 
 Context: MacroSentinel computes a recession danger score and regime (GREEN/YELLOW/ORANGE/RED) from 8 macro indicators. The question was whether to auto-throttle agents or halt trading when regime worsens.
 Decision: Advisory-only. MacroSentinel reports regime and shows it on the dashboard. It does NOT auto-throttle agents, reduce position sizes, or halt PaperTrader.
-Reason: Auto-throttle without the user first observing a live run creates surprising behavior. Vaibhav reviews the regime card and decides whether to act — e.g., manually tightening the risk profile or pausing trading.
+Reason: Auto-throttle without the user first observing a live run creates surprising behavior. Vaibhav reviews the regime card and decides whether to act â€” e.g., manually tightening the risk profile or pausing trading.
 Alternatives considered: Auto-throttle on ORANGE/RED; auto-reduce position_size_pct when score > 50.
 Impact: MarketsPage gauge + DashboardHome banner are display-only. No agent behavior changes automatically based on macro regime.
 Files/features affected: `/api/agents/macro-sentinel`, `macro_regime`, `macro_signals`, MarketsPage, DashboardHome

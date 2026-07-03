@@ -15,6 +15,18 @@ export async function POST(req: NextRequest) {
 
   const supabase = createServiceClient();
 
+  // Skip on weekends and US market holidays — no market data = no point running
+  const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const dayOfWeek = nowET.getDay(); // 0=Sun, 6=Sat
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    return NextResponse.json({ skipped: true, reason: "Weekend — market closed" });
+  }
+  const mmdd = `${String(nowET.getMonth() + 1).padStart(2, "0")}-${String(nowET.getDate()).padStart(2, "0")}`;
+  const US_HOLIDAYS = ["01-01","01-20","02-17","04-18","05-26","06-19","07-04","09-01","11-27","12-25"]; // 2026 approx
+  if (US_HOLIDAYS.includes(mmdd)) {
+    return NextResponse.json({ skipped: true, reason: `US market holiday (${mmdd})` });
+  }
+
   // Pause check — skip if app is paused
   const { data: cfg } = await supabase.from("strategy_config").select("app_paused").limit(1).single();
   if ((cfg as any)?.app_paused) {

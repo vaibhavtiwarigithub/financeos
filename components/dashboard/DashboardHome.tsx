@@ -241,13 +241,13 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
           <div style={{ padding: "10px 12px", background: T.dim, borderRadius: "10px", borderLeft: `3px solid ${T.blue}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
               <span style={{ fontSize: "11px", color: T.muted }}>••••8641 · READ-ONLY</span>
-              <span style={{ fontSize: "10px", fontWeight: 700, color: T.blue }}>VIEW</span>
+              <a href="/dashboard/live-portfolio" style={{ fontSize: "10px", fontWeight: 700, color: T.blue, textDecoration: "none" }}>VIEW →</a>
             </div>
             {liveSnap ? (
               <>
                 <div style={{ display: "flex", gap: "16px", marginBottom: "5px" }}>
                   <div>
-                    <div style={{ fontSize: "9px", color: T.muted, marginBottom: "1px" }}>Portfolio</div>
+                    <div style={{ fontSize: "9px", color: T.muted, marginBottom: "1px" }}>Live Equity</div>
                     <div style={{ fontSize: "14px", fontWeight: 700 }}>${Number(liveSnap.equity ?? liveSnap.portfolio_value ?? 0).toFixed(0)}</div>
                   </div>
                   <div>

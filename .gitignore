@@ -4,3 +4,6 @@ node_modules/
 .next/
 *.log
 .DS_Store
+.mcp.json
+scripts/robin.env
+scripts/logs/

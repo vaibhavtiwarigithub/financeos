@@ -1,6 +1,9 @@
-import { execClaude, parseClaudeOutput, parseTokenUsage } from "@/lib/claude-exec";
+import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
+import { callLLM } from "@/lib/llm-router";
 import { fetchSocialSentiment, SocialSentiment } from "@/lib/social-sentiment";
 import { fetchOptionsSignal, OptionsSignal } from "@/lib/options-signal";
+import { computeScores, type ComputedScores } from "@/lib/data/scores";
+import type { Candle } from "@/lib/data/technicals";
 
 // Insider scoring: fetch from Alpha Vantage INSIDER_TRANSACTIONS
 async function scoreInsider(symbol: string, avKey: string): Promise<{ score: number; summary: string }> {
@@ -71,7 +74,11 @@ export type SymbolEntry = {
   symbol: string;
   isHeld: boolean;
   isEtf: boolean;
+  assetClass?: string; // "us_equity" | "etf" | "metal"
 };
+
+const METAL_ETF_SYMBOLS = new Set(["GLD","SLV","GDX","GDXJ","IAU","UGL","GLL"]);
+const METALS_BASKET = ["GLD","SLV","GDX","IAU"];
 
 export function isEtfSymbol(s: string): boolean {
   return KNOWN_ETFS.has(s.toUpperCase());
@@ -90,26 +97,24 @@ export function extractParsed(claudeRaw: string): any {
   return null;
 }
 
-// Phase 1A — fetch current Robinhood holdings from Trading account
-export async function fetchHoldings(): Promise<string[]> {
-  const prompt = `Call the Robinhood MCP tool get_equity_positions with account_number: "${TRADING_ACCOUNT}"
-
-From the response, extract the symbol from each position (the symbol field or ticker field inside each position object).
-Return ONLY a JSON array of ticker strings (no markdown, no explanation):
-["AAPL","NVDA","TSLA"]
-
-If the tool fails or returns no positions, return: []`;
-
+// Phase 1A — fetch holdings from ALL live_account_snapshots (no MCP cold-start)
+export async function fetchHoldings(supabase: any): Promise<string[]> {
   try {
-    const stdout = await execClaude(prompt, 60000);
-    const text = parseClaudeOutput(stdout);
-    const match = text.match(/\[[\s\S]*?\]/);
-    if (!match) return [];
-    const arr: unknown[] = JSON.parse(match[0]);
-    if (!Array.isArray(arr)) return [];
-    return arr
-      .filter((s): s is string => typeof s === "string" && s.length > 0 && s.length <= 6)
-      .map(s => s.toUpperCase());
+    const { data } = await supabase
+      .from("live_account_snapshots")
+      .select("positions_json")
+      .order("captured_at", { ascending: false });
+
+    if (!data || !Array.isArray(data)) return [];
+    const symbols = new Set<string>();
+    for (const row of data) {
+      const positions = row?.positions_json;
+      if (!Array.isArray(positions)) continue;
+      for (const p of positions) {
+        if (p?.symbol && typeof p.symbol === "string") symbols.add(p.symbol.toUpperCase());
+      }
+    }
+    return Array.from(symbols);
   } catch {
     return [];
   }
@@ -189,7 +194,7 @@ Return ONLY a JSON array of stock ticker symbols (no ETFs, no REITs, no explanat
 Max 6 symbols total. If both screens fail, return []`;
 
   try {
-    const stdout = await execClaude(prompt, 90000);
+    const stdout = await execClaude(prompt, 180000);
     const text = parseClaudeOutput(stdout);
     const match = text.match(/\[[\s\S]*?\]/);
     if (!match) return [];
@@ -204,7 +209,16 @@ Max 6 symbols total. If both screens fail, return []`;
   }
 }
 
-// Gather full symbol batch: holdings + watchlist + screener candidates
+// Region ETF baskets — appended when user's market_focus includes that region
+const REGION_ETFS: Record<string, string[]> = {
+  India:  ["INDA", "EPI", "INDY", "INFY", "WIT", "HDB"],
+  Europe: ["VGK", "EWG", "EWL", "EWU", "EWQ"],
+  Asia:   ["EWJ", "EWT", "EWY", "EWH", "FXI"],
+  Crypto: ["IBIT", "BITO", "GBTC"],
+  Global: ["VT", "ACWI", "EFA"],
+};
+
+// Gather full symbol batch: holdings + watchlist + screener candidates + region ETFs from profile
 export async function gatherSymbols(
   supabase: any,
   manualOverride?: string[]
@@ -217,36 +231,69 @@ export async function gatherSymbols(
     }));
   }
 
-  const [holdings, watchlistResult, screenerSymbols] = await Promise.all([
-    fetchHoldings(),
+  // fetchAndStoreAccountSnapshot is truly fire-and-forget: not in Promise.all (avoids its 90s cold-start blocking the pipeline)
+  void fetchAndStoreAccountSnapshot();
+
+  const [holdings, watchlistResult, screenerSymbols, profileResult] = await Promise.all([
+    fetchHoldings(supabase),
     supabase.from("watchlist").select("symbol"),
     runScreener(),
-    fetchAndStoreAccountSnapshot(), // fire-and-forget alongside holdings fetch
+    supabase.from("profiles").select("market_focus").limit(1).single(),
   ]);
 
   const watchlistSymbols: string[] =
     (watchlistResult.data ?? []).map((r: any) => String(r.symbol).toUpperCase());
 
+  const rawFocus: string = (profileResult.data as any)?.market_focus ?? "US";
+  const focusRegions = rawFocus.split(",").map((s: string) => s.trim()).filter(Boolean);
+
   const result = new Map<string, SymbolEntry>();
 
   for (const sym of holdings) {
-    result.set(sym, { symbol: sym, isHeld: true, isEtf: isEtfSymbol(sym) });
+    const isMetal = METAL_ETF_SYMBOLS.has(sym);
+    result.set(sym, { symbol: sym, isHeld: true, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity" });
   }
   for (const sym of watchlistSymbols) {
     if (!result.has(sym)) {
-      result.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym) });
+      const isMetal = METAL_ETF_SYMBOLS.has(sym);
+      result.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity" });
     }
   }
 
   let screenerAdded = 0;
   for (const sym of screenerSymbols) {
     if (result.has(sym) || screenerAdded >= 3) continue;
-    result.set(sym, { symbol: sym, isHeld: false, isEtf: false });
+    result.set(sym, { symbol: sym, isHeld: false, isEtf: false, assetClass: "us_equity" });
     screenerAdded++;
   }
 
   const cap = parseInt(process.env.RESEARCH_MAX_SYMBOLS ?? "10");
-  return Array.from(result.values()).slice(0, cap);
+  const nonMetals = Array.from(result.values()).slice(0, cap);
+
+  // Metals basket — always appended on top of cap (4 extra symbols, cheap ETF analysis)
+  const metals: SymbolEntry[] = [];
+  for (const sym of METALS_BASKET) {
+    if (!result.has(sym)) {
+      metals.push({ symbol: sym, isHeld: false, isEtf: true, assetClass: "metal" });
+    }
+  }
+
+  // Region ETFs — appended for each non-US focus in profile.market_focus (max 3 per region)
+  const regionEtfs: SymbolEntry[] = [];
+  const seenAll = new Set([...result.keys(), ...metals.map(m => m.symbol)]);
+  for (const region of focusRegions) {
+    if (region === "US") continue;
+    const basket = REGION_ETFS[region] ?? [];
+    let added = 0;
+    for (const sym of basket) {
+      if (seenAll.has(sym) || added >= 3) continue;
+      seenAll.add(sym);
+      regionEtfs.push({ symbol: sym, isHeld: false, isEtf: true, assetClass: "etf" });
+      added++;
+    }
+  }
+
+  return [...nonMetals, ...metals, ...regionEtfs];
 }
 
 const DOCTRINE_PREAMBLE = `## Reasoning doctrine (non-negotiable)
@@ -370,69 +417,218 @@ Output ONLY this JSON (no markdown):
 ${heldNote}`;
 }
 
+// Fetch company overview from Alpha Vantage (fundamentals for scoring)
+async function fetchAVOverview(symbol: string, avKey: string): Promise<Record<string, string>> {
+  if (!avKey) return {};
+  try {
+    const r = await fetch(
+      `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${avKey}`,
+      { next: { revalidate: 0 } }
+    );
+    const json = await r.json();
+    return json?.Symbol ? (json as Record<string, string>) : {};
+  } catch { return {}; }
+}
+
+// Fetch daily OHLCV candles from Alpha Vantage TIME_SERIES_DAILY_ADJUSTED (100 days compact)
+// Used for deterministic RSI(14) / EMA(20,50) computation — no LLM involved
+async function fetchAVCandles(symbol: string, avKey: string): Promise<Candle[]> {
+  if (!avKey) return [];
+  try {
+    const r = await fetch(
+      `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${symbol}&outputsize=compact&apikey=${avKey}`,
+      { next: { revalidate: 0 } }
+    );
+    const json = await r.json();
+    const series = json?.["Time Series (Daily)"];
+    if (!series || typeof series !== "object") return [];
+    return Object.entries(series as Record<string, Record<string, string>>)
+      .sort(([a], [b]) => a.localeCompare(b)) // oldest first → required for EMA computation
+      .map(([date, d]) => ({
+        date,
+        open:   parseFloat(d["1. open"]          ?? "0"),
+        high:   parseFloat(d["2. high"]          ?? "0"),
+        low:    parseFloat(d["3. low"]           ?? "0"),
+        close:  parseFloat(d["5. adjusted close"] ?? d["4. close"] ?? "0"),
+        volume: parseFloat(d["6. volume"]        ?? d["5. volume"] ?? "0"),
+      }));
+  } catch { return []; }
+}
+
+// Deprecated — kept for buildSynthesisPrompt compatibility (not called by processSymbol)
+async function fetchAVSymbolData(symbol: string, avKey: string): Promise<{
+  rsi: number | null;
+  overview: Record<string, string>;
+}> {
+  const [rsiJson, overviewJson] = await Promise.all([
+    fetch(`https://www.alphavantage.co/query?function=RSI&symbol=${symbol}&interval=daily&time_period=14&series_type=close&apikey=${avKey}`)
+      .then(r => r.json()).catch(() => ({})),
+    fetch(`https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${avKey}`)
+      .then(r => r.json()).catch(() => ({})),
+  ]);
+  const rsiSeries = rsiJson?.["Technical Analysis: RSI"];
+  const rsiLatestVal = rsiSeries ? (Object.values(rsiSeries)[0] as any)?.RSI : null;
+  const rsi = rsiLatestVal != null ? parseFloat(rsiLatestVal) : null;
+  const overview: Record<string, string> = overviewJson?.Symbol ? (overviewJson as Record<string, string>) : {};
+  return { rsi: rsi != null && !isNaN(rsi) ? rsi : null, overview };
+}
+
+function buildSynthesisPrompt(
+  symbol: string,
+  isHeld: boolean,
+  isEtf: boolean,
+  rsi: number | null,
+  overview: Record<string, string>,
+  social: SocialSentiment | null,
+  options: OptionsSignal | null,
+  insider: { score: number; summary: string } | null,
+): string {
+  const heldNote = isHeld
+    ? `IMPORTANT: currently held position. If bearish, set direction "short" as exit signal.`
+    : `New candidate. direction must be "long" or "neutral" only — never "short".`;
+
+  const techBlock = rsi != null
+    ? `RSI-14 (daily): ${rsi.toFixed(1)} — ${rsi > 60 ? "OVERBOUGHT/momentum" : rsi < 40 ? "OVERSOLD/potential reversal" : "neutral range"}`
+    : `RSI-14: not available`;
+
+  const fundBlock = isEtf ? "" : overview?.Symbol ? `
+Fundamentals (Alpha Vantage Overview):
+- P/E: ${overview.PERatio ?? "n/a"} | EPS: ${overview.EPS ?? "n/a"}
+- Market cap: ${overview.MarketCapitalization ?? "n/a"}
+- Revenue growth YoY: ${overview.QuarterlyRevenueGrowthYOY ?? "n/a"}
+- Profit margin: ${overview.ProfitMargin ?? "n/a"} | ROE: ${overview.ReturnOnEquityTTM ?? "n/a"}
+- 52w range: ${overview["52WeekLow"] ?? "n/a"} – ${overview["52WeekHigh"] ?? "n/a"}
+- Sector: ${overview.Sector ?? "n/a"} | Industry: ${overview.Industry ?? "n/a"}
+- Analyst target: ${overview.AnalystTargetPrice ?? "n/a"} | Rating: ${overview.AnalystRatingStrongBuy ?? "?"} strong buy, ${overview.AnalystRatingBuy ?? "?"} buy, ${overview.AnalystRatingHold ?? "?"} hold` : "Fundamentals: not available (rate limit)";
+
+  const socialBlock = social
+    ? `Social: ${social.overall_sentiment} — StockTwits ${social.stocktwits_bullish_pct ?? "n/a"}% bullish/${social.stocktwits_bearish_pct ?? "n/a"}% bearish (${social.stocktwits_message_count ?? 0} msgs). AV news sentiment: ${social.av_news_sentiment?.toFixed(3) ?? "n/a"} (${social.av_news_articles ?? 0} articles).`
+    : "Social sentiment: not available";
+
+  const optionsBlock = options
+    ? `Options flow (nearest expiry ${options.nearestExpiry}): ${options.summary}`
+    : "";
+
+  const insiderBlock = insider
+    ? `Insider (90 days): score ${insider.score}/100. ${insider.summary}`
+    : "";
+
+  return `${DOCTRINE_PREAMBLE}
+
+You are a professional equity analyst synthesizing pre-fetched data for ${symbol}. You CANNOT call any tools — all data is provided below. Derive scores ONLY from the provided data; if a score cannot be grounded, default to 50.
+
+## Pre-fetched data for ${symbol}
+Technical:
+${techBlock}
+${fundBlock}
+${socialBlock}
+${optionsBlock}
+${insiderBlock}
+
+## Scoring rubric
+- fundamental_score (0-100): based on P/E vs typical sector, revenue growth, margins, ROE. Default 50 if data missing.
+- technical_score (0-100): RSI>60 → 70+, RSI<40 → 30-, RSI 40-60 → 45-55.
+- sentiment_score (0-100): Bullish social/news → 70+, Bearish → 30-, Neutral → 50.
+- macro_score (0-100): sector tailwinds/headwinds; use Sector field and general macro knowledge.
+- insider_score: use provided insider score directly (${insider?.score ?? 50}).
+- conviction: your overall confidence 0-100.
+- direction: "long" if analystScore likely ≥ 60 and bullish signals dominate, "neutral" otherwise. ${heldNote}
+
+Return ONLY valid JSON (no markdown, no prose):
+{"symbol":"${symbol}","fundamental_score":50,"technical_score":50,"sentiment_score":50,"macro_score":50,"insider_score":${insider?.score ?? 50},"direction":"neutral","conviction":50,"summary":"2-3 sentence thesis citing actual provided numbers","key_risks":["risk1","risk2"],"catalysts":["catalyst1","catalyst2"]}`;
+}
+
+// Phase 0: thesis-only LLM prompt. LLM receives pre-computed scores, outputs direction+narrative only.
+// No scores are generated by the LLM — all quantitative data is deterministic.
+function buildThesisOnlyPrompt(
+  symbol: string,
+  isHeld: boolean,
+  scores: ComputedScores,
+  analystScore: number,
+  scoreThreshold: number,
+  marketFocus?: string,
+): string {
+  const { fundamental_score, technical_score, sentiment_score, macro_score, insider_score, evidence } = scores;
+  const tech = evidence.technical as Record<string, unknown>;
+  const fund = evidence.fundamental as Record<string, unknown>;
+
+  const fundLines = [
+    fund.pe_ratio != null ? `P/E: ${fund.pe_ratio}` : null,
+    fund.profit_margin != null ? `margin: ${((fund.profit_margin as number) * 100).toFixed(1)}%` : null,
+    fund.roe != null ? `ROE: ${((fund.roe as number) * 100).toFixed(1)}%` : null,
+    fund.revenue_growth_yoy != null ? `rev growth: ${((fund.revenue_growth_yoy as number) * 100).toFixed(1)}%` : null,
+    fund.sector ? `sector: ${fund.sector}` : null,
+  ].filter(Boolean).join(" | ");
+
+  const techLines = [
+    tech.rsi14 != null ? `RSI-14: ${tech.rsi14}` : "RSI: n/a",
+    tech.priceVsEma50 ? `vs EMA50: ${tech.priceVsEma50}` : null,
+    tech.priceVsEma20 ? `vs EMA20: ${tech.priceVsEma20}` : null,
+    tech.trend20d ? `20d trend: ${tech.trend20d}` : null,
+  ].filter(Boolean).join(" | ");
+
+  const heldNote = isHeld
+    ? `This is a CURRENTLY HELD position. If signals are BEARISH (score < ${scoreThreshold} or strong sell), set direction "short" as an exit signal.`
+    : `New candidate. direction MUST be "long" or "neutral" ONLY — never "short".`;
+
+  const focusNote = marketFocus && marketFocus !== "US"
+    ? `\nMarket focus: ${marketFocus}. Where relevant, frame risks/catalysts in context of these regions (macro exposure, currency risk, ADR premiums, regulatory environment).`
+    : "";
+
+  return `${DOCTRINE_PREAMBLE}
+
+You are a professional equity analyst. All quantitative scores for ${symbol} were pre-computed from real fetched market data (no LLM estimation). Your ONLY job: write a coherent investment thesis, assign direction, and identify specific key risks and catalysts grounded in the data below.${focusNote}
+
+## Pre-computed scores (DO NOT override — derive thesis FROM them)
+Fundamental: ${fundamental_score}/100 | ${fundLines || "data unavailable"}
+Technical:   ${technical_score}/100 | ${techLines}
+Sentiment:   ${sentiment_score}/100
+Macro:       ${macro_score}/100 | regime: ${(evidence.macro as Record<string, unknown>).regime ?? "unknown"}
+Insider:     ${insider_score}/100
+Weighted analyst score: ${analystScore}/100 (threshold for trade: ${scoreThreshold})
+
+${heldNote}
+
+Return ONLY valid JSON (no markdown, no prose):
+{"direction":"long","summary":"2-3 sentence thesis citing specific numbers from the data above","key_risks":["specific risk 1","specific risk 2"],"catalysts":["specific catalyst 1","specific catalyst 2"]}`;
+}
+
 // Process a single symbol: research → write research_packet + agent_signal
+// Phase 0: all 5 scores computed deterministically. LLM writes thesis+direction only.
 export async function processSymbol(
   entry: SymbolEntry,
   supabase: any
 ): Promise<{ symbol: string; analystScore: number; direction: string; conviction: number; source: string; tokensIn: number; tokensOut: number; currentPrice: number | null; priceTarget: number | null; stopLoss: number | null; scoreThreshold: number }> {
-  const { symbol, isHeld, isEtf } = entry;
+  const { symbol, isHeld, isEtf, assetClass = "us_equity" } = entry;
   const source: string = isHeld ? "holding" : "screener";
-
-  // Fetch social sentiment + options flow + insider data in parallel (non-blocking — failures silenced)
   const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
-  const [socialResult, optionsResult, insiderResult] = await Promise.all([
+
+  // Phase 0: fetch all real data in parallel — no LLM-generated numbers
+  const [socialResult, optionsResult, insiderResult, avOverview, candles] = await Promise.all([
     fetchSocialSentiment(symbol).catch(() => null),
     isEtf ? Promise.resolve(null) : fetchOptionsSignal(symbol).catch(() => null),
     isEtf ? Promise.resolve(null) : scoreInsider(symbol, avKey).catch(() => null),
+    fetchAVOverview(symbol, avKey).catch(() => ({})),
+    fetchAVCandles(symbol, avKey).catch(() => [] as Candle[]),
   ]);
 
-  const prompt = isEtf
-    ? buildEtfPrompt(symbol, isHeld, socialResult)
-    : buildStockPrompt(symbol, isHeld, socialResult, optionsResult, insiderResult);
+  // Compute all 5 scores deterministically from fetched data
+  const scores = await computeScores({
+    symbol, isEtf,
+    avOverview: avOverview as Record<string, string>,
+    candles,
+    socialResult,
+    insiderResult,
+    supabase,
+  });
 
-  const stdout = await execClaude(prompt, 90000);
-  const claudeRaw = parseClaudeOutput(stdout);
-  const tokenUsage = parseTokenUsage(stdout);
-  const parsed = extractParsed(claudeRaw);
-  if (!parsed) throw new Error(`JSON parse failed for ${symbol}. Raw: ${claudeRaw.slice(0, 200)}`);
-
-  const rawDirection: string = parsed.direction ?? "neutral";
-  const signalDirection = !isHeld && rawDirection === "short" ? "neutral" : rawDirection;
-  const directionNote =
-    rawDirection !== signalDirection ? ` [short→neutral override: not a held position]` : "";
-
-  const { data: packet } = await supabase
-    .from("research_packets")
-    .insert({
-      symbol: parsed.symbol ?? symbol,
-      fundamental_score: parsed.fundamental_score,
-      technical_score: parsed.technical_score,
-      sentiment_score: parsed.sentiment_score,
-      macro_score: parsed.macro_score,
-      insider_score: parsed.insider_score,
-      summary: parsed.summary,
-      key_risks: parsed.key_risks,
-      catalysts: parsed.catalysts,
-      is_held_position: isHeld,
-      raw_data: {
-        ...parsed,
-        _original_direction: rawDirection,
-        _direction_override: rawDirection !== signalDirection,
-        _social_sentiment: socialResult ?? null,
-        _options_signal: optionsResult ?? null,
-        _insider_prefetch: insiderResult ?? null,
-      },
-    })
-    .select()
-    .single();
-
-  const [{ data: weights }, { data: strategy }] = await Promise.all([
+  const [{ data: weights }, { data: strategy }, { data: profileData }] = await Promise.all([
     supabase.from("signal_weights").select("*").single(),
     supabase.from("strategy_config").select("risk_profile, score_threshold, min_analyst_score, position_size_pct, stop_loss_pct, target_pct").single(),
+    supabase.from("profiles").select("market_focus").limit(1).single(),
   ]);
+  const marketFocus: string = (profileData as any)?.market_focus ?? "US";
 
-  // Risk profile weight overrides — aggressive shifts weight toward technical/sentiment,
-  // conservative shifts weight toward fundamental/macro
   const PROFILE_WEIGHTS: Record<string, Record<string, number>> = {
     conservative: { fundamental: 0.40, technical: 0.20, sentiment: 0.15, macro: 0.15, insider: 0.10 },
     balanced:     { fundamental: 0.30, technical: 0.25, sentiment: 0.20, macro: 0.15, insider: 0.10 },
@@ -442,7 +638,6 @@ export async function processSymbol(
   const profileKey = (strategy?.risk_profile ?? "balanced") as string;
   const profileWeights = PROFILE_WEIGHTS[profileKey] ?? PROFILE_WEIGHTS.balanced;
 
-  // Profile weights take priority; fall back to DB signal_weights; then hardcoded defaults
   const fw = profileWeights.fundamental ?? weights?.fundamental_weight ?? 0.30;
   const tw = profileWeights.technical   ?? weights?.technical_weight  ?? 0.25;
   const sw = profileWeights.sentiment   ?? weights?.sentiment_weight  ?? 0.20;
@@ -450,56 +645,95 @@ export async function processSymbol(
   const iw = profileWeights.insider     ?? weights?.insider_weight    ?? 0.10;
 
   const analystScore = Math.round(
-    (parsed.fundamental_score ?? 50) * fw +
-    (parsed.technical_score   ?? 50) * tw +
-    (parsed.sentiment_score   ?? 50) * sw +
-    (parsed.macro_score       ?? 50) * mw +
-    (parsed.insider_score     ?? 50) * iw
+    scores.fundamental_score * fw +
+    scores.technical_score   * tw +
+    scores.sentiment_score   * sw +
+    scores.macro_score       * mw +
+    scores.insider_score     * iw
   );
 
-  // Score threshold from risk profile (strategy_config.score_threshold > min_analyst_score > 60)
   const scoreThreshold = strategy?.score_threshold ?? strategy?.min_analyst_score ?? 60;
-  // Stop loss and target from risk profile
-  const stopLossPct  = strategy?.stop_loss_pct ?? 7;
-  const targetPct    = strategy?.target_pct    ?? 20;
+  const stopLossPct    = strategy?.stop_loss_pct ?? 7;
+  const targetPct      = strategy?.target_pct    ?? 20;
 
-  // Extract current price from raw_data (Claude may embed it in the JSON response)
-  // Fall back to null — PaperTrader will use its own fetchQuote price
-  const currentPrice: number | null = parsed.current_price ?? null;
+  // LLM only writes thesis + direction — no score generation
+  const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus);
+  const llmResult = await callLLM({
+    task: "screen",
+    model: "llama-3.3-70b-versatile",
+    prompt: thesisPrompt,
+    symbol,
+    agentLabel: "groq",
+    maxTokens: 512,
+  });
 
-  // price_target and stop_loss use risk-profile targetPct / stopLossPct
-  const priceTarget = currentPrice != null && currentPrice > 0
-    ? parseFloat((currentPrice * (1 + targetPct / 100)).toFixed(2))
-    : null;
-  const stopLoss = currentPrice != null && currentPrice > 0
-    ? parseFloat((currentPrice * (1 - stopLossPct / 100)).toFixed(2))
-    : null;
+  const rawText = llmResult.text;
+  const tokenUsage = { input: llmResult.tokensIn, output: llmResult.tokensOut };
+
+  // Parse thesis response — LLM only returns { direction, summary, key_risks, catalysts }
+  let thesis: { direction?: string; summary?: string; key_risks?: string[]; catalysts?: string[] } = {};
+  try {
+    const match = rawText.match(/\{[\s\S]*\}/);
+    if (match) thesis = JSON.parse(match[0]);
+  } catch { /* fallback to empty — scores are still written */ }
+
+  const rawDirection: string = thesis.direction ?? (analystScore >= scoreThreshold ? "long" : "neutral");
+  const signalDirection = !isHeld && rawDirection === "short" ? "neutral" : rawDirection;
+  const directionNote   = rawDirection !== signalDirection ? ` [short→neutral: not a held position]` : "";
+
+  const { data: packet } = await supabase
+    .from("research_packets")
+    .insert({
+      symbol,
+      fundamental_score: scores.fundamental_score,
+      technical_score:   scores.technical_score,
+      sentiment_score:   scores.sentiment_score,
+      macro_score:       scores.macro_score,
+      insider_score:     scores.insider_score,
+      summary:    thesis.summary   ?? `Analyst score: ${analystScore}. Direction: ${signalDirection}.`,
+      key_risks:  thesis.key_risks ?? [],
+      catalysts:  thesis.catalysts ?? [],
+      is_held_position: isHeld,
+      raw_data: {
+        _scores: scores,
+        _analyst_score: analystScore,
+        _profile_weights: { fw, tw, sw, mw, iw },
+        _original_direction: rawDirection,
+        _direction_override: rawDirection !== signalDirection,
+        _data_quality: scores.dataQuality,
+        _social_sentiment: socialResult ?? null,
+        _options_signal:   optionsResult ?? null,
+      },
+    })
+    .select()
+    .single();
 
   await supabase.from("agent_signals").insert({
-    symbol: parsed.symbol ?? symbol,
+    symbol,
     direction: signalDirection,
     analyst_score: analystScore,
-    conviction: parsed.conviction,
+    conviction: Math.min(100, analystScore), // Phase 0: conviction mirrors analyst score
     agent_type: "research",
     research_packet_id: packet?.id ?? null,
     status: "pending",
     source,
-    rationale: (parsed.summary ?? "") + directionNote,
-    price_target: priceTarget,
-    stop_loss: stopLoss,
+    rationale: (thesis.summary ?? `Score: ${analystScore}/100`) + directionNote,
+    price_target: null, // PaperTrader sets targets at fill time using real price
+    stop_loss:    null,
+    asset_class:  assetClass,
   });
 
   return {
-    symbol: parsed.symbol ?? symbol,
+    symbol,
     analystScore,
     direction: signalDirection,
-    conviction: parsed.conviction ?? 50,
+    conviction: Math.min(100, analystScore),
     source,
-    tokensIn: tokenUsage.input,
+    tokensIn:  tokenUsage.input,
     tokensOut: tokenUsage.output,
-    currentPrice,
-    priceTarget,
-    stopLoss,
+    currentPrice: null, // PaperTrader fetches price at fill time via lib/data/quotes.ts
+    priceTarget:  null,
+    stopLoss:     null,
     scoreThreshold,
   };
 }

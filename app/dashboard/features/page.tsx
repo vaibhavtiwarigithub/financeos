@@ -139,7 +139,7 @@ export default function FeaturesPage() {
     <div style={{ padding: "28px", maxWidth: "900px" }}>
       {/* Header */}
       <div style={{ marginBottom: "28px" }}>
-        <div style={{ fontSize: "22px", fontWeight: 700, marginBottom: "4px" }}>FinanceOS Features</div>
+        <div style={{ fontSize: "22px", fontWeight: 700, marginBottom: "4px" }}>Kairos Features</div>
         <div style={{ fontSize: "13px", color: T.muted }}>Built features &amp; release timeline</div>
       </div>
 
