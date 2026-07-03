@@ -7,3 +7,13 @@ node_modules/
 .mcp.json
 scripts/robin.env
 scripts/logs/
+
+# next-pwa generated service worker artifacts (built into public/ on prod build)
+public/sw.js
+public/sw.js.map
+public/workbox-*.js
+public/workbox-*.js.map
+public/fallback-*.js
+
+# Claude Code preview config
+.claude/launch.json
