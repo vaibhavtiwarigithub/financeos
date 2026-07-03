@@ -49,9 +49,9 @@ export async function GET() {
       cost: parseFloat((hourly[h] ?? 0).toFixed(4)),
     }));
 
-    const todayCost = (today ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0);
-    const weekCost = (week ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0);
-    const monthCost = (month ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0);
+    const todayCost = (today ?? []).reduce((s: number, r: any) => s + (r.cost_usd ?? 0), 0);
+    const weekCost = (week ?? []).reduce((s: number, r: any) => s + (r.cost_usd ?? 0), 0);
+    const monthCost = (month ?? []).reduce((s: number, r: any) => s + (r.cost_usd ?? 0), 0);
 
     // Burn rate: today's cost / hours elapsed
     const hoursElapsed = Math.max(1, now.getHours() + now.getMinutes() / 60);

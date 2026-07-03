@@ -491,7 +491,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
   packets: any[]; trades: any[]; fullLog: any[]; signals: any[];
   performance: any[]; weights: any; allTrades: any[];
 }) {
-  const [tab, setTab] = useState<"ask" | "decisions" | "learning" | "journal">("ask");
+  const [tab, setTab] = useState<"ask" | "decisions" | "learning" | "journal" | "dimensions">("ask");
   const [thesis, setThesis] = useState<string | null>(null);
   const [thesisLoading, setThesisLoading] = useState(true);
   const [question, setQuestion] = useState("");

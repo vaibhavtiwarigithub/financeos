@@ -19,7 +19,7 @@ async function runMonitor() {
   if (!positions?.length) return { checked: 0, closed: 0, closedDetails: [], updated: 0 };
 
   // 2. Batch fetch current prices via Massive/Polygon API
-  const symbols = [...new Set(positions.map((p: any) => p.symbol as string))];
+  const symbols: string[] = Array.from(new Set(positions.map((p: any) => String(p.symbol))));
   const massiveKey = process.env.MASSIVE_API_KEY ?? process.env.POLYGON_API_KEY;
 
   const priceMap: Record<string, number> = {};

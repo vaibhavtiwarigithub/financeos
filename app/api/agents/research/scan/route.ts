@@ -206,10 +206,11 @@ export async function POST(req: NextRequest) {
         // Fundamental score from FD snapshot
         let fundScore = 50;
         if (fundamentals) {
-          const pe   = parseFloat(fundamentals.pe_ratio ?? fundamentals.price_to_earnings_ratio ?? "0");
-          const roe  = parseFloat(fundamentals.return_on_equity ?? "0");
-          const revG = parseFloat(fundamentals.revenue_growth ?? "0");
-          const fcf  = parseFloat(fundamentals.free_cash_flow_yield ?? "0");
+          const f    = fundamentals as any;
+          const pe   = parseFloat(f.pe_ratio ?? f.price_to_earnings_ratio ?? "0");
+          const roe  = parseFloat(f.return_on_equity ?? "0");
+          const revG = parseFloat(f.revenue_growth ?? "0");
+          const fcf  = parseFloat(f.free_cash_flow_yield ?? "0");
 
           let pts = 0;
           if (pe > 0 && pe < 20)   pts += 20;

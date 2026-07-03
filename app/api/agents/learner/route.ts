@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
 
             const tradeMap = new Map((trades ?? []).map((t: any) => [t.symbol, t]));
             const enriched = (signals ?? []).map((s: any) => ({
-              ...s, trade_outcome: tradeMap.get(s.symbol)?.outcome ?? null, trade_pnl_pct: tradeMap.get(s.symbol)?.pnl_pct ?? null,
+              ...s, trade_outcome: (tradeMap.get(s.symbol) as any)?.outcome ?? null, trade_pnl_pct: (tradeMap.get(s.symbol) as any)?.pnl_pct ?? null,
             }));
             return JSON.stringify({ count: enriched.length, signals: enriched.slice(0, 50) });
           }
@@ -185,12 +185,12 @@ export async function POST(req: NextRequest) {
               .select("symbol, pnl_pct, executed_at")
               .not("closed_at", "is", null).gte("executed_at", since);
 
-            const tradeMap = new Map((trades ?? []).map((t: any) => [t.symbol, t.pnl_pct]));
+            const tradeMap = new Map<string, number | null>((trades ?? []).map((t: any) => [t.symbol as string, t.pnl_pct as number | null]));
             const pairs: { score: number; pnl: number }[] = [];
             for (const s of signals ?? []) {
               const pnl = tradeMap.get(s.symbol);
               const score = (s as any)[dimension];
-              if (pnl != null && score != null) pairs.push({ score, pnl });
+              if (pnl != null && score != null) pairs.push({ score, pnl: pnl as number });
             }
 
             if (pairs.length < 3) return JSON.stringify({ error: "Insufficient data", n: pairs.length, dimension });

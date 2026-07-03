@@ -18,7 +18,7 @@ export async function GET() {
       .from("trade_proposals")
       .select("symbol, side, qty, price_at_proposal")
       .eq("status", "pending_review")
-      .then(r => r.data ?? []),
+      .then((r: any) => r.data ?? []),
   ]);
 
   const allHoldings = accounts.flatMap(a => a.holdings);

@@ -59,6 +59,7 @@ const NAV_SECTIONS = [
     hint: "Improve your judgment",
     items: [
       { href: "/dashboard/mentor",     label: "Mentor",           icon: "🎓", hint: "Learn trading principles, get scored on your calls", alertCat: "" },
+      { href: "/dashboard/journal",    label: "Decision Journal",  icon: "📓", hint: "Audit trail of every signal, fill, exit, and experiment decision", alertCat: "" },
     ],
   },
   {
@@ -166,8 +167,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
       .single()
       .then(({ data }) => {
         if (data) setPauseState({ paused: !!data.app_paused, paused_at: data.paused_at, paused_reason: data.paused_reason });
-      })
-      .catch(() => {});
+      }, () => {});
   }, []);
 
   // â"€â"€ Browser push: proposal watcher â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€

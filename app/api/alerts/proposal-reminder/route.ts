@@ -53,5 +53,5 @@ export async function POST(req: NextRequest) {
     sent++;
   }
 
-  return NextResponse.json({ sent, proposals: proposals.map((p) => p.symbol) });
+  return NextResponse.json({ sent, proposals: proposals.map((p: any) => p.symbol) });
 }

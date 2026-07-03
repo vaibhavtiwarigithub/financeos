@@ -1,5 +1,5 @@
 // Route tasks to the right LLM. Claude for accuracy-critical, DeepSeek for cheap tasks.
-export type LLMTask = "research" | "chat" | "summarize" | "trade" | "evaluate" | "thesis" | "screen"
+export type LLMTask = "research" | "chat" | "summarize" | "trade" | "evaluate" | "thesis" | "screen" | "optimize"
 
 export interface LLMCallOpts {
   task: LLMTask
@@ -27,6 +27,7 @@ const MODEL_ROUTING: Record<LLMTask, string> = {
   trade:     "claude-sonnet-4-6",
   evaluate:  "claude-sonnet-4-6",
   thesis:    "claude-sonnet-4-6",
+  optimize:  "claude-haiku-4-5-20251001",
   screen:    "llama-3.3-70b-versatile",  // Groq free — fast screener pre-filter
   chat:      "deepseek-chat",
   summarize: "deepseek-chat",

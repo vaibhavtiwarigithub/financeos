@@ -170,6 +170,36 @@ async function buildProposals(supabase: any, isCron: boolean) {
       avKey = (vaultRow as any)?.key_value ?? process.env.ALPHA_VANTAGE_API_KEY ?? null;
     } catch { avKey = process.env.ALPHA_VANTAGE_API_KEY ?? null; }
 
+    // Half-Kelly position sizing: requires ≥10 closed trades; falls back to flat positionSizePct.
+    // Kelly fraction f = win_rate/avg_loss - loss_rate/avg_win. Use f*0.5 (Half-Kelly) for safety.
+    // Cap at positionSizePct (config ceiling); floor at 2%.
+    let effectiveSizePct = positionSizePct;
+    let kellySizingSource = "flat";
+    try {
+      const { data: closedTrades } = await supabase
+        .from("paper_trades")
+        .select("pnl_pct")
+        .not("closed_at", "is", null)
+        .not("pnl_pct", "is", null)
+        .order("closed_at", { ascending: false })
+        .limit(100);
+
+      const pnls = (closedTrades ?? []).map((t: any) => parseFloat(t.pnl_pct));
+      if (pnls.length >= 10) {
+        const wins   = pnls.filter((p: number) => p > 0);
+        const losses = pnls.filter((p: number) => p <= 0);
+        if (wins.length > 0 && losses.length > 0) {
+          const win_rate  = wins.length / pnls.length;
+          const avg_win   = wins.reduce((a: number, b: number) => a + b, 0) / wins.length / 100;  // as fraction
+          const avg_loss  = Math.abs(losses.reduce((a: number, b: number) => a + b, 0) / losses.length) / 100;
+          const kelly_f   = win_rate / avg_loss - (1 - win_rate) / avg_win;
+          const half_kelly_pct = Math.max(2, Math.min(positionSizePct, kelly_f * 50)); // *0.5 and *100
+          effectiveSizePct = parseFloat(half_kelly_pct.toFixed(1));
+          kellySizingSource = `half-kelly (n=${pnls.length}, wr=${(win_rate*100).toFixed(0)}%, f=${(kelly_f*100).toFixed(1)}%)`;
+        }
+      }
+    } catch { /* sizing falls back to flat */ }
+
     for (const signal of (signals ?? []) as any[]) {
       if (alreadyProposed.has(signal.id)) {
         skipped.push({ symbol: signal.symbol, reason: "already_proposed_today" });
@@ -213,10 +243,10 @@ async function buildProposals(supabase: any, isCron: boolean) {
         continue;
       }
 
-      // Portfolio sizing
+      // Portfolio sizing — uses Half-Kelly if ≥10 closed trades, else flat positionSizePct
       const { data: portfolio } = await supabase.from("paper_portfolio").select("nav, cash_balance").limit(1).single();
       const nav = (portfolio as any)?.nav ?? 10000;
-      const estimatedValue = nav * (positionSizePct / 100);
+      const estimatedValue = nav * (effectiveSizePct / 100);
       const qty = Math.floor(estimatedValue / quote.price);
       if (qty < 1) {
         skipped.push({ symbol: signal.symbol, reason: "qty_too_small" });
@@ -246,7 +276,7 @@ async function buildProposals(supabase: any, isCron: boolean) {
         price_source:        quote.source,
         price_retrieved_at:  quote.retrievedAt,
         risk_check_pass:     riskPass,
-        risk_check_reasons:  riskReasons,
+        risk_check_reasons:  { ...riskReasons, sizing_method: { source: kellySizingSource, pct: effectiveSizePct } },
         estimated_value:     parseFloat((qty * quote.price).toFixed(2)),
         pct_of_nav:          parseFloat(pctOfNav.toFixed(4)),
         status:              "pending_review",

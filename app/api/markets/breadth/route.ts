@@ -87,7 +87,7 @@ export async function GET(req: NextRequest) {
         total: (cached.advance_count ?? 0) + (cached.decline_count ?? 0) + (cached.unchanged_count ?? 0),
         breadthPct: parseFloat(cached.breadth_pct) || 0,
         narrowTag: (parseFloat(cached.breadth_pct) < 40 ? "NARROW" : parseFloat(cached.breadth_pct) > 65 ? "BROAD" : "MIXED"),
-        breadthHistory: (historyRows || []).map(r => ({ date: r.date, breadth_pct: parseFloat(r.breadth_pct) || 0 })),
+        breadthHistory: (historyRows || []).map((r: any) => ({ date: r.date, breadth_pct: parseFloat(r.breadth_pct) || 0 })),
         topExplainPct: 0,
         _cached: true,
         _cachedDate: cached.date,
@@ -186,7 +186,7 @@ export async function GET(req: NextRequest) {
       .order("date", { ascending: true })
       .limit(30);
 
-    const breadthHistory = (historyRows || []).map((r) => ({
+    const breadthHistory = (historyRows || []).map((r: any) => ({
       date: r.date,
       breadth_pct: parseFloat(r.breadth_pct) || 0,
     }));

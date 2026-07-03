@@ -306,7 +306,7 @@ export default function LivePortfolioPage({
           )}
         </div>
         <button
-          onClick={loadHoldings}
+          onClick={() => loadHoldings()}
           style={{ background: T.accentBg, border: `1px solid ${T.accent}44`, color: T.accent, borderRadius: "8px", padding: "8px 16px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
         >
           ↻ Refresh

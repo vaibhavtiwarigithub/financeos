@@ -155,7 +155,7 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider }: {
               <div style={{ fontSize: "24px", fontWeight: 700, color: s.color }}>{s.value}</div>
               <div style={{ display: "flex", alignItems: "center", gap: "5px", marginTop: "3px" }}>
                 <div style={{ fontSize: "11px", color: T.muted }}>{s.label}</div>
-                <InfoTooltip title={s.tip.title} body={s.tip.body} bullets={s.tip.bullets} placement="bottom" />
+                <InfoTooltip title={s.tip.title} body={s.tip.body} bullets={s.tip.bullets as unknown as string[]} placement="bottom" />
               </div>
             </div>
           ))}

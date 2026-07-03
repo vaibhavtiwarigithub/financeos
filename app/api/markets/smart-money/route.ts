@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
     )];
 
     const insiderResults = await Promise.all(
-      topSymbols.map(sym => fetchInsiderTransactions(sym, avKey))
+      topSymbols.map((sym: any) => fetchInsiderTransactions(sym as string, avKey))
     );
     insiderData = insiderResults
       .flat()

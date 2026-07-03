@@ -874,7 +874,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                 <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7", display: "flex", flexDirection: "column", gap: "4px" }}>
                   <div>Identifies thematic investing opportunities (AI infrastructure, energy transition, biotech, etc.) using LLM analysis of market trends.</div>
                   <div>Writes 3–5 symbol candidates with theme tag + rationale to watchlist. Symbols auto-expire after 7 days unless manually kept.</div>
-                  <div><span style={{ color: T.purple, fontWeight: 600 }}>AI Scout</span> badge in watchlist identifies ThemeScout additions.</div>
+                  <div><span style={{ color: "#a78bfa", fontWeight: 600 }}>AI Scout</span> badge in watchlist identifies ThemeScout additions.</div>
                 </div>
               </div>
 

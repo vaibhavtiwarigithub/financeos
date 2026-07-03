@@ -21,7 +21,7 @@ export default async function Page() {
     .limit(1000);
 
   const total = decisionStats?.length ?? 0;
-  const enriched = decisionStats?.filter(d => d.enrichment_status === "enriched").length ?? 0;
+  const enriched = decisionStats?.filter((d: any) => d.enrichment_status === "enriched").length ?? 0;
   const pending = total - enriched;
 
   return (
