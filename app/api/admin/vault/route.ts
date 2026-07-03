@@ -1,5 +1,5 @@
 // API Key Vault — requires Supabase session (admin email) + X-Vault-Pin header
-// Add VAULT_PIN=fos-vault-2026 to your .env.local before using this route.
+// Requires VAULT_PIN env var in .env.local. No default fallback — vault is locked if unconfigured.
 import { NextRequest, NextResponse } from "next/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { createClient } from "@/lib/supabase/server"
@@ -11,10 +11,10 @@ function maskKey(k: string): string {
   return k.slice(0, 4) + "•".repeat(Math.min(k.length - 8, 20)) + k.slice(-4)
 }
 
-async function getActivePin(svc: ReturnType<typeof createServiceClient>): Promise<string> {
-  // DB-stored PIN takes priority over env var (allows runtime change)
+async function getActivePin(svc: ReturnType<typeof createServiceClient>): Promise<string | null> {
+  // DB-stored PIN takes priority over env var (allows runtime change without redeploy)
   const { data } = await svc.from("app_settings").select("value").eq("key", "vault_pin").single()
-  return data?.value ?? process.env.VAULT_PIN ?? "fos-vault-2026"
+  return data?.value ?? process.env.VAULT_PIN ?? null
 }
 
 export async function GET(req: NextRequest) {
@@ -27,6 +27,9 @@ export async function GET(req: NextRequest) {
   const svc = createServiceClient()
   const pin = req.headers.get("x-vault-pin")
   const activePin = await getActivePin(svc)
+  if (!activePin) {
+    return NextResponse.json({ error: "Vault not configured — set VAULT_PIN in .env.local or via Settings" }, { status: 503 })
+  }
   if (pin !== activePin) {
     return NextResponse.json({ error: "Vault locked — PIN required" }, { status: 403 })
   }
@@ -58,6 +61,9 @@ export async function POST(req: NextRequest) {
   const svc = createServiceClient()
   const pin = req.headers.get("x-vault-pin")
   const activePin = await getActivePin(svc)
+  if (!activePin) {
+    return NextResponse.json({ error: "Vault not configured — set VAULT_PIN in .env.local or via Settings" }, { status: 503 })
+  }
   if (pin !== activePin) {
     return NextResponse.json({ error: "Vault locked" }, { status: 403 })
   }

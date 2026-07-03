@@ -6,13 +6,13 @@ Architecture status: Approved
 Architecture approved: Yes
 Approved scope: Long-only, 2-20 market-day swing-trading research, validation, paper execution, explainability, approval-required Robinhood execution, and a future separately unlocked limited auto-live mode
 Approved date: 2026-06-27
-Implementation allowed: No
-
-Implementation remains blocked until Vaibhav approves a phased implementation plan. This document is the canonical implementation contract for this feature.
+Implementation allowed: Yes (phased â€” see Delivery Phases)
+Phase 0 complete: 2026-07-01
+Phase 1: Not started
 
 ## Feature Purpose
 
-FinanceOS will become a governed multi-agent research platform that continuously gathers evidence, develops and validates trading hypotheses, runs realistic paper experiments, explains its reasoning to Vaibhav, and can eventually execute approved trades through the Robinhood agentic account.
+Kairos will become a governed multi-agent research platform that continuously gathers evidence, develops and validates trading hypotheses, runs realistic paper experiments, explains its reasoning to Vaibhav, and can eventually execute approved trades through the Robinhood agentic account.
 
 The platform is designed to test whether strategies can outperform appropriate benchmarks after costs, taxes, and risk. It does not assume or promise market outperformance. Survival, reproducibility, and auditability take precedence over return.
 
@@ -67,7 +67,7 @@ This feature does not include:
 - Options, crypto, futures, short selling, leverage, or margin borrowing.
 - Intraday, high-frequency, or latency-sensitive trading.
 - Access to any Robinhood account except agentic account `605420660`.
-- Guaranteed returns or an assertion that FinanceOS will beat the market.
+- Guaranteed returns or an assertion that Kairos will beat the market.
 - Autonomous promotion of a strategy to live trading.
 - Silent changes to risk policy, tax rules, execution permissions, or champion strategies.
 - LLM-generated authoritative prices, P&L, fills, tax calculations, or risk calculations.
@@ -79,20 +79,24 @@ This feature does not include:
 
 The repository already contains research, paper-trade, learner, and trade-proposal routes, a paper-trading migration, and agent dashboards. These are prototypes, not conforming implementations of this architecture.
 
-Critical current gaps:
+**Phase 0 resolved (2026-07-01):**
+- âœ… ResearchAgent `processSymbol` now computes all 5 scores deterministically from real fetched data (`lib/data/scores.ts`). LLM only writes thesis + direction (no scores, no prices).
+- âœ… PaperTrader uses `lib/data/quotes.ts` (AV GLOBAL_QUOTE â†’ price_cache). No MCP/LLM for prices.
+- âœ… Fill price = ask + 0.05% slippage via `computeFillPrice()` â€” not LLM-estimated.
+- âœ… Every fill logged to immutable `paper_order_events` with price source, bid/ask at fill, spread applied.
+- âœ… LearnerAgent weight mutation blocked by phase gate (requires 10+ closed trades) + auto-guard (3 consecutive bad runs).
+- âœ… Long-only enforcement: `short` direction overridden to `neutral` for non-held positions.
+- âœ… Paper NAV refresh uses deterministic batch quotes (no MCP cold-start).
 
-- `app/api/agents/research/route.ts` asks an LLM to generate financial scores without providing authoritative, timestamped evidence.
-- `app/api/agents/paper-trade/route.ts` asks Claude for current prices and uses those responses as fills.
-- `app/api/agents/learner/route.ts` asks Claude for exit prices and mutates weights from individual trade outcomes.
-- Paper short-side logic is incompatible with the approved long-only scope and is accounted for like a long purchase.
-- Paper NAV can use stale position prices and omits realistic execution costs and corporate actions.
-- Strategy versions, eligibility reports, champion/challenger governance, and deterministic validation do not exist.
-- Existing paper records are mutable and do not provide a complete append-only event trail.
-- The local migration chain is incomplete: migration `003_paper_trading.sql` exists without a repository migration `002_agent_tables.sql`.
-- `WORK_LOG.md`, `PRD.md`, and connection state do not consistently describe the implemented system.
-- Current agent API routes do not consistently enforce the authentication pattern required by `PRD.md`.
+**Remaining gaps (Phase 1+):**
+- Evidence store with source hierarchy, quality rules, and append-only evidence records does not exist.
+- Corporate actions (dividends, splits, symbol changes) are not tracked.
+- Macro data uses single macro_signals row â€” no FRED/ALFRED vintage history.
+- Strategy versioning, champion/challenger governance, and eligibility reports do not exist.
+- Python Validation Engine does not exist â€” no deterministic backtesting or historical replay.
+- Provider adapters are not behind a replaceable contract interface.
 
-Until the stabilization phase is implemented and verified, live trade execution must remain approval-required and no current paper result should be treated as statistically valid evidence.
+Live trade execution remains approval-required. Paper results are not yet statistically valid evidence (no out-of-sample validation or benchmark attribution).
 
 ## Proposed Behavior
 
@@ -682,10 +686,78 @@ The implementation plan will narrow each phase. Expected areas include:
 - Every displayed claim links to evidence or a stored experiment.
 - Every trade proposal shows invalidation, counterargument, correlated-shock risk, tax/dividend flags, and why waiting was rejected.
 
+---
+
+## Implementation Log
+
+### Phase 0 — Complete (2026-07-01)
+
+See `ARCHITECTURE.md` Session 2026-07-01 section for full detail.
+
+All Phase 0 acceptance criteria met:
+- All 5 ResearchAgent scores deterministic (no LLM score generation)
+- LLM role: thesis + direction only
+- PaperTrader uses deterministic quote adapter (price_cache + AV GLOBAL_QUOTE)
+- Fill price = ask + 0.05% slippage via `computeFillPrice()`
+- Immutable `paper_order_events` with UPDATE/DELETE blocked
+- LearnerAgent phase gate (≥10 closed trades before weight mutation)
+- Auto-guard (3 consecutive bad runs blocks mutation)
+- Long-only enforcement enforced in code
+
+---
+
+### Phase 0 Addendum — 2026-07-03 Session
+
+**Live Portfolio + Trade History Layer added outside original Phase 0 scope (does not block Phase 1 gate).**
+
+#### All-Accounts ResearchAgent Fix
+- `lib/research-agent.ts::fetchHoldings()` — removed `account_id` filter, now reads ALL `live_account_snapshots` rows
+- SELL signals now possible for holdings across all 6 Robinhood accounts
+
+#### Trade Decision Enrichment Pipeline
+- Migration 043 applied: `trade_decisions` + `uploaded_trade_files`
+- `/api/live-portfolio/enrich` — batch enrichment with AV `TIME_SERIES_DAILY_ADJUSTED`; computes outcome_score, macro_market_regime, pattern_tags
+- `/api/live-portfolio/import-csv` — SHA-256 dedup; Robinhood CSV parsing
+- `LivePortfolioPage.tsx` — CSV import UI, enrichment trigger, decisions table
+
+#### LearnerAgent Enhancements
+- Tool `query_trade_decisions` added (tool #7) — queries real enriched trades by action/regime/outcome range
+- Model upgraded: `deepseek-chat` → `claude-opus-4-8` (89.08% finance accuracy, AIMultiple benchmark)
+
+---
+
+### Phase 1 — Planned [REVIEW PENDING — ChatGPT]
+
+**Status:** Not started. Gate: Phase 0 complete ✅. Can begin.
+
+**Key Phase 1 items from original spec + new additions:**
+
+1. Evidence store (Evidence categories defined in Data Architecture section above)
+2. Corporate actions (dividends, splits, symbol changes) automated tracking
+3. Macro data: FRED/ALFRED vintage history (currently: single macro_signals row)
+4. Provider adapter contracts (replaceable interface in front of AV/FinancialDatasets/Robinhood)
+5. **RAG pipeline** [REVIEW PENDING — ChatGPT]
+   - Voyage-3.5 embeddings (finance-tuned) for `trade_decisions`
+   - Supabase pgvector table: `trade_decision_embeddings(decision_id, embedding vector(1536))`
+   - `gte-reranker-modernbert-base` post-retrieval reranker
+   - New LearnerAgent tool: `semantic_search_decisions`
+   - Migration 044 needed
+6. **Langfuse observability** [REVIEW PENDING — ChatGPT]
+   - Wrap `lib/llm-router.ts` with Langfuse SDK
+   - Each agent run = trace; each LLM call = generation span
+7. **Firecrawl ResearchAgent integration** [REVIEW PENDING — ChatGPT]
+   - Firecrawl MCP active (needs new Claude session)
+   - Adds `crawl_url` tool to ResearchAgent; max 3 calls/run
+   - Source quality: Firecrawl output = unverified hypothesis (level 4 in source hierarchy)
+8. **ResearchAgent model upgrade** [REVIEW PENDING — ChatGPT]
+   - Current: Groq 70B for thesis
+   - Proposed: Claude Fable 5 (90.34% finance accuracy) — pending cost gate ($2/day budget)
+
 ## Approval
 
 Architecture approved: Yes
 Approved scope: Governed long-only swing-trading research, paper experimentation, explainability, tax/dividend awareness, and initial approval-required live trading as specified above
-Implementation allowed: No
+Implementation allowed: Yes (phased)
+Phase 0 complete: 2026-07-01
 
-Next gate: Vaibhav reviews this written specification, then explicitly authorizes creation of the phased implementation plan.
+Next gate: Vaibhav approves Phase 1 implementation plan (Evidence store, provider adapters, source hierarchy, corporate actions, macro vintages).
