@@ -1534,7 +1534,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                       {/* Approved state — instruct user to submit via Robinhood */}
                       {p.status === "approved" && (
                         <div style={{ marginTop: "10px", fontSize: "12px", color: T.green, background: T.greenBg, padding: "8px 12px", borderRadius: "6px" }}>
-                          ✓ Approved — submit via Robinhood MCP: <code style={{ background: T.card, padding: "1px 5px", borderRadius: "3px" }}>place_equity_order</code> on account 605420650
+                          ✓ Approved — submit via Robinhood MCP: <code style={{ background: T.card, padding: "1px 5px", borderRadius: "3px" }}>place_equity_order</code> on account 605420660
                         </div>
                       )}
                     </div>

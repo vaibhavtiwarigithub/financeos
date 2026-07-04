@@ -35,8 +35,8 @@ $endpoints = @{
   "trader"           = @{ method="POST"; url="$BASE/api/agents/trader";                headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "brief-morning"    = @{ method="POST"; url="$BASE/api/briefing/generate";            headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"session":"morning"}' }
   "brief-evening"    = @{ method="POST"; url="$BASE/api/briefing/generate";            headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"session":"evening"}' }
-  "position-monitor" = @{ method="POST"; url="$BASE/api/agents/position-monitor";     headers=@{"Content-Type"="application/json"}; body="{}" }
-  "nav-snapshot"     = @{ method="POST"; url="$BASE/api/agents/performance";           headers=@{"Content-Type"="application/json"}; body='{"action":"snapshot"}' }
+  "position-monitor" = @{ method="POST"; url="$BASE/api/agents/position-monitor";     headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
+  "nav-snapshot"     = @{ method="POST"; url="$BASE/api/agents/performance";           headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"action":"snapshot"}' }
   "stale-check"      = @{ method="GET";  url="$BASE/api/alerts/stale-check";           headers=@{}; body=$null }
   "embed"            = @{ method="POST"; url="$BASE/api/live-portfolio/embed";         headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"limit":200}'; timeoutSec=300 }
   "proposal-reminder"= @{ method="POST"; url="$BASE/api/alerts/proposal-reminder";     headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }

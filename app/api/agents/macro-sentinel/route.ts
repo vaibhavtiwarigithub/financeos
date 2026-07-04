@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -245,7 +246,17 @@ export async function GET() {
   return NextResponse.json({ message: "Use POST to run MacroSentinel" });
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  // Was completely unauthenticated and burns Alpha Vantage budget (already
+  // scarce — 25/day). Require cron secret or a logged-in user.
+  const cronSecret = req.headers.get("x-cron-secret");
+  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  if (!isCron) {
+    const userClient = await createClient();
+    const { data: { user } } = await userClient.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const svc = createServiceClient();
   const weekOf = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
 

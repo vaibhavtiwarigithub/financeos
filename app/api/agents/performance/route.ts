@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -103,6 +104,16 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  // Was completely unauthenticated — any caller could write NAV snapshots via
+  // the service-role client. Require cron secret or a logged-in user.
+  const cronSecret = req.headers.get("x-cron-secret");
+  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  if (!isCron) {
+    const userClient = await createClient();
+    const { data: { user } } = await userClient.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = await req.json().catch(() => ({}));
     if (body.action !== "snapshot") {

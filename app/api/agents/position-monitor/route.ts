@@ -163,8 +163,17 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// GET for manual testing / browser trigger
-export async function GET() {
+// GET was unauthenticated and mutated positions/cash on a plain page request —
+// anyone (or a crawler/prefetch) hitting this URL could close real positions.
+// Require the same auth as POST before running the monitor.
+export async function GET(req: NextRequest) {
+  const cronSecret = req.headers.get("x-cron-secret");
+  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  if (!isCron) {
+    const userClient = await createClient();
+    const { data: { user } } = await userClient.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const result = await runMonitor();
     return NextResponse.json({ success: true, ...result });
