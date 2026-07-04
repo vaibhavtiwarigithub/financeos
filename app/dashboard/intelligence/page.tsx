@@ -106,8 +106,6 @@ export default function IntelligencePage() {
   const [prompt, setPrompt] = useState("");
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
-  const [briefText, setBriefText] = useState("");
-  const [briefLoading, setBriefLoading] = useState(false);
   const [dailyCount, setDailyCount] = useState(0);
 
   useEffect(() => {
@@ -151,26 +149,8 @@ Rules:
     setLoading(false);
   }
 
-  async function genBrief() {
-    setBriefLoading(true);
-    try {
-      const sys = `You are a financial morning brief writer. User: ${profile?.full_name}, Focus: ${profile?.market_focus}, Level: ${profile?.knowledge_level}.
-Search for real current data. Format:
-MARKET PULSE: Key overnight moves
-MACRO: Fed/RBI/rates/macro
-WATCHLIST: 3 setups to watch today
-RISK: Main risk to watch
-LEARN: One concept tied to today's conditions
-Keep it under 400 words. Specific, not generic.`;
-      const text = await callAI("Generate today's morning brief with current market conditions", sys);
-      setBriefText(text);
-      // Save to DB
-      await supabase.from("brief_history").insert({ content: text });
-    } catch (e: unknown) {
-      setBriefText("Error: " + (e instanceof Error ? e.message : "Unknown"));
-    }
-    setBriefLoading(false);
-  }
+  // Morning Brief moved to the dashboard home + email briefing (single source).
+  // The Intelligence "brief" tab was removed to avoid duplication (#11).
 
   const tier = profile?.subscription_tier ?? "elite";
   const limit = 9999;
@@ -199,7 +179,7 @@ Keep it under 400 words. Specific, not generic.`;
       </div>
 
       <div style={{ display: "flex", gap: "6px", borderBottom: `1px solid ${T.border}`, marginBottom: "24px" }}>
-        {["analysis", "brief", "newsletter"].map(t => (
+        {["analysis", "newsletter"].map(t => (
           <button key={t} onClick={() => setTab(t)} style={{ background: "none", border: "none", borderBottom: tab === t ? `2px solid ${T.accent}` : "2px solid transparent", color: tab === t ? T.accent : T.muted, padding: "8px 16px", fontSize: "14px", cursor: "pointer", textTransform: "capitalize", marginBottom: "-1px" }}>{t}</button>
         ))}
       </div>
@@ -240,28 +220,6 @@ Keep it under 400 words. Specific, not generic.`;
             </div>
           )}
 
-        </div>
-      )}
-
-      {tab === "brief" && (
-        <div>
-          <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-                <div style={{ fontSize: "15px", fontWeight: 600 }}>Morning Brief</div>
-                <button onClick={genBrief} disabled={briefLoading} style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "10px 22px", fontSize: "14px", fontWeight: 600, cursor: "pointer", opacity: briefLoading ? 0.7 : 1 }}>
-                  {briefLoading ? "Generating..." : "Generate Brief"}
-                </button>
-              </div>
-              {briefText ? (
-                <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
-                  <pre style={{ fontFamily: "'Inter', sans-serif", fontSize: "14px", color: T.textSub, lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{briefText}</pre>
-                </div>
-              ) : (
-                <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "60px", textAlign: "center", color: T.muted }}>
-                  Click Generate Brief to get your personalized daily update
-                </div>
-              )}
-            </div>
         </div>
       )}
 
