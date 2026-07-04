@@ -13,17 +13,22 @@ const PERIOD_DAYS: Record<string, number> = {
   "All": 1825,
 };
 
-async function fetchDailySeries(symbol: string, avKey: string): Promise<Record<string, number>> {
-  if (!avKey) return {};
+interface MassiveResult { t: number; o: number; h: number; l: number; c: number; v: number; }
+
+// Daily close series via Massive (matches the rest of the app — Alpha Vantage's
+// 25/day cap made a per-holding fetch here impossible: 26 holdings = 26 calls
+// in one page load, before any other AV feature got a look-in).
+async function fetchDailySeries(symbol: string, from: string, to: string, apiKey: string): Promise<Record<string, number>> {
+  if (!apiKey) return {};
   try {
-    const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${encodeURIComponent(symbol)}&outputsize=full&apikey=${avKey}`;
-    const r = await fetch(url, { next: { revalidate: 3600 } });
-    const json = await r.json();
-    const series = json["Time Series (Daily)"];
-    if (!series) return {};
+    const url = `https://api.massive.com/v2/aggs/ticker/${symbol}/range/1/day/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${apiKey}`;
+    // Daily bars only change once/day — 1h cache matches charts/symbol-history.
+    const res = await fetch(url, { headers: { Accept: "application/json" }, next: { revalidate: 3600 } });
+    if (!res.ok) return {};
+    const data: { results?: MassiveResult[] } = await res.json();
     const result: Record<string, number> = {};
-    for (const [date, val] of Object.entries(series as Record<string, any>)) {
-      result[date] = parseFloat(val["5. adjusted close"] ?? val["4. close"] ?? "0");
+    for (const r of data.results ?? []) {
+      result[new Date(r.t).toISOString().slice(0, 10)] = r.c;
     }
     return result;
   } catch {
@@ -33,7 +38,7 @@ async function fetchDailySeries(symbol: string, avKey: string): Promise<Record<s
 
 export async function GET(req: NextRequest) {
   const period = new URL(req.url).searchParams.get("period") ?? "1M";
-  const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
+  const massiveKey = process.env.MASSIVE_API_KEY ?? "";
 
   const accountIds = new URL(req.url).searchParams.get("accounts")?.split(",").filter(Boolean);
   const svc = createServiceClient();
@@ -69,13 +74,14 @@ export async function GET(req: NextRequest) {
     startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
   }
   const startStr = startDate.toISOString().slice(0, 10);
+  const endStr = now.toISOString().slice(0, 10);
 
-  // Stagger AV calls 300ms apart to avoid rate limiting
+  // Fetch all holdings' series in parallel — Massive has no 25/day wall, and
+  // each URL is independently cached for 1h, so repeat loads are free.
   const symbolSeries: Record<string, Record<string, number>> = {};
-  for (const pos of positions) {
-    symbolSeries[pos.symbol] = await fetchDailySeries(pos.symbol, avKey);
-    await new Promise(r => setTimeout(r, 300));
-  }
+  await Promise.all(positions.map(async pos => {
+    symbolSeries[pos.symbol] = await fetchDailySeries(pos.symbol, startStr, endStr, massiveKey);
+  }));
 
   // Collect all dates in range across all series
   const allDates = new Set<string>();

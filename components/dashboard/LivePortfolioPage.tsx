@@ -252,13 +252,13 @@ export default function LivePortfolioPage({
             <span style={{ fontSize: "10px", color: T.muted }}>••••8641 · READ-ONLY</span>
           </div>
           {syncedAt && (
-            <div style={{ fontSize: "11px", color: T.muted }}>
+            <div style={{ fontSize: "11px", color: T.amber }}>
               Last synced: {new Date(syncedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
               {" · "}
-              <span style={{ color: T.muted + "88" }}>auto-syncs 8:50 AM weekdays</span>
+              <span>manual sync only — no auto-sync cron is wired up yet</span>
             </div>
           )}
-          {!hasSnaps && <div style={{ fontSize: "11px", color: T.amber }}>Not yet synced — will sync automatically at 8:50 AM on the next weekday</div>}
+          {!hasSnaps && <div style={{ fontSize: "11px", color: T.amber }}>Not yet synced — no auto-sync is configured; a manual Robinhood sync must be run</div>}
 
           {/* Account selector chips */}
           {snaps.length > 1 && (
@@ -372,7 +372,7 @@ export default function LivePortfolioPage({
         {chartData.length === 0 && !loadingChart ? (
           <div style={{ height: "200px", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: "13px", flexDirection: "column", gap: "6px" }}>
             <div>No price data</div>
-            <div style={{ fontSize: "11px" }}>Requires Alpha Vantage API key · <code style={{ background: T.dim, padding: "1px 4px", borderRadius: "3px" }}>ALPHA_VANTAGE_API_KEY</code></div>
+            <div style={{ fontSize: "11px" }}>Needs a synced holdings snapshot + <code style={{ background: T.dim, padding: "1px 4px", borderRadius: "3px" }}>MASSIVE_API_KEY</code> for price history</div>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={220}>
