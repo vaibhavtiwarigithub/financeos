@@ -23,23 +23,35 @@ interface MassiveResult {
   t: number; o: number; h: number; l: number; c: number; v: number;
 }
 
+// Massive/Polygon paginates aggs responses via `next_url` regardless of the
+// `limit` param — a single unpaginated fetch silently truncates any range
+// longer than one page (this was why longer periods returned barely more
+// rows than shorter ones). Follow next_url like charts/symbol-history does.
 async function fetchMassiveSymbol(
   sym: string, from: string, to: string, apiKey: string
 ): Promise<{ symbol: string; rows: { symbol: string; date: string; open: number; high: number; low: number; close: number; volume: number }[] }> {
-  const url =
+  const rows: { symbol: string; date: string; open: number; high: number; low: number; close: number; volume: number }[] = [];
+  let url: string | null =
     `https://api.massive.com/v2/aggs/ticker/${sym}/range/1/day/${from}/${to}` +
     `?adjusted=true&sort=asc&limit=50000&apiKey=${apiKey}`;
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 86400 },
-  });
-  if (!res.ok) throw new Error(`Massive ${res.status} for ${sym}`);
-  const data: { results?: MassiveResult[] } = await res.json();
-  const rows = (data.results ?? []).map(r => ({
-    symbol: sym,
-    date: new Date(r.t).toISOString().slice(0, 10),
-    open: r.o, high: r.h, low: r.l, close: r.c, volume: r.v,
-  }));
+
+  let pages = 0;
+  while (url && pages < 20) {
+    pages++;
+    let res: Response = await fetch(url, { headers: { Accept: "application/json" }, next: { revalidate: 86400 } });
+    // Free-tier Massive rate limit (429) — retry with backoff instead of
+    // failing the whole symbol out of Promise.allSettled.
+    for (let attempt = 0; res.status === 429 && attempt < 3; attempt++) {
+      await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+      res = await fetch(url, { headers: { Accept: "application/json" }, next: { revalidate: 86400 } });
+    }
+    if (!res.ok) throw new Error(`Massive ${res.status} for ${sym}`);
+    const data: { results?: MassiveResult[]; next_url?: string } = await res.json();
+    for (const r of data.results ?? []) {
+      rows.push({ symbol: sym, date: new Date(r.t).toISOString().slice(0, 10), open: r.o, high: r.h, low: r.l, close: r.c, volume: r.v });
+    }
+    url = data.next_url ? `${data.next_url}&apiKey=${apiKey}` : null;
+  }
   return { symbol: sym, rows };
 }
 
@@ -97,8 +109,12 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // Stagger start times — firing all 11 symbols at once trips the free-tier
+  // per-minute rate limit (429s) and Promise.allSettled silently drops those.
   const results = await Promise.allSettled(
-    SYMBOLS.map(sym => fetchMassiveSymbol(sym, cutoff, today, apiKey))
+    SYMBOLS.map((sym, i) =>
+      new Promise(r => setTimeout(r, i * 200)).then(() => fetchMassiveSymbol(sym, cutoff, today, apiKey))
+    )
   );
 
   const allRows: { symbol: string; date: string; open: number; high: number; low: number; close: number; volume: number }[] = [];
