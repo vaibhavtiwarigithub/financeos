@@ -14,8 +14,31 @@ const SOURCE_META: Record<string, { label: string; color: string; bg: string }> 
   manual:             { label: "Manual",      color: T.muted,  bg: "#6B728018" },
   tradingview_import: { label: "TradingView", color: T.blue,   bg: "#60A5FA18" },
   robinhood_sync:     { label: "Robinhood",   color: T.green,  bg: "#34D39918" },
+  robinhood:          { label: "Robinhood",   color: T.green,  bg: "#34D39918" },
+  holdings:           { label: "Robinhood",   color: T.green,  bg: "#34D39918" },
   briefing:           { label: "Briefing",    color: T.amber,  bg: "#FBBF2418" },
 };
+
+// Always-visible one-line "why added" derived from source + optional reason clause.
+function whyAdded(item: { source: string; theme?: string; reason?: string; auto_added?: boolean }): string {
+  let base: string;
+  if (item.source === "llm_theme" || item.auto_added) {
+    base = item.theme ? `AI Scout · ${item.theme}` : "AI Scout";
+  } else if (item.source === "briefing") {
+    base = "From a briefing mention";
+  } else if (item.source === "tradingview_import") {
+    base = "Imported from TradingView";
+  } else if (item.source === "robinhood" || item.source === "robinhood_sync" || item.source === "holdings") {
+    base = "From your Robinhood account";
+  } else {
+    base = "Manually added";
+  }
+  if (item.reason) {
+    const clause = item.reason.split(/[.;\n]/)[0].trim();
+    if (clause) base = `${base} — ${clause}`;
+  }
+  return base;
+}
 
 type WatchlistItem = {
   id: string;
@@ -76,6 +99,11 @@ export default function WatchlistPanel() {
   const [newSymbol, setNewSymbol] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  // Ticker autocomplete state
+  type SymbolResult = { symbol: string; name: string; exchange: string; locale: string };
+  const [suggestions, setSuggestions] = useState<SymbolResult[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
   // Filter + sort state
   const [search, setSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
@@ -114,18 +142,49 @@ export default function WatchlistPanel() {
 
   useEffect(() => { load(); }, [load]);
 
-  async function addManual() {
-    const sym = newSymbol.trim().toUpperCase();
-    if (!sym) return;
+  // Debounced ticker autocomplete (250ms). Falls back to filtering existing
+  // watchlist items client-side if the provider returns nothing/errors.
+  useEffect(() => {
+    const q = newSymbol.trim();
+    if (q.length < 1) { setSuggestions([]); return; }
+    const t = setTimeout(async () => {
+      const clientFallback = (): SymbolResult[] =>
+        items
+          .filter(i =>
+            i.symbol.toLowerCase().includes(q.toLowerCase()) ||
+            i.company_name?.toLowerCase().includes(q.toLowerCase()))
+          .slice(0, 8)
+          .map(i => ({ symbol: i.symbol, name: i.company_name ?? "", exchange: "watchlist", locale: "us" }));
+      try {
+        const r = await fetch(`/api/symbols/search?q=${encodeURIComponent(q)}`);
+        const d = await r.json();
+        const results: SymbolResult[] = Array.isArray(d.results) ? d.results : [];
+        setSuggestions(results.length > 0 ? results : clientFallback());
+      } catch {
+        setSuggestions(clientFallback());
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [newSymbol, items]);
+
+  async function addSymbol(sym: string, source = "manual") {
+    const clean = sym.trim().toUpperCase();
+    if (!clean) return;
     setAdding(true);
+    setSuggestions([]);
+    setShowSuggestions(false);
     await fetch("/api/watchlist", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol: sym, source: "manual" }),
+      body: JSON.stringify({ symbol: clean, source }),
     }).catch(() => {});
     setNewSymbol("");
     setAdding(false);
     load();
+  }
+
+  async function addManual() {
+    await addSymbol(newSymbol, "manual");
   }
 
   async function removeItem(symbol: string) {
@@ -224,6 +283,10 @@ export default function WatchlistPanel() {
                 {item.company_name}
               </div>
             )}
+            {/* Always-visible "why added" reason line */}
+            <div style={{ fontSize: "9px", color: T.muted, marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: 0.85 }}>
+              {whyAdded(item)}
+            </div>
           </div>
 
           {q ? (
@@ -300,16 +363,50 @@ export default function WatchlistPanel() {
         </div>
 
         <div style={{ display: "flex", gap: "8px" }}>
-          <input
-            value={newSymbol}
-            onChange={e => setNewSymbol(e.target.value.toUpperCase())}
-            onKeyDown={e => e.key === "Enter" && addManual()}
-            placeholder="Add ticker (e.g. NVDA)…"
-            style={{
-              flex: 1, background: T.dim, border: `1px solid ${T.border}`, borderRadius: "6px",
-              color: T.text, padding: "6px 10px", fontSize: "12px", outline: "none",
-            }}
-          />
+          <div style={{ flex: 1, position: "relative" }}>
+            <input
+              value={newSymbol}
+              onChange={e => { setNewSymbol(e.target.value.toUpperCase()); setShowSuggestions(true); }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+              onKeyDown={e => e.key === "Enter" && addManual()}
+              placeholder="Add ticker (e.g. NVDA)…"
+              style={{
+                width: "100%", boxSizing: "border-box", background: T.dim, border: `1px solid ${T.border}`,
+                borderRadius: "6px", color: T.text, padding: "6px 10px", fontSize: "12px", outline: "none",
+              }}
+            />
+            {showSuggestions && suggestions.length > 0 && (
+              <div style={{
+                position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 50,
+                background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px",
+                overflow: "hidden", boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+              }}>
+                {suggestions.map(s => (
+                  <div
+                    key={`${s.symbol}-${s.exchange}`}
+                    onMouseDown={e => { e.preventDefault(); addSymbol(s.symbol, "manual"); }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: "8px", padding: "7px 10px",
+                      cursor: "pointer", borderBottom: `1px solid ${T.border}22`,
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = T.surface)}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <span style={{ fontSize: "12px", fontWeight: 700, color: T.text, minWidth: "46px" }}>{s.symbol}</span>
+                    <span style={{ fontSize: "11px", color: T.textSub, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {s.name || "—"}
+                    </span>
+                    {s.exchange && (
+                      <span style={{ fontSize: "9px", fontWeight: 700, color: T.muted, background: T.surface, padding: "1px 5px", borderRadius: "3px", whiteSpace: "nowrap" }}>
+                        {s.exchange}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             onClick={addManual}
             disabled={adding || !newSymbol}
@@ -332,6 +429,11 @@ export default function WatchlistPanel() {
           >
             📥 Import CSV
           </button>
+        </div>
+
+        {/* Multi-market note */}
+        <div style={{ fontSize: "9px", color: T.muted, marginTop: "6px", lineHeight: "1.5" }}>
+          US symbols fully supported; other markets show if the data provider returns them.
         </div>
 
         {/* Filter + search bar */}
