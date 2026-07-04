@@ -22,32 +22,172 @@ function mdToHtml(md: string): string {
     .replace(/\n/g, "<br>");
 }
 
-async function sendBriefingEmail(svc: any, session: "morning" | "evening", dateStr: string, dayName: string, content: string): Promise<{ sent: boolean; error?: string }> {
-  const resendKey = await getResendKey(svc);
-  if (!resendKey) return { sent: false, error: "RESEND_API_KEY not configured" };
+interface BriefingData {
+  session: "morning" | "evening";
+  dateStr: string; dayName: string; timestamp: string;
+  editorNote: string;
+  paper: { nav: number; cash: number; pnl: number; pnlPct: number; positionsCount: number };
+  live: { equity: number; buyingPower: number; positions: number } | null;
+  healthScore: number; healthVerdict: string;
+  market: { label: string; price: number | null; changePct: number | null }[];
+  regime: { label: string; tone: string } | null;
+  distribution: { strongBuy: number; buy: number; watch: number };
+  positions: { symbol: string; direction: string; qty: number; entry: number; current: number | null; pnl: number | null; pnlPct: number | null }[];
+  signals: { symbol: string; direction: string; score: number; reasoning: string }[];
+  candidates: { symbol: string; direction: string; score: number; reasoning: string }[];
+  earnings: { symbol: string; date: string; isToday: boolean; eps: number | null }[];
+  learning: { symbol: string; outcome: string; note: string }[];
+  phase: { closed: number; needed: number };
+  researchRan: boolean;
+}
 
-  const icon = session === "morning" ? "☀️" : "🌙";
-  const label = session === "morning" ? "Morning Briefing" : "Evening Summary";
-  const subject = `${icon} Kairos ${label} — ${dayName}, ${dateStr}`;
+function regimeTone(regime: string): string {
+  const r = regime.toLowerCase();
+  if (r.includes("risk-on") || r.includes("bull") || r.includes("green")) return "green";
+  if (r.includes("risk-off") || r.includes("bear") || r.includes("red")) return "red";
+  return "amber";
+}
+
+// ── Email palette (dark) ──
+const E = { bg: "#0D0F14", card: "#1A1D27", surface: "#13151C", border: "#252836", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", green: "#34D399", red: "#F87171", amber: "#FBBF24", accent: "#6366F1", blue: "#60A5FA" };
+const pctColor = (v: number | null) => v == null ? E.muted : v >= 0 ? E.green : E.red;
+const sign = (v: number) => (v >= 0 ? "+" : "");
+function chip(text: string, color: string): string {
+  return `<span style="display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;border-radius:5px;background:${color}22;color:${color};border:1px solid ${color}44;margin:2px 4px 2px 0">${text}</span>`;
+}
+function bandHeader(label: string): string {
+  return `<div style="font-size:11px;font-weight:800;letter-spacing:0.1em;color:${E.muted};text-transform:uppercase;margin:22px 0 10px;padding-bottom:6px;border-bottom:1px solid ${E.border}">${label}</div>`;
+}
+
+function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string; html: string } {
+  const icon = d.session === "morning" ? "📈" : "🌙";
+  const label = d.session === "morning" ? "Morning Briefing" : "Evening Summary";
+  const topSig = d.signals[0];
+
+  const subject = d.session === "morning"
+    ? `${icon} Your portfolio ${sign(d.paper.pnlPct)}${d.paper.pnlPct.toFixed(1)}%${topSig ? ` · Plus: ${topSig.direction.toUpperCase()} ${topSig.symbol} flagged` : " · pre-market scan"}`
+    : `${icon} Close ${sign(d.paper.pnl)}$${Math.abs(d.paper.pnl).toFixed(0)} (${sign(d.paper.pnlPct)}${d.paper.pnlPct.toFixed(1)}%) · ${d.signals.length} signal${d.signals.length === 1 ? "" : "s"}`;
+
+  const healthColor = d.healthVerdict === "Healthy" ? E.green : d.healthVerdict === "Watch" ? E.amber : E.red;
+
+  // Market snapshot rows
+  const marketRows = d.market.map(m => `
+    <td style="padding:8px 6px;text-align:center;border:1px solid ${E.border};background:${E.surface}">
+      <div style="font-size:10px;color:${E.muted};margin-bottom:3px">${m.label}</div>
+      <div style="font-size:14px;font-weight:700;color:${E.text}">${m.price != null ? "$" + m.price.toFixed(0) : "—"}</div>
+      <div style="font-size:11px;font-weight:600;color:${pctColor(m.changePct)}">${m.changePct != null ? sign(m.changePct) + m.changePct.toFixed(2) + "%" : "n/a"}</div>
+    </td>`).join("");
+
+  // Signal cards
+  const signalCards = d.signals.length ? d.signals.map(s => {
+    const sc = s.score >= 75 ? E.green : s.score >= 60 ? E.amber : E.blue;
+    const why = s.reasoning ? s.reasoning.slice(0, 160) : "";
+    return `<div style="background:${E.surface};border:1px solid ${E.border};border-left:3px solid ${sc};border-radius:8px;padding:12px 14px;margin-bottom:8px">
+      <div style="font-size:13px;font-weight:700;color:${E.text}">${s.direction.toUpperCase()} ${s.symbol} ${chip(String(s.score) + "/100", sc)}</div>
+      ${why ? `<div style="font-size:12px;color:${E.sub};line-height:1.55;margin-top:6px"><b style="color:${E.muted}">Why it matters:</b> ${why}</div>` : ""}
+      <a href="${baseUrl}/dashboard/symbol/${s.symbol}" style="font-size:11px;color:${E.accent};text-decoration:none">Open ${s.symbol} »</a>
+    </div>`;
+  }).join("") : `<div style="font-size:13px;color:${E.muted};padding:8px 0">No agent signals yet — the pre-market research scan runs at 9:00 AM ET.</div>`;
+
+  // Positions table
+  const positionsBlock = d.positions.length ? `<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">
+    ${d.positions.map(p => `<tr>
+      <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;font-weight:700;color:${E.text}">${p.symbol}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;color:${E.sub}">${p.qty} @ $${p.entry.toFixed(2)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;color:${E.text};text-align:right">${p.current != null ? "$" + p.current.toFixed(2) : "—"}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;font-weight:700;text-align:right;color:${pctColor(p.pnlPct)}">${p.pnlPct != null ? sign(p.pnlPct) + p.pnlPct.toFixed(1) + "%" : "—"}</td>
+    </tr>`).join("")}
+  </table>` : `<div style="font-size:13px;color:${E.muted};padding:8px 0">No open positions.</div>`;
+
+  const earningsBlock = d.earnings.length
+    ? d.earnings.map(e => `${e.symbol}${e.isToday ? " <b style='color:" + E.amber + "'>(today)</b>" : " (" + e.date + ")"}${e.eps != null ? " · EPS est $" + e.eps.toFixed(2) : ""}`).join(" &nbsp;·&nbsp; ")
+    : "None in the next 3 days for tracked symbols.";
+
+  const learningBlock = d.learning.length
+    ? d.learning.map(l => `<div style="font-size:12px;color:${E.sub};margin:3px 0">• ${l.symbol} <span style="color:${l.outcome === "win" ? E.green : l.outcome === "loss" ? E.red : E.muted}">[${l.outcome}]</span> ${l.note ?? ""}</div>`).join("")
+    : `<div style="font-size:12px;color:${E.muted}">No closed trades yet.</div>`;
+
+  const distBlock = (d.distribution.strongBuy + d.distribution.buy + d.distribution.watch) > 0
+    ? `<div style="margin-bottom:10px">${d.distribution.strongBuy ? chip(`Strong Buy ${d.distribution.strongBuy}`, E.green) : ""}${d.distribution.buy ? chip(`Buy ${d.distribution.buy}`, E.amber) : ""}${d.distribution.watch ? chip(`Watch ${d.distribution.watch}`, E.blue) : ""}</div>`
+    : "";
 
   const html = `<!DOCTYPE html>
-<html><body style="margin:0;padding:0;background:#0D0F14;font-family:'Inter',Arial,sans-serif">
-<div style="max-width:600px;margin:0 auto;padding:24px 16px">
-  <div style="background:#1A1D27;border:1px solid #252836;border-radius:16px;overflow:hidden">
-    <div style="background:linear-gradient(135deg,#6366F1,#4F46E5);padding:24px 28px">
-      <div style="font-size:11px;color:rgba(255,255,255,0.7);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:6px">Kairos</div>
-      <div style="font-size:22px;font-weight:700;color:#fff">${icon} ${label}</div>
-      <div style="font-size:13px;color:rgba(255,255,255,0.8);margin-top:4px">${dayName}, ${dateStr}</div>
+<html><body style="margin:0;padding:0;background:${E.bg};font-family:'Inter',Arial,sans-serif">
+<div style="max-width:600px;margin:0 auto;padding:20px 14px">
+  <div style="background:${E.card};border:1px solid ${E.border};border-radius:16px;overflow:hidden">
+
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,${E.accent},#4F46E5);padding:20px 26px">
+      <div style="font-size:10px;color:rgba(255,255,255,0.7);letter-spacing:0.18em;text-transform:uppercase">Kairos</div>
+      <div style="font-size:20px;font-weight:700;color:#fff;margin-top:4px">${icon} ${label}</div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.85);margin-top:3px">${d.dayName}, ${d.dateStr} · as of ${d.timestamp}</div>
     </div>
-    <div style="padding:24px 28px;color:#9B9EA8;font-size:14px;line-height:1.7">
-      <p style="margin:0 0 12px;color:#9B9EA8;line-height:1.6">${mdToHtml(content)}</p>
+
+    <div style="padding:20px 26px">
+
+      <!-- Editor's note -->
+      <div style="background:${E.surface};border:1px solid ${E.border};border-radius:10px;padding:14px 16px;font-size:13.5px;color:${E.text};line-height:1.6">${d.editorNote}</div>
+
+      <!-- Health + P&L hero -->
+      ${bandHeader("Portfolio Health")}
+      <table width="100%" cellspacing="0" cellpadding="0"><tr>
+        <td style="width:38%;vertical-align:middle">
+          <div style="font-size:32px;font-weight:800;color:${healthColor};line-height:1">${d.healthScore.toFixed(1)}<span style="font-size:15px;color:${E.muted}">/5</span></div>
+          <div style="margin-top:4px">${chip(d.healthVerdict, healthColor)}</div>
+        </td>
+        <td style="vertical-align:middle">
+          <div style="font-size:11px;color:${E.muted}">Paper</div>
+          <div style="font-size:15px;font-weight:700;color:${pctColor(d.paper.pnl)}">${sign(d.paper.pnl)}$${Math.abs(d.paper.pnl).toFixed(0)} <span style="font-size:12px">(${sign(d.paper.pnlPct)}${d.paper.pnlPct.toFixed(1)}%)</span></div>
+          <div style="font-size:11px;color:${E.muted};margin-top:2px">NAV $${d.paper.nav.toFixed(0)} · ${d.paper.positionsCount} pos · cash $${d.paper.cash.toFixed(0)}</div>
+          ${d.live ? `<div style="font-size:11px;color:${E.muted};margin-top:6px">Live ●●●●8641: $${d.live.equity.toFixed(0)} · ${d.live.positions} pos</div>` : ""}
+        </td>
+      </tr></table>
+
+      <!-- Market snapshot -->
+      ${bandHeader("Market Snapshot")}
+      <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse"><tr>${marketRows}</tr></table>
+      ${d.regime ? `<div style="margin-top:10px">Regime: ${chip(d.regime.label, d.regime.tone === "green" ? E.green : d.regime.tone === "red" ? E.red : E.amber)}</div>` : ""}
+
+      <!-- Agent signals -->
+      ${bandHeader(d.session === "morning" ? "Agent Signals — Today's Candidates" : "Agent Signals — Fired Today")}
+      ${distBlock}
+      ${signalCards}
+
+      <!-- Positions -->
+      ${bandHeader("Your Positions")}
+      ${positionsBlock}
+
+      <!-- Earnings -->
+      ${bandHeader("Upcoming Earnings")}
+      <div style="font-size:12px;color:${E.sub};line-height:1.6">${earningsBlock}</div>
+
+      <!-- Learning -->
+      ${bandHeader("Learning")}
+      ${learningBlock}
+      <div style="margin-top:8px">${chip(`Phase 0 · ${d.phase.closed}/${d.phase.needed} trades to weight-tuning`, E.blue)}</div>
+
     </div>
-    <div style="padding:16px 28px;border-top:1px solid #252836;font-size:11px;color:#6B7280">
-      Kairos Agentic Quant Platform · <a href="http://localhost:3000/dashboard/briefing" style="color:#6366F1;text-decoration:none">View in app →</a>
+
+    <!-- Footer -->
+    <div style="padding:16px 26px;border-top:1px solid ${E.border};font-size:11px;color:${E.muted}">
+      <a href="${baseUrl}/dashboard" style="color:${E.accent};text-decoration:none">Dashboard</a> ·
+      <a href="${baseUrl}/dashboard/intelligence" style="color:${E.accent};text-decoration:none">Signals</a> ·
+      <a href="${baseUrl}/dashboard/portfolio" style="color:${E.accent};text-decoration:none">Portfolio</a>
+      <div style="margin-top:8px;color:${E.muted}">Kairos Agentic Quant Platform · paper + governed. Not financial advice.</div>
     </div>
   </div>
 </div>
 </body></html>`;
+
+  return { subject, html };
+}
+
+async function sendBriefingEmail(svc: any, d: BriefingData): Promise<{ sent: boolean; error?: string }> {
+  const resendKey = await getResendKey(svc);
+  if (!resendKey) return { sent: false, error: "RESEND_API_KEY not configured" };
+
+  const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
+  const { subject, html } = buildBriefingHtml(d, baseUrl);
 
   try {
     const res = await fetch("https://api.resend.com/emails", {
@@ -128,6 +268,9 @@ export async function POST(req: NextRequest) {
     spyData,
     qqqData,
     diaData,
+    vixData,
+    { data: macroRow },
+    { count: closedTradesCount },
   ] = await Promise.all([
     svc.from("agent_runs").select("*").eq("agent_type", "research").order("created_at", { ascending: false }).limit(1).single(),
     svc.from("paper_portfolio").select("*").limit(1).single(),
@@ -140,11 +283,15 @@ export async function POST(req: NextRequest) {
     massiveKey ? fetchIndexClose("SPY", massiveKey) : Promise.resolve(null),
     massiveKey ? fetchIndexClose("QQQ", massiveKey) : Promise.resolve(null),
     massiveKey ? fetchIndexClose("DIA", massiveKey) : Promise.resolve(null),
+    massiveKey ? fetchIndexClose("VIXY", massiveKey) : Promise.resolve(null),
+    svc.from("macro_signals").select("regime, summary").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    svc.from("paper_trades").select("*", { count: "exact", head: true }).not("closed_at", "is", null),
   ]);
 
   // Enrich positions with current price from price_cache
   const positions = rawPositions ?? [];
   const positionLines: string[] = [];
+  const positionsStruct: { symbol: string; direction: string; qty: number; entry: number; current: number | null; pnl: number | null; pnlPct: number | null }[] = [];
   for (const p of positions) {
     const { data: cache } = await svc
       .from("price_cache")
@@ -161,8 +308,10 @@ export async function POST(req: NextRequest) {
       positionLines.push(
         `  • ${p.symbol} ${p.direction?.toUpperCase()}: ${p.quantity} shares @ $${entryPrice.toFixed(2)} entry → $${currentPrice.toFixed(2)} now = ${pnlDollar >= 0 ? "+" : ""}$${pnlDollar.toFixed(0)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%)`
       );
+      positionsStruct.push({ symbol: p.symbol, direction: p.direction ?? "long", qty: Number(p.quantity), entry: entryPrice, current: currentPrice, pnl: pnlDollar, pnlPct });
     } else {
       positionLines.push(`  • ${p.symbol} ${p.direction?.toUpperCase()}: ${p.quantity} shares @ $${entryPrice.toFixed(2)} entry (price unavailable)`);
+      positionsStruct.push({ symbol: p.symbol, direction: p.direction ?? "long", qty: Number(p.quantity), entry: entryPrice, current: null, pnl: null, pnlPct: null });
     }
   }
 
@@ -255,48 +404,76 @@ WATCHLIST (research-enabled): ${watchlistSymbols || "empty"}
 === END CONTEXT ===
 `.trim();
 
-  const morningPrompt = `You are a personal AI investment assistant preparing a ${sessionLabel} for ${dayName}, ${dateStr}.
+  // The rich data (market table, portfolio cards, signals, movers) is rendered
+  // deterministically as HTML blocks below. The LLM writes ONLY a short editor's
+  // note — the human voice/takeaway — so we never regurgitate numbers as prose.
+  const morningPrompt = `You are the editor of a personal markets briefing. Below is today's real data.
 
 ${contextBlock}
 
-Write a concise morning briefing (200-300 words). Use ONLY the data above — do not invent market moves, analyst notes, or events not mentioned. If data says "unavailable" or "none", say so directly rather than guessing.
+Write a SHORT "What matters today" note: 2-3 sentences max, ~45 words. Forward-looking, present/future tense, second person. Point to the single most important thing to watch or do today based on the actual signals/earnings/positions above. If nothing is actionable (no signals, no positions), say plainly what today is for (e.g. "a clean slate — let the pre-market scan run"). Use ONLY the data above. No headings, no bullet points, no disclaimers, no invented events. Just the note.`;
 
-Structure:
-**1. TODAY'S FOCUS** — what to watch today, based on actual signals and earnings above
-**2. PORTFOLIO STATUS** — reference specific positions by name with their actual P&L from context
-**3. RISK WATCH** — any concern from the actual data (high IV, earnings risk on positions, etc.)
-**4. ONE THING** — single most important action for today
-
-Second person, present tense. Specific. No disclaimers. No invented data.`;
-
-  const eveningPrompt = `You are a personal AI investment assistant preparing an ${sessionLabel} for ${dayName}, ${dateStr}.
+  const eveningPrompt = `You are the editor of a personal markets briefing. Below is today's real data.
 
 ${contextBlock}
 
-Write a concise evening summary (200-300 words). Use ONLY the data above — do not invent market moves, analyst notes, or events not in context. If index data shows actual closes, cite them. If positions show specific P&L, cite them. Do not say "markets were mixed" unless the index data supports it.
-
-Structure:
-**1. WHAT HAPPENED** — cite actual index closes from context. If unavailable, say so.
-**2. POSITIONS CHECK** — each open position by name with actual P&L from context
-**3. TOMORROW PREP** — reference actual upcoming earnings and pending signals from context
-**4. LEARNING** — reference actual learning log entries, or state Phase 0 status if no closed trades
-
-Second person, past tense for today / future tense for tomorrow. No invented catalysts, reports, or analyst notes. No disclaimers.`;
+Write a SHORT "Today's takeaway" note: 2-3 sentences max, ~45 words. Retrospective, past tense for today. Second person. Capture the one thing that mattered today from the actual index closes / position P&L / signals above, and what it sets up for tomorrow. Use ONLY the data above — do not say "markets were mixed" unless the index data supports it. No headings, no bullets, no disclaimers, no invented events. Just the note.`;
 
   const result = await callLLM({
     task: "summarize",
     prompt: session === "morning" ? morningPrompt : eveningPrompt,
-    maxTokens: 600,
+    maxTokens: 150,
   });
-  const content = result.text;
+  const editorNote = result.text.trim();
+  const content = editorNote; // in-app briefing shows the editor's note
 
   await svc.from("briefings").upsert(
     { date: dateStr, session, content, model: "auto" },
     { onConflict: "date,session" }
   );
 
+  // ── Derived blocks for the rich email (rendered deterministically) ──────────
+  const market = [
+    { label: "S&P 500", price: spyData?.price ?? null, changePct: spyData?.changePct ?? null },
+    { label: "Nasdaq",  price: qqqData?.price ?? null, changePct: qqqData?.changePct ?? null },
+    { label: "Dow",     price: diaData?.price ?? null, changePct: diaData?.changePct ?? null },
+    { label: "VIX (VIXY)", price: vixData?.price ?? null, changePct: vixData?.changePct ?? null },
+  ];
+
+  const regimeRaw = (macroRow as any)?.regime ?? null;
+  const regime = regimeRaw ? { label: String(regimeRaw), tone: regimeTone(String(regimeRaw)) } : null;
+
+  const pendingSignals: { symbol: string; direction: string; score: number; reasoning: string }[] = (signals ?? []).map((s: any) => ({ symbol: s.symbol, direction: s.direction ?? "long", score: Number(s.analyst_score), reasoning: s.reasoning ? String(s.reasoning) : "" }));
+  const distribution = {
+    strongBuy: pendingSignals.filter(s => s.score >= 75).length,
+    buy:       pendingSignals.filter(s => s.score >= 60 && s.score < 75).length,
+    watch:     pendingSignals.filter(s => s.score >= 50 && s.score < 60).length,
+  };
+
+  // Health score (0-5): neutral 3.0, nudged by P&L and average signal strength.
+  const avgScore = pendingSignals.length ? pendingSignals.reduce((a, s) => a + s.score, 0) / pendingSignals.length : 50;
+  const healthScore = Math.max(0, Math.min(5, 3.0 + (pnlPct * 0.1) + (avgScore - 50) / 30));
+  const healthVerdict = healthScore >= 4 ? "Healthy" : healthScore >= 3 ? "Watch" : "Exposed";
+
+  const briefingData: BriefingData = {
+    session, dateStr, dayName,
+    timestamp: etNow.toISOString().slice(11, 16) + " ET",
+    editorNote,
+    paper: { nav, cash, pnl, pnlPct, positionsCount: positions.length },
+    live: liveSnap ? { equity: Number(liveSnap.equity), buyingPower: Number(liveSnap.buying_power), positions: liveSnap.position_count ?? 0 } : null,
+    healthScore: Number(healthScore.toFixed(1)), healthVerdict,
+    market, regime, distribution,
+    positions: positionsStruct,
+    signals: pendingSignals.slice(0, 5),
+    candidates: pendingSignals.slice(0, 3),
+    earnings: (tomorrowEarnings ?? []).map((e: any) => ({ symbol: e.symbol, date: e.report_date, isToday: e.report_date === dateStr, eps: e.estimate_eps != null ? Number(e.estimate_eps) : null })),
+    learning: (learningLog ?? []).map((l: any) => ({ symbol: l.symbol, outcome: l.outcome, note: l.note })),
+    phase: { closed: closedTradesCount ?? 0, needed: 10 },
+    researchRan: !!lastRun && new Date(lastRun.created_at).toISOString().slice(0, 10) === dateStr,
+  };
+
   // Send email — briefing IS the email, so await and report the real result.
-  const emailResult = await sendBriefingEmail(svc, session, dateStr, dayName, content);
+  const emailResult = await sendBriefingEmail(svc, briefingData);
 
   // Only stamp email_sent_at when the send actually succeeded.
   if (emailResult.sent) {
