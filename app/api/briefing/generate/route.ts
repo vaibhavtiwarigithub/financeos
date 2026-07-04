@@ -39,6 +39,10 @@ interface BriefingData {
   learning: { symbol: string; outcome: string; note: string }[];
   phase: { closed: number; needed: number };
   researchRan: boolean;
+  recap7d?: { agent: string; runs: number; signals: number; today: number }[];
+  learnerHypCount?: number;
+  mentor?: { grade: number | null; focus: string[]; lesson: string | null; milestone: string | null } | null;
+  outlook?: { market: string | null; positions: string | null; future: string | null } | null;
 }
 
 function regimeTone(regime: string): string {
@@ -48,8 +52,8 @@ function regimeTone(regime: string): string {
   return "amber";
 }
 
-// ── Email palette (dark) ──
-const E = { bg: "#0D0F14", card: "#1A1D27", surface: "#13151C", border: "#252836", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", green: "#34D399", red: "#F87171", amber: "#FBBF24", accent: "#6366F1", blue: "#60A5FA" };
+// ── Email palette (light — user wants a not-all-dark briefing) ──
+const E = { bg: "#F5F6F8", card: "#FFFFFF", surface: "#F1F3F6", border: "#E3E6EA", text: "#1A1D27", sub: "#4B5563", muted: "#6B7280", green: "#16A34A", red: "#DC2626", amber: "#D97706", accent: "#4F46E5", blue: "#2563EB" };
 const pctColor = (v: number | null) => v == null ? E.muted : v >= 0 ? E.green : E.red;
 const sign = (v: number) => (v >= 0 ? "+" : "");
 function chip(text: string, color: string): string {
@@ -142,11 +146,19 @@ function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string;
           ${d.live ? `<div style="font-size:11px;color:${E.muted};margin-top:6px">Live ●●●●8641: $${d.live.equity.toFixed(0)} · ${d.live.positions} pos</div>` : ""}
         </td>
       </tr></table>
+      <div style="font-size:11px;color:${E.muted};margin-top:8px;line-height:1.5">What this is: a 0–5 read of your book — it blends realized P&L momentum with how strong the agent's current signals are. Higher = a more constructive setup, not a guarantee. Verdict: Healthy ≥4, Watch ≥3, Exposed below.</div>
 
       <!-- Market snapshot -->
       ${bandHeader("Market Snapshot")}
       <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse"><tr>${marketRows}</tr></table>
       ${d.regime ? `<div style="margin-top:10px">Regime: ${chip(d.regime.label, d.regime.tone === "green" ? E.green : d.regime.tone === "red" ? E.red : E.amber)}</div>` : ""}
+      <div style="font-size:11px;color:${E.muted};margin-top:6px;line-height:1.5">How to read it: green across the indices = risk-on tape; VIX rising = fear building; the Regime chip is the one-word summary the agents act on.</div>
+
+      <!-- Outlook (AI, grounded, with confidence) -->
+      ${d.outlook && (d.outlook.market || d.outlook.positions || d.outlook.future) ? `${bandHeader("Outlook")}
+      ${d.outlook.market ? `<div style="font-size:12.5px;color:${E.sub};line-height:1.6;margin-bottom:6px"><b style="color:${E.text}">Market:</b> ${d.outlook.market}</div>` : ""}
+      ${d.outlook.positions ? `<div style="font-size:12.5px;color:${E.sub};line-height:1.6;margin-bottom:6px"><b style="color:${E.text}">Positions:</b> ${d.outlook.positions}</div>` : ""}
+      ${d.outlook.future ? `<div style="font-size:12.5px;color:${E.sub};line-height:1.6"><b style="color:${E.text}">Next 1–2 weeks:</b> ${d.outlook.future}</div>` : ""}` : ""}
 
       <!-- Agent signals -->
       ${bandHeader(d.session === "morning" ? "Agent Signals — Today's Candidates" : "Agent Signals — Fired Today")}
@@ -160,6 +172,20 @@ function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string;
       <!-- Earnings -->
       ${bandHeader("Upcoming Earnings")}
       <div style="font-size:12px;color:${E.sub};line-height:1.6">${earningsBlock}</div>
+
+      <!-- 7-day agent recap -->
+      ${bandHeader("What the agents did — last 7 days")}
+      ${d.recap7d && d.recap7d.length ? d.recap7d.map(r => `<div style="font-size:12px;color:${E.sub};margin:2px 0">• <b style="color:${E.text}">${r.agent}</b>: ${r.runs} run${r.runs === 1 ? "" : "s"} (${r.today} today), ${r.signals} signals written</div>`).join("") : `<div style="font-size:12px;color:${E.muted}">No agent runs in the last 7 days.</div>`}
+      <div style="font-size:11px;color:${E.muted};margin-top:6px">LearnerAgent hypotheses this cycle: ${d.learnerHypCount ?? 0}. This recap shows what ran today vs across the week so you can see the pipeline working.</div>
+
+      <!-- Mentor -->
+      ${d.mentor ? `${bandHeader("Your Coach")}
+      <div style="background:${E.surface};border:1px solid ${E.border};border-radius:10px;padding:12px 14px">
+        ${d.mentor.grade != null ? `<div style="font-size:12px;color:${E.muted};margin-bottom:6px">Discipline &amp; progress grade: <b style="color:${E.text}">${d.mentor.grade}/100</b></div>` : ""}
+        ${d.mentor.lesson ? `<div style="font-size:12.5px;color:${E.sub};line-height:1.6"><b style="color:${E.accent}">Lesson:</b> ${d.mentor.lesson}</div>` : ""}
+        ${Array.isArray(d.mentor.focus) && d.mentor.focus.length ? `<div style="font-size:12px;color:${E.sub};margin-top:6px"><b style="color:${E.text}">Focus:</b> ${d.mentor.focus.slice(0,2).join("; ")}</div>` : ""}
+        ${d.mentor.milestone ? `<div style="font-size:12px;color:${E.sub};margin-top:6px"><b style="color:${E.text}">Next milestone:</b> ${d.mentor.milestone}</div>` : ""}
+      </div>` : ""}
 
       <!-- Learning -->
       ${bandHeader("Learning")}
@@ -471,6 +497,47 @@ Write a SHORT "Today's takeaway" note: 2-3 sentences max, ~45 words. Retrospecti
     phase: { closed: closedTradesCount ?? 0, needed: 10 },
     researchRan: !!lastRun && new Date(lastRun.created_at).toISOString().slice(0, 10) === dateStr,
   };
+
+  // ── v2: 7-day agent-activity recap + mentor block + AI outlooks ─────────────
+  const since7d = new Date(Date.now() - 7 * 86400_000).toISOString();
+  const [{ data: recentRuns }, { data: learnerRuns }, { data: mentorRow }] = await Promise.all([
+    svc.from("agent_runs").select("agent_type, signals_written, started_at, trigger_source").gte("started_at", since7d).order("started_at", { ascending: false }).limit(200),
+    svc.from("learner_runs").select("run_date, hypotheses").gte("run_date", dateStr.slice(0, 8) + "01").order("run_date", { ascending: false }).limit(4),
+    svc.from("mentor_insights").select("grade, focus_areas, lesson, next_milestone").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+
+  const recapByAgent: Record<string, { runs: number; signals: number; today: number }> = {};
+  for (const r of (recentRuns ?? []) as any[]) {
+    const k = r.agent_type ?? "agent";
+    recapByAgent[k] ??= { runs: 0, signals: 0, today: 0 };
+    recapByAgent[k].runs++;
+    recapByAgent[k].signals += r.signals_written ?? 0;
+    if (new Date(r.started_at).toISOString().slice(0, 10) === dateStr) recapByAgent[k].today++;
+  }
+  const recap7d = Object.entries(recapByAgent).map(([agent, v]) => ({ agent, ...v }));
+  const learnerHypotheses = ((learnerRuns ?? [])[0] as any)?.hypotheses;
+  const hypCount = Array.isArray(learnerHypotheses) ? learnerHypotheses.length : 0;
+  (briefingData as any).recap7d = recap7d;
+  (briefingData as any).learnerHypCount = hypCount;
+  (briefingData as any).mentor = mentorRow ? { grade: (mentorRow as any).grade, focus: (mentorRow as any).focus_areas, lesson: (mentorRow as any).lesson, milestone: (mentorRow as any).next_milestone } : null;
+
+  // AI outlooks with confidence — one grounded call over the real data.
+  try {
+    const outlookPrompt = `You are a markets analyst. Using ONLY this data, write THREE short outlooks, each 1-2 sentences, each ending with a confidence in parentheses (Low/Medium/High + one reason).
+
+${contextBlock}
+
+Format EXACTLY (no extra text):
+MARKET: <near-term market outlook> (Confidence: <Low|Medium|High> — <reason>)
+POSITIONS: <outlook for the held positions, or 'No open positions to assess.'> (Confidence: ...)
+FUTURE: <what to expect next 1-2 weeks and what would change it> (Confidence: ...)
+
+No invented events. Ground every claim in the data above.`;
+    const ol = await callLLM({ task: "summarize", model: "deepseek-chat", prompt: outlookPrompt, maxTokens: 300 });
+    const t = ol.text;
+    const grab = (k: string) => { const m = t.match(new RegExp(k + ":\\s*([\\s\\S]*?)(?=\\n(?:MARKET|POSITIONS|FUTURE):|$)", "i")); return m ? m[1].trim() : null; };
+    (briefingData as any).outlook = { market: grab("MARKET"), positions: grab("POSITIONS"), future: grab("FUTURE") };
+  } catch { (briefingData as any).outlook = null; }
 
   // Send email — briefing IS the email, so await and report the real result.
   const emailResult = await sendBriefingEmail(svc, briefingData);
