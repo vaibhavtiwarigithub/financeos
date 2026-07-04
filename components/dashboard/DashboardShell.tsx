@@ -67,7 +67,8 @@ const NAV_SECTIONS = [
     label: "Settings",
     hint: "",
     items: [
-      { href: "/dashboard/settings",   label: "Settings",         icon: "⚙", hint: "App configuration",                 alertCat: "" },
+      { href: "/dashboard/settings",              label: "Settings",   icon: "⚙", hint: "App configuration", alertCat: "" },
+      { href: "/dashboard/settings/automation",   label: "Automation", icon: "⏱", hint: "All scheduled jobs — times, runner (Windows Scheduler), next run", alertCat: "" },
     ],
   },
 ];
