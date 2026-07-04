@@ -1546,23 +1546,28 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         </div>
       )}
 
-      {/* Visual Agent Section */}
+      {/* Agent & Flow Architecture Section */}
       <div style={{ marginTop: 24, borderRadius: 12, border: "1px solid #1E2130", background: "#13151C", overflow: "hidden" }}>
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid #1E2130", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: "#E2E8F0" }}>Visual Agent</span>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid #1E2130", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#E2E8F0" }}>Agent &amp; Flow Architecture</span>
+            <span style={{ fontSize: 10, color: "#64748B" }}>🤖 AI Agent = LLM reasons/decides · ⚙️ Flow = deterministic rules. Diagrams show current architecture (why each node exists).</span>
+          </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {[
-              { id: "research-agent", label: "Research" },
-              { id: "theme-scout", label: "ThemeScout" },
-              { id: "deepseek-agent", label: "DeepSeek" },
-              { id: "learner-agent", label: "LearnerAgent" },
-              { id: "paper-trader", label: "PaperTrader" },
-              { id: "position-monitor", label: "Position Monitor" },
-              { id: "macro-sentinel", label: "Macro Sentinel" },
+              { id: "research-agent", label: "Research", kind: "ai" },
+              { id: "deep-dive", label: "Deep-Dive", kind: "ai" },
+              { id: "theme-scout", label: "ThemeScout", kind: "ai" },
+              { id: "deepseek-agent", label: "DeepSeek", kind: "ai" },
+              { id: "learner-agent", label: "LearnerAgent", kind: "ai" },
+              { id: "macro-sentinel", label: "Macro Sentinel", kind: "ai" },
+              { id: "paper-trader", label: "PaperTrader", kind: "flow" },
+              { id: "position-monitor", label: "Position Monitor", kind: "flow" },
             ].map(a => (
               <button
                 key={a.id}
                 onClick={() => setSelectedDiagramAgent(a.id)}
+                title={a.kind === "ai" ? "AI Agent — LLM reasons and decides" : "Flow — deterministic rules, no LLM decision"}
                 style={{
                   padding: "4px 10px", fontSize: 11, fontWeight: 600, borderRadius: 5,
                   cursor: "pointer", border: "1px solid",
@@ -1571,7 +1576,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                   color: selectedDiagramAgent === a.id ? "#6366F1" : "#64748B",
                 }}
               >
-                {a.label}
+                {a.kind === "ai" ? "🤖" : "⚙️"} {a.label}
               </button>
             ))}
           </div>
