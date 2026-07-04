@@ -22,9 +22,9 @@ function mdToHtml(md: string): string {
     .replace(/\n/g, "<br>");
 }
 
-async function sendBriefingEmail(svc: any, session: "morning" | "evening", dateStr: string, dayName: string, content: string): Promise<void> {
+async function sendBriefingEmail(svc: any, session: "morning" | "evening", dateStr: string, dayName: string, content: string): Promise<{ sent: boolean; error?: string }> {
   const resendKey = await getResendKey(svc);
-  if (!resendKey) return;
+  if (!resendKey) return { sent: false, error: "RESEND_API_KEY not configured" };
 
   const icon = session === "morning" ? "☀️" : "🌙";
   const label = session === "morning" ? "Morning Briefing" : "Evening Summary";
@@ -54,8 +54,13 @@ async function sendBriefingEmail(svc: any, session: "morning" | "evening", dateS
       method: "POST",
       headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Kairos <onboarding@resend.dev>",
-        to: [ADMIN_EMAIL],
+        // onboarding@resend.dev (Resend shared domain) only delivers to the Resend
+        // account owner's own email. To send anywhere else, verify a domain at
+        // resend.com/domains and set BRIEFING_FROM to an address on it.
+        from: process.env.BRIEFING_FROM ?? "Kairos <onboarding@resend.dev>",
+        // Recipient override — set BRIEFING_TO to test-deliver to the Resend
+        // account's own address without changing ADMIN_EMAIL (used for vault OTP).
+        to: [process.env.BRIEFING_TO ?? ADMIN_EMAIL],
         subject,
         html,
       }),
@@ -63,9 +68,12 @@ async function sendBriefingEmail(svc: any, session: "morning" | "evening", dateS
     if (!res.ok) {
       const errBody = await res.text().catch(() => "");
       console.error(`[briefing-email] Resend ${res.status}: ${errBody}`);
+      return { sent: false, error: `Resend ${res.status}: ${errBody.slice(0, 300)}` };
     }
+    return { sent: true };
   } catch (e) {
     console.error("[briefing-email] fetch error:", e);
+    return { sent: false, error: String(e) };
   }
 }
 
@@ -287,14 +295,20 @@ Second person, past tense for today / future tense for tomorrow. No invented cat
     { onConflict: "date,session" }
   );
 
-  // Send email — fire and await (briefing is the email, not fire-and-forget)
-  await sendBriefingEmail(svc, session, dateStr, dayName, content);
+  // Send email — briefing IS the email, so await and report the real result.
+  const emailResult = await sendBriefingEmail(svc, session, dateStr, dayName, content);
 
-  // Mark email sent
-  await svc.from("briefings")
-    .update({ email_sent_at: new Date().toISOString() })
-    .eq("date", dateStr)
-    .eq("session", session);
+  // Only stamp email_sent_at when the send actually succeeded.
+  if (emailResult.sent) {
+    await svc.from("briefings")
+      .update({ email_sent_at: new Date().toISOString() })
+      .eq("date", dateStr)
+      .eq("session", session);
+  }
 
-  return NextResponse.json({ session, date: dateStr, content, email_sent: true });
+  return NextResponse.json({
+    session, date: dateStr, content,
+    email_sent: emailResult.sent,
+    email_error: emailResult.error,
+  });
 }
