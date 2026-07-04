@@ -43,9 +43,14 @@ async function voyageEmbed(texts: string[], apiKey: string): Promise<number[][]>
 }
 
 export async function POST(req: NextRequest) {
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Allow cron calls via x-cron-secret header (same pattern as position-monitor/learner)
+  const cronSecret = req.headers.get("x-cron-secret");
+  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  if (!isCron) {
+    const userClient = await createClient();
+    const { data: { user } } = await userClient.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const apiKey = process.env.VOYAGE_API_KEY;
   if (!apiKey) return NextResponse.json({ error: "VOYAGE_API_KEY not configured" }, { status: 503 });

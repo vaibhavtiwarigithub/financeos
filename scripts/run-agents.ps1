@@ -5,16 +5,29 @@
 #   09:45  trader            — proposal generation after research settles
 #   16:15  position-monitor  — post-close exit/trailing-stop checks
 #   16:30  brief-evening     — email recap
+#   16:50  embed             — RAG embeddings for newly-enriched trade_decisions (before learner)
 #   17:00  nav-snapshot      — daily NAV + alpha snapshot
 #   Friday 17:00  learner    — weekly weight learning (Fridays only; route skips other days)
 #   Every 4h  stale-check   — alert on stale agent runs
 param(
   [Parameter(Mandatory=$true)]
-  [string]$Agent  # "research" | "learner" | "brief-morning" | "brief-evening" | "position-monitor" | "nav-snapshot" | "stale-check" | "trader"
+  [string]$Agent  # "research" | "learner" | "brief-morning" | "brief-evening" | "position-monitor" | "nav-snapshot" | "stale-check" | "trader" | "embed"
 )
 
 $BASE = "http://localhost:3000"
-$CRON_SECRET = ""
+
+# CRON_SECRET is never hardcoded here (would leak into git). Resolve at runtime:
+#   1. $env:KAIROS_CRON_SECRET if set
+#   2. else parse CRON_SECRET from ../.env.local (the same source the server reads)
+$CRON_SECRET = $env:KAIROS_CRON_SECRET
+if (-not $CRON_SECRET) {
+  $envFile = Join-Path $PSScriptRoot "..\.env.local"
+  if (Test-Path $envFile) {
+    $line = Select-String -Path $envFile -Pattern '^\s*CRON_SECRET\s*=' | Select-Object -First 1
+    if ($line) { $CRON_SECRET = ($line.Line -replace '^\s*CRON_SECRET\s*=\s*','').Trim().Trim('"').Trim("'") }
+  }
+}
+if (-not $CRON_SECRET) { Write-Warning "CRON_SECRET not resolved — cron-authed endpoints will 401. Set KAIROS_CRON_SECRET env or CRON_SECRET in .env.local." }
 
 $endpoints = @{
   "research"         = @{ method="POST"; url="$BASE/api/agents/research/cron";        headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
@@ -25,6 +38,7 @@ $endpoints = @{
   "position-monitor" = @{ method="POST"; url="$BASE/api/agents/position-monitor";     headers=@{"Content-Type"="application/json"}; body="{}" }
   "nav-snapshot"     = @{ method="POST"; url="$BASE/api/agents/performance";           headers=@{"Content-Type"="application/json"}; body='{"action":"snapshot"}' }
   "stale-check"      = @{ method="GET";  url="$BASE/api/alerts/stale-check";           headers=@{}; body=$null }
+  "embed"            = @{ method="POST"; url="$BASE/api/live-portfolio/embed";         headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"limit":200}' }
 }
 
 if (-not $endpoints.ContainsKey($Agent)) {
