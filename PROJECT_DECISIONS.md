@@ -179,3 +179,73 @@ Alternatives considered: Chat-only explanations; static reports; unrestricted au
 Impact: Adds evidence labels, rule-version review, tax/dividend flags, and auditable user decisions.
 Files/features affected: Explainer, knowledge store, daily briefing, decision journal, Risk/Tax Engine, and rule monitoring.
 Reversal cost: Medium
+
+### Decision 11: RAG Memory for LearnerAgent (Voyage embeddings + pgvector)
+
+Date: 2026-07-03
+Status: Approved
+Category: Architecture / Data
+
+Context: LearnerAgent reasons over historical trade decisions but keyword/filter queries miss semantically-similar situations across different symbols and regimes (e.g. "rate-hike sell-off", "earnings-miss hold").
+Decision: Store one Voyage `voyage-finance-2` (1024-dim) embedding per enriched `trade_decisions` row in `trade_decision_embeddings` (migration 045, HNSW cosine index). Expose `semantic_search_decisions` as a LearnerAgent tool backed by the `semantic_search_trade_decisions` RPC. Enrichment is treated as final, so a decision is embedded once and never re-embedded (content_hash retained for audit only).
+Reason: Vector recall lets the learner find shared failure modes across similar past trades regardless of ticker/wording. Enrichment-final avoids a re-embed loop and keeps the pipeline idempotent.
+Alternatives considered: LLM re-reading all history each run (token-expensive, lossy); keyword search only (misses semantic matches); re-embed on any content change (needless churn given enrichment is final).
+Impact: Adds an embeddings table, an embed route, two RPCs, and a `VOYAGE_API_KEY` dependency (route 503s without it).
+Files/features affected: `supabase/migrations/045_*`, `047_*`; `app/api/live-portfolio/embed/route.ts`; `app/api/agents/learner/route.ts`.
+Reversal cost: Low
+
+### Decision 12: Auto-embed cron before the weekly learner run
+
+Date: 2026-07-03
+Status: Approved
+Category: Architecture
+
+Context: Semantic search is only useful if new enriched decisions get embedded before the learner needs them.
+Decision: Run the embed route on a weekday 4:50 PM scheduled task (`Kairos\embed`), ahead of the Friday 5:00 PM learner. Candidate selection uses a `unembedded_trade_decisions` NOT-EXISTS RPC (bounded, deterministic) rather than loading all embedded ids into app memory. The learner tolerates missing embeddings (tool returns an error, agent continues).
+Reason: Keeps the vector store fresh with no manual step; NOT-EXISTS scales past the in-memory-id approach; the 10-minute gap plus small daily volume makes overlap a non-issue.
+Alternatives considered: Embed inline during enrichment (couples two concerns); load-all-ids-then-filter-in-JS (unbounded memory as history grows); no automation (stale vectors).
+Impact: Adds an `embed` agent to `run-agents.ps1` and a scheduled task; `run-agents.ps1` now resolves `CRON_SECRET` at runtime from `.env.local` (secret never committed).
+Files/features affected: `scripts/run-agents.ps1`, `scripts/register-tasks.ps1`, `supabase/migrations/047_*`.
+Reversal cost: Low
+
+### Decision 13: Challenger lifecycle for learner weight changes
+
+Date: 2026-07-03
+Status: Approved
+Category: Architecture / Security
+
+Context: LearnerAgent previously mutated `signal_weights` directly, letting probabilistic reasoning silently overwrite the live champion strategy — violating the governance principle in Decision 4.
+Decision: `update_signal_weight` no longer touches `signal_weights`. It inserts an immutable `strategy_versions` row with `state='challenger'` and a `weights_snapshot` (only the five weight columns, no metadata). Weights take effect only when a human promotes the challenger to champion via the Strategy Registry. Every Supabase error is checked; success is reported only after a confirmed insert; versions carry a date+HHMMSS suffix to avoid same-day collisions.
+Reason: Human-in-the-loop gate before any strategy change goes live; auditable proposal trail; no silent authority expansion.
+Alternatives considered: Direct weight mutation (unsafe); auto-promote above a confidence threshold (removes human gate).
+Impact: Learner output is advisory until promoted; adds challenger rows to `strategy_versions`.
+Files/features affected: `app/api/agents/learner/route.ts`, Strategy Registry UI.
+Reversal cost: Low
+
+### Decision 14: LearnerAgent runs on DeepSeek-reasoner, not Opus (no ANTHROPIC_API_KEY)
+
+Date: 2026-07-04
+Status: Approved
+Category: Technical / Architecture
+
+Context: LearnerAgent was configured for `claude-opus-4-8`, but the app has no raw `ANTHROPIC_API_KEY` — all Claude usage falls back to the `claude` CLI subprocess (`execClaude`), which cannot do tool-calling. Every Friday the learner's tool-loop threw "Could not resolve authentication method" and recorded a 0-token error run.
+Decision: Run the learner on `deepseek-reasoner` (works via DeepSeek's native tool-calling, ~$0.043/run). `runAgentLoop` dispatches by model prefix: Claude → Anthropic SDK tool loop, everything else → DeepSeek. The Claude branch stays in code but requires a real `ANTHROPIC_API_KEY` to ever run.
+Reason: The learner must actually run; DeepSeek-reasoner gives budget-friendly step-by-step reasoning today. Model is user-changeable per agent via `/dashboard/agents` → LLM Config (`agent_config.model`).
+Alternatives considered: Keep Opus + add `ANTHROPIC_API_KEY` (best reasoning, real API cost $5/$25 per Mtok — deferred until the user adds a key); `deepseek-chat` (cheaper, weaker reasoning). Supersedes the earlier "Opus for learner" intent.
+Impact: Learner reasoning quality is DeepSeek-reasoner tier, not Opus, until an Anthropic key is added.
+Files/features affected: `agent_config.model` (learner), `lib/llm-router.ts`.
+Reversal cost: Low
+
+### Decision 15: Langfuse observability + full agent-loop cost logging
+
+Date: 2026-07-04
+Status: Approved
+Category: Technical / Data
+
+Context: Direct `callLLM` calls were logged to `llm_call_log`, but agent tool-loops (learner/research/mentor/theme-scout/macro-sentinel via `runAgentLoop`) bypassed it — so the cost dashboard undercounted exactly where the expensive tokens live. There was also no external trace view of LLM calls.
+Decision: (a) `runAgentLoop` now calls `logCall` on every invocation (model, tokens, cost, duration, success, `agent_label`, `run_id`), so all agent-loop usage appears at `/dashboard/admin/llm-history`. (b) `callLLM` wraps each call in a Langfuse trace/generation, gated on `LANGFUSE_SECRET_KEY`/`LANGFUSE_PUBLIC_KEY` and no-op when absent.
+Reason: Accurate per-agent/per-task cost visibility is required to make model-tier decisions with data; Langfuse adds zero-risk external tracing when keys are present.
+Alternatives considered: Leave agent loops untracked (blind spot); build a custom trace UI (reinventing Langfuse).
+Impact: Complete cost ledger; optional Langfuse tracing.
+Files/features affected: `lib/llm-router.ts`, `llm_call_log`, `/dashboard/admin/llm-history`.
+Reversal cost: Low
