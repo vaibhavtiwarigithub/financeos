@@ -34,6 +34,23 @@ async function fetchQuote(symbol: string): Promise<{ price: number; changePct: n
   return null;
 }
 
+// Real fundamentals via Alpha Vantage OVERVIEW (1 call per deep-dive). AV free
+// tier is 25/day; deep-dive is on-demand + low-frequency so this stays in budget.
+// Grounds the debate in actual numbers instead of the model's training memory.
+async function fetchFundamentals(symbol: string): Promise<string | null> {
+  const avKey = process.env.ALPHA_VANTAGE_API_KEY;
+  if (!avKey) return null;
+  try {
+    const res = await fetch(`https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${avKey}`,
+      { signal: AbortSignal.timeout(12_000) });
+    if (!res.ok) return null;
+    const d: any = await res.json();
+    if (!d || !d.Symbol) return null; // rate-limited or unknown symbol
+    const pick = (k: string) => d[k] && d[k] !== "None" ? d[k] : "n/a";
+    return `sector=${pick("Sector")}, industry=${pick("Industry")}, PE=${pick("PERatio")}, PEG=${pick("PEGRatio")}, profitMargin=${pick("ProfitMargin")}, marketCap=${pick("MarketCapitalization")}, 52wHigh=${pick("52WeekHigh")}, 52wLow=${pick("52WeekLow")}, analystTarget=${pick("AnalystTargetPrice")}, EPS=${pick("EPS")}`;
+  } catch { return null; }
+}
+
 interface Acc { tokensIn: number; tokensOut: number; costUsd: number; }
 function tally(acc: Acc, r: { tokensIn: number; tokensOut: number; costUsd: number }) {
   acc.tokensIn += r.tokensIn; acc.tokensOut += r.tokensOut; acc.costUsd += r.costUsd;
@@ -56,9 +73,10 @@ export async function POST(req: NextRequest) {
 
   const svc = createServiceClient();
 
-  // ── Data bundle: quote + our own signal scores + macro regime + holding status ──
-  const [quote, { data: sig }, { data: macro }, { data: pos }, { data: wl }] = await Promise.all([
+  // ── Data bundle: quote + fundamentals + our signal scores + macro + holding ──
+  const [quote, fundamentals, { data: sig }, { data: macro }, { data: pos }, { data: wl }] = await Promise.all([
     fetchQuote(symbol),
+    fetchFundamentals(symbol),
     svc.from("agent_signals").select("direction, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, rationale, created_at").eq("symbol", symbol).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     svc.from("macro_signals").select("regime, summary, created_at").order("created_at", { ascending: false }).limit(1).maybeSingle(),
     svc.from("paper_positions").select("qty").eq("symbol", symbol).is("closed_at", null).maybeSingle(),
@@ -72,6 +90,7 @@ export async function POST(req: NextRequest) {
   const bundle = [
     `SYMBOL: ${symbol} (${companyName})`,
     quote ? `PRICE: $${quote.price?.toFixed(2)} (${quote.changePct >= 0 ? "+" : ""}${quote.changePct?.toFixed(2)}% last session, src=${quote.source})` : `PRICE: unavailable`,
+    fundamentals ? `FUNDAMENTALS (Alpha Vantage): ${fundamentals}` : `FUNDAMENTALS: unavailable`,
     `HELD IN PAPER PORTFOLIO: ${isHeld ? "YES" : "NO"}`,
     s ? `PRIOR RESEARCH SIGNAL (${new Date(s.created_at).toISOString().slice(0,10)}): direction=${s.direction}, analyst_score=${s.analyst_score}/100 | dims: fundamental=${s.fundamental_score ?? "?"}, technical=${s.technical_score ?? "?"}, sentiment=${s.sentiment_score ?? "?"}, macro=${s.macro_score ?? "?"}, insider=${s.insider_score ?? "?"}\n  rationale: ${(s.rationale ?? "").slice(0, 400)}` : `PRIOR RESEARCH SIGNAL: none on record`,
     macro ? `MACRO REGIME: ${(macro as any).regime} — ${((macro as any).summary ?? "").slice(0, 300)}` : `MACRO REGIME: unknown`,
