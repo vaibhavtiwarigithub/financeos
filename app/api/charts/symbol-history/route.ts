@@ -27,7 +27,10 @@ async function fetchFromMassive(symbol: string, from: string, to: string): Promi
   let pages = 0;
   while (url && pages < 20) {
     pages++;
-    const res: Response = await fetch(url, { headers: { Accept: "application/json" } });
+    // Was completely uncached — up to 20 paginated requests per symbol-page
+    // view, on every load. Daily bars only change once per day; 1h keeps
+    // today's bar reasonably fresh while cutting redundant calls drastically.
+    const res: Response = await fetch(url, { headers: { Accept: "application/json" }, next: { revalidate: 3600 } });
     if (!res.ok) {
       const txt: string = await res.text();
       throw new Error(`Massive ${res.status}: ${txt.slice(0, 200)}`);

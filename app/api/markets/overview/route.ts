@@ -69,7 +69,9 @@ async function fetchPrevClose(
 ): Promise<{ symbol: string; price: number; change: number; changePct: number }> {
   const url = `https://api.massive.com/v2/aggs/ticker/${symbol}/prev?adjusted=true&apiKey=${apiKey}`;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    // Was uncached — this route fetches ~9 symbols on every dashboard/markets
+    // load. 5-min shared cache matches the convention used by quotes/quote.
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000), next: { revalidate: 300 } });
     if (!res.ok) {
       return { symbol, price: 0, change: 0, changePct: 0 };
     }
