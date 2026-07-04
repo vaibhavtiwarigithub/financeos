@@ -18,7 +18,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS trade_decision_embeddings_td_id ON trade_decis
 -- HNSW index: faster ANN queries than IVFFlat; no training required; good for 10k-100k rows
 CREATE INDEX IF NOT EXISTS trade_decision_embeddings_hnsw ON trade_decision_embeddings USING hnsw (embedding vector_cosine_ops);
 
--- RLS: same pattern as other agent tables
+-- RLS: same pattern as other agent tables (idempotent — safe to re-run)
 ALTER TABLE trade_decision_embeddings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_all_tde" ON trade_decision_embeddings;
+DROP POLICY IF EXISTS "auth_read_tde"   ON trade_decision_embeddings;
 CREATE POLICY "service_all_tde"  ON trade_decision_embeddings FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "auth_read_tde"    ON trade_decision_embeddings FOR SELECT TO authenticated USING (true);

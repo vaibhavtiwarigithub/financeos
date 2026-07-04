@@ -29,40 +29,45 @@ $tasks = @(
   @{ Name="learner";          Trigger=(FridayTrigger  "5:00PM");  Agent="learner"           }
 )
 
-# proposal-reminder: every 15 min on weekdays (hits /api/alerts/proposal-reminder)
-$BaseUrl    = "http://localhost:3000"
-$CronSecret = "fos-cron-k9x2m7p4-2026"
-$reminderArgs = "-NonInteractive -ExecutionPolicy Bypass -Command `"Invoke-WebRequest -Uri '$BaseUrl/api/alerts/proposal-reminder' -Method POST -Headers @{'x-cron-secret'='$CronSecret'} -UseBasicParsing | Out-Null`""
+# Ensure task folder exists BEFORE any Register-ScheduledTask call (fresh machines
+# have no \Kairos folder yet, and registering into a missing folder fails).
+$sch = New-Object -ComObject Schedule.Service
+$sch.Connect()
+$root = $sch.GetFolder("\")
+try { $root.GetFolder($TaskFolder) | Out-Null }
+catch { $root.CreateFolder($TaskFolder) | Out-Null; Write-Host "Created folder \$TaskFolder" }
+
+# Per-agent execution time limits (minutes). embed can run a large first backfill.
+$timeLimits = @{ "embed" = 10; "learner" = 15 }
+function TimeLimitFor([string]$agent) {
+  if ($timeLimits.ContainsKey($agent)) { return $timeLimits[$agent] } else { return 5 }
+}
+
+# proposal-reminder: every 15 min on weekdays. Routed THROUGH run-agents.ps1 so the
+# cron secret is resolved at runtime from .env.local — never hardcoded here or baked
+# into the registered task's command line.
 $reminderBase = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At "9:00AM"
-$reminderBase.Repetition.Interval   = "PT15M"
-$reminderBase.Repetition.Duration   = "PT8H"
-$reminderBase.Repetition.StopAtDurationEnd = $false
-$reminderAction   = New-ScheduledTaskAction -Execute $PSExe -Argument $reminderArgs
-$reminderSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 1) -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
+# PS 5.1 can't mutate an empty .Repetition — borrow a populated one from a -Once trigger.
+$reminderBase.Repetition = (New-ScheduledTaskTrigger -Once -At "9:00AM" -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Hours 8)).Repetition
+$reminderAction   = New-ScheduledTaskAction -Execute $PSExe -Argument "$PSArgs proposal-reminder"
+$reminderSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
 $reminderTask     = New-ScheduledTask -Action $reminderAction -Trigger $reminderBase -Settings $reminderSettings -Description "Kairos: proposal expiry reminder (every 15min, 9am-5pm weekdays)"
 Register-ScheduledTask -TaskName "$TaskFolder\proposal-reminder" -InputObject $reminderTask -Force | Out-Null
 Write-Host "Registered: $TaskFolder\proposal-reminder  -> every 15 min, weekdays 9am-5pm"
 
-# Ensure task folder exists
-$sch = New-Object -ComObject Schedule.Service
-$sch.Connect()
-$root = $sch.GetFolder("\")
-try { $root.GetFolder($TaskFolder) }
-catch { $root.CreateFolder($TaskFolder) | Out-Null; Write-Host "Created folder \$TaskFolder" }
-
 foreach ($t in $tasks) {
+  $mins     = TimeLimitFor $t.Agent
   $action   = New-ScheduledTaskAction -Execute $PSExe -Argument "$PSArgs $($t.Agent)"
-  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
+  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes $mins) -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
   $task     = New-ScheduledTask -Action $action -Trigger $t.Trigger -Settings $settings -Description "Kairos agent: $($t.Agent)"
   Register-ScheduledTask -TaskName "$TaskFolder\$($t.Name)" -InputObject $task -Force | Out-Null
-  Write-Host "Registered: $TaskFolder\$($t.Name)  -> $($t.Agent)"
+  Write-Host "Registered: $TaskFolder\$($t.Name)  -> $($t.Agent) (limit ${mins}m)"
 }
 
 # Stale-check: every 4h, all days
 $staleBase = New-ScheduledTaskTrigger -Daily -At "12:00AM"
-$staleBase.Repetition.Interval   = "PT4H"
-$staleBase.Repetition.Duration   = "P1D"
-$staleBase.Repetition.StopAtDurationEnd = $false
+# Borrow a populated Repetition object (PS 5.1 can't mutate an empty one).
+$staleBase.Repetition = (New-ScheduledTaskTrigger -Once -At "12:00AM" -RepetitionInterval (New-TimeSpan -Hours 4) -RepetitionDuration (New-TimeSpan -Days 1)).Repetition
 $staleAction   = New-ScheduledTaskAction -Execute $PSExe -Argument "$PSArgs stale-check"
 $staleSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
 $staleTask     = New-ScheduledTask -Action $staleAction -Trigger $staleBase -Settings $staleSettings -Description "Kairos agent: stale-check (every 4h)"

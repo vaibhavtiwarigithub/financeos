@@ -39,7 +39,10 @@ async function voyageEmbed(texts: string[], apiKey: string): Promise<number[][]>
     throw new Error(`Voyage API error ${res.status}: ${err}`);
   }
   const data = await res.json();
-  return (data.data as any[]).map((d: any) => d.embedding as number[]);
+  // Voyage returns items with an explicit `index`; do NOT assume array order.
+  // Sort by index so embeddings align to their input texts.
+  const items = (data.data as any[]).slice().sort((a: any, b: any) => (a.index ?? 0) - (b.index ?? 0));
+  return items.map((d: any) => d.embedding as number[]);
 }
 
 export async function POST(req: NextRequest) {
@@ -60,26 +63,14 @@ export async function POST(req: NextRequest) {
 
   const svc = createServiceClient();
 
-  // Already-embedded ids (PostgREST can't take a subquery as an `in` value,
-  // so exclude them in JS). Set of uuids kept in memory — fine at our scale.
-  const { data: embeddedRows, error: embErr } = await svc
-    .from("trade_decision_embeddings")
-    .select("trade_decision_id");
-  if (embErr) return NextResponse.json({ error: embErr.message }, { status: 500 });
-  const embeddedIds = new Set((embeddedRows ?? []).map((r: any) => r.trade_decision_id));
-
-  // Pull enriched decisions, over-fetch to cover already-embedded rows, then
-  // filter to the first `limit` that still need embedding.
-  const { data: enriched, error: fetchErr } = await svc
-    .from("trade_decisions")
-    .select("id, symbol, action, qty, exec_price, exec_date, outcome_score, pattern_tags, llm_analysis, macro_market_regime, macro_event_tag")
-    .eq("enrichment_status", "enriched")
-    .order("exec_date", { ascending: false })
-    .limit(limit + embeddedIds.size);
+  // Candidate selection via NOT EXISTS in SQL (migration 047) — bounded,
+  // deterministic, index-friendly. Enrichment is final, so an already-embedded
+  // decision never needs re-embedding; content_hash is retained only for audit.
+  const { data: decisions, error: fetchErr } = await svc
+    .rpc("unembedded_trade_decisions" as any, { match_count: limit } as any) as { data: any[] | null; error: any };
 
   if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
-  const decisions = (enriched ?? []).filter((d: any) => !embeddedIds.has(d.id)).slice(0, limit);
-  if (!decisions.length) return NextResponse.json({ embedded: 0, message: "No unembedded enriched decisions found" });
+  if (!decisions?.length) return NextResponse.json({ embedded: 0, message: "No unembedded enriched decisions found" });
 
   let embedded = 0;
   const errors: string[] = [];
@@ -98,6 +89,10 @@ export async function POST(req: NextRequest) {
         const vec = vectors[j];
         if (!vec || vec.length !== EMBED_DIM) {
           errors.push(`${(batch[j] as any).id}: bad embedding dim ${vec?.length}`);
+          continue;
+        }
+        if (!vec.every((n: number) => Number.isFinite(n))) {
+          errors.push(`${(batch[j] as any).id}: embedding contains non-finite values`);
           continue;
         }
         const { error: insertErr } = await svc.from("trade_decision_embeddings").upsert({

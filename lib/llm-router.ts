@@ -1,6 +1,8 @@
 // Route tasks to the right LLM. Claude for accuracy-critical, DeepSeek for cheap tasks.
 // Langfuse observability: enabled when LANGFUSE_SECRET_KEY + LANGFUSE_PUBLIC_KEY are set in .env.local.
 // No-ops gracefully if keys are absent — zero runtime impact.
+import type Anthropic from "@anthropic-ai/sdk"
+
 export type LLMTask = "research" | "chat" | "summarize" | "trade" | "evaluate" | "thesis" | "screen" | "optimize"
 
 export interface LLMCallOpts {
@@ -39,6 +41,8 @@ const MODEL_ROUTING: Record<LLMTask, string> = {
 const PRICING: Record<string, [number, number]> = {
   "claude-sonnet-4-6":         [3.00,  15.00],
   "claude-haiku-4-5":          [0.25,   1.25],
+  "claude-haiku-4-5-20251001": [0.25,   1.25],
+  "claude-opus-4-8":           [5.00,  25.00],
   "deepseek-chat":             [0.07,   0.28],
   "deepseek-reasoner":         [0.55,   2.19],
   "gemini-2.5-flash":          [0.075,  0.30],
@@ -168,7 +172,8 @@ async function callClaude(
       ...(system ? { system } : {}),
       messages,
     })
-    const text = resp.content[0].type === "text" ? resp.content[0].text : ""
+    const textBlock = resp.content.find(b => b.type === "text")
+    const text = textBlock && textBlock.type === "text" ? textBlock.text : ""
     return { text, tokensIn: resp.usage.input_tokens, tokensOut: resp.usage.output_tokens }
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string }
@@ -205,6 +210,7 @@ async function callDeepSeek(
       "Authorization": `Bearer ${apiKey}`,
     },
     body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
+    signal: AbortSignal.timeout(120_000),
   })
 
   if (!resp.ok) {
@@ -240,6 +246,7 @@ async function callGroq(
       "Authorization": `Bearer ${apiKey}`,
     },
     body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
+    signal: AbortSignal.timeout(120_000),
   })
 
   if (!resp.ok) {
@@ -277,9 +284,14 @@ export interface AgentLoopResult {
   toolCalls: { name: string; args: Record<string, unknown>; result: string }[]
 }
 
+const AGENT_LOOP_TIMEOUT_MS = 120_000
+
 /**
- * Run a tool-use agent loop via DeepSeek (OpenAI-compatible tool calling).
- * The LLM can call tools in any order, multiple times, until it calls "finish" or stop reason = "stop".
+ * Run a tool-use agent loop. Dispatches by model provider:
+ *   - Claude models  → Anthropic Messages tool-use loop (tool_use / tool_result blocks)
+ *   - everything else → DeepSeek (OpenAI-compatible function calling)
+ * The LLM can call tools in any order, multiple times, until it calls "finish"
+ * or the model stops requesting tools.
  */
 export async function runAgentLoop(opts: {
   model?: string
@@ -293,8 +305,86 @@ export async function runAgentLoop(opts: {
 }): Promise<AgentLoopResult> {
   const model = opts.model ?? "deepseek-chat"
   const maxIter = opts.maxIterations ?? 12
+  if (model.startsWith("claude")) return runClaudeAgentLoop(opts, model, maxIter)
+  return runDeepSeekAgentLoop(opts, model, maxIter)
+}
+
+// ── Claude (Anthropic) tool-use loop ─────────────────────────────────────────
+async function runClaudeAgentLoop(
+  opts: { systemPrompt: string; initialMessage: string; tools: ToolDef[]; toolExecutor: (call: ToolCall) => Promise<string> },
+  model: string,
+  maxIter: number
+): Promise<AgentLoopResult> {
+  const { default: AnthropicSDK } = await import("@anthropic-ai/sdk")
+  const client = new AnthropicSDK()
+
+  const tools = opts.tools.map(t => ({
+    name: t.name,
+    description: t.description,
+    input_schema: t.parameters as Anthropic.Tool.InputSchema,
+  }))
+
+  // messages holds Anthropic content blocks (assistant tool_use, user tool_result)
+  const messages: Anthropic.MessageParam[] = [
+    { role: "user", content: opts.initialMessage },
+  ]
+
+  let totalIn = 0, totalOut = 0, steps = 0
+  const callLog: AgentLoopResult["toolCalls"] = []
+
+  for (let i = 0; i < maxIter; i++) {
+    const resp = await client.messages.create(
+      { model, max_tokens: 2048, system: opts.systemPrompt, tools, messages },
+      { timeout: AGENT_LOOP_TIMEOUT_MS }
+    )
+    totalIn += resp.usage.input_tokens
+    totalOut += resp.usage.output_tokens
+    steps++
+
+    messages.push({ role: "assistant", content: resp.content })
+
+    const toolUses = resp.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
+    if (resp.stop_reason !== "tool_use" || toolUses.length === 0) {
+      const textBlock = resp.content.find((b): b is Anthropic.TextBlock => b.type === "text")
+      return { text: textBlock?.text ?? "", steps, tokensIn: totalIn, tokensOut: totalOut, toolCalls: callLog }
+    }
+
+    const toolResults: Anthropic.ToolResultBlockParam[] = []
+    let finished: string | null = null
+    for (const tu of toolUses) {
+      const args = (tu.input ?? {}) as Record<string, unknown>
+      let result = ""
+      try {
+        result = await opts.toolExecutor({ id: tu.id, name: tu.name, arguments: args })
+      } catch (e) {
+        result = `Error executing ${tu.name}: ${String(e)}`
+      }
+      callLog.push({ name: tu.name, args, result: result.slice(0, 500) })
+      toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: result })
+      if (tu.name === "finish") finished = result
+    }
+
+    messages.push({ role: "user", content: toolResults })
+    if (finished !== null) {
+      return { text: finished, steps, tokensIn: totalIn, tokensOut: totalOut, toolCalls: callLog }
+    }
+  }
+
+  const lastAssistant = [...messages].reverse().find(m => m.role === "assistant")
+  const lastText = Array.isArray(lastAssistant?.content)
+    ? (lastAssistant!.content.find((b: any) => b.type === "text") as any)?.text
+    : lastAssistant?.content
+  return { text: String(lastText ?? "max iterations reached"), steps, tokensIn: totalIn, tokensOut: totalOut, toolCalls: callLog }
+}
+
+// ── DeepSeek (OpenAI-compatible) tool-use loop ───────────────────────────────
+async function runDeepSeekAgentLoop(
+  opts: { systemPrompt: string; initialMessage: string; tools: ToolDef[]; toolExecutor: (call: ToolCall) => Promise<string> },
+  model: string,
+  maxIter: number
+): Promise<AgentLoopResult> {
   const apiKey = process.env.DEEPSEEK_API_KEY
-  if (!apiKey) throw new Error("DEEPSEEK_API_KEY not set — runAgentLoop requires DeepSeek")
+  if (!apiKey) throw new Error("DEEPSEEK_API_KEY not set — runAgentLoop requires DeepSeek for non-Claude models")
 
   const openAITools = opts.tools.map(t => ({
     type: "function" as const,
@@ -314,6 +404,7 @@ export async function runAgentLoop(opts: {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
       body: JSON.stringify({ model, messages, tools: openAITools, tool_choice: "auto", max_tokens: 2048 }),
+      signal: AbortSignal.timeout(AGENT_LOOP_TIMEOUT_MS),
     })
 
     if (!resp.ok) {
@@ -329,24 +420,20 @@ export async function runAgentLoop(opts: {
     const choice = data.choices?.[0]
     const msg = choice?.message
 
-    // Add assistant message to history
     messages.push({ role: "assistant", content: msg?.content ?? null, tool_calls: msg?.tool_calls })
 
-    // If no tool calls or stop → done
     if (!msg?.tool_calls || msg.tool_calls.length === 0 || choice?.finish_reason === "stop") {
       return { text: msg?.content ?? "", steps, tokensIn: totalIn, tokensOut: totalOut, toolCalls: callLog }
     }
 
-    // Execute each tool call and feed results back
     for (const tc of msg.tool_calls) {
       const fnName = tc.function?.name ?? ""
       let args: Record<string, unknown> = {}
       try { args = JSON.parse(tc.function?.arguments ?? "{}") } catch { args = {} }
 
-      const toolCall: ToolCall = { id: tc.id, name: fnName, arguments: args }
       let result = ""
       try {
-        result = await opts.toolExecutor(toolCall)
+        result = await opts.toolExecutor({ id: tc.id, name: fnName, arguments: args })
       } catch (e) {
         result = `Error executing ${fnName}: ${String(e)}`
       }
@@ -354,14 +441,12 @@ export async function runAgentLoop(opts: {
       callLog.push({ name: fnName, args, result: result.slice(0, 500) })
       messages.push({ role: "tool", content: result, tool_call_id: tc.id })
 
-      // "finish" tool = agent is done
       if (fnName === "finish") {
         return { text: result, steps, tokensIn: totalIn, tokensOut: totalOut, toolCalls: callLog }
       }
     }
   }
 
-  // Max iterations hit — return last content
   const lastMsg = messages.findLast(m => m.role === "assistant")
   return { text: String(lastMsg?.content ?? "max iterations reached"), steps, tokensIn: totalIn, tokensOut: totalOut, toolCalls: callLog }
 }

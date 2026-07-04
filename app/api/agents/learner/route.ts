@@ -256,11 +256,19 @@ export async function POST(req: NextRequest) {
           }
 
           case "update_signal_weight": {
-            const dimension = call.arguments.dimension as string;
-            const newWeight = call.arguments.new_weight as number;
-            const reason = call.arguments.reason as string;
-            const nTrades = call.arguments.n_trades as number;
-            const confidence = (call.arguments.confidence as number) ?? 0;
+            const dimension = String(call.arguments.dimension ?? "");
+            const newWeight = Number(call.arguments.new_weight);
+            const reason = String(call.arguments.reason ?? "");
+            const nTrades = Number(call.arguments.n_trades);
+            const confidence = Number(call.arguments.confidence ?? 0);
+
+            // Runtime validation — tool args come from the LLM and are untrusted.
+            // NaN/missing values must not slip past the numeric gates below.
+            const WEIGHT_DIMS = ["fundamental_weight", "technical_weight", "sentiment_weight", "macro_weight", "insider_weight"];
+            if (!WEIGHT_DIMS.includes(dimension)) return JSON.stringify({ error: `Invalid dimension '${dimension}'. Must be one of: ${WEIGHT_DIMS.join(", ")}` });
+            if (!Number.isFinite(newWeight)) return JSON.stringify({ error: "new_weight must be a finite number" });
+            if (!Number.isInteger(nTrades) || nTrades < 0) return JSON.stringify({ error: "n_trades must be a non-negative integer" });
+            if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return JSON.stringify({ error: "confidence must be a number between 0 and 1" });
 
             if (autoGuardTripped) return JSON.stringify({ error: "AUTO-GUARD: last 3 runs had win_rate < 35%. Weight mutations paused. Review strategy before re-enabling." });
             if ((totalClosedTrades ?? 0) < 10) return JSON.stringify({ error: `Phase 0 gate: ${totalClosedTrades} closed trades. Need 10+.` });
@@ -273,10 +281,15 @@ export async function POST(req: NextRequest) {
             if (!dimAllowMutation) return JSON.stringify({ error: `Dimension ${dimension} has allow_mutation=false — disabled by user in learner_config` });
             if (confidence < dimMinConfidence) return JSON.stringify({ error: `Confidence ${confidence} < min_confidence ${dimMinConfidence} for ${dimension}` });
 
-            const { data: current } = await svc.from("signal_weights").select("*").single();
-            const currentVal = (current as any)?.[dimension] ?? 0.25;
+            // Select ONLY the weight columns — never spread metadata (ids/timestamps)
+            // into weights_snapshot, or promotion code that iterates keys breaks.
+            const { data: current, error: curErr } = await svc.from("signal_weights").select(WEIGHT_DIMS.join(", ")).single();
+            if (curErr) return JSON.stringify({ error: `Failed to read current weights: ${curErr.message}` });
+            const currentVal = Number((current as any)?.[dimension] ?? 0.25);
             const clamped = Math.max(0.05, Math.min(0.60, Math.max(currentVal - 0.05, Math.min(currentVal + 0.05, newWeight))));
-            const proposedWeights = { ...(current as any), [dimension]: clamped };
+            const proposedWeights: Record<string, number> = {};
+            for (const d of WEIGHT_DIMS) proposedWeights[d] = Number((current as any)?.[d] ?? 0.25);
+            proposedWeights[dimension] = clamped;
 
             // CHALLENGER LIFECYCLE: Do NOT mutate signal_weights directly.
             // Create an immutable strategy_versions challenger row. It must be
@@ -289,11 +302,14 @@ export async function POST(req: NextRequest) {
               .order("created_at", { ascending: false })
               .limit(1).maybeSingle();
 
+            // Collision-safe version: base + date + HHMMSS so two proposals on the
+            // same day for the same champion don't hit a unique-constraint clash.
+            const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
             const nextVersion = champion
-              ? `${champion.version ?? "0.0"}.learner-${today}`
-              : `0.1.learner-${today}`;
+              ? `${champion.version ?? "0.0"}.learner-${today}-${stamp}`
+              : `0.1.learner-${today}-${stamp}`;
 
-            const { data: challengerRow } = await svc.from("strategy_versions").insert({
+            const { data: challengerRow, error: insErr } = await svc.from("strategy_versions").insert({
               version:           nextVersion,
               name:              `Challenger — ${dimension} ${currentVal.toFixed(3)}→${clamped.toFixed(3)}`,
               description:       `LearnerAgent proposed weight change. Reason: ${reason}`,
@@ -304,15 +320,21 @@ export async function POST(req: NextRequest) {
               notes:             `Proposed by LearnerAgent on ${today}. N=${nTrades} trades, confidence=${Math.round(confidence * 100)}%. NOT active until promoted.`,
             }).select("id").single();
 
-            await svc.from("learning_log").insert({
+            // Only report success if the challenger actually persisted.
+            if (insErr || !challengerRow) {
+              return JSON.stringify({ error: `Challenger insert failed: ${insErr?.message ?? "no row returned"}`, challenger_created: false });
+            }
+
+            const { error: logErr } = await svc.from("learning_log").insert({
               note: `CHALLENGER CREATED (not live): ${dimension} ${currentVal.toFixed(3)}→${clamped.toFixed(3)} | Reason: ${reason} | N=${nTrades} trades | Confidence=${Math.round(confidence * 100)}% | Promote via Strategy Registry to make active`,
               weight_snapshot: proposedWeights,
               trades_evaluated: nTrades,
             });
             return JSON.stringify({
               challenger_created: true,
-              challenger_id: (challengerRow as any)?.id,
+              challenger_id: (challengerRow as any).id,
               dimension, old: currentVal, new: clamped, reason,
+              log_warning: logErr?.message,
               note: "Weight NOT applied yet. Promoted to champion via /dashboard/strategies to take effect.",
             });
           }
@@ -362,8 +384,13 @@ export async function POST(req: NextRequest) {
           }
 
           case "semantic_search_decisions": {
-            const queryText = call.arguments.query as string;
-            const topK = Math.min((call.arguments.top_k as number) ?? 8, 20);
+            // Validate untrusted LLM args.
+            const queryText = String(call.arguments.query ?? "").trim();
+            if (!queryText) return JSON.stringify({ error: "query must be a non-empty string" });
+            if (queryText.length > 2000) return JSON.stringify({ error: "query too long (max 2000 chars)" });
+            const rawTopK = Number(call.arguments.top_k ?? 8);
+            const topK = Number.isFinite(rawTopK) ? Math.min(Math.max(Math.trunc(rawTopK), 1), 20) : 8;
+
             const voyageKey = process.env.VOYAGE_API_KEY;
             if (!voyageKey) return JSON.stringify({ error: "VOYAGE_API_KEY not set — semantic search unavailable" });
 
@@ -377,9 +404,12 @@ export async function POST(req: NextRequest) {
             if (!embedRes.ok) return JSON.stringify({ error: `Voyage embed failed: ${embedRes.status}` });
             const embedData = await embedRes.json();
             const vec: number[] = embedData.data?.[0]?.embedding ?? [];
-            if (!vec.length) return JSON.stringify({ error: "Empty embedding returned" });
+            // Require exactly 1024 finite numbers before it reaches PostgreSQL.
+            if (vec.length !== 1024 || !vec.every((n) => Number.isFinite(n))) {
+              return JSON.stringify({ error: `Bad query embedding: expected 1024 finite dims, got ${vec.length}` });
+            }
 
-            // Cosine ANN search via pgvector
+            // Parameterized RPC (migration 047) — clamps match_count, INVOKER rights.
             const pgVec = `[${vec.join(",")}]`;
             const { data: rows, error: sqlErr } = await svc.rpc("semantic_search_trade_decisions" as any, {
               query_embedding: pgVec,
@@ -387,13 +417,7 @@ export async function POST(req: NextRequest) {
             } as any);
 
             if (sqlErr) {
-              // Fallback: raw SQL if RPC not available
-              const { data: fallback } = await (svc as any).from("trade_decision_embeddings")
-                .select("trade_decision_id, content_text")
-                .order(`embedding <=> '${pgVec}'::vector`)
-                .limit(topK);
-              if (!fallback?.length) return JSON.stringify({ error: "No embeddings found. Run POST /api/live-portfolio/embed first.", query: queryText });
-              return JSON.stringify({ results: fallback, note: "Content text only — RPC not available" });
+              return JSON.stringify({ error: `Semantic search failed: ${sqlErr.message}. If no embeddings exist yet, run POST /api/live-portfolio/embed first.`, query: queryText });
             }
 
             return JSON.stringify({ query: queryText, top_k: topK, results: rows ?? [] });
@@ -471,9 +495,9 @@ REASONING APPROACH:
         { name: "query_macro_context", description: "Get recent macro signals (rates, geopolitical events, sector rotations) from MacroSentinel", parameters: { type: "object", properties: { days: { type: "number" } } } },
         { name: "read_past_learnings", description: "Read past learning log and previous learner run summaries", parameters: { type: "object", properties: { limit: { type: "number" } } } },
         { name: "write_hypothesis", description: "Save a finding or hypothesis", parameters: { type: "object", properties: { claim: { type: "string" }, evidence: { type: "string" }, confidence: { type: "number" }, action_taken: { type: "string" }, category: { type: "string", enum: ["fundamental", "technical", "macro", "insider", "general"] } }, required: ["claim", "evidence", "confidence"] } },
-        { name: "update_signal_weight", description: "Propose a weight change — creates an immutable challenger in strategy_versions. NOT applied until promoted via Strategy Registry. Gated by phase gate, per-dim config, and auto-guard.", parameters: { type: "object", properties: { dimension: { type: "string", enum: ["fundamental_weight", "technical_weight", "sentiment_weight", "macro_weight", "insider_weight"] }, new_weight: { type: "number" }, reason: { type: "string" }, n_trades: { type: "number" }, confidence: { type: "number" } }, required: ["dimension", "new_weight", "reason", "n_trades", "confidence"] } },
+        { name: "update_signal_weight", description: "Propose a weight change — creates an immutable challenger in strategy_versions. NOT applied until promoted via Strategy Registry. Gated by phase gate, per-dim config, and auto-guard.", parameters: { type: "object", properties: { dimension: { type: "string", enum: ["fundamental_weight", "technical_weight", "sentiment_weight", "macro_weight", "insider_weight"] }, new_weight: { type: "number", minimum: 0.05, maximum: 0.60 }, reason: { type: "string" }, n_trades: { type: "integer", minimum: 10 }, confidence: { type: "number", minimum: 0, maximum: 1 } }, required: ["dimension", "new_weight", "reason", "n_trades", "confidence"] } },
         { name: "query_trade_decisions", description: "Query enriched real trade history (CSV imports + Robinhood MCP). Returns outcome_score per trade (positive=good decision), regime breakdown, win/loss counts. Use to find behavioral patterns in the user's actual trading history.", parameters: { type: "object", properties: { limit: { type: "number", description: "Max trades to return (default 50)" }, action: { type: "string", enum: ["buy", "sell"], description: "Filter by buy or sell" }, regime: { type: "string", description: "Filter by macro regime name (partial match)" }, min_outcome_score: { type: "number", description: "Filter decisions with outcome_score >= this" }, max_outcome_score: { type: "number", description: "Filter decisions with outcome_score <= this" } } } },
-        { name: "semantic_search_decisions", description: "Vector similarity search over enriched trade decisions using Voyage AI embeddings. Use to find trades similar to a situation ('tech sell-off Q4', 'rate hike momentum trade', 'earnings miss hold'), or to answer 'what did I do when X happened'. Returns top-K decisions with outcome data. Only works if embeddings have been built (POST /api/live-portfolio/embed).", parameters: { type: "object", properties: { query: { type: "string", description: "Natural language query describing the trade situation to search for" }, top_k: { type: "number", description: "Number of results to return (default 8, max 20)" } }, required: ["query"] } },
+        { name: "semantic_search_decisions", description: "Vector similarity search over enriched trade decisions using Voyage AI embeddings. Use to find trades similar to a situation ('tech sell-off Q4', 'rate hike momentum trade', 'earnings miss hold'), or to answer 'what did I do when X happened'. Returns top-K decisions with outcome data. Only works if embeddings have been built (POST /api/live-portfolio/embed).", parameters: { type: "object", properties: { query: { type: "string", minLength: 1, maxLength: 2000, description: "Natural language query describing the trade situation to search for" }, top_k: { type: "integer", minimum: 1, maximum: 20, description: "Number of results to return (default 8, max 20)" } }, required: ["query"] } },
         { name: "finish", description: "Complete the run. Must include summary, hypotheses array, and structured Mermaid diagram with inputs node.", parameters: { type: "object", properties: { summary: { type: "string" }, mermaid: { type: "string" }, hypotheses: { type: "array", items: { type: "object" } } }, required: ["summary", "mermaid", "hypotheses"] } },
       ];
 

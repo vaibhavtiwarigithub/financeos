@@ -38,7 +38,8 @@ $endpoints = @{
   "position-monitor" = @{ method="POST"; url="$BASE/api/agents/position-monitor";     headers=@{"Content-Type"="application/json"}; body="{}" }
   "nav-snapshot"     = @{ method="POST"; url="$BASE/api/agents/performance";           headers=@{"Content-Type"="application/json"}; body='{"action":"snapshot"}' }
   "stale-check"      = @{ method="GET";  url="$BASE/api/alerts/stale-check";           headers=@{}; body=$null }
-  "embed"            = @{ method="POST"; url="$BASE/api/live-portfolio/embed";         headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"limit":200}' }
+  "embed"            = @{ method="POST"; url="$BASE/api/live-portfolio/embed";         headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"limit":200}'; timeoutSec=300 }
+  "proposal-reminder"= @{ method="POST"; url="$BASE/api/alerts/proposal-reminder";     headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
 }
 
 if (-not $endpoints.ContainsKey($Agent)) {
@@ -51,14 +52,26 @@ $logFile = "$PSScriptRoot\logs\$Agent-$(Get-Date -Format 'yyyy-MM-dd').log"
 New-Item -ItemType Directory -Force -Path "$PSScriptRoot\logs" | Out-Null
 
 try {
-  $params = @{ Uri=$ep.url; Method=$ep.method; Headers=$ep.headers; TimeoutSec=120 }
+  $timeout = if ($ep.timeoutSec) { $ep.timeoutSec } else { 120 }
+  $params = @{ Uri=$ep.url; Method=$ep.method; Headers=$ep.headers; TimeoutSec=$timeout }
   if ($ep.body) { $params.Body = $ep.body }
   $res = Invoke-RestMethod @params
+
+  # Routes return HTTP 200 with { error: ... } on app-level failure — treat as failure.
+  if ($res -and ($res.PSObject.Properties.Name -contains 'error') -and $res.error) {
+    $err = "$(Get-Date -Format 'HH:mm:ss') [$Agent] APP-ERROR: $($res.error)"
+    Add-Content -Path $logFile -Value $err
+    Write-Error $err
+    exit 1
+  }
+
   $msg = "$(Get-Date -Format 'HH:mm:ss') [$Agent] OK: $($res | ConvertTo-Json -Compress -Depth 2)"
   Add-Content -Path $logFile -Value $msg
   Write-Host $msg
+  exit 0
 } catch {
   $err = "$(Get-Date -Format 'HH:mm:ss') [$Agent] ERROR: $_"
   Add-Content -Path $logFile -Value $err
   Write-Error $err
+  exit 1
 }
