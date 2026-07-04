@@ -42,14 +42,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Batch mode: no symbol provided → run on watchlist top 3
     if (!symbol) {
       const svc = createServiceClient();
-      const { data: wl } = await svc
+      // Prefer research-enabled watchlist names; order by created_at (added_at
+      // does not exist on this table — the bad column silently returned 0 rows → 400).
+      const { data: wl, error: wlErr } = await svc
         .from("watchlist")
         .select("symbol")
-        .order("added_at", { ascending: false })
+        .eq("research_enabled", true)
+        .order("created_at", { ascending: false })
         .limit(3);
 
+      if (wlErr) {
+        return NextResponse.json({ error: `Watchlist query failed: ${wlErr.message}` }, { status: 500 });
+      }
       if (!wl || wl.length === 0) {
-        return NextResponse.json({ error: "No symbols in watchlist to analyze" }, { status: 400 });
+        return NextResponse.json({ error: "No research-enabled symbols in watchlist to analyze" }, { status: 400 });
       }
 
       const results = [];

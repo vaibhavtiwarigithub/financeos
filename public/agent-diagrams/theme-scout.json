@@ -1,25 +1,17 @@
 {
   "agentId": "theme-scout",
   "agentLabel": "ThemeScout",
-  "diagram": "flowchart TD\n  TRIG[\"⚡ On-Demand or After Research\"] --> THEME[\"🎯 Identify Active Themes\"]\n  THEME --> CAND[\"🔍 Find Thematic Candidates\"]\n  CAND --> SCORE[\"📊 Theme Score\"]\n  SCORE --> FILTER{\"Score >= 60?\"}\n  FILTER -->|Yes| ADD[\"➕ Add to Watchlist\"]\n  FILTER -->|No| DROP[\"❌ Drop\"]\n  ADD --> EXPIRE[\"⏳ 7-day Auto-Expiry\"]",
+  "diagram": "flowchart TD\n  TRIG[\"▶ On-demand (run in Agents)\"] --> THEMES[\"🔥 Scan daily market themes\"]\n  THEMES --> CAND[\"🎯 Pick 3-5 thematic candidates\"]\n  CAND --> ADD[\"➕ Add to watchlist\\nsource = llm_theme (AI Scout)\"]\n  ADD --> EXPIRE[\"⏳ 7-day expiry\"]\n  ADD --> RESEARCH[\"➡️ Enters daily ResearchAgent scoring\"]",
   "nodes": {
-    "TRIG": { "label": "On-Demand Trigger", "description": "Runs manually from Agents page or chained after ResearchAgent. No fixed daily schedule — themes last weeks.", "addedAt": "2026-06-29", "addReason": "Thematic scanning doesn't need daily cadence. Themes last weeks to months.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "THEME": { "label": "Identify Active Themes", "description": "LLM identifies 3-5 active market themes (AI infrastructure, robotics, nuclear, GLP-1) based on news and momentum.", "addedAt": "2026-06-29", "addReason": "Pure fundamental screening misses narrative-driven moves.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "CAND": { "label": "Find Thematic Candidates", "description": "Searches stocks matching themes via Alpha Vantage sector data + FinancialDatasets by industry.", "addedAt": "2026-06-29", "addReason": "Translates abstract themes into specific tickers.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "SCORE": { "label": "Theme Score", "description": "Scores on momentum (RSI, price vs MA), narrative fit (LLM assessment), sector strength.", "addedAt": "2026-06-29", "addReason": "Not every stock in a theme deserves watchlist. Score filters highest conviction.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "FILTER": { "label": "Score Filter", "description": "Score >= 60 passes. Failed candidates logged but not added.", "addedAt": "2026-06-29", "addReason": "Quality filter — avoid polluting watchlist with weak bets.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "ADD": { "label": "Add to Watchlist", "description": "Adds with source='theme_scout', theme tag, expiry. Shows 🎯 badge in Watchlist panel.", "addedAt": "2026-06-29", "addReason": "Watchlist staging area before ResearchAgent deep-analyzes.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "DROP": { "label": "Drop Candidate", "description": "Below-threshold candidates discarded.", "addedAt": "2026-06-29", "addReason": "Explicit drop prevents noise.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "EXPIRE": { "label": "7-Day Auto-Expiry", "description": "ThemeScout additions auto-expire after 7 days if ResearchAgent hasn't traded them.", "addedAt": "2026-06-29", "addReason": "Themes time-sensitive. Stale picks clutter watchlist.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null }
+    "TRIG": { "label": "On-demand", "description": "Runs manually from the Agents page (not a scheduled cron). Uses deepseek-chat.", "addedAt": "2026-06-30", "addReason": "Thematic discovery is exploratory — run when you want fresh ideas.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "THEMES": { "label": "Scan market themes", "description": "Identifies the day's dominant market themes (e.g. AI infrastructure, energy, semis) from market context.", "addedAt": "2026-06-30", "addReason": "Themes surface names the static watchlist would miss.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "CAND": { "label": "3-5 candidates", "description": "Selects 3-5 thematic tickers to track — a bounded set to avoid watchlist bloat.", "addedAt": "2026-06-30", "addReason": "Small, curated additions.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "ADD": { "label": "Add to watchlist (AI Scout)", "description": "Inserts into the watchlist with source=llm_theme, tagged 'AI Scout' and grouped under the theme name.", "addedAt": "2026-06-30", "addReason": "Auto-populates the watchlist with themed ideas.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "EXPIRE": { "label": "7-day expiry", "description": "AI-Scout additions expire after 7 days unless they prove out — keeps the list fresh.", "addedAt": "2026-06-30", "addReason": "Themes rotate; stale ones should drop off.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
+    "RESEARCH": { "label": "Enters research", "description": "Once on the watchlist (research-enabled), the names flow into the daily ResearchAgent scoring like any other symbol.", "addedAt": "2026-06-30", "addReason": "No special path — scored the same way.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null }
   },
   "history": [
-    { "date": "2026-06-29", "event": "add", "nodeId": "TRIG", "label": "Trigger", "reason": "Initial build" },
-    { "date": "2026-06-29", "event": "add", "nodeId": "THEME", "label": "Identify Themes", "reason": "Initial build" },
-    { "date": "2026-06-29", "event": "add", "nodeId": "CAND", "label": "Find Candidates", "reason": "Initial build" },
-    { "date": "2026-06-29", "event": "add", "nodeId": "SCORE", "label": "Theme Score", "reason": "Initial build" },
-    { "date": "2026-06-29", "event": "add", "nodeId": "FILTER", "label": "Score Filter", "reason": "Initial build" },
-    { "date": "2026-06-29", "event": "add", "nodeId": "ADD", "label": "Add to Watchlist", "reason": "Initial build" },
-    { "date": "2026-06-29", "event": "add", "nodeId": "DROP", "label": "Drop", "reason": "Initial build" },
-    { "date": "2026-06-29", "event": "add", "nodeId": "EXPIRE", "label": "7-Day Expiry", "reason": "Initial build" }
+    { "date": "2026-06-30", "event": "add", "nodeId": "TRIG", "label": "ThemeScout", "reason": "Dynamic watchlist via AI themes" },
+    { "date": "2026-06-30", "event": "add", "nodeId": "EXPIRE", "label": "Expiry", "reason": "7-day freshness" }
   ]
 }
