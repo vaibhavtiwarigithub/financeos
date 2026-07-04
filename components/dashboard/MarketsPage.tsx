@@ -284,6 +284,202 @@ function renderThesisText(text: string) {
   });
 }
 
+// ─── Market Synthesis + Regime Indicators ────────────────────────────────────
+
+interface SynthIndicator {
+  label: string;
+  symbol: string;
+  price: number | null;
+  changePct: number | null;
+  note: string;
+}
+
+interface SynthData {
+  regime: "risk-on" | "neutral" | "risk-off";
+  indicators: SynthIndicator[];
+  synthesis: string;
+  generatedAt: string | null;
+}
+
+const REGIME_CHIP: Record<string, { bg: string; color: string; border: string; label: string }> = {
+  "risk-on":  { bg: T.greenBg, color: T.green, border: "#065F46", label: "RISK-ON" },
+  "neutral":  { bg: "#2D2000", color: T.amber, border: "#5B3A00", label: "NEUTRAL" },
+  "risk-off": { bg: T.redBg,  color: T.red,   border: "#5B0000", label: "RISK-OFF" },
+};
+
+function MarketSynthesis() {
+  const [data, setData] = useState<SynthData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function load(force = false) {
+    if (force) setRefreshing(true); else setLoading(true);
+    try {
+      const url = force ? "/api/markets/synthesis?force=true" : "/api/markets/synthesis";
+      const res = await fetch(url);
+      if (res.ok) {
+        const json = await res.json();
+        setData({
+          regime: json.regime ?? "neutral",
+          indicators: json.indicators ?? [],
+          synthesis: json.synthesis ?? "",
+          generatedAt: json.generatedAt ?? null,
+        });
+      }
+    } catch {
+      // silent
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  function minutesAgo(iso: string) {
+    const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (diff < 1) return "just now";
+    if (diff === 1) return "1 min ago";
+    if (diff < 60) return `${diff} min ago`;
+    const hrs = Math.floor(diff / 60);
+    return hrs === 1 ? "1 hr ago" : `${hrs} hrs ago`;
+  }
+
+  const chip = data ? REGIME_CHIP[data.regime] ?? REGIME_CHIP.neutral : REGIME_CHIP.neutral;
+
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+        <div>
+          <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "2px" }}>
+            Market Synthesis · regime read across asset classes
+          </div>
+          <div style={{ fontSize: "11px", color: T.muted }}>
+            Equities, credit, rates, dollar, gold & volatility → one risk-regime call
+            {data?.generatedAt && !loading ? ` · generated ${minutesAgo(data.generatedAt)}` : ""}
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {data && !loading && (
+            <span style={{
+              padding: "5px 12px",
+              borderRadius: "8px",
+              background: chip.bg,
+              border: `1px solid ${chip.border}`,
+              color: chip.color,
+              fontSize: "12px",
+              fontWeight: 700,
+              letterSpacing: "0.06em",
+              whiteSpace: "nowrap",
+            }}>
+              {chip.label}
+            </span>
+          )}
+          <button
+            onClick={() => load(true)}
+            disabled={loading || refreshing}
+            style={{
+              padding: "6px 14px",
+              background: T.surface,
+              border: `1px solid ${T.border}`,
+              borderRadius: "8px",
+              color: loading || refreshing ? T.muted : T.text,
+              fontSize: "12px",
+              fontWeight: 500,
+              cursor: loading || refreshing ? "not-allowed" : "pointer",
+            }}
+          >
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      {loading && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "10px" }}>
+            {[...Array(8)].map((_, i) => (
+              <div key={i} style={{ height: "78px", background: T.surface, borderRadius: "10px", animation: "pulse 1.5s ease-in-out infinite" }} />
+            ))}
+          </div>
+          <div style={{ height: "60px", background: T.surface, borderRadius: "8px", animation: "pulse 1.5s ease-in-out infinite" }} />
+        </div>
+      )}
+
+      {!loading && data && (
+        <>
+          {/* Indicator tiles */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "10px", marginBottom: "16px" }}>
+            {data.indicators.map((ind) => {
+              const pct = ind.changePct;
+              const color = pct === null ? T.muted : pct > 0 ? T.green : pct < 0 ? T.red : T.muted;
+              // For safe-haven / risk-off proxies, up move is not "good" — but we keep
+              // signed color literal (green=up, red=down) and let the note explain meaning.
+              return (
+                <div
+                  key={ind.symbol + ind.label}
+                  style={{
+                    background: T.surface,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: "10px",
+                    padding: "12px 14px",
+                    borderTop: `3px solid ${color}`,
+                    minWidth: 0,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "6px", marginBottom: "6px" }}>
+                    <span style={{ fontSize: "11px", color: T.textSub, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {ind.label}
+                    </span>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: T.accent, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>
+                      {ind.symbol}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "8px" }}>
+                    <span style={{ fontSize: "16px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: T.text }}>
+                      {ind.price !== null ? `$${fmt(ind.price)}` : "—"}
+                    </span>
+                    <span style={{ fontSize: "13px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color }}>
+                      {pct !== null ? `${pct >= 0 ? "+" : ""}${fmt(pct, 2)}%` : "—"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: "10px", color: T.muted, lineHeight: "1.4" }}>
+                    {ind.note}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Synthesis paragraph */}
+          {data.synthesis && (
+            <div style={{
+              background: T.surface,
+              border: `1px solid ${T.border}`,
+              borderRadius: "10px",
+              padding: "14px 16px",
+              fontSize: "13px",
+              lineHeight: "1.7",
+              color: T.textSub,
+              whiteSpace: "pre-wrap",
+            }}>
+              {renderThesisText(data.synthesis)}
+            </div>
+          )}
+        </>
+      )}
+
+      {!loading && !data && (
+        <div style={{ fontSize: "13px", color: T.muted }}>
+          Synthesis unavailable — regime indicator data could not be fetched.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── End Market Synthesis ────────────────────────────────────────────────────
+
 function MarketThesis() {
   const [thesis, setThesis] = useState<string | null>(null);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
@@ -1051,6 +1247,11 @@ export default function MarketsPage() {
           )}
         </>
       )}
+
+      {/* Market Synthesis — regime read across asset classes (fetches independently) */}
+      <div style={{ marginBottom: "16px" }}>
+        <MarketSynthesis />
+      </div>
 
       {/* Data loaded */}
       {data && (

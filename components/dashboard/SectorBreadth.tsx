@@ -29,6 +29,14 @@ const T = {
   amber: "#FBBF24",
 };
 
+const PERIOD_OPTIONS = [
+  { label: "1W", days: 7 },
+  { label: "1M", days: 30 },
+  { label: "3M", days: 90 },
+  { label: "6M", days: 180 },
+  { label: "1Y", days: 365 },
+];
+
 const SECTORS = [
   { etf: "XLK", name: "Technology" },
   { etf: "XLF", name: "Financials" },
@@ -284,8 +292,10 @@ function shortDate(dateStr: string): string {
 
 export default function SectorBreadth() {
   const [activeSector, setActiveSector] = useState("XLK");
+  const [period, setPeriod] = useState(PERIOD_OPTIONS[1]); // default 1M
   const [data, setData] = useState<BreadthData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [periodReturn, setPeriodReturn] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -308,6 +318,29 @@ export default function SectorBreadth() {
       cancelled = true;
     };
   }, [activeSector]);
+
+  // Period-scoped ETF return (from the sector-returns price cache). The A/D
+  // holdings breakdown below is always the latest daily session; this figure
+  // gives period context matching the selected window.
+  useEffect(() => {
+    let cancelled = false;
+    setPeriodReturn(null);
+    fetch(`/api/charts/sector-returns?days=${period.days}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        const row = (d.sectors ?? []).find(
+          (s: { symbol: string; returnPct: number | null }) => s.symbol === activeSector
+        );
+        setPeriodReturn(row?.returnPct ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setPeriodReturn(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSector, period.days]);
 
   const sectorName =
     SECTORS.find((s) => s.etf === activeSector)?.name ?? activeSector;
@@ -334,21 +367,68 @@ export default function SectorBreadth() {
       }}
     >
       {/* Header */}
-      <div style={{ marginBottom: "16px" }}>
-        <div
-          style={{
-            fontSize: "11px",
-            color: T.muted,
-            fontWeight: 500,
-            textTransform: "uppercase",
-            letterSpacing: "0.1em",
-            marginBottom: "4px",
-          }}
-        >
-          Sector Breadth Analysis
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          flexWrap: "wrap",
+          gap: "10px",
+          marginBottom: "16px",
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontSize: "11px",
+              color: T.muted,
+              fontWeight: 500,
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              marginBottom: "4px",
+            }}
+          >
+            Sector Breadth Analysis
+          </div>
+          <div style={{ fontSize: "12px", color: T.textSub }}>
+            Holdings advancing vs declining within {sectorName} · {period.label}{" "}
+            {activeSector} return{" "}
+            {periodReturn !== null ? (
+              <span
+                style={{
+                  color: periodReturn >= 0 ? T.green : T.red,
+                  fontWeight: 700,
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                {periodReturn >= 0 ? "+" : ""}
+                {fmt(periodReturn, 2)}%
+              </span>
+            ) : (
+              <span style={{ color: T.muted }}>—</span>
+            )}
+          </div>
         </div>
-        <div style={{ fontSize: "12px", color: T.textSub }}>
-          Holdings advancing vs declining within {sectorName}
+        {/* Period selector — mirrors Sector Performance chart */}
+        <div style={{ display: "flex", gap: "4px", flexShrink: 0 }}>
+          {PERIOD_OPTIONS.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => setPeriod(p)}
+              style={{
+                padding: "4px 10px",
+                borderRadius: "6px",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+                border: "none",
+                background: period.label === p.label ? T.accent : T.surface,
+                color: period.label === p.label ? "#fff" : T.muted,
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
         </div>
       </div>
 
