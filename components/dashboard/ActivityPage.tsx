@@ -116,11 +116,13 @@ function getEventMeta(ev: TimelineEvent): EventMeta {
     const summary = r.result_summary ?? r.status ?? "completed";
     const sigCount = r.signals_written ?? r.signals_count ?? 0;
     const symbols: string[] = Array.isArray(r.symbols) ? r.symbols : [];
+    const trig = r.trigger_source === "manual" ? "✋ manual" : r.trigger_source === "scheduled" ? "⚡ scheduled" : null;
     return {
       icon: "◐",
       dotColor: T.accent,
       label: `${r.agent_type ?? "Agent"} ran — ${summary}`,
       subtext: [
+        trig,
         sigCount > 0 ? `${sigCount} signals` : null,
         symbols.length > 0 ? symbols.join(", ") : null,
       ].filter(Boolean).join(" | "),

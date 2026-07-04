@@ -36,6 +36,7 @@ const NAV_SECTIONS = [
       { href: "/dashboard/markets",      label: "Markets",          icon: "◉", hint: "Indices, sectors, VIX proxy",         alertCat: "market" },
       { href: "/dashboard/intelligence", label: "Intelligence",     icon: "◆", hint: "Agent signals + research runs",       alertCat: "cron" },
       { href: "/dashboard/agents",       label: "Agents",           icon: "⬡", hint: "Run agents manually, view status",    alertCat: "" },
+      { href: "/dashboard/agents/history", label: "Agent History",  icon: "◷", hint: "Every agent run: what it did, result, handoff, cost, tokens — filter & delete", alertCat: "" },
       { href: "/dashboard/smart-money",  label: "Smart Money",      icon: "🦊", hint: "Trade queue, insider flow, multi-asset signals", alertCat: "" },
     ],
   },

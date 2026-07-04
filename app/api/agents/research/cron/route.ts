@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
     agent_type: "research",
     status: "running",
     symbols: batch,
+    trigger_source: "scheduled",
   } as any).select().single();
   const runId = (runRow as any)?.id ?? null;
 

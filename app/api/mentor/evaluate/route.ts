@@ -194,6 +194,7 @@ export async function POST(req: NextRequest) {
   await svc.from("agent_runs").insert({
     agent_type: "mentor_evaluate",
     status: "completed",
+    trigger_source: "manual",
     symbols: [symbol],
     result_summary: `Evaluated ${symbol} ${action} thesis — score ${evaluation.score}/100`,
     tokens_input: tokenUsage.input,

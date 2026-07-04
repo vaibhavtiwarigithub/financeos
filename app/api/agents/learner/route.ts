@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
 
     const { data: runRow } = await svc.from("agent_runs").insert({
       agent_type: "learner", status: "running",
+      trigger_source: isCron ? "scheduled" : "manual",
     } as any).select().single();
     const runId = (runRow as any)?.id ?? null;
 
