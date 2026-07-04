@@ -40,6 +40,7 @@ $endpoints = @{
   "stale-check"      = @{ method="GET";  url="$BASE/api/alerts/stale-check";           headers=@{}; body=$null }
   "embed"            = @{ method="POST"; url="$BASE/api/live-portfolio/embed";         headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"limit":200}'; timeoutSec=300 }
   "proposal-reminder"= @{ method="POST"; url="$BASE/api/alerts/proposal-reminder";     headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
+  "rescore"          = @{ method="POST"; url="$BASE/api/agents/rescore-check";          headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
 }
 
 if (-not $endpoints.ContainsKey($Agent)) {

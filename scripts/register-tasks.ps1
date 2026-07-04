@@ -25,6 +25,7 @@ $tasks = @(
   @{ Name="position-monitor"; Trigger=(WeekdayTrigger "4:15PM");  Agent="position-monitor" },
   @{ Name="brief-evening";    Trigger=(WeekdayTrigger "4:30PM");  Agent="brief-evening"    },
   @{ Name="nav-snapshot";     Trigger=(WeekdayTrigger "5:00PM");  Agent="nav-snapshot"     },
+  @{ Name="rescore";          Trigger=(WeekdayTrigger "4:45PM");  Agent="rescore"           },
   @{ Name="embed";            Trigger=(WeekdayTrigger "4:50PM");  Agent="embed"             },
   @{ Name="learner";          Trigger=(FridayTrigger  "5:00PM");  Agent="learner"           }
 )

@@ -148,9 +148,53 @@ function SentimentWidget({ symbol }: { symbol: string }) {
   );
 }
 
+// Score trajectory: how the research agent's analyst_score for this symbol has
+// moved over time. Reveals whether conviction is rising or falling.
+function ScoreTrajectory({ signals }: { signals: any[] }) {
+  const pts = signals
+    .filter(s => s.analyst_score != null && s.created_at)
+    .map(s => ({ score: Number(s.analyst_score), t: new Date(s.created_at).getTime() }))
+    .sort((a, b) => a.t - b.t);
+  if (pts.length < 2) return null;
+
+  const W = 100, H = 40, pad = 2;
+  const scoreColor = (v: number) => v >= 70 ? T.green : v >= 50 ? T.amber : T.red;
+  const xs = pts.map((_, i) => pad + (i / (pts.length - 1)) * (W - 2 * pad));
+  const ys = pts.map(p => H - pad - (p.score / 100) * (H - 2 * pad));
+  const path = pts.map((_, i) => `${i === 0 ? "M" : "L"} ${xs[i].toFixed(1)} ${ys[i].toFixed(1)}`).join(" ");
+  const first = pts[0].score, last = pts[pts.length - 1].score;
+  const delta = last - first;
+
+  return (
+    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 16px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
+        <span style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          Score Trajectory · {pts.length} signals
+        </span>
+        <span style={{ fontSize: "12px", fontWeight: 700, color: delta > 0 ? T.green : delta < 0 ? T.red : T.muted }}>
+          {first} → {last} {delta !== 0 && `(${delta > 0 ? "+" : ""}${delta})`}
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: "100%", height: "56px", display: "block" }}>
+        {/* 50 & 60 reference lines */}
+        <line x1={0} x2={W} y1={H - pad - 0.5 * (H - 2 * pad)} y2={H - pad - 0.5 * (H - 2 * pad)} stroke={T.border} strokeWidth={0.4} strokeDasharray="2 2" />
+        <line x1={0} x2={W} y1={H - pad - 0.6 * (H - 2 * pad)} y2={H - pad - 0.6 * (H - 2 * pad)} stroke={T.green} strokeWidth={0.4} strokeDasharray="2 2" opacity={0.5} />
+        <path d={path} fill="none" stroke={T.accent} strokeWidth={1.2} vectorEffect="non-scaling-stroke" />
+        {pts.map((p, i) => (
+          <circle key={i} cx={xs[i]} cy={ys[i]} r={1.4} fill={scoreColor(p.score)} vectorEffect="non-scaling-stroke" />
+        ))}
+      </svg>
+      <div style={{ fontSize: "10px", color: T.muted, marginTop: "4px" }}>
+        Green dashed = 60 (buy threshold) · grey dashed = 50. Points colored by score.
+      </div>
+    </div>
+  );
+}
+
 function SignalsTab({ signals, trades }: { signals: any[]; trades: any[] }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      <ScoreTrajectory signals={signals} />
       {/* Agent signals */}
       <div>
         <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "12px" }}>
