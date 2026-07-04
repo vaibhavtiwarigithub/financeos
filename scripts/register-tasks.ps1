@@ -27,7 +27,8 @@ $tasks = @(
   @{ Name="nav-snapshot";     Trigger=(WeekdayTrigger "5:00PM");  Agent="nav-snapshot"     },
   @{ Name="rescore";          Trigger=(WeekdayTrigger "4:45PM");  Agent="rescore"           },
   @{ Name="embed";            Trigger=(WeekdayTrigger "4:50PM");  Agent="embed"             },
-  @{ Name="learner";          Trigger=(FridayTrigger  "5:00PM");  Agent="learner"           }
+  @{ Name="learner";          Trigger=(FridayTrigger  "5:00PM");  Agent="learner"           },
+  @{ Name="mentor-coach";     Trigger=(FridayTrigger  "5:15PM");  Agent="mentor-coach"      }
 )
 
 # Ensure task folder exists BEFORE any Register-ScheduledTask call (fresh machines

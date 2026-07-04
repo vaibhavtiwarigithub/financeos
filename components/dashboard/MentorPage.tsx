@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
+import MentorCoachPanel from "@/components/dashboard/MentorCoachPanel";
 import {
   ResponsiveContainer, LineChart as LC, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine, Label,
@@ -491,7 +492,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
   packets: any[]; trades: any[]; fullLog: any[]; signals: any[];
   performance: any[]; weights: any; allTrades: any[];
 }) {
-  const [tab, setTab] = useState<"ask" | "decisions" | "learning" | "journal" | "dimensions">("ask");
+  const [tab, setTab] = useState<"coach" | "ask" | "decisions" | "learning" | "journal" | "dimensions">("coach");
   const [thesis, setThesis] = useState<string | null>(null);
   const [thesisLoading, setThesisLoading] = useState(true);
   const [question, setQuestion] = useState("");
@@ -629,6 +630,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
   });
 
   const TABS = [
+    { key: "coach", label: "AI Coach" },
     { key: "ask", label: "Ask the Agent" },
     { key: "decisions", label: "Decision Log" },
     { key: "learning", label: "Learning" },
@@ -781,6 +783,12 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
       </div>
 
       {/* Ask the Agent tab */}
+      {tab === "coach" && (
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px 24px" }}>
+          <MentorCoachPanel />
+        </div>
+      )}
+
       {tab === "ask" && (
         <div>
           {/* Starter questions */}
