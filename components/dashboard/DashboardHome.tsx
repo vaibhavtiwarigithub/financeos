@@ -112,13 +112,17 @@ function nextWeekdayLabel(): string {
   return next.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + " 9:00 AM ET";
 }
 
-function nextSundayLabel(): string {
+// LearnerAgent runs Friday 5:00 PM ET (Windows Task Scheduler: FridayTrigger 5PM;
+// the route gates on getDay()===5). Keep this in sync with scripts/register-tasks.ps1.
+function nextFridayLabel(): string {
   const now = new Date();
-  const day = now.getDay();
-  const daysUntilSun = day === 0 ? 7 : 7 - day;
+  const day = now.getDay(); // 0=Sun … 5=Fri
+  let addDays = (5 - day + 7) % 7; // days until next Friday
+  // If today is Friday but past 5 PM local, roll to next Friday.
+  if (addDays === 0 && now.getHours() >= 17) addDays = 7;
   const next = new Date(now);
-  next.setDate(now.getDate() + daysUntilSun);
-  return next.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + " 8:00 PM ET";
+  next.setDate(now.getDate() + addDays);
+  return next.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + " 5:00 PM ET";
 }
 
 export default function DashboardHome({ profile, paperPortfolio, positions, recentTrades, recentRuns, recentSignals, pendingSignals, recentLog, liveSnap, latestBriefing }: {
@@ -454,8 +458,8 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
             <div style={{ padding: "12px", background: T.dim, borderRadius: "8px" }}>
               <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px" }}>Next learning run</div>
               <div style={{ fontSize: "13px", fontWeight: 600, color: T.blue }}>◫ LearnerAgent</div>
-              <div style={{ fontSize: "12px", color: T.muted, marginTop: "2px" }}>{nextSundayLabel()}</div>
-              <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>Closes trades older than 7d, writes outcomes</div>
+              <div style={{ fontSize: "12px", color: T.muted, marginTop: "2px" }}>{nextFridayLabel()}</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>Closes trades older than 7d, writes outcomes · weekly</div>
             </div>
             <div style={{ padding: "12px", background: T.dim, borderRadius: "8px" }}>
               <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px" }}>ThemeScout</div>

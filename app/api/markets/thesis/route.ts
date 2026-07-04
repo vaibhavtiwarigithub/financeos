@@ -137,9 +137,18 @@ export async function GET(req: NextRequest) {
     ].join("\n");
   }
 
-  const llmResult = await callLLM({
-    task: "thesis",
-    prompt: `You are a macro analyst. Based on the following real market data from the most recent session, write a concise market thesis.
+  // Route to DeepSeek: there is no ANTHROPIC_API_KEY, so a Claude-routed task
+  // would fall back to the CLI subprocess and can fail → 500. DeepSeek works and
+  // is fine for a market-summary. Wrap so an LLM failure never 500s the endpoint —
+  // return the market data with a null thesis instead.
+  let thesis = "";
+  let model = "deepseek-chat";
+  let llmError: string | null = null;
+  try {
+    const llmResult = await callLLM({
+      task: "thesis",
+      model: "deepseek-chat",
+      prompt: `You are a macro analyst. Based on the following real market data from the most recent session, write a concise market thesis.
 
 MARKET DATA:
 ${contextString}
@@ -150,23 +159,31 @@ Write:
 **NEXT SESSION PREDICTION** (1-2 sentences): Most likely scenario for the next trading day based on current momentum. State it as a directional call with the key risk.
 
 Base everything on the data above. No invented events or data. Be specific about which sectors/assets are showing strength or weakness.`,
-    maxTokens: 400,
-  });
+      maxTokens: 400,
+    });
+    thesis = llmResult.text;
+    model = llmResult.model;
+  } catch (e) {
+    llmError = String(e);
+  }
 
-  const thesis = llmResult.text;
   const generatedAt = new Date().toISOString();
 
-  // Cache to Supabase — upsert by (date, session)
-  await svc.from("briefings").upsert(
-    { date: today, session: "thesis", content: thesis, model: llmResult.model },
-    { onConflict: "date,session" }
-  );
+  // Cache only a real thesis (never cache an error placeholder for the day).
+  if (thesis) {
+    await svc.from("briefings").upsert(
+      { date: today, session: "thesis", content: thesis, model },
+      { onConflict: "date,session" }
+    );
+  }
 
   return NextResponse.json({
-    thesis,
+    thesis: thesis || null,
     pairs: pairResults,
     macro: macroResults,
     generatedAt,
     cached: false,
+    dataAvailable: hasData,
+    error: llmError ? "Thesis generation failed — market data shown below." : undefined,
   });
 }

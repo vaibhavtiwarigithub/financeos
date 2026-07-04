@@ -172,7 +172,9 @@ export default function BriefingSection({ initialBriefing }: Props) {
 
   const morning = briefings.find(b => b.session === "morning");
   const evening = briefings.find(b => b.session === "evening");
-  const todayStr = new Date().toISOString().slice(0, 10);
+  // Local calendar day (not UTC) so "today's briefing" matches the user's day near midnight.
+  const _n = new Date();
+  const todayStr = `${_n.getFullYear()}-${String(_n.getMonth() + 1).padStart(2, "0")}-${String(_n.getDate()).padStart(2, "0")}`;
   const morningIsToday = morning?.date === todayStr;
   const eveningIsToday = evening?.date === todayStr;
 

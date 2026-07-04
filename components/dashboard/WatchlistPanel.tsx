@@ -188,8 +188,11 @@ export default function WatchlistPanel() {
     return result;
   })();
 
-  const themed = filteredItems.filter(i => i.theme);
-  const other = filteredItems.filter(i => !i.theme);
+  // Only group under an "AI SCOUT" theme header items that ACTUALLY came from AI Scout
+  // (source === "llm_theme"). A manual item can carry a stale `theme` from a prior
+  // AI-scout add; it must render as Manual, not under an AI SCOUT header.
+  const themed = filteredItems.filter(i => i.theme && i.source === "llm_theme");
+  const other = filteredItems.filter(i => !(i.theme && i.source === "llm_theme"));
   const themeGroups = new Map<string, WatchlistItem[]>();
   for (const item of themed) {
     const key = item.theme!;
