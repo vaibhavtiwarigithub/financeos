@@ -188,6 +188,12 @@ export default function StrategiesPage() {
       />
       <div style={{ padding: "0 28px 32px" }}>
 
+      {/* Sub-nav: Fit Scores (this page) ↔ Algo Library */}
+      <div style={{ display: "flex", gap: "8px", marginBottom: "20px", borderBottom: "1px solid #252836", paddingBottom: "0" }}>
+        <div style={{ padding: "8px 14px", fontSize: "13px", fontWeight: 600, color: "#6366F1", borderBottom: "2px solid #6366F1", marginBottom: "-1px" }}>Fit Scores</div>
+        <Link href="/dashboard/strategies/library" style={{ padding: "8px 14px", fontSize: "13px", fontWeight: 600, color: "#9B9EA8", textDecoration: "none", borderBottom: "2px solid transparent" }}>Algo Library →</Link>
+      </div>
+
       {/* Grid */}
       {loading ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "16px" }}>
