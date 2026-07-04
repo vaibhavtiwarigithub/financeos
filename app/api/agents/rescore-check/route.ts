@@ -46,11 +46,12 @@ export async function POST(req: NextRequest) {
   if (!symbols.length) return NextResponse.json({ flags: [], checked: 0, message: "No scored signals in window" });
 
   // Price series per symbol from price_cache
-  const { data: prices } = await svc.from("price_cache")
+  const { data: prices, error: priceErr } = await svc.from("price_cache")
     .select("symbol, date, close")
     .in("symbol", symbols)
     .gte("date", sincePrices)
     .order("date", { ascending: false });
+  if (priceErr) return NextResponse.json({ error: `price_cache query failed: ${priceErr.message}` }, { status: 500 });
 
   const bySymbol: Record<string, { date: string; close: number }[]> = {};
   for (const p of (prices ?? []) as any[]) {
@@ -84,16 +85,29 @@ export async function POST(req: NextRequest) {
     if (flag) flags.push({ symbol: sym, score: sig.score, movePct: Number(movePct.toFixed(1)), daysSince: Math.round(daysSince), note: flag });
   }
 
-  // Persist flags to learning_log so the LearnerAgent picks them up
-  for (const f of flags) {
-    await svc.from("learning_log").insert({
-      note: `[RESCORE] ${f.note}`,
-      weight_snapshot: null,
-      trades_evaluated: 0,
-    });
+  // Dedup: don't re-insert the same symbol+type flag while it's still recent.
+  // Otherwise a daily cron floods learning_log and over-weights one divergence.
+  const { data: recentFlags } = await svc.from("learning_log")
+    .select("note").ilike("note", "[RESCORE]%").gte("created_at", new Date(Date.now() - 7 * 86400_000).toISOString());
+  const seen = new Set<string>();
+  for (const r of (recentFlags ?? []) as any[]) {
+    const m = String(r.note).match(/\[RESCORE\]\s+(UNDERSCORED|OVERSCORED):\s+(\S+)/);
+    if (m) seen.add(`${m[1]}:${m[2]}`);
   }
 
-  return NextResponse.json({ checked: symbols.length, flagged: flags.length, flags });
+  let inserted = 0;
+  for (const f of flags) {
+    const type = f.note.startsWith("UNDERSCORED") ? "UNDERSCORED" : "OVERSCORED";
+    const key = `${type}:${f.symbol}`;
+    if (seen.has(key)) continue;   // already flagged in the last 7 days
+    seen.add(key);
+    await svc.from("learning_log").insert({ note: `[RESCORE] ${f.note}`, weight_snapshot: null, trades_evaluated: 0 });
+    inserted++;
+  }
+
+  // "evaluated" = symbols that actually had price data (not just candidates).
+  const evaluated = symbols.filter(s => (bySymbol[s]?.length ?? 0) > 0).length;
+  return NextResponse.json({ candidates: symbols.length, evaluated, flagged: flags.length, new_flags: inserted, flags });
 }
 
 // GET: recent rescore flags (from learning_log)

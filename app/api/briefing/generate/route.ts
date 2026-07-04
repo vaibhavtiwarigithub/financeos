@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { createClient } from "@/lib/supabase/server";
 import { callLLM } from "@/lib/llm-router";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "vterminater@gmail.com";
@@ -260,23 +261,34 @@ async function fetchIndexClose(ticker: string, apiKey: string): Promise<{ price:
 }
 
 export async function POST(req: NextRequest) {
+  // Proper auth — NEVER infer from a cookie substring (that let any cookie
+  // containing "sb-" through). Cron via secret; users via a real session.
   const cronSecret = req.headers.get("x-cron-secret");
-  const isAuthed = req.headers.get("cookie")?.includes("sb-") ||
-    cronSecret === process.env.CRON_SECRET;
-  if (!isAuthed) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  if (!isCron) {
+    const userClient = await createClient();
+    const { data: { user } } = await userClient.auth.getUser();
+    if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
 
   const body = await req.json().catch(() => ({}));
-  const forceSession: "morning" | "evening" | undefined = body.session;
+  // Validate session: only morning|evening (or undefined = auto). Reject others
+  // so a bogus value can't create a new briefings.session and bypass idempotency.
+  const rawSession = body.session;
+  if (rawSession != null && rawSession !== "morning" && rawSession !== "evening") {
+    return NextResponse.json({ error: "session must be 'morning' or 'evening'" }, { status: 400 });
+  }
+  const forceSession: "morning" | "evening" | undefined = rawSession ?? undefined;
 
   const svc = createServiceClient();
   const now = new Date();
 
-  // Compute ET date (UTC-4 EDT / UTC-5 EST)
-  const etOffset = -4;
-  const etNow = new Date(now.getTime() + etOffset * 60 * 60 * 1000);
-  const dateStr = etNow.toISOString().slice(0, 10);
-  const dayName = etNow.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
-  const etH = etNow.getUTCHours();
+  // Compute ET wall-clock via the timezone DB (handles EDT/EST DST automatically),
+  // not a fixed -4 offset which is wrong for half the year.
+  const etNow = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const dateStr = `${etNow.getFullYear()}-${String(etNow.getMonth() + 1).padStart(2, "0")}-${String(etNow.getDate()).padStart(2, "0")}`;
+  const dayName = etNow.toLocaleDateString("en-US", { weekday: "long" });
+  const etH = etNow.getHours();
   const session: "morning" | "evening" = forceSession ?? (etH < 14 ? "morning" : "evening");
 
   const massiveKey = process.env.MASSIVE_API_KEY;
@@ -300,7 +312,7 @@ export async function POST(req: NextRequest) {
   ] = await Promise.all([
     svc.from("agent_runs").select("*").eq("agent_type", "research").order("created_at", { ascending: false }).limit(1).single(),
     svc.from("paper_portfolio").select("*").limit(1).single(),
-    svc.from("paper_positions").select("*").eq("status", "open").limit(10),
+    svc.from("paper_positions").select("*").limit(10),
     svc.from("agent_signals").select("symbol,direction,analyst_score,reasoning").eq("status", "pending").gte("analyst_score", 50).order("analyst_score", { ascending: false }).limit(8),
     svc.from("live_account_snapshots").select("*").order("captured_at", { ascending: false }).limit(1).single(),
     svc.from("earnings_calendar").select("symbol,report_date,estimate_eps,period").gte("report_date", dateStr).order("report_date").limit(5),
@@ -326,18 +338,22 @@ export async function POST(req: NextRequest) {
       .order("date", { ascending: false })
       .limit(1)
       .single();
-    const currentPrice = cache?.close ? Number(cache.close) : null;
-    const entryPrice = Number(p.entry_price);
-    if (currentPrice && entryPrice) {
-      const pnlDollar = (currentPrice - entryPrice) * Number(p.quantity);
+    // paper_positions columns: qty, avg_cost, current_price (no status/direction/
+    // entry_price/quantity — it's long-only, and open = present). Prefer the row's
+    // current_price, fall back to price_cache.
+    const currentPrice = (p.current_price ? Number(p.current_price) : null) ?? (cache?.close ? Number(cache.close) : null);
+    const entryPrice = Number(p.avg_cost);
+    const qty = Number(p.qty);
+    if (currentPrice && Number.isFinite(entryPrice) && entryPrice > 0) {
+      const pnlDollar = (currentPrice - entryPrice) * qty;
       const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
       positionLines.push(
-        `  • ${p.symbol} ${p.direction?.toUpperCase()}: ${p.quantity} shares @ $${entryPrice.toFixed(2)} entry → $${currentPrice.toFixed(2)} now = ${pnlDollar >= 0 ? "+" : ""}$${pnlDollar.toFixed(0)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%)`
+        `  • ${p.symbol} LONG: ${qty} shares @ $${entryPrice.toFixed(2)} entry → $${currentPrice.toFixed(2)} now = ${pnlDollar >= 0 ? "+" : ""}$${pnlDollar.toFixed(0)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%)`
       );
-      positionsStruct.push({ symbol: p.symbol, direction: p.direction ?? "long", qty: Number(p.quantity), entry: entryPrice, current: currentPrice, pnl: pnlDollar, pnlPct });
+      positionsStruct.push({ symbol: p.symbol, direction: "long", qty, entry: entryPrice, current: currentPrice, pnl: pnlDollar, pnlPct });
     } else {
-      positionLines.push(`  • ${p.symbol} ${p.direction?.toUpperCase()}: ${p.quantity} shares @ $${entryPrice.toFixed(2)} entry (price unavailable)`);
-      positionsStruct.push({ symbol: p.symbol, direction: p.direction ?? "long", qty: Number(p.quantity), entry: entryPrice, current: null, pnl: null, pnlPct: null });
+      positionLines.push(`  • ${p.symbol} LONG: ${qty} shares @ $${Number.isFinite(entryPrice) ? entryPrice.toFixed(2) : "?"} entry (price unavailable)`);
+      positionsStruct.push({ symbol: p.symbol, direction: "long", qty, entry: entryPrice, current: null, pnl: null, pnlPct: null });
     }
   }
 

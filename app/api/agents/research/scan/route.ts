@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { ALGO_STRATEGIES, STRATEGY_MAP } from "@/lib/strategy-definitions";
+import { avCachedFetch } from "@/lib/av-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -45,37 +46,28 @@ async function screenFundamentals(
   } catch { return []; }
 }
 
-// Fetch RSI-14 daily for a symbol from Alpha Vantage
+// Fetch RSI-14 daily for a symbol from Alpha Vantage (day-cached — AV is 25/day).
 async function fetchRSI(symbol: string, avKey: string): Promise<number | null> {
   if (!avKey) return null;
-  try {
-    const url = `https://www.alphavantage.co/query?function=RSI&symbol=${symbol}&interval=daily&time_period=14&series_type=close&apikey=${avKey}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return null;
-    const json = await res.json();
-    const series = json?.["Technical Analysis: RSI"];
-    if (!series) return null;
-    const latest = Object.values(series)[0] as any;
-    return parseFloat(latest?.RSI ?? "0") || null;
-  } catch { return null; }
+  const url = `https://www.alphavantage.co/query?function=RSI&symbol=${symbol}&interval=daily&time_period=14&series_type=close&apikey=${avKey}`;
+  const json = await avCachedFetch(`RSI:${symbol}`, url, 5000);
+  const series = json?.["Technical Analysis: RSI"];
+  if (!series) return null;
+  const latest = Object.values(series)[0] as any;
+  return parseFloat(latest?.RSI ?? "0") || null;
 }
 
-// Fetch latest price and EMA50 from Alpha Vantage
+// Fetch latest price and EMA50 from Alpha Vantage (both day-cached).
 async function fetchTechnicals(symbol: string, avKey: string): Promise<{ price: number | null; ema50: number | null }> {
   if (!avKey) return { price: null, ema50: null };
-  try {
-    const [quoteRes, emaRes] = await Promise.all([
-      fetch(`https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${avKey}`, { signal: AbortSignal.timeout(5000) }),
-      fetch(`https://www.alphavantage.co/query?function=EMA&symbol=${symbol}&interval=daily&time_period=50&series_type=close&apikey=${avKey}`, { signal: AbortSignal.timeout(5000) }),
-    ]);
-    const quoteJson = quoteRes.ok ? await quoteRes.json() : {};
-    const emaJson   = emaRes.ok   ? await emaRes.json()   : {};
-
-    const price = parseFloat(quoteJson?.["Global Quote"]?.["05. price"] ?? "0") || null;
-    const emaSeries = emaJson?.["Technical Analysis: EMA"];
-    const ema50 = emaSeries ? parseFloat((Object.values(emaSeries)[0] as any)?.EMA ?? "0") || null : null;
-    return { price, ema50 };
-  } catch { return { price: null, ema50: null }; }
+  const [quoteJson, emaJson] = await Promise.all([
+    avCachedFetch(`QUOTE:${symbol}`, `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${avKey}`, 5000),
+    avCachedFetch(`EMA50:${symbol}`, `https://www.alphavantage.co/query?function=EMA&symbol=${symbol}&interval=daily&time_period=50&series_type=close&apikey=${avKey}`, 5000),
+  ]);
+  const price = parseFloat(quoteJson?.["Global Quote"]?.["05. price"] ?? "0") || null;
+  const emaSeries = emaJson?.["Technical Analysis: EMA"];
+  const ema50 = emaSeries ? parseFloat((Object.values(emaSeries)[0] as any)?.EMA ?? "0") || null : null;
+  return { price, ema50 };
 }
 
 // Fetch basic fundamentals from FinancialDatasets for a specific symbol

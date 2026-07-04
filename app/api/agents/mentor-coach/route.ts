@@ -115,9 +115,17 @@ Be specific, warm but honest, and concrete. Tie the ONE lesson to BOTH the curre
     });
 
     const finishCall = loop.toolCalls.find(c => c.name === "finish");
-    const a: any = finishCall?.args ?? {};
+    // The model must have produced a real coaching payload — don't persist/return
+    // an all-null row as success.
+    if (!finishCall) {
+      return NextResponse.json({ error: "Mentor did not produce coaching (no finish call)" }, { status: 502 });
+    }
+    const a: any = finishCall.args ?? {};
+    if (!a.lesson && !(Array.isArray(a.focus_areas) && a.focus_areas.length)) {
+      return NextResponse.json({ error: "Mentor coaching was empty" }, { status: 502 });
+    }
 
-    const { data: saved } = await svc.from("mentor_insights").insert({
+    const { data: saved, error: saveErr } = await svc.from("mentor_insights").insert({
       grade: Number.isFinite(a.grade) ? Math.round(a.grade) : null,
       confidence: Number.isFinite(a.confidence) ? a.confidence : null,
       strengths: Array.isArray(a.strengths) ? a.strengths : [],
@@ -128,6 +136,10 @@ Be specific, warm but honest, and concrete. Tie the ONE lesson to BOTH the curre
       model: "deepseek-reasoner",
       tokens_in: loop.tokensIn, tokens_out: loop.tokensOut,
     }).select("id, created_at").single();
+
+    if (saveErr || !saved) {
+      return NextResponse.json({ error: `Mentor save failed: ${saveErr?.message ?? "no row"}` }, { status: 500 });
+    }
 
     return NextResponse.json({
       id: (saved as any)?.id, createdAt: (saved as any)?.created_at,

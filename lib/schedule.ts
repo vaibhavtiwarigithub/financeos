@@ -159,9 +159,9 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     runner: "Windows Task Scheduler",
     editable: false,
     description:
-      "Weekly coaching. The Mentor scores the week's theses and decisions and writes coaching feedback to the decision journal.",
-    handoff: "→ Decision Journal (thesis scored for the user)",
-    agentRunsType: "mentor_evaluate",
+      "Weekly coaching. The MentorAgent (deepseek-reasoner) reads your behavior + learning progress + market regime and writes personalized coaching to mentor_insights.",
+    handoff: "→ Mentor 'AI Coach' tab + the daily briefing",
+    agentRunsType: null,
   },
   {
     name: "proposal-reminder",

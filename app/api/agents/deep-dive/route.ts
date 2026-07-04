@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
+import { avCachedFetch } from "@/lib/av-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -41,10 +42,7 @@ async function fetchFundamentals(symbol: string): Promise<string | null> {
   const avKey = process.env.ALPHA_VANTAGE_API_KEY;
   if (!avKey) return null;
   try {
-    const res = await fetch(`https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${avKey}`,
-      { signal: AbortSignal.timeout(12_000) });
-    if (!res.ok) return null;
-    const d: any = await res.json();
+    const d: any = await avCachedFetch(`OVERVIEW:${symbol}`, `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${avKey}`, 12_000);
     if (!d || !d.Symbol) return null; // rate-limited or unknown symbol
     const pick = (k: string) => d[k] && d[k] !== "None" ? d[k] : "n/a";
     return `sector=${pick("Sector")}, industry=${pick("Industry")}, PE=${pick("PERatio")}, PEG=${pick("PEGRatio")}, profitMargin=${pick("ProfitMargin")}, marketCap=${pick("MarketCapitalization")}, 52wHigh=${pick("52WeekHigh")}, 52wLow=${pick("52WeekLow")}, analystTarget=${pick("AnalystTargetPrice")}, EPS=${pick("EPS")}`;
@@ -67,7 +65,9 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}));
   const symbol = String(body.symbol ?? "").toUpperCase().trim();
-  if (!symbol || symbol.length > 6) return NextResponse.json({ error: "valid symbol required" }, { status: 400 });
+  // Canonical US ticker grammar (1-5 alnum + optional .X/-X class), so junk like
+  // "AAPL/?x" can't reach the provider URL path.
+  if (!/^[A-Z]{1,5}([.-][A-Z]{1,2})?$/.test(symbol)) return NextResponse.json({ error: "valid US ticker required" }, { status: 400 });
 
   if (!process.env.DEEPSEEK_API_KEY) return NextResponse.json({ error: "DEEPSEEK_API_KEY not set" }, { status: 503 });
 
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
     fetchFundamentals(symbol),
     svc.from("agent_signals").select("direction, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, rationale, created_at").eq("symbol", symbol).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     svc.from("macro_signals").select("regime, summary, created_at").order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    svc.from("paper_positions").select("qty").eq("symbol", symbol).is("closed_at", null).maybeSingle(),
+    svc.from("paper_positions").select("qty").eq("symbol", symbol).maybeSingle(),
     svc.from("watchlist_items").select("company_name").eq("symbol", symbol).limit(1).maybeSingle(),
   ]);
 
@@ -149,10 +149,15 @@ export async function POST(req: NextRequest) {
     const reports = { market, sentiment, fundamentals, macro: macroReport, bull, bear, research_evaluator, risk, portfolio_manager: pm };
     const model = `${CHAT}+${REASONER}`;
 
-    const { data: saved } = await svc.from("deep_analyses").insert({
+    const { data: saved, error: saveErr } = await svc.from("deep_analyses").insert({
       symbol, verdict, conviction, summary, reports, model,
       tokens_in: acc.tokensIn, tokens_out: acc.tokensOut, cost_usd: Number(acc.costUsd.toFixed(5)),
     }).select("id, created_at").single();
+
+    // Don't report success for an analysis that was never persisted.
+    if (saveErr || !saved) {
+      return NextResponse.json({ error: `Deep-dive save failed: ${saveErr?.message ?? "no row returned"}`, partialCost: Number(acc.costUsd.toFixed(5)) }, { status: 500 });
+    }
 
     return NextResponse.json({
       id: (saved as any)?.id,

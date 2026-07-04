@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callLLM } from "@/lib/llm-router";
 import { createServiceClient } from "@/lib/supabase/service";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +62,11 @@ function signedPct(v: number | null): string {
 }
 
 export async function GET(req: NextRequest) {
+  // Require a logged-in user — this route spends Massive + DeepSeek quota and
+  // writes via the service role, so it must not be anonymously forceable.
+  const { data: { user } } = await (await createClient()).auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const force = req.nextUrl.searchParams.get("force") === "true";
   const today = new Date().toISOString().slice(0, 10);
   const svc = createServiceClient();
