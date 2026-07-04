@@ -60,19 +60,26 @@ export async function POST(req: NextRequest) {
 
   const svc = createServiceClient();
 
-  // Pull enriched decisions that don't yet have an embedding
-  const { data: decisions, error: fetchErr } = await svc
+  // Already-embedded ids (PostgREST can't take a subquery as an `in` value,
+  // so exclude them in JS). Set of uuids kept in memory — fine at our scale.
+  const { data: embeddedRows, error: embErr } = await svc
+    .from("trade_decision_embeddings")
+    .select("trade_decision_id");
+  if (embErr) return NextResponse.json({ error: embErr.message }, { status: 500 });
+  const embeddedIds = new Set((embeddedRows ?? []).map((r: any) => r.trade_decision_id));
+
+  // Pull enriched decisions, over-fetch to cover already-embedded rows, then
+  // filter to the first `limit` that still need embedding.
+  const { data: enriched, error: fetchErr } = await svc
     .from("trade_decisions")
     .select("id, symbol, action, qty, exec_price, exec_date, outcome_score, pattern_tags, llm_analysis, macro_market_regime, macro_event_tag")
     .eq("enrichment_status", "enriched")
-    .not("id", "in",
-      svc.from("trade_decision_embeddings").select("trade_decision_id")
-    )
     .order("exec_date", { ascending: false })
-    .limit(limit);
+    .limit(limit + embeddedIds.size);
 
   if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
-  if (!decisions?.length) return NextResponse.json({ embedded: 0, message: "No unemdedded enriched decisions found" });
+  const decisions = (enriched ?? []).filter((d: any) => !embeddedIds.has(d.id)).slice(0, limit);
+  if (!decisions.length) return NextResponse.json({ embedded: 0, message: "No unembedded enriched decisions found" });
 
   let embedded = 0;
   const errors: string[] = [];
