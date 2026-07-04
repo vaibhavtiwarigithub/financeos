@@ -10,7 +10,7 @@ const T = {
 
 interface UserRow {
   id: string; email: string; full_name: string | null;
-  role: string; subscription_tier: string; subscription_status: string;
+  role: string; subscription_tier: string;
   xp: number; analysis_count: number; created_at: string;
 }
 
@@ -110,8 +110,11 @@ export default function AdminPage() {
                       </select>
                     </td>
                     <td style={{ padding: "10px" }}>
-                      <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "4px", background: u.subscription_status === "active" ? T.green + "22" : T.red + "22", color: u.subscription_status === "active" ? T.green : T.red }}>
-                        {u.subscription_status}
+                      {/* No billing subsystem wired up yet — subscription_status
+                          doesn't exist on profiles. Show a neutral placeholder
+                          instead of a fake "active" status. */}
+                      <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "4px", background: T.muted + "22", color: T.muted }}>
+                        n/a
                       </span>
                     </td>
                     <td style={{ padding: "10px", fontFamily: "'JetBrains Mono', monospace", color: T.accent }}>{u.xp}</td>

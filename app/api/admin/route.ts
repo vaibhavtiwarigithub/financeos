@@ -19,23 +19,36 @@ export async function GET(req: NextRequest) {
   const admin = await requireAdmin(supabase);
   if (!admin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+  // Admin is already verified above. profiles RLS is "auth.uid() = id" (every
+  // user, including an admin, can only see their OWN row) — so the "all users"
+  // list and counts were silently scoped to just the caller. Use the service
+  // client for these admin-gated reads, same pattern as everywhere else.
+  const svc = createServiceClient();
+
   const { searchParams } = new URL(req.url);
   const action = searchParams.get("action");
 
   if (action === "users") {
-    const { data } = await supabase
+    // subscription_status doesn't exist on profiles (no billing subsystem is
+    // wired up yet) — selecting it 400'd every call, and the error was
+    // silently swallowed (only `data` was destructured), so this always
+    // returned users: null with no visible error.
+    const { data, error } = await svc
       .from("profiles")
-      .select("id, email, full_name, role, subscription_tier, subscription_status, xp, analysis_count, created_at")
+      .select("id, email, full_name, role, subscription_tier, xp, analysis_count, created_at")
       .order("created_at", { ascending: false });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ users: data });
   }
 
   if (action === "stats") {
-    const { count: totalUsers } = await supabase.from("profiles").select("*", { count: "exact", head: true });
-    const { count: proUsers } = await supabase.from("profiles").select("*", { count: "exact", head: true }).eq("subscription_tier", "pro");
-    const { count: eliteUsers } = await supabase.from("profiles").select("*", { count: "exact", head: true }).eq("subscription_tier", "elite");
-    const { data: recentUsage } = await supabase.from("usage_logs").select("cost_usd").gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString());
-    const totalCost = recentUsage?.reduce((s, r) => s + (r.cost_usd ?? 0), 0) ?? 0;
+    const { count: totalUsers } = await svc.from("profiles").select("*", { count: "exact", head: true });
+    const { count: proUsers } = await svc.from("profiles").select("*", { count: "exact", head: true }).eq("subscription_tier", "pro");
+    const { count: eliteUsers } = await svc.from("profiles").select("*", { count: "exact", head: true }).eq("subscription_tier", "elite");
+    // usage_logs is a dead/legacy table nothing writes to — real cost lives in
+    // llm_call_log (see /dashboard/admin/llm-history).
+    const { data: recentUsage } = await svc.from("llm_call_log").select("cost_usd").gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString());
+    const totalCost = recentUsage?.reduce((s: number, r: any) => s + (Number(r.cost_usd) || 0), 0) ?? 0;
     return NextResponse.json({ totalUsers, proUsers, eliteUsers, totalCost });
   }
 
@@ -77,8 +90,14 @@ export async function PATCH(req: NextRequest) {
   if (role) update.role = role;
   if (tier) update.subscription_tier = tier;
 
-  const { error } = await supabase.from("profiles").update(update).eq("id", userId);
+  // profiles RLS ("auth.uid() = id") would silently filter this UPDATE to zero
+  // rows for any user other than the admin themselves (RLS filters, doesn't
+  // error) — an admin could never actually change someone else's role/tier.
+  // Admin is already verified above; use the service client for the write.
+  const svc = createServiceClient();
+  const { error, count } = await svc.from("profiles").update(update).eq("id", userId).select("id", { count: "exact" });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!count) return NextResponse.json({ error: "No matching user" }, { status: 404 });
 
   return NextResponse.json({ success: true });
 }
