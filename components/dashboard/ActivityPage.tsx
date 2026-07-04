@@ -31,8 +31,13 @@ function toDate(v: string | null | undefined): Date | null {
 }
 
 function calendarKey(d: Date): string {
-  // "2026-06-28"
-  return d.toISOString().slice(0, 10);
+  // Local calendar day (NOT UTC). Must match the local time shown by formatTime,
+  // otherwise a late-evening event renders under the next UTC day with a PM time
+  // (e.g. 11:18 PM grouped under the following morning's date).
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function formatDayHeader(key: string): string {
