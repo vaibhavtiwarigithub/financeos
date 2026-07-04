@@ -511,6 +511,7 @@ REASONING APPROACH:
           maxIterations: 18,
           task: "summarize",
           agentLabel: "learner",
+          runId: runId ?? undefined,
         });
 
         const finishCall = loopResult.toolCalls.find(c => c.name === "finish");

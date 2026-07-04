@@ -302,11 +302,46 @@ export async function runAgentLoop(opts: {
   maxIterations?: number
   task?: LLMTask
   agentLabel?: string
+  runId?: string
+  symbol?: string
 }): Promise<AgentLoopResult> {
   const model = opts.model ?? "deepseek-chat"
   const maxIter = opts.maxIterations ?? 12
-  if (model.startsWith("claude")) return runClaudeAgentLoop(opts, model, maxIter)
-  return runDeepSeekAgentLoop(opts, model, maxIter)
+  const start = Date.now()
+  let result: AgentLoopResult | undefined
+  let success = true, errorMsg = ""
+  try {
+    result = model.startsWith("claude")
+      ? await runClaudeAgentLoop(opts, model, maxIter)
+      : await runDeepSeekAgentLoop(opts, model, maxIter)
+    return result
+  } catch (err) {
+    success = false
+    errorMsg = String(err)
+    throw err
+  } finally {
+    // Record agent-loop usage in the central cost ledger (llm_call_log).
+    // Without this, tool-loop agents (learner/research/mentor/…) are invisible
+    // to /dashboard/admin/llm-history and total cost is undercounted.
+    const durationMs = Date.now() - start
+    const [inRate, outRate] = PRICING[model] ?? [0, 0]
+    const tIn = result?.tokensIn ?? 0
+    const tOut = result?.tokensOut ?? 0
+    const costUsd = (tIn / 1_000_000 * inRate) + (tOut / 1_000_000 * outRate)
+    logCall({
+      model,
+      task: opts.task ?? "agent-loop",
+      tokensIn: tIn,
+      tokensOut: tOut,
+      costUsd,
+      durationMs,
+      success,
+      errorMsg,
+      symbol: opts.symbol,
+      agentLabel: opts.agentLabel ?? "agent-loop",
+      runId: opts.runId,
+    }).catch(() => {})
+  }
 }
 
 // ── Claude (Anthropic) tool-use loop ─────────────────────────────────────────
