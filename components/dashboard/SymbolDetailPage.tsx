@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import TradingViewChart from "@/components/charts/TradingViewChart";
 import SymbolFundamentals from "@/components/dashboard/SymbolFundamentals";
 import SymbolPeers from "@/components/dashboard/SymbolPeers";
+import DeepDivePanel from "@/components/dashboard/DeepDivePanel";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -12,7 +13,7 @@ const T = {
   greenBg: "#052E16", redBg: "#3B0000", amberBg: "#2D1B00",
 };
 
-type Tab = "chart" | "signals" | "options" | "chat" | "peers";
+type Tab = "chart" | "deepdive" | "signals" | "options" | "chat" | "peers";
 
 function dirColor(dir: string) {
   const d = (dir ?? "").toLowerCase();
@@ -447,6 +448,7 @@ export default function SymbolDetailPage({
       {/* Tab bar */}
       <div style={{ display: "flex", gap: "4px", borderBottom: `1px solid ${T.border}`, paddingBottom: "4px" }}>
         <button style={tabStyle(tab === "chart")} onClick={() => setTab("chart")}>Chart</button>
+        <button style={tabStyle(tab === "deepdive")} onClick={() => setTab("deepdive")}>🔬 Deep Dive</button>
         <button style={tabStyle(tab === "signals")} onClick={() => setTab("signals")}>
           Signals {signals.length > 0 ? `(${signals.length})` : ""}
         </button>
@@ -460,6 +462,12 @@ export default function SymbolDetailPage({
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <TradingViewChart symbol={symbol} height={520} />
           <SymbolFundamentals symbol={symbol} />
+        </div>
+      )}
+
+      {tab === "deepdive" && (
+        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px 24px" }}>
+          <DeepDivePanel symbol={symbol} />
         </div>
       )}
 
