@@ -188,6 +188,28 @@ export default function BacktestPage() {
           </div>
         )}
 
+        {/* How this works — explainer */}
+        <details style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "14px 18px", marginBottom: "18px" }}>
+          <summary style={{ fontSize: "13px", fontWeight: 700, color: T.text, cursor: "pointer" }}>How the backtest works — read me</summary>
+          <div style={{ fontSize: "12.5px", color: T.sub, lineHeight: 1.7, marginTop: "10px" }}>
+            <p style={{ margin: "0 0 10px" }}>
+              <b style={{ color: T.text }}>What it tests:</b> whether the ResearchAgent's <b>scoring strategy has a real edge</b> — not a single stock. It replays your own history: every past <code>agent_signal</code> with an analyst score at or above the <b>Score threshold</b> becomes a simulated trade.
+            </p>
+            <p style={{ margin: "0 0 10px" }}>
+              <b style={{ color: T.text }}>Which symbols:</b> whatever the agent actually signaled over the date range (your researched watchlist names) — you don't pick tickers here; the strategy did, historically. It needs <code>price_cache</code> candles for those symbols/dates (run the price cron if empty).
+            </p>
+            <p style={{ margin: "0 0 10px" }}>
+              <b style={{ color: T.text }}>The rules:</b> enter at the first close on/after the signal date; exit on whichever comes first — <b>+Target%</b>, <b>−Stop%</b>, or <b>Max hold days</b> timeout. Fully deterministic, no LLM. Then it computes win rate, expectancy, Sharpe, max drawdown, and <b>alpha vs SPY</b> (are you beating just buying the index?).
+            </p>
+            <p style={{ margin: "0 0 10px" }}>
+              <b style={{ color: T.text }}>What's "right" for us:</b> this is <b>informational only</b> — a backtest is NOT valid grounds for a live-trade eligibility decision (locked project rule). Use it to sanity-check that the scoring + exit rules would have made money, and to tune target/stop/hold. Real edge is proven by the forward paper record, not the backtest.
+            </p>
+            <p style={{ margin: 0 }}>
+              <b style={{ color: T.text }}>vs other platforms:</b> tools like QuantConnect / Backtrader let you backtest arbitrary coded strategies over full market history. Ours is narrower on purpose — it validates <i>this system's own signals</i> with simple, transparent exit rules, which is what matters for a governed paper-first platform.
+            </p>
+          </div>
+        </details>
+
         {/* Config form */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px 24px", marginBottom: "20px" }}>
           <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>Backtest Parameters</div>
