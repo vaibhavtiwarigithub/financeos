@@ -249,3 +249,73 @@ Alternatives considered: Leave agent loops untracked (blind spot); build a custo
 Impact: Complete cost ledger; optional Langfuse tracing.
 Files/features affected: `lib/llm-router.ts`, `llm_call_log`, `/dashboard/admin/llm-history`.
 Reversal cost: Low
+
+### Decision 16: Deep-Dive Debate — adversarial per-symbol analysis
+
+Date: 2026-07-04
+Status: Approved
+Category: Product / Architecture
+
+Context: Competitor trading-agents.ai produces an argued per-symbol verdict via multi-agent debate; Kairos only produced a numeric analyst_score.
+Decision: On-demand per-symbol Deep-Dive: 4 parallel analysts → Bull vs Bear advocate → Research Evaluator → Risk desk → Portfolio Manager verdict (BUY/HOLD/SELL/PASS + conviction). Reasons over data we already have (quote + our signal scores + macro + 1 Alpha Vantage OVERVIEW for fundamentals) to stay in AV's 25/day budget. DeepSeek models (no ANTHROPIC_API_KEY). Long-only enforced (unheld → BUY/PASS). Advisory only — risk gate still governs. Stored in `deep_analyses`.
+Reason: Closes the one gap where the competitor was ahead (argued verdict + transparency) without giving up governance.
+Alternatives considered: Full history re-read (expensive); replace analyst_score (loses the deterministic pipeline).
+Impact: New per-symbol "Deep Dive" tab; ~$0.004/run.
+Files/features affected: `app/api/agents/deep-dive/`, `components/dashboard/DeepDivePanel.tsx`, migration 048.
+Reversal cost: Low
+
+### Decision 17: MentorAgent is a true AI coaching agent
+
+Date: 2026-07-04
+Status: Approved
+Category: Product / Architecture
+
+Context: The old mentor just scored a single thesis. The user wants a coach that reasons over their behavior + market + learning progress.
+Decision: MentorAgent is a deepseek-reasoner tool-use agent (query_behavior, query_learning_progress, query_market_context, read_principles → finish). Returns grade + confidence, strengths, focus areas, one market-tailored lesson, next milestone. Grounded; if data is thin it coaches on process. Advisory/educational only. Stored in `mentor_insights`, surfaced on the Mentor "AI Coach" tab + the briefing. Weekly cron (Fri 5:15 PM).
+Reason: A data-grounded personal trading coach is a differentiator nobody combines (behavior + regime + curriculum).
+Alternatives considered: Keep the one-shot scorer; a human-written static tip.
+Impact: New coaching surface; ~$0.006/run.
+Files/features affected: `app/api/agents/mentor-coach/`, `components/dashboard/MentorCoachPanel.tsx`, migration 050.
+Reversal cost: Low
+
+### Decision 18: Briefing = structured data blocks + short LLM note (newsletter-grade)
+
+Date: 2026-07-04
+Status: Approved
+Category: Product / UX
+
+Context: The briefing was a wall of LLM prose. The user wants newsletter-grade structure with mandatory explanations on every metric.
+Decision: Render the data deterministically as designed HTML blocks (accurate); the LLM writes only a short editor's note + a grounded 3-part outlook with confidence. v2 adds a lighter theme, per-metric explanations, market/positions/future outlooks, a 7-day agent-activity recap, and a Mentor block. Email delivers via Resend; `email_sent` reflects the real result; recipient/sender overridable via `BRIEFING_TO`/`BRIEFING_FROM`. onboarding@resend.dev only delivers to the Resend account owner until a domain is verified.
+Reason: Numbers must be accurate (code-built) and every figure must carry a what/why (locked user preference — details mandatory).
+Alternatives considered: All-LLM prose (hallucination + wall of text); all-static (no human voice).
+Impact: Redesigned morning/evening emails.
+Files/features affected: `app/api/briefing/generate/route.ts`.
+Reversal cost: Low
+
+### Decision 19: Markets synthesis from ETF regime proxies (no AV budget)
+
+Date: 2026-07-04
+Status: Approved
+Category: Architecture / Data
+
+Context: The user wants a synthesis above the heatmap answering "where are markets and heading" from more than just VIX.
+Decision: A Market Synthesis card reads ETF regime proxies via Massive (breadth SPY/QQQ/IWM, credit HYG/IEF, rates TLT/IEF, dollar UUP, gold GLD, vol VIXY), computes risk-on/neutral/risk-off, and a DeepSeek synthesis grounded only in those numbers, with a what/why note on every tile. Sector Breadth gains a 1W–1Y period selector. Uses Massive (not Alpha Vantage) to avoid the 25/day cap.
+Reason: A combined-signal read guides the user and feeds regime context; ETF proxies via Massive are budget-free.
+Alternatives considered: Alpha Vantage macro series (blows the 25/day budget).
+Impact: New synthesis section on Markets; cached to `briefings` (session='synthesis', migration 038).
+Files/features affected: `app/api/markets/synthesis/`, `components/dashboard/MarketsPage.tsx`, `SectorBreadth.tsx`.
+Reversal cost: Low
+
+### Decision 20: Automation schedule source-of-truth + nav consolidation
+
+Date: 2026-07-04
+Status: Approved
+Category: Architecture / UX
+
+Context: The pipeline widget was hardcoded/wrong; there was no single view of what runs when/where. Nav had duplicated/overlapping items.
+Decision: `lib/schedule.ts` is the single source-of-truth for all 12 scheduled jobs (name, time, days, runner, description, handoff). A read-only Settings → Automation page shows times, runner (Windows Task Scheduler), last/next run. Consolidated nav: removed the duplicate Intelligence "brief" tab (#11), unified Strategies + Algo Library into one tabbed section and dropped the standalone Library nav item (#18/#19). All crons run via Windows Task Scheduler (cloud edge-function crons decommissioned); edit by re-running `scripts/register-tasks.ps1`.
+Reason: One accurate schedule surface; less nav clutter; honest about what's editable where.
+Alternatives considered: Keep hardcoded widget; in-app schedule editing (needs OS/admin — deferred).
+Impact: New Automation page; leaner nav.
+Files/features affected: `lib/schedule.ts`, `app/dashboard/settings/automation/`, `app/api/automation/schedule/`, `DashboardShell.tsx`, `scripts/*.ps1`.
+Reversal cost: Low
