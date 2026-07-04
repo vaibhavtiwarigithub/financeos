@@ -183,9 +183,12 @@ export default function DashboardShell({ profile, children }: { profile: Profile
     async function checkProposals() {
       if (Notification.permission !== "granted") return;
       try {
+        // trade_proposals.side, not order_side (that column is on paper_trades) —
+        // this was silently 400ing on every page load, so the desktop
+        // notification for pending proposals never fired.
         const { data } = await supabase
           .from("trade_proposals")
-          .select("id, symbol, order_side, qty, limit_price, analyst_score, created_at")
+          .select("id, symbol, side, qty, limit_price, analyst_score, created_at")
           .eq("status", "pending_review")
           .order("created_at", { ascending: false })
           .limit(10);
@@ -194,7 +197,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
           if (seenProposalIds.current.has(p.id)) continue;
           seenProposalIds.current.add(p.id);
           const n = new Notification("Kairos — Trade Proposal Ready", {
-            body: `${p.order_side?.toUpperCase()} ${p.qty} ${p.symbol} @ $${Number(p.limit_price).toFixed(2)} · Score ${p.analyst_score} · Awaiting your approval`,
+            body: `${p.side?.toUpperCase()} ${p.qty} ${p.symbol} @ $${Number(p.limit_price).toFixed(2)} · Score ${p.analyst_score} · Awaiting your approval`,
             icon: "/favicon.ico",
             tag: `proposal-${p.id}`,
             requireInteraction: true,
