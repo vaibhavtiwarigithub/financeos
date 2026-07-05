@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import PageHeader from "./PageHeader";
+import { useMarket } from "@/lib/market-context";
 import type { RiskMetrics, HoldingWithRisk, SectorBreakdown } from "@/lib/portfolio-risk";
 
 const T = {
@@ -56,6 +57,7 @@ function StatCard({ label, value, sub, color }: { label: string; value: string; 
 }
 
 export default function PortfolioRiskPage() {
+  const { market } = useMarket();
   const [data, setData]       = useState<{ accounts: AccountSummary[]; risk: RiskMetrics; fetchedAt: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState("");
@@ -64,13 +66,14 @@ export default function PortfolioRiskPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/portfolio/holdings");
+      const res = await fetch(`/api/portfolio/holdings?market=${market}`);
       if (!res.ok) throw new Error(await res.text());
       setData(await res.json());
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
-  }, []);
+  }, [market]);
 
+  // Refetch whenever the global market switcher changes (US ↔ India).
   useEffect(() => { load(); }, [load]);
 
   if (loading) return <div style={{ padding: "28px", color: T.muted, fontSize: "14px" }}>Fetching holdings from all accounts…</div>;
@@ -78,12 +81,14 @@ export default function PortfolioRiskPage() {
   if (!data)   return null;
 
   const { accounts, risk } = data;
+  const cur = risk.currency ?? "$";
+  const isIndia = risk.market === "india";
 
   return (
     <div>
       <PageHeader
         title="Portfolio Risk"
-        subtitle="Live risk analytics across all connected accounts"
+        subtitle={isIndia ? "Live ₹ risk analytics across your India paper book" : "Live risk analytics across all connected accounts"}
         cadence="as-needed"
         whatItDoes="Aggregates real holdings from all connected brokers (Alpaca, Robinhood) and your paper portfolio. Computes concentration risk, market sensitivity (beta), potential daily loss (VaR), and sector exposure vs the S&P 500."
         whatToLookFor={[
@@ -110,7 +115,7 @@ export default function PortfolioRiskPage() {
               <span style={{ color: T.sub }}>{SOURCE_LABELS[a.source] ?? a.source}</span>
               {a.error
                 ? <span style={{ color: T.red, marginLeft: "8px" }}>— {a.error.slice(0, 60)}</span>
-                : <span style={{ color: T.text, fontWeight: 700, marginLeft: "8px" }}>${a.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                : <span style={{ color: T.text, fontWeight: 700, marginLeft: "8px" }}>{cur}{a.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
               }
               {!a.error && <span style={{ color: T.muted, marginLeft: "6px" }}>· {a.holdingCount} positions</span>}
             </div>
@@ -126,7 +131,7 @@ export default function PortfolioRiskPage() {
 
             {/* ── At a glance ── */}
             <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "20px" }}>
-              <StatCard label="Total Value" value={`$${risk.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} sub={`${risk.holdingCount} positions`} />
+              <StatCard label="Total Value" value={`${cur}${risk.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} sub={`${risk.holdingCount} positions`} />
               <StatCard
                 label="Risk Score"
                 value={`${risk.riskScore}/100`}
@@ -135,13 +140,15 @@ export default function PortfolioRiskPage() {
               />
               <StatCard
                 label="Market Sensitivity"
-                value={`β ${risk.portfolioBeta.toFixed(2)}`}
-                sub={risk.portfolioBeta > 1 ? `${Math.round((risk.portfolioBeta - 1) * 100)}% more volatile than market` : `${Math.round((1 - risk.portfolioBeta) * 100)}% less volatile than market`}
-                color={betaColor(risk.portfolioBeta)}
+                value={risk.betaComingSoon ? "β —" : `β ${risk.portfolioBeta.toFixed(2)}`}
+                sub={risk.betaComingSoon
+                  ? `beta vs ${risk.benchmarkLabel} — coming soon`
+                  : (risk.portfolioBeta > 1 ? `${Math.round((risk.portfolioBeta - 1) * 100)}% more volatile than market` : `${Math.round((1 - risk.portfolioBeta) * 100)}% less volatile than market`)}
+                color={risk.betaComingSoon ? T.muted : betaColor(risk.portfolioBeta)}
               />
               <StatCard
                 label="1-Day VaR (95%)"
-                value={`−$${risk.var95_dollar.toFixed(0)}`}
+                value={`−${cur}${risk.var95_dollar.toFixed(0)}`}
                 sub={`${(risk.var95_pct * 100).toFixed(1)}% · bad-day loss estimate`}
                 color={T.amber}
               />
@@ -151,9 +158,10 @@ export default function PortfolioRiskPage() {
             <div style={{ background: T.card, border: `1px solid ${risk.riskColor}33`, borderRadius: "12px", padding: "18px 20px", marginBottom: "20px" }}>
               <div style={{ fontSize: "9px", color: risk.riskColor, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 700, marginBottom: "10px" }}>Risk Summary</div>
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                <div style={{ fontSize: "14px", color: T.text }}>📊 {risk.betaLabel}</div>
+                {!risk.betaComingSoon && <div style={{ fontSize: "14px", color: T.text }}>📊 {risk.betaLabel}</div>}
                 <div style={{ fontSize: "14px", color: T.text }}>⚠️ {risk.varLabel}</div>
-                <div style={{ fontSize: "13px", color: T.sub }}>📉 Estimated max drawdown in a market crash: <span style={{ color: T.red, fontWeight: 700 }}>−{(risk.maxDrawdownEst * 100).toFixed(0)}%</span> <span style={{ color: T.muted }}>(based on portfolio beta vs S&P historical −34%)</span></div>
+                <div style={{ fontSize: "13px", color: T.sub }}>📉 Estimated max drawdown in a market crash: <span style={{ color: T.red, fontWeight: 700 }}>−{(risk.maxDrawdownEst * 100).toFixed(0)}%</span> <span style={{ color: T.muted }}>{isIndia ? `(NIFTY historical drawdown proxy)` : `(based on portfolio beta vs S&P historical −34%)`}</span></div>
+                {risk.betaComingSoon && <div style={{ fontSize: "12px", color: T.muted }}>β vs {risk.benchmarkLabel} — coming soon. VaR here uses NIFTY daily volatility directly.</div>}
               </div>
             </div>
 
@@ -190,14 +198,14 @@ export default function PortfolioRiskPage() {
                         <tr key={`${h.symbol}-${h.source}-${i}`} style={{ borderBottom: `1px solid ${T.border}44` }}>
                           <td style={{ padding: "8px 10px", fontWeight: 700, color: T.text }}>{h.symbol}</td>
                           <td style={{ padding: "8px 10px", color: T.sub }}>{h.sector}</td>
-                          <td style={{ padding: "8px 10px", color: T.text }}>${h.marketValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                          <td style={{ padding: "8px 10px", color: T.text }}>{cur}{h.marketValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                           <td style={{ padding: "8px 10px" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                               <span style={{ color: weightColor, fontWeight: 600, width: "36px" }}>{(h.weightPct * 100).toFixed(1)}%</span>
                               <Bar pct={h.weightPct} color={weightColor} maxPct={0.25} />
                             </div>
                           </td>
-                          <td style={{ padding: "8px 10px", color: betaColor(h.beta) }}>{h.beta.toFixed(2)}</td>
+                          <td style={{ padding: "8px 10px", color: isIndia ? T.muted : betaColor(h.beta) }}>{isIndia ? "—" : h.beta.toFixed(2)}</td>
                           <td style={{ padding: "8px 10px", color: pnlColor }}>
                             {h.unrealizedPnl != null ? (
                               <>
@@ -216,18 +224,18 @@ export default function PortfolioRiskPage() {
 
             {/* ── Sector breakdown ── */}
             <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px", marginBottom: "20px" }}>
-              <div style={{ fontSize: "9px", color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 700, marginBottom: "14px" }}>Sector Exposure vs S&P 500</div>
+              <div style={{ fontSize: "9px", color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 700, marginBottom: "14px" }}>{isIndia ? "Sector Exposure" : "Sector Exposure vs S&P 500"}</div>
               <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                 {risk.sectorBreakdown.map(s => {
-                  const overColor = s.overweightPct > 0.15 ? T.red : s.overweightPct > 0.05 ? T.amber : T.green;
+                  const overColor = isIndia ? T.accent : (s.overweightPct > 0.15 ? T.red : s.overweightPct > 0.05 ? T.amber : T.green);
                   return (
                     <div key={s.sector}>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px", fontSize: "12px" }}>
                         <span style={{ color: T.text, fontWeight: 600 }}>{s.sector}</span>
                         <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
                           <span style={{ color: overColor, fontWeight: 700 }}>{(s.weightPct * 100).toFixed(0)}%</span>
-                          <span style={{ color: T.muted }}>S&P: {(s.sp500WeightPct * 100).toFixed(0)}%</span>
-                          {s.overweightPct > 0.03 && (
+                          {!isIndia && <span style={{ color: T.muted }}>S&P: {(s.sp500WeightPct * 100).toFixed(0)}%</span>}
+                          {!isIndia && s.overweightPct > 0.03 && (
                             <span style={{ color: overColor, fontSize: "10px", background: overColor + "22", padding: "2px 7px", borderRadius: "4px" }}>
                               +{(s.overweightPct * 100).toFixed(0)}% OW
                             </span>
@@ -244,7 +252,9 @@ export default function PortfolioRiskPage() {
                 })}
               </div>
               <div style={{ fontSize: "11px", color: T.muted, marginTop: "14px", borderTop: `1px solid ${T.border}`, paddingTop: "10px" }}>
-                OW = overweight vs S&P 500 sector weight. High overweight = concentrated sector risk.
+                {isIndia
+                  ? "Sector weights of your ₹ India book. NIFTY sector-weight benchmark not yet wired."
+                  : "OW = overweight vs S&P 500 sector weight. High overweight = concentrated sector risk."}
               </div>
             </div>
 
@@ -299,8 +309,10 @@ export default function PortfolioRiskPage() {
             )}
 
             <div style={{ fontSize: "11px", color: T.muted, borderTop: `1px solid ${T.border}`, paddingTop: "14px" }}>
-              Beta approximations are sector-based averages. VaR uses portfolio beta × historical SPY daily volatility (0.85%) × 1.645 z-score. Not financial advice.
-              Last updated: {new Date(data.fetchedAt).toLocaleTimeString()}
+              {isIndia
+                ? "India VaR uses NIFTY 50 daily volatility (1.0%) × 1.645 z-score. Beta vs NIFTY and sector benchmark are coming soon. Not financial advice."
+                : "Beta approximations are sector-based averages. VaR uses portfolio beta × historical SPY daily volatility (0.85%) × 1.645 z-score. Not financial advice."}
+              {" "}Last updated: {new Date(data.fetchedAt).toLocaleTimeString()}
             </div>
 
           </>

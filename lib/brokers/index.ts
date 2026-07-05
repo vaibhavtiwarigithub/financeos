@@ -5,8 +5,10 @@ import type { BrokerAccount, BrokerHolding } from "./types";
 export type { BrokerAccount, BrokerHolding };
 export type { BrokerName } from "./types";
 
-// Internal paper positions from Supabase
-async function fetchInternalPaper(): Promise<BrokerAccount> {
+// Internal paper positions from Supabase, scoped to a market (us | india).
+// Pre-057 (no `market` column) the `.eq("market", …)` filter errors; we detect
+// that and fall back to the unscoped query so US behaves exactly as before.
+async function fetchInternalPaper(market: "us" | "india" = "us"): Promise<BrokerAccount> {
   const sb = createServiceClient();
   const fetchedAt = new Date().toISOString();
 
@@ -15,10 +17,15 @@ async function fetchInternalPaper(): Promise<BrokerAccount> {
   // (every row is open by definition; PnL is derived, not stored). The old
   // select queried nonexistent columns, Supabase errored, and this silently
   // returned zero paper holdings on the Risk Analytics page.
-  // Phase 4: prefer the US pool; fall back to any row pre-057 (no market column)
-  let { data: portfolio } = await sb.from("paper_portfolio").select("nav, cash_balance").eq("market", "us").limit(1).maybeSingle();
+  // Phase 4/5: prefer the requested market pool; fall back to any row pre-057.
+  let { data: portfolio } = await sb.from("paper_portfolio").select("nav, cash_balance").eq("market", market).limit(1).maybeSingle();
   if (!portfolio) ({ data: portfolio } = await sb.from("paper_portfolio").select("nav, cash_balance").limit(1).maybeSingle());
-  const { data: positions } = await sb.from("paper_positions").select("symbol, qty, avg_cost, current_price");
+
+  // Market-scoped positions. If the column doesn't exist (pre-057) the query
+  // errors → retry unscoped so the US book is unchanged.
+  let { data: positions, error: posErr } = await sb
+    .from("paper_positions").select("symbol, qty, avg_cost, current_price").eq("market", market);
+  if (posErr) ({ data: positions } = await sb.from("paper_positions").select("symbol, qty, avg_cost, current_price"));
 
   const holdings: BrokerHolding[] = (positions ?? []).map((p: any) => {
     const qty = parseFloat(p.qty ?? 0);
@@ -48,13 +55,14 @@ async function fetchInternalPaper(): Promise<BrokerAccount> {
   };
 }
 
-// Fetch all connected accounts in parallel
-export async function fetchAllAccounts(): Promise<BrokerAccount[]> {
-  const results = await Promise.allSettled([
-    fetchInternalPaper(),
-    fetchAlpacaAccount(true),   // paper
-    fetchAlpacaAccount(false),  // live
-  ]);
+// Fetch all connected accounts in parallel, scoped to a market.
+// US pulls the paper pool + both Alpaca books (US brokers). India pulls only the
+// ₹ paper pool — Alpaca/Robinhood are US-only, so blending them would mix $ and ₹.
+export async function fetchAllAccounts(market: "us" | "india" = "us"): Promise<BrokerAccount[]> {
+  const tasks = market === "india"
+    ? [fetchInternalPaper("india")]
+    : [fetchInternalPaper("us"), fetchAlpacaAccount(true), fetchAlpacaAccount(false)];
+  const results = await Promise.allSettled(tasks);
 
   return results
     .map(r => r.status === "fulfilled" ? r.value : null)

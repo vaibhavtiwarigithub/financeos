@@ -12,6 +12,7 @@ interface BacktestParams {
   stop_loss_pct?: number;
   max_hold_days?: number;
   strategy_version_id?: string;
+  market?: "us" | "india";
 }
 
 interface BacktestMetrics {
@@ -70,6 +71,9 @@ export async function POST(req: NextRequest) {
       stop_loss_pct:     body.stop_loss_pct     ?? 7,
       max_hold_days:     body.max_hold_days      ?? 15,
       strategy_version_id: body.strategy_version_id,
+      // Thread market through so India optimize replays ₹ signals. The internal
+      // fetch to /api/agents/backtest can't forward the cookie, so pass it in body.
+      market:            body.market === "india" ? "india" : "us",
     };
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
@@ -170,6 +174,7 @@ Return ONLY valid JSON array with exactly 3 items:
           date_from:       initialParams.date_from,
           date_to:         initialParams.date_to,
           strategy_version_id: initialParams.strategy_version_id,
+          market:          initialParams.market,
           ...s.params,
         };
         const { metrics, error } = await runBacktest(params, baseUrl);

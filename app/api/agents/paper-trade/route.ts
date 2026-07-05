@@ -23,6 +23,11 @@ export async function POST(req: NextRequest) {
     const cronSecret = req.headers.get("x-cron-secret");
     const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
 
+    // Optional ?market=us|india — scope a run to one pool (India cron fills only
+    // the ₹ pool, US cron only the $ pool). No param = all active markets.
+    const mktParam = new URL(req.url).searchParams.get("market");
+    const marketScope = mktParam === "india" ? "india" : mktParam === "us" ? "us" : null;
+
     if (!isCron) {
       const userClient = await createClient();
       const { data: { user } } = await userClient.auth.getUser();
@@ -75,7 +80,8 @@ export async function POST(req: NextRequest) {
     if (!poolByMarket.has("us")) {
       return NextResponse.json({ error: "No paper portfolio found" }, { status: 500 });
     }
-    const activeMarkets = [...poolByMarket.keys()]; // 'us' always; 'india' when 057 applied
+    let activeMarkets = [...poolByMarket.keys()]; // 'us' always; 'india' when 057 applied
+    if (marketScope) activeMarkets = activeMarkets.filter(m => m === marketScope); // scoped cron run
 
     // ── Qualifying signals across active markets ─────────────────────────────
     // India signals only get pulled when the India pool exists (hasMarketCol +

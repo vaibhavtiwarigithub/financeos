@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 
 const marketOf = (p: any, hasMarketCol: boolean) => (hasMarketCol ? String(p.market ?? "us") : "us");
 
-async function runMonitor() {
+async function runMonitor(marketScope?: "us" | "india" | null) {
   const svc = createServiceClient();
 
   // 1. Fetch all paper positions — paper_positions has NO closed_at column
@@ -27,9 +27,16 @@ async function runMonitor() {
   // returned an error that was never checked, and this route silently did
   // nothing on every single run since — including never refreshing
   // current_price, which is why stale prices lingered for days.
-  const { data: positions } = await svc
+  const { data: allPositionsRaw } = await svc
     .from("paper_positions")
     .select("*");
+
+  // Scope to one market when the caller asks (India cron runs after the NSE close
+  // and must only touch India positions, priced off Yahoo; US cron only US).
+  const hasMarketColEarly = !!allPositionsRaw?.[0] && Object.prototype.hasOwnProperty.call(allPositionsRaw[0], "market");
+  const positions = marketScope && hasMarketColEarly
+    ? (allPositionsRaw ?? []).filter((p: any) => String(p.market ?? "us") === marketScope)
+    : allPositionsRaw;
 
   if (!positions?.length) return { checked: 0, closed: 0, closedDetails: [], updated: 0 };
 
@@ -238,7 +245,8 @@ export async function POST(req: NextRequest) {
       if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const result = await runMonitor();
+    const mp = new URL(req.url).searchParams.get("market");
+    const result = await runMonitor(mp === "india" ? "india" : mp === "us" ? "us" : null);
     return NextResponse.json({ success: true, ...result });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -258,7 +266,8 @@ export async function GET(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const result = await runMonitor();
+    const mp = new URL(req.url).searchParams.get("market");
+    const result = await runMonitor(mp === "india" ? "india" : mp === "us" ? "us" : null);
     return NextResponse.json({ success: true, ...result });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

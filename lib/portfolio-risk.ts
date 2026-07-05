@@ -118,6 +118,10 @@ export interface RiskWarning {
 }
 
 export interface RiskMetrics {
+  market: "us" | "india";
+  currency: string;             // "$" | "₹" — never mix these across a payload
+  benchmarkLabel: string;       // "S&P 500" | "NIFTY 50"
+  betaComingSoon: boolean;      // India: beta vs NIFTY not yet wired
   totalValue: number;
   holdingCount: number;
   holdings: HoldingWithRisk[];
@@ -143,38 +147,90 @@ export interface ProposalImpact {
   description: string;
 }
 
+// India (NSE `.NS`) sector map for the NIFTY-100 universe. US SECTOR_MAP keys are
+// bare US tickers and never match `.NS` symbols, so India needs its own lookup or
+// every position collapses to "Other". Kept small + honest — extend as needed.
+const INDIA_SECTOR_MAP: Record<string, string> = {
+  "TCS": "Technology", "INFY": "Technology", "WIPRO": "Technology", "HCLTECH": "Technology",
+  "TECHM": "Technology", "LTIM": "Technology", "MPHASIS": "Technology", "PERSISTENT": "Technology",
+  "HDFCBANK": "Financials", "ICICIBANK": "Financials", "AXISBANK": "Financials", "SBIN": "Financials",
+  "KOTAKBANK": "Financials", "BAJFINANCE": "Financials", "BAJAJFINSV": "Financials", "INDUSINDBK": "Financials",
+  "HDFCLIFE": "Financials", "SBILIFE": "Financials", "BANKBARODA": "Financials", "PNB": "Financials",
+  "RELIANCE": "Energy", "ONGC": "Energy", "BPCL": "Energy", "IOC": "Energy", "GAIL": "Energy", "COALINDIA": "Energy",
+  "SUNPHARMA": "Healthcare", "DRREDDY": "Healthcare", "CIPLA": "Healthcare", "DIVISLAB": "Healthcare",
+  "APOLLOHOSP": "Healthcare", "TORNTPHARM": "Healthcare", "AUROPHARMA": "Healthcare", "ZYDUSLIFE": "Healthcare",
+  "HINDUNILVR": "Consumer Staples", "ITC": "Consumer Staples", "NESTLEIND": "Consumer Staples",
+  "BRITANNIA": "Consumer Staples", "TATACONSUM": "Consumer Staples", "DABUR": "Consumer Staples", "MARICO": "Consumer Staples",
+  "MARUTI": "Consumer Discretionary", "TATAMOTORS": "Consumer Discretionary", "M&M": "Consumer Discretionary",
+  "TITAN": "Consumer Discretionary", "EICHERMOT": "Consumer Discretionary", "HEROMOTOCO": "Consumer Discretionary",
+  "BAJAJ-AUTO": "Consumer Discretionary", "TVSMOTOR": "Consumer Discretionary", "DMART": "Consumer Discretionary",
+  "LT": "Industrials", "SIEMENS": "Industrials", "ABB": "Industrials", "BEL": "Industrials", "BOSCHLTD": "Industrials",
+  "BHARTIARTL": "Communication", "ZOMATO": "Communication", "NAUKRI": "Communication", "IRCTC": "Communication",
+  "TATASTEEL": "Materials", "JSWSTEEL": "Materials", "HINDALCO": "Materials", "VEDL": "Materials",
+  "ULTRACEMCO": "Materials", "GRASIM": "Materials", "SHREECEM": "Materials", "AMBUJACEM": "Materials",
+  "ASIANPAINT": "Materials", "BERGEPAINT": "Materials", "PIDILITIND": "Materials", "JINDALSTEL": "Materials",
+  "NTPC": "Utilities", "POWERGRID": "Utilities", "TATAPOWER": "Utilities", "ADANIGREEN": "Utilities", "ADANIPOWER": "Utilities",
+  "DLF": "Real Estate", "LODHA": "Real Estate", "ADANIPORTS": "Industrials", "ADANIENT": "Industrials",
+};
+
+function indiaSector(symbol: string): string {
+  const base = symbol.toUpperCase().replace(/\.(NS|BO)$/, "");
+  return INDIA_SECTOR_MAP[base] ?? "Other";
+}
+
+// India daily-vol proxy for VaR when we have no NIFTY beta wired. NIFTY 50's
+// realized daily vol runs ~1.0% — higher than SPY's ~0.85%. Used directly
+// (beta = 1 assumption) so the ₹ VaR figure is honest, not beta-scaled off SPY.
+const NIFTY_DAILY_VOL = 0.010;
+
+export interface RiskOptions {
+  market?: "us" | "india";
+  currency?: string; // "$" | "₹"
+}
+
 // ── Core computation ─────────────────────────────────────────────────────────
 
 export function computeRiskMetrics(
   holdings: BrokerHolding[],
   pendingProposals?: Array<{ symbol: string; side: string; qty: number; priceAtProposal: number }>,
+  opts: RiskOptions = {},
 ): RiskMetrics {
+  const market = opts.market ?? "us";
+  const currency = opts.currency ?? (market === "india" ? "₹" : "$");
+  const benchmarkLabel = market === "india" ? "NIFTY 50" : "S&P 500";
+  const betaComingSoon = market === "india"; // beta vs NIFTY not yet wired
   if (!holdings.length) {
-    return emptyMetrics();
+    return emptyMetrics(market, currency, benchmarkLabel, betaComingSoon);
   }
 
   const totalValue = holdings.reduce((s, h) => s + h.marketValue, 0);
-  if (totalValue <= 0) return emptyMetrics();
+  if (totalValue <= 0) return emptyMetrics(market, currency, benchmarkLabel, betaComingSoon);
 
-  // Enrich with sector + beta
+  const isIndia = market === "india";
+
+  // Enrich with sector + beta. India uses its own `.NS` sector map; beta stays a
+  // sector-average proxy (vs NIFTY is coming soon — we don't claim SPY beta for ₹).
   const enriched: HoldingWithRisk[] = holdings.map(h => {
-    const sector = SECTOR_MAP[h.symbol] ?? "Other";
+    const sector = isIndia ? indiaSector(h.symbol) : (SECTOR_MAP[h.symbol] ?? "Other");
     const beta   = SECTOR_BETA[sector] ?? 1.0;
     const weightPct = h.marketValue / totalValue;
     return { ...h, sector, beta, weightPct, riskContribution: weightPct * beta };
   });
 
-  // Portfolio beta = weighted average beta
+  // Portfolio beta = weighted average sector beta (proxy).
   const portfolioBeta = enriched.reduce((s, h) => s + h.weightPct * h.beta, 0);
 
-  // VaR: SPY historical daily vol ≈ 0.85%, portfolio vol = beta × spy_vol
-  const SPY_DAILY_VOL = 0.0085;
-  const portfolioDailyVol = portfolioBeta * SPY_DAILY_VOL;
+  // VaR: US scales SPY daily vol by beta. India has no NIFTY beta wired, so use
+  // NIFTY's own daily vol directly (beta-1 assumption) — an honest ₹ figure that
+  // doesn't borrow SPY sensitivity.
+  const dailyVol = isIndia ? NIFTY_DAILY_VOL : 0.0085;
+  const portfolioDailyVol = isIndia ? dailyVol : portfolioBeta * dailyVol;
   const var95_pct    = portfolioDailyVol * 1.645;
-  const var95_dollar = totalValue * var95_pct;
+  const var95_dollar = totalValue * var95_pct; // amount is in `currency`, not always $
 
-  // Max drawdown estimate: SPY historical max ~34%, scaled by beta (capped at 60%)
-  const maxDrawdownEst = Math.min(0.60, portfolioBeta * 0.34);
+  // Max drawdown estimate: benchmark historical max (~34%), scaled by beta for US;
+  // India uses a flat NIFTY drawdown proxy (~38%) since beta isn't wired.
+  const maxDrawdownEst = isIndia ? 0.38 : Math.min(0.60, portfolioBeta * 0.34);
 
   // Sector breakdown
   const sectorTotals: Record<string, number> = {};
@@ -183,15 +239,20 @@ export function computeRiskMetrics(
     sectorTotals[h.sector] = (sectorTotals[h.sector] ?? 0) + h.weightPct;
     sectorCounts[h.sector] = (sectorCounts[h.sector] ?? 0) + 1;
   }
+  // India has no free NIFTY sector-weight reference wired, so benchmark weight is
+  // 0 and overweight is not claimed (the UI hides the S&P column for India).
   const sectorBreakdown: SectorBreakdown[] = Object.entries(sectorTotals)
     .sort((a, b) => b[1] - a[1])
-    .map(([sector, weightPct]) => ({
-      sector,
-      weightPct,
-      sp500WeightPct: SP500_SECTOR_WEIGHTS[sector] ?? 0,
-      overweightPct: weightPct - (SP500_SECTOR_WEIGHTS[sector] ?? 0),
-      holdingCount: sectorCounts[sector],
-    }));
+    .map(([sector, weightPct]) => {
+      const benchWeight = isIndia ? 0 : (SP500_SECTOR_WEIGHTS[sector] ?? 0);
+      return {
+        sector,
+        weightPct,
+        sp500WeightPct: benchWeight,
+        overweightPct: isIndia ? 0 : weightPct - benchWeight,
+        holdingCount: sectorCounts[sector],
+      };
+    });
 
   // Correlated pairs (from known map, only for held symbols)
   const symbols = new Set(enriched.map(h => h.symbol));
@@ -222,10 +283,11 @@ export function computeRiskMetrics(
   }
 
   const techWeight = sectorTotals["Technology"] ?? 0;
+  const techOW = isIndia ? "" : ` — ${Math.round(techWeight / (SP500_SECTOR_WEIGHTS["Technology"] ?? 0.31))}× overweight vs S&P 500`;
   if (techWeight > 0.55) {
-    warnings.push({ type: "sector", severity: "critical", message: `${(techWeight * 100).toFixed(0)}% in Technology — ${Math.round(techWeight / (SP500_SECTOR_WEIGHTS["Technology"] ?? 0.31))}× overweight vs S&P 500`, action: "Add non-tech positions to diversify" });
+    warnings.push({ type: "sector", severity: "critical", message: `${(techWeight * 100).toFixed(0)}% in Technology${techOW}`, action: "Add non-tech positions to diversify" });
   } else if (techWeight > 0.40) {
-    warnings.push({ type: "sector", severity: "warn", message: `${(techWeight * 100).toFixed(0)}% in Technology — ${Math.round(techWeight / (SP500_SECTOR_WEIGHTS["Technology"] ?? 0.31))}× overweight vs S&P 500`, action: "Consider diversifying into Healthcare or Financials" });
+    warnings.push({ type: "sector", severity: "warn", message: `${(techWeight * 100).toFixed(0)}% in Technology${techOW}`, action: "Consider diversifying into Healthcare or Financials" });
   }
 
   if (portfolioBeta > 1.5) {
@@ -258,7 +320,7 @@ export function computeRiskMetrics(
     ? `Your portfolio moves ${Math.round((1 - portfolioBeta) * 100)}% LESS than the market`
     : "Your portfolio moves in line with the market";
 
-  const varLabel = `On a bad day (1-in-20), you could lose up to $${var95_dollar.toFixed(0)}`;
+  const varLabel = `On a bad day (1-in-20), you could lose up to ${currency}${var95_dollar.toFixed(0)}`;
 
   // Proposal impact (if pending proposals provided)
   let proposalImpact: ProposalImpact | undefined;
@@ -268,7 +330,7 @@ export function computeRiskMetrics(
       if (p.side !== "buy") continue;
       const addedValue = p.qty * p.priceAtProposal;
       const newTotal   = totalValue + addedValue;
-      const sector     = SECTOR_MAP[p.symbol] ?? "Other";
+      const sector     = isIndia ? indiaSector(p.symbol) : (SECTOR_MAP[p.symbol] ?? "Other");
       const existing   = newHoldings.find(h => h.symbol === p.symbol);
       if (existing) {
         existing.marketValue += addedValue;
@@ -289,6 +351,7 @@ export function computeRiskMetrics(
   }
 
   return {
+    market, currency, benchmarkLabel, betaComingSoon,
     totalValue, holdingCount: enriched.length,
     holdings: enriched.sort((a, b) => b.marketValue - a.marketValue),
     portfolioBeta, betaLabel,
@@ -300,8 +363,14 @@ export function computeRiskMetrics(
   };
 }
 
-function emptyMetrics(): RiskMetrics {
+function emptyMetrics(
+  market: "us" | "india" = "us",
+  currency = "$",
+  benchmarkLabel = "S&P 500",
+  betaComingSoon = false,
+): RiskMetrics {
   return {
+    market, currency, benchmarkLabel, betaComingSoon,
     totalValue: 0, holdingCount: 0, holdings: [],
     portfolioBeta: 0, betaLabel: "No holdings",
     var95_dollar: 0, var95_pct: 0, varLabel: "No holdings to assess",

@@ -3,6 +3,8 @@
 import { useEffect, useState, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import PageHeader from "@/components/dashboard/PageHeader";
+import { useMarket, CURRENCY } from "@/lib/market-context";
+import { fetchIndiaIndices } from "@/lib/india-data";
 import SectorTradingViewOverview from "@/components/charts/SectorTradingViewOverview";
 const SectorTreemap = lazy(() => import("@/components/charts/SectorTreemap"));
 const PriceChart = lazy(() => import("@/components/charts/PriceChart"));
@@ -83,8 +85,8 @@ function PctPill({ value }: { value: number }) {
   );
 }
 
-function IndexCard({ q }: { q: IndexQuote }) {
-  const isVIX = q.symbol === "VIX";
+function IndexCard({ q, currency = "" }: { q: IndexQuote; currency?: string }) {
+  const isVIX = q.symbol === "VIX" || q.symbol === "^INDIAVIX" || /vix/i.test(q.name);
   const color = isVIX
     ? q.changePct >= 0 ? T.red : T.green   // VIX up = bad
     : pctColor(q.changePct);
@@ -109,7 +111,7 @@ function IndexCard({ q }: { q: IndexQuote }) {
         <PctPill value={q.changePct} />
       </div>
       <div style={{ fontSize: "26px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "-0.02em", color: T.text }}>
-        {q.price > 0 ? fmt(q.price) : "—"}
+        {q.price > 0 ? `${isVIX ? "" : currency}${fmt(q.price)}` : "—"}
       </div>
       <div style={{ fontSize: "12px", color: pctColor(q.change), fontFamily: "'JetBrains Mono', monospace", marginTop: "4px" }}>
         {q.change >= 0 ? "+" : ""}{fmt(q.change)} today
@@ -1138,8 +1140,21 @@ function LoadingSkeleton() {
   );
 }
 
+// Muted "no free India equivalent" note shown in place of US-only panels when
+// India is selected. Honest gap — we don't fabricate India sector/breadth data.
+function IndiaGapNote({ label }: { label: string }) {
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px", color: T.muted, fontSize: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
+      <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", padding: "2px 8px", borderRadius: "5px", background: T.surface, border: `1px solid ${T.border}`, color: T.textSub }}>US only</span>
+      {label} has no free India data source yet — hidden for 🇮🇳 India.
+    </div>
+  );
+}
+
 export default function MarketsPage() {
   const router = useRouter();
+  const { market } = useMarket();
+  const isIndia = market === "india";
   const [data, setData] = useState<MarketOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [slowFetch, setSlowFetch] = useState(false);
@@ -1147,6 +1162,10 @@ export default function MarketsPage() {
   const [lastFetch, setLastFetch] = useState<string | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [showRecessions, setShowRecessions] = useState(false);
+  // India index/VIX quotes (NIFTY 50 / SENSEX / BANK NIFTY / India VIX), fetched
+  // client-side from Yahoo. Only populated when India is the selected market.
+  const [indiaIndices, setIndiaIndices] = useState<IndexQuote[] | null>(null);
+  const [indiaLoading, setIndiaLoading] = useState(false);
 
   async function fetchMarkets() {
     setLoading(true);
@@ -1179,6 +1198,37 @@ export default function MarketsPage() {
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // When India is selected, pull NIFTY/SENSEX/BANK NIFTY/India VIX from Yahoo
+  // (client-side, CORS-allowed) and map into the same IndexQuote shape the US
+  // index bar uses — identical cards, India data.
+  useEffect(() => {
+    if (!isIndia) return;
+    let cancelled = false;
+    async function loadIndia() {
+      setIndiaLoading(true);
+      try {
+        const rows = await fetchIndiaIndices();
+        if (cancelled) return;
+        setIndiaIndices(
+          rows.map((r) => ({
+            symbol: r.symbol,
+            name: r.label,
+            price: r.price,
+            change: (r.price * r.changePct) / 100, // absolute move from % (no raw prev close exposed)
+            changePct: r.changePct,
+          }))
+        );
+      } catch {
+        if (!cancelled) setIndiaIndices([]);
+      } finally {
+        if (!cancelled) setIndiaLoading(false);
+      }
+    }
+    loadIndia();
+    const iv = setInterval(loadIndia, 5 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [isIndia]);
 
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
@@ -1240,8 +1290,8 @@ export default function MarketsPage() {
         </div>
       )}
 
-      {/* Loading skeleton — show slow-fetch note after 10s */}
-      {loading && !data && (
+      {/* Loading skeleton — show slow-fetch note after 10s (US only) */}
+      {!isIndia && loading && !data && (
         <>
           <LoadingSkeleton />
           {slowFetch && (
@@ -1252,13 +1302,49 @@ export default function MarketsPage() {
         </>
       )}
 
-      {/* Market Synthesis — regime read across asset classes (fetches independently) */}
-      <div style={{ marginBottom: "16px" }}>
-        <MarketSynthesis />
-      </div>
+      {/* Market Synthesis — US regime read across asset classes (fetches independently) */}
+      {!isIndia && (
+        <div style={{ marginBottom: "16px" }}>
+          <MarketSynthesis />
+        </div>
+      )}
 
-      {/* Data loaded */}
-      {data && (
+      {/* India index bar — NIFTY 50 / SENSEX / BANK NIFTY / India VIX.
+          Same card layout as US, India data. Non-clickable (no per-symbol page). */}
+      {isIndia && (
+        <>
+          {indiaLoading && !indiaIndices && (
+            <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+              {[...Array(4)].map((_, i) => (
+                <div key={i} style={{ flex: "1 1 180px", minWidth: 0, height: "110px", background: T.card, borderRadius: "12px", border: `1px solid ${T.border}`, animation: "pulse 1.5s ease-in-out infinite" }} />
+              ))}
+            </div>
+          )}
+          {indiaIndices && indiaIndices.length > 0 && (
+            <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+              {indiaIndices.map(q => (
+                <div key={q.symbol}>
+                  <IndexCard q={q} currency={CURRENCY.india} />
+                </div>
+              ))}
+            </div>
+          )}
+          {indiaIndices && indiaIndices.length === 0 && (
+            <div style={{ marginBottom: "16px" }}>
+              <IndiaGapNote label="India index quotes" />
+            </div>
+          )}
+          <div style={{ marginBottom: "16px" }}>
+            <IndiaGapNote label="Sector rotation, breadth & leveraged-pair sentiment" />
+          </div>
+          <div style={{ fontSize: "11px", color: T.muted, textAlign: "right" }}>
+            India indices via Yahoo Finance · refreshed every 5 min
+          </div>
+        </>
+      )}
+
+      {/* Data loaded (US) */}
+      {!isIndia && data && (
         <>
           {/* Index bar */}
           <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
@@ -1317,6 +1403,11 @@ export default function MarketsPage() {
         </>
       )}
 
+      {/* US-only analytics — sector rotation, breadth, sentiment, thesis, macro,
+          smart money. No free India equivalent, so hidden when India is selected
+          (the India gap note above stands in for these). */}
+      {!isIndia && (
+        <>
       {/* Sector charts — render immediately from Supabase cache, no dependency on live quotes */}
       <div style={{ marginTop: "16px" }}>
         <Suspense fallback={
@@ -1368,6 +1459,8 @@ export default function MarketsPage() {
       <div style={{ marginTop: "16px", marginBottom: "32px" }}>
         <SmartMoneyTrades />
       </div>
+        </>
+      )}
       </div>
     </div>
   );

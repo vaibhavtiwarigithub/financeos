@@ -1,30 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { gatherSymbols, processSymbol } from "@/lib/research-agent";
+import { isIndia } from "@/lib/india-data";
 import { prewarmPriceCache } from "@/lib/chart-data";
 
 export const dynamic = "force-dynamic";
 
-// Called by Windows Task Scheduler at 9 AM weekdays.
-// curl -X POST http://localhost:3000/api/agents/research/cron -H "x-cron-secret: <CRON_SECRET>"
+// Called by Windows Task Scheduler. US run ~9 AM ET; India run ~6:15 AM ET (after
+// the 15:30 IST / 06:00 ET NSE close). `?market=us|india` scopes the run to one
+// market so each fires on its own market's schedule and only touches its own
+// symbols. No param = legacy all-symbols behavior.
+// curl -X POST "http://localhost:3000/api/agents/research/cron?market=india" -H "x-cron-secret: <CRON_SECRET>"
 export async function POST(req: NextRequest) {
   const secret = req.headers.get("x-cron-secret");
   if (!secret || secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const mktParam = new URL(req.url).searchParams.get("market");
+  const marketScope = mktParam === "india" ? "india" : mktParam === "us" ? "us" : null;
+
   const supabase = createServiceClient();
 
-  // Skip on weekends and US market holidays — no market data = no point running
+  // Skip on weekends (both markets closed Sat/Sun).
   const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
   const dayOfWeek = nowET.getDay(); // 0=Sun, 6=Sat
   if (dayOfWeek === 0 || dayOfWeek === 6) {
     return NextResponse.json({ skipped: true, reason: "Weekend — market closed" });
   }
-  const mmdd = `${String(nowET.getMonth() + 1).padStart(2, "0")}-${String(nowET.getDate()).padStart(2, "0")}`;
-  const US_HOLIDAYS = ["01-01","01-20","02-17","04-18","05-26","06-19","07-04","09-01","11-27","12-25"]; // 2026 approx
-  if (US_HOLIDAYS.includes(mmdd)) {
-    return NextResponse.json({ skipped: true, reason: `US market holiday (${mmdd})` });
+  // US holiday calendar only gates US runs — an India run must not be skipped on
+  // a US holiday (and vice versa; India has its own holidays, not yet modeled).
+  if (marketScope !== "india") {
+    const mmdd = `${String(nowET.getMonth() + 1).padStart(2, "0")}-${String(nowET.getDate()).padStart(2, "0")}`;
+    const US_HOLIDAYS = ["01-01","01-20","02-17","04-18","05-26","06-19","07-04","09-01","11-27","12-25"]; // 2026 approx
+    if (US_HOLIDAYS.includes(mmdd)) {
+      return NextResponse.json({ skipped: true, reason: `US market holiday (${mmdd})` });
+    }
   }
 
   // Pause check — skip if app is paused
@@ -53,8 +64,17 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const entries = await gatherSymbols(supabase);
+  const allEntries = await gatherSymbols(supabase);
+  // Scope to the requested market: India run researches only .NS/.BO names; US run
+  // only non-India. No param → everything (legacy).
+  const entries = marketScope === "india" ? allEntries.filter(e => isIndia(e.symbol))
+    : marketScope === "us" ? allEntries.filter(e => !isIndia(e.symbol))
+    : allEntries;
   const batch = entries.map(e => e.symbol);
+
+  if (entries.length === 0) {
+    return NextResponse.json({ skipped: true, reason: `No ${marketScope ?? "any"}-market symbols to research (check market_focus).` });
+  }
 
   const { data: runRow } = await supabase.from("agent_runs").insert({
     agent_type: "research",
@@ -117,10 +137,12 @@ export async function POST(req: NextRequest) {
     }).catch(() => {});
   }
 
-  // Chain PaperTrader automatically after research completes
+  // Chain PaperTrader automatically after research completes — same market scope
+  // so an India research run fills the ₹ pool, a US run the $ pool.
   let paperTradeResult: any = null;
   try {
-    const ptRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/agents/paper-trade`, {
+    const ptUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/agents/paper-trade${marketScope ? `?market=${marketScope}` : ""}`;
+    const ptRes = await fetch(ptUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

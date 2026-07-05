@@ -23,6 +23,10 @@ $tasks = @(
   @{ Name="research";         Trigger=(WeekdayTrigger "9:00AM");  Agent="research"          },
   @{ Name="trader";           Trigger=(WeekdayTrigger "9:45AM");  Agent="trader"            },
   @{ Name="position-monitor"; Trigger=(WeekdayTrigger "4:15PM");  Agent="position-monitor" },
+  # India market — fires after the NSE close (15:30 IST = 06:00 ET). Runs only do
+  # work when market_focus includes India; otherwise the routes skip (0 symbols).
+  @{ Name="research-india";         Trigger=(WeekdayTrigger "6:15AM");  Agent="research-india"         },
+  @{ Name="position-monitor-india"; Trigger=(WeekdayTrigger "6:35AM");  Agent="position-monitor-india" },
   @{ Name="brief-evening";    Trigger=(WeekdayTrigger "4:30PM");  Agent="brief-evening"    },
   @{ Name="nav-snapshot";     Trigger=(WeekdayTrigger "5:00PM");  Agent="nav-snapshot"     },
   @{ Name="rescore";          Trigger=(WeekdayTrigger "4:45PM");  Agent="rescore"           },

@@ -2,6 +2,8 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import PageHeader from "./PageHeader";
+import { useMarket } from "@/lib/market-context";
+import { indiaScreenUniverse } from "@/lib/india-universe";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -37,7 +39,10 @@ interface BacktestResult {
   expectancy: number;
   avg_hold_days: number;
   benchmark_return_pct: number | null;
+  benchmark_symbol?: string;
   alpha_pct: number | null;
+  market?: "us" | "india";
+  currency?: string;
   gate_pass: boolean;
   gate_reasons: Record<string, GateCheck>;
   outcomes: TradeOutcome[];
@@ -66,6 +71,7 @@ function MetricCard({ label, value, sub, color }: { label: string; value: string
 }
 
 export default function BacktestPage() {
+  const { market } = useMarket();
   const searchParams = useSearchParams();
   const [form, setForm] = useState({
     date_from:       "2025-01-01",
@@ -104,6 +110,10 @@ export default function BacktestPage() {
   const [optimizing, setOptimizing] = useState(false);
   const [optimizeResult, setOptimizeResult] = useState<any>(null);
 
+  // Clear stale results when the global market switches (US ↔ India) so a $ run
+  // is never shown under a ₹ header or vice versa.
+  useEffect(() => { setResult(null); setOptimizeResult(null); setError(""); }, [market]);
+
   async function runBacktest() {
     setRunning(true);
     setError("");
@@ -113,7 +123,7 @@ export default function BacktestPage() {
       const res = await fetch("/api/agents/backtest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, market }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? "Unknown error");
@@ -130,7 +140,7 @@ export default function BacktestPage() {
       const res = await fetch("/api/agents/backtest/optimize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, market }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? "Optimize failed");
@@ -180,6 +190,14 @@ export default function BacktestPage() {
       />
 
       <div style={{ padding: "0 28px 40px" }}>
+
+        {/* India universe note — the ₹ backtest replays India signals against free
+            Yahoo .NS candles, drawn from the NIFTY-100 screen universe. */}
+        {market === "india" && (
+          <div style={{ background: `${T.accent}10`, border: `1px solid ${T.accent}30`, borderRadius: "10px", padding: "10px 16px", marginBottom: "14px", fontSize: "12px", color: T.sub }}>
+            <span style={{ color: T.accent, fontWeight: 600 }}>🇮🇳 India (₹) backtest</span> — replays India signals against Yahoo <code>.NS</code> candles. Universe: {indiaScreenUniverse().length} NIFTY-100 names. Benchmark: NIFTY 50 (^NSEI). Prices in ₹.
+          </div>
+        )}
 
         {/* Strategy banner */}
         {strategyBanner && (
@@ -310,9 +328,9 @@ export default function BacktestPage() {
               />
               {result.alpha_pct != null && (
                 <MetricCard
-                  label="Alpha vs SPY"
+                  label={`Alpha vs ${result.benchmark_symbol === "^NSEI" ? "NIFTY" : "SPY"}`}
                   value={pct(result.alpha_pct)}
-                  sub={result.benchmark_return_pct != null ? `SPY: ${pct(result.benchmark_return_pct)}` : ""}
+                  sub={result.benchmark_return_pct != null ? `${result.benchmark_symbol === "^NSEI" ? "NIFTY" : "SPY"}: ${pct(result.benchmark_return_pct)}` : ""}
                   color={result.alpha_pct >= 0 ? T.green : T.red}
                 />
               )}
@@ -399,8 +417,8 @@ export default function BacktestPage() {
                             <td style={{ padding: "6px 10px", fontWeight: 700 }}>{t.symbol}</td>
                             <td style={{ padding: "6px 10px", color: T.sub }}>{t.signal_date}</td>
                             <td style={{ padding: "6px 10px", color: T.accent }}>{t.analyst_score}</td>
-                            <td style={{ padding: "6px 10px" }}>${t.entry_price.toFixed(2)}</td>
-                            <td style={{ padding: "6px 10px" }}>${t.exit_price.toFixed(2)}</td>
+                            <td style={{ padding: "6px 10px" }}>{result.currency ?? "$"}{t.entry_price.toFixed(2)}</td>
+                            <td style={{ padding: "6px 10px" }}>{result.currency ?? "$"}{t.exit_price.toFixed(2)}</td>
                             <td style={{ padding: "6px 10px", fontWeight: 700, color: win ? T.green : T.red }}>
                               {pct(t.return_pct)}
                             </td>

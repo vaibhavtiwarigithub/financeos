@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
+import { useMarket } from "@/lib/market-context";
 
 const WATCHLIST = ["AAPL", "NVDA", "TSLA", "MSFT", "META", "GOOGL", "AMZN", "SPY"];
 
@@ -61,6 +62,10 @@ function DaysChip({ days }: { days: number }) {
 }
 
 export default function CalendarPage() {
+  const { market } = useMarket();
+  const isIndia = market === "india";
+  const earningsEndpoint = isIndia ? "/api/calendar/earnings-india" : "/api/calendar/earnings";
+
   const [earnings, setEarnings] = useState<EarningsEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [slowFetch, setSlowFetch] = useState(false);
@@ -70,7 +75,7 @@ export default function CalendarPage() {
 
   async function loadEarnings() {
     try {
-      const res = await fetch("/api/calendar/earnings");
+      const res = await fetch(earningsEndpoint);
       if (res.ok) {
         const data = await res.json();
         setEarnings(data.earnings ?? []);
@@ -80,6 +85,7 @@ export default function CalendarPage() {
   }
 
   useEffect(() => {
+    setLoading(true);
     const slowTimer = setTimeout(() => setSlowFetch(true), 10_000);
     loadEarnings().finally(() => {
       clearTimeout(slowTimer);
@@ -87,11 +93,12 @@ export default function CalendarPage() {
       setSlowFetch(false);
     });
     return () => clearTimeout(slowTimer);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [earningsEndpoint]);
 
   async function refresh() {
     setRefreshing(true);
-    await fetch("/api/calendar/earnings?bust=" + Date.now());
+    await fetch(earningsEndpoint + "?bust=" + Date.now());
     await loadEarnings();
     setRefreshing(false);
   }
@@ -123,7 +130,9 @@ export default function CalendarPage() {
       {/* Header */}
       <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ fontSize: "11px", color: "#4B5563" }}>
-          {source ? `via Robinhood ${source === "fallback" ? "(fallback)" : source === "cache" ? "(cached)" : "(live)"}` : ""}
+          {isIndia
+            ? (source ? "via Yahoo Finance (per-symbol)" : "")
+            : (source ? `via Robinhood ${source === "fallback" ? "(fallback)" : source === "cache" ? "(cached)" : "(live)"}` : "")}
         </div>
         <button onClick={refresh} disabled={refreshing} style={{
           padding: "6px 14px", borderRadius: "6px", border: `1px solid ${T.border}`, background: "transparent",
@@ -149,6 +158,11 @@ export default function CalendarPage() {
 
       {tab === "earnings" && (
         <div>
+          {isIndia && (
+            <div style={{ marginBottom: "12px", fontSize: "11px", color: "#9CA3AF", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "8px 12px" }}>
+              India: earnings dates for tracked symbols only (no full-market feed).
+            </div>
+          )}
           {loading ? (
             <div style={{ color: T.muted, fontSize: "13px" }}>
               Loading earnings…{slowFetch && " (fetching via AI subprocess, may take up to 90s…)"}

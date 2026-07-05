@@ -30,12 +30,19 @@ if (-not $CRON_SECRET) {
 if (-not $CRON_SECRET) { Write-Warning "CRON_SECRET not resolved — cron-authed endpoints will 401. Set KAIROS_CRON_SECRET env or CRON_SECRET in .env.local." }
 
 $endpoints = @{
-  "research"         = @{ method="POST"; url="$BASE/api/agents/research/cron";        headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
+  # US market (ET schedule). ?market=us so the 9 AM run no longer touches India —
+  # India has its own post-NSE-close run below.
+  "research"         = @{ method="POST"; url="$BASE/api/agents/research/cron?market=us";    headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "learner"          = @{ method="POST"; url="$BASE/api/agents/learner";               headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "trader"           = @{ method="POST"; url="$BASE/api/agents/trader";                headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "brief-morning"    = @{ method="POST"; url="$BASE/api/briefing/generate";            headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"session":"morning"}' }
   "brief-evening"    = @{ method="POST"; url="$BASE/api/briefing/generate";            headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"session":"evening"}' }
-  "position-monitor" = @{ method="POST"; url="$BASE/api/agents/position-monitor";     headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
+  "position-monitor" = @{ method="POST"; url="$BASE/api/agents/position-monitor?market=us"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
+  # India market. NSE closes 15:30 IST = 06:00 ET, so these fire in the ET morning
+  # (register-tasks.ps1: research-india 6:15 AM, monitor-india 6:35 AM ET). India
+  # research chains its own ?market=india paper-trade automatically.
+  "research-india"         = @{ method="POST"; url="$BASE/api/agents/research/cron?market=india";    headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
+  "position-monitor-india" = @{ method="POST"; url="$BASE/api/agents/position-monitor?market=india"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "nav-snapshot"     = @{ method="POST"; url="$BASE/api/agents/performance";           headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"action":"snapshot"}' }
   "stale-check"      = @{ method="GET";  url="$BASE/api/alerts/stale-check";           headers=@{}; body=$null }
   "embed"            = @{ method="POST"; url="$BASE/api/live-portfolio/embed";         headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"limit":200}'; timeoutSec=300 }

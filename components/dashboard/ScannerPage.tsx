@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import PageHeader from "./PageHeader";
+import { useMarket, CURRENCY } from "@/lib/market-context";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -46,6 +47,9 @@ export default function ScannerPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initStrategy = searchParams.get("strategy") ?? "";
+  const { market } = useMarket();
+  const isIndia = market === "india";
+  const ccy = CURRENCY[market] ?? "$";
 
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [selectedStrategy, setSelectedStrategy] = useState(initStrategy);
@@ -81,7 +85,10 @@ export default function ScannerPage() {
       if (aboveMa50 === "yes") body.price_above_ma50 = true;
       if (aboveMa50 === "no")  body.price_above_ma50 = false;
 
-      const res = await fetch("/api/agents/research/scan", {
+      // India has no free screen API — screen the ~NIFTY-100 universe via the
+      // dedicated India route (Yahoo fundamentals + candles, ₹). US path unchanged.
+      const endpoint = isIndia ? "/api/scan/india" : "/api/agents/research/scan";
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -123,7 +130,13 @@ export default function ScannerPage() {
       <div style={{ padding: "0 28px 40px" }}>
         {/* Config */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px 24px", marginBottom: "20px" }}>
-          <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>Scan Configuration</div>
+          <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>Scan Configuration {isIndia && <span style={{ color: T.accent }}>· 🇮🇳 India (₹)</span>}</div>
+
+          {isIndia && (
+            <div style={{ background: `${T.accent}10`, border: `1px solid ${T.accent}30`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.sub }}>
+              No free India screen API exists — this scans the <strong style={{ color: T.text }}>~NIFTY-100</strong> universe name-by-name via Yahoo (₹ prices, fundamentals + candles), applying the same filters. Coverage is honestly capped at NIFTY-100, not the full ~2000 NSE. Enter symbols above (e.g. RELIANCE, TCS) to scan specific names.
+            </div>
+          )}
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: "20px", alignItems: "flex-end", marginBottom: "16px" }}>
             <div>
@@ -254,7 +267,7 @@ export default function ScannerPage() {
                             {r.rsi ?? "—"}
                           </td>
                           <td style={{ padding: "9px 12px", color: T.sub }}>
-                            {r.price != null ? `$${r.price.toFixed(2)}` : "—"}
+                            {r.price != null ? `${ccy}${r.price.toFixed(2)}` : "—"}
                           </td>
                           <td style={{ padding: "9px 12px" }}>
                             {r.price_above_ma50 == null ? <span style={{ color: T.muted }}>—</span>

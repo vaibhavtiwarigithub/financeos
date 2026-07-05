@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import PageHeader from "@/components/dashboard/PageHeader";
+import { useMarket } from "@/lib/market-context";
 
 interface TopSymbol {
   symbol: string;
@@ -14,6 +15,7 @@ interface Strategy {
   description: string;
   rules: Record<string, unknown>;
   top_symbols: TopSymbol[];
+  us_only?: boolean;
 }
 
 function FitScoreBar({ score }: { score: number }) {
@@ -58,14 +60,14 @@ function StrategyCard({ strategy }: { strategy: Strategy }) {
             fontWeight: 700,
             padding: "3px 8px",
             borderRadius: "20px",
-            background: "rgba(99,102,241,0.15)",
-            color: "#6366F1",
+            background: strategy.us_only ? "rgba(155,158,168,0.15)" : "rgba(99,102,241,0.15)",
+            color: strategy.us_only ? "#9B9EA8" : "#6366F1",
             textTransform: "uppercase",
             letterSpacing: "0.08em",
             whiteSpace: "nowrap",
             flexShrink: 0,
           }}>
-            Strategy
+            {strategy.us_only ? "US only" : "Strategy"}
           </span>
         </div>
         <p style={{ fontSize: "12px", color: "#9B9EA8", margin: "6px 0 0", lineHeight: 1.5 }}>
@@ -112,7 +114,7 @@ function StrategyCard({ strategy }: { strategy: Strategy }) {
         </div>
       ) : (
         <div style={{ fontSize: "12px", color: "#9B9EA8", fontStyle: "italic", padding: "8px 0" }}>
-          No classifications yet
+          {strategy.us_only ? "US market only — no India fit scores" : "No classifications yet"}
         </div>
       )}
     </div>
@@ -120,6 +122,8 @@ function StrategyCard({ strategy }: { strategy: Strategy }) {
 }
 
 export default function StrategiesPage() {
+  const { market } = useMarket();
+  const isIndia = market === "india";
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -128,8 +132,9 @@ export default function StrategiesPage() {
   const [classifyStatus, setClassifyStatus] = useState<string | null>(null);
 
   const loadStrategies = useCallback(async () => {
+    setLoading(true);
     try {
-      const res = await fetch("/api/strategies");
+      const res = await fetch(`/api/strategies?market=${market}`);
       if (res.ok) {
         const data = await res.json() as { strategies: Strategy[] };
         setStrategies(data.strategies ?? []);
@@ -139,7 +144,7 @@ export default function StrategiesPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [market]);
 
   useEffect(() => { loadStrategies(); }, [loadStrategies]);
 
@@ -194,12 +199,24 @@ export default function StrategiesPage() {
         <Link href="/dashboard/strategies/library" style={{ padding: "8px 14px", fontSize: "13px", fontWeight: 600, color: "#9B9EA8", textDecoration: "none", borderBottom: "2px solid transparent" }}>Algo Library →</Link>
       </div>
 
+      {isIndia && (
+        <div style={{ background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: "10px", padding: "12px 16px", marginBottom: "20px", fontSize: "13px", color: "#9B9EA8", lineHeight: 1.5 }}>
+          <strong style={{ color: "#ECEDEF" }}>🇮🇳 India selected.</strong> Fit-score classification runs on US market data only — these 7 templates are marked <strong style={{ color: "#ECEDEF" }}>US only</strong> and show no India scores rather than fabricated ones. The strategy <em>definitions</em> still apply to India; use the <Link href="/dashboard/scanner" style={{ color: "#6366F1" }}>Scanner</Link> to screen NIFTY-100 names against them in ₹.
+        </div>
+      )}
+
       {/* Grid */}
       {loading ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "16px" }}>
           {Array.from({ length: 7 }).map((_, i) => (
             <div key={i} style={{ height: "180px", background: "#1A1D27", border: "1px solid #252836", borderRadius: "12px", animation: "pulse 1.5s ease-in-out infinite" }} />
           ))}
+        </div>
+      ) : isIndia ? (
+        // India: no classifier CTA (US-data classifier). Just show the templates,
+        // each marked "US only" by the card. Note banner above explains why.
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "16px" }}>
+          {strategies.map(s => <StrategyCard key={s.id} strategy={s} />)}
         </div>
       ) : !hasClassifications ? (
         <div style={{

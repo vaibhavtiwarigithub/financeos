@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
+import { fetchIndiaCandles } from "@/lib/india-data";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +34,10 @@ interface BacktestMetrics {
   expectancy: number;         // avg_win * win_rate - avg_loss * loss_rate
   avg_hold_days: number;
   benchmark_return_pct: number | null;
+  benchmark_symbol: string;   // "SPY" | "^NSEI"
   alpha_pct: number | null;
+  market: "us" | "india";
+  currency: string;           // "$" | "₹"
   gate_pass: boolean;
   gate_reasons: Record<string, { pass: boolean; value: number | null; threshold: number | null }>;
   outcomes: TradeOutcome[];
@@ -93,6 +98,7 @@ export async function POST(req: NextRequest) {
       target_pct = 20,
       stop_loss_pct = 7,
       max_hold_days = 15,
+      market: bodyMarket,
     } = body as {
       strategy_version_id?: number;
       date_from?: string;
@@ -101,46 +107,70 @@ export async function POST(req: NextRequest) {
       target_pct?: number;
       stop_loss_pct?: number;
       max_hold_days?: number;
+      market?: "us" | "india";
     };
 
-    // Pull qualifying long signals in date range
-    let signalsQuery = supabase
-      .from("agent_signals")
-      .select("id, symbol, direction, analyst_score, created_at, asset_class")
-      .eq("direction", "long")
-      .gte("analyst_score", score_threshold)
-      .order("created_at", { ascending: true });
+    // Market scope: body wins, else `mkt` cookie, else US. India replays ₹ signals
+    // against Yahoo `.NS` candles; US replays against price_cache (unchanged).
+    const cookieMkt = (await cookies()).get("mkt")?.value;
+    const market: "us" | "india" = (bodyMarket ?? cookieMkt) === "india" ? "india" : "us";
+    const currency = market === "india" ? "₹" : "$";
 
-    if (date_from) signalsQuery = signalsQuery.gte("created_at", date_from);
-    if (date_to)   signalsQuery = signalsQuery.lte("created_at", date_to);
+    // Pull qualifying long signals in date range, scoped to market. Pre-057 the
+    // `market` column doesn't exist → the .eq errors, so we retry unscoped and
+    // behave exactly as before (US book).
+    function buildSignalsQuery(scoped: boolean) {
+      let q = supabase
+        .from("agent_signals")
+        .select("id, symbol, direction, analyst_score, created_at, asset_class")
+        .eq("direction", "long")
+        .gte("analyst_score", score_threshold)
+        .order("created_at", { ascending: true });
+      if (scoped) q = q.eq("market", market);
+      if (date_from) q = q.gte("created_at", date_from);
+      if (date_to)   q = q.lte("created_at", date_to);
+      return q.limit(500);
+    }
 
-    const { data: signals, error: sigErr } = await signalsQuery.limit(500);
+    let { data: signals, error: sigErr } = await buildSignalsQuery(true);
+    if (sigErr) ({ data: signals, error: sigErr } = await buildSignalsQuery(false));
     if (sigErr) return NextResponse.json({ error: sigErr.message }, { status: 500 });
     if (!signals?.length) return NextResponse.json({ error: "No qualifying signals in date range" }, { status: 404 });
 
-    // Pull all relevant price candles from price_cache
-    const symbols = [...new Set(signals.map((s: any) => s.symbol as string))];
-    const { data: candles } = await supabase
-      .from("price_cache")
-      .select("symbol, date, close, open, high, low")
-      .in("symbol", symbols)
-      .order("date", { ascending: true });
+    const symbols: string[] = [...new Set((signals as any[]).map((s) => String(s.symbol)))];
 
-    // Build price lookup: symbol → sorted candle array (oldest first)
+    // Build price lookup: symbol → sorted candle array (oldest first).
     const priceMap: Record<string, { date: string; close: number }[]> = {};
-    for (const c of candles ?? []) {
-      if (!priceMap[c.symbol]) priceMap[c.symbol] = [];
-      priceMap[c.symbol].push({ date: c.date, close: parseFloat(c.close) });
-    }
+    // Benchmark daily closes by date: SPY for US, NIFTY (^NSEI) for India.
+    const benchPrices: Record<string, number> = {};
+    const benchSymbol = market === "india" ? "^NSEI" : "SPY";
 
-    // Also fetch SPY for benchmark
-    const { data: spyCandles } = await supabase
-      .from("price_cache")
-      .select("date, close")
-      .eq("symbol", "SPY")
-      .order("date", { ascending: true });
-    const spyPrices: Record<string, number> = {};
-    for (const c of spyCandles ?? []) spyPrices[c.date] = parseFloat(c.close);
+    if (market === "india") {
+      // India: source `.NS` candles from free Yahoo (price_cache is US-only).
+      const candleArrays = await Promise.all(symbols.map(s => fetchIndiaCandles(s, "2y")));
+      symbols.forEach((sym, i) => {
+        priceMap[sym] = candleArrays[i].map(c => ({ date: c.date, close: c.close }));
+      });
+      const nifty = await fetchIndiaCandles("^NSEI", "2y");
+      for (const c of nifty) benchPrices[c.date] = c.close;
+    } else {
+      // US: price_cache candles (unchanged path).
+      const { data: candles } = await supabase
+        .from("price_cache")
+        .select("symbol, date, close, open, high, low")
+        .in("symbol", symbols)
+        .order("date", { ascending: true });
+      for (const c of candles ?? []) {
+        if (!priceMap[c.symbol]) priceMap[c.symbol] = [];
+        priceMap[c.symbol].push({ date: c.date, close: parseFloat(c.close) });
+      }
+      const { data: spyCandles } = await supabase
+        .from("price_cache")
+        .select("date, close")
+        .eq("symbol", "SPY")
+        .order("date", { ascending: true });
+      for (const c of spyCandles ?? []) benchPrices[c.date] = parseFloat(c.close);
+    }
 
     const outcomes: TradeOutcome[] = [];
 
@@ -186,7 +216,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (outcomes.length === 0) {
-      return NextResponse.json({ error: "No trades could be simulated — missing price_cache data" }, { status: 404 });
+      return NextResponse.json({
+        error: market === "india"
+          ? "No trades could be simulated — no Yahoo .NS candles for the signalled India symbols in range"
+          : "No trades could be simulated — missing price_cache data",
+      }, { status: 404 });
     }
 
     const returns = outcomes.map(o => o.return_pct);
@@ -203,13 +237,13 @@ export async function POST(req: NextRequest) {
     const expectancy      = avg_win * win_rate - avg_loss * (1 - win_rate);
     const avg_hold_days   = outcomes.reduce((s, o) => s + o.hold_days, 0) / outcomes.length;
 
-    // Benchmark: SPY return over same period
+    // Benchmark return over same period: SPY (US) or NIFTY 50 (India).
     const firstDate = outcomes[0].signal_date;
     const lastDate  = outcomes[outcomes.length - 1].signal_date;
-    const spyStart  = spyPrices[firstDate] ?? null;
-    const spyEnd    = spyPrices[lastDate]  ?? null;
-    const benchmark_return_pct = (spyStart && spyEnd)
-      ? parseFloat(((spyEnd - spyStart) / spyStart * 100).toFixed(4))
+    const benchStart  = benchPrices[firstDate] ?? null;
+    const benchEnd    = benchPrices[lastDate]  ?? null;
+    const benchmark_return_pct = (benchStart && benchEnd)
+      ? parseFloat(((benchEnd - benchStart) / benchStart * 100).toFixed(4))
       : null;
     const alpha_pct = benchmark_return_pct != null
       ? parseFloat((avg_return_pct - benchmark_return_pct).toFixed(4))
@@ -235,7 +269,10 @@ export async function POST(req: NextRequest) {
       expectancy:       parseFloat(expectancy.toFixed(4)),
       avg_hold_days:    parseFloat(avg_hold_days.toFixed(1)),
       benchmark_return_pct,
+      benchmark_symbol: benchSymbol,
       alpha_pct,
+      market,
+      currency,
       gate_pass,
       gate_reasons,
       outcomes,
@@ -258,7 +295,7 @@ export async function POST(req: NextRequest) {
         max_drawdown_pct:  max_drawdown,
         sharpe_ratio:      sharpe,
         expectancy,
-        benchmark_symbol:       "SPY",
+        benchmark_symbol:       benchSymbol,
         benchmark_return_pct,
         alpha_pct,
         gate_pass,
