@@ -166,47 +166,66 @@ If any field is unavailable, use null.`;
 }
 
 // Phase 1C — dual-bucket screener: momentum + value
-export async function runScreener(): Promise<string[]> {
-  const prompt = `Run TWO stock screening passes using the FinancialDatasets screen_stocks tool.
-
-Pass 1 — Momentum bucket (call screen_stocks):
-filters:
-- field: "revenue_growth", operator: "gt", value: 0.15
-- field: "earnings_growth", operator: "gt", value: 0.10
-- field: "gross_margin", operator: "gt", value: 0.25
-- field: "return_on_equity", operator: "gt", value: 0.15
-- field: "market_cap", operator: "gt", value: 2000000000
-limit: 10
-
-Pass 2 — Value bucket (call screen_stocks):
-filters:
-- field: "pe_ratio", operator: "gt", value: 0
-- field: "pe_ratio", operator: "lt", value: 18
-- field: "free_cash_flow_yield", operator: "gt", value: 0.04
-- field: "debt_to_equity", operator: "lt", value: 1.0
-- field: "market_cap", operator: "gt", value: 1000000000
-limit: 10
-
-After BOTH tool calls complete, combine unique symbols from both results.
-Return ONLY a JSON array of stock ticker symbols (no ETFs, no REITs, no explanation):
-["MSFT","GOOGL","JNJ"]
-
-Max 6 symbols total. If both screens fail, return []`;
-
+// GET FinancialDatasets key from vault or env — mirrors app/api/agents/research/scan/route.ts
+async function getFDKey(supabase: any): Promise<string> {
   try {
-    const stdout = await execClaude(prompt, 180000);
-    const text = parseClaudeOutput(stdout);
-    const match = text.match(/\[[\s\S]*?\]/);
-    if (!match) return [];
-    const arr: unknown[] = JSON.parse(match[0]);
-    if (!Array.isArray(arr)) return [];
-    return arr
-      .filter((s): s is string => typeof s === "string" && s.length > 0 && s.length <= 6)
-      .slice(0, 6)
-      .map(s => s.toUpperCase());
+    const { data } = await supabase.from("api_key_vault").select("key_value").eq("key_name", "FINANCIAL_DATASETS_API_KEY").single();
+    return (data as any)?.key_value ?? process.env.FINANCIAL_DATASETS_API_KEY ?? "";
+  } catch { return process.env.FINANCIAL_DATASETS_API_KEY ?? ""; }
+}
+
+async function screenBucket(
+  filters: Array<{ field: string; operator: string; value: number }>,
+  fdKey: string,
+  limit = 10
+): Promise<string[]> {
+  try {
+    const res = await fetch("https://api.financialdatasets.ai/stocks/screener/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-KEY": fdKey },
+      body: JSON.stringify({ filters, limit }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const results: any[] = data?.results ?? data?.stocks ?? [];
+    return results.map((r: any) => String(r.ticker ?? r.symbol ?? "").toUpperCase()).filter(Boolean);
   } catch {
     return [];
   }
+}
+
+// Dual-bucket screener (CLAUDE.md-approved architecture: momentum + value,
+// always both running, no regime-switching logic). Was previously asking
+// execClaude — a plain text-completion subprocess with no MCP server
+// attached — to "call" the screen_stocks tool, which it structurally
+// cannot do; every run silently returned []. Calls FinancialDatasets'
+// REST screener directly instead, same pattern already proven working in
+// app/api/agents/research/scan/route.ts.
+export async function runScreener(supabase: any): Promise<string[]> {
+  const fdKey = await getFDKey(supabase);
+  if (!fdKey) return [];
+
+  const [momentum, value] = await Promise.all([
+    screenBucket([
+      { field: "revenue_growth", operator: "gt", value: 0.15 },
+      { field: "earnings_growth", operator: "gt", value: 0.10 },
+      { field: "gross_margin", operator: "gt", value: 0.25 },
+      { field: "return_on_equity", operator: "gt", value: 0.15 },
+      { field: "market_cap", operator: "gt", value: 2_000_000_000 },
+    ], fdKey, 10),
+    screenBucket([
+      { field: "pe_ratio", operator: "gt", value: 0 },
+      { field: "pe_ratio", operator: "lt", value: 18 },
+      { field: "free_cash_flow_yield", operator: "gt", value: 0.04 },
+      { field: "debt_to_equity", operator: "lt", value: 1.0 },
+      { field: "market_cap", operator: "gt", value: 1_000_000_000 },
+    ], fdKey, 10),
+  ]);
+
+  return Array.from(new Set([...momentum, ...value]))
+    .filter(s => s.length > 0 && s.length <= 6)
+    .slice(0, 6);
 }
 
 // Region ETF baskets — appended when user's market_focus includes that region
@@ -237,7 +256,7 @@ export async function gatherSymbols(
   const [holdings, watchlistResult, screenerSymbols, profileResult] = await Promise.all([
     fetchHoldings(supabase),
     supabase.from("watchlist").select("symbol"),
-    runScreener(),
+    runScreener(supabase),
     supabase.from("profiles").select("market_focus").limit(1).single(),
   ]);
 
