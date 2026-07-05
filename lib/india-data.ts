@@ -75,6 +75,48 @@ export async function fetchIndiaQuote(symbol: string): Promise<{ price: number; 
   }
 }
 
+// India market indices (Yahoo symbols). Consumed by the Markets panel so India
+// gets the same index/VIX row US gets. Chart endpoint = no auth needed.
+export const INDIA_INDICES: { symbol: string; label: string; kind: "index" | "vix" }[] = [
+  { symbol: "^NSEI",      label: "NIFTY 50",   kind: "index" },
+  { symbol: "^BSESN",     label: "SENSEX",     kind: "index" },
+  { symbol: "^NSEBANK",   label: "BANK NIFTY", kind: "index" },
+  { symbol: "^INDIAVIX",  label: "India VIX",  kind: "vix"   },
+];
+
+// Batch index quotes for the Markets page. Reuses the auth-free chart endpoint
+// (fetchIndiaQuote works for any Yahoo symbol, indices included).
+export async function fetchIndiaIndices(): Promise<{ symbol: string; label: string; kind: string; price: number; changePct: number }[]> {
+  const out = await Promise.all(
+    INDIA_INDICES.map(async (idx) => {
+      const q = await fetchIndiaQuote(idx.symbol);
+      return q ? { ...idx, price: q.price, changePct: q.changePct } : null;
+    })
+  );
+  return out.filter(Boolean) as any[];
+}
+
+// Next earnings date for an NSE symbol via Yahoo calendarEvents. There is no free
+// full-market India earnings CALENDAR feed, so this is per-symbol (used to enrich
+// the watchlist/tracked names on the Earnings panel). Returns YYYY-MM-DD or null.
+export async function fetchIndiaEarningsDate(symbol: string): Promise<string | null> {
+  const c = await getCrumb();
+  if (!c) return null;
+  try {
+    const res = await fetch(
+      `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=calendarEvents&crumb=${encodeURIComponent(c.crumb)}`,
+      { headers: { "User-Agent": "Mozilla/5.0", Cookie: c.cookie }, next: { revalidate: 86400 } }
+    );
+    if (!res.ok) return null;
+    const ev = (await res.json())?.quoteSummary?.result?.[0]?.calendarEvents?.earnings;
+    const raw = ev?.earningsDate?.[0]?.raw ?? ev?.earningsDate?.[0];
+    if (raw == null) return null;
+    return new Date(Number(raw) * 1000).toISOString().slice(0, 10);
+  } catch {
+    return null;
+  }
+}
+
 // Map Yahoo fundamentals into the same shape the existing scorer expects from
 // Alpha Vantage's OVERVIEW (PERatio, ProfitMargin, ReturnOnEquityTTM, EPS,
 // QuarterlyRevenueGrowthYOY, 52WeekHigh, Sector, Symbol) so India stocks run

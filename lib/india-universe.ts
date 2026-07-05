@@ -16,6 +16,28 @@ export const NIFTY_50: string[] = [
   "SBILIFE.NS", "HINDALCO.NS", "ADANIPORTS.NS", "UPL.NS", "LTIM.NS",
 ];
 
+// NIFTY Next 50 — the large-caps just below the NIFTY 50. Added so the India
+// Scanner has a wider (~100-name) universe to screen than the 50 the research
+// pipeline rotates through. Still a static list (no free India screen API), so
+// the India scan is honestly capped at ~NIFTY-100, not the full ~2000 NSE.
+export const NIFTY_NEXT_50: string[] = [
+  "ADANIGREEN.NS", "ADANIPOWER.NS", "AMBUJACEM.NS", "DMART.NS", "BANKBARODA.NS",
+  "BERGEPAINT.NS", "BEL.NS", "BOSCHLTD.NS", "CANBK.NS", "CHOLAFIN.NS",
+  "COLPAL.NS", "DABUR.NS", "DLF.NS", "GAIL.NS", "GODREJCP.NS",
+  "HAVELLS.NS", "HDFCAMC.NS", "ICICIGI.NS", "ICICIPRULI.NS", "IOC.NS",
+  "INDIGO.NS", "NAUKRI.NS", "JINDALSTEL.NS", "JIOFIN.NS", "SIEMENS.NS",
+  "PIDILITIND.NS", "PNB.NS", "PFC.NS", "RECLTD.NS", "MOTHERSON.NS",
+  "SHREECEM.NS", "SRF.NS", "TATAPOWER.NS", "TORNTPHARM.NS", "TVSMOTOR.NS",
+  "VBL.NS", "VEDL.NS", "ZOMATO.NS", "ZYDUSLIFE.NS", "IRCTC.NS",
+  "MARICO.NS", "MPHASIS.NS", "MUTHOOTFIN.NS", "PAGEIND.NS", "AUROPHARMA.NS",
+  "LODHA.NS", "TIINDIA.NS", "CGPOWER.NS", "POLYCAB.NS", "ABB.NS",
+];
+
+// ~NIFTY-100 union — the India Scanner's screen universe.
+export function indiaScreenUniverse(): string[] {
+  return [...new Set([...NIFTY_50, ...NIFTY_NEXT_50])];
+}
+
 // Take the top N as daily candidates (rotate later if we want variety).
 export function niftyCandidates(n = 8): string[] {
   return NIFTY_50.slice(0, n);

@@ -4,6 +4,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
 import { getMarketSupport, SUPPORT_META } from "@/lib/market-support";
+import { MarketProvider, MarketSwitcher } from "@/lib/market-context";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -253,7 +254,10 @@ export default function DashboardShell({ profile, children }: { profile: Profile
     : null;
   const bellColor = worstSeverity ? SEV[worstSeverity].dot : T.muted;
 
+  const indiaEnabled = (profile?.market_focus ?? "US").toLowerCase().includes("india");
+
   return (
+   <MarketProvider indiaEnabled={indiaEnabled}>
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: "'Inter', sans-serif", color: T.text }}>
 
       {/* â"€â"€ Sidebar â"€â"€ */}
@@ -541,6 +545,9 @@ export default function DashboardShell({ profile, children }: { profile: Profile
           {/* Spacer */}
           <div style={{ flex: 1 }} />
 
+          {/* Global market switcher (US/India) — hidden unless India is enabled */}
+          <MarketSwitcher />
+
           {/* Date + time ET */}
           <div style={{ fontSize: "11px", color: T.muted, display: "flex", gap: "10px", alignItems: "center" }}>
             <span>{new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}</span>
@@ -574,5 +581,6 @@ export default function DashboardShell({ profile, children }: { profile: Profile
         })()}
       </main>
     </div>
+   </MarketProvider>
   );
 }
