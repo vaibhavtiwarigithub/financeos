@@ -49,6 +49,31 @@ async function runMonitor() {
   const { data: portfolio } = await svc.from("paper_portfolio").select("*").single();
   let cashBalance = portfolio?.cash_balance ?? 10000;
 
+  // 3b. Daily score-based exit. ResearchAgent re-scores held symbols every
+  // trading morning (Mon-Fri); PositionMonitor runs every trading afternoon.
+  // So the RIGHT place for "hold while the AI score stays above threshold,
+  // exit when it drops below" is HERE, daily — not in LearnerAgent Phase A,
+  // which runs weekly (Friday) at best and would leave a decayed position
+  // open for days. Fetch the latest analyst_score + direction per held symbol
+  // and exit any whose conviction has fallen below the exit threshold.
+  // Exit threshold sits below the entry threshold (hysteresis) so a position
+  // isn't churned out the moment it dips one point under the buy bar.
+  const { data: strategyCfg } = await svc.from("strategy_config").select("score_threshold, min_analyst_score").maybeSingle();
+  const entryThreshold = Number((strategyCfg as any)?.score_threshold ?? (strategyCfg as any)?.min_analyst_score ?? 60);
+  const exitThreshold = Math.max(35, entryThreshold - 15); // e.g. enter 60, exit below 45
+  const latestScore: Record<string, { score: number | null; direction: string | null }> = {};
+  for (const sym of symbols) {
+    const { data: sig } = await svc.from("agent_signals")
+      .select("analyst_score, direction")
+      .eq("symbol", sym)
+      .order("created_at", { ascending: false })
+      .limit(1).maybeSingle();
+    latestScore[sym] = {
+      score: (sig as any)?.analyst_score != null ? Number((sig as any).analyst_score) : null,
+      direction: (sig as any)?.direction ?? null,
+    };
+  }
+
   const closed: string[] = [];
   const updated: string[] = [];
 
@@ -108,6 +133,21 @@ async function runMonitor() {
     }
 
     if (!currentPrice) continue;
+
+    // Daily score-based exit: hold while the AI score stays above the exit
+    // threshold, exit when today's fresh score drops below it (or the signal
+    // flipped away from long). This is the primary conviction-driven exit and
+    // runs every trading day — LearnerAgent Phase A's weekly re-score is now a
+    // secondary/slower path. Only act when we actually have a recent score;
+    // a missing score means research hasn't covered this symbol, so we hold
+    // and let the mechanical stop/target below protect it.
+    const sc = latestScore[pos.symbol];
+    if (sc?.score != null && (sc.score < exitThreshold || (sc.direction && sc.direction !== "long"))) {
+      const outcome = (currentPrice - pos.avg_cost) * pos.qty > 0.5 ? "win"
+        : (currentPrice - pos.avg_cost) * pos.qty < -0.5 ? "loss" : "breakeven";
+      await closePosition(pos, currentPrice, `score_exit (${sc.score} < ${exitThreshold})`, outcome);
+      continue;
+    }
 
     // Update highest_price (trailing stop anchor)
     const newHighest = Math.max(pos.highest_price ?? pos.avg_cost, currentPrice);
