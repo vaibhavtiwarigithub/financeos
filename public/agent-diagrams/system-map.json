@@ -1,0 +1,86 @@
+{
+  "agentId": "system-map",
+  "agentLabel": "System Map — how the agents connect",
+  "diagram": "flowchart TD\n  MACRO[\"🌐 MacroSentinel\\nweekly · reads econ data\"] -->|macro_signals| RESEARCH\n  HOLD[\"📋 Holdings + Watchlist\\n+ dual-bucket screener\"] --> RESEARCH\n  CHAMPION[\"🏆 Champion weights\\nstrategy_versions\"] -->|weights_snapshot| RESEARCH\n  SCOREHIST[\"📈 signal_score_history\\nprior scores (trend)\"] -->|last N| RESEARCH\n  RESEARCH[\"🤖 ResearchAgent\\ndaily Mon-Fri · scores 5 dims\"] -->|agent_signals| TRADER\n  RESEARCH -->|append| SCOREHIST\n  TRADER[\"⚙️ PaperTrader\\nscore>=threshold & long → buy\"] -->|paper_positions| MONITOR\n  RESEARCH -->|fresh daily score| MONITOR\n  MONITOR[\"⚙️ PositionMonitor\\ndaily post-close\"] -->|score<exit OR stop/target| EXITS[\"💸 Exit + close trade\\ncredit cash · decision_journal\"]\n  MONITOR -->|still above threshold| HELD[\"✅ Keep holding\"]\n  EXITS -->|closed outcomes| LEARNER\n  LEARNER[\"🤖 LearnerAgent\\nFriday · evaluates outcomes\"] -->|proposes| CHALLENGER[\"🧪 Challenger weights\\nstrategy_versions\"]\n  CHALLENGER -->|you review| PROMOTE{\"👤 Promote?\"}\n  PROMOTE -->|yes| CHAMPION\n  EXITS -->|outcomes| MENTOR[\"🎓 MentorAgent\\ncoaches you\"]\n  LEARNER -->|runs| MENTOR\n  TRADER -.->|live: manual| REALORDER[\"📲 Paste command\\ninto Claude MCP → Robinhood\"]",
+  "nodes": {
+    "MACRO": {
+      "label": "MacroSentinel",
+      "description": "Weekly. Reads 8 economic indicators (Alpha Vantage) and writes a risk regime to macro_signals. Consumed by ResearchAgent's macro score, DeepDive, and Mentor. Purely advisory — never places or blocks a trade by itself.",
+      "addedAt": "2026-06-28", "addReason": "Give every downstream score a macro context input.",
+      "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    },
+    "RESEARCH": {
+      "label": "ResearchAgent",
+      "description": "Daily (Mon-Fri, 9:00 ET). Scores each tracked symbol across 5 dimensions (fundamental/technical/sentiment/macro/insider) into an analyst_score, using the promoted CHAMPION weights when one exists (the closed learning loop) and each symbol's recent score TREND as context. Writes agent_signals + appends signal_score_history.",
+      "addedAt": "2026-06-25", "addReason": "Central scoring engine — everything downstream keys off its analyst_score.",
+      "status": "active", "changedAt": "2026-07-05", "changeReason": "Now consumes champion weights (closed loop) and its own score-history trend.", "removedAt": null, "removeReason": null
+    },
+    "SCOREHIST": {
+      "label": "signal_score_history",
+      "description": "Append-only per-symbol score log (migration 054/055). Never mutated after insert. Feeds the Score Tracker chart AND is read back by ResearchAgent as trend context so it reasons about rising/falling conviction, not a cold snapshot.",
+      "addedAt": "2026-07-05", "addReason": "The score-history data model — previously the trajectory chart had no durable source.",
+      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    },
+    "CHAMPION": {
+      "label": "Champion weights",
+      "description": "The promoted strategy_versions row (is_champion=true) whose weights_snapshot ResearchAgent reads. This is where a human-approved LearnerAgent improvement finally takes effect. Before 2026-07-05 nothing read it — the loop was open and approved learning evaporated.",
+      "addedAt": "2026-07-05", "addReason": "Closes the learning loop — Learner learns → you promote → Research scores differently.",
+      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    },
+    "TRADER": {
+      "label": "PaperTrader",
+      "description": "Deterministic flow (no LLM). Reads pending agent_signals with analyst_score >= threshold and direction long, sizes at position_size_pct of cash (default 10%), and opens paper_positions + paper_trades. Long-only.",
+      "addedAt": "2026-06-26", "addReason": "Turns qualifying signals into paper positions.",
+      "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    },
+    "MONITOR": {
+      "label": "PositionMonitor",
+      "description": "Daily post-close (Mon-Fri, 16:15 ET). Refreshes current_price for every held symbol, then runs the exit logic: DAILY SCORE-EXIT (sell when today's fresh analyst_score falls below the exit threshold, ~entry-15), trailing-stop (93% of high), and price-target. Owns ALL exits now. Writes decision_journal.",
+      "addedAt": "2026-06-27", "addReason": "Manage held positions daily.",
+      "status": "changed", "changedAt": "2026-07-05", "changeReason": "Added daily score-based exit — hold while score stays above threshold, exit when it drops. Replaces LearnerAgent's old weekly timer-sell.", "removedAt": null, "removeReason": null
+    },
+    "EXITS": {
+      "label": "Exit + close",
+      "description": "On any exit trigger, deletes the paper_positions row, marks the matching paper_trades closed with realized P&L / outcome, credits cash once, and logs a decision_journal entry. These closed outcomes are the LearnerAgent's training corpus.",
+      "addedAt": "2026-06-27", "addReason": "Single close path so cash is credited exactly once.",
+      "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    },
+    "LEARNER": {
+      "label": "LearnerAgent",
+      "description": "Weekly (Friday). Evaluates the full closed-trade history and proposes weight-change CHALLENGERS into strategy_versions — it does NOT mutate live weights or sell live positions. Gated by a phase gate (10+ closed trades) and an auto-guard.",
+      "addedAt": "2026-06-28", "addReason": "Learn from outcomes and evolve the scoring weights.",
+      "status": "changed", "changedAt": "2026-07-05", "changeReason": "No longer timer-sells positions — reconciliation only. Exits moved to PositionMonitor's daily score-exit.", "removedAt": null, "removeReason": null
+    },
+    "CHALLENGER": {
+      "label": "Challenger weights",
+      "description": "An immutable strategy_versions row (is_champion=false) holding a proposed weight change. Inert until a human promotes it — the architecture gate that stops the AI silently overwriting the live strategy.",
+      "addedAt": "2026-06-28", "addReason": "Human-in-the-loop guard on weight mutation.",
+      "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    },
+    "PROMOTE": {
+      "label": "You promote (Strategy Registry)",
+      "description": "Human review step. Promoting a challenger in the Strategy Registry flips it to champion — and (as of 2026-07-05) ResearchAgent actually consumes it on its next run. This is the only place approved learning takes effect.",
+      "addedAt": "2026-06-28", "addReason": "Keep a human in control of what the AI is allowed to change.",
+      "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    },
+    "MENTOR": {
+      "label": "MentorAgent",
+      "description": "Reads your trade outcomes + learner runs and writes coaching insights (mentor_insights). Advisory to YOU — does not touch positions or weights.",
+      "addedAt": "2026-06-30", "addReason": "Coach the human, not just the portfolio.",
+      "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    },
+    "REALORDER": {
+      "label": "Manual real-order execution",
+      "description": "Live trading is manual by design. Approving a proposal generates an exact natural-language command to paste into a Claude session with Robinhood MCP access (account 605420660 only). The app never claims a fill it didn't make. trading_mode stays disabled until a typed broker gateway replaces this.",
+      "addedAt": "2026-07-05", "addReason": "execClaude cannot actually call broker tools — a generated command keeps the human in the loop instead of faking fills.",
+      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    }
+  },
+  "history": [
+    { "date": "2026-07-05", "event": "added", "nodeId": "CHAMPION", "label": "Champion weights", "reason": "Closed the learning loop — ResearchAgent now reads promoted champion weights." },
+    { "date": "2026-07-05", "event": "added", "nodeId": "SCOREHIST", "label": "signal_score_history", "reason": "Durable score-history data model + trend feedback into ResearchAgent." },
+    { "date": "2026-07-05", "event": "changed", "nodeId": "MONITOR", "label": "PositionMonitor", "reason": "Daily score-based exit added." },
+    { "date": "2026-07-05", "event": "changed", "nodeId": "LEARNER", "label": "LearnerAgent", "reason": "Stopped timer-selling; reconciliation only." },
+    { "date": "2026-07-05", "event": "added", "nodeId": "REALORDER", "label": "Manual real-order execution", "reason": "Replaced fake execClaude order execution with a generated manual command." }
+  ]
+}

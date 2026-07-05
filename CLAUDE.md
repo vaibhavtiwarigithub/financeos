@@ -1,5 +1,18 @@
 ﻿# Kairos â€” Claude Operating Rules
 
+## Agent System Map — keep it current
+
+`public/agent-diagrams/system-map.json` is the single diagram of how every
+agent/flow connects to the others (rendered on `/dashboard/agents` → "System
+Map", the default diagram view). It is NOT auto-generated. Whenever an
+agent-to-agent data flow, handoff, table dependency, schedule, or the
+learning loop changes — anything that alters how the agents collaborate —
+update `system-map.json` in the same change: fix the mermaid `diagram`, the
+`nodes` descriptions, and append a `history` entry (date/event/nodeId/reason).
+The per-agent diagrams (`public/agent-diagrams/<agent>.json`) follow the same
+rule for changes scoped to a single agent. A flow change that ships without a
+diagram update is incomplete.
+
 ## Project Intelligence Layer
 
 **Active every session. No exceptions.**

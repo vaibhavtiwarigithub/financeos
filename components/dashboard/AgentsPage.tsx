@@ -65,7 +65,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [configSaving, setConfigSaving] = useState(false);
   const [configToast, setConfigToast] = useState("");
   const [expandedRuns, setExpandedRuns] = useState<string | null>(null);
-  const [selectedDiagramAgent, setSelectedDiagramAgent] = useState("research-agent");
+  const [selectedDiagramAgent, setSelectedDiagramAgent] = useState("system-map");
   const [learnerRuns, setLearnerRuns] = useState<any[]>([]);
   const [learnerRunIdx, setLearnerRunIdx] = useState(0);
   const [agentConfigs, setAgentConfigs] = useState<any[]>([]);
@@ -1555,6 +1555,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {[
+              { id: "system-map", label: "System Map", kind: "map" },
               { id: "research-agent", label: "Research", kind: "ai" },
               { id: "deep-dive", label: "Deep-Dive", kind: "ai" },
               { id: "theme-scout", label: "ThemeScout", kind: "ai" },
@@ -1567,16 +1568,16 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
               <button
                 key={a.id}
                 onClick={() => setSelectedDiagramAgent(a.id)}
-                title={a.kind === "ai" ? "AI Agent — LLM reasons and decides" : "Flow — deterministic rules, no LLM decision"}
+                title={a.kind === "ai" ? "AI Agent — LLM reasons and decides" : a.kind === "map" ? "System Map — how every agent connects to the others" : "Flow — deterministic rules, no LLM decision"}
                 style={{
                   padding: "4px 10px", fontSize: 11, fontWeight: 600, borderRadius: 5,
                   cursor: "pointer", border: "1px solid",
-                  borderColor: selectedDiagramAgent === a.id ? "#6366F1" : "#1E2130",
+                  borderColor: selectedDiagramAgent === a.id ? "#6366F1" : a.kind === "map" ? "#6366F166" : "#1E2130",
                   background: selectedDiagramAgent === a.id ? "#6366F122" : "transparent",
-                  color: selectedDiagramAgent === a.id ? "#6366F1" : "#64748B",
+                  color: selectedDiagramAgent === a.id ? "#6366F1" : a.kind === "map" ? "#818CF8" : "#64748B",
                 }}
               >
-                {a.kind === "ai" ? "🤖" : "⚙️"} {a.label}
+                {a.kind === "ai" ? "🤖" : a.kind === "map" ? "🗺️" : "⚙️"} {a.label}
               </button>
             ))}
           </div>
