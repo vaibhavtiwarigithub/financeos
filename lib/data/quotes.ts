@@ -4,6 +4,8 @@
  * Never calls an LLM for price data.
  */
 
+import { avCachedFetch } from "@/lib/av-cache";
+
 export type QuoteSource = "alpha_vantage" | "price_cache" | "unavailable";
 
 export interface DeterministicQuote {
@@ -34,16 +36,16 @@ function isStale(retrievedAt: string): boolean {
   return Date.now() - new Date(retrievedAt).getTime() > STALE_THRESHOLD_MS;
 }
 
-/** Fetch a real-time quote from Alpha Vantage GLOBAL_QUOTE (direct HTTP, no MCP) */
+/** Fetch a real-time quote from Alpha Vantage GLOBAL_QUOTE (direct HTTP, no MCP).
+ * Day-cached — AV free tier is 25 calls/day and this was previously calling
+ * uncached on every page load (e.g. up to 26 symbols per Live Portfolio
+ * refresh), exhausting the daily budget almost immediately. */
 async function fetchAVQuote(symbol: string, avKey: string): Promise<DeterministicQuote | null> {
   if (!avKey) return null;
   const retrievedAt = new Date().toISOString();
   try {
-    const r = await fetch(
-      `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(symbol)}&apikey=${avKey}`,
-      { next: { revalidate: 0 } }
-    );
-    const json = await r.json();
+    const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(symbol)}&apikey=${avKey}`;
+    const json = await avCachedFetch(`GLOBAL_QUOTE:${symbol}`, url);
     const q = json?.["Global Quote"];
     if (!q || !q["05. price"]) return null;
 

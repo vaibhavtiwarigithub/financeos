@@ -36,12 +36,16 @@ export async function POST(req: NextRequest) {
     const runId = (runRow as any)?.id ?? null;
 
     // ── Phase A: Rule-based trade closing ──────────────────────────────────────
+    // paper_positions has no closed_at column (every row is open by
+    // definition — closing means deleting the row, see position-monitor's
+    // closePosition) and no created_at (real column is opened_at). This
+    // query silently errored on the old filter and always returned nothing.
     const positionReassessments: string[] = [];
-    const { data: openPositions } = await svc.from("paper_positions").select("*").is("closed_at", null);
+    const { data: openPositions } = await svc.from("paper_positions").select("*");
 
     if (openPositions?.length) {
       for (const pos of openPositions) {
-        const ageMs = Date.now() - new Date(pos.created_at ?? 0).getTime();
+        const ageMs = Date.now() - new Date(pos.opened_at ?? 0).getTime();
         if (ageMs < 7 * 86400_000) continue;
         const daysSince = pos.target_updated_at
           ? (Date.now() - new Date(pos.target_updated_at).getTime()) / 86400_000 : 999;

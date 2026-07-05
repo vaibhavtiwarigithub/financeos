@@ -349,7 +349,10 @@ export async function POST(req: NextRequest) {
     // return a different account's row.
     svc.from("live_account_snapshots").select("*").eq("account_id", "965848641").order("captured_at", { ascending: false }).limit(1).single(),
     svc.from("earnings_calendar").select("symbol,report_date,estimate_eps,period").gte("report_date", dateStr).order("report_date").limit(5),
-    svc.from("learning_log").select("symbol,outcome,note,created_at").order("created_at", { ascending: false }).limit(3),
+    // learning_log has no symbol/outcome columns (it's the learner's own
+    // weight-mutation audit log) — recently closed trades actually live in
+    // paper_trades (which does have symbol/outcome/closed_at).
+    svc.from("paper_trades").select("symbol,outcome,rationale,closed_at").not("closed_at", "is", null).order("closed_at", { ascending: false }).limit(3),
     svc.from("watchlist").select("symbol,company_name").eq("research_enabled", true).limit(20),
     massiveKey ? fetchIndexClose("SPY", massiveKey) : Promise.resolve(null),
     massiveKey ? fetchIndexClose("QQQ", massiveKey) : Promise.resolve(null),
@@ -457,7 +460,7 @@ export async function POST(req: NextRequest) {
 
   // Learning block
   const learningLines = (learningLog ?? []).length > 0
-    ? (learningLog ?? []).map((l: any) => `  • ${l.symbol} [${l.outcome}]: ${l.note}`)
+    ? (learningLog ?? []).map((l: any) => `  • ${l.symbol} [${l.outcome}]: ${l.rationale ?? ""}`)
     : ["  • No closed trades yet (Phase 0 — learning starts after 10+ closed paper trades)"];
 
   // Live account block
@@ -595,7 +598,7 @@ If a category above has no data (e.g. no agent runs, no mentor grade), say so pl
     signals: pendingSignals.slice(0, 5),
     candidates: pendingSignals.slice(0, 3),
     earnings: (tomorrowEarnings ?? []).map((e: any) => ({ symbol: e.symbol, date: e.report_date, isToday: e.report_date === dateStr, eps: e.estimate_eps != null ? Number(e.estimate_eps) : null })),
-    learning: (learningLog ?? []).map((l: any) => ({ symbol: l.symbol, outcome: l.outcome, note: l.note })),
+    learning: (learningLog ?? []).map((l: any) => ({ symbol: l.symbol, outcome: l.outcome, note: l.rationale ?? "" })),
     phase: { closed: closedTradesCount ?? 0, needed: 10 },
     researchRan: !!lastRun && new Date(lastRun.created_at).toISOString().slice(0, 10) === dateStr,
   };

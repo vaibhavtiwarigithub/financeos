@@ -46,7 +46,12 @@ export async function GET(req: NextRequest) {
     const q = quotes[p.symbol];
     const qty = p._qty;
     const avgCost = qty > 0 ? p._cost / qty : 0;
-    const currentPrice = q?.price ?? (qty > 0 ? p._cost / qty : 0);
+    // q.price is explicitly 0 (not null/undefined) for an "unavailable" quote,
+    // so `q?.price ?? fallback` never triggered the fallback — every holding
+    // with a failed quote showed currentValue $0 and a false "-100%" total
+    // loss instead of falling back to avg cost (0% unrealized P&L, honest
+    // "we don't know" instead of a wrong number).
+    const currentPrice = (q?.price && q.price > 0) ? q.price : avgCost;
     const currentValue = qty * currentPrice;
     const costBasis = p._cost;
     const totalPnlDollar = currentValue - costBasis;
