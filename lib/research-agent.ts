@@ -792,7 +792,7 @@ export async function processSymbol(
   // touched after insert. Best-effort: a logging failure must not fail the
   // research run, and if migration 054 hasn't been applied yet this simply
   // no-ops until it is.
-  const { error: scoreHistErr } = await supabase.from("signal_score_history").insert({
+  const baseScoreRow = {
     symbol,
     analyst_score: analystScore,
     fundamental_score: scores.fundamental_score,
@@ -802,8 +802,20 @@ export async function processSymbol(
     insider_score: scores.insider_score,
     direction: signalDirection,
     source,
+  };
+  // Self-explaining fields (migration 055) — let the Score Tracker's point-click
+  // drill-down show WHY the score moved. Fall back to the base row if migration
+  // 055 hasn't been applied yet (columns missing) so writes never stop.
+  const { error: scoreHistErr } = await supabase.from("signal_score_history").insert({
+    ...baseScoreRow,
+    rationale: thesis.summary ?? `Analyst score ${analystScore}, direction ${signalDirection}.`,
+    research_packet_id: packet?.id ?? null,
+    used_champion_weights: usingChampion,
   });
-  if (scoreHistErr) console.error("[research-agent] signal_score_history insert failed:", scoreHistErr.message);
+  if (scoreHistErr) {
+    const { error: fallbackErr } = await supabase.from("signal_score_history").insert(baseScoreRow);
+    if (fallbackErr) console.error("[research-agent] signal_score_history insert failed:", fallbackErr.message);
+  }
 
   return {
     symbol,

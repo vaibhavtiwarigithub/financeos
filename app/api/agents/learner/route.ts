@@ -101,14 +101,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Blunt time-based backstop only — pushed from 7d to 14d. Phase A above
-    // (signal re-score → flags exit_reason="llm_exit", which position-monitor
-    // then executes with a live price + trailing-stop logic) is the PRIMARY,
-    // smarter exit path. This sweep exists purely so nothing sits open
-    // indefinitely if the signal pipeline stalls. It used to race with Phase A
-    // — closing the same position on a crude pnl>$0.50 win/loss the same day
-    // Phase A flagged it — so it now SKIPS any trade whose position already
-    // carries an llm_exit flag and lets position-monitor handle that one.
+    // Reconciliation only — LearnerAgent no longer force-sells live positions on
+    // a timer. That old behavior (close any trade >N days old on a crude
+    // pnl>$0.50 win/loss) was wrong: it dumped positions that were still scoring
+    // well purely because time had passed, contradicting the "hold while the AI
+    // score stays above threshold" model. Exits are now fully owned by
+    // PositionMonitor (daily): score-based exit when conviction drops below the
+    // exit threshold, plus trailing-stop and price-target — all using a live
+    // price, checked every trading day, so nothing goes stale-unchecked.
+    //
+    // This sweep now only closes TRUE ORPHANS: an open paper_trades row whose
+    // paper_positions row no longer exists (the position was already exited but
+    // the trade row dangles). It never touches a trade whose position is still
+    // open — that's a live holding the daily monitor manages.
     const cutoff = new Date(Date.now() - 14 * 86400_000).toISOString();
     const { data: openTrades } = await svc.from("paper_trades").select("*").is("closed_at", null).lt("executed_at", cutoff);
 
@@ -116,10 +121,11 @@ export async function POST(req: NextRequest) {
     const priceFailures: string[] = [];
 
     for (const trade of openTrades ?? []) {
-      // Defer to Phase A / position-monitor if this position is already flagged.
-      const { data: flaggedPos } = await svc.from("paper_positions")
-        .select("exit_reason").eq("symbol", trade.symbol).maybeSingle();
-      if ((flaggedPos as any)?.exit_reason === "llm_exit") continue;
+      // Only reconcile orphans — if a position still exists for this symbol,
+      // it's a live holding managed by PositionMonitor; leave it alone.
+      const { data: livePos } = await svc.from("paper_positions")
+        .select("id").eq("symbol", trade.symbol).maybeSingle();
+      if (livePos) continue;
 
       const quote = await fetchQuote(trade.symbol);
       if (quote.source === "unavailable" || quote.price <= 0) { priceFailures.push(trade.symbol); continue; }
@@ -129,22 +135,12 @@ export async function POST(req: NextRequest) {
       const pnlPct = ((exitPrice - trade.fill_price) / trade.fill_price) * 100;
       const outcome = pnl > 0.5 ? "win" : pnl < -0.5 ? "loss" : "breakeven";
 
+      // Close the dangling trade row. Do NOT credit cash again — the position
+      // that this trade belonged to was already closed by PositionMonitor, which
+      // already credited the proceeds. Double-crediting here would inflate NAV.
       await svc.from("paper_trades").update({ exit_price: exitPrice, realized_pnl: pnl, pnl_pct: pnlPct, outcome, closed_at: new Date().toISOString() }).eq("id", trade.id);
 
-      const { data: portfolioArr } = await svc.from("paper_portfolio").select("*").limit(1);
-      const portfolio = portfolioArr?.[0];
-      if (portfolio) {
-        await svc.from("paper_portfolio").update({ cash_balance: portfolio.cash_balance + exitPrice * trade.qty }).eq("id", portfolio.id);
-      }
-
-      const { data: pos } = await svc.from("paper_positions").select("*").eq("symbol", trade.symbol).single();
-      if (pos) {
-        const remaining = pos.qty - trade.qty;
-        if (remaining <= 0) await svc.from("paper_positions").delete().eq("id", pos.id);
-        else await svc.from("paper_positions").update({ qty: remaining }).eq("id", pos.id);
-      }
-
-      outcomes.push({ symbol: trade.symbol, outcome, pnl, pnlPct, exitPrice });
+      outcomes.push({ symbol: trade.symbol, outcome, pnl, pnlPct, exitPrice, reconciled_orphan: true });
     }
 
     // ── Phase B: Load context for agent ──────────────────────────────────────
