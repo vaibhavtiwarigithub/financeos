@@ -13,10 +13,10 @@ function isThrottled(json: any): boolean {
   return !!(json && (json.Note || json.Information)) && !json["Global Quote"] && !json["Technical Analysis: RSI"] && !json.Symbol;
 }
 
-export async function avCachedFetch(cacheKey: string, url: string, timeoutMs = 6000): Promise<any | null> {
+export async function avCachedFetch(cacheKey: string, url: string, timeoutMs = 6000, headers?: Record<string, string>): Promise<any | null> {
   const svc = createServiceClient();
 
-  // 1. Fresh cache hit for today → no AV call at all.
+  // 1. Fresh cache hit for today → no real call at all.
   const { data: today } = await svc
     .from("av_cache")
     .select("payload")
@@ -25,10 +25,10 @@ export async function avCachedFetch(cacheKey: string, url: string, timeoutMs = 6
     .maybeSingle();
   if (today?.payload) return today.payload;
 
-  // 2. Spend one real AV call.
+  // 2. Spend one real call.
   let json: any = null;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers });
     if (res.ok) json = await res.json();
   } catch { json = null; }
 

@@ -70,16 +70,14 @@ async function fetchTechnicals(symbol: string, avKey: string): Promise<{ price: 
   return { price, ema50 };
 }
 
-// Fetch basic fundamentals from FinancialDatasets for a specific symbol
+// Fetch basic fundamentals from FinancialDatasets for a specific symbol.
+// Day-cached — FinancialDatasets' free tier is limited too, and this was
+// called uncached once per scanned symbol on every request.
 async function fetchFundamentals(symbol: string, fdKey: string): Promise<Record<string, any>> {
   if (!fdKey) return {};
   try {
-    const res = await fetch(
-      `https://api.financialdatasets.ai/financial-metrics/snapshot/?ticker=${symbol}`,
-      { headers: { "X-API-KEY": fdKey }, signal: AbortSignal.timeout(8000) }
-    );
-    if (!res.ok) return {};
-    const data = await res.json();
+    const url = `https://api.financialdatasets.ai/financial-metrics/snapshot/?ticker=${symbol}`;
+    const data = await avCachedFetch(`FD_SNAPSHOT:${symbol}`, url, 8000, { "X-API-KEY": fdKey });
     return data?.snapshot ?? data?.metrics ?? data ?? {};
   } catch { return {}; }
 }
