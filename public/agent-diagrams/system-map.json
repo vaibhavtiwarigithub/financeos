@@ -1,7 +1,7 @@
 {
   "agentId": "system-map",
   "agentLabel": "System Map — how the agents connect",
-  "diagram": "flowchart TD\n  MACRO[\"🌐 MacroSentinel\\nweekly · reads econ data\"] -->|macro_signals| RESEARCH\n  HOLD[\"📋 Holdings + Watchlist\\n+ dual-bucket screener\"] --> RESEARCH\n  CHAMPION[\"🏆 Champion weights\\nstrategy_versions\"] -->|weights_snapshot| RESEARCH\n  SCOREHIST[\"📈 signal_score_history\\nprior scores (trend)\"] -->|last N| RESEARCH\n  RESEARCH[\"🤖 ResearchAgent\\ndaily Mon-Fri · scores 5 dims\"] -->|agent_signals| TRADER\n  RESEARCH -->|append| SCOREHIST\n  TRADER[\"⚙️ PaperTrader\\nscore>=threshold & long → buy\"] -->|paper_positions| MONITOR\n  RESEARCH -->|fresh daily score| MONITOR\n  MONITOR[\"⚙️ PositionMonitor\\ndaily post-close\"] -->|score<exit OR stop/target| EXITS[\"💸 Exit + close trade\\ncredit cash · decision_journal\"]\n  MONITOR -->|still above threshold| HELD[\"✅ Keep holding\"]\n  EXITS -->|closed outcomes| LEARNER\n  LEARNER[\"🤖 LearnerAgent\\nFriday · evaluates outcomes\"] -->|proposes| CHALLENGER[\"🧪 Challenger weights\\nstrategy_versions\"]\n  CHALLENGER -->|you review| PROMOTE{\"👤 Promote?\"}\n  PROMOTE -->|yes| CHAMPION\n  EXITS -->|outcomes| MENTOR[\"🎓 MentorAgent\\ncoaches you\"]\n  LEARNER -->|runs| MENTOR\n  TRADER -.->|live: manual| REALORDER[\"📲 Paste command\\ninto Claude MCP → Robinhood\"]",
+  "diagram": "flowchart TD\n  MACRO[\"🌐 MacroSentinel\\nweekly · reads econ data\"] -->|macro_signals| RESEARCH\n  HOLD[\"📋 Holdings + Watchlist\\n+ dual-bucket screener\"] --> RESEARCH\n  CHAMPION[\"🏆 Champion weights\\nstrategy_versions\"] -->|weights_snapshot| RESEARCH\n  SCOREHIST[\"📈 signal_score_history\\nprior scores (trend)\"] -->|last N| RESEARCH\n  YAHOO[\"🇮🇳 Yahoo .NS data\\nfree · NIFTY candidates\"] -->|India fundamentals+candles| RESEARCH\n  RESEARCH[\"🤖 ResearchAgent\\ndaily Mon-Fri · scores 5 dims\"] -->|US agent_signals| TRADER\n  RESEARCH -->|India agent_signals| INDIA\n  RESEARCH -->|append| SCOREHIST\n  TRADER[\"⚙️ PaperTrader\\nscore>=threshold & long → buy\\n(sector cap · USD only)\"] -->|paper_positions| MONITOR\n  RESEARCH -->|fresh daily score| MONITOR\n  MONITOR[\"⚙️ PositionMonitor\\ndaily post-close\"] -->|score<exit OR stop/target| EXITS[\"💸 Exit + close trade\\ncredit cash · decision_journal\"]\n  MONITOR -->|still above threshold| HELD[\"✅ Keep holding\"]\n  EXITS -->|closed outcomes| LEARNER\n  LEARNER[\"🤖 LearnerAgent\\nFriday · evaluates outcomes\"] -->|proposes| CHALLENGER[\"🧪 Challenger weights\\nstrategy_versions\"]\n  CHALLENGER -->|you review| PROMOTE{\"👤 Promote?\"}\n  PROMOTE -->|yes| CHAMPION\n  EXITS -->|outcomes| MENTOR[\"🎓 MentorAgent\\ncoaches you\"]\n  LEARNER -->|runs| MENTOR\n  TRADER -.->|US live: manual| REALORDER[\"📲 Paste command\\ninto Claude MCP → Robinhood\"]\n  INDIA[\"🇮🇳 India signals\\nScore Tracker + /dashboard/india\"] -.->|you confirm| KITE[\"📲 Real NSE/BSE order\\nvia Zerodha Kite (daily token)\"]",
   "nodes": {
     "MACRO": {
       "label": "MacroSentinel",
@@ -70,9 +70,27 @@
       "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
     },
     "REALORDER": {
-      "label": "Manual real-order execution",
-      "description": "Live trading is manual by design. Approving a proposal generates an exact natural-language command to paste into a Claude session with Robinhood MCP access (account 605420660 only). The app never claims a fill it didn't make. trading_mode stays disabled until a typed broker gateway replaces this.",
+      "label": "Manual real-order execution (US)",
+      "description": "US live trading is manual by design. Approving a proposal generates an exact natural-language command to paste into a Claude session with Robinhood MCP access (account 605420660 only). The app never claims a fill it didn't make. trading_mode stays disabled until a typed broker gateway replaces this.",
       "addedAt": "2026-07-05", "addReason": "execClaude cannot actually call broker tools — a generated command keeps the human in the loop instead of faking fills.",
+      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    },
+    "YAHOO": {
+      "label": "Yahoo .NS data (India)",
+      "description": "Free Yahoo Finance is the India data source (Kite Personal tier has no market data). The chart endpoint gives price + candles (no auth); the cookie+crumb quoteSummary gives fundamentals (P/E, ROE, margins). Mapped into the same shape the US scorer expects, so Indian stocks run the identical 5-dimension pipeline. Candidates come from a static NIFTY-50 list.",
+      "addedAt": "2026-07-05", "addReason": "Score real NSE stocks on free data, keyed off market_focus = India.",
+      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    },
+    "INDIA": {
+      "label": "India signals",
+      "description": "Indian stocks are scored + tracked (Score Tracker, /dashboard/india) but NOT paper-traded — they're INR-priced and the paper_portfolio is a single USD pool, so PaperTrader skips asset_class 'india'. India is acted on via real Kite orders, not USD paper fills.",
+      "addedAt": "2026-07-05", "addReason": "Track India like US without corrupting the USD paper NAV.",
+      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    },
+    "KITE": {
+      "label": "Zerodha Kite (India execution)",
+      "description": "Real NSE/BSE orders via Kite Connect (Personal tier). Human-in-the-loop: user-initiated from /dashboard/india with an explicit confirm — never cron/agent-fired. Kite's token expires daily (SEBI requirement), so a one-click login each trading morning re-arms it; reads/orders degrade to a 'reconnect' state when stale.",
+      "addedAt": "2026-07-05", "addReason": "The one thing free India data can't do — real execution.",
       "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
     }
   },
@@ -81,6 +99,9 @@
     { "date": "2026-07-05", "event": "added", "nodeId": "SCOREHIST", "label": "signal_score_history", "reason": "Durable score-history data model + trend feedback into ResearchAgent." },
     { "date": "2026-07-05", "event": "changed", "nodeId": "MONITOR", "label": "PositionMonitor", "reason": "Daily score-based exit added." },
     { "date": "2026-07-05", "event": "changed", "nodeId": "LEARNER", "label": "LearnerAgent", "reason": "Stopped timer-selling; reconciliation only." },
-    { "date": "2026-07-05", "event": "added", "nodeId": "REALORDER", "label": "Manual real-order execution", "reason": "Replaced fake execClaude order execution with a generated manual command." }
+    { "date": "2026-07-05", "event": "added", "nodeId": "REALORDER", "label": "Manual real-order execution", "reason": "Replaced fake execClaude order execution with a generated manual command." },
+    { "date": "2026-07-05", "event": "added", "nodeId": "YAHOO", "label": "Yahoo .NS data", "reason": "India Phase 2 — score NSE stocks on free Yahoo data." },
+    { "date": "2026-07-05", "event": "added", "nodeId": "INDIA", "label": "India signals", "reason": "India scored + tracked, excluded from USD paper pool." },
+    { "date": "2026-07-05", "event": "added", "nodeId": "KITE", "label": "Zerodha Kite execution", "reason": "India Phase 3 — real NSE/BSE orders via Kite, human-confirmed." }
   ]
 }
