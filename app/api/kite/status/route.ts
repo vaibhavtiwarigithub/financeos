@@ -13,7 +13,7 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const svc = createServiceClient();
-  const { apiKey } = await getKiteCreds(svc);
+  const { apiKey, apiSecret } = await getKiteCreds(svc);
   const { fresh, updatedAt } = await getAccessToken(svc);
 
   let profile: { user_name?: string; email?: string } | null = null;
@@ -26,6 +26,7 @@ export async function GET() {
 
   return NextResponse.json({
     has_key: !!apiKey,
+    has_secret: !!apiSecret,
     token_fresh: fresh,
     token_updated_at: updatedAt,
     connected: !!apiKey && fresh && !!profile,
