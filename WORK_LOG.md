@@ -20,6 +20,17 @@
 
 ---
 
+## ✅ Session 2026-07-05 (India — Zerodha Kite + Yahoo multi-market integration)
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Phase 1 — Kite auth (daily one-click login) | Claude | 2026-07-05 | `lib/kite.ts`, `app/api/kite/login\|callback\|status`. Kite Connect v3: login → `request_token` → SHA256-checksum exchange → `access_token` stored in `api_key_vault` as `KITE_ACCESS_TOKEN`, treated as expired if not generated today (Kite tokens expire 6 AM next day, SEBI rule). Verified live — real `/user/profile` returns the user's name. Settings → Agents shows a "Zerodha Kite · India" connection card. See Decision 30. |
+| Phase 2 — India scoring on free Yahoo data | Claude | 2026-07-05 | `lib/india-data.ts`, `lib/india-universe.ts`, `research-agent.ts`, paper-trade route. Indian NSE (`.NS`) stocks run the SAME 5-dimension pipeline as US, but data is FREE Yahoo Finance (Kite Personal tier has no market data) — chart endpoint for price+candles (no auth), cookie+crumb `quoteSummary` for fundamentals, mapped into the AV-OVERVIEW shape the scorer expects. Candidates from a static NIFTY-50 list. US-only inputs (social/options/insider) skipped → neutral baseline, flagged in score-detail. Wired off `profiles.market_focus` including "India". Verified: RELIANCE.NS scored on real Yahoo fundamentals (P/E 21.85, ROE 9.1%, rev +12.5% → fundamental 73) over 124 real candles. **India is scored + tracked but NOT paper-traded** — INR pricing would corrupt the single-USD paper pool; `PaperTrader` excludes `asset_class="india"`. See Decisions 28, 29. |
+| Phase 3 — real Kite execution + holdings | Claude | 2026-07-05 | `lib/kite.ts` additions, `app/api/kite/portfolio`, `app/api/kite/order`, `app/dashboard/india` page + nav. Real NSE/BSE holdings read (verified: 5 real INR holdings from the live account) and real order placement (`POST /orders/regular`, product `CNC`). Human-in-the-loop safety: authenticated-user-only (never cron/agent), requires explicit `confirm:true`, writes a `decision_journal` audit row; `/dashboard/india` uses a two-step confirm with a "REAL MONEY" warning that never fires on first click. Reads/orders degrade to a "reconnect" state when the daily token is stale. See Decision 30. |
+| system-map.json + docs updated for India | Claude | 2026-07-05 | Added YAHOO/INDIA/KITE nodes to `system-map.json`; India / multi-market section in ARCHITECTURE.md; Decisions 28–30 in PROJECT_DECISIONS.md. Recorded data-source reality: US = Alpha Vantage + FinancialDatasets + Massive; India = free Yahoo (`.NS`) for data + Zerodha Kite for execution/holdings; no direct non-US equity beyond India. |
+
+---
+
 ## ✅ Session 2026-07-05 (closed-loop learning, score history, exit de-confliction, Langfuse agent-loop tracing)
 
 | Task | Agent | Completed | Notes |

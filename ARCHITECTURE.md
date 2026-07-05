@@ -475,6 +475,53 @@ All agents remain fully indirected through shared Supabase tables — there are 
 
 ---
 
+## Session 2026-07-05 (India) — Multi-Market: Zerodha Kite + Yahoo Finance
+
+Kairos was US-only for execution. It now spans two markets. This section supersedes any earlier "US-only" framing — the platform is multi-market, with US and India handled by different data/execution stacks.
+
+### Data sources per market
+
+| Market | Screener candidates | Price + candles | Fundamentals | Sentiment / options / insider | Execution + holdings |
+|---|---|---|---|---|---|
+| US | FinancialDatasets `screen_stocks` | Massive + Alpha Vantage | Alpha Vantage OVERVIEW | Massive / AV / StockTwits | Robinhood (paper + real) |
+| India (`.NS`) | static NIFTY-50 list (`lib/india-universe.ts`) | **free Yahoo Finance** chart endpoint (no auth) | **free Yahoo Finance** quoteSummary (cookie+crumb) → mapped into AV-OVERVIEW shape | **skipped** (not available free) → neutral baseline, flagged honestly in score-detail | **Zerodha Kite** (real only) |
+
+Why Yahoo for India: the Kite **Personal tier gives execution + portfolio only, no market data**. Rather than pay for a data feed, Indian stocks run on free Yahoo Finance — the chart endpoint for price/candles (unauthenticated) and a cookie+crumb `quoteSummary` call for P/E, ROE, and margins, remapped into the exact AV-OVERVIEW shape the existing scorer already consumes. No direct non-US equity coverage exists beyond India.
+
+### India scoring — same pipeline, free data (Phase 2)
+
+`lib/india-data.ts` + `lib/india-universe.ts` feed Indian NSE symbols (`.NS`) through the **same 5-dimension scoring pipeline** as US stocks. US-only inputs (social sentiment, options, insider) are unavailable for India, so those dimensions fall back to a neutral baseline and are flagged in the score-detail rather than silently zeroed. Activated only when `profiles.market_focus` includes "India". Verified live: RELIANCE.NS scored with real Yahoo fundamentals (P/E 21.85, ROE 9.1%, rev +12.5% → fundamental 73) over 124 real candles.
+
+### Score-only, not paper-traded (critical design point)
+
+India is **scored and tracked** (Score Tracker, `/dashboard/india`) but **NOT paper-traded**. The `paper_portfolio` is a single USD pool; Indian stocks are INR-priced, so mixing currencies into one NAV pool would corrupt paper P&L. `PaperTrader` therefore excludes `asset_class = "india"`. India is acted on via **real Kite orders** instead of paper fills — the opposite of the US path, where paper comes first.
+
+### Kite auth flow (Phase 1)
+
+`lib/kite.ts` + `app/api/kite/login|callback|status`. Daily one-click Kite Connect v3 login:
+
+`login` → Kite returns `request_token` → SHA256-checksum exchange (`api_key` + `request_token` + `api_secret`) → `access_token` stored in `api_key_vault` as `KITE_ACCESS_TOKEN`.
+
+The token is treated as **expired if not generated today** — Kite access tokens expire at 6 AM the next day by SEBI rule, so a fresh one-click re-login is required each trading morning. This is un-automatable without storing broker credentials, which is deliberately not done. Verified live: a real `/user/profile` call returns the user's name. Settings → Agents shows a "Zerodha Kite · India" connection card.
+
+### Kite execution + portfolio (Phase 3)
+
+`app/api/kite/portfolio` (real NSE/BSE holdings read — verified: 5 real INR holdings from the live account) and `app/api/kite/order` (real order placement: `POST /orders/regular`, product `CNC` delivery). New `app/dashboard/india` page + nav.
+
+Order safety is human-in-the-loop:
+- authenticated-user-only — **never** cron/agent-invoked
+- requires explicit `confirm: true`
+- writes a `decision_journal` audit row
+- the `/dashboard/india` UI uses a two-step confirm with a prominent "REAL MONEY" warning that never fires on first click
+
+Reads and orders degrade to a "reconnect" state when the daily token is stale (see auth flow above).
+
+### System map
+
+`system-map.json` diagram updated with **YAHOO**, **INDIA**, and **KITE** nodes reflecting the India data/execution path.
+
+---
+
 ## Planned Architecture — [REVIEW PENDING — ChatGPT]
 
 Items below are approved for architecture review. Not yet implemented. Each section marked with status.

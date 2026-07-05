@@ -417,3 +417,45 @@ Alternatives considered: Leave agent loops traced only in `llm_call_log` (no spa
 Impact: Agent tool-loops appear as Langfuse traces with their tool-call trail; no change to agent logic. LangChain/LangGraph remain unused.
 Files/features affected: `runAgentLoop` (agent tool-calling loop), Langfuse integration in the LLM layer.
 Reversal cost: Low
+
+### Decision 28: India market data via free Yahoo Finance (not a paid feed)
+
+Date: 2026-07-05
+Status: Approved
+Category: Data / Architecture
+
+Context: Kairos added India as a second market. Execution runs through Zerodha Kite, but the Kite **Personal tier provides execution + portfolio only, with no market data**. Indian NSE stocks still need price, candles, and fundamentals to run the same 5-dimension scoring pipeline as US stocks.
+Decision: Source all India market data from **free Yahoo Finance** (`.NS` symbols). `lib/india-data.ts` uses the Yahoo chart endpoint for price + candles (unauthenticated) and a cookie+crumb `quoteSummary` call for fundamentals (P/E, ROE, margins), remapping the result into the exact AV-OVERVIEW shape the existing scorer already consumes. Candidates come from a static NIFTY-50 list (`lib/india-universe.ts`) rather than a paid screener. US-only inputs (social sentiment, options, insider) are unavailable for India, so those dimensions use a neutral baseline, flagged honestly in the score-detail.
+Reason: Kite Personal tier has no data feed; paying for one (or upgrading Kite) is unjustified when Yahoo covers price, candles, and core fundamentals for free. Mapping into the AV-OVERVIEW shape lets India reuse the whole scoring pipeline with no scorer changes.
+Alternatives considered: Pay for a Kite data subscription or a third-party Indian data vendor (cost, deferred); a paid screener for candidate selection (static NIFTY-50 is sufficient for now); skip India fundamentals entirely (loses the fundamental dimension).
+Impact: India scores on free data with no per-call cost; the three US-only dimensions are neutral for Indian names by design. No direct non-US equity coverage exists beyond India.
+Files/features affected: `lib/india-data.ts`, `lib/india-universe.ts`, `lib/research-agent.ts`, paper-trade route (India exclusion — see Decision 29).
+Reversal cost: Low (data adapter is replaceable; the AV-OVERVIEW mapping isolates the scorer from the source)
+
+### Decision 29: India is scored + tracked but NOT paper-traded (currency/USD-pool)
+
+Date: 2026-07-05
+Status: Approved
+Category: Product / Data / Architecture
+
+Context: US signals flow into a single `paper_portfolio` USD pool for paper P&L before any real money is involved. India was added as a second market, and the question was whether Indian signals should also open paper positions.
+Decision: India is **scored and tracked** (Score Tracker, `/dashboard/india`) but **NOT paper-traded**. `PaperTrader` excludes `asset_class = "india"`. Indian stocks are acted on via **real Zerodha Kite orders** instead (see Decision 30).
+Reason: The `paper_portfolio` is a single USD pool; Indian stocks are INR-priced. Mixing currencies into one NAV pool would corrupt paper P&L and NAV/alpha accounting. Keeping India out of the paper pool preserves the integrity of the USD paper track while still surfacing India's scores.
+Alternatives considered: Convert INR fills to USD at a daily FX rate for the paper pool (adds an FX-rate dependency and silent conversion error into every India paper P&L — rejected); a separate INR paper pool (new parallel accounting surface, deferred — India already executes for real via Kite so a paper stage adds little); score India but hide it (loses the Score Tracker value).
+Impact: India appears in scoring/tracking surfaces but never in paper positions or paper NAV. The US "paper-first" path and the India "real-only via Kite" path are deliberately asymmetric.
+Files/features affected: `lib/research-agent.ts`, paper-trade route, `/dashboard/india`, Score Tracker.
+Reversal cost: Low (a separate INR paper pool could be added later without touching the USD pool)
+
+### Decision 30: Zerodha Kite for India execution — human-confirm + daily one-click token
+
+Date: 2026-07-05
+Status: Approved
+Category: Security / Architecture / Product
+
+Context: India needs real order placement and holdings (there is no paper stage — Decision 29). Zerodha Kite Connect v3 is the broker. Kite access tokens expire at 6 AM the next day by SEBI rule and cannot be silently refreshed without storing broker credentials.
+Decision: Real Kite execution (`app/api/kite/order` — `POST /orders/regular`, product `CNC`) and holdings read (`app/api/kite/portfolio`) with a strict human-in-the-loop model: **authenticated-user-only (never cron/agent), requires explicit `confirm: true`, writes a `decision_journal` audit row**, and the `/dashboard/india` UI uses a two-step confirm with a prominent "REAL MONEY" warning that never fires on first click. Auth is a **daily one-click Kite Connect v3 login** (`lib/kite.ts`, `app/api/kite/login|callback|status`): login → `request_token` → SHA256-checksum exchange → `access_token` stored in `api_key_vault` as `KITE_ACCESS_TOKEN`, treated as expired if not generated today. Reads and orders degrade to a "reconnect" state when the token is stale.
+Reason: India orders are real money with no paper buffer, so the confirm gate must be stricter than the US path — never agent-invoked, always explicit two-step confirm, always audited. The daily re-login is a SEBI regulatory constraint; automating it would require storing broker credentials, which is deliberately not done.
+Alternatives considered: Allow cron/agent-placed India orders (rejected — real money, no paper stage, unacceptable without a human); store broker credentials to auto-refresh the token (rejected — deliberately not storing credentials); a paper stage before real Kite orders (Decision 29 — INR/USD pool conflict).
+Impact: India execution requires a fresh one-click login each trading morning and an explicit two-step "REAL MONEY" confirm per order. No automated India trading path exists.
+Files/features affected: `lib/kite.ts`, `app/api/kite/login`, `app/api/kite/callback`, `app/api/kite/status`, `app/api/kite/portfolio`, `app/api/kite/order`, `app/dashboard/india`, `api_key_vault` (`KITE_ACCESS_TOKEN`), `decision_journal`, Settings → Agents connection card.
+Reversal cost: Medium (execution path is broker-specific; auth/token model is Kite/SEBI-specific)
