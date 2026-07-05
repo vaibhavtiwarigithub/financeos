@@ -46,6 +46,7 @@ const NAV_SECTIONS = [
     hint: "Review on Fridays or Mondays",
     items: [
       { href: "/dashboard/live-portfolio", label: "Live Portfolio",   icon: "◉", hint: "Live Robinhood holdings, P&L, performance charts, transaction history", alertCat: "" },
+      { href: "/dashboard/india",          label: "India",             icon: "🇮🇳", hint: "NSE stocks · Zerodha Kite", alertCat: "" },
       { href: "/dashboard/portfolio",  label: "Paper Portfolio",  icon: "◈", hint: "Paper positions, P&L, open trades",  alertCat: "portfolio" },
       { href: "/dashboard/risk",       label: "Risk Analytics",   icon: "⚠", hint: "Beta, VaR, sector concentration across all accounts", alertCat: "" },
       { href: "/dashboard/calendar",   label: "Earnings Calendar",icon: "▦", hint: "Upcoming earnings for watchlist",     alertCat: "earnings" },

@@ -79,16 +79,39 @@ export async function getAccessToken(svc?: any): Promise<{ token: string; fresh:
   return { token: value, fresh, updatedAt };
 }
 
-// Authenticated GET against the Kite REST API using the stored daily token.
-export async function kiteGet(path: string, svc?: any): Promise<{ ok: boolean; data?: any; error?: string }> {
-  const s = svc ?? createServiceClient();
+async function authHeaders(s: any): Promise<{ ok: true; headers: Record<string, string> } | { ok: false; error: string }> {
   const { apiKey } = await getKiteCreds(s);
   const { token, fresh } = await getAccessToken(s);
   if (!apiKey || !token) return { ok: false, error: "Kite not connected — log in via /api/kite/login" };
   if (!fresh) return { ok: false, error: "Kite token expired (daily) — re-login via /api/kite/login" };
+  return { ok: true, headers: { "X-Kite-Version": "3", Authorization: `token ${apiKey}:${token}` } };
+}
+
+// Authenticated GET against the Kite REST API using the stored daily token.
+export async function kiteGet(path: string, svc?: any): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const s = svc ?? createServiceClient();
+  const h = await authHeaders(s);
+  if (!h.ok) return { ok: false, error: h.error };
+  try {
+    const res = await fetch(`https://api.kite.trade${path}`, { headers: h.headers });
+    const json = await res.json();
+    if (!res.ok || json?.status !== "success") return { ok: false, error: json?.message ?? `Kite ${res.status}` };
+    return { ok: true, data: json.data };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+// Authenticated form-encoded POST (order placement etc).
+export async function kitePost(path: string, body: Record<string, string>, svc?: any): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const s = svc ?? createServiceClient();
+  const h = await authHeaders(s);
+  if (!h.ok) return { ok: false, error: h.error };
   try {
     const res = await fetch(`https://api.kite.trade${path}`, {
-      headers: { "X-Kite-Version": "3", Authorization: `token ${apiKey}:${token}` },
+      method: "POST",
+      headers: { ...h.headers, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(body),
     });
     const json = await res.json();
     if (!res.ok || json?.status !== "success") return { ok: false, error: json?.message ?? `Kite ${res.status}` };
@@ -96,4 +119,29 @@ export async function kiteGet(path: string, svc?: any): Promise<{ ok: boolean; d
   } catch (e) {
     return { ok: false, error: String(e) };
   }
+}
+
+export async function getKiteHoldings(svc?: any) {
+  return kiteGet("/portfolio/holdings", svc);
+}
+
+// Place a real equity order (POST /orders/regular). CNC = delivery (cash &
+// carry), the right product for holding equity. Only called from a
+// user-initiated, explicitly-confirmed request — never auto-fired.
+export async function placeEquityOrder(opts: {
+  tradingsymbol: string; exchange?: string; transaction_type: "BUY" | "SELL";
+  quantity: number; order_type?: "MARKET" | "LIMIT"; price?: number;
+  product?: "CNC" | "MIS" | "NRML"; validity?: "DAY" | "IOC";
+}, svc?: any): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const body: Record<string, string> = {
+    tradingsymbol: opts.tradingsymbol.replace(/\.(NS|BO)$/i, ""), // Kite wants the bare symbol
+    exchange: opts.exchange ?? (opts.tradingsymbol.toUpperCase().endsWith(".BO") ? "BSE" : "NSE"),
+    transaction_type: opts.transaction_type,
+    order_type: opts.order_type ?? "MARKET",
+    quantity: String(Math.max(1, Math.floor(opts.quantity))),
+    product: opts.product ?? "CNC",
+    validity: opts.validity ?? "DAY",
+  };
+  if ((opts.order_type ?? "MARKET") === "LIMIT" && opts.price != null) body.price = String(opts.price);
+  return kitePost("/orders/regular", body, svc);
 }
