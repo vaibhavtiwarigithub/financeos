@@ -319,3 +319,45 @@ Alternatives considered: Keep hardcoded widget; in-app schedule editing (needs O
 Impact: New Automation page; leaner nav.
 Files/features affected: `lib/schedule.ts`, `app/dashboard/settings/automation/`, `app/api/automation/schedule/`, `DashboardShell.tsx`, `scripts/*.ps1`.
 Reversal cost: Low
+
+### Decision 21: Sector chart — real TradingView widget, not a custom Massive-backed chart
+
+Date: 2026-07-04
+Status: Approved
+Category: Architecture / Data
+
+Context: The Sector Correlation chart on Markets was custom-built against Massive candle data. Root-caused a missing pagination bug (`next_url` wasn't followed, so 1Y+ periods silently returned the same truncated data as 3M — commit `bc07c7a`). Fixing pagination then exposed a real provider limit, not a code bug: Massive's free tier hard-caps every aggs response at ~500 bars with no pagination beyond that (confirmed via direct API call requesting 2016–2026 and getting back only the most recent ~500 bars).
+Decision: Replace the custom Massive-backed sector chart entirely with TradingView's real widget. First tried the free "Symbol Overview" embed (`77f371f`) — it did not hydrate reliably in real testing (empty section on the Markets page). Landed on reusing the same `TradingViewChart` component (real tv.js Advanced Chart widget — full toolbar, indicators, real period buttons) already proven on the symbol detail page, with a tab switcher across the 11 sector ETFs, since TradingView's free tier has no combined multi-symbol overlay/correlation chart (`9f81fd5`).
+Reason: Massive's free tier cannot support long-lookback sector correlation no matter how the code is written; TradingView's real widget gives accurate, full-history charting per sector today without waiting on a paid Massive plan.
+Alternatives considered: Upgrade Massive plan (cost, deferred); keep the custom chart capped at ~2yr lookback for 3Y/5Y/10Y (misleading — those periods would silently show the same window); free "Symbol Overview" embed (tried first, didn't render reliably).
+Impact: Sector Correlation section on Markets is now single-symbol-at-a-time (tab per sector ETF) rather than a combined overlay chart, in exchange for accurate, full-toolbar real-time charting per sector.
+Files/features affected: `components/charts/SectorTradingViewOverview.tsx` (new); removed `components/charts/SectorLineChart.tsx` and `app/api/charts/sector-history/route.ts`.
+Reversal cost: Low (additive — a combined overlay could be reintroduced later on a paid Massive tier or a different data provider)
+
+### Decision 22: Privacy Mode — mask live-account dollar figures by default
+
+Date: 2026-07-04
+Status: Approved
+Category: Product / UX
+
+Context: Live Robinhood account figures (equity, buying power, position values, P&L) render in plaintext on Dashboard home and Live Portfolio — a problem for screen-sharing, screenshots, or anyone glancing at the screen.
+Decision: An eye-icon toggle on both surfaces masks these figures by default; clicking reveals them. The reveal state is plain `useState`, not persisted, so it resets to hidden on every navigation away and back — no extra logic needed to "re-hide." A master on/off switch lives in Settings → Preferences, persisted to `localStorage` (`components/dashboard/PrivacyMask.tsx`).
+Reason: Default-hidden is the safer default for a dashboard that's frequently open during screen-shares; per-mount reset means the user never has to remember to re-hide; a master switch lets users who don't need this (private single-user desktop) turn it off entirely.
+Alternatives considered: Persist the reveal state across navigation (risk of numbers staying visible after the user forgets); no default masking (status quo, rejected as the motivating problem); server-side masking (unnecessary — this is a display-only concern with no security boundary implication).
+Impact: New shared component; two consuming surfaces (Dashboard home "Live Robinhood" panel, Live Portfolio page).
+Files/features affected: `components/dashboard/PrivacyMask.tsx` (new), `components/dashboard/DashboardHome.tsx`, `components/dashboard/LivePortfolioPage.tsx`, `app/dashboard/settings/page.tsx`.
+Reversal cost: Low
+
+### Decision 23: execClaude/MCP tool-calling gap — OPEN, decision needed, not yet resolved
+
+Date: 2026-07-04
+Status: **Open — not resolved. Requires explicit user sign-off before any fix.**
+Category: Architecture / Security
+
+Context: An audit this session found that `execClaude` (`lib/claude-exec.ts`) runs the Claude Code CLI as a plain text-completion subprocess — no `ANTHROPIC_API_KEY`, no MCP server config attached anywhere. It structurally cannot call any MCP tool (Robinhood, FinancialDatasets, etc.) no matter what its prompt asks for; the pattern in every call site is "ask the model to call a tool it can't reach, trust whatever text comes back." Confirmed call sites: `lib/research-agent.ts` (`fetchAndStoreAccountSnapshot` and `runScreener` — meaning the CLAUDE.md-mandated dual-bucket momentum/value screener has likely never produced real candidates via this path), `app/api/mentor/evaluate/route.ts` (worst case: could silently write hallucinated "verified" fundamental data into `trade_journal` as fact), `app/api/portfolio/live-holdings/route.ts`, `lib/market-data.ts`, `app/api/portfolio/robinhood/route.ts`, `lib/chart-data.ts` (two functions), and — highest severity — `app/api/agents/trader/route.ts` and `app/api/agents/trade/approve/route.ts`, the real-money order-execution paths for account `605420660`, which gate "order submitted to Robinhood" entirely on a `success: true` JSON flag `execClaude` cannot authentically produce. It currently fails toward `success: false` in practice rather than fabricating a fill, but this is not a code guarantee — there is no independent verification step.
+Decision: **Not resolved.** This entry exists to flag the risk and lock in why `trading_mode = disabled` must stay in place (per CLAUDE.md) until a real fix ships. No code change has been made against this finding.
+Reason: This is exactly the class of risk Decision 3 (Evidence, Data, and Online Research Policy) was written to prevent — LLM-mediated "tool calls" that aren't real must not be trusted as evidence or as execution confirmation, especially on the order-placement path.
+Alternatives considered (proposed, none implemented yet): (a) Rebuild these call sites as direct, typed API calls with no LLM asked to "call" a tool in the loop — most consistent with Decision 3; (b) add a real `ANTHROPIC_API_KEY` so `execClaude`'s replacement can use genuine MCP tool-calling; (c) leave as-is and rely on `trading_mode = disabled` — acceptable short-term only, not a fix.
+Impact: Until resolved, do not enable live trading; do not trust `research-agent.ts`'s screener output as verified against real MCP data; treat `mentor/evaluate` "verified" fundamentals with suspicion.
+Files/features affected: `lib/claude-exec.ts`, `lib/research-agent.ts`, `app/api/mentor/evaluate/route.ts`, `app/api/portfolio/live-holdings/route.ts`, `lib/market-data.ts`, `app/api/portfolio/robinhood/route.ts`, `lib/chart-data.ts`, `app/api/agents/trader/route.ts`, `app/api/agents/trade/approve/route.ts`.
+Reversal cost: N/A (nothing reversed — decision on the fix approach is pending)

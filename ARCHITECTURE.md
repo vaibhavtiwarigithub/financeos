@@ -389,6 +389,42 @@ Returns: `total_enriched`, `wins`, `losses`, `avg_outcome_score`, `regime_breakd
 
 ---
 
+## Session 2026-07-04 (late) — Bug Sweep: Sector Chart, Briefing, Newsletter, Live Account, Paper Prices, Privacy Mode
+
+### Sector Correlation Chart — Replaced with Real TradingView Widget
+Root-caused `bc07c7a` (missing pagination — `next_url` wasn't followed, so 1Y+ periods returned the same truncated data as 3M) and fixed the stagger/429 handling on `/api/charts/sector-history` and `/api/charts/sector-returns`. Discovered a real data-provider limit while validating: Massive free tier hard-caps every aggs response at ~500 bars with no pagination beyond that — confirmed via direct API call requesting 2016–2026 and getting back only the most recent ~500 bars. Per explicit user decision, the custom Massive-backed sector chart was replaced entirely:
+- First attempt (`bc07c7a`... `77f371f`): free TradingView "Symbol Overview" embed — did not hydrate reliably in real testing (empty section on Markets page).
+- Final (`9f81fd5`): same `TradingViewChart` component (real tv.js Advanced Chart widget — full toolbar/indicators/real period buttons) already used on the symbol detail page, with a tab switcher across the 11 sector ETFs (TradingView's free tier has no combined multi-symbol overlay/correlation chart).
+- **Removed:** `components/charts/SectorLineChart.tsx`, `app/api/charts/sector-history/route.ts` (custom Massive-backed sector chart superseded — see Decision 21 in PROJECT_DECISIONS.md for the swap rationale).
+- **New:** `components/charts/SectorTradingViewOverview.tsx`.
+
+### Daily Briefing — Weekend Recap (`909bcc4`)
+The in-app "editor's note" always used the daily-actionable-items prompt, producing a bland "nothing to do" message on weekends. Added a weekend-specific prompt (in `app/api/briefing/generate/route.ts`) synthesizing the last 7 days (paper P&L, live account, agent runs/signals written, closed trades, mentor grade) and the week ahead (regime, earnings, watchlist) — moved the underlying queries earlier in the function so the in-app note can use them, not just the email.
+
+### Newsletter History Wiring (`909bcc4`)
+The `newsletters` table (read by Intelligence → Newsletter tab for full send history) had zero rows ever — the working email path only wrote to `briefings`. Wired `sendBriefingEmail` to also insert into `newsletters` on successful send (subject, html body, Resend message id, NAV/signals/positions snapshot).
+
+### Market Synthesis Cache-Poisoning Fix (`909bcc4`)
+A transient all-8-indicators Massive fetch failure got cached into `briefings` unconditionally, showing "Synthesis unavailable" for the rest of the day even after Massive recovered. Fixed to cache only on success in `app/api/markets/synthesis/route.ts`.
+
+### Live Robinhood Account Showing $0/$0 Dashboard-Wide (`359b2c6`)
+Two real bugs, verified against the actual Robinhood app (equity $158,297.95, buying power $136,641.22, HOOD/LNG/CRWV/DBA positions — now matches exactly):
+1. `live_account_snapshots` has a unique constraint on `account_id` (one row per account, not a history table). Both `scripts/sync_robin.py` and the `app/api/live-account/snapshot` POST did a plain INSERT — first write per account succeeded, every subsequent write crashed with a silent duplicate-key error (Task Scheduler doesn't surface Python tracebacks in-app). Switched both to upsert on `account_id`.
+2. Every read of that table (dashboard home, briefing generator, snapshot GET route) queried "most recent snapshot" across all 3 accounts sharing the table (Agentic/Autopilot/Trading) with no `account_id` filter — could silently surface the wrong account's data under the hardcoded "••••8641" label. Added `.eq("account_id", "965848641")` everywhere it was missing.
+
+### Stale Paper-Trading Position Prices (`9165958`)
+Symptom: META stuck at its $551 entry price for a week despite trading at $584 for real. Root cause: `paper_positions` has no `closed_at` column and no `created_at` (real column is `opened_at`) — the table's closing model is delete-the-row-on-close, not a soft-close flag. Both `app/api/agents/position-monitor/route.ts` and `app/api/agents/learner/route.ts` (Phase A rule-based trade reassessment) queried `.is("closed_at", null)` against this nonexistent column; Supabase errored, the code only destructured `{ data }` and never checked `error`, so both routes silently received an empty array on every run since they were written — stop-loss/trailing-stop checks, price refreshes, and llm_exit flag handling were a complete no-op the entire time. Fixed both queries, fixed the `opened_at` column name, fixed a stray `api.polygon.io` endpoint (rest of the app uses `api.massive.com`), and rewrote position-close logic to match the real schema (delete the `paper_positions` row + mark the matching open `paper_trades` row(s) closed with exit_price/realized_pnl/pnl_pct/outcome — those columns live on `paper_trades`, not `paper_positions`). Also fixed briefing/generate's "Learning Log" section, which queried a `learning_log` table for symbol/outcome/note columns that don't exist there (`learning_log` is the LearnerAgent's own weight-mutation audit log, unrelated schema) — switched to querying recently-closed `paper_trades` rows instead.
+
+Same commit also fixed: `lib/data/quotes.ts`'s `getBatchQuotes`/`fetchAVQuote` called Alpha Vantage uncached on every request (up to ~26 symbols per Live Portfolio page load), exhausting the 25-calls/day free tier — wired in the existing `lib/av-cache.ts` day-cache wrapper. And `app/api/live-portfolio/route.ts` computed `currentPrice = q?.price ?? fallback`, but a failed quote has `price: 0` explicitly (not null/undefined), so `??` never triggered the fallback — every holding with a failed quote showed `currentValue: $0`, producing a false "-100% total loss" on the whole portfolio. Fixed to fall back to avg cost (honest 0% unrealized P&L) instead.
+
+### Privacy Mode (new feature, this session)
+Eye-icon toggle on Dashboard home's "Live Robinhood" panel and the Live Portfolio page that masks live-account dollar figures (equity, buying power, position values, P&L) by default. Click the eye to reveal; resets to hidden automatically on navigating away and back (plain React state, not persisted — a fresh mount always starts masked). Master on/off switch in Settings → Preferences (localStorage-backed). Shared hook/component module: `components/dashboard/PrivacyMask.tsx` (`isPrivacyEnabled`, `usePrivacySetting`, `useRevealToggle`, `EyeToggle`). See Decision 22 in PROJECT_DECISIONS.md.
+
+### Known Architecture Risk Documented This Session
+See "Known Architecture Risk — execClaude / MCP Tool-Calling Gap" section above and Decision 23 in PROJECT_DECISIONS.md. Not fixed — flagged for explicit user sign-off.
+
+---
+
 ## Planned Architecture — [REVIEW PENDING — ChatGPT]
 
 Items below are approved for architecture review. Not yet implemented. Each section marked with status.
@@ -513,6 +549,72 @@ These items identified from AIMultiple synthesis and current gaps. Not yet archi
 | Python Validation Engine | High (Phase 1 gate) | Required before strategy promotion. Deterministic backtesting with historical replay. FEATURE_ARCHITECTURE.md documents spec. |
 | Strategy Registry UI | Medium | `strategy_versions` table exists; no UI to promote/retire/view challengers. |
 | Learner Brain/Controls UI | Medium | Routes exist (`/api/agents/learner-brain`, `/api/agents/learner-controls`) but no UI panel. |
+
+---
+
+## Dashboard Navigation Map — [FOR EXTERNAL REVIEW]
+
+Authoritative source: `components/dashboard/DashboardShell.tsx` (nav array). Every left-nav item, what it shows, and what backs it — written so an external reviewer with live localhost access can open each page and know what to test.
+
+### Daily group
+
+| Nav item | Path | Shows | Backed by |
+|---|---|---|---|
+| Morning Briefing | `/dashboard` | Home/landing page: live Robinhood account card (equity, buying power, positions — Privacy Mode eye toggle), paper portfolio snapshot, today's agent signals, MacroSentinel regime banner, LLM cost banner (if projected daily > $2), Mentor grade teaser | `app/dashboard/page.tsx`; `live_account_snapshots` (filtered `.eq("account_id","965848641")`), `paper_positions`, `paper_trades`, `agent_signals`, `macro_regime`, `llm_call_log` |
+| Markets | `/dashboard/markets` | Index quotes, Sector Performance heatmap, Market Synthesis (risk-on/neutral/risk-off from ETF proxies), Sector Breadth (1W–1Y period selector), Sector chart (TradingView tv.js Advanced Chart, tab-switcher across 11 sector ETFs), VIX proxy, insider/congressional trade tabs | `components/dashboard/MarketsPage.tsx`, `components/charts/SectorTradingViewOverview.tsx`; `/api/markets/synthesis`, `/api/markets/breadth`, `/api/markets/insider-trades`, `/api/charts/sector-history`, `/api/charts/sector-returns`; `briefings` (session='synthesis', cache) |
+| Intelligence | `/dashboard/intelligence` | Agent signals feed, research run history, Newsletter tab (full send history) | `app/dashboard/intelligence/`; `agent_signals`, `newsletters` (subject/html/Resend message id/NAV+signals+positions snapshot — written on successful send alongside `briefings`) |
+| Agents | `/dashboard/agents` | Manual run triggers per agent, agent config/LLM model picker, Experiments tab (champion/challenger + backtest), Proposals tab (TraderAgent approve/reject), Learner Controls tab, Weight History tab, Deep-Dive tab | `components/dashboard/AgentsPage.tsx`; `/api/agents/research`, `/api/agents/trader`, `/api/agents/learner`, `/api/agents/learner-controls`, `/api/agents/learner-brain`, `/api/agents/backtest`, `/api/agents/deep-dive`, `/api/strategies/versions`; `agent_config`, `strategy_versions`, `trade_proposals` |
+| Agent History | `/dashboard/agents/history` | Every agent run: what it did, result, handoff, cost, tokens, manual vs scheduled trigger source; filter and delete | `/api/agents/*` run logs; `llm_call_log`, `agent_signals` |
+| Smart Money | `/dashboard/smart-money` | Trade queue, insider flow, options flow, congressional trades, multi-asset signals across asset-class tabs | `components/dashboard/SmartMoneyPage.tsx`; `/api/markets/smart-money`, `/api/markets/edgar-insiders` |
+
+### Weekly group
+
+| Nav item | Path | Shows | Backed by |
+|---|---|---|---|
+| Live Portfolio | `/dashboard/live-portfolio` | All Robinhood account positions (live, Privacy Mode eye toggle), performance chart, CSV import/manage panel, "Analyze Now" enrichment, trade decisions table with macro tags | `components/dashboard/LivePortfolioPage.tsx`; `/api/live-portfolio`, `/api/live-portfolio/performance`, `/api/live-portfolio/import-csv`, `/api/live-portfolio/files`, `/api/live-portfolio/decisions`, `/api/live-portfolio/enrich`; `live_account_snapshots`, `uploaded_trade_files`, `trade_decisions` |
+| Paper Portfolio | `/dashboard/portfolio` | Paper positions, P&L, open trades, exit management (stop/target/trailing) | `paper_positions`, `paper_trades`; `/api/agents/position-monitor`, `/api/agents/paper-trade` |
+| Risk Analytics | `/dashboard/risk` | Beta, VaR, sector concentration across all accounts | `app/dashboard/risk/`; live + paper position data |
+| Earnings Calendar | `/dashboard/calendar` | Upcoming earnings for watchlist symbols | `/api/calendar` (Massive API, no LLM) |
+| Strategies | `/dashboard/strategies` | Two tabs: Fit Scores (7 strategy templates) + Algo Library (8 strategies) | `/api/strategies`, `/api/strategies/versions`; `strategy_config`, `strategy_versions` |
+| Scanner | `/dashboard/scanner` | Screen stocks by technical + fundamental conditions | `/api/scanner`(FinancialDatasets `screen_stocks`) |
+| Backtest | `/dashboard/backtest` | Replay agent signals against historical prices — win rate, Sharpe, alpha, drawdown; "How this works" explainer | `/api/agents/backtest`; `agent_signals`, `price_cache`, `experiment_runs` |
+| Watchlist | `/dashboard/watchlist` | AI-curated (Theme Scout) + manual symbols; ticker autocomplete; always-visible why-added; per-symbol toggles (research_enabled, alert_on_signal, alert_on_earnings) | `components/dashboard/WatchlistPanel.tsx`; `/api/watchlist` |
+
+### Learn group
+
+| Nav item | Path | Shows | Backed by |
+|---|---|---|---|
+| Mentor | `/dashboard/mentor` | Judgment score chart (Recharts, reference lines 50/70/90), AI Coach tab (grade + confidence, strengths, focus areas, market-tailored lesson, next milestone), 6-axis behavior radar | `/api/mentor/scores`, `/api/agents/mentor-coach`; `mentor_insights`, `trade_journal` |
+| Decision Journal | `/dashboard/journal` | Audit trail of every signal, fill, exit, and experiment decision; links signal → fill → outcome | `/api/journal`; `decision_journal` |
+
+### Settings group
+
+| Nav item | Path | Shows | Backed by |
+|---|---|---|---|
+| Settings | `/dashboard/settings` | App configuration: risk profile presets, market_focus multi-select, API key vault (PIN-protected), Privacy Mode master on/off switch (Preferences) | `/api/settings/risk-profile`, `/api/vault`; `strategy_config`, `app_settings` |
+| Automation | `/dashboard/settings/automation` | Read-only view of all scheduled jobs — times, runner (Windows Task Scheduler), last/next run | `lib/schedule.ts` (single source of truth); `/api/automation/schedule` |
+
+### Admin (separate from main nav groups)
+
+| Nav item | Path | Shows | Backed by |
+|---|---|---|---|
+| Admin | `/dashboard/admin` | API keys, vault management, agent config, LLM cost monitor (burn rate, projected daily, per-model breakdown, 24-bar hourly chart), LLM call history | `/api/admin/llm-costs`, `/api/vault`; `llm_call_log`, `agent_config` |
+
+---
+
+## Known Architecture Risk — execClaude / MCP Tool-Calling Gap [OPEN, NOT FIXED]
+
+**Flagging prominently — do not treat as resolved.**
+
+`lib/claude-exec.ts` (`execClaude`) runs the Claude Code CLI as a plain text-completion subprocess: no `ANTHROPIC_API_KEY`, no MCP server config attached. It structurally cannot call any MCP tool (Robinhood, FinancialDatasets, etc.) regardless of what its prompt asks for — the model can only return text, which calling code then trusts as if a tool had actually run.
+
+**Confirmed call sites (audit, current session):**
+- `lib/research-agent.ts` — `fetchAndStoreAccountSnapshot` and `runScreener` (the CLAUDE.md-mandated dual-bucket momentum/value screener has likely never produced real candidates via this path)
+- `app/api/mentor/evaluate/route.ts` — worst case, could silently write hallucinated "verified" fundamental data into `trade_journal` as fact
+- `app/api/portfolio/live-holdings/route.ts`, `app/api/portfolio/robinhood/route.ts`, `lib/market-data.ts`, `lib/chart-data.ts` (two functions)
+- **Highest severity:** `app/api/agents/trader/route.ts` and `app/api/agents/trade/approve/route.ts` — the real-money order-execution paths for account `605420660`. These gate "order submitted to Robinhood" on a `success: true` JSON flag that `execClaude` cannot authentically produce. In practice it currently fails toward `success: false` rather than fabricating a fill, but this is not a code guarantee — there is no independent verification step.
+
+**Why this matters:** CLAUDE.md's `trading_mode = disabled` lock must stay in place until this is rebuilt as a direct, typed API call with no LLM "calling" a tool in the loop. This is an open decision needing explicit user sign-off before any fix — see Decision 21 in PROJECT_DECISIONS.md.
 
 ---
 

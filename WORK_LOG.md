@@ -20,6 +20,26 @@
 
 ---
 
+## ✅ Session 2026-07-04 (late — bug sweep: sector chart, briefing, live account, paper prices, privacy mode)
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Sector chart pagination fix + Massive 500-bar cap discovery | Claude | 2026-07-04 | `bc07c7a` — `next_url` wasn't followed on 1Y+ periods; fixed, then found a real provider limit: Massive free tier caps aggs responses at ~500 bars, no pagination beyond that |
+| Sector chart replaced with real TradingView widget | Claude | 2026-07-04 | `77f371f` (Symbol Overview embed — didn't hydrate reliably) → `9f81fd5` (final: reused `TradingViewChart` tv.js Advanced Chart component from symbol detail page, tab switcher across 11 sector ETFs). Removed `components/charts/SectorLineChart.tsx` + `app/api/charts/sector-history/route.ts`. See Decision 21. |
+| Weekend briefing recap | Claude | 2026-07-04 | `909bcc4` — weekend-specific editor's-note prompt synthesizing last 7 days + week ahead, replacing the bland "nothing to do" daily prompt |
+| Newsletter history wiring | Claude | 2026-07-04 | `909bcc4` — `sendBriefingEmail` now also inserts into `newsletters` table on send; Intelligence → Newsletter tab was always empty before this |
+| Market Synthesis cache-poisoning fix | Claude | 2026-07-04 | `909bcc4` — only cache synthesis result to `briefings` on success, not on transient Massive failure |
+| Live Robinhood account $0/$0 fix | Claude | 2026-07-04 | `359b2c6` — upsert (not insert) on `live_account_snapshots`; added missing `.eq("account_id", "965848641")` filter everywhere reads lacked it; verified against real Robinhood app |
+| Stale paper position prices fix (META stuck at entry price) | Claude | 2026-07-04 | `9165958` — `position-monitor` + `learner` routes queried nonexistent `closed_at` column, silently no-op'd every run since written; fixed queries, fixed `opened_at` column name, fixed stray polygon.io endpoint, rewrote close logic to match real schema (delete `paper_positions` row, close matching `paper_trades` row) |
+| Alpha Vantage day-cache wired into batch quotes | Claude | 2026-07-04 | Same commit `9165958` — `getBatchQuotes`/`fetchAVQuote` were uncached, burning the 25/day AV quota on every Live Portfolio load |
+| Live Portfolio false "-100% total loss" fix | Claude | 2026-07-04 | Same commit `9165958` — `q?.price ?? fallback` never triggered on explicit `price: 0`; now falls back to avg cost honestly |
+| Briefing "Learning Log" query fix | Claude | 2026-07-04 | Same commit `9165958` — was querying nonexistent columns on `learning_log` (that table is the learner's own weight-mutation audit log); switched to querying recently-closed `paper_trades` |
+| Privacy Mode (new feature) | Claude | 2026-07-04 | Eye-icon toggle masks live-account dollar figures on Dashboard home + Live Portfolio, default-hidden, resets on remount; master switch in Settings → Preferences (localStorage). `components/dashboard/PrivacyMask.tsx`. See Decision 22. **Uncommitted as of this entry.** |
+| execClaude/MCP tool-calling architecture audit | Claude | 2026-07-04 | **NOT FIXED — flagged only.** `execClaude` cannot call MCP tools (no API key, no MCP config); every "tool call" it makes is trusted text output. Found in `research-agent.ts` screener, `mentor/evaluate`, and — highest severity — the real-money order paths `agents/trader` + `agents/trade/approve`. Requires explicit user sign-off before fixing. See Decision 23 and ARCHITECTURE.md "Known Architecture Risk" section. |
+| ARCHITECTURE.md dashboard nav map | Claude | 2026-07-04 | Added full nav-item-by-nav-item map (path, what it shows, backing API/tables) so an external reviewer can test every page against documented behavior |
+
+---
+
 ## ✅ Session 2026-07-01 (latest — Kairos rename + wiring)
 
 | Task | Agent | Completed | Notes |
