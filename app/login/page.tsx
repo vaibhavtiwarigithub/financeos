@@ -42,8 +42,12 @@ export default function LoginPage() {
       setLoading(false);
       return;
     }
+    // Recovery links use Supabase's own token format (hash fragment or
+    // token_hash, not the ?code= PKCE param /auth/callback expects) — send
+    // straight to /reset-password, which listens for the PASSWORD_RECOVERY
+    // auth event instead of trying to exchange a code.
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
+      redirectTo: `${window.location.origin}/reset-password`,
     });
     if (error) setError(error.message ?? "Could not send reset email");
     else setSuccess("Password reset link sent — check your email.");

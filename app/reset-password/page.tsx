@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -15,9 +15,11 @@ const inp: React.CSSProperties = {
   padding: "11px 14px", outline: "none", boxSizing: "border-box",
 };
 
-// Reached only via the reset-password email link, which /auth/callback
-// exchanges for a real session before redirecting here — updateUser works
-// against that session, no separate token handling needed.
+// Reached via the reset-password email link. Supabase's recovery link
+// format (hash-fragment tokens, not a ?code= param) is handled by the
+// browser client automatically on load, which then fires a
+// PASSWORD_RECOVERY auth event — that's what gates showing the form,
+// rather than trying to exchange a code via /auth/callback.
 export default function ResetPasswordPage() {
   const supabase = createClient();
   const router = useRouter();
@@ -26,6 +28,21 @@ export default function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") { setReady(true); setChecking(false); }
+    });
+    // If the event already fired before this listener attached, a session
+    // will already be present — treat that as ready too.
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) setReady(true);
+      setChecking(false);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, [supabase]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -48,7 +65,16 @@ export default function ResetPasswordPage() {
           <h1 style={{ fontSize: "28px", fontWeight: 700, letterSpacing: "-0.02em" }}>Set new password</h1>
         </div>
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "32px" }}>
-          {success ? (
+          {checking ? (
+            <div style={{ color: T.muted, fontSize: "13px", textAlign: "center" }}>Verifying reset link...</div>
+          ) : !ready ? (
+            <div style={{ textAlign: "center" }}>
+              <div style={{ background: "#3B0000", border: `1px solid ${T.red}`, borderRadius: "8px", padding: "14px", color: T.red, fontSize: "13px", marginBottom: "16px" }}>
+                This reset link is invalid or expired.
+              </div>
+              <a href="/login" style={{ color: T.accent, fontSize: "13px", textDecoration: "none" }}>← Back to sign in</a>
+            </div>
+          ) : success ? (
             <div style={{ background: "#052E16", border: `1px solid ${T.green}`, borderRadius: "8px", padding: "14px", color: T.green, fontSize: "13px", textAlign: "center" }}>
               Password updated — redirecting to dashboard...
             </div>
