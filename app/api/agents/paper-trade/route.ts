@@ -72,12 +72,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No paper portfolio found" }, { status: 500 });
     }
 
-    // Only qualifying LONG signals not yet paper-traded (threshold from risk profile)
+    // Only qualifying LONG signals not yet paper-traded (threshold from risk
+    // profile). India (asset_class "india") is excluded — those are INR-priced
+    // NSE stocks and the paper_portfolio is a single USD pool; mixing currencies
+    // would corrupt NAV. India is scored + tracked (Score Tracker / signals) and
+    // acted on via real Kite orders, not USD paper fills.
     const { data: signals } = await supabase
       .from("agent_signals")
       .select("*")
       .eq("status", "pending")
       .eq("direction", "long") // long-only enforcement
+      .neq("asset_class", "india")
       .gte("analyst_score", scoreThreshold)
       .order("analyst_score", { ascending: false })
       .limit(5);

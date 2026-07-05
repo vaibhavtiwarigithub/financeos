@@ -4,6 +4,8 @@ import { fetchSocialSentiment, SocialSentiment } from "@/lib/social-sentiment";
 import { fetchOptionsSignal, OptionsSignal } from "@/lib/options-signal";
 import { computeScores, type ComputedScores } from "@/lib/data/scores";
 import type { Candle } from "@/lib/data/technicals";
+import { isIndia, fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
+import { niftyCandidates } from "@/lib/india-universe";
 
 // Insider scoring: fetch from Alpha Vantage INSIDER_TRANSACTIONS
 async function scoreInsider(symbol: string, avKey: string): Promise<{ score: number; summary: string }> {
@@ -243,11 +245,15 @@ export async function gatherSymbols(
   manualOverride?: string[]
 ): Promise<SymbolEntry[]> {
   if (manualOverride && manualOverride.length > 0) {
-    return manualOverride.map(s => ({
-      symbol: s.toUpperCase(),
-      isHeld: false,
-      isEtf: isEtfSymbol(s),
-    }));
+    return manualOverride.map(s => {
+      const sym = s.toUpperCase();
+      return {
+        symbol: sym,
+        isHeld: false,
+        isEtf: isEtfSymbol(sym),
+        assetClass: isIndia(sym) ? "india" : (isEtfSymbol(sym) ? "etf" : "us_equity"),
+      };
+    });
   }
 
   // fetchAndStoreAccountSnapshot is truly fire-and-forget: not in Promise.all (avoids its 90s cold-start blocking the pipeline)
@@ -312,7 +318,20 @@ export async function gatherSymbols(
     }
   }
 
-  return [...nonMetals, ...metals, ...regionEtfs];
+  // India: when the user's focus includes India, add direct NSE stocks (from
+  // the NIFTY list) scored via Yahoo — real Indian equities, not just US-listed
+  // India ETFs. asset_class "india" so PaperTrader skips them (they're priced
+  // in INR and must not enter the USD paper pool — India acts via Kite).
+  const indiaSymbols: SymbolEntry[] = [];
+  if (focusRegions.includes("India")) {
+    for (const sym of niftyCandidates(8)) {
+      if (seenAll.has(sym)) continue;
+      seenAll.add(sym);
+      indiaSymbols.push({ symbol: sym, isHeld: false, isEtf: false, assetClass: "india" });
+    }
+  }
+
+  return [...nonMetals, ...metals, ...regionEtfs, ...indiaSymbols];
 }
 
 const DOCTRINE_PREAMBLE = `## Reasoning doctrine (non-negotiable)
@@ -622,13 +641,19 @@ export async function processSymbol(
   const source: string = isHeld ? "holding" : "screener";
   const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
 
+  // India (.NS/.BO) uses Yahoo (free) for fundamentals + candles instead of
+  // Alpha Vantage/FinancialDatasets, which are US-only. Social sentiment and
+  // options/insider (US-only sources) are skipped for India → those dimensions
+  // fall to their neutral baseline, which the score-detail panel flags honestly.
+  const india = isIndia(symbol);
+
   // Phase 0: fetch all real data in parallel — no LLM-generated numbers
   const [socialResult, optionsResult, insiderResult, avOverview, candles] = await Promise.all([
-    fetchSocialSentiment(symbol).catch(() => null),
-    isEtf ? Promise.resolve(null) : fetchOptionsSignal(symbol).catch(() => null),
-    isEtf ? Promise.resolve(null) : scoreInsider(symbol, avKey).catch(() => null),
-    fetchAVOverview(symbol, avKey).catch(() => ({})),
-    fetchAVCandles(symbol, avKey).catch(() => [] as Candle[]),
+    india ? Promise.resolve(null) : fetchSocialSentiment(symbol).catch(() => null),
+    (india || isEtf) ? Promise.resolve(null) : fetchOptionsSignal(symbol).catch(() => null),
+    (india || isEtf) ? Promise.resolve(null) : scoreInsider(symbol, avKey).catch(() => null),
+    india ? fetchIndiaOverview(symbol).catch(() => ({})) : fetchAVOverview(symbol, avKey).catch(() => ({})),
+    india ? fetchIndiaCandles(symbol).catch(() => [] as Candle[]) : fetchAVCandles(symbol, avKey).catch(() => [] as Candle[]),
   ]);
 
   // Compute all 5 scores deterministically from fetched data
