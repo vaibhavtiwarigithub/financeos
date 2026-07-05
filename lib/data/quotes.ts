@@ -6,7 +6,7 @@
 
 import { avCachedFetch } from "@/lib/av-cache";
 
-export type QuoteSource = "alpha_vantage" | "price_cache" | "unavailable";
+export type QuoteSource = "massive" | "alpha_vantage" | "price_cache" | "unavailable";
 
 export interface DeterministicQuote {
   symbol: string;
@@ -70,6 +70,64 @@ async function fetchAVQuote(symbol: string, avKey: string): Promise<Deterministi
   }
 }
 
+/**
+ * Batch-fetch quotes for many symbols in ONE Massive HTTP call via the
+ * "Full Market Snapshot" endpoint's `tickers` filter (Polygon-compatible
+ * `/v2/snapshot/locale/us/markets/stocks/tickers?tickers=A,B,C`), instead of
+ * one Alpha Vantage call per symbol. This is the primary batch path — AV
+ * (25 calls/day free tier) can't cover a ~26-symbol Live Portfolio refresh
+ * in a single page load, so every symbol past the first ~25 came back
+ * "unavailable" and fell back to avgCost (0% P&L, "—" day change).
+ * Massive is already used elsewhere in this repo (app/api/markets/overview,
+ * app/api/markets/quote(s)) via the same prev-day-bar pattern.
+ */
+async function fetchMassiveBatchQuotes(
+  symbols: string[],
+  apiKey: string
+): Promise<Record<string, DeterministicQuote>> {
+  const results: Record<string, DeterministicQuote> = {};
+  if (!apiKey || symbols.length === 0) return results;
+
+  // API allows up to 250 tickers per call; batch in chunks to be safe.
+  const chunks: string[][] = [];
+  for (let i = 0; i < symbols.length; i += 100) chunks.push(symbols.slice(i, i + 100));
+
+  for (const chunk of chunks) {
+    const retrievedAt = new Date().toISOString();
+    try {
+      const url = `https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(chunk.join(","))}&apiKey=${apiKey}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const tickers: any[] = data?.tickers ?? [];
+      for (const t of tickers) {
+        const sym = t?.ticker;
+        if (!sym) continue;
+        const price = t?.day?.c ?? t?.min?.c ?? t?.prevDay?.c;
+        if (!price || price <= 0) continue;
+        const prevClose = t?.prevDay?.c;
+        const change = t?.todaysChange ?? (prevClose ? price - prevClose : null);
+        const changePct = t?.todaysChangePerc ?? (prevClose ? ((price - prevClose) / prevClose) * 100 : null);
+        results[sym] = {
+          symbol: sym,
+          price,
+          bid: t?.lastQuote?.p ?? null,
+          ask: t?.lastQuote?.P ?? null,
+          change: change ?? null,
+          changePct: changePct ?? null,
+          source: "massive",
+          retrievedAt,
+          stale: false,
+        };
+      }
+    } catch {
+      // fall through — leaves this chunk's symbols to be filled by AV/cache fallback
+    }
+  }
+
+  return results;
+}
+
 /** Try price_cache for most recent closing price (EOD fallback) */
 async function fetchCachedQuote(symbol: string, supabase: any): Promise<DeterministicQuote | null> {
   try {
@@ -124,20 +182,34 @@ export async function getQuote(symbol: string, supabase: any): Promise<Determini
 }
 
 /**
- * Batch quote fetch — one AV call per symbol (up to 25/day budget).
- * Returns map of symbol → quote.
+ * Batch quote fetch.
+ * Priority: Massive snapshot (one HTTP call for all symbols) → Alpha Vantage
+ * per-symbol (only for whatever Massive didn't cover) → price_cache → unavailable.
+ * Massive is primary because AV's 25 calls/day free tier can't cover a
+ * ~26-symbol portfolio refresh — see fetchMassiveBatchQuotes above.
  */
 export async function getBatchQuotes(
   symbols: string[],
   supabase: any
 ): Promise<Record<string, DeterministicQuote>> {
   const results: Record<string, DeterministicQuote> = {};
-  // Parallel with small concurrency limit to avoid AV rate-limiting
-  const chunks: string[][] = [];
-  for (let i = 0; i < symbols.length; i += 5) chunks.push(symbols.slice(i, i + 5));
-  for (const chunk of chunks) {
-    await Promise.all(chunk.map(async s => { results[s] = await getQuote(s, supabase); }));
+  if (symbols.length === 0) return results;
+
+  const massiveKey = process.env.MASSIVE_API_KEY ?? "";
+  const massiveResults = await fetchMassiveBatchQuotes(symbols, massiveKey);
+  Object.assign(results, massiveResults);
+
+  const remaining = symbols.filter(s => !results[s]);
+  if (remaining.length > 0) {
+    // Fall back to AV per-symbol / price_cache for whatever Massive missed.
+    // Small concurrency limit to avoid AV rate-limiting.
+    const chunks: string[][] = [];
+    for (let i = 0; i < remaining.length; i += 5) chunks.push(remaining.slice(i, i + 5));
+    for (const chunk of chunks) {
+      await Promise.all(chunk.map(async s => { results[s] = await getQuote(s, supabase); }));
+    }
   }
+
   return results;
 }
 

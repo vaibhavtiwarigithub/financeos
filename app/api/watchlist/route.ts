@@ -27,7 +27,24 @@ export async function GET() {
     .or(`expires_at.is.null,expires_at.gt.${now}`)
     .order("created_at", { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ items: data ?? [] });
+
+  // Dedupe by symbol. Auto-added rows (theme-scout, briefing, etc.) can have a
+  // null user_id, which means the DB's unique(user_id, symbol) constraint never
+  // catches repeat inserts for the same symbol (NULL <> NULL in Postgres). Keep
+  // the most recent row per symbol so the list — and any count derived from it —
+  // reflects the real distinct number of symbols being tracked/researched.
+  const bySymbol = new Map<string, (typeof data)[number]>();
+  for (const row of data ?? []) {
+    const existing = bySymbol.get(row.symbol);
+    if (!existing || new Date(row.created_at).getTime() > new Date(existing.created_at).getTime()) {
+      bySymbol.set(row.symbol, row);
+    }
+  }
+  const deduped = [...bySymbol.values()].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+
+  return NextResponse.json({ items: deduped });
 }
 
 export async function POST(req: NextRequest) {

@@ -852,16 +852,17 @@ interface MacroSignal {
 interface MacroRegime {
   week_of: string;
   danger_score: number;
-  regime: "green" | "yellow" | "orange" | "red";
+  regime: "green" | "yellow" | "orange" | "red" | "unknown";
   signals_triggered: number;
   summary: string | null;
 }
 
 const REGIME_STYLES: Record<string, { bg: string; color: string; border: string }> = {
-  green:  { bg: "#0d2218", color: "#34D399", border: "#1a3a24" },
-  yellow: { bg: "#1a1500", color: "#FBBF24", border: "#3a2e00" },
-  orange: { bg: "#2a1000", color: "#FB923C", border: "#3a2000" },
-  red:    { bg: "#2a0000", color: "#F87171", border: "#3a0000" },
+  green:   { bg: "#0d2218", color: "#34D399", border: "#1a3a24" },
+  yellow:  { bg: "#1a1500", color: "#FBBF24", border: "#3a2e00" },
+  orange:  { bg: "#2a1000", color: "#FB923C", border: "#3a2000" },
+  red:     { bg: "#2a0000", color: "#F87171", border: "#3a0000" },
+  unknown: { bg: "#1a1a1a", color: "#9B9EA8", border: "#2a2a2a" },
 };
 
 const SIGNAL_COLORS: Record<string, string> = {
@@ -901,9 +902,12 @@ function MacroSentinelCard() {
   const signals = macroData?.latest_signals ?? [];
   const hasData = !!latest;
   const regime = latest?.regime ?? "green";
+  const isUnknown = regime === "unknown";
   const regStyle = REGIME_STYLES[regime] ?? REGIME_STYLES.green;
   const dangerScore = latest?.danger_score ?? 0;
-  const dangerColor = dangerScore < 20 ? "#34D399" : dangerScore < 40 ? "#FBBF24" : dangerScore < 60 ? "#FB923C" : "#F87171";
+  const dangerColor = isUnknown
+    ? T.muted
+    : dangerScore < 20 ? "#34D399" : dangerScore < 40 ? "#FBBF24" : dangerScore < 60 ? "#FB923C" : "#F87171";
 
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
@@ -979,11 +983,11 @@ function MacroSentinelCard() {
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
                 <span style={{ fontSize: "12px", color: T.muted }}>Danger Score</span>
                 <span style={{ fontSize: "13px", fontWeight: 700, color: dangerColor, fontFamily: "'JetBrains Mono', monospace" }}>
-                  {dangerScore}/100
+                  {isUnknown ? "—/100" : `${dangerScore}/100`}
                 </span>
               </div>
               <div style={{ height: 8, borderRadius: 4, background: "#1E2130", width: "100%", overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${dangerScore}%`, background: dangerColor, borderRadius: 4, transition: "width 0.5s" }} />
+                <div style={{ height: "100%", width: isUnknown ? "100%" : `${dangerScore}%`, background: isUnknown ? "repeating-linear-gradient(45deg, #2a2a2a, #2a2a2a 6px, #1E2130 6px, #1E2130 12px)" : dangerColor, borderRadius: 4, transition: "width 0.5s" }} />
               </div>
             </div>
 
@@ -999,9 +1003,9 @@ function MacroSentinelCard() {
               letterSpacing: "0.04em",
               whiteSpace: "nowrap",
             }}>
-              {regime === "green" ? "🟢" : regime === "yellow" ? "🟡" : regime === "orange" ? "🟠" : "🔴"} {regime.toUpperCase()}
+              {isUnknown ? "❓" : regime === "green" ? "🟢" : regime === "yellow" ? "🟡" : regime === "orange" ? "🟠" : "🔴"} {isUnknown ? "UNKNOWN" : regime.toUpperCase()}
               <span style={{ fontWeight: 400, fontSize: "11px", marginLeft: "8px", opacity: 0.8 }}>
-                ({latest?.signals_triggered ?? 0} signal{latest?.signals_triggered !== 1 ? "s" : ""})
+                {isUnknown ? "(insufficient data)" : `(${latest?.signals_triggered ?? 0} signal${latest?.signals_triggered !== 1 ? "s" : ""})`}
               </span>
             </div>
 

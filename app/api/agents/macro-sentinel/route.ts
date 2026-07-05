@@ -205,9 +205,10 @@ async function fetchIndicators(): Promise<Indicator[]> {
 }
 
 function computeRegime(indicators: Indicator[]): {
-  danger_score: number;
-  regime: "green" | "yellow" | "orange" | "red";
+  danger_score: number | null;
+  regime: "green" | "yellow" | "orange" | "red" | "unknown";
   signals_triggered: number;
+  indicators_available: number;
 } {
   const SIGNAL_WEIGHTS: Record<string, number> = { green: 0, yellow: 1, orange: 2, red: 3 };
   let weightedScore = 0;
@@ -221,9 +222,18 @@ function computeRegime(indicators: Indicator[]): {
     if (ind.signal !== "green") signals_triggered++;
   }
 
-  // Need at least 3 indicators to compute a meaningful regime
+  // Need at least 3 indicators to compute a meaningful regime. Fewer than
+  // that (including zero) is NOT evidence of a healthy economy — it means
+  // we don't have enough real data to say anything. Report an explicit
+  // "unknown" regime with a null danger score instead of defaulting to a
+  // favorable GREEN/0 verdict.
   if (indicators.length < 3) {
-    return { danger_score: 0, regime: "green" as const, signals_triggered: 0 };
+    return {
+      danger_score: null,
+      regime: "unknown" as const,
+      signals_triggered: 0,
+      indicators_available: indicators.length,
+    };
   }
 
   const danger_score = totalWeight > 0 ? Math.round((weightedScore / totalWeight) * 100) : 0;
@@ -239,7 +249,7 @@ function computeRegime(indicators: Indicator[]): {
   );
   if (highSignals.length >= 2 && regime === "yellow") regime = "orange";
 
-  return { danger_score, regime, signals_triggered };
+  return { danger_score, regime, signals_triggered, indicators_available: indicators.length };
 }
 
 export async function GET() {
@@ -277,7 +287,7 @@ export async function POST(req: NextRequest) {
   }
 
   const indicators = await fetchIndicators();
-  const { danger_score, regime, signals_triggered } = computeRegime(indicators);
+  const { danger_score, regime, signals_triggered, indicators_available } = computeRegime(indicators);
 
   // Build summary
   const topSignals = indicators
@@ -287,16 +297,22 @@ export async function POST(req: NextRequest) {
     .map((i) => `${i.name}: ${i.signal.toUpperCase()}`)
     .join("; ");
 
+  // A 0-signal read is only meaningful if we actually collected enough real
+  // indicator data. If fewer than 3 of the 8 indicators came back (e.g. Alpha
+  // Vantage rate-limited every call), we have no evidence either way — say so
+  // explicitly instead of defaulting to a favorable "economy in expansion".
   const summary =
-    signals_triggered === 0
-      ? "No recession signals. Economy in expansion."
-      : `${signals_triggered} signal(s) triggered. Top: ${topSignals}`;
+    indicators_available < 3
+      ? `Insufficient data: only ${indicators_available}/8 indicators available this run (data source likely rate-limited). No verdict — try "Run Now" again shortly.`
+      : signals_triggered === 0
+      ? `No recession signals across ${indicators_available}/8 indicators. Economy in expansion.`
+      : `${signals_triggered} signal(s) triggered (${indicators_available}/8 indicators available). Top: ${topSignals}`;
 
-  // Upsert regime
+  // regime is a free-text column, so "unknown" is safe to store without a migration.
   const { error: regimeError } = await svc.from("macro_regime").upsert(
     {
       week_of: weekOf,
-      danger_score,
+      danger_score: danger_score ?? 0,
       regime,
       signals_triggered,
       ai_bubble_score: 0,

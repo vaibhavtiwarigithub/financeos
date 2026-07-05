@@ -178,19 +178,23 @@ export async function GET(req: NextRequest) {
   let model = "none";
 
   if (hasData) {
+    const coverageNote = scored < 7
+      ? `\n\nDATA COVERAGE WARNING: only ${scored}/7 regime proxy signals were available this run (the rest failed to fetch). Explicitly note this coverage gap in your synthesis and temper your confidence accordingly — do not present a fully confident read when signals are missing.`
+      : "";
+
     const prompt = `You are a macro strategist. Using ONLY the real regime indicator numbers below from the most recent session, write a 3-4 sentence market synthesis. Do NOT invent any events, data points, or numbers beyond what is provided.
 
 COMPUTED REGIME READ: ${regime.toUpperCase()}
 
-REGIME INDICATORS (most recent session, ETF proxies):
-${contextString}
+REGIME INDICATORS (most recent session, ETF proxies) — ${scored}/7 signals available:
+${contextString}${coverageNote}
 
 Write exactly:
 1. What the numbers say — describe the current cross-asset picture (equity breadth, credit, rates, dollar, gold, volatility) and whether it points risk-on, neutral, or risk-off.
 2. Near-term outlook — where markets are most likely heading over the next few sessions if this configuration holds.
 3. The key risk — the single most important thing that would flip the read.
 
-Be specific about which indicators are driving the read. No invented catalysts. Reference the actual directions above.`;
+Be specific about which indicators are driving the read. No invented catalysts. Reference the actual directions above.${scored < 7 ? " If fewer than 7 of the 7 regime signals are available, say so plainly and reduce your confidence." : ""}`;
 
     const llmResult = await callLLM({
       task: "thesis",
@@ -203,7 +207,7 @@ Be specific about which indicators are driving the read. No invented catalysts. 
   }
 
   const generatedAt = new Date().toISOString();
-  const payload = { regime, indicators, synthesis };
+  const payload = { regime, indicators, synthesis, signalsAvailable: scored, signalsTotal: 7 };
 
   // Only cache a real result — a transient Massive failure (all 8 quotes
   // fail) must NOT get cached as "unavailable" for the rest of the day.

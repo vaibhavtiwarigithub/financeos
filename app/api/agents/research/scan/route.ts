@@ -90,11 +90,12 @@ export interface ScanResult {
   price: number | null;
   ema50: number | null;
   price_above_ma50: boolean | null;
-  fundamental_score: number;
-  technical_score: number;
-  combined_score: number;
+  fundamental_score: number | null;
+  technical_score: number | null;
+  combined_score: number | null;
   fundamentals: Record<string, any>;
   passes_filters: boolean;
+  data_sufficient: boolean;
   filter_notes: string[];
 }
 
@@ -165,11 +166,13 @@ export async function POST(req: NextRequest) {
         ]);
 
         const priceAboveMa50 = price != null && ema50 != null ? price > ema50 : null;
+        const hasFundData = Object.keys(fundamentals as object).length > 0;
 
-        // Technical score
-        let techScore = 50;
+        // Technical score — null (not a fabricated 50) when there's no RSI to score
+        let techScore: number | null = null;
         const filterNotes: string[] = [];
         let passes = true;
+        let notEvaluated = false;
 
         if (rsi != null) {
           if (rsi > 60)      techScore = 75;
@@ -184,20 +187,28 @@ export async function POST(req: NextRequest) {
             filterNotes.push(`RSI ${rsi.toFixed(0)} > max ${effectiveRsiMax}`);
             passes = false;
           }
+        } else if (effectiveRsiMin != null || effectiveRsiMax != null) {
+          // An RSI filter is active but we have no RSI to check it against —
+          // this used to silently "pass" (the condition just never ran).
+          filterNotes.push("RSI unavailable — condition not evaluated");
+          notEvaluated = true;
         }
 
         if (effectiveMa50 === true && priceAboveMa50 === false) {
           filterNotes.push("Price below 50-day MA");
           passes = false;
-        }
-        if (effectiveMa50 === false && priceAboveMa50 === true) {
+        } else if (effectiveMa50 === false && priceAboveMa50 === true) {
           filterNotes.push("Price above 50-day MA (need below)");
           passes = false;
+        } else if (effectiveMa50 != null && priceAboveMa50 === null) {
+          filterNotes.push("Price/MA50 unavailable — condition not evaluated");
+          notEvaluated = true;
         }
 
-        // Fundamental score from FD snapshot
-        let fundScore = 50;
-        if (fundamentals) {
+        // Fundamental score from FD snapshot — null (not a fabricated 50/40)
+        // when there's no real fundamentals data (no FD key or empty result).
+        let fundScore: number | null = null;
+        if (hasFundData) {
           const f    = fundamentals as any;
           const pe   = parseFloat(f.pe_ratio ?? f.price_to_earnings_ratio ?? "0");
           const roe  = parseFloat(f.return_on_equity ?? "0");
@@ -216,9 +227,19 @@ export async function POST(req: NextRequest) {
           fundScore = Math.min(95, 40 + pts);
         }
 
-        const combined = Math.round(fundScore * 0.5 + techScore * 0.5);
+        const combined = techScore != null && fundScore != null
+          ? Math.round(fundScore * 0.5 + techScore * 0.5)
+          : techScore != null ? Math.round(techScore)
+          : fundScore != null ? Math.round(fundScore)
+          : null;
 
-        if (passes && filterNotes.length === 0) filterNotes.push("All conditions met");
+        // A verdict is only meaningful if we actually had data to evaluate it
+        // against — missing data used to silently skip every falsifying
+        // check, which read as "all conditions met" with nothing checked.
+        const dataSufficient = !notEvaluated;
+        const passesFilters = passes && dataSufficient;
+        if (passesFilters && filterNotes.length === 0) filterNotes.push("All conditions met");
+        if (!dataSufficient && filterNotes.length === 0) filterNotes.push("Insufficient data to evaluate conditions");
 
         return {
           symbol,
@@ -226,11 +247,12 @@ export async function POST(req: NextRequest) {
           price,
           ema50,
           price_above_ma50: priceAboveMa50,
-          fundamental_score: Math.round(fundScore),
-          technical_score: Math.round(techScore),
+          fundamental_score: fundScore != null ? Math.round(fundScore) : null,
+          technical_score: techScore != null ? Math.round(techScore) : null,
           combined_score: combined,
           fundamentals,
-          passes_filters: passes,
+          passes_filters: passesFilters,
+          data_sufficient: dataSufficient,
           filter_notes: filterNotes,
         } as ScanResult;
       }));
@@ -246,7 +268,7 @@ export async function POST(req: NextRequest) {
     results.sort((a, b) => {
       if (a.passes_filters && !b.passes_filters) return -1;
       if (!a.passes_filters && b.passes_filters) return 1;
-      return b.combined_score - a.combined_score;
+      return (b.combined_score ?? -1) - (a.combined_score ?? -1);
     });
 
     return NextResponse.json({

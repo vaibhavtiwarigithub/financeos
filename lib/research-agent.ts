@@ -713,6 +713,15 @@ export async function processSymbol(
     direction: signalDirection,
     analyst_score: analystScore,
     conviction: Math.min(100, analystScore), // Phase 0: conviction mirrors analyst score
+    // Per-dimension scores were computed above (used for the weighted
+    // analyst_score) but never persisted — Smart Money's "All Signals" and
+    // other dimension-breakdown views always showed "—" for every signal
+    // generated via this path even though real scores existed in memory.
+    fundamental_score: scores.fundamental_score,
+    technical_score: scores.technical_score,
+    sentiment_score: scores.sentiment_score,
+    macro_score: scores.macro_score,
+    insider_score: scores.insider_score,
     agent_type: "research",
     research_packet_id: packet?.id ?? null,
     status: "pending",

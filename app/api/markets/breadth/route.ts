@@ -36,15 +36,15 @@ async function getEtfHoldings(sector: string, avKey: string): Promise<{ symbol: 
   return parsed;
 }
 
-async function getQuote(symbol: string, massiveKey: string): Promise<{ changePct: number }> {
+async function getQuote(symbol: string, massiveKey: string): Promise<{ changePct: number; ok: boolean }> {
   const url = `https://api.massive.com/v2/aggs/ticker/${symbol}/prev?adjusted=true&apiKey=${massiveKey}`;
   const res = await fetch(url, { next: { revalidate: 900 } });
-  if (!res.ok) return { changePct: 0 };
+  if (!res.ok) return { changePct: 0, ok: false };
   const data = await res.json();
   const result = data?.results?.[0];
-  if (!result || !result.o || result.o === 0) return { changePct: 0 };
+  if (!result || !result.o || result.o === 0) return { changePct: 0, ok: false };
   const changePct = ((result.c - result.o) / result.o) * 100;
-  return { changePct };
+  return { changePct, ok: true };
 }
 
 export async function GET(req: NextRequest) {
@@ -140,11 +140,17 @@ export async function GET(req: NextRequest) {
     const topContributors = sorted.slice(0, 5);
     const topDetractors = sorted.slice(-5).reverse();
 
-    // 5. A/D counts
-    const advanceCount = holdings.filter((h) => h.changePct > 0).length;
-    const declineCount = holdings.filter((h) => h.changePct < 0).length;
-    const unchangedCount = holdings.length - advanceCount - declineCount;
-    const total = holdings.length;
+    // 5. A/D counts — exclude holdings whose quote fetch failed from the
+    // breadth denominator. Previously a failed fetch silently returned
+    // changePct: 0 and was counted as "unchanged", inflating `total` and
+    // diluting breadthPct (e.g. 6 advancing / 4 declining out of 10 real
+    // quotes showed as "30%" because 10 more holdings with failed quotes
+    // were folded into a total of 20).
+    const validHoldings = holdings.filter((_, i) => quotes[i].ok);
+    const advanceCount = validHoldings.filter((h) => h.changePct > 0).length;
+    const declineCount = validHoldings.filter((h) => h.changePct < 0).length;
+    const unchangedCount = validHoldings.length - advanceCount - declineCount;
+    const total = validHoldings.length;
     const breadthPct = total > 0 ? (advanceCount / total) * 100 : 0;
 
     const narrowTag =

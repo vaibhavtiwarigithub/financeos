@@ -29,9 +29,16 @@ export default function MentorCoachPanel() {
   useEffect(() => {
     fetch("/api/agents/mentor-coach")
       .then(r => r.json())
-      .then(d => { if (d.insight) setInsight(normalize(d.insight)); })
+      .then(d => {
+        if (d.insight) setInsight(normalize(d.insight));
+        // Cached coaching is stale relative to new positions/signals it never saw
+        // (e.g. still says "before your first paper trade" after one opened).
+        // Auto-regenerate instead of serving stale prose indefinitely.
+        if (d.stale) run();
+      })
       .catch(() => {})
       .finally(() => setFetching(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function normalize(a: any): Insight {

@@ -25,9 +25,28 @@ interface Job {
 }
 
 // --- Next-run computation (browser local time) -------------------------------
-// Schedule times in lib/schedule.ts are US-Eastern. We approximate ET as UTC-4
-// (EDT) for next-run display; this is a human-facing estimate, not a trigger.
-const ET_OFFSET_MIN = -4 * 60;
+// Schedule times in lib/schedule.ts are US-Eastern. This is a human-facing
+// estimate, not a trigger.
+//
+// IMPORTANT: ET is EDT (UTC-4) roughly mid-March to early November and EST
+// (UTC-5) the rest of the year. A hardcoded -4h offset is wrong for ~4 months
+// a year and silently shifts every computed slot by an hour — for US-Eastern
+// users this can make a "next run" candidate land in the past (e.g. a 4-hour
+// stale-check slot appearing to already have happened, showing "in -57m").
+// Derive the ET offset for a given moment from the Intl API instead of
+// hardcoding one.
+function etOffsetMin(d: Date): number {
+  // en-US "shortOffset" gives e.g. "GMT-4" / "GMT-5" for America/New_York,
+  // correctly reflecting EDT vs EST for the given instant.
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    timeZoneName: "shortOffset",
+  }).formatToParts(d);
+  const tzPart = parts.find((p) => p.type === "timeZoneName")?.value ?? "GMT-5";
+  const m = tzPart.match(/GMT([+-]\d+)/);
+  const hours = m ? parseInt(m[1], 10) : -5;
+  return hours * 60;
+}
 
 function localOffsetMin(d: Date) {
   return -d.getTimezoneOffset();
@@ -70,14 +89,22 @@ function nextIntervalRun(job: Job, now: Date): Date | null {
     }
     return null;
   }
-  // stale-check: every 4 hours, all days — next 4h boundary in ET
+  // stale-check: every 4 hours, all days — next 4h boundary in ET.
+  // Walk forward day-by-day (like the 15-min branch above) instead of only
+  // checking "today" and falling back to a single hardcoded midnight slot —
+  // that fallback was the source of the "next run in the past" bug when the
+  // day's last slot had already passed.
   if (/every\s*4\s*hour/i.test(job.time)) {
-    for (let slot = 0; slot <= 24 * 60; slot += 4 * 60) {
-      const cand = etSlotToLocal(now, slot);
-      if (cand > now) return cand;
+    const cur = new Date(now);
+    for (let i = 0; i < 3; i++) {
+      for (let slot = 0; slot < 24 * 60; slot += 4 * 60) {
+        const cand = etSlotToLocal(cur, slot);
+        if (cand > now) return cand;
+      }
+      cur.setDate(cur.getDate() + 1);
+      cur.setHours(0, 0, 0, 0);
     }
-    const t = new Date(now); t.setDate(t.getDate() + 1);
-    return etSlotToLocal(t, 0);
+    return null;
   }
   return null;
 }
@@ -87,7 +114,7 @@ function etSlotToLocal(ref: Date, etMinutes: number): Date {
   const d = new Date(ref);
   d.setHours(0, 0, 0, 0);
   // shift from ET wall-clock to local: local = ET + (localOffset - etOffset)
-  const shift = localOffsetMin(d) - ET_OFFSET_MIN;
+  const shift = localOffsetMin(d) - etOffsetMin(d);
   return new Date(d.getTime() + (etMinutes + shift) * 60_000);
 }
 
@@ -115,10 +142,15 @@ const fmtTime = (s: string | null) =>
 function fmtNext(d: Date | null): string {
   if (!d) return "—";
   const now = Date.now();
-  const diff = d.getTime() - now;
+  let diff = d.getTime() - now;
+  // Defensive floor: a "next run" must never render as a past time. If
+  // upstream computation ever yields a stale candidate, treat it as "due now"
+  // rather than showing a confusing negative countdown like "in -57m".
+  if (diff < 0) diff = 0;
   const mins = Math.round(diff / 60_000);
   let rel: string;
-  if (mins < 60) rel = `in ${mins}m`;
+  if (mins < 1) rel = "due now";
+  else if (mins < 60) rel = `in ${mins}m`;
   else if (mins < 24 * 60) rel = `in ${Math.round(mins / 60)}h`;
   else rel = `in ${Math.round(mins / (24 * 60))}d`;
   return `${d.toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit" })} · ${rel}`;

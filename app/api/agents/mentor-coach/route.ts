@@ -158,5 +158,22 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const svc = createServiceClient();
   const { data } = await svc.from("mentor_insights").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle();
-  return NextResponse.json({ insight: data ?? null });
+
+  // Staleness check: the cached insight goes stale if a new paper position was
+  // opened or a new signal was written after it, since the coaching text quotes
+  // "current" positions/signals verbatim (e.g. "before your first paper trade",
+  // "mega-cap tech signals"). Rather than a blind TTL, regenerate when there's
+  // new relevant activity the cached row never saw.
+  const insight = (data as any) ?? null;
+  let stale = false;
+  if (insight?.created_at) {
+    const since = insight.created_at;
+    const [{ count: newPositions }, { count: newSignals }] = await Promise.all([
+      svc.from("paper_positions").select("*", { count: "exact", head: true }).gt("opened_at", since),
+      svc.from("agent_signals").select("*", { count: "exact", head: true }).gt("created_at", since),
+    ]);
+    stale = (newPositions ?? 0) > 0 || (newSignals ?? 0) > 0;
+  }
+
+  return NextResponse.json({ insight, stale });
 }

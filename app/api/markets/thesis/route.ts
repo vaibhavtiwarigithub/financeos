@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callLLM } from "@/lib/llm-router";
 import { createServiceClient } from "@/lib/supabase/service";
+import type { MarketOverview } from "@/app/api/markets/overview/route";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,22 @@ const PAIRS = [
 ];
 
 const MACRO_TICKERS = ["SPY", "QQQ", "IWM", "SMH", "GLD", "USO", "VIX"];
+
+// Fetch the same indices/sector data that the Market Snapshot cards render on
+// this page (via /api/markets/overview), so the thesis is grounded in the
+// exact real, current numbers the user sees above it — not a separate,
+// independently-fetched (and often empty) leveraged-ETF context.
+async function fetchOverviewContext(origin: string): Promise<MarketOverview | null> {
+  try {
+    const res = await fetch(`${origin}/api/markets/overview`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const json = (await res.json()) as MarketOverview;
+    if (!json.indices?.length && !json.sectors?.length) return null;
+    return json;
+  } catch {
+    return null;
+  }
+}
 
 interface QuoteResult {
   symbol: string;
@@ -88,7 +105,12 @@ export async function GET(req: NextRequest) {
     if (r.status === "fulfilled" && r.value) quoteMap.set(sym, r.value);
   });
 
-  const hasData = quoteMap.size > 0;
+  // The real, current index + sector data — same source as the Market
+  // Snapshot cards rendered on this page. This is the primary grounding for
+  // the thesis; the leveraged-pair signals below are supplementary color.
+  const overview = await fetchOverviewContext(req.nextUrl.origin);
+
+  const hasData = quoteMap.size > 0 || !!overview;
 
   // Build pair results
   const pairResults = PAIRS.map(p => {
@@ -118,6 +140,19 @@ export async function GET(req: NextRequest) {
   if (!hasData) {
     contextString = "Market data unavailable for this session.";
   } else {
+    const sections: string[] = [];
+
+    if (overview) {
+      const indexLines = overview.indices.map(
+        (i) => `${i.symbol} (${i.name}): $${i.price.toFixed(2)} (${i.changePct >= 0 ? "+" : ""}${i.changePct.toFixed(2)}%)`
+      );
+      const sectorLines = [...overview.sectors]
+        .sort((a, b) => b.changePct - a.changePct)
+        .map((s) => `${s.symbol} (${s.name}): ${s.changePct >= 0 ? "+" : ""}${s.changePct.toFixed(2)}%`);
+      sections.push("REAL-TIME INDICES (today's session):", ...indexLines);
+      sections.push("", "SECTOR PERFORMANCE (today's session, best to worst):", ...sectorLines);
+    }
+
     const pairLines = pairResults.map(p => {
       const bullStr = p.bull.changePct !== null ? `${p.bull.changePct >= 0 ? "+" : ""}${p.bull.changePct.toFixed(2)}%` : "N/A";
       const bearStr = p.bear.changePct !== null ? `${p.bear.changePct >= 0 ? "+" : ""}${p.bear.changePct.toFixed(2)}%` : "N/A";
@@ -128,13 +163,10 @@ export async function GET(req: NextRequest) {
       const pctStr = m.changePct !== null ? ` (${m.changePct >= 0 ? "+" : ""}${m.changePct.toFixed(2)}%)` : "";
       return `${m.symbol}: $${m.price.toFixed(2)}${pctStr}`;
     });
-    contextString = [
-      "LEVERAGED PAIR SIGNALS:",
-      ...pairLines,
-      "",
-      "MACRO OVERVIEW:",
-      ...macroLines,
-    ].join("\n");
+    sections.push("", "LEVERAGED PAIR SIGNALS:", ...pairLines);
+    sections.push("", "ADDITIONAL MACRO TICKERS:", ...macroLines);
+
+    contextString = sections.join("\n");
   }
 
   // Route to DeepSeek: there is no ANTHROPIC_API_KEY, so a Claude-routed task

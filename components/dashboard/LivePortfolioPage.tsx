@@ -284,9 +284,16 @@ export default function LivePortfolioPage({
                   <button
                     key={s.account_id}
                     onClick={() => {
-                      const next = active
-                        ? selectedAccounts.filter(id => id !== s.account_id)
-                        : [...selectedAccounts, s.account_id];
+                      // Isolate to just this account on click, not toggle-within-
+                      // multiselect. With "All" selected by default, clicking a
+                      // single chip used to just *remove* that account (since it
+                      // was already active), leaving every OTHER account selected
+                      // — zeroing equity/buying-power if those accounts had no
+                      // real synced data, while the positions list (aggregated
+                      // from the remaining accounts) still looked "unfiltered".
+                      // Clicking an already-isolated single chip again restores "All".
+                      const isolated = selectedAccounts.length === 1 && active;
+                      const next = isolated ? allAccountIds : [s.account_id];
                       setSelectedAccounts(next);
                       loadHoldings(next);
                     }}

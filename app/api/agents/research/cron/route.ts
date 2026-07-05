@@ -33,6 +33,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ skipped: true, reason: "App is paused — research cron disabled" });
   }
 
+  // Idempotency guard — the scheduled trigger fires once at 9 AM, but a manual
+  // re-trigger (or a duplicate Task Scheduler firing) minutes later should not
+  // re-run the full research pass. Skip if a research run already completed
+  // (or is currently running) within the last 30 minutes.
+  const guardWindow = new Date(Date.now() - 30 * 60_000).toISOString();
+  const { data: recentRun } = await supabase
+    .from("agent_runs")
+    .select("id, status, started_at")
+    .eq("agent_type", "research")
+    .gte("started_at", guardWindow)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (recentRun) {
+    return NextResponse.json({
+      skipped: true,
+      reason: `Research already ran (or is running) within the last 30 minutes — run ${(recentRun as any).id} started at ${(recentRun as any).started_at}`,
+    });
+  }
+
   const entries = await gatherSymbols(supabase);
   const batch = entries.map(e => e.symbol);
 

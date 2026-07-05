@@ -138,7 +138,7 @@ Rules: distinct themes, max ${MAX_CANDIDATES} candidates each, real US equity ti
 
   // Enrich candidates with AV topic sentiment
   const expiry = new Date(Date.now() + EXPIRE_DAYS * 86400000).toISOString();
-  const rows: any[] = [];
+  const rowsBySymbol = new Map<string, any>();
 
   for (const t of themes.slice(0, MAX_THEMES)) {
     const avCandidates = await fetchCandidatesFromAV(t.theme, avKey);
@@ -146,7 +146,9 @@ Rules: distinct themes, max ${MAX_CANDIDATES} candidates each, real US equity ti
     for (const sym of merged) {
       const clean = sym.trim().toUpperCase();
       if (!clean || clean.length > 10) continue;
-      rows.push({
+      // Dedupe within this run too — the same ticker can surface under two themes.
+      if (rowsBySymbol.has(clean)) continue;
+      rowsBySymbol.set(clean, {
         symbol: clean,
         source: "llm_theme",
         theme: t.theme,
@@ -158,17 +160,29 @@ Rules: distinct themes, max ${MAX_CANDIDATES} candidates each, real US equity ti
       });
     }
   }
+  const rows = [...rowsBySymbol.values()];
 
+  let newRows: any[] = [];
   if (rows.length) {
-    await supabase.from("watchlist").upsert(rows, { onConflict: "user_id,symbol", ignoreDuplicates: false });
-    await supabase.from("agent_alerts").insert({
-      severity: "info",
-      category: "watchlist",
-      title: `Theme Scout: ${rows.length} stocks added`,
-      detail: `Themes: ${themes.map((t: any) => t.theme).join(", ")} → ${rows.map((r: any) => r.symbol).join(", ")}`,
-      auto_expire_at: new Date(Date.now() + 86400000).toISOString(),
-    });
+    // rows here have no user_id (auto-added, global). Postgres treats NULL <> NULL,
+    // so onConflict: "user_id,symbol" never matches across separate theme-scout runs
+    // and the same symbol re-added on different days piles up as duplicate rows.
+    // De-dupe against symbols already on the watchlist (regardless of user_id) before
+    // inserting, so re-adding an existing symbol just skips it instead of duplicating.
+    const { data: existingRows } = await supabase.from("watchlist").select("symbol");
+    const existingSymbols = new Set((existingRows ?? []).map((r: any) => r.symbol));
+    newRows = rows.filter((r) => !existingSymbols.has(r.symbol));
+    if (newRows.length) {
+      await supabase.from("watchlist").insert(newRows);
+      await supabase.from("agent_alerts").insert({
+        severity: "info",
+        category: "watchlist",
+        title: `Theme Scout: ${newRows.length} stocks added`,
+        detail: `Themes: ${themes.map((t: any) => t.theme).join(", ")} → ${newRows.map((r: any) => r.symbol).join(", ")}`,
+        auto_expire_at: new Date(Date.now() + 86400000).toISOString(),
+      });
+    }
   }
 
-  return jsonOk({ ok: true, themes, added: rows.length, symbols: rows.map((r: any) => r.symbol) });
+  return jsonOk({ ok: true, themes, added: newRows.length, symbols: newRows.map((r: any) => r.symbol) });
 });

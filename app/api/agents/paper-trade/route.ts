@@ -212,8 +212,10 @@ export async function POST(req: NextRequest) {
       // Mark signal as paper-traded
       await supabase.from("agent_signals").update({ status: "paper_traded" }).eq("id", signal.id);
 
-      // Phase 4: decision journal entry for this fill
-      void supabase.from("decision_journal").insert({
+      // Phase 4: decision journal entry for this fill — was fire-and-forget
+      // with no error check, so a schema drift or transient failure here
+      // would silently vanish. Await it and log failures.
+      const { error: journalErr } = await supabase.from("decision_journal").insert({
         entry_type: "paper_fill",
         symbol: signal.symbol,
         signal_id: signal.id,
@@ -225,6 +227,7 @@ export async function POST(req: NextRequest) {
         has_calculations: true,
         resolved: false,
       });
+      if (journalErr) console.error("[paper-trade] decision_journal insert failed:", journalErr.message);
 
       filled.push({ symbol: signal.symbol, qty, fillPrice, totalCost, priceSource: quote.source });
     }

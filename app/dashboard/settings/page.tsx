@@ -251,9 +251,12 @@ export default function SettingsPage() {
             </div>
             <div style={{ marginBottom: "24px" }}>
               <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>AI Model</label>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px" }}>
+                This preference is not wired to the agent stack — ResearchAgent, TraderAgent, LearnerAgent, and MentorAgent each use a hardcoded model (DeepSeek / Groq via the LLM router) regardless of this setting. Claude options require <code style={{ color: T.textSub, background: T.card, padding: "1px 5px", borderRadius: "4px" }}>ANTHROPIC_API_KEY</code>, which is not currently configured.
+              </div>
               <select value={profile.ai_model} onChange={e => setProfile({ ...profile, ai_model: e.target.value })} style={sel}>
-                <option value="claude-sonnet">Claude Sonnet (Recommended)</option>
-                <option value="claude-haiku">Claude Haiku (Faster)</option>
+                <option value="claude-sonnet">Claude Sonnet (requires ANTHROPIC_API_KEY — not configured)</option>
+                <option value="claude-haiku">Claude Haiku (requires ANTHROPIC_API_KEY — not configured)</option>
               </select>
             </div>
             <button onClick={saveProfile} disabled={saving} style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "11px 28px", fontSize: "14px", fontWeight: 600, cursor: "pointer" }}>

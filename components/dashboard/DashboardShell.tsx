@@ -280,7 +280,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
                 position: "relative", display: "flex", alignItems: "center",
               }}
             >
-              ðŸ""
+              🔔
               {unreadCount > 0 && (
                 <span style={{
                   position: "absolute", top: "2px", right: "2px",

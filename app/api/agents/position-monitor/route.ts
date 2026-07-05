@@ -77,6 +77,21 @@ async function runMonitor() {
 
     await svc.from("paper_positions").delete().eq("id", pos.id);
 
+    // Decision Journal was showing "0 entries" because nothing ever wrote to
+    // it for exits — only the initial buy fill (paper-trade/route.ts) did.
+    // Log the exit so the journal actually reflects the position lifecycle.
+    const { error: journalError } = await svc.from("decision_journal").insert({
+      entry_type: "paper_exit",
+      symbol: pos.symbol,
+      summary: `Paper exit: ${pos.qty} × ${pos.symbol} @ $${currentPrice.toFixed(2)} (${exitReason}), P&L $${realizedPnl.toFixed(2)} (${outcome})`,
+      calculations: { qty: pos.qty, exit_price: currentPrice, avg_cost: pos.avg_cost, realized_pnl: realizedPnl, pnl_pct: pnlPct, exit_reason: exitReason },
+      has_verified_facts: true,
+      has_calculations: true,
+      resolved: true,
+      resolved_at: new Date().toISOString(),
+    });
+    if (journalError) console.error("[position-monitor] decision_journal insert failed:", journalError.message);
+
     cashBalance += currentPrice * pos.qty;
     closed.push(`${pos.symbol} (${exitReason}: $${currentPrice.toFixed(2)}, P&L: $${realizedPnl.toFixed(2)})`);
   }
@@ -133,17 +148,29 @@ async function runMonitor() {
     }
   }
 
-  // Update portfolio cash if any positions closed
-  if (closed.length > 0) {
-    const { count: allOpen } = await svc
-      .from("paper_positions")
-      .select("id", { count: "exact", head: true });
-    await svc.from("paper_portfolio").update({
-      cash_balance: cashBalance,
-      open_positions: allOpen ?? Math.max(0, positions.length - closed.length),
-      updated_at: new Date().toISOString(),
-    }).eq("id", portfolio?.id);
-  }
+  // Recompute + persist NAV = cash + mark-to-market of every still-open
+  // position (using the freshly refreshed current_price, or avg_cost for
+  // anything Massive had no price for). paper_portfolio.nav was only ever
+  // set at seed time and on close — it never reflected open-position
+  // mark-to-market, so NAV showed a flat $10,000 even with real unrealized
+  // gains sitting in paper_positions (e.g. +$31.81 on an open META position).
+  const { data: stillOpen } = await svc.from("paper_positions").select("qty, avg_cost, current_price");
+  const positionsValue = (stillOpen ?? []).reduce((sum: number, p: any) => {
+    const price = Number(p.current_price ?? p.avg_cost ?? 0);
+    return sum + Number(p.qty ?? 0) * price;
+  }, 0);
+  const newNav = cashBalance + positionsValue;
+
+  const { count: allOpenCount } = await svc
+    .from("paper_positions")
+    .select("id", { count: "exact", head: true });
+
+  await svc.from("paper_portfolio").update({
+    cash_balance: cashBalance,
+    nav: newNav,
+    open_positions: allOpenCount ?? Math.max(0, positions.length - closed.length),
+    updated_at: new Date().toISOString(),
+  }).eq("id", portfolio?.id);
 
   return {
     checked: positions.length,

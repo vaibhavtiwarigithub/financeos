@@ -10,24 +10,34 @@ async function fetchInternalPaper(): Promise<BrokerAccount> {
   const sb = createServiceClient();
   const fetchedAt = new Date().toISOString();
 
+  // paper_positions real columns: symbol, qty, avg_cost, current_price,
+  // opened_at — no status/avg_fill_price/unrealized_pnl(_pct) columns exist
+  // (every row is open by definition; PnL is derived, not stored). The old
+  // select queried nonexistent columns, Supabase errored, and this silently
+  // returned zero paper holdings on the Risk Analytics page.
   const [{ data: portfolio }, { data: positions }] = await Promise.all([
     sb.from("paper_portfolio").select("nav, cash_balance").limit(1).single(),
-    sb.from("paper_positions")
-      .select("symbol, qty, avg_fill_price, current_price, unrealized_pnl, unrealized_pnl_pct")
-      .eq("status", "open"),
+    sb.from("paper_positions").select("symbol, qty, avg_cost, current_price"),
   ]);
 
-  const holdings: BrokerHolding[] = (positions ?? []).map((p: any) => ({
-    symbol: p.symbol,
-    qty: parseFloat(p.qty ?? 0),
-    currentPrice: parseFloat(p.current_price ?? p.avg_fill_price ?? 0),
-    marketValue: parseFloat(p.qty ?? 0) * parseFloat(p.current_price ?? p.avg_fill_price ?? 0),
-    costBasis: parseFloat(p.avg_fill_price ?? 0) * parseFloat(p.qty ?? 0),
-    unrealizedPnl: parseFloat(p.unrealized_pnl ?? 0),
-    unrealizedPnlPct: parseFloat(p.unrealized_pnl_pct ?? 0),
-    side: "long" as const,
-    source: "internal" as const,
-  }));
+  const holdings: BrokerHolding[] = (positions ?? []).map((p: any) => {
+    const qty = parseFloat(p.qty ?? 0);
+    const avgCost = parseFloat(p.avg_cost ?? 0);
+    const currentPrice = parseFloat(p.current_price ?? avgCost ?? 0);
+    const marketValue = qty * currentPrice;
+    const costBasis = qty * avgCost;
+    return {
+      symbol: p.symbol,
+      qty,
+      currentPrice,
+      marketValue,
+      costBasis,
+      unrealizedPnl: marketValue - costBasis,
+      unrealizedPnlPct: costBasis > 0 ? ((marketValue - costBasis) / costBasis) * 100 : 0,
+      side: "long" as const,
+      source: "internal" as const,
+    };
+  });
 
   return {
     source: "internal",

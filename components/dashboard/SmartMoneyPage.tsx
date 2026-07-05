@@ -423,9 +423,13 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider }: {
                             {s.direction?.toUpperCase()}
                           </span>
                         </td>
-                        {[s.analyst_score, s.fundamental_score, s.technical_score, s.sentiment_score, null, s.insider_score].map((v, j) => (
-                          <td key={j} style={{ padding: "8px 10px 8px 0", fontWeight: v != null ? 600 : 400, color: v == null ? T.muted : v >= 70 ? T.green : v >= 50 ? T.amber : T.red, fontFamily: "monospace" }}>
-                            {v != null ? v : "—"}
+                        {[s.analyst_score, s.fundamental_score, s.technical_score, s.sentiment_score, s.macro_score, s.insider_score].map((v, j) => (
+                          <td
+                            key={j}
+                            style={{ padding: "8px 10px 8px 0", fontWeight: v != null ? 600 : 400, fontSize: v != null ? undefined : "10px", color: v == null ? T.muted : v >= 70 ? T.green : v >= 50 ? T.amber : T.red, fontFamily: v != null ? "monospace" : undefined }}
+                            title={v == null ? "Not scored — this signal predates per-dimension scoring, or the scorer fell back to composite-only for this symbol" : undefined}
+                          >
+                            {v != null ? v : "not scored"}
                           </td>
                         ))}
                         <td style={{ padding: "8px 0", color: T.muted, fontSize: "11px", whiteSpace: "nowrap" }}>{timeAgo(s.created_at)}</td>

@@ -24,12 +24,19 @@ export async function GET() {
           .order("fit_score", { ascending: false })
           .limit(5);
 
+        // A fit_score of 0 almost always means the classifier's data fetch failed for
+        // that symbol (see classify/route.ts fallback), not a genuine "0% match" — showing
+        // it as a real top match reads as broken output. Treat 0-score rows as no signal.
+        const meaningful = (classifications ?? []).filter(
+          (c: { symbol: string; fit_score: number }) => (c.fit_score ?? 0) > 0
+        );
+
         return {
           id: template.id,
           name: template.name,
           description: template.description ?? "",
           rules: template.rules,
-          top_symbols: (classifications ?? []).map((c: { symbol: string; fit_score: number }) => ({
+          top_symbols: meaningful.map((c: { symbol: string; fit_score: number }) => ({
             symbol: c.symbol,
             fit_score: c.fit_score,
           })),

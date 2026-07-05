@@ -354,7 +354,7 @@ export default function WatchlistPanel() {
               Watchlist
             </div>
             <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>
-              {items.length} tracked · researched daily · tap ⚙ to configure each
+              {items.length} tracked · {items.filter(i => i.research_enabled).length} researched daily · tap ⚙ to configure each
             </div>
           </div>
         </div>

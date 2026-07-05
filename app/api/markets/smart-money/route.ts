@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
   const since = new Date(Date.now() - 30 * 86400_000).toISOString();
   const { data: signals } = await svc
     .from("agent_signals")
-    .select("symbol, direction, analyst_score, insider_score, technical_score, fundamental_score, sentiment_score, created_at, asset_class")
+    .select("symbol, direction, analyst_score, insider_score, technical_score, fundamental_score, sentiment_score, macro_score, created_at, asset_class")
     .gte("created_at", since)
     .order("insider_score", { ascending: false })
     .limit(50);

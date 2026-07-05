@@ -29,6 +29,36 @@ export async function POST(req: NextRequest) {
 
     const svc = createServiceClient();
 
+    // Idempotency guard — LearnerAgent is documented (and scheduled) as a weekly
+    // batch job. Even manual triggers (allowed any day from AgentsPage) should not
+    // silently stack multiple runs on the same day — that's how one day ends up
+    // with 4 learner runs. Skip if a run already exists for today's date, unless
+    // the caller explicitly passes { force: true } to intentionally re-run.
+    let forceRerun = false;
+    try {
+      const body = await req.clone().json();
+      forceRerun = body?.force === true;
+    } catch { /* no/invalid body — default to not forcing */ }
+
+    if (!forceRerun) {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const dayStart = `${todayStr}T00:00:00.000Z`;
+      const { data: todaysRun } = await svc
+        .from("agent_runs")
+        .select("id, status, started_at, trigger_source")
+        .eq("agent_type", "learner")
+        .gte("started_at", dayStart)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (todaysRun) {
+        return NextResponse.json({
+          skipped: true,
+          reason: `Learner already ran today (run ${(todaysRun as any).id}, ${(todaysRun as any).trigger_source} at ${(todaysRun as any).started_at}). Pass { force: true } to re-run.`,
+        });
+      }
+    }
+
     const { data: runRow } = await svc.from("agent_runs").insert({
       agent_type: "learner", status: "running",
       trigger_source: isCron ? "scheduled" : "manual",
