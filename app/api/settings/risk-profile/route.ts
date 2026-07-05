@@ -5,9 +5,9 @@ import { createClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 const PROFILES = {
-  conservative: { score_threshold: 72, position_size_pct: 7, stop_loss_pct: 5, target_pct: 12 },
-  balanced:     { score_threshold: 60, position_size_pct: 10, stop_loss_pct: 7, target_pct: 20 },
-  aggressive:   { score_threshold: 52, position_size_pct: 15, stop_loss_pct: 10, target_pct: 35 },
+  conservative: { score_threshold: 72, position_size_pct: 7, stop_loss_pct: 5, target_pct: 12, max_positions_per_sector: 2 },
+  balanced:     { score_threshold: 60, position_size_pct: 10, stop_loss_pct: 7, target_pct: 20, max_positions_per_sector: 3 },
+  aggressive:   { score_threshold: 52, position_size_pct: 15, stop_loss_pct: 10, target_pct: 35, max_positions_per_sector: 4 },
 };
 
 const VALID_TRADING_MODES = ["disabled", "manual", "auto"] as const;
@@ -21,7 +21,7 @@ export async function PATCH(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
-  const { risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_mode, broker } = body;
+  const { risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_mode, broker, max_positions_per_sector } = body;
 
   // Validate bounded inputs — reject out-of-range values
   if (risk_profile !== undefined && !VALID_PROFILES.includes(risk_profile)) {
@@ -42,6 +42,9 @@ export async function PATCH(req: NextRequest) {
   if (target_pct !== undefined && (target_pct < 1 || target_pct > 100)) {
     return NextResponse.json({ error: "target_pct must be 1–100" }, { status: 400 });
   }
+  if (max_positions_per_sector !== undefined && (max_positions_per_sector < 1 || max_positions_per_sector > 6)) {
+    return NextResponse.json({ error: "max_positions_per_sector must be 1–6" }, { status: 400 });
+  }
 
   const svc = createServiceClient();
   const { data: existing } = await svc.from("strategy_config").select("id").limit(1).single();
@@ -58,8 +61,15 @@ export async function PATCH(req: NextRequest) {
   if (target_pct !== undefined) update.target_pct = target_pct;
   if (trading_mode !== undefined) update.trading_mode = trading_mode;
   if (broker !== undefined) update.broker = broker;
+  if (max_positions_per_sector !== undefined) update.max_positions_per_sector = max_positions_per_sector;
 
-  await svc.from("strategy_config").update(update).eq("id", existing.id);
+  // Resilient write — max_positions_per_sector column may not exist until
+  // migration 056 is applied; retry without it so saving a profile still works.
+  const { error: updErr } = await svc.from("strategy_config").update(update).eq("id", existing.id);
+  if (updErr && "max_positions_per_sector" in update) {
+    const { max_positions_per_sector: _omit, ...rest } = update;
+    await svc.from("strategy_config").update(rest).eq("id", existing.id);
+  }
   return NextResponse.json({ ok: true, ...update });
 }
 

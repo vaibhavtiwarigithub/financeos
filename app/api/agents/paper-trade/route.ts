@@ -22,7 +22,9 @@ export async function POST(req: NextRequest) {
     // All DB ops use service client — bypasses RLS on agent/paper tables
     const supabase = createServiceClient();
 
-    // Pause check + risk profile params (single fetch)
+    // Pause check + risk profile params. max_positions_per_sector may not exist
+    // until migration 056 is applied — select it separately so its absence
+    // doesn't error the whole config read; fall back to the balanced default 3.
     const { data: cfg } = await supabase
       .from("strategy_config")
       .select("app_paused, score_threshold, position_size_pct, stop_loss_pct, target_pct")
@@ -31,6 +33,11 @@ export async function POST(req: NextRequest) {
     if ((cfg as any)?.app_paused) {
       return NextResponse.json({ skipped: true, reason: "App is paused — paper trades disabled" });
     }
+    let maxPerSector = 3;
+    try {
+      const { data: capRow } = await supabase.from("strategy_config").select("max_positions_per_sector").limit(1).single();
+      if ((capRow as any)?.max_positions_per_sector != null) maxPerSector = Number((capRow as any).max_positions_per_sector);
+    } catch { /* column not present yet — keep default 3 */ }
 
     // Risk profile parameters (fall back to balanced defaults)
     const scoreThreshold  = (cfg as any)?.score_threshold   ?? 60;
@@ -83,6 +90,31 @@ export async function POST(req: NextRequest) {
     const filled: any[] = [];
     const skipped: any[] = [];
 
+    // Sector concentration guardrail. Count how many open positions are already
+    // in each sector, then refuse to open more than max_positions_per_sector in
+    // any one — so the book can't silently become 8/10 tech. This is a hard
+    // human-set risk limit (from the risk profile), NOT something the agents
+    // tune. Sector comes from the research packet's fundamentals; when it's
+    // unknown (ETF/missing data) the cap can't be enforced for that name, so it
+    // isn't counted against a sector.
+    const { data: openPos } = await supabase.from("paper_positions").select("symbol, sector");
+    const sectorCount: Record<string, number> = {};
+    for (const p of (openPos ?? []) as any[]) {
+      if (p.sector) sectorCount[p.sector] = (sectorCount[p.sector] ?? 0) + 1;
+    }
+    // Resolve a symbol's sector from its most recent research packet (raw_data
+    // -> _scores -> evidence -> fundamental -> sector). Returns null if unknown.
+    async function resolveSector(sym: string, packetId: string | null): Promise<string | null> {
+      try {
+        const q = packetId
+          ? supabase.from("research_packets").select("raw_data").eq("id", packetId).maybeSingle()
+          : supabase.from("research_packets").select("raw_data").eq("symbol", sym).order("created_at", { ascending: false }).limit(1).maybeSingle();
+        const { data } = await q;
+        const sec = (data as any)?.raw_data?._scores?.evidence?.fundamental?.sector;
+        return typeof sec === "string" && sec.length > 0 ? sec : null;
+      } catch { return null; }
+    }
+
     for (const signal of signals) {
       // Idempotent claim: atomically set status→'claiming' only if still 'pending'
       // Prevents duplicate fills if this route is called concurrently
@@ -93,6 +125,16 @@ export async function POST(req: NextRequest) {
         .eq("status", "pending")
         .select("id");
       if (!claimed || claimed.length === 0) continue; // already claimed
+
+      // Sector cap check — before spending a price fetch. If this candidate's
+      // sector is already at the limit, release the claim and skip it (the next
+      // best candidate from a different sector still gets its turn).
+      const candSector = await resolveSector(signal.symbol, signal.research_packet_id ?? null);
+      if (candSector && (sectorCount[candSector] ?? 0) >= maxPerSector) {
+        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+        skipped.push({ symbol: signal.symbol, reason: `sector_cap (${candSector} already at ${maxPerSector})` });
+        continue;
+      }
 
       // Fetch real price: AV GLOBAL_QUOTE → price_cache (no MCP cold-start)
       const quote = await getQuote(signal.symbol, supabase);
@@ -186,17 +228,25 @@ export async function POST(req: NextRequest) {
           .update({ qty: newQty, avg_cost: newAvg, current_price: fillPrice })
           .eq("id", existing.id);
       } else {
-        await supabase
-          .from("paper_positions")
-          .insert({
-            symbol: signal.symbol,
-            qty,
-            avg_cost: fillPrice,
-            current_price: fillPrice,
-            price_target: priceTarget,
-            stop_loss: stopLoss,
-            highest_price: fillPrice,
-          });
+        const newPosRow: Record<string, any> = {
+          symbol: signal.symbol,
+          qty,
+          avg_cost: fillPrice,
+          current_price: fillPrice,
+          price_target: priceTarget,
+          stop_loss: stopLoss,
+          highest_price: fillPrice,
+          sector: candSector, // for the sector-concentration cap (migration 056)
+        };
+        const { error: posErr } = await supabase.from("paper_positions").insert(newPosRow);
+        if (posErr) {
+          // sector column not present yet (056 not applied) — insert without it.
+          delete newPosRow.sector;
+          await supabase.from("paper_positions").insert(newPosRow);
+        }
+        // Count this new position against its sector so later candidates in the
+        // same run respect the cap too.
+        if (candSector) sectorCount[candSector] = (sectorCount[candSector] ?? 0) + 1;
       }
 
       // Deduct from cash

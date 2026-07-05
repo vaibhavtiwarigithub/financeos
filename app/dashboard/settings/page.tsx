@@ -15,20 +15,20 @@ const T = {
 const RISK_PROFILES = {
   conservative: {
     label: "Conservative", icon: "🛡️",
-    desc: "Lower risk, tighter stops, higher conviction required",
-    score_threshold: 72, position_size_pct: 7, stop_loss_pct: 5, target_pct: 12,
+    desc: "Lower risk, tighter stops, higher conviction required · max 2 positions/sector",
+    score_threshold: 72, position_size_pct: 7, stop_loss_pct: 5, target_pct: 12, max_positions_per_sector: 2,
     activeBg: "#0D2410", activeBorder: "#34D399", activeText: "#34D399",
   },
   balanced: {
     label: "Balanced", icon: "⚖️",
-    desc: "Default — mix of growth and safety",
-    score_threshold: 60, position_size_pct: 10, stop_loss_pct: 7, target_pct: 20,
+    desc: "Default — mix of growth and safety · max 3 positions/sector",
+    score_threshold: 60, position_size_pct: 10, stop_loss_pct: 7, target_pct: 20, max_positions_per_sector: 3,
     activeBg: "#1E1F3A", activeBorder: "#6366F1", activeText: "#6366F1",
   },
   aggressive: {
     label: "Aggressive", icon: "🚀",
-    desc: "Higher risk, wider stops, momentum-first",
-    score_threshold: 52, position_size_pct: 15, stop_loss_pct: 10, target_pct: 35,
+    desc: "Higher risk, wider stops, momentum-first · max 4 positions/sector",
+    score_threshold: 52, position_size_pct: 15, stop_loss_pct: 10, target_pct: 35, max_positions_per_sector: 4,
     activeBg: "#2D1800", activeBorder: "#F59E0B", activeText: "#F59E0B",
   },
 } as const;
