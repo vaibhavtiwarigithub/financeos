@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
 
 export async function POST(req: NextRequest) {
   try {
@@ -36,75 +35,42 @@ export async function POST(req: NextRequest) {
     // CONNECTIONS.md: 965848641 is NEVER used for orders (read-only positions only).
     const AGENTIC_ACCOUNT = "605420660";
 
-    // Attempt Robinhood execution via Claude subprocess.
-    // Step 1: review_equity_order (dry-run) — confirms symbol, qty, side, and current quote.
-    // Step 2: place_equity_order only if review succeeds.
-    const robinhoodPrompt = `You are executing a pre-approved trade on the Robinhood AGENTIC account only.
-AGENTIC ACCOUNT: ${AGENTIC_ACCOUNT}
-NEVER use any other account number.
+    // Execution is manual-by-design: execClaude (a plain text-completion
+    // subprocess, no MCP server attached) structurally cannot call
+    // review_equity_order/place_equity_order — a prompt asking it to "call"
+    // those tools can only ever produce a hallucinated result, which would
+    // be a false "executed" with no real trade behind it. Instead, generate
+    // the exact natural-language instruction to paste into an interactive
+    // Claude session that DOES have live Robinhood MCP access (e.g. Claude
+    // Code) — the human stays in the loop for every real order.
+    const orderTypeText = trade.order_type === "limit"
+      ? `a limit order at $${trade.limit_price}`
+      : `a ${trade.order_type} order`;
+    const manualCommand = `Review and place ${orderTypeText} to ${trade.order_side} ${trade.qty} shares of ${trade.symbol} on Robinhood account ${AGENTIC_ACCOUNT}.`;
+    const executionStatus = "approved_awaiting_manual_execution";
 
-Trade to execute:
-- Symbol: ${trade.symbol}
-- Side: ${trade.order_side}
-- Quantity: ${trade.qty} shares
-- Order type: ${trade.order_type}
-${trade.order_type === "limit" ? `- Limit price: $${trade.limit_price}` : ""}
-
-Step 1: Call review_equity_order with account_number "${AGENTIC_ACCOUNT}", symbol "${trade.symbol}", side "${trade.order_side}", quantity ${trade.qty}, order_type "${trade.order_type}"${trade.limit_price ? `, price ${trade.limit_price}` : ""}.
-If review_equity_order returns an error or the reviewed payload does not match the trade details, STOP and output {"success": false, "error": "review_failed: <reason>"}.
-
-Step 2: Only if review succeeded, call place_equity_order with the exact same parameters and account_number "${AGENTIC_ACCOUNT}".
-
-Output ONLY a JSON object:
-{"success": true, "order_id": "...", "status": "...", "filled_price": 0.00}
-OR
-{"success": false, "error": "reason"}`;
-
-    let robinhoodResult: any = null;
-    let executionStatus = "approved_pending_execution";
-
-    try {
-      const stdout = await execClaude(robinhoodPrompt, 60000);
-      const raw = parseClaudeOutput(stdout);
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        robinhoodResult = JSON.parse(jsonMatch[0]);
-        if (robinhoodResult?.success) {
-          executionStatus = "executed";
-          await supabase.from("trade_queue").update({
-            status: "executed",
-            robinhood_order_id: robinhoodResult.order_id ?? null,
-          } as any).eq("id", tradeId);
-        } else {
-          executionStatus = "approved_pending_execution";
-        }
-      }
-    } catch {
-      executionStatus = "approved_pending_execution";
-      robinhoodResult = { success: false, error: "Robinhood OAuth not complete in subprocess — complete auth in main Claude session" };
-    }
-
-    // Log to trade_log (best-effort)
+    // Log to trade_log (best-effort) — no fill_price/outcome since nothing
+    // was actually executed yet; those get filled in once a real order is
+    // placed and the account snapshot syncs.
     try {
       await supabase.from("trade_log").insert({
         symbol: trade.symbol,
         order_side: trade.order_side,
         qty: trade.qty,
-        fill_price: robinhoodResult?.filled_price ?? trade.limit_price,
+        fill_price: null,
         analyst_score: trade.analyst_score,
         rationale: (reason ? `User note: ${reason}. ` : "") + (trade.rationale ?? ""),
         outcome: null,
-        executed_at: new Date().toISOString(),
+        executed_at: null,
       } as any);
     } catch { /* non-critical */ }
 
     return NextResponse.json({
       success: true,
       executionStatus,
-      robinhoodResult,
-      message: executionStatus === "executed"
-        ? `Order placed: ${trade.qty} shares of ${trade.symbol}`
-        : `Trade approved. Robinhood execution pending — complete OAuth to enable auto-execution.`,
+      manual_command: manualCommand,
+      manual_command_note: "Paste this into a Claude session with Robinhood MCP access (e.g. Claude Code) to actually place the order. This app cannot execute Robinhood trades itself.",
+      message: `Approved — paste the manual_command into an MCP-enabled Claude session to place it: "${manualCommand}"`,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

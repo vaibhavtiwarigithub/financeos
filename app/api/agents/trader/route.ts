@@ -3,7 +3,6 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getQuote, computeFillPrice } from "@/lib/data/quotes";
 import { checkKillSwitches } from "@/lib/kill-switches";
-import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
 import { guardOrderRequest } from "@/lib/request-guards";
 import { notifyTradeAction } from "@/lib/trade-notify";
 import { sendTradeAlertEmail } from "@/lib/trade-alert";
@@ -377,76 +376,37 @@ async function handleApproval(supabase: any, proposalId: number) {
       approved_at: new Date().toISOString(),
     }).eq("id", proposalId);
 
-    // Submit to Robinhood via execClaude subprocess (which has MCP access).
-    // Step 1: review_equity_order — dry-run confirms broker accepts the parameters.
-    // Step 2: place_equity_order only if review succeeds.
-    const robinhoodPrompt = `You are executing a pre-approved trade on the Robinhood AGENTIC account only.
-AGENTIC ACCOUNT: ${AGENTIC_ACCOUNT}
-NEVER use any other account number.
+    // Execution is manual-by-design: execClaude (a plain text-completion
+    // subprocess, no MCP server attached) structurally cannot call
+    // review_equity_order/place_equity_order — a prompt asking it to "call"
+    // those tools can only ever produce a hallucinated result, which would
+    // be a false "order submitted" with no real trade behind it. Instead,
+    // generate the exact natural-language instruction to paste into an
+    // interactive Claude session that DOES have live Robinhood MCP access
+    // (e.g. Claude Code) — the human stays in the loop for every real order.
+    const orderTypeText = proposal.order_type === "limit"
+      ? `a limit order at $${proposal.limit_price}`
+      : `a ${proposal.order_type} order`;
+    const manualCommand = `Review and place ${orderTypeText} to ${proposal.side} ${proposal.qty} shares of ${proposal.symbol} on Robinhood account ${AGENTIC_ACCOUNT}.`;
 
-Trade to execute:
-- Symbol: ${proposal.symbol}
-- Side: ${proposal.side}
-- Quantity: ${proposal.qty} shares
-- Order type: ${proposal.order_type}
-${proposal.order_type === "limit" ? `- Limit price: $${proposal.limit_price}` : ""}
-
-Step 1: Call review_equity_order with account_number "${AGENTIC_ACCOUNT}", symbol "${proposal.symbol}", side "${proposal.side}", quantity ${proposal.qty}, order_type "${proposal.order_type}"${proposal.limit_price ? `, price ${proposal.limit_price}` : ""}.
-If review_equity_order returns an error or the reviewed payload does not match the trade details, STOP and output {"success": false, "error": "review_failed: <reason>"}.
-
-Step 2: Only if review succeeded, call place_equity_order with the exact same parameters and account_number "${AGENTIC_ACCOUNT}".
-
-Output ONLY a JSON object:
-{"success": true, "order_id": "...", "status": "...", "filled_price": 0.00}
-OR
-{"success": false, "error": "reason"}`;
-
-    let executionStatus: string = "approved";
-    let robinhoodResult: any = null;
-
-    try {
-      const stdout = await execClaude(robinhoodPrompt, 150000); // 2.5 min — accounts for MCP cold-start
-      const raw = parseClaudeOutput(stdout);
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        robinhoodResult = JSON.parse(jsonMatch[0]);
-        if (robinhoodResult?.success) {
-          executionStatus = "submitted";
-          await supabase.from("trade_proposals").update({
-            status: "submitted",
-            robinhood_order_id: robinhoodResult.order_id ?? null,
-            fill_price: robinhoodResult.filled_price ?? null,
-          }).eq("id", proposalId);
-          notifyTradeAction({ action: "submitted", symbol: proposal.symbol, qty: proposal.qty, side: proposal.side, price: robinhoodResult.filled_price ?? freshQuote.price, orderId: robinhoodResult.order_id, proposalId }).catch(() => {});
-        } else {
-          executionStatus = "failed";
-          await supabase.from("trade_proposals").update({
-            status: "failed",
-            rejection_reason: `Robinhood: ${robinhoodResult?.error ?? "unknown"}`,
-          }).eq("id", proposalId);
-          notifyTradeAction({ action: "failed", symbol: proposal.symbol, qty: proposal.qty, side: proposal.side, proposalId, reason: robinhoodResult?.error }).catch(() => {});
-        }
-      }
-    } catch {
-      // execClaude timeout or MCP not authenticated — leave status as "approved"
-      robinhoodResult = { success: false, error: "Robinhood MCP unavailable — complete OAuth in Claude Code session then retry" };
-    }
+    await supabase.from("trade_proposals").update({
+      status: "approved",
+      rejection_reason: null,
+    }).eq("id", proposalId);
+    notifyTradeAction({ action: "approved", symbol: proposal.symbol, qty: proposal.qty, side: proposal.side, proposalId, reason: "Awaiting manual execution via Claude MCP" }).catch(() => {});
 
     return NextResponse.json({
       success: true,
-      action: executionStatus,
+      action: "approved_awaiting_manual_execution",
       proposal_id: proposalId,
       symbol: proposal.symbol,
       qty: proposal.qty,
       current_price: freshQuote.price,
       price_at_proposal: proposal.price_at_proposal,
       account_number: AGENTIC_ACCOUNT,
-      robinhood_result: robinhoodResult,
-      message: executionStatus === "submitted"
-        ? `Order submitted: ${proposal.qty} shares of ${proposal.symbol} (order ${robinhoodResult?.order_id})`
-        : executionStatus === "failed"
-        ? `Approved but Robinhood rejected: ${robinhoodResult?.error}`
-        : `Approved. Robinhood MCP unavailable — authenticate in Claude Code session to enable auto-execution.`,
+      manual_command: manualCommand,
+      manual_command_note: "Paste this into a Claude session with Robinhood MCP access (e.g. Claude Code) to actually place the order. This app cannot execute Robinhood trades itself.",
+      message: `Approved — paste the manual_command into an MCP-enabled Claude session to place it: "${manualCommand}"`,
     });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
