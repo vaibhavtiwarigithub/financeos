@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import WatchlistPanel from "@/components/dashboard/WatchlistPanel";
 import BriefingSection from "@/components/dashboard/BriefingSection";
+import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -140,6 +141,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
   const nav = paperPortfolio?.nav ?? 10000;
   const cash = paperPortfolio?.cash_balance ?? 10000;
   const totalPnl = nav - 10000;
+  const { masked: liveNumbersMasked, setRevealed: setLiveRevealed } = useRevealToggle();
 
   // LLM burn rate banner
   const [llmAlert, setLlmAlert] = useState(false);
@@ -240,7 +242,10 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
 
         {/* Live accounts panel */}
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "20px 22px", minWidth: "220px", display: "flex", flexDirection: "column", gap: "10px" }}>
-          <div style={{ fontSize: "10px", fontWeight: 800, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "4px" }}>Live Robinhood</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+            <div style={{ fontSize: "10px", fontWeight: 800, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase" }}>Live Robinhood</div>
+            <EyeToggle masked={liveNumbersMasked} onToggle={() => setLiveRevealed(r => !r)} />
+          </div>
 
           <div style={{ padding: "10px 12px", background: T.dim, borderRadius: "10px", borderLeft: `3px solid ${T.blue}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
@@ -252,21 +257,25 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
                 <div style={{ display: "flex", gap: "16px", marginBottom: "5px" }}>
                   <div>
                     <div style={{ fontSize: "9px", color: T.muted, marginBottom: "1px" }}>Live Equity</div>
-                    <div style={{ fontSize: "14px", fontWeight: 700 }}>${Number(liveSnap.equity ?? liveSnap.portfolio_value ?? 0).toFixed(0)}</div>
+                    <div style={{ fontSize: "14px", fontWeight: 700 }}>{maskText(`$${Number(liveSnap.equity ?? liveSnap.portfolio_value ?? 0).toFixed(0)}`, liveNumbersMasked)}</div>
                   </div>
                   <div>
                     <div style={{ fontSize: "9px", color: T.muted, marginBottom: "1px" }}>Buying Power</div>
-                    <div style={{ fontSize: "14px", fontWeight: 700, color: T.green }}>${Number(liveSnap.buying_power ?? 0).toFixed(0)}</div>
+                    <div style={{ fontSize: "14px", fontWeight: 700, color: T.green }}>{maskText(`$${Number(liveSnap.buying_power ?? 0).toFixed(0)}`, liveNumbersMasked)}</div>
                   </div>
                   <div>
                     <div style={{ fontSize: "9px", color: T.muted, marginBottom: "1px" }}>Positions</div>
-                    <div style={{ fontSize: "14px", fontWeight: 700 }}>{liveSnap.position_count ?? "—"}</div>
+                    <div style={{ fontSize: "14px", fontWeight: 700 }}>{liveNumbersMasked ? "••" : (liveSnap.position_count ?? "—")}</div>
                   </div>
                 </div>
                 {Array.isArray(liveSnap.positions_json) && liveSnap.positions_json.length > 0 && (
                   <div style={{ fontSize: "10px", color: T.muted, marginBottom: "4px" }}>
-                    {liveSnap.positions_json.slice(0, 4).map((p: any) => p.symbol).join(" · ")}
-                    {liveSnap.positions_json.length > 4 ? ` +${liveSnap.positions_json.length - 4}` : ""}
+                    {liveNumbersMasked ? "••••• · ••••• · •••••" : (
+                      <>
+                        {liveSnap.positions_json.slice(0, 4).map((p: any) => p.symbol).join(" · ")}
+                        {liveSnap.positions_json.length > 4 ? ` +${liveSnap.positions_json.length - 4}` : ""}
+                      </>
+                    )}
                   </div>
                 )}
                 <div style={{ fontSize: "9px", color: T.muted, marginTop: "3px" }}>

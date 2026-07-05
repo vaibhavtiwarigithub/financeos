@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback, type ChangeEvent } from "reac
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
+import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -85,6 +86,7 @@ export default function LivePortfolioPage({
 }) {
   const allAccountIds = liveSnaps.map(s => s.account_id);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>(allAccountIds);
+  const { masked, setRevealed } = useRevealToggle();
   const [holdings, setHoldings] = useState<HoldingRow[]>([]);
   const [loadingHoldings, setLoadingHoldings] = useState(liveSnaps.length > 0);
   const [snaps, setSnaps] = useState<any[]>(liveSnaps);
@@ -297,36 +299,39 @@ export default function LivePortfolioPage({
                     }}
                   >
                     {s.nickname ?? "••••" + s.account_id.slice(-4)}
-                    {s.equity ? " · " + fmt$(Number(s.equity)) : ""}
-                    {s.position_count > 0 ? ` · ${s.position_count}p` : " · no pos"}
+                    {s.equity ? " · " + maskText(fmt$(Number(s.equity)), masked) : ""}
+                    {s.position_count > 0 ? ` · ${masked ? "••" : s.position_count}p` : " · no pos"}
                   </button>
                 );
               })}
             </div>
           )}
         </div>
-        <button
-          onClick={() => loadHoldings()}
-          style={{ background: T.accentBg, border: `1px solid ${T.accent}44`, color: T.accent, borderRadius: "8px", padding: "8px 16px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
-        >
-          ↻ Refresh
-        </button>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <EyeToggle masked={masked} onToggle={() => setRevealed(r => !r)} />
+          <button
+            onClick={() => loadHoldings()}
+            style={{ background: T.accentBg, border: `1px solid ${T.accent}44`, color: T.accent, borderRadius: "8px", padding: "8px 16px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+          >
+            ↻ Refresh
+          </button>
+        </div>
       </div>
 
       {/* Stats row */}
       <div style={{ display: "flex", gap: "12px", marginBottom: "20px" }}>
-        <StatCard label="Total Equity" value={fmt$(Number(totalEquity))} sub="Live Robinhood" />
-        <StatCard label="Buying Power" value={fmt$(Number(buyingPower))} color={T.green} />
-        <StatCard label="Positions" value={String(positionCount)} sub={holdings.length > 0 ? fmt$(totalInvested) + " invested" : undefined} />
+        <StatCard label="Total Equity" value={maskText(fmt$(Number(totalEquity)), masked)} sub="Live Robinhood" />
+        <StatCard label="Buying Power" value={maskText(fmt$(Number(buyingPower)), masked)} color={T.green} />
+        <StatCard label="Positions" value={masked ? "••" : String(positionCount)} sub={holdings.length > 0 ? maskText(fmt$(totalInvested) + " invested", masked) : undefined} />
         <StatCard
           label="Total P&L"
-          value={fmt$(totalPnl)}
-          sub={totalPnlPct !== 0 ? fmtPct(totalPnlPct) : undefined}
+          value={maskText(fmt$(totalPnl), masked)}
+          sub={totalPnlPct !== 0 ? maskText(fmtPct(totalPnlPct), masked) : undefined}
           color={totalPnl >= 0 ? T.green : T.red}
         />
         <StatCard
           label="Day P&L"
-          value={dayPnl !== 0 ? fmt$(dayPnl) : "—"}
+          value={dayPnl !== 0 ? maskText(fmt$(dayPnl), masked) : "—"}
           color={dayPnl >= 0 ? T.green : T.red}
         />
       </div>
@@ -453,19 +458,19 @@ export default function LivePortfolioPage({
                   >
                     <td style={{ padding: "10px 10px", fontWeight: 700, color: T.accent }}>{h.symbol}</td>
                     <td style={{ padding: "10px 10px", color: T.textSub, fontSize: "12px", maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</td>
-                    <td style={{ padding: "10px 10px", textAlign: "right", color: T.text }}>{h.qty.toFixed(h.qty % 1 === 0 ? 0 : 4)}</td>
+                    <td style={{ padding: "10px 10px", textAlign: "right", color: T.text }}>{maskText(h.qty.toFixed(h.qty % 1 === 0 ? 0 : 4), masked)}</td>
                     <td style={{ padding: "10px 10px", textAlign: "right", color: T.muted }}>
-                      {h.avgCost > 0 ? "$" + h.avgCost.toFixed(2) : "—"}
+                      {maskText(h.avgCost > 0 ? "$" + h.avgCost.toFixed(2) : "—", masked)}
                     </td>
                     <td style={{ padding: "10px 10px", textAlign: "right", fontWeight: 600 }}>
-                      {h.currentPrice > 0 ? "$" + h.currentPrice.toFixed(2) : "—"}
+                      {maskText(h.currentPrice > 0 ? "$" + h.currentPrice.toFixed(2) : "—", masked)}
                       {h.priceSource === "unavailable" && <span style={{ fontSize: "9px", color: T.amber, marginLeft: "4px" }}>⚠</span>}
                     </td>
-                    <td style={{ padding: "10px 10px", textAlign: "right" }}><PctBadge value={h.dayChangePct} /></td>
-                    <td style={{ padding: "10px 10px", textAlign: "right" }}><PctBadge value={h.totalPnlPct} /></td>
-                    <td style={{ padding: "10px 10px", textAlign: "right", fontWeight: 600 }}>{fmt$(h.currentValue)}</td>
+                    <td style={{ padding: "10px 10px", textAlign: "right" }}>{masked ? "••" : <PctBadge value={h.dayChangePct} />}</td>
+                    <td style={{ padding: "10px 10px", textAlign: "right" }}>{masked ? "••" : <PctBadge value={h.totalPnlPct} />}</td>
+                    <td style={{ padding: "10px 10px", textAlign: "right", fontWeight: 600 }}>{maskText(fmt$(h.currentValue), masked)}</td>
                     <td style={{ padding: "10px 10px", textAlign: "right", fontWeight: 600, color: h.totalPnlDollar >= 0 ? T.green : T.red }}>
-                      {fmt$(h.totalPnlDollar)}
+                      {maskText(fmt$(h.totalPnlDollar), masked)}
                     </td>
                   </tr>
                 ))}
@@ -474,10 +479,10 @@ export default function LivePortfolioPage({
                 <tr style={{ borderTop: `1px solid ${T.border}` }}>
                   <td colSpan={7} style={{ padding: "10px 10px", fontSize: "11px", color: T.muted }}>Total</td>
                   <td style={{ padding: "10px 10px", textAlign: "right", fontWeight: 700 }}>
-                    {fmt$(holdings.reduce((s, h) => s + h.currentValue, 0))}
+                    {maskText(fmt$(holdings.reduce((s, h) => s + h.currentValue, 0)), masked)}
                   </td>
                   <td style={{ padding: "10px 10px", textAlign: "right", fontWeight: 700, color: totalPnl >= 0 ? T.green : T.red }}>
-                    {fmt$(totalPnl)}
+                    {maskText(fmt$(totalPnl), masked)}
                   </td>
                 </tr>
               </tfoot>

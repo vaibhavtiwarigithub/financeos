@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
 import PageHeader from "@/components/dashboard/PageHeader";
+import { usePrivacySetting } from "@/components/dashboard/PrivacyMask";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -51,6 +52,7 @@ export default function SettingsPage() {
   const supabase = createClient();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [tab, setTab] = useState("profile");
+  const [privacyEnabled, setPrivacyEnabled] = usePrivacySetting();
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
 
@@ -257,6 +259,29 @@ export default function SettingsPage() {
             <button onClick={saveProfile} disabled={saving} style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "11px 28px", fontSize: "14px", fontWeight: 600, cursor: "pointer" }}>
               {saving ? "Saving..." : "Save preferences"}
             </button>
+          </div>
+
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginTop: "16px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "4px" }}>Privacy Mode</div>
+                <div style={{ fontSize: "12px", color: T.textSub, maxWidth: "380px" }}>
+                  Hides live-account dollar amounts (equity, buying power, position values) behind an eye icon by default on Dashboard and Live Portfolio. Click the eye to reveal — it re-hides automatically when you leave and come back.
+                </div>
+              </div>
+              <button
+                onClick={() => setPrivacyEnabled(!privacyEnabled)}
+                style={{
+                  position: "relative", width: "44px", height: "24px", borderRadius: "12px", border: "none", cursor: "pointer", flexShrink: 0,
+                  background: privacyEnabled ? T.accent : T.border,
+                }}
+              >
+                <div style={{
+                  position: "absolute", top: "2px", left: privacyEnabled ? "22px" : "2px",
+                  width: "20px", height: "20px", borderRadius: "50%", background: "#fff", transition: "left 0.15s",
+                }} />
+              </button>
+            </div>
           </div>
         </div>
       )}
