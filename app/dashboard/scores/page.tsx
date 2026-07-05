@@ -61,6 +61,187 @@ type StrategyVersion = {
 
 type Selected = { symbol: string; row: ScoreRow; index: number } | null;
 
+// ── Point-detail API shapes (GET /api/scores/point-detail) ──────────────────
+type PacketDetail = {
+  packet_id: string | null;
+  analyst_score: number | null;
+  summary: string | null;
+  key_risks: string[];
+  catalysts: string[];
+  weights: Record<string, number> | null;
+  used_champion_weights: boolean | null;
+  scores: Record<string, number | null>;
+  evidence: Record<string, any>;
+  data_quality: Record<string, any> | null;
+  created_at: string | null;
+};
+type PointDetailResp = { detail: PacketDetail | null; prior: PacketDetail | null; available: boolean };
+
+// Evidence dimensions map to the score keys the API returns.
+const EVIDENCE_DIMS: { key: string; label: string }[] = [
+  { key: "fundamental", label: "Fundamental" },
+  { key: "technical", label: "Technical" },
+  { key: "sentiment", label: "Sentiment" },
+  { key: "macro", label: "Macro" },
+  { key: "insider", label: "Insider" },
+];
+
+// A qualitative verdict + the T color token that reads for it.
+type Verdict = { text: string; tone: "green" | "amber" | "red" | "muted" };
+function num(v: any): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function pct(v: any): string {
+  const n = num(v);
+  if (n === null) return "";
+  // Values may arrive as 0–1 fractions or 0–100 already.
+  const p = n <= 1 && n >= -1 ? n * 100 : n;
+  return `${Math.round(p)}%`;
+}
+function toneColor(tone: Verdict["tone"]) {
+  return tone === "green" ? T.green : tone === "amber" ? T.amber : tone === "red" ? T.red : T.muted;
+}
+
+// Turn one dimension's evidence object into a human sentence with inline
+// strong/moderate/weak verdicts. Returns null if there's genuinely nothing.
+function explainDimension(dim: string, evidence: any, score: number | null): { parts: Verdict[]; note: string | null } | null {
+  if (!evidence || typeof evidence !== "object") {
+    return { parts: [], note: null };
+  }
+  const note: string | null = typeof evidence.note === "string" ? evidence.note : null;
+  const parts: Verdict[] = [];
+
+  if (dim === "fundamental") {
+    const pe = num(evidence.pe_ratio);
+    if (pe !== null) {
+      const tone = pe < 18 ? "green" : pe < 30 ? "amber" : "red";
+      const tag = pe < 18 ? "cheap" : pe < 30 ? "fair" : "rich vs a typical sub-20";
+      parts.push({ text: `P/E ${pe.toFixed(1)} (${tag})`, tone });
+    }
+    const roe = num(evidence.roe);
+    if (roe !== null) {
+      const r = roe <= 1 ? roe * 100 : roe;
+      const tone = r > 20 ? "green" : r > 12 ? "amber" : "red";
+      const tag = r > 20 ? "strong" : r > 12 ? "ok" : "weak";
+      parts.push({ text: `ROE ${Math.round(r)}% (${tag})`, tone });
+    }
+    const rg = num(evidence.revenue_growth_yoy);
+    if (rg !== null) {
+      const g = Math.abs(rg) <= 1 ? rg * 100 : rg;
+      const tone = g > 20 ? "green" : g > 8 ? "amber" : "red";
+      const tag = g > 20 ? "strong" : g > 8 ? "moderate" : g >= 0 ? "soft" : "contracting";
+      parts.push({ text: `revenue growth ${g > 0 ? "+" : ""}${Math.round(g)}% YoY (${tag})`, tone });
+    }
+    const pm = num(evidence.profit_margin);
+    if (pm !== null) {
+      const m = Math.abs(pm) <= 1 ? pm * 100 : pm;
+      const tone = m > 20 ? "green" : m > 8 ? "amber" : "red";
+      parts.push({ text: `margin ${Math.round(m)}%`, tone });
+    }
+    const eps = num(evidence.eps);
+    if (eps !== null) parts.push({ text: `EPS ${eps.toFixed(2)}`, tone: eps > 0 ? "green" : "red" });
+    const tgt = num(evidence.analyst_target);
+    if (tgt !== null) parts.push({ text: `analyst target $${tgt.toFixed(0)}`, tone: "muted" });
+    if (evidence.sector) parts.push({ text: `Sector: ${evidence.sector}`, tone: "muted" });
+    return { parts, note };
+  }
+
+  if (dim === "technical") {
+    const rsi = num(evidence.rsi);
+    if (rsi !== null) {
+      const tone = rsi > 70 ? "amber" : rsi > 55 ? "green" : rsi < 45 ? "red" : "muted";
+      const tag = rsi > 70 ? "overbought" : rsi > 55 ? "bullish momentum, not yet overbought" : rsi < 45 ? "bearish momentum" : "neutral";
+      parts.push({ text: `RSI ${Math.round(rsi)} (${tag})`, tone });
+    }
+    const price = num(evidence.price);
+    const ema = num(evidence.ema50) ?? num(evidence.ema) ?? num(evidence.sma);
+    if (price !== null && ema !== null) {
+      const above = price >= ema;
+      parts.push({ text: `price ${above ? "above" : "below"} 50-day ${evidence.ema50 || evidence.ema ? "EMA" : "MA"} (${above ? "uptrend" : "downtrend"})`, tone: above ? "green" : "red" });
+    }
+    const macd = num(evidence.macd);
+    if (macd !== null) parts.push({ text: `MACD ${macd > 0 ? "positive" : "negative"}`, tone: macd > 0 ? "green" : "red" });
+    return { parts, note };
+  }
+
+  if (dim === "sentiment") {
+    const bull = num(evidence.bullish_pct);
+    const bear = num(evidence.bearish_pct);
+    if (bull !== null || bear !== null) {
+      const b = bull ?? (bear !== null ? (bear <= 1 ? 1 - bear : 100 - bear) : null);
+      const net = b !== null ? (b <= 1 ? b * 100 : b) : null;
+      const tone: Verdict["tone"] = net === null ? "muted" : net > 55 ? "green" : net < 45 ? "red" : "muted";
+      const tag = net === null ? "" : net > 55 ? "net positive social sentiment" : net < 45 ? "net negative social sentiment" : "mixed social sentiment";
+      parts.push({ text: `Bullish ${pct(bull ?? "")} / bearish ${pct(bear ?? "")}${tag ? ` — ${tag}` : ""}`, tone });
+    }
+    if (evidence.source) parts.push({ text: `source: ${evidence.source}`, tone: "muted" });
+    return { parts, note };
+  }
+
+  if (dim === "macro") {
+    const regime = evidence.regime ? String(evidence.regime).toUpperCase() : null;
+    const danger = num(evidence.danger_score);
+    if (regime || danger !== null) {
+      const tone: Verdict["tone"] = regime === "GREEN" ? "green" : regime === "RED" ? "red" : regime === "AMBER" || regime === "YELLOW" ? "amber" : danger !== null ? (danger < 30 ? "green" : danger < 60 ? "amber" : "red") : "muted";
+      const backdrop = tone === "green" ? "supportive backdrop" : tone === "red" ? "risk-off backdrop" : "mixed backdrop";
+      const bits = [regime ? `Regime ${regime}` : null, danger !== null ? `danger score ${Math.round(danger)}/100` : null].filter(Boolean).join(", ");
+      parts.push({ text: `${bits} — ${backdrop}`, tone });
+    }
+    if (evidence.as_of) parts.push({ text: `as of ${evidence.as_of}`, tone: "muted" });
+    return { parts, note };
+  }
+
+  if (dim === "insider") {
+    const keys = Object.keys(evidence).filter(k => k !== "note");
+    if (keys.length === 0) return { parts: [], note: note ?? "No insider signal data." };
+    for (const k of keys) {
+      const v = evidence[k];
+      if (v === null || v === undefined || typeof v === "object") continue;
+      parts.push({ text: `${k.replace(/_/g, " ")}: ${v}`, tone: "muted" });
+    }
+    if (parts.length === 0 && !note) return { parts: [], note: "No insider signal data." };
+    return { parts, note };
+  }
+
+  return { parts, note };
+}
+
+// Compare this point's evidence vs prior for one dimension → the driving metric
+// that moved, as a short clause. Returns null if no specific driver identified.
+function evidenceDeltaClause(dim: string, cur: any, prv: any): string | null {
+  if (!cur || !prv || typeof cur !== "object" || typeof prv !== "object") return null;
+  const chg = (label: string, a: any, b: any, digits = 0) => {
+    const na = num(a), nb = num(b);
+    if (na === null || nb === null || Math.abs(na - nb) < (digits ? 0.01 : 0.5)) return null;
+    return `${label} ${nb.toFixed(digits)} → ${na.toFixed(digits)}`;
+  };
+  const clauses: string[] = [];
+  if (dim === "fundamental") {
+    const c = chg("P/E", cur.pe_ratio, prv.pe_ratio, 1); if (c) clauses.push(c);
+    const r = chg("ROE", cur.roe, prv.roe, 0); if (r) clauses.push(r);
+    const g = chg("rev growth", cur.revenue_growth_yoy, prv.revenue_growth_yoy, 0); if (g) clauses.push(g);
+  } else if (dim === "technical") {
+    const rsi = chg("RSI", cur.rsi, prv.rsi, 0); if (rsi) clauses.push(rsi);
+    const pc = num(cur.price), pp = num(prv.price);
+    const ec = num(cur.ema50) ?? num(cur.ema), ep = num(prv.ema50) ?? num(prv.ema);
+    if (pc !== null && ec !== null && pp !== null && ep !== null) {
+      const wasAbove = pp >= ep, nowAbove = pc >= ec;
+      if (wasAbove !== nowAbove) clauses.push(`price crossed ${nowAbove ? "above" : "below"} the 50-day EMA`);
+    }
+  } else if (dim === "sentiment") {
+    const b = chg("bullish", cur.bullish_pct, prv.bullish_pct, 0); if (b) clauses.push(b);
+  } else if (dim === "macro") {
+    const d = chg("danger", cur.danger_score, prv.danger_score, 0); if (d) clauses.push(d);
+    if (cur.regime && prv.regime && String(cur.regime).toUpperCase() !== String(prv.regime).toUpperCase()) {
+      clauses.push(`regime ${String(prv.regime).toUpperCase()} → ${String(cur.regime).toUpperCase()}`);
+    }
+  }
+  if (clauses.length === 0) return null;
+  return clauses.join(" and ");
+}
+
 function fmtDateTime(iso: string) {
   return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
@@ -90,6 +271,10 @@ export default function ScoreTrackerPage() {
   const [loading, setLoading] = useState(false);
   const [versions, setVersions] = useState<StrategyVersion[]>([]);
   const [selected, setSelected] = useState<Selected>(null);
+
+  // Rich "why" evidence for the currently-selected point (fetched on click).
+  const [pointDetail, setPointDetail] = useState<PointDetailResp | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   // ── Hydrate selection from localStorage + fetch candidate symbols ──────────
   useEffect(() => {
@@ -228,6 +413,79 @@ export default function ScoreTrackerPage() {
 
     return { row, prev, analystDelta, dims, biggestDriver, championChange };
   }, [selected, bySymbol, versions]);
+
+  // ── Fetch rich evidence for the selected point ──────────────────────────────
+  useEffect(() => {
+    if (!selected) { setPointDetail(null); setDetailLoading(false); return; }
+    const rows = bySymbol[selected.symbol] ?? [];
+    const row = rows[selected.index];
+    const packetId = row?.research_packet_id ?? null;
+    if (!packetId) {
+      // Old point predating the evidence upgrade — nothing to fetch.
+      setPointDetail({ detail: null, prior: null, available: false });
+      setDetailLoading(false);
+      return;
+    }
+    const priorPacketId = selected.index > 0 ? (rows[selected.index - 1]?.research_packet_id ?? null) : null;
+    const params = new URLSearchParams({ packet_id: packetId });
+    if (priorPacketId) params.set("prior_packet_id", priorPacketId);
+
+    let cancelled = false;
+    setDetailLoading(true);
+    setPointDetail(null);
+    fetch(`/api/scores/point-detail?${params.toString()}`)
+      .then(r => r.json())
+      .then((d: PointDetailResp) => { if (!cancelled) setPointDetail(d); })
+      .catch(() => { if (!cancelled) setPointDetail({ detail: null, prior: null, available: false }); })
+      .finally(() => { if (!cancelled) setDetailLoading(false); });
+    return () => { cancelled = true; };
+  }, [selected, bySymbol]);
+
+  // ── Per-dimension "why" + "what changed" narrative from the fetched evidence ─
+  const evidenceView = useMemo(() => {
+    const detail = pointDetail?.detail ?? null;
+    const prior = pointDetail?.prior ?? null;
+    if (!detail) return null;
+
+    const rows = detail.evidence ?? {};
+    const priorEv = prior?.evidence ?? {};
+    const curScores = detail.scores ?? {};
+    const priorScores = prior?.scores ?? {};
+
+    const dims = EVIDENCE_DIMS.map(({ key, label }) => {
+      const explained = explainDimension(key, rows[key], num(curScores[key]));
+      const curScore = num(curScores[key]);
+      const prvScore = prior ? num(priorScores[key]) : null;
+      const scoreDelta = curScore !== null && prvScore !== null ? curScore - prvScore : null;
+      const driverClause = prior ? evidenceDeltaClause(key, rows[key], priorEv[key]) : null;
+      return { key, label, explained, curScore, prvScore, scoreDelta, driverClause };
+    });
+
+    // Biggest driver of the overall move = dimension with largest |scoreDelta|.
+    let biggestDriver: { label: string; scoreDelta: number } | null = null;
+    if (prior) {
+      let max = 0;
+      for (const d of dims) {
+        if (d.scoreDelta !== null && Math.abs(d.scoreDelta) > max) {
+          max = Math.abs(d.scoreDelta);
+          biggestDriver = { label: d.label, scoreDelta: d.scoreDelta };
+        }
+      }
+    }
+
+    // Data-quality caveats.
+    const dq = detail.data_quality ?? {};
+    const caveats: string[] = [];
+    if (dq && typeof dq === "object") {
+      if (dq.fundamentalDataAvailable === false) caveats.push("fundamental data missing");
+      if (dq.technicalDataPoints === 0 || dq.technicalDataPoints === "0") caveats.push("no technical data points");
+      if (dq.sentimentDataAvailable === false) caveats.push("sentiment data missing");
+      if (dq.macroDataAvailable === false) caveats.push("macro data missing");
+      if (dq.insiderDataAvailable === false) caveats.push("insider data missing");
+    }
+
+    return { detail, prior, dims, biggestDriver, caveats };
+  }, [pointDetail]);
 
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif", minHeight: "100vh", background: T.bg }}>
@@ -444,13 +702,128 @@ export default function ScoreTrackerPage() {
                 </table>
               </div>
 
-              {/* Rationale */}
-              {drill.row.rationale && (
-                <div style={{ background: T.dim, borderRadius: "10px", padding: "12px 14px", marginBottom: "14px" }}>
-                  <div style={{ fontSize: "9px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "6px" }}>Thesis</div>
-                  <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7" }}>{drill.row.rationale}</div>
+              {/* ── Rich evidence: WHY each dimension is what it is ── */}
+              {detailLoading ? (
+                <div style={{ color: T.accent, fontSize: "12px", padding: "6px 0 14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: T.accent, display: "inline-block", opacity: 0.7 }} />
+                  Loading explanation — pulling the per-dimension evidence behind this score…
                 </div>
-              )}
+              ) : pointDetail && !pointDetail.available ? (
+                <div style={{ color: T.muted, fontSize: "12px", fontStyle: "italic", padding: "6px 0 14px", lineHeight: "1.6" }}>
+                  Detailed evidence wasn&apos;t recorded for this point (it predates the evidence upgrade — new points written each research run will show full reasoning).
+                </div>
+              ) : evidenceView ? (
+                <>
+                  {/* Data-quality caveat */}
+                  {evidenceView.caveats.length > 0 && (
+                    <div style={{ background: T.amberBg, border: `1px solid ${T.amber}44`, borderRadius: "10px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.amber, lineHeight: "1.5" }}>
+                      ⚠ Some inputs were unavailable this run ({evidenceView.caveats.join(", ")}) — those dimensions used a neutral 50 baseline, so treat them as low-confidence rather than a true neutral read.
+                    </div>
+                  )}
+
+                  {/* Per-dimension "why" */}
+                  <div style={{ marginBottom: "16px" }}>
+                    <div style={{ fontSize: "9px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "10px" }}>Why each dimension scored this</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {evidenceView.dims.map(d => {
+                        const ex = d.explained;
+                        const empty = !ex || (ex.parts.length === 0 && !ex.note);
+                        return (
+                          <div key={d.key} style={{ background: T.dim, borderRadius: "8px", padding: "8px 12px" }}>
+                            <div style={{ display: "flex", alignItems: "baseline", gap: "8px", marginBottom: "3px" }}>
+                              <span style={{ fontSize: "11px", fontWeight: 700, color: T.textSub }}>{d.label}</span>
+                              {d.curScore !== null && <span style={{ fontSize: "11px", color: T.muted }}>· {d.curScore}/100</span>}
+                            </div>
+                            <div style={{ fontSize: "12px", color: T.textSub, lineHeight: "1.6" }}>
+                              {empty ? (
+                                <span style={{ color: T.muted }}>No detailed evidence for this dimension.</span>
+                              ) : ex!.parts.length > 0 ? (
+                                ex!.parts.map((p, i) => (
+                                  <span key={i}>
+                                    <span style={{ color: toneColor(p.tone), fontWeight: p.tone === "muted" ? 400 : 600 }}>{p.text}</span>
+                                    {i < ex!.parts.length - 1 && <span style={{ color: T.muted }}>, </span>}
+                                  </span>
+                                ))
+                              ) : (
+                                <span style={{ color: T.muted }}>{ex!.note}</span>
+                              )}
+                              {ex && ex.parts.length > 0 && ex.note && (
+                                <span style={{ color: T.muted, fontStyle: "italic" }}> — {ex.note}</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* What changed vs prior */}
+                  {evidenceView.prior && (
+                    <div style={{ marginBottom: "16px" }}>
+                      <div style={{ fontSize: "9px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "10px" }}>What changed vs the prior point</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                        {(() => {
+                          const changed = evidenceView.dims.filter(d => d.scoreDelta !== null && d.scoreDelta !== 0);
+                          if (changed.length === 0) {
+                            return <div style={{ fontSize: "12px", color: T.muted }}>No dimension scores moved between these two points.</div>;
+                          }
+                          return changed.map(d => {
+                            const delta = d.scoreDelta!;
+                            const color = delta > 0 ? T.green : T.red;
+                            return (
+                              <div key={d.key} style={{ fontSize: "12px", color: T.textSub, lineHeight: "1.6" }}>
+                                <span style={{ fontWeight: 700, color: T.textSub }}>{d.label}</span>{" "}
+                                <span style={{ color: T.muted }}>{d.prvScore} → {d.curScore}</span>{" "}
+                                <span style={{ color, fontWeight: 600 }}>({delta > 0 ? "+" : ""}{delta})</span>
+                                <span style={{ color: T.muted }}>: {d.driverClause ? d.driverClause : "dimension inputs shifted"}.</span>
+                              </div>
+                            );
+                          });
+                        })()}
+                        {evidenceView.biggestDriver && (
+                          <div style={{ fontSize: "12px", color: T.accent, fontWeight: 600, marginTop: "4px" }}>
+                            ➜ Biggest driver: {evidenceView.biggestDriver.label} ({evidenceView.biggestDriver.scoreDelta > 0 ? "+" : ""}{evidenceView.biggestDriver.scoreDelta})
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : null}
+
+              {/* Thesis / risks / catalysts */}
+              {(() => {
+                const thesis = evidenceView?.detail.summary || drill.row.rationale;
+                const risks = evidenceView?.detail.key_risks ?? [];
+                const catalysts = evidenceView?.detail.catalysts ?? [];
+                if (!thesis && risks.length === 0 && catalysts.length === 0) return null;
+                return (
+                  <div style={{ background: T.dim, borderRadius: "10px", padding: "12px 14px", marginBottom: "14px" }}>
+                    {thesis && (
+                      <>
+                        <div style={{ fontSize: "9px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "6px" }}>Thesis</div>
+                        <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7", marginBottom: (risks.length || catalysts.length) ? "12px" : 0 }}>{thesis}</div>
+                      </>
+                    )}
+                    {risks.length > 0 && (
+                      <div style={{ marginBottom: catalysts.length ? "12px" : 0 }}>
+                        <div style={{ fontSize: "9px", fontWeight: 700, color: T.red, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "6px" }}>Key risks</div>
+                        <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "12px", color: T.textSub, lineHeight: "1.7" }}>
+                          {risks.map((r, i) => <li key={i}>{r}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                    {catalysts.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: "9px", fontWeight: 700, color: T.green, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "6px" }}>Catalysts</div>
+                        <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "12px", color: T.textSub, lineHeight: "1.7" }}>
+                          {catalysts.map((c, i) => <li key={i}>{c}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Meta row */}
               <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", fontSize: "11px", color: T.muted }}>
