@@ -35,9 +35,15 @@ export interface ComputedScores {
 // ── Fundamental scoring from AV OVERVIEW ──────────────────────────────────────
 
 function scoreFundamentals(overview: Record<string, string>, isEtf: boolean): { score: number; evidence: Record<string, unknown> } {
-  if (isEtf || !overview?.Symbol) {
-    // ETFs: use simple momentum proxy (no PE/earnings)
-    return { score: 55, evidence: { note: "ETF — fundamental scoring uses 55 neutral baseline" } };
+  if (isEtf) {
+    // ETFs have no P/E/earnings — use a neutral baseline (momentum drives the score elsewhere).
+    return { score: 55, evidence: { note: "ETF — no company fundamentals; neutral 55 baseline" } };
+  }
+  if (!overview?.Symbol) {
+    // A real stock whose fundamentals just weren't fetched (rate limit / no key).
+    // This must NOT masquerade as an ETF — say plainly the data was missing so
+    // the score-detail "why" is honest about it being a low-confidence default.
+    return { score: 55, evidence: { note: "No fundamental data available (provider rate limit or missing key) — neutral 55 baseline, low confidence" } };
   }
 
   let score = 50;
