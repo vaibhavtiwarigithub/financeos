@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
+import { getMarketSupport, SUPPORT_META } from "@/lib/market-support";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -547,6 +548,30 @@ export default function DashboardShell({ profile, children }: { profile: Profile
           </div>
         </div>
         {children}
+
+        {/* Per-page country-support badge — single source of truth in lib/market-support.ts */}
+        {(() => {
+          const sup = getMarketSupport(pathname);
+          const meta = SUPPORT_META[sup.level];
+          return (
+            <div style={{
+              marginTop: "32px", paddingTop: "14px", borderTop: `1px solid ${T.border}`,
+              display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap",
+              fontSize: "11px", color: T.muted,
+            }}>
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: "6px",
+                padding: "3px 10px", borderRadius: "20px",
+                background: `${meta.color}18`, color: meta.color,
+                border: `1px solid ${meta.color}44`, fontWeight: 600, whiteSpace: "nowrap",
+              }}>
+                <span>{meta.flags}</span>
+                <span>Country support: {meta.label}</span>
+              </span>
+              <span style={{ color: T.textSub }}>{sup.note}</span>
+            </div>
+          );
+        })()}
       </main>
     </div>
   );
