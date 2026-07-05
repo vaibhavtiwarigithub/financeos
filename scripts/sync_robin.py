@@ -81,13 +81,17 @@ def check_env():
 
 def insert_snapshot(data: dict):
     import requests as req
+    # live_account_snapshots has a unique constraint on account_id (one row
+    # per account) — a plain POST/insert crashed with a duplicate-key error
+    # on every run after the first ever succeeded. Upsert via Prefer header.
     headers = {
         "apikey":        SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type":  "application/json",
+        "Prefer":        "resolution=merge-duplicates",
     }
     r = req.post(
-        f"{SUPABASE_URL}/rest/v1/live_account_snapshots",
+        f"{SUPABASE_URL}/rest/v1/live_account_snapshots?on_conflict=account_id",
         headers=headers,
         json=data,
         timeout=15,

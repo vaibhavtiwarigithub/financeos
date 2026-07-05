@@ -344,7 +344,10 @@ export async function POST(req: NextRequest) {
     svc.from("paper_portfolio").select("*").limit(1).single(),
     svc.from("paper_positions").select("*").limit(10),
     svc.from("agent_signals").select("symbol,direction,analyst_score,reasoning").eq("status", "pending").gte("analyst_score", 50).order("analyst_score", { ascending: false }).limit(8),
-    svc.from("live_account_snapshots").select("*").order("captured_at", { ascending: false }).limit(1).single(),
+    // Filter to the Trading account (••••8641) — see app/dashboard/page.tsx
+    // for why: without this, the most-recent-snapshot query could silently
+    // return a different account's row.
+    svc.from("live_account_snapshots").select("*").eq("account_id", "965848641").order("captured_at", { ascending: false }).limit(1).single(),
     svc.from("earnings_calendar").select("symbol,report_date,estimate_eps,period").gte("report_date", dateStr).order("report_date").limit(5),
     svc.from("learning_log").select("symbol,outcome,note,created_at").order("created_at", { ascending: false }).limit(3),
     svc.from("watchlist").select("symbol,company_name").eq("research_enabled", true).limit(20),

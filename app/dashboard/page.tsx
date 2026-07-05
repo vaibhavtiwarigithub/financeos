@@ -34,7 +34,10 @@ export default async function DashboardPage() {
     supabase.from("agent_signals").select("*").order("created_at", { ascending: false }).limit(6),
     supabase.from("agent_signals").select("*").eq("status", "pending").gte("analyst_score", 55).order("analyst_score", { ascending: false }).limit(5),
     supabase.from("learning_log").select("*").order("created_at", { ascending: false }).limit(3),
-    supabase.from("live_account_snapshots").select("*").order("captured_at", { ascending: false }).limit(1).single(),
+    // Filter to the Trading account (••••8641) specifically — without this,
+    // "most recent snapshot" could silently return Autopilot or Agentic's
+    // row instead, mislabeled under the hardcoded "••••8641" UI text.
+    supabase.from("live_account_snapshots").select("*").eq("account_id", "965848641").order("captured_at", { ascending: false }).limit(1).single(),
     supabase.from("briefings").select("*").order("created_at", { ascending: false }).limit(1).single(),
   ]);
 
