@@ -361,3 +361,59 @@ Alternatives considered (proposed, none implemented yet): (a) Rebuild these call
 Impact: Until resolved, do not enable live trading; do not trust `research-agent.ts`'s screener output as verified against real MCP data; treat `mentor/evaluate` "verified" fundamentals with suspicion.
 Files/features affected: `lib/claude-exec.ts`, `lib/research-agent.ts`, `app/api/mentor/evaluate/route.ts`, `app/api/portfolio/live-holdings/route.ts`, `lib/market-data.ts`, `app/api/portfolio/robinhood/route.ts`, `lib/chart-data.ts`, `app/api/agents/trader/route.ts`, `app/api/agents/trade/approve/route.ts`.
 Reversal cost: N/A (nothing reversed — decision on the fix approach is pending)
+
+### Decision 24: Close the learning loop — ResearchAgent consumes promoted champion weights
+
+Date: 2026-07-05
+Status: Approved
+Category: Architecture / Data
+
+Context: Decision 13 established the challenger→champion governance path: LearnerAgent proposes weight challengers into `strategy_versions`, and a human promotes one to champion (`is_champion=true`, `weights_snapshot` jsonb). But the loop was OPEN — nothing downstream ever read the promoted weights. ResearchAgent scored every symbol with a hardcoded `PROFILE_WEIGHTS` table keyed only on `risk_profile`, and `signal_weights` was dead code. Approved learning had zero effect on scoring.
+Decision: `lib/research-agent.ts`'s `processSymbol` reads the promoted champion's `weights_snapshot` first, normalizing both key formats (seed row short keys `{fundamental:0.3,...}`; LearnerAgent challenger suffixed keys `{fundamental_weight:0.3,...}`). It falls back to the static `PROFILE_WEIGHTS` table (then `signal_weights`) only when no champion is promoted. `research_packets.raw_data` records `_using_champion_weights: true/false` per signal for auditability.
+Reason: A learning system that can't affect scoring is decorative. This is the hop that makes the human-gated challenger path from Decision 13 actually change production behavior — while keeping the human promotion gate intact.
+Alternatives considered: Auto-apply challenger weights without promotion (removes the Decision 13 human gate — rejected); keep scoring on `PROFILE_WEIGHTS` and treat learning as advisory-only forever (defeats the learner's purpose).
+Impact: Promoting a challenger now changes ResearchAgent's next-run scoring. No effect until a champion is actually promoted (falls back to profile weights).
+Files/features affected: `lib/research-agent.ts` (`processSymbol`), `strategy_versions`, `research_packets.raw_data`.
+Reversal cost: Low (revert to always reading `PROFILE_WEIGHTS`)
+
+### Decision 25: Durable per-symbol score history (`signal_score_history`) + ScoreTrajectory feature
+
+Date: 2026-07-05
+Status: Approved
+Category: Data / Product
+
+Context: PRD.md specced a "30-day price + agent score history" chart, but the data model never existed. `agent_signals` rows get status-mutated and filtered, and the table barely accumulates, so the existing ScoreTrajectory chart UI was starved of data. There was no durable record of how a symbol's score evolved over time.
+Decision: New append-only table `signal_score_history` (migration 054): `symbol`, `analyst_score` + 5 dimension scores (`fundamental`/`technical`/`sentiment`/`macro`/`insider`), `direction`, `source`, `created_at`; RLS service_role-all + authenticated-read; index on `(symbol, created_at desc)`. Every score computation in `lib/research-agent.ts` appends a row (best-effort — won't fail the research run, no-ops until migration applied). Rows are never touched after insert. Consumed by (1) a `SCORE TREND` note injected into the thesis prompt so the agent reasons about conviction momentum, and (2) a new `GET /api/charts/score-history?symbol=X` route feeding the symbol-detail ScoreTrajectory chart.
+Reason: Score trajectory is signal — a rising score carries different conviction than a cold snapshot at the same value. An append-only history is the honest data model (unlike the mutated `agent_signals`) and finally delivers the PRD chart.
+Alternatives considered: Reconstruct history from `agent_signals` (unreliable — rows are mutated/filtered); store history inside `research_packets.raw_data` (not queryable per-symbol over time).
+Impact: New table + route; thesis prompt gains a trend line; symbol detail page chart now shows real durable history. Best-effort write means research runs are unaffected if the insert fails.
+Files/features affected: `supabase/migrations/054_signal_score_history.sql`, `lib/research-agent.ts`, `app/api/charts/score-history/route.ts`, symbol detail ScoreTrajectory chart.
+Reversal cost: Low
+
+### Decision 26: LearnerAgent Phase B is a last-resort backstop, deferring to the Phase A smart-exit path
+
+Date: 2026-07-05
+Status: Approved
+Category: Architecture
+
+Context: The LearnerAgent had two exit mechanisms that raced. Phase A (smart) re-scores a position's current signal and flags `exit_reason="llm_exit"`, which position-monitor executes with a live price + trailing-stop logic. Phase B (blunt) unconditionally closed any `paper_trades` row >7 days old on a crude `pnl>$0.50` win/loss threshold. The same position could be closed by both in one run, and the crude outcome usually won — overriding the smart exit.
+Decision: Phase B now (1) skips any trade whose position already carries the `llm_exit` flag — deferring to Phase A / position-monitor — and (2) its time cutoff moves from 7 → 14 days, making it a true last-resort backstop (nothing sits open forever) rather than a primary exit competing with the smart path.
+Reason: The smart, live-priced exit should always win; the blunt time-based rule exists only to guarantee nothing is stranded open indefinitely. De-conflicting them prevents the crude outcome from silently clobbering the intended exit.
+Alternatives considered: Remove Phase B entirely (loses the guarantee that stale positions eventually close); keep both racing (status quo — crude path wins incorrectly).
+Impact: Phase A drives real exits; Phase B only touches positions with no `llm_exit` flag that are >14 days old.
+Files/features affected: `app/api/agents/learner/route.ts` (Phase A / Phase B close logic).
+Reversal cost: Low
+
+### Decision 27: Langfuse tracing extended to the agent tool-loop (`runAgentLoop`)
+
+Date: 2026-07-05
+Status: Approved
+Category: Technical / Data
+
+Context: Decision 15 wrapped single-shot `callLLM` completions (thesis, screening, chat) in Langfuse traces. But the multi-step tool-calling `runAgentLoop` (LearnerAgent, MentorAgent) was invisible in Langfuse — it only wrote to the internal `llm_call_log` table. The most complex, multi-turn LLM usage had no external trace view.
+Decision: Wrap `runAgentLoop` in a Langfuse trace/generation span capturing system prompt in, final text out, total tokens, cost, and the tool-call trail as metadata. Gated on the Langfuse keys and no-op when absent, consistent with Decision 15.
+Reason: The tool-loops are exactly where multi-turn debugging and cost attribution matter most; leaving them out of Langfuse was the biggest remaining observability gap.
+Alternatives considered: Leave agent loops traced only in `llm_call_log` (no span/tool-call view); adopt LangChain/LangGraph for built-in tracing (rejected — the loop stays hand-rolled against the Anthropic/DeepSeek SDKs; not introducing a framework just for tracing).
+Impact: Agent tool-loops appear as Langfuse traces with their tool-call trail; no change to agent logic. LangChain/LangGraph remain unused.
+Files/features affected: `runAgentLoop` (agent tool-calling loop), Langfuse integration in the LLM layer.
+Reversal cost: Low

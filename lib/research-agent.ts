@@ -641,10 +641,19 @@ export async function processSymbol(
     supabase,
   });
 
-  const [{ data: weights }, { data: strategy }, { data: profileData }] = await Promise.all([
+  const [{ data: weights }, { data: strategy }, { data: profileData }, { data: champion }, { data: scoreHistory }] = await Promise.all([
     supabase.from("signal_weights").select("*").single(),
     supabase.from("strategy_config").select("risk_profile, score_threshold, min_analyst_score, position_size_pct, stop_loss_pct, target_pct").single(),
     supabase.from("profiles").select("market_focus").limit(1).single(),
+    // CLOSED LOOP: the promoted champion strategy's weight snapshot. LearnerAgent
+    // proposes weight challengers → user promotes one to champion → THIS is where
+    // that approved learning finally gets consumed. Before this, the loop was open
+    // (challengers were created and promotable but ResearchAgent never read them,
+    // so approved learning had no effect on scoring).
+    supabase.from("strategy_versions").select("weights_snapshot").eq("is_champion", true).order("promoted_at", { ascending: false }).limit(1).maybeSingle(),
+    // Recent score history for THIS symbol so the thesis prompt can reference the
+    // trend (rising/falling conviction) rather than judging the symbol in isolation.
+    supabase.from("signal_score_history").select("analyst_score, created_at").eq("symbol", symbol).order("created_at", { ascending: false }).limit(5),
   ]);
   const marketFocus: string = (profileData as any)?.market_focus ?? "US";
 
@@ -657,11 +666,24 @@ export async function processSymbol(
   const profileKey = (strategy?.risk_profile ?? "balanced") as string;
   const profileWeights = PROFILE_WEIGHTS[profileKey] ?? PROFILE_WEIGHTS.balanced;
 
-  const fw = profileWeights.fundamental ?? weights?.fundamental_weight ?? 0.30;
-  const tw = profileWeights.technical   ?? weights?.technical_weight  ?? 0.25;
-  const sw = profileWeights.sentiment   ?? weights?.sentiment_weight  ?? 0.20;
-  const mw = profileWeights.macro       ?? weights?.macro_weight      ?? 0.15;
-  const iw = profileWeights.insider     ?? weights?.insider_weight    ?? 0.10;
+  // Champion weights take priority when a promoted champion exists. The snapshot
+  // may use either short keys ({fundamental: 0.3}) from the seed row or the
+  // *_weight keys ({fundamental_weight: 0.3}) LearnerAgent's challengers write —
+  // read both. Falls back to the static profile table (then signal_weights) when
+  // no champion is promoted, preserving prior behavior.
+  const champWeights = (champion as any)?.weights_snapshot ?? null;
+  const cw = (short: string, full: string): number | undefined => {
+    if (!champWeights) return undefined;
+    const v = champWeights[short] ?? champWeights[full];
+    return typeof v === "number" ? v : undefined;
+  };
+  const usingChampion = !!champWeights;
+
+  const fw = cw("fundamental", "fundamental_weight") ?? profileWeights.fundamental ?? weights?.fundamental_weight ?? 0.30;
+  const tw = cw("technical",   "technical_weight")   ?? profileWeights.technical   ?? weights?.technical_weight  ?? 0.25;
+  const sw = cw("sentiment",   "sentiment_weight")   ?? profileWeights.sentiment   ?? weights?.sentiment_weight  ?? 0.20;
+  const mw = cw("macro",       "macro_weight")       ?? profileWeights.macro       ?? weights?.macro_weight      ?? 0.15;
+  const iw = cw("insider",     "insider_weight")     ?? profileWeights.insider     ?? weights?.insider_weight    ?? 0.10;
 
   const analystScore = Math.round(
     scores.fundamental_score * fw +
@@ -675,8 +697,20 @@ export async function processSymbol(
   const stopLossPct    = strategy?.stop_loss_pct ?? 7;
   const targetPct      = strategy?.target_pct    ?? 20;
 
+  // Score-trend note from this symbol's recent history — lets the thesis reason
+  // about momentum in conviction ("score rising over the last N runs") instead
+  // of judging the symbol cold each time.
+  const priorScores = ((scoreHistory ?? []) as any[]).map(r => Number(r.analyst_score)).filter(Number.isFinite).reverse();
+  let trendNote = "";
+  if (priorScores.length >= 2) {
+    const oldest = priorScores[0];
+    const delta = analystScore - oldest;
+    const dir = delta > 3 ? "rising" : delta < -3 ? "falling" : "flat";
+    trendNote = `\n\nSCORE TREND: this symbol's analyst score over its last ${priorScores.length} runs was [${priorScores.join(", ")}] → now ${analystScore} (${dir}, ${delta >= 0 ? "+" : ""}${delta}). Factor this momentum into your conviction.`;
+  }
+
   // LLM only writes thesis + direction — no score generation
-  const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus);
+  const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus) + trendNote;
   const llmResult = await callLLM({
     task: "screen",
     model: "llama-3.3-70b-versatile",
@@ -722,6 +756,7 @@ export async function processSymbol(
         _data_quality: scores.dataQuality,
         _social_sentiment: socialResult ?? null,
         _options_signal:   optionsResult ?? null,
+        _using_champion_weights: usingChampion,
       },
     })
     .select()
@@ -750,6 +785,25 @@ export async function processSymbol(
     stop_loss:    null,
     asset_class:  assetClass,
   });
+
+  // Append-only score history — the durable per-symbol score trajectory that
+  // the ScoreTrajectory chart and the trend context above read from. Unlike
+  // agent_signals (whose rows get status-mutated and filtered), this is never
+  // touched after insert. Best-effort: a logging failure must not fail the
+  // research run, and if migration 054 hasn't been applied yet this simply
+  // no-ops until it is.
+  const { error: scoreHistErr } = await supabase.from("signal_score_history").insert({
+    symbol,
+    analyst_score: analystScore,
+    fundamental_score: scores.fundamental_score,
+    technical_score: scores.technical_score,
+    sentiment_score: scores.sentiment_score,
+    macro_score: scores.macro_score,
+    insider_score: scores.insider_score,
+    direction: signalDirection,
+    source,
+  });
+  if (scoreHistErr) console.error("[research-agent] signal_score_history insert failed:", scoreHistErr.message);
 
   return {
     symbol,

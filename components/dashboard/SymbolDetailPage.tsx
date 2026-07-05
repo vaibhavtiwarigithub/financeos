@@ -149,16 +149,104 @@ function SentimentWidget({ symbol }: { symbol: string }) {
 }
 
 // Score trajectory: how the research agent's analyst_score for this symbol has
-// moved over time. Reveals whether conviction is rising or falling.
-function ScoreTrajectory({ signals }: { signals: any[] }) {
-  const pts = signals
+// moved over time. Reveals whether conviction is rising or falling. Data comes
+// from signal_score_history (append-only), which accumulates on every re-score —
+// far denser than agent_signals, so a real trend line actually shows up.
+interface ScoreHistoryRow {
+  symbol: string;
+  analyst_score: number | null;
+  fundamental_score: number | null;
+  technical_score: number | null;
+  sentiment_score: number | null;
+  macro_score: number | null;
+  insider_score: number | null;
+  direction: string | null;
+  source: string | null;
+  created_at: string;
+}
+
+function ScoreTrajectory({ symbol }: { symbol: string }) {
+  const [history, setHistory] = useState<ScoreHistoryRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`/api/charts/score-history?symbol=${symbol}`)
+      .then(r => r.json())
+      .then(d => setHistory(Array.isArray(d.history) ? d.history : []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [symbol]);
+
+  const scoreColor = (v: number) => v >= 70 ? T.green : v >= 50 ? T.amber : T.red;
+
+  const pts = history
     .filter(s => s.analyst_score != null && s.created_at)
     .map(s => ({ score: Number(s.analyst_score), t: new Date(s.created_at).getTime() }))
     .sort((a, b) => a.t - b.t);
-  if (pts.length < 2) return null;
+
+  // Latest dimension breakdown (last row that actually has values).
+  const latest = history.length > 0 ? history[history.length - 1] : null;
+  const dims: { label: string; value: number | null }[] = latest
+    ? [
+        { label: "Fundamental", value: latest.fundamental_score },
+        { label: "Technical", value: latest.technical_score },
+        { label: "Sentiment", value: latest.sentiment_score },
+        { label: "Macro", value: latest.macro_score },
+        { label: "Insider", value: latest.insider_score },
+      ]
+    : [];
+
+  const DimChips = () => (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: pts.length >= 2 ? "12px" : "0" }}>
+      {dims.map(d => {
+        const v = d.value == null ? null : Number(d.value);
+        const c = v == null ? T.muted : scoreColor(v);
+        return (
+          <span key={d.label} style={{
+            fontSize: "11px", fontWeight: 600, padding: "3px 9px", borderRadius: "6px",
+            color: c, background: c + "18", border: `1px solid ${c}30`,
+            display: "inline-flex", alignItems: "center", gap: "5px",
+          }}>
+            <span style={{ color: T.muted, fontWeight: 500 }}>{d.label}</span>
+            {v == null ? "—" : Math.round(v)}
+          </span>
+        );
+      })}
+    </div>
+  );
+
+  if (loading) {
+    return (
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 16px", fontSize: "12px", color: T.muted }}>
+        Loading score history…
+      </div>
+    );
+  }
+
+  if (history.length === 0) {
+    return (
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 16px", fontSize: "12px", color: T.muted }}>
+        No score history yet — accumulates as the research agent re-scores this symbol.
+      </div>
+    );
+  }
+
+  // Only 1 data point: show the dimension breakdown, skip the (impossible) line.
+  if (pts.length < 2) {
+    return (
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 16px" }}>
+        <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>
+          Score Breakdown · latest re-score
+        </div>
+        <div style={{ fontSize: "10px", color: T.muted, marginBottom: "6px" }}>
+          One data point so far — trend line appears after the next re-score.
+        </div>
+        <DimChips />
+      </div>
+    );
+  }
 
   const W = 100, H = 40, pad = 2;
-  const scoreColor = (v: number) => v >= 70 ? T.green : v >= 50 ? T.amber : T.red;
   const xs = pts.map((_, i) => pad + (i / (pts.length - 1)) * (W - 2 * pad));
   const ys = pts.map(p => H - pad - (p.score / 100) * (H - 2 * pad));
   const path = pts.map((_, i) => `${i === 0 ? "M" : "L"} ${xs[i].toFixed(1)} ${ys[i].toFixed(1)}`).join(" ");
@@ -169,7 +257,7 @@ function ScoreTrajectory({ signals }: { signals: any[] }) {
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 16px" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
         <span style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-          Score Trajectory · {pts.length} signals
+          Score Trajectory · {pts.length} re-scores
         </span>
         <span style={{ fontSize: "12px", fontWeight: 700, color: delta > 0 ? T.green : delta < 0 ? T.red : T.muted }}>
           {first} → {last} {delta !== 0 && `(${delta > 0 ? "+" : ""}${delta})`}
@@ -187,14 +275,15 @@ function ScoreTrajectory({ signals }: { signals: any[] }) {
       <div style={{ fontSize: "10px", color: T.muted, marginTop: "4px" }}>
         Green dashed = 60 (buy threshold) · grey dashed = 50. Points colored by score.
       </div>
+      <DimChips />
     </div>
   );
 }
 
-function SignalsTab({ signals, trades }: { signals: any[]; trades: any[] }) {
+function SignalsTab({ symbol, signals, trades }: { symbol: string; signals: any[]; trades: any[] }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-      <ScoreTrajectory signals={signals} />
+      <ScoreTrajectory symbol={symbol} />
       {/* Agent signals */}
       <div>
         <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "12px" }}>
@@ -517,7 +606,7 @@ export default function SymbolDetailPage({
 
       {tab === "signals" && (
         <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px 24px" }}>
-          <SignalsTab signals={signals} trades={trades} />
+          <SignalsTab symbol={symbol} signals={signals} trades={trades} />
         </div>
       )}
 

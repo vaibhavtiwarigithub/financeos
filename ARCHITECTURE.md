@@ -425,6 +425,56 @@ See "Known Architecture Risk — execClaude / MCP Tool-Calling Gap" section abov
 
 ---
 
+## Session 2026-07-05 — Closed-Loop Learning, Score History, Exit De-Confliction, Langfuse Agent-Loop Tracing
+
+### Closed-Loop Learning Wired (the big one)
+
+**Before:** The LearnerAgent → champion-strategy loop was OPEN. LearnerAgent proposed weight-change challengers into `strategy_versions` (gated behind human promotion via the Strategy Registry — Decision 13), and a user could promote one to champion (`is_champion=true`, `weights_snapshot` jsonb). But NOTHING downstream ever read the promoted champion's weights — `ResearchAgent` scored every symbol using a hardcoded `PROFILE_WEIGHTS` table keyed only on `risk_profile` (conservative/balanced/aggressive), and the `signal_weights` table was effectively dead code. Approved learning had zero effect on scoring.
+
+**Now:** `lib/research-agent.ts`'s `processSymbol` reads the promoted champion's `weights_snapshot` first, normalizing both key formats — the seed row uses short keys (`{fundamental:0.3,...}`), LearnerAgent challengers write suffixed keys (`{fundamental_weight:0.3,...}`). It falls back to the static `PROFILE_WEIGHTS` table (then `signal_weights`) only when no champion is promoted. The loop is now CLOSED: LearnerAgent learns → user promotes a challenger → ResearchAgent's next run actually scores with the new weights. `research_packets.raw_data` now records `_using_champion_weights: true/false` so you can see which weighting drove each signal.
+
+### Score-History Feature (per-stock score over time)
+
+New append-only table `signal_score_history` (migration 054). Unlike `agent_signals` (whose rows get status-mutated/filtered), this history is never touched after insert. Every score computation in `lib/research-agent.ts` now appends a row (best-effort — won't fail the research run, no-ops until the migration is applied).
+
+Consumed two ways:
+1. **Thesis conviction momentum:** ResearchAgent reads this symbol's last 5 score rows and injects a `SCORE TREND: [48, 52, 61] → now 67 (rising, +19)` note into the thesis prompt, so the agent reasons about score trajectory, not just a cold snapshot.
+2. **ScoreTrajectory chart:** new `GET /api/charts/score-history?symbol=X` route feeds the symbol-detail-page chart. The chart UI already existed but was starved of data (`agent_signals` barely accumulates); it now plots real durable history plus the current 5-dimension breakdown. This was spec'd in PRD.md ("Chart: 30-day price + agent score history") but had never been built — the data model didn't exist.
+
+### LearnerAgent Close-Rule De-Confliction
+
+Two exit mechanisms existed and RACED:
+- **Phase A (smart):** re-scores a position's current signal, flags `exit_reason="llm_exit"` which position-monitor then executes with a live price + trailing-stop logic.
+- **Phase B (blunt):** unconditionally closed any `paper_trades` row >7 days old on a crude `pnl>$0.50` win/loss threshold.
+
+The same position could get closed by both in one run, with the crude outcome usually winning. **Fixed:** Phase B now (1) skips any trade whose position already carries the `llm_exit` flag — deferring to Phase A / position-monitor — and (2) its time cutoff was pushed from 7 → 14 days, making it a true last-resort backstop (nothing sits open forever) rather than a primary exit competing with the smart path.
+
+### Langfuse Coverage Extended to the Agent Loop
+
+Previously only `callLLM` (single-shot completions — thesis, screening, chat) was traced in Langfuse; the multi-step tool-calling `runAgentLoop` (used by LearnerAgent and MentorAgent) was invisible, only logged to the internal `llm_call_log` table. Now `runAgentLoop` is wrapped in a Langfuse trace/generation span capturing system prompt in, final text out, total tokens, cost, and the tool-call trail as metadata. (LangChain/LangGraph are still NOT used anywhere — the whole tool-calling loop remains hand-rolled directly against the Anthropic/DeepSeek SDKs.)
+
+### DB Migration (2026-07-05)
+
+| Migration | Table | Key Changes |
+|---|---|---|
+| 054 | `signal_score_history` | Append-only per-symbol score history. Columns: `symbol`, `analyst_score` + 5 dimension scores (`fundamental`/`technical`/`sentiment`/`macro`/`insider`), `direction`, `source`, `created_at`. RLS: service_role all + authenticated read. Index on `(symbol, created_at desc)`. Never mutated after insert. |
+
+### New API Route (2026-07-05)
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/api/charts/score-history` | GET | `?symbol=X` — returns durable score history from `signal_score_history` plus current 5-dimension breakdown; feeds the ScoreTrajectory chart on the symbol detail page |
+
+### Agent Interaction Model (indirection through shared tables — unchanged, now recorded)
+
+All agents remain fully indirected through shared Supabase tables — there are ZERO direct agent-to-agent calls (no route invokes another agent's handler/function). The "collaboration" is entirely via table reads/writes:
+
+- ResearchAgent writes `agent_signals` → PaperTrader reads them to open positions → PositionMonitor/LearnerAgent manage/close them → LearnerAgent evaluates outcomes and proposes weight challengers into `strategy_versions` → (human promotes a challenger to champion) → ResearchAgent consumes the new champion `weights_snapshot` on its next run. **This last hop is the newly-closed loop above.**
+- MacroSentinel writes `macro_signals`, consumed by ResearchAgent's macro score + Deep-Dive + Mentor.
+- MentorAgent reads trade outcomes + learner runs to coach.
+
+---
+
 ## Planned Architecture — [REVIEW PENDING — ChatGPT]
 
 Items below are approved for architecture review. Not yet implemented. Each section marked with status.
@@ -454,9 +504,9 @@ Items below are approved for architecture review. Not yet implemented. Each sect
 
 ---
 
-### 2. Langfuse Observability [REVIEW PENDING — ChatGPT]
+### 2. Langfuse Observability [RESOLVED — 2026-07-05]
 
-**Status:** Chip spawned (task_63b52714). Not implemented.
+**Status:** Implemented. `callLLM` wraps single-shot completions in a Langfuse trace/generation (Decision 15, 2026-07-04); the multi-step tool-calling `runAgentLoop` (LearnerAgent, MentorAgent) is now also wrapped in a Langfuse trace/generation span capturing system prompt in, final text out, total tokens, cost, and the tool-call trail as metadata (2026-07-05). Agent-loop LLM usage is no longer a Langfuse blind spot. LangChain/LangGraph remain unused — the tool-calling loop is hand-rolled against the Anthropic/DeepSeek SDKs. Original proposal below retained for context.
 
 **Problem:** No visibility into token usage per agent, latency per tool call, or LLM cost per run. `llm_call_log` table captures costs but no trace correlation or UI.
 

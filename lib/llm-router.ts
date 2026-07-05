@@ -310,6 +310,24 @@ export async function runAgentLoop(opts: {
   const start = Date.now()
   let result: AgentLoopResult | undefined
   let success = true, errorMsg = ""
+
+  // Langfuse trace for the whole tool-loop. Previously only callLLM (single-shot
+  // completions) was traced — the multi-step tool-calling agents (LearnerAgent,
+  // MentorAgent) were invisible in Langfuse. This wraps the loop as one
+  // generation span capturing the system prompt in, final text out, total
+  // tokens, and the tool-call trail as metadata.
+  const lf = getLangfuse()
+  const trace = lf?.trace({
+    name: `agent-loop-${opts.task ?? "agent"}`,
+    userId: opts.agentLabel ?? "kairos",
+    metadata: { symbol: opts.symbol, runId: opts.runId, task: opts.task, model },
+  })
+  const generation = trace?.generation({
+    name: opts.task ?? "agent-loop",
+    model,
+    input: [{ role: "system", content: opts.systemPrompt }, { role: "user", content: opts.initialMessage }],
+  })
+
   try {
     result = model.startsWith("claude")
       ? await runClaudeAgentLoop(opts, model, maxIter)
@@ -318,6 +336,7 @@ export async function runAgentLoop(opts: {
   } catch (err) {
     success = false
     errorMsg = String(err)
+    generation?.end({ level: "ERROR", statusMessage: errorMsg })
     throw err
   } finally {
     // Record agent-loop usage in the central cost ledger (llm_call_log).
@@ -328,6 +347,14 @@ export async function runAgentLoop(opts: {
     const tIn = result?.tokensIn ?? 0
     const tOut = result?.tokensOut ?? 0
     const costUsd = (tIn / 1_000_000 * inRate) + (tOut / 1_000_000 * outRate)
+    if (success) {
+      generation?.end({
+        output: result?.text ?? "",
+        usage: { inputTokens: tIn, outputTokens: tOut },
+        metadata: { costUsd, durationMs, toolCalls: result?.toolCalls?.map(t => t.name) ?? [] },
+      })
+    }
+    lf?.flushAsync?.().catch?.(() => {})
     logCall({
       model,
       task: opts.task ?? "agent-loop",

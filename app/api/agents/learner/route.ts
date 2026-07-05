@@ -101,13 +101,26 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const cutoff = new Date(Date.now() - 7 * 86400_000).toISOString();
+    // Blunt time-based backstop only — pushed from 7d to 14d. Phase A above
+    // (signal re-score → flags exit_reason="llm_exit", which position-monitor
+    // then executes with a live price + trailing-stop logic) is the PRIMARY,
+    // smarter exit path. This sweep exists purely so nothing sits open
+    // indefinitely if the signal pipeline stalls. It used to race with Phase A
+    // — closing the same position on a crude pnl>$0.50 win/loss the same day
+    // Phase A flagged it — so it now SKIPS any trade whose position already
+    // carries an llm_exit flag and lets position-monitor handle that one.
+    const cutoff = new Date(Date.now() - 14 * 86400_000).toISOString();
     const { data: openTrades } = await svc.from("paper_trades").select("*").is("closed_at", null).lt("executed_at", cutoff);
 
     const outcomes: any[] = [];
     const priceFailures: string[] = [];
 
     for (const trade of openTrades ?? []) {
+      // Defer to Phase A / position-monitor if this position is already flagged.
+      const { data: flaggedPos } = await svc.from("paper_positions")
+        .select("exit_reason").eq("symbol", trade.symbol).maybeSingle();
+      if ((flaggedPos as any)?.exit_reason === "llm_exit") continue;
+
       const quote = await fetchQuote(trade.symbol);
       if (quote.source === "unavailable" || quote.price <= 0) { priceFailures.push(trade.symbol); continue; }
 

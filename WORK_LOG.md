@@ -20,6 +20,17 @@
 
 ---
 
+## ✅ Session 2026-07-05 (closed-loop learning, score history, exit de-confliction, Langfuse agent-loop tracing)
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Closed-loop learning — ResearchAgent consumes champion weights | Claude | 2026-07-05 | `processSymbol` in `lib/research-agent.ts` now reads the promoted champion's `weights_snapshot` first (normalizing both key formats — seed `{fundamental:0.3}` vs challenger `{fundamental_weight:0.3}`), falling back to static `PROFILE_WEIGHTS` then `signal_weights` only when no champion is promoted. Loop was OPEN (promoted weights were never read); now CLOSED. `research_packets.raw_data` records `_using_champion_weights`. See Decision 24. |
+| Score history — `signal_score_history` table + ScoreTrajectory | Claude | 2026-07-05 | Migration 054: append-only per-symbol score history (analyst_score + 5 dimensions, direction, source, created_at; RLS + `(symbol, created_at desc)` index; never mutated after insert). ResearchAgent appends best-effort per score (no-ops until migration applied) and injects a `SCORE TREND` note into the thesis prompt. New `GET /api/charts/score-history?symbol=X` feeds the symbol-detail chart (previously starved of data). PRD-specced, never built. See Decision 25. |
+| LearnerAgent Phase B backstop de-confliction | Claude | 2026-07-05 | Phase A (smart `llm_exit` re-score) and Phase B (blunt >7-day time cutoff) raced; crude Phase B usually won. Phase B now skips any position already carrying the `llm_exit` flag and its cutoff moves 7 → 14 days, making it a last-resort backstop. `app/api/agents/learner/route.ts`. See Decision 26. |
+| Langfuse tracing extended to `runAgentLoop` | Claude | 2026-07-05 | The multi-step tool-calling loop (LearnerAgent, MentorAgent) was invisible in Langfuse (only `llm_call_log`); now wrapped in a Langfuse trace/generation span (system prompt in, final text out, tokens, cost, tool-call trail as metadata). Extends Decision 15. LangChain/LangGraph still unused — loop stays hand-rolled against Anthropic/DeepSeek SDKs. See Decision 27. |
+
+---
+
 ## ✅ Session 2026-07-04 (late — bug sweep: sector chart, briefing, live account, paper prices, privacy mode)
 
 | Task | Agent | Completed | Notes |
