@@ -492,9 +492,11 @@ Why Yahoo for India: the Kite **Personal tier gives execution + portfolio only, 
 
 `lib/india-data.ts` + `lib/india-universe.ts` feed Indian NSE symbols (`.NS`) through the **same 5-dimension scoring pipeline** as US stocks. US-only inputs (social sentiment, options, insider) are unavailable for India, so those dimensions fall back to a neutral baseline and are flagged in the score-detail rather than silently zeroed. Activated only when `profiles.market_focus` includes "India". Verified live: RELIANCE.NS scored with real Yahoo fundamentals (P/E 21.85, ROE 9.1%, rev +12.5% → fundamental 73) over 124 real candles.
 
-### Score-only, not paper-traded (critical design point)
+### Score-only, not paper-traded (critical design point) — SUPERSEDED by Phase 4 below
 
 India is **scored and tracked** (Score Tracker, `/dashboard/india`) but **NOT paper-traded**. The `paper_portfolio` is a single USD pool; Indian stocks are INR-priced, so mixing currencies into one NAV pool would corrupt paper P&L. `PaperTrader` therefore excludes `asset_class = "india"`. India is acted on via **real Kite orders** instead of paper fills — the opposite of the US path, where paper comes first.
+
+> **Superseded (same day) by "Phase 4 — multi-market learning" below.** India IS now paper-traded, in its own ₹ pool that never blends into the USD NAV. The corruption concern above is answered by per-currency pools, not by excluding India. See Decision 31.
 
 ### Kite auth flow (Phase 1)
 
@@ -519,6 +521,27 @@ Reads and orders degrade to a "reconnect" state when the daily token is stale (s
 ### System map
 
 `system-map.json` diagram updated with **YAHOO**, **INDIA**, and **KITE** nodes reflecting the India data/execution path.
+
+### Phase 4 — multi-market learning (per-currency pools + per-market champions)
+
+Migration `057_multi_market.sql` plus code turns "market" from a fork into a **tag/dimension**. There is one app; panels filter by market and **currencies are never summed into one number**. This closes the India learning loop that Phase 2/3 left open — India was scored but never paper-traded, so it produced zero closed outcomes and the Learner/Mentor never learned it. See Decision 31.
+
+**Market as a tag.** `market ∈ {us, india}` is a column, not a code path. `paper_portfolio`, `paper_positions`, `paper_trades`, `paper_performance`, `agent_signals`, and `signal_score_history` all gain a `market` column; `paper_performance`'s unique key moves from `(date)` to `(date, market)` so each market keeps its own NAV curve.
+
+**Per-currency pools.** Each market has its OWN paper pool in its OWN currency — they never blend:
+
+| Market | Pool currency | Starting cash | Price source for fills/exits |
+|---|---|---|---|
+| US | USD | $10,000 | `getQuote` (Alpha Vantage / Robinhood, USD) |
+| India (`.NS`) | INR (₹) | ₹1,000,000 | free Yahoo Finance `.NS` (INR) |
+
+`PaperTrader` (`app/api/agents/paper-trade/route.ts`) fills EACH signal into its market's pool, in native currency, sizing on `position_size_pct` of THAT pool's cash. `PositionMonitor` (`app/api/agents/position-monitor/route.ts`) monitors/exits per market in native currency, crediting each close back to its own pool. India fills now flow — this is the hop that gives India closed outcomes.
+
+**Per-market champions + phase gate.** `strategy_versions` gains a `market` column. `LearnerAgent` (`app/api/agents/learner/route.ts`) analyzes ONE market's cohort per run (US today) and proposes challengers ONLY for that market's champion — a bad India run can never shift US scoring. India starts on a **clone of the US champion** as a prior (seeded by 057) and diverges once it clears the SAME 10+ closed-trade phase gate. `ResearchAgent` (`lib/research-agent.ts`) reads the market-matched champion.
+
+**`market_focus` = non-destructive gate.** Trimmed to **US + India only** (Europe/Asia/Crypto/Global removed as noise). Turning India ON starts NIFTY scoring + ₹ paper fills + the India learning cohort; turning it OFF stops NEW India research/fills but KEEPS open India positions monitored-to-close, plus all history and weights (re-enable resumes). Real Kite holdings/execution are unaffected by the toggle — real money is independent of a preference.
+
+**Guarded/resilient rollout.** Pre-057 (no `market` column, single pool) every path behaves byte-for-byte as the old US-only app; India activates automatically once 057 is applied and the pool row exists. **Operational note: 057 could NOT be auto-applied this session (Supabase MCP permission-denied, no psql/DATABASE_URL) — it must be applied manually in the Supabase SQL editor.** `system-map.json` was updated to split the paper pool + learner per market.
 
 ---
 

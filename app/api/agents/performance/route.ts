@@ -32,11 +32,10 @@ export async function GET() {
       .select("*", { count: "exact", head: true });
 
     // 4. Current portfolio nav + cash
-    const { data: portfolioArr } = await svc
-      .from("paper_portfolio")
-      .select("nav, cash_balance")
-      .limit(1);
-    const portfolio = portfolioArr?.[0] ?? { nav: 10000, cash_balance: 10000 };
+    // Phase 4: prefer the US pool; fall back to any row pre-057 (no market column)
+    let { data: portfolio } = await svc.from("paper_portfolio").select("nav, cash_balance").eq("market", "us").limit(1).maybeSingle();
+    if (!portfolio) ({ data: portfolio } = await svc.from("paper_portfolio").select("nav, cash_balance").limit(1).maybeSingle());
+    portfolio = portfolio ?? { nav: 10000, cash_balance: 10000 };
     const nav = Number(portfolio.nav ?? 10000);
     const cash = Number(portfolio.cash_balance ?? 10000);
 
@@ -123,11 +122,10 @@ export async function POST(req: NextRequest) {
     const svc = createServiceClient();
 
     // Read current portfolio
-    const { data: portfolioArr } = await svc
-      .from("paper_portfolio")
-      .select("nav, cash_balance")
-      .limit(1);
-    const portfolio = portfolioArr?.[0] ?? { nav: 10000, cash_balance: 10000 };
+    // Phase 4: prefer the US pool; fall back to any row pre-057 (no market column)
+    let { data: portfolio } = await svc.from("paper_portfolio").select("nav, cash_balance").eq("market", "us").limit(1).maybeSingle();
+    if (!portfolio) ({ data: portfolio } = await svc.from("paper_portfolio").select("nav, cash_balance").limit(1).maybeSingle());
+    portfolio = portfolio ?? { nav: 10000, cash_balance: 10000 };
     const nav = Number(portfolio.nav ?? 10000);
     const cashBalance = Number(portfolio.cash_balance ?? 10000);
 

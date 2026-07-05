@@ -1,7 +1,7 @@
 {
   "agentId": "system-map",
   "agentLabel": "System Map — how the agents connect",
-  "diagram": "flowchart TD\n  MACRO[\"🌐 MacroSentinel\\nweekly · reads econ data\"] -->|macro_signals| RESEARCH\n  HOLD[\"📋 Holdings + Watchlist\\n+ dual-bucket screener\"] --> RESEARCH\n  CHAMPION[\"🏆 Champion weights\\nstrategy_versions\"] -->|weights_snapshot| RESEARCH\n  SCOREHIST[\"📈 signal_score_history\\nprior scores (trend)\"] -->|last N| RESEARCH\n  YAHOO[\"🇮🇳 Yahoo .NS data\\nfree · NIFTY candidates\"] -->|India fundamentals+candles| RESEARCH\n  RESEARCH[\"🤖 ResearchAgent\\ndaily Mon-Fri · scores 5 dims\"] -->|US agent_signals| TRADER\n  RESEARCH -->|India agent_signals| INDIA\n  RESEARCH -->|append| SCOREHIST\n  TRADER[\"⚙️ PaperTrader\\nscore>=threshold & long → buy\\n(sector cap · USD only)\"] -->|paper_positions| MONITOR\n  RESEARCH -->|fresh daily score| MONITOR\n  MONITOR[\"⚙️ PositionMonitor\\ndaily post-close\"] -->|score<exit OR stop/target| EXITS[\"💸 Exit + close trade\\ncredit cash · decision_journal\"]\n  MONITOR -->|still above threshold| HELD[\"✅ Keep holding\"]\n  EXITS -->|closed outcomes| LEARNER\n  LEARNER[\"🤖 LearnerAgent\\nFriday · evaluates outcomes\"] -->|proposes| CHALLENGER[\"🧪 Challenger weights\\nstrategy_versions\"]\n  CHALLENGER -->|you review| PROMOTE{\"👤 Promote?\"}\n  PROMOTE -->|yes| CHAMPION\n  EXITS -->|outcomes| MENTOR[\"🎓 MentorAgent\\ncoaches you\"]\n  LEARNER -->|runs| MENTOR\n  TRADER -.->|US live: manual| REALORDER[\"📲 Paste command\\ninto Claude MCP → Robinhood\"]\n  INDIA[\"🇮🇳 India signals\\nScore Tracker + /dashboard/india\"] -.->|you confirm| KITE[\"📲 Real NSE/BSE order\\nvia Zerodha Kite (daily token)\"]",
+  "diagram": "flowchart TD\n  MACRO[\"🌐 MacroSentinel\\nweekly · reads econ data\"] -->|macro_signals| RESEARCH\n  HOLD[\"📋 Holdings + Watchlist\\n+ dual-bucket screener\"] --> RESEARCH\n  CHAMPION[\"🏆 Champion weights\\nstrategy_versions\"] -->|weights_snapshot| RESEARCH\n  SCOREHIST[\"📈 signal_score_history\\nprior scores (trend)\"] -->|last N| RESEARCH\n  YAHOO[\"🇮🇳 Yahoo .NS data\\nfree · NIFTY candidates\"] -->|India fundamentals+candles| RESEARCH\n  RESEARCH[\"🤖 ResearchAgent\\ndaily Mon-Fri · scores 5 dims\"] -->|US agent_signals| TRADER\n  RESEARCH -->|India agent_signals| INDIA\n  RESEARCH -->|India agent_signals| TRADER\n  RESEARCH -->|append| SCOREHIST\n  TRADER[\"⚙️ PaperTrader\\nscore>=threshold & long → buy\\nper-market pools: US $ · India ₹\"] -->|paper_positions| MONITOR\n  RESEARCH -->|fresh daily score| MONITOR\n  MONITOR[\"⚙️ PositionMonitor\\ndaily post-close · per market\"] -->|score<exit OR stop/target| EXITS[\"💸 Exit + close trade\\ncredit own-currency pool · decision_journal\"]\n  MONITOR -->|still above threshold| HELD[\"✅ Keep holding\"]\n  EXITS -->|closed outcomes| LEARNER\n  LEARNER[\"🤖 LearnerAgent\\nFriday · evaluates outcomes\"] -->|proposes| CHALLENGER[\"🧪 Challenger weights\\nstrategy_versions\"]\n  CHALLENGER -->|you review| PROMOTE{\"👤 Promote?\"}\n  PROMOTE -->|yes| CHAMPION\n  EXITS -->|outcomes| MENTOR[\"🎓 MentorAgent\\ncoaches you\"]\n  LEARNER -->|runs| MENTOR\n  TRADER -.->|US live: manual| REALORDER[\"📲 Paste command\\ninto Claude MCP → Robinhood\"]\n  INDIA[\"🇮🇳 India signals\\nScore Tracker + /dashboard/india\"] -.->|you confirm| KITE[\"📲 Real NSE/BSE order\\nvia Zerodha Kite (daily token)\"]",
   "nodes": {
     "MACRO": {
       "label": "MacroSentinel",
@@ -23,15 +23,15 @@
     },
     "CHAMPION": {
       "label": "Champion weights",
-      "description": "The promoted strategy_versions row (is_champion=true) whose weights_snapshot ResearchAgent reads. This is where a human-approved LearnerAgent improvement finally takes effect. Before 2026-07-05 nothing read it — the loop was open and approved learning evaporated.",
+      "description": "The promoted strategy_versions row (is_champion=true) whose weights_snapshot ResearchAgent reads. This is where a human-approved LearnerAgent improvement finally takes effect. Before 2026-07-05 nothing read it — the loop was open and approved learning evaporated. Phase 4: ONE champion PER MARKET (strategy_versions.market) — an India stock scores off India-learned weights, a US stock off US weights. India's champion is seeded as a clone of the US champion (a prior) and diverges as India accrues its own trades.",
       "addedAt": "2026-07-05", "addReason": "Closes the learning loop — Learner learns → you promote → Research scores differently.",
-      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "status": "changed", "changedAt": "2026-07-05", "changeReason": "Per-market champions — India rides a US-cloned prior until it earns its own weights.", "removedAt": null, "removeReason": null
     },
     "TRADER": {
       "label": "PaperTrader",
-      "description": "Deterministic flow (no LLM). Reads pending agent_signals with analyst_score >= threshold and direction long, sizes at position_size_pct of cash (default 10%), and opens paper_positions + paper_trades. Long-only.",
+      "description": "Deterministic flow (no LLM). Reads pending agent_signals with analyst_score >= threshold and direction long, sizes at position_size_pct of that pool's cash (default 10%), and opens paper_positions + paper_trades. Long-only. Phase 4: fills EACH signal into ITS market's own pool in native currency — US in USD (price via getQuote/AV/Robinhood), India in ₹ (price via free Yahoo .NS). Currencies are never summed; each pool has its own NAV. This is what finally closes the learning loop for India (previously scored but never paper-traded → zero closed outcomes).",
       "addedAt": "2026-06-26", "addReason": "Turns qualifying signals into paper positions.",
-      "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "status": "changed", "changedAt": "2026-07-05", "changeReason": "Per-market pools (US $ + India ₹) — India signals now paper-fill in ₹ off Yahoo, closing India's learning loop.", "removedAt": null, "removeReason": null
     },
     "MONITOR": {
       "label": "PositionMonitor",
@@ -47,9 +47,9 @@
     },
     "LEARNER": {
       "label": "LearnerAgent",
-      "description": "Weekly (Friday). Evaluates the full closed-trade history and proposes weight-change CHALLENGERS into strategy_versions — it does NOT mutate live weights or sell live positions. Gated by a phase gate (10+ closed trades) and an auto-guard.",
+      "description": "Weekly (Friday). Evaluates a market's closed-trade cohort and proposes weight-change CHALLENGERS into strategy_versions — it does NOT mutate live weights or sell live positions. Gated by a phase gate (10+ closed trades) and an auto-guard. Phase 4: analyzes ONE market per run (US today) and proposes challengers ONLY for that market's champion, so a bad India run can never shift US weights. India gets its own cohort once it clears the 10+ closed-trade gate.",
       "addedAt": "2026-06-28", "addReason": "Learn from outcomes and evolve the scoring weights.",
-      "status": "changed", "changedAt": "2026-07-05", "changeReason": "No longer timer-sells positions — reconciliation only. Exits moved to PositionMonitor's daily score-exit.", "removedAt": null, "removeReason": null
+      "status": "changed", "changedAt": "2026-07-05", "changeReason": "Per-market cohorts + per-market challengers — India learning can't contaminate US. (Also: no longer timer-sells; reconciliation only.)", "removedAt": null, "removeReason": null
     },
     "CHALLENGER": {
       "label": "Challenger weights",
@@ -83,9 +83,9 @@
     },
     "INDIA": {
       "label": "India signals",
-      "description": "Indian stocks are scored + tracked (Score Tracker, /dashboard/india) but NOT paper-traded — they're INR-priced and the paper_portfolio is a single USD pool, so PaperTrader skips asset_class 'india'. India is acted on via real Kite orders, not USD paper fills.",
+      "description": "Indian stocks are scored + tracked (Score Tracker, /dashboard/india) AND (Phase 4) paper-traded in their own ₹ pool — no longer excluded. The old single-USD-pool constraint is gone: PaperTrader now keeps a separate India ₹ pool so INR fills never corrupt US NAV. India is ALSO acted on via real Kite orders (the /dashboard/india confirm path). Gated by market_focus including India — a non-destructive toggle.",
       "addedAt": "2026-07-05", "addReason": "Track India like US without corrupting the USD paper NAV.",
-      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "status": "changed", "changedAt": "2026-07-05", "changeReason": "India now paper-trades in its own ₹ pool (Phase 4) — closes India's learning loop.", "removedAt": null, "removeReason": null
     },
     "KITE": {
       "label": "Zerodha Kite (India execution)",
@@ -102,6 +102,10 @@
     { "date": "2026-07-05", "event": "added", "nodeId": "REALORDER", "label": "Manual real-order execution", "reason": "Replaced fake execClaude order execution with a generated manual command." },
     { "date": "2026-07-05", "event": "added", "nodeId": "YAHOO", "label": "Yahoo .NS data", "reason": "India Phase 2 — score NSE stocks on free Yahoo data." },
     { "date": "2026-07-05", "event": "added", "nodeId": "INDIA", "label": "India signals", "reason": "India scored + tracked, excluded from USD paper pool." },
-    { "date": "2026-07-05", "event": "added", "nodeId": "KITE", "label": "Zerodha Kite execution", "reason": "India Phase 3 — real NSE/BSE orders via Kite, human-confirmed." }
+    { "date": "2026-07-05", "event": "added", "nodeId": "KITE", "label": "Zerodha Kite execution", "reason": "India Phase 3 — real NSE/BSE orders via Kite, human-confirmed." },
+    { "date": "2026-07-05", "event": "changed", "nodeId": "TRADER", "label": "PaperTrader", "reason": "Phase 4 — per-market pools (US $ + India ₹); India now paper-fills off Yahoo, closing its learning loop." },
+    { "date": "2026-07-05", "event": "changed", "nodeId": "INDIA", "label": "India signals", "reason": "Phase 4 — India paper-traded in its own ₹ pool, no longer excluded from the paper engine." },
+    { "date": "2026-07-05", "event": "changed", "nodeId": "CHAMPION", "label": "Champion weights", "reason": "Phase 4 — one champion per market; India rides a US-cloned prior until it earns its own." },
+    { "date": "2026-07-05", "event": "changed", "nodeId": "LEARNER", "label": "LearnerAgent", "reason": "Phase 4 — per-market cohorts + challengers; India learning can't shift US weights." }
   ]
 }

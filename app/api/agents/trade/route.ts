@@ -60,7 +60,9 @@ export async function POST(req: NextRequest) {
       if (quote.source === "unavailable" || quote.price <= 0) continue;
 
       // Sizing from strategy config (% of paper portfolio), not hardcoded $10k
-      const { data: portfolio } = await supabase.from("paper_portfolio").select("nav").limit(1).single();
+      // Phase 4: prefer the US pool; fall back to any row pre-057 (no market column)
+      let { data: portfolio } = await supabase.from("paper_portfolio").select("nav").eq("market", "us").limit(1).maybeSingle();
+      if (!portfolio) ({ data: portfolio } = await supabase.from("paper_portfolio").select("nav").limit(1).maybeSingle());
       const portfolioNav = portfolio?.nav ?? 10000;
       // max_position_pct is stored as a decimal (0.10 = 10%) — do NOT divide by 100
       const maxSpend = portfolioNav * strategy.max_position_pct;

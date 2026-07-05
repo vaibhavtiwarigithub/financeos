@@ -14,8 +14,12 @@ const T = {
   greenBg: "#052E16", redBg: "#3B0000", amberBg: "#2D1B00",
 };
 
+// Currency symbol per market — US pool is USD, India pool is INR. Never blend the two.
+const CURRENCY: Record<string, string> = { us: "$", india: "₹" };
+const MARKET_LABEL: Record<string, string> = { us: "🇺🇸 US", india: "🇮🇳 India" };
+
 function pnlColor(n: number) { return n >= 0 ? T.green : T.red; }
-function fmt(n: number) { return (n >= 0 ? "+" : "") + "$" + Math.abs(n).toFixed(2); }
+function fmt(n: number, cur = "$") { return (n >= 0 ? "+" : "") + cur + Math.abs(n).toFixed(2); }
 function fmtPct(n: number) { return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
 
 // ── Gauge helpers ─────────────────────────────────────────────────────────────
@@ -145,7 +149,7 @@ function CashDonut({ cashPct }: { cashPct: number }) {
 }
 
 /** Thin full-width NAV sparkline with gradient fill */
-function NavSparkline({ perf }: { perf: any[] }) {
+function NavSparkline({ perf, cur = "$" }: { perf: any[]; cur?: string }) {
   if (perf.length < 2) return null;
   const navs = perf.map(p => p.nav);
   const min = Math.min(...navs);
@@ -164,7 +168,7 @@ function NavSparkline({ perf }: { perf: any[] }) {
       <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "8px" }}>
         NAV History · {perf.length} days
         <span style={{ marginLeft: "12px", color, fontWeight: 600 }}>
-          ${navs[navs.length - 1].toFixed(0)}
+          {cur}{navs[navs.length - 1].toFixed(0)}
         </span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: `${H}px` }} preserveAspectRatio="none">
@@ -183,11 +187,11 @@ function NavSparkline({ perf }: { perf: any[] }) {
 
 /** Rich gauge+stats header row */
 function PortfolioHeader({
-  nav, cash, totalPnl, totalPnlPct, posValue, positions, winRate, wins, closedTrades, vooReturn, perf,
+  nav, cash, totalPnl, totalPnlPct, posValue, positions, winRate, wins, closedTrades, vooReturn, perf, cur = "$", startingNAV = 10000,
 }: {
   nav: number; cash: number; totalPnl: number; totalPnlPct: number; posValue: number;
   positions: any[]; winRate: number | null; wins: number; closedTrades: any[];
-  vooReturn: { pct: number | null; loading: boolean }; perf: any[];
+  vooReturn: { pct: number | null; loading: boolean }; perf: any[]; cur?: string; startingNAV?: number;
 }) {
   const cashPct = (cash / nav) * 100;
   const wr = winRate ?? 0;
@@ -235,9 +239,9 @@ function PortfolioHeader({
           <div>
             <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "4px" }}>Paper NAV</div>
             <div style={{ fontSize: "32px", fontWeight: 800, letterSpacing: "-0.02em", color: T.text, lineHeight: 1 }}>
-              ${nav.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              {cur}{nav.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </div>
-            <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>started $10,000</div>
+            <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>started {cur}{startingNAV.toLocaleString("en-US")}</div>
           </div>
 
           {/* Total P&L */}
@@ -245,7 +249,7 @@ function PortfolioHeader({
             <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "4px" }}>Total P&L</div>
             <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>
               <span style={{ fontSize: "22px", fontWeight: 700, color: pnlColor(totalPnl), letterSpacing: "-0.01em" }}>
-                {fmt(totalPnl)}
+                {fmt(totalPnl, cur)}
               </span>
               <span style={{
                 fontSize: "12px", fontWeight: 600,
@@ -265,7 +269,7 @@ function PortfolioHeader({
               {positions.length} open
               <span style={{ color: T.muted, fontWeight: 400, marginLeft: "6px" }}>·</span>
               <span style={{ color: T.textSub, fontWeight: 500, marginLeft: "6px" }}>
-                ${posValue.toLocaleString("en-US", { maximumFractionDigits: 0 })} deployed
+                {cur}{posValue.toLocaleString("en-US", { maximumFractionDigits: 0 })} deployed
               </span>
             </div>
           </div>
@@ -273,7 +277,7 @@ function PortfolioHeader({
       </div>
 
       {/* NAV sparkline */}
-      <NavSparkline perf={perf} />
+      <NavSparkline perf={perf} cur={cur} />
     </>
   );
 }
@@ -606,11 +610,11 @@ function LiveHoldingsTab() {
 }
 
 /** Rich position card — replaces plain table row */
-function PositionCard({ p, onChart }: { p: any; onChart: (sym: string) => void }) {
-  const cur = p.current_price ?? p.avg_cost;
-  const pnl = (cur - p.avg_cost) * p.qty;
-  const pnlPct = ((cur - p.avg_cost) / p.avg_cost) * 100;
-  const posValue = cur * p.qty;
+function PositionCard({ p, onChart, cur = "$" }: { p: any; onChart: (sym: string) => void; cur?: string }) {
+  const px = p.current_price ?? p.avg_cost;
+  const pnl = (px - p.avg_cost) * p.qty;
+  const pnlPct = ((px - p.avg_cost) / p.avg_cost) * 100;
+  const posValue = px * p.qty;
   const hasLive = !!p.current_price;
   const pColor = pnlColor(pnl);
   return (
@@ -635,10 +639,10 @@ function PositionCard({ p, onChart }: { p: any; onChart: (sym: string) => void }
           <span style={{ fontSize: "12px", color: T.muted }}>{p.qty} shares</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: T.textSub }}>
-          <span>${p.avg_cost.toFixed(2)}</span>
+          <span>{cur}{p.avg_cost.toFixed(2)}</span>
           <span style={{ color: T.muted }}>→</span>
           <span style={{ color: hasLive ? T.text : T.muted, fontWeight: hasLive ? 600 : 400 }}>
-            {hasLive ? "$" + p.current_price.toFixed(2) : "—"}
+            {hasLive ? cur + p.current_price.toFixed(2) : "—"}
           </span>
         </div>
       </div>
@@ -647,7 +651,7 @@ function PositionCard({ p, onChart }: { p: any; onChart: (sym: string) => void }
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: "7px" }}>
           <span style={{ fontSize: "17px", fontWeight: 700, color: pColor }}>
-            {fmt(pnl)}
+            {fmt(pnl, cur)}
           </span>
           <span style={{
             fontSize: "11px", fontWeight: 600, color: pColor,
@@ -657,20 +661,37 @@ function PositionCard({ p, onChart }: { p: any; onChart: (sym: string) => void }
             {fmtPct(pnlPct)}
           </span>
         </div>
-        <div style={{ fontSize: "12px", color: T.muted }}>${posValue.toFixed(0)} value</div>
+        <div style={{ fontSize: "12px", color: T.muted }}>{cur}{posValue.toFixed(0)} value</div>
       </div>
     </div>
   );
 }
 
-export default function PortfolioPage({ portfolio, positions, trades, perf, signals, pendingSignals, strategy, tradeQueue }: {
-  portfolio: any; positions: any[]; trades: any[]; perf: any[]; signals: any[];
+export default function PortfolioPage({ pools, positions: allPositions, trades: allTrades, perf: allPerf, signals, pendingSignals, strategy, tradeQueue }: {
+  pools: any[]; positions: any[]; trades: any[]; perf: any[]; signals: any[];
   pendingSignals: any[]; strategy: any; tradeQueue: any[];
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue">("positions");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   const [vooReturn, setVooReturn] = useState<{ pct: number | null; loading: boolean }>({ pct: null, loading: true });
+
+  // Phase 4: market-scoped pools. Each pool holds funds in its own currency
+  // (US=USD, India=INR) — NEVER blend a $ value with a ₹ value. Pre-057 there's
+  // one row with no market column: treat it as US (market ?? "us").
+  const poolList = pools ?? [];
+  const hasIndia = poolList.some((p: any) => p.market === "india");
+  const [market, setMarket] = useState<"us" | "india">("us");
+  const activeMarket = market === "india" && hasIndia ? "india" : "us";
+  const cur = CURRENCY[activeMarket] ?? "$";
+  // Pick this market's pool; pre-057 (no market col) fall back to the sole row.
+  const portfolio =
+    poolList.find((p: any) => (p.market ?? "us") === activeMarket) ??
+    (poolList.length === 1 && !poolList[0]?.market ? poolList[0] : null);
+  // Scope positions/trades/perf to the selected market (un-tagged rows = US).
+  const positions = (allPositions ?? []).filter((p: any) => (p.market ?? "us") === activeMarket);
+  const trades = (allTrades ?? []).filter((t: any) => (t.market ?? "us") === activeMarket);
+  const perf = (allPerf ?? []).filter((p: any) => (p.market ?? "us") === activeMarket);
 
   useEffect(() => {
     fetch("/api/charts/price-history?symbol=VOO&days=90")
@@ -688,7 +709,8 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
       .catch(() => setVooReturn({ pct: null, loading: false }));
   }, []);
 
-  const startingNAV = 10000;
+  // Starting NAV differs per market: US pool = $10k, India ₹ pool = ₹1,000,000.
+  const startingNAV = activeMarket === "india" ? 1000000 : 10000;
   const nav = portfolio?.nav ?? startingNAV;
   const cash = portfolio?.cash_balance ?? startingNAV;
   const totalPnl = nav - startingNAV;
@@ -702,7 +724,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
       <PageHeader
         title="Paper Portfolio"
-        subtitle={`NAV $${nav.toFixed(0)} · ${positions.length} open position${positions.length !== 1 ? "s" : ""}`}
+        subtitle={`NAV ${cur}${nav.toFixed(0)} · ${positions.length} open position${positions.length !== 1 ? "s" : ""}`}
         cadence="weekly"
         whatItDoes="Your paper trading portfolio — all open positions, closed trades, P&L history, and pending signals queue. Agent executes paper trades automatically each morning."
         whatToLookFor={[
@@ -714,9 +736,32 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
       />
       <div style={{ padding: "4px 28px 28px" }}>
 
-      <div style={{ marginBottom: "20px" }}>
-        <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "6px" }}>Paper Trading Portfolio</div>
-        <h1 style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.02em" }}>Paper Portfolio</h1>
+      <div style={{ marginBottom: "20px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "16px" }}>
+        <div>
+          <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "6px" }}>Paper Trading Portfolio</div>
+          <h1 style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.02em" }}>Paper Portfolio</h1>
+        </div>
+
+        {/* Market selector — only shows India when that ₹ pool exists (post-057).
+            US and India NAV are NEVER blended: each renders in its own currency. */}
+        {hasIndia && (
+          <div style={{ display: "flex", gap: "4px", background: T.card, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "3px" }}>
+            {(["us", "india"] as const).map(m => (
+              <button
+                key={m}
+                onClick={() => setMarket(m)}
+                style={{
+                  padding: "7px 16px", borderRadius: "7px", fontSize: "12px", fontWeight: 700,
+                  cursor: "pointer", border: "none",
+                  background: activeMarket === m ? T.accent : "transparent",
+                  color: activeMarket === m ? "#fff" : T.muted,
+                }}
+              >
+                {MARKET_LABEL[m]}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Rich header: gauge cluster + key numbers + sparkline */}
@@ -732,6 +777,8 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
         closedTrades={closedTrades}
         vooReturn={vooReturn}
         perf={perf}
+        cur={cur}
+        startingNAV={startingNAV}
       />
 
       {/* Charts row */}
@@ -741,7 +788,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
         </Suspense>
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <Suspense fallback={null}>
-            <AllocationDonut positions={positions} cash={portfolio?.cash_balance ?? 10000} />
+            <AllocationDonut positions={positions} cash={portfolio?.cash_balance ?? startingNAV} />
           </Suspense>
         </div>
       </div>
@@ -781,7 +828,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               {positions.map((p: any) => (
-                <PositionCard key={p.id} p={p} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
+                <PositionCard key={p.id} p={p} cur={cur} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
               ))}
             </div>
           )}
@@ -817,11 +864,11 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
                       </span>
                     </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{t.qty}</td>
-                    <td style={{ padding: "10px 12px 10px 0" }}>${t.fill_price?.toFixed(2)}</td>
-                    <td style={{ padding: "10px 12px 10px 0" }}>${(t.qty * t.fill_price)?.toFixed(0)}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{cur}{t.fill_price?.toFixed(2)}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{cur}{(t.qty * t.fill_price)?.toFixed(0)}</td>
                     <td style={{ padding: "10px 12px 10px 0", color: T.accent }}>{t.analyst_score ?? "—"}</td>
                     <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: t.realized_pnl != null ? pnlColor(t.realized_pnl) : T.muted }}>
-                      {t.realized_pnl != null ? fmt(t.realized_pnl) : "—"}
+                      {t.realized_pnl != null ? fmt(t.realized_pnl, cur) : "—"}
                     </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>
                       {t.outcome ? (
@@ -924,7 +971,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
               </div>
               <div>
                 <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Realized P&L (taken)</div>
-                <div style={{ fontSize: "22px", fontWeight: 700, color: takenPnl >= 0 ? T.green : T.red }}>{takenPnl >= 0 ? "+" : ""}${takenPnl.toFixed(2)}</div>
+                <div style={{ fontSize: "22px", fontWeight: 700, color: takenPnl >= 0 ? T.green : T.red }}>{takenPnl >= 0 ? "+" : ""}{cur}{takenPnl.toFixed(2)}</div>
               </div>
               <div>
                 <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Open Positions</div>
@@ -961,7 +1008,7 @@ export default function PortfolioPage({ portfolio, positions, trades, perf, sign
                         {r.trade ? (r.trade.closed_at ? r.trade.outcome?.toUpperCase() : "open") : "—"}
                       </td>
                       <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: r.trade?.realized_pnl != null ? (r.trade.realized_pnl >= 0 ? T.green : T.red) : T.muted }}>
-                        {r.trade?.realized_pnl != null ? (r.trade.realized_pnl >= 0 ? "+" : "") + "$" + Math.abs(r.trade.realized_pnl).toFixed(2) : "—"}
+                        {r.trade?.realized_pnl != null ? (r.trade.realized_pnl >= 0 ? "+" : "") + cur + Math.abs(r.trade.realized_pnl).toFixed(2) : "—"}
                       </td>
                       <td style={{ padding: "10px 0", color: T.muted, fontSize: "11px" }}>{new Date(r.created_at).toLocaleDateString()}</td>
                     </tr>

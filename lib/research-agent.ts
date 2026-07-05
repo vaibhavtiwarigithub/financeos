@@ -666,21 +666,38 @@ export async function processSymbol(
     supabase,
   });
 
-  const [{ data: weights }, { data: strategy }, { data: profileData }, { data: champion }, { data: scoreHistory }] = await Promise.all([
+  const market = india ? "india" : "us"; // Phase 4: per-market champion weights
+
+  const [{ data: weights }, { data: strategy }, { data: profileData }, { data: scoreHistory }] = await Promise.all([
     supabase.from("signal_weights").select("*").single(),
     supabase.from("strategy_config").select("risk_profile, score_threshold, min_analyst_score, position_size_pct, stop_loss_pct, target_pct").single(),
     supabase.from("profiles").select("market_focus").limit(1).single(),
-    // CLOSED LOOP: the promoted champion strategy's weight snapshot. LearnerAgent
-    // proposes weight challengers → user promotes one to champion → THIS is where
-    // that approved learning finally gets consumed. Before this, the loop was open
-    // (challengers were created and promotable but ResearchAgent never read them,
-    // so approved learning had no effect on scoring).
-    supabase.from("strategy_versions").select("weights_snapshot").eq("is_champion", true).order("promoted_at", { ascending: false }).limit(1).maybeSingle(),
     // Recent score history for THIS symbol so the thesis prompt can reference the
     // trend (rising/falling conviction) rather than judging the symbol in isolation.
     supabase.from("signal_score_history").select("analyst_score, created_at").eq("symbol", symbol).order("created_at", { ascending: false }).limit(5),
   ]);
   const marketFocus: string = (profileData as any)?.market_focus ?? "US";
+
+  // CLOSED LOOP: the promoted champion strategy's weight snapshot. LearnerAgent
+  // proposes weight challengers → user promotes one to champion → THIS is where
+  // that approved learning gets consumed. Phase 4: each MARKET has its own
+  // champion, so an India stock scores off India-learned weights and a US stock
+  // off US weights — no cross-contamination. Resilient: pre-057 (no `market`
+  // column) the market-filtered query errors, so we fall back to the global
+  // champion, preserving prior US behavior.
+  let champion: any = null;
+  {
+    const scoped = await supabase.from("strategy_versions").select("weights_snapshot")
+      .eq("is_champion", true).eq("market", market)
+      .order("promoted_at", { ascending: false }).limit(1).maybeSingle();
+    if (scoped.error) {
+      const legacy = await supabase.from("strategy_versions").select("weights_snapshot")
+        .eq("is_champion", true).order("promoted_at", { ascending: false }).limit(1).maybeSingle();
+      champion = legacy.data;
+    } else {
+      champion = scoped.data;
+    }
+  }
 
   const PROFILE_WEIGHTS: Record<string, Record<string, number>> = {
     conservative: { fundamental: 0.40, technical: 0.20, sentiment: 0.15, macro: 0.15, insider: 0.10 },
@@ -787,7 +804,7 @@ export async function processSymbol(
     .select()
     .single();
 
-  await supabase.from("agent_signals").insert({
+  const signalRow: Record<string, any> = {
     symbol,
     direction: signalDirection,
     analyst_score: analystScore,
@@ -809,7 +826,12 @@ export async function processSymbol(
     price_target: null, // PaperTrader sets targets at fill time using real price
     stop_loss:    null,
     asset_class:  assetClass,
-  });
+    market, // Phase 4: routes the signal to its market's paper pool + champion
+  };
+  {
+    const { error } = await supabase.from("agent_signals").insert(signalRow);
+    if (error) { delete signalRow.market; await supabase.from("agent_signals").insert(signalRow); } // pre-057: no market column
+  }
 
   // Append-only score history — the durable per-symbol score trajectory that
   // the ScoreTrajectory chart and the trend context above read from. Unlike
@@ -836,6 +858,7 @@ export async function processSymbol(
     rationale: thesis.summary ?? `Analyst score ${analystScore}, direction ${signalDirection}.`,
     research_packet_id: packet?.id ?? null,
     used_champion_weights: usingChampion,
+    market, // Phase 4: per-market score trajectory
   });
   if (scoreHistErr) {
     const { error: fallbackErr } = await supabase.from("signal_score_history").insert(baseScoreRow);

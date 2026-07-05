@@ -29,6 +29,17 @@ export async function POST(req: NextRequest) {
 
     const svc = createServiceClient();
 
+    // Phase 4 (multi-market): the learner analyzes ONE market's cohort per run
+    // and proposes weights ONLY for that market's champion — so a bad India run
+    // can never shift US scoring. Default to US (the only market with closed-trade
+    // history today); India gets its own cohort + champion once it clears the same
+    // 10+ closed-trade phase gate. `hasMarketCol` gates all market filters so this
+    // degrades to the old US-only behavior pre-057.
+    const LEARN_MARKET = "us";
+    let hasMarketCol = true;
+    { const { error } = await svc.from("paper_trades").select("market").limit(1); hasMarketCol = !error; }
+    const scopeMkt = (q: any) => (hasMarketCol ? q.eq("market", LEARN_MARKET) : q);
+
     // Idempotency guard — LearnerAgent is documented (and scheduled) as a weekly
     // batch job. Even manual triggers (allowed any day from AgentsPage) should not
     // silently stack multiple runs on the same day — that's how one day ends up
@@ -153,7 +164,7 @@ export async function POST(req: NextRequest) {
     ] = await Promise.all([
       svc.from("agent_config").select("model, enabled").eq("agent_name", "learner").single(),
       svc.from("learner_runs").select("id").eq("run_date", new Date().toISOString().slice(0, 10)).single(),
-      svc.from("paper_trades").select("*", { count: "exact", head: true }).not("closed_at", "is", null),
+      scopeMkt(svc.from("paper_trades").select("*", { count: "exact", head: true }).not("closed_at", "is", null)),
       svc.from("learner_config").select("*"),
       svc.from("learner_runs").select("win_rate_snapshot, mutations_paused, run_date").order("run_date", { ascending: false }).limit(5),
     ]);
@@ -190,19 +201,19 @@ export async function POST(req: NextRequest) {
             const assetClass = call.arguments.asset_class as string | undefined;
             const since = new Date(Date.now() - days * 86400_000).toISOString();
 
-            let query = svc.from("agent_signals")
+            let query = scopeMkt(svc.from("agent_signals")
               .select("symbol, direction, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, created_at, source, asset_class")
               .gte("created_at", since)
               .gte("analyst_score", minScore)
               .order("created_at", { ascending: false })
-              .limit(100);
+              .limit(100));
             if (assetClass) query = (query as any).eq("asset_class", assetClass);
 
             const { data: signals } = await query;
-            const { data: trades } = await svc.from("paper_trades")
+            const { data: trades } = await scopeMkt(svc.from("paper_trades")
               .select("symbol, outcome, pnl_pct, realized_pnl, executed_at, closed_at")
               .not("closed_at", "is", null)
-              .gte("executed_at", since);
+              .gte("executed_at", since));
 
             const tradeMap = new Map((trades ?? []).map((t: any) => [t.symbol, t]));
             const enriched = (signals ?? []).map((s: any) => ({
@@ -222,12 +233,12 @@ export async function POST(req: NextRequest) {
               return JSON.stringify({ skipped: true, reason: `Dimension ${dimension} is disabled in learner_config — turned off by user` });
             }
 
-            const { data: signals } = await svc.from("agent_signals")
+            const { data: signals } = await scopeMkt(svc.from("agent_signals")
               .select(`symbol, ${dimension}, created_at`)
-              .gte("created_at", since).not(dimension, "is", null).limit(100);
-            const { data: trades } = await svc.from("paper_trades")
+              .gte("created_at", since).not(dimension, "is", null).limit(100));
+            const { data: trades } = await scopeMkt(svc.from("paper_trades")
               .select("symbol, pnl_pct, executed_at")
-              .not("closed_at", "is", null).gte("executed_at", since);
+              .not("closed_at", "is", null).gte("executed_at", since));
 
             const tradeMap = new Map<string, number | null>((trades ?? []).map((t: any) => [t.symbol as string, t.pnl_pct as number | null]));
             const pairs: { score: number; pnl: number }[] = [];
@@ -340,11 +351,13 @@ export async function POST(req: NextRequest) {
             // promoted through the Strategy Registry before it takes effect.
             // This is the architecture gate that prevents learning from immediately
             // overwriting the champion strategy without human review.
-            const { data: champion } = await svc.from("strategy_versions")
+            // Parent this challenger to THIS market's champion (post-057 there is
+            // one champion per market — an unscoped lookup would grab the wrong one).
+            const { data: champion } = await scopeMkt(svc.from("strategy_versions")
               .select("id, version, weights_snapshot")
               .eq("is_champion", true)
               .order("created_at", { ascending: false })
-              .limit(1).maybeSingle();
+              .limit(1)).maybeSingle();
 
             // Collision-safe version: base + date + HHMMSS so two proposals on the
             // same day for the same champion don't hit a unique-constraint clash.
@@ -353,7 +366,7 @@ export async function POST(req: NextRequest) {
               ? `${champion.version ?? "0.0"}.learner-${today}-${stamp}`
               : `0.1.learner-${today}-${stamp}`;
 
-            const { data: challengerRow, error: insErr } = await svc.from("strategy_versions").insert({
+            const challengerInsert: Record<string, any> = {
               version:           nextVersion,
               name:              `Challenger — ${dimension} ${currentVal.toFixed(3)}→${clamped.toFixed(3)}`,
               description:       `LearnerAgent proposed weight change. Reason: ${reason}`,
@@ -361,8 +374,18 @@ export async function POST(req: NextRequest) {
               parent_version_id: (champion as any)?.id ?? null,
               is_champion:       false,
               weights_snapshot:  proposedWeights,
-              notes:             `Proposed by LearnerAgent on ${today}. N=${nTrades} trades, confidence=${Math.round(confidence * 100)}%. NOT active until promoted.`,
-            }).select("id").single();
+              market:            LEARN_MARKET, // Phase 4: challenger belongs to this market
+              notes:             `Proposed by LearnerAgent on ${today} for ${LEARN_MARKET.toUpperCase()}. N=${nTrades} trades, confidence=${Math.round(confidence * 100)}%. NOT active until promoted.`,
+            };
+            let challengerRow: any = null, insErr: any = null;
+            {
+              const r = await svc.from("strategy_versions").insert(challengerInsert).select("id").single();
+              if (r.error) { // pre-057: no market column — retry without it
+                delete challengerInsert.market;
+                const r2 = await svc.from("strategy_versions").insert(challengerInsert).select("id").single();
+                challengerRow = r2.data; insErr = r2.error;
+              } else { challengerRow = r.data; }
+            }
 
             // Only report success if the challenger actually persisted.
             if (insErr || !challengerRow) {

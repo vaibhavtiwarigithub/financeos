@@ -16,7 +16,7 @@ export default async function DashboardPage() {
 
   const [
     { data: profile },
-    { data: paperPortfolioArr },
+    { data: paperPortfolio },
     { data: positions },
     { data: recentTrades },
     { data: recentRuns },
@@ -27,7 +27,8 @@ export default async function DashboardPage() {
     { data: latestBriefing },
   ] = await Promise.all([
     supabase.from("profiles").select("*").eq("id", session.user.id).single(),
-    supabase.from("paper_portfolio").select("*").limit(1),
+    // Phase 4: US pool only (post-057 there's also an India ₹ row). maybeSingle so a missing market column pre-057 yields null gracefully.
+    supabase.from("paper_portfolio").select("*").eq("market", "us").limit(1).maybeSingle(),
     supabase.from("paper_positions").select("*"),
     supabase.from("paper_trades").select("*").gte("executed_at", sevenDaysAgo).order("executed_at", { ascending: false }),
     supabase.from("agent_runs").select("*").gte("completed_at", sevenDaysAgo).order("completed_at", { ascending: false }),
@@ -44,7 +45,7 @@ export default async function DashboardPage() {
   return (
     <DashboardHome
       profile={profile}
-      paperPortfolio={paperPortfolioArr?.[0] ?? null}
+      paperPortfolio={paperPortfolio ?? null}
       positions={positions ?? []}
       recentTrades={recentTrades ?? []}
       recentRuns={recentRuns ?? []}

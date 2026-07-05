@@ -15,10 +15,10 @@ async function fetchInternalPaper(): Promise<BrokerAccount> {
   // (every row is open by definition; PnL is derived, not stored). The old
   // select queried nonexistent columns, Supabase errored, and this silently
   // returned zero paper holdings on the Risk Analytics page.
-  const [{ data: portfolio }, { data: positions }] = await Promise.all([
-    sb.from("paper_portfolio").select("nav, cash_balance").limit(1).single(),
-    sb.from("paper_positions").select("symbol, qty, avg_cost, current_price"),
-  ]);
+  // Phase 4: prefer the US pool; fall back to any row pre-057 (no market column)
+  let { data: portfolio } = await sb.from("paper_portfolio").select("nav, cash_balance").eq("market", "us").limit(1).maybeSingle();
+  if (!portfolio) ({ data: portfolio } = await sb.from("paper_portfolio").select("nav, cash_balance").limit(1).maybeSingle());
+  const { data: positions } = await sb.from("paper_positions").select("symbol, qty, avg_cost, current_price");
 
   const holdings: BrokerHolding[] = (positions ?? []).map((p: any) => {
     const qty = parseFloat(p.qty ?? 0);

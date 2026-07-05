@@ -11,7 +11,7 @@ export default async function Page() {
     { data: weights },
     { data: strategyArr },
     { data: learningLog },
-    { data: paperPortfolioArr },
+    { data: paperPortfolio },
     { data: paperPositions },
     { data: paperTrades },
     { data: paperPerf },
@@ -21,7 +21,8 @@ export default async function Page() {
     supabase.from("signal_weights").select("*").single(),
     supabase.from("strategy_config").select("*").limit(1),
     supabase.from("learning_log").select("*").order("created_at", { ascending: false }).limit(10),
-    supabase.from("paper_portfolio").select("*").limit(1),
+    // Phase 4: US pool only (post-057 there's also an India ₹ row). maybeSingle so a missing market column pre-057 yields null gracefully.
+    supabase.from("paper_portfolio").select("*").eq("market", "us").limit(1).maybeSingle(),
     supabase.from("paper_positions").select("*"),
     supabase.from("paper_trades").select("*").order("executed_at", { ascending: false }).limit(20),
     supabase.from("paper_performance").select("*").order("date", { ascending: true }).limit(30),
@@ -29,7 +30,6 @@ export default async function Page() {
   ]);
 
   const strategy = strategyArr?.[0] ?? null;
-  const paperPortfolio = paperPortfolioArr?.[0] ?? null;
 
   // Group runs by agent_type, last 5 each
   const runsByAgent: Record<string, any[]> = {};

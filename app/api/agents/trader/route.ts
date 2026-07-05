@@ -243,7 +243,9 @@ async function buildProposals(supabase: any, isCron: boolean) {
       }
 
       // Portfolio sizing — uses Half-Kelly if ≥10 closed trades, else flat positionSizePct
-      const { data: portfolio } = await supabase.from("paper_portfolio").select("nav, cash_balance").limit(1).single();
+      // Phase 4: prefer the US pool; fall back to any row pre-057 (no market column)
+      let { data: portfolio } = await supabase.from("paper_portfolio").select("nav, cash_balance").eq("market", "us").limit(1).maybeSingle();
+      if (!portfolio) ({ data: portfolio } = await supabase.from("paper_portfolio").select("nav, cash_balance").limit(1).maybeSingle());
       const nav = (portfolio as any)?.nav ?? 10000;
       const estimatedValue = nav * (effectiveSizePct / 100);
       const qty = Math.floor(estimatedValue / quote.price);

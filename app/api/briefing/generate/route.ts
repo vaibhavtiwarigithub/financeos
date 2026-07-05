@@ -341,7 +341,8 @@ export async function POST(req: NextRequest) {
     { data: weekTrades },
   ] = await Promise.all([
     svc.from("agent_runs").select("*").eq("agent_type", "research").order("created_at", { ascending: false }).limit(1).single(),
-    svc.from("paper_portfolio").select("*").limit(1).single(),
+    // Phase 4: US pool only (post-057 there's also an India ₹ row). maybeSingle so a missing market column pre-057 yields null gracefully.
+    svc.from("paper_portfolio").select("*").eq("market", "us").limit(1).maybeSingle(),
     svc.from("paper_positions").select("*").limit(10),
     svc.from("agent_signals").select("symbol,direction,analyst_score,reasoning").eq("status", "pending").gte("analyst_score", 50).order("analyst_score", { ascending: false }).limit(8),
     // Filter to the Trading account (••••8641) — see app/dashboard/page.tsx

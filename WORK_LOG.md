@@ -20,6 +20,24 @@
 
 ---
 
+## ✅ Session 2026-07-05 (Phase 4 — multi-market learning: per-currency pools + per-market champions)
+
+> Market is now a **tag** (us | india), not a fork — one app, panels filter by market, currencies NEVER summed. Supersedes Decision 29 (India was score-only): India now paper-trades in its own ₹ pool, closing the India learning loop. See **Decision 31**.
+> **⚠️ OPEN ITEM: migration `057_multi_market.sql` must be applied MANUALLY in the Supabase SQL editor** — Supabase MCP was permission-denied this session (no psql/DATABASE_URL). Guarded code runs unchanged until 057 lands; India activates automatically once the `market` column + ₹ pool row exist.
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Migration 057 — market as a tag across the paper stack | Claude | 2026-07-05 | `market` column added to `paper_portfolio`/`paper_positions`/`paper_trades`/`paper_performance`/`agent_signals`/`signal_score_history`; `paper_performance` unique key `(date)` → `(date, market)` so each market keeps its own NAV curve. New India ₹ pool seeded at ₹1,000,000; `strategy_versions` gains `market` and India is seeded as a CLONE of the US champion (prior). **NOT auto-applied — user must run it in the Supabase SQL editor.** See Decision 31. |
+| PaperTrader — per-currency fills | Claude | 2026-07-05 | `app/api/agents/paper-trade/route.ts` fills EACH signal into its market's pool in native currency: US via `getQuote` (AV/Robinhood USD), India via free Yahoo `.NS` (INR). Sizing = `position_size_pct` of THAT pool's cash. India now produces closed outcomes → **closes the India learning loop** (previously scored but never paper-traded). See Decision 31. |
+| PositionMonitor — per-market exits | Claude | 2026-07-05 | `app/api/agents/position-monitor/route.ts` monitors/exits per market in native currency (India prices via Yahoo), crediting each close back to its own pool. See Decision 31. |
+| LearnerAgent — per-market champion weights | Claude | 2026-07-05 | `app/api/agents/learner/route.ts` analyzes ONE market's cohort per run (US today) and proposes challengers ONLY for that market's champion — a bad India run can never shift US scoring. India diverges from its US-clone prior once it clears the same 10+ closed-trade phase gate. See Decision 31. |
+| ResearchAgent — reads market-matched champion | Claude | 2026-07-05 | `lib/research-agent.ts` reads the champion weights for the symbol's market rather than a single global champion. See Decision 31. |
+| Settings — `market_focus` trimmed + non-destructive gate | Claude | 2026-07-05 | `market_focus` reduced to US + India only (Europe/Asia/Crypto/Global removed as noise). Toggle is NON-destructive: India ON → NIFTY scoring + ₹ fills + India learning cohort; India OFF → stops NEW India research/fills but KEEPS open India positions monitored-to-close + all history/weights (re-enable resumes). Real Kite holdings/execution unaffected by the toggle. See Decision 31. |
+| Portfolio UI — market selector | Claude | 2026-07-05 | Portfolio/paper surfaces gain a per-market selector so US ($) and India (₹) NAV curves and positions are viewed independently and never blended into one number. See Decision 31. |
+| Guarded rollout + system-map.json | Claude | 2026-07-05 | Every path is pre-057-safe: with no `market` column / single pool, behavior is byte-for-byte the old US-only app. `system-map.json` updated to split the paper pool + learner per market. See Decision 31. |
+
+---
+
 ## ✅ Session 2026-07-05 (India — Zerodha Kite + Yahoo multi-market integration)
 
 | Task | Agent | Completed | Notes |

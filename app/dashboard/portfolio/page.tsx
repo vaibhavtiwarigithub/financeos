@@ -7,7 +7,7 @@ export default async function Page() {
   const supabase = createServiceClient();
 
   const [
-    { data: portfolioArr },
+    { data: pools },
     { data: positions },
     { data: trades },
     { data: perf },
@@ -16,7 +16,10 @@ export default async function Page() {
     { data: strategyArr },
     { data: tradeQueueArr },
   ] = await Promise.all([
-    supabase.from("paper_portfolio").select("*").limit(1),
+    // Phase 4: fetch ALL pools (US + India ₹ post-057). The client component
+    // filters by selected market and shows each in its own currency — never blended.
+    // Pre-057 (no market column) this returns the single US row unchanged.
+    supabase.from("paper_portfolio").select("*"),
     supabase.from("paper_positions").select("*").order("opened_at", { ascending: false }),
     supabase.from("paper_trades").select("*").order("executed_at", { ascending: false }).limit(50),
     supabase.from("paper_performance").select("*").order("date", { ascending: true }).limit(60),
@@ -28,7 +31,7 @@ export default async function Page() {
 
   return (
     <PortfolioPage
-      portfolio={portfolioArr?.[0] ?? null}
+      pools={pools ?? []}
       positions={positions ?? []}
       trades={trades ?? []}
       perf={perf ?? []}

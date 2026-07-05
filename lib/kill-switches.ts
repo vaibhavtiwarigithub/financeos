@@ -14,7 +14,8 @@ export async function checkKillSwitches(supabase: any): Promise<KillSwitchResult
     { data: recentPerf },
     { data: closedTrades },
   ] = await Promise.all([
-    supabase.from("paper_portfolio").select("nav, updated_at").limit(1).single(),
+    // Phase 4: US pool only — the kill-switch NAV/drawdown thresholds are USD. Post-057 an India ₹ row exists; reading ₹1,000,000 against USD thresholds would misfire. maybeSingle so a missing market column pre-057 yields null gracefully.
+    supabase.from("paper_portfolio").select("nav, updated_at").eq("market", "us").limit(1).maybeSingle(),
     supabase.from("paper_performance").select("date, nav").order("date", { ascending: true }).limit(90),
     supabase
       .from("paper_trades")

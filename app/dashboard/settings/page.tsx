@@ -223,7 +223,7 @@ export default function SettingsPage() {
             <div style={{ marginBottom: "16px" }}>
               <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>Market focus <span style={{ color: T.muted, fontWeight: 400 }}>(select all that apply)</span></label>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                {(["US", "India", "Europe", "Asia", "Crypto", "Global"] as const).map(m => {
+                {(["US", "India"] as const).map(m => {
                   const active = (profile.market_focus ?? "US").split(",").map(s => s.trim()).includes(m);
                   return (
                     <button key={m} type="button"
@@ -243,7 +243,7 @@ export default function SettingsPage() {
                 })}
               </div>
               <div style={{ fontSize: "11px", color: T.muted, marginTop: "6px" }}>
-                Selected: {profile.market_focus || "US"} — agents prioritize screener + signals for these regions
+                Selected: {profile.market_focus || "US"} — turning on India makes the agents score NIFTY stocks (free Yahoo data) and run a separate ₹ paper pool with its own learning. Turning it off stops new India research/fills but keeps open India positions + history intact (non-destructive).
               </div>
             </div>
             <div style={{ marginBottom: "24px" }}>

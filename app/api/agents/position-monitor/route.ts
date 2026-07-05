@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchIndiaQuote } from "@/lib/india-data";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
 // Also honors exit_reason="llm_exit" flags set by LearnerAgent — closes those on next run.
+//
+// MULTI-MARKET (Phase 4): positions carry a `market` (us | india). US prices come
+// from Massive (USD); India prices from free Yahoo .NS (INR). Each position is
+// closed against — and credits cash back to — ITS OWN market pool, so currencies
+// never cross. Guarded: pre-057 (single pool, no market column) it runs exactly
+// as the old US-only path.
 export const dynamic = "force-dynamic";
+
+const marketOf = (p: any, hasMarketCol: boolean) => (hasMarketCol ? String(p.market ?? "us") : "us");
 
 async function runMonitor() {
   const svc = createServiceClient();
@@ -24,30 +33,37 @@ async function runMonitor() {
 
   if (!positions?.length) return { checked: 0, closed: 0, closedDetails: [], updated: 0 };
 
-  // 2. Batch fetch current prices via Massive
+  // Market detection + per-market pools. Post-057 there are 2+ portfolio rows,
+  // so `.single()` would THROW — load them all and key by market instead.
+  const { data: poolRows } = await svc.from("paper_portfolio").select("*");
+  const hasMarketCol = !!poolRows?.[0] && Object.prototype.hasOwnProperty.call(poolRows[0], "market");
+  const poolByMarket = new Map<string, any>();
+  for (const p of (poolRows ?? []) as any[]) poolByMarket.set(String(p.market ?? "us"), p);
+  // Per-market running cash (credited back on close).
+  const cashByMarket: Record<string, number> = {};
+  for (const [m, p] of poolByMarket) cashByMarket[m] = Number(p.cash_balance ?? (m === "india" ? 1000000 : 10000));
+
+  // 2. Current prices: US via Massive (USD), India via Yahoo .NS (INR).
   const symbols: string[] = Array.from(new Set(positions.map((p: any) => String(p.symbol))));
   const massiveKey = process.env.MASSIVE_API_KEY;
-
   const priceMap: Record<string, number> = {};
-  if (massiveKey) {
-    await Promise.allSettled(
-      symbols.map(async (sym) => {
-        try {
-          const res = await fetch(
-            `https://api.massive.com/v2/aggs/ticker/${sym}/prev?adjusted=true&apiKey=${massiveKey}`
-          );
-          const d = await res.json();
-          if (d.results?.[0]?.c) priceMap[sym] = d.results[0].c;
-        } catch {
-          // silently skip unavailable symbols
-        }
-      })
-    );
-  }
-
-  // 3. Fetch portfolio for cash updates
-  const { data: portfolio } = await svc.from("paper_portfolio").select("*").single();
-  let cashBalance = portfolio?.cash_balance ?? 10000;
+  await Promise.allSettled(
+    positions.map(async (pos: any) => {
+      const sym = String(pos.symbol);
+      if (priceMap[sym] != null) return;
+      if (marketOf(pos, hasMarketCol) === "india") {
+        const q = await fetchIndiaQuote(sym);
+        if (q && q.price > 0) priceMap[sym] = q.price;
+        return;
+      }
+      if (!massiveKey) return;
+      try {
+        const res = await fetch(`https://api.massive.com/v2/aggs/ticker/${sym}/prev?adjusted=true&apiKey=${massiveKey}`);
+        const d = await res.json();
+        if (d.results?.[0]?.c) priceMap[sym] = d.results[0].c;
+      } catch { /* silently skip unavailable symbols */ }
+    })
+  );
 
   // 3b. Daily score-based exit. ResearchAgent re-scores held symbols every
   // trading morning (Mon-Fri); PositionMonitor runs every trading afternoon.
@@ -62,12 +78,12 @@ async function runMonitor() {
   const entryThreshold = Number((strategyCfg as any)?.score_threshold ?? (strategyCfg as any)?.min_analyst_score ?? 60);
   const exitThreshold = Math.max(35, entryThreshold - 15); // e.g. enter 60, exit below 45
   const latestScore: Record<string, { score: number | null; direction: string | null }> = {};
-  for (const sym of symbols) {
-    const { data: sig } = await svc.from("agent_signals")
-      .select("analyst_score, direction")
-      .eq("symbol", sym)
-      .order("created_at", { ascending: false })
-      .limit(1).maybeSingle();
+  for (const pos of positions) {
+    const sym = String(pos.symbol);
+    if (latestScore[sym]) continue;
+    let q = svc.from("agent_signals").select("analyst_score, direction").eq("symbol", sym);
+    if (hasMarketCol) q = q.eq("market", marketOf(pos, hasMarketCol)); // don't read a US score for an India position
+    const { data: sig } = await q.order("created_at", { ascending: false }).limit(1).maybeSingle();
     latestScore[sym] = {
       score: (sig as any)?.analyst_score != null ? Number((sig as any).analyst_score) : null,
       direction: (sig as any)?.direction ?? null,
@@ -85,14 +101,14 @@ async function runMonitor() {
   // learning_log is the learner's own weight-mutation audit log and has no
   // symbol/outcome columns) + crediting cash.
   async function closePosition(pos: any, currentPrice: number, exitReason: string, outcome: string) {
+    const market = marketOf(pos, hasMarketCol);
+    const cur = market === "india" ? "₹" : "$";
     const realizedPnl = (currentPrice - pos.avg_cost) * pos.qty;
     const pnlPct = pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0;
 
-    const { data: openTrades } = await svc
-      .from("paper_trades")
-      .select("id")
-      .eq("symbol", pos.symbol)
-      .is("closed_at", null);
+    let tq = svc.from("paper_trades").select("id").eq("symbol", pos.symbol).is("closed_at", null);
+    if (hasMarketCol) tq = tq.eq("market", market);
+    const { data: openTrades } = await tq;
     for (const t of openTrades ?? []) {
       await svc.from("paper_trades").update({
         exit_price: currentPrice, realized_pnl: realizedPnl, pnl_pct: pnlPct,
@@ -108,8 +124,8 @@ async function runMonitor() {
     const { error: journalError } = await svc.from("decision_journal").insert({
       entry_type: "paper_exit",
       symbol: pos.symbol,
-      summary: `Paper exit: ${pos.qty} × ${pos.symbol} @ $${currentPrice.toFixed(2)} (${exitReason}), P&L $${realizedPnl.toFixed(2)} (${outcome})`,
-      calculations: { qty: pos.qty, exit_price: currentPrice, avg_cost: pos.avg_cost, realized_pnl: realizedPnl, pnl_pct: pnlPct, exit_reason: exitReason },
+      summary: `Paper exit (${market.toUpperCase()}): ${pos.qty} × ${pos.symbol} @ ${cur}${currentPrice.toFixed(2)} (${exitReason}), P&L ${cur}${realizedPnl.toFixed(2)} (${outcome})`,
+      calculations: { market, qty: pos.qty, exit_price: currentPrice, avg_cost: pos.avg_cost, realized_pnl: realizedPnl, pnl_pct: pnlPct, exit_reason: exitReason },
       has_verified_facts: true,
       has_calculations: true,
       resolved: true,
@@ -117,8 +133,8 @@ async function runMonitor() {
     });
     if (journalError) console.error("[position-monitor] decision_journal insert failed:", journalError.message);
 
-    cashBalance += currentPrice * pos.qty;
-    closed.push(`${pos.symbol} (${exitReason}: $${currentPrice.toFixed(2)}, P&L: $${realizedPnl.toFixed(2)})`);
+    cashByMarket[market] = (cashByMarket[market] ?? 0) + currentPrice * pos.qty; // credit THIS market's pool
+    closed.push(`${pos.symbol} (${exitReason}: ${cur}${currentPrice.toFixed(2)}, P&L: ${cur}${realizedPnl.toFixed(2)})`);
   }
 
   for (const pos of positions) {
@@ -188,29 +204,19 @@ async function runMonitor() {
     }
   }
 
-  // Recompute + persist NAV = cash + mark-to-market of every still-open
-  // position (using the freshly refreshed current_price, or avg_cost for
-  // anything Massive had no price for). paper_portfolio.nav was only ever
-  // set at seed time and on close — it never reflected open-position
-  // mark-to-market, so NAV showed a flat $10,000 even with real unrealized
-  // gains sitting in paper_positions (e.g. +$31.81 on an open META position).
-  const { data: stillOpen } = await svc.from("paper_positions").select("qty, avg_cost, current_price");
-  const positionsValue = (stillOpen ?? []).reduce((sum: number, p: any) => {
-    const price = Number(p.current_price ?? p.avg_cost ?? 0);
-    return sum + Number(p.qty ?? 0) * price;
-  }, 0);
-  const newNav = cashBalance + positionsValue;
-
-  const { count: allOpenCount } = await svc
-    .from("paper_positions")
-    .select("id", { count: "exact", head: true });
-
-  await svc.from("paper_portfolio").update({
-    cash_balance: cashBalance,
-    nav: newNav,
-    open_positions: allOpenCount ?? Math.max(0, positions.length - closed.length),
-    updated_at: new Date().toISOString(),
-  }).eq("id", portfolio?.id);
+  // Recompute + persist NAV PER MARKET = that pool's cash + mark-to-market of its
+  // still-open positions. Each currency stays in its own pool; never summed.
+  const { data: stillOpen } = await svc.from("paper_positions").select("qty, avg_cost, current_price, market");
+  for (const [market, pool] of poolByMarket) {
+    const mktPos = (stillOpen ?? []).filter((p: any) => marketOf(p, hasMarketCol) === market);
+    const positionsValue = mktPos.reduce((sum: number, p: any) => sum + Number(p.qty ?? 0) * Number(p.current_price ?? p.avg_cost ?? 0), 0);
+    await svc.from("paper_portfolio").update({
+      cash_balance: cashByMarket[market],
+      nav: cashByMarket[market] + positionsValue,
+      open_positions: mktPos.length,
+      updated_at: new Date().toISOString(),
+    }).eq("id", pool.id);
+  }
 
   return {
     checked: positions.length,
