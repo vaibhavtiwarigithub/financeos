@@ -16,6 +16,7 @@ interface Strategy {
   rules: Record<string, unknown>;
   top_symbols: TopSymbol[];
   us_only?: boolean;
+  no_india_signals?: boolean;
 }
 
 function FitScoreBar({ score }: { score: number }) {
@@ -114,7 +115,11 @@ function StrategyCard({ strategy }: { strategy: Strategy }) {
         </div>
       ) : (
         <div style={{ fontSize: "12px", color: "#9B9EA8", fontStyle: "italic", padding: "8px 0" }}>
-          {strategy.us_only ? "US market only — no India fit scores" : "No classifications yet"}
+          {strategy.us_only
+            ? "US market only — no India fit scores"
+            : strategy.no_india_signals
+            ? "No India signals yet — run research"
+            : "No classifications yet"}
         </div>
       )}
     </div>
@@ -175,6 +180,7 @@ export default function StrategiesPage() {
   }
 
   const hasClassifications = strategies.some(s => s.top_symbols.length > 0);
+  const noIndiaSignals = strategies.length > 0 && strategies.every(s => s.no_india_signals);
 
   return (
     <div style={{ maxWidth: "1400px" }}>
@@ -199,9 +205,9 @@ export default function StrategiesPage() {
         <Link href="/dashboard/strategies/library" style={{ padding: "8px 14px", fontSize: "13px", fontWeight: 600, color: "#9B9EA8", textDecoration: "none", borderBottom: "2px solid transparent" }}>Algo Library →</Link>
       </div>
 
-      {isIndia && (
+      {isIndia && noIndiaSignals && (
         <div style={{ background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: "10px", padding: "12px 16px", marginBottom: "20px", fontSize: "13px", color: "#9B9EA8", lineHeight: 1.5 }}>
-          <strong style={{ color: "#ECEDEF" }}>🇮🇳 India selected.</strong> Fit-score classification runs on US market data only — these 7 templates are marked <strong style={{ color: "#ECEDEF" }}>US only</strong> and show no India scores rather than fabricated ones. The strategy <em>definitions</em> still apply to India; use the <Link href="/dashboard/scanner" style={{ color: "#6366F1" }}>Scanner</Link> to screen NIFTY-100 names against them in ₹.
+          <strong style={{ color: "#ECEDEF" }}>🇮🇳 India selected.</strong> No India signals scored yet — fit scores here are computed directly from India research/scanner dimension scores. Run the <Link href="/dashboard/agents" style={{ color: "#6366F1" }}>Research agent</Link> on India, or use the <Link href="/dashboard/scanner" style={{ color: "#6366F1" }}>Scanner</Link> to screen NIFTY-100 names in ₹. Fit scores appear here once India signals exist.
         </div>
       )}
 
@@ -213,8 +219,9 @@ export default function StrategiesPage() {
           ))}
         </div>
       ) : isIndia ? (
-        // India: no classifier CTA (US-data classifier). Just show the templates,
-        // each marked "US only" by the card. Note banner above explains why.
+        // India: fit scores computed directly from India dimension scores (no
+        // US-data classifier CTA). Renders identically to US; cards show a
+        // "run research" empty state when no India signals exist yet.
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "16px" }}>
           {strategies.map(s => <StrategyCard key={s.id} strategy={s} />)}
         </div>

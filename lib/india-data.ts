@@ -96,6 +96,32 @@ export async function fetchIndiaIndices(): Promise<{ symbol: string; label: stri
   return out.filter(Boolean) as any[];
 }
 
+// NSE sectoral indices (Yahoo symbols) — the India equivalent of the US sector
+// row/heatmap on the Markets panel. All resolve on the auth-free chart endpoint.
+export const INDIA_SECTORS: { symbol: string; label: string }[] = [
+  { symbol: "^CNXIT",      label: "IT" },
+  { symbol: "^NSEBANK",    label: "Bank" },
+  { symbol: "^CNXAUTO",    label: "Auto" },
+  { symbol: "^CNXFMCG",    label: "FMCG" },
+  { symbol: "^CNXPHARMA",  label: "Pharma" },
+  { symbol: "^CNXMETAL",   label: "Metal" },
+  { symbol: "^CNXENERGY",  label: "Energy" },
+  { symbol: "^CNXREALTY",  label: "Realty" },
+  { symbol: "^CNXFIN",     label: "Financials" },
+  { symbol: "^CNXINFRA",   label: "Infra" },
+];
+
+// Batch sector-index quotes for the Markets panel's India sector heatmap.
+export async function fetchIndiaSectors(): Promise<{ symbol: string; label: string; price: number; changePct: number }[]> {
+  const out = await Promise.all(
+    INDIA_SECTORS.map(async (s) => {
+      const q = await fetchIndiaQuote(s.symbol);
+      return q ? { ...s, price: q.price, changePct: q.changePct } : null;
+    })
+  );
+  return out.filter(Boolean) as any[];
+}
+
 // Next earnings date for an NSE symbol via Yahoo calendarEvents. There is no free
 // full-market India earnings CALENDAR feed, so this is per-symbol (used to enrich
 // the watchlist/tracked names on the Earnings panel). Returns YYYY-MM-DD or null.

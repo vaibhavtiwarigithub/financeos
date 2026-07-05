@@ -71,6 +71,7 @@ export default function CalendarPage() {
   const [slowFetch, setSlowFetch] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [source, setSource] = useState<string>("");
+  const [note, setNote] = useState<string>("");
   const [tab, setTab] = useState<"earnings" | "econ">("earnings");
 
   async function loadEarnings() {
@@ -80,6 +81,7 @@ export default function CalendarPage() {
         const data = await res.json();
         setEarnings(data.earnings ?? []);
         setSource(data.source ?? "");
+        setNote(data.note ?? "");
       }
     } catch {}
   }
@@ -131,7 +133,7 @@ export default function CalendarPage() {
       <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ fontSize: "11px", color: "#4B5563" }}>
           {isIndia
-            ? (source ? "via Yahoo Finance (per-symbol)" : "")
+            ? (source === "nse_calendar" ? "via NSE results calendar (market-wide)" : source ? "via Yahoo Finance (per-symbol)" : "")
             : (source ? `via Robinhood ${source === "fallback" ? "(fallback)" : source === "cache" ? "(cached)" : "(live)"}` : "")}
         </div>
         <button onClick={refresh} disabled={refreshing} style={{
@@ -158,9 +160,9 @@ export default function CalendarPage() {
 
       {tab === "earnings" && (
         <div>
-          {isIndia && (
+          {isIndia && note && (
             <div style={{ marginBottom: "12px", fontSize: "11px", color: "#9CA3AF", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "8px 12px" }}>
-              India: earnings dates for tracked symbols only (no full-market feed).
+              {note}
             </div>
           )}
           {loading ? (

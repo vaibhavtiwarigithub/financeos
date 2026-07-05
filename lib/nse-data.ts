@@ -84,6 +84,24 @@ export async function fetchNseInsider(symbol?: string): Promise<InsiderTrade[]> 
   }));
 }
 
+// Market-wide India earnings/results calendar from NSE's event-calendar (free
+// JSON) — a real full-market feed, unlike the per-symbol Yahoo dates. Filters to
+// "Financial Results" events. Fails soft → []. Dates are DD-MMM-YYYY from NSE.
+export type EarningsEvent = { symbol: string; company: string; date: string | null; purpose: string };
+export async function fetchNseEarnings(): Promise<EarningsEvent[]> {
+  const j = await nseApi(`/api/event-calendar?index=equities`);
+  const rows = Array.isArray(j) ? j : (j?.data ?? []);
+  return (Array.isArray(rows) ? rows : [])
+    .filter((r: any) => /result/i.test(String(r.purpose ?? r.subject ?? "")))
+    .slice(0, 200)
+    .map((r: any) => ({
+      symbol: r.symbol ? `${r.symbol}.NS` : "",
+      company: r.company ?? r.symbol ?? "—",
+      date: r.date ?? null,
+      purpose: r.purpose ?? r.subject ?? "Financial Results",
+    }));
+}
+
 // Option chain for a symbol (index like NIFTY/BANKNIFTY, or an equity). Returns
 // put/call OI, PCR, and the top OI strikes = the free stand-in for "options flow".
 export type OptionFlow = { symbol: string; underlying: number | null; pcr: number | null; totalCallOI: number; totalPutOI: number; topStrikes: { strike: number; callOI: number; putOI: number }[] };

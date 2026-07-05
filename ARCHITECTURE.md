@@ -555,12 +555,12 @@ Phase 4 gave India its own pool and champion; Phase 5 makes India a first-class 
 
 | Panel | India level | India data source |
 |---|---|---|
-| Markets | full | NIFTY / SENSEX / BankNifty / India-VIX via Yahoo |
-| Risk Analytics | partial | per-₹ book, VaR vs NIFTY (beta-vs-NIFTY still "coming soon") |
+| Markets | full | NIFTY / SENSEX / BankNifty / India-VIX via Yahoo; sector heatmap (10 NSE sector indices, `fetchIndiaSectors`) + NIFTY-50 breadth (TradingView/macro-sentinel tiles remain US-only) |
+| Risk Analytics | full | per-₹ book, VaR vs NIFTY, real beta-vs-NIFTY (1y daily-candle covariance/variance regression, value-weighted; `computeRiskMetrics` async) |
 | Backtest | full | Yahoo `.NS` candles, alpha vs NIFTY |
 | Scanner | full | full NSE market via nightly cache; NIFTY-100 live fallback |
-| Strategies | partial | market-scoped fit scores (India classification still US-only) |
-| Earnings | partial | India per-symbol dates via Yahoo — tracked names only, no full-market feed |
+| Strategies | full | real fit-scores from India signals' dimension scores (`signal_score_history` market='india'); Algo Library remains US-only |
+| Earnings | full | market-wide NSE results calendar (`fetchNseEarnings` via NSE event-calendar) with per-symbol Yahoo fallback |
 | Smart Money | full | signals + trade queue both markets; India insider + option-chain PCR/OI live from NSE |
 
 **Direct NSE feeds (`lib/nse-data.ts`) — the ceiling fixes.** A cookie-handshake adapter for NSE's free public JSON: full equity list (`EQUITY_L.csv`), insider trades (`corporates-pit`), and option chain (`option-chain-indices` / `option-chain-equities`). This is what lifted the two earlier ceilings — **full-market scan** (was NIFTY-100 only) and **India insider + options** (were US-only). It **fails soft**: NSE geo-throttles some non-India IPs, so every caller falls back to Yahoo / NIFTY-100 with an honest note rather than 500ing. **Caveat: from a US IP the NSE feeds may be geo-blocked**, degrading those features to their fallback path.
