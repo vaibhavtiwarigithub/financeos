@@ -4,7 +4,8 @@ import { useEffect, useState, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket, CURRENCY } from "@/lib/market-context";
-import { fetchIndiaIndices } from "@/lib/india-data";
+import { fetchIndiaIndices, fetchIndiaSectors, fetchIndiaQuote } from "@/lib/india-data";
+import { NIFTY_50 } from "@/lib/india-universe";
 import SectorTradingViewOverview from "@/components/charts/SectorTradingViewOverview";
 const SectorTreemap = lazy(() => import("@/components/charts/SectorTreemap"));
 const PriceChart = lazy(() => import("@/components/charts/PriceChart"));
@@ -1142,6 +1143,104 @@ function LoadingSkeleton() {
 
 // Muted "no free India equivalent" note shown in place of US-only panels when
 // India is selected. Honest gap — we don't fabricate India sector/breadth data.
+// India sector heatmap — 10 free NSE sector indices from Yahoo. Same visual
+// treatment as the US SectorHeatmap (color by changePct). Falls back to the
+// gap note only when Yahoo returns nothing.
+function IndiaSectors({ onSymbol }: { onSymbol: (sym: string) => void }) {
+  const [sectors, setSectors] = useState<SectorQuote[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await fetchIndiaSectors();
+        if (cancelled) return;
+        setSectors(
+          rows.map((r) => ({
+            symbol: r.symbol,
+            name: r.label,
+            price: r.price,
+            change: (r.price * r.changePct) / 100,
+            changePct: r.changePct,
+          }))
+        );
+      } catch {
+        if (!cancelled) setSectors([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!sectors) {
+    return (
+      <div style={{ height: "180px", background: T.card, borderRadius: "12px", border: `1px solid ${T.border}`, animation: "pulse 1.5s ease-in-out infinite" }} />
+    );
+  }
+  if (sectors.length === 0) {
+    return <IndiaGapNote label="India sector rotation" />;
+  }
+  return <SectorHeatmap sectors={sectors} onSymbol={onSymbol} />;
+}
+
+// India breadth — advancers/decliners from a NIFTY-50 sample (first 10 names,
+// fetched sequentially to stay under Yahoo rate limits). Mirrors the US breadth
+// tile's advancers/decliners bar.
+function IndiaBreadth() {
+  const [counts, setCounts] = useState<{ up: number; down: number } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let up = 0;
+      let down = 0;
+      const sample = NIFTY_50.slice(0, 10);
+      for (const sym of sample) {
+        try {
+          const q = await fetchIndiaQuote(sym);
+          if (q) {
+            if (q.changePct > 0) up += 1;
+            else if (q.changePct < 0) down += 1;
+          }
+        } catch {
+          /* skip failed quote */
+        }
+        await new Promise((r) => setTimeout(r, 300));
+        if (cancelled) return;
+      }
+      if (!cancelled) setCounts({ up, down });
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!counts) {
+    return (
+      <div style={{ height: "120px", background: T.card, borderRadius: "12px", border: `1px solid ${T.border}`, animation: "pulse 1.5s ease-in-out infinite" }} />
+    );
+  }
+
+  const total = counts.up + counts.down;
+  const upPct = total > 0 ? (counts.up / total) * 100 : 50;
+
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+      <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>
+        Market Breadth · advancers vs decliners
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+        <span style={{ fontSize: "13px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: T.green }}>{counts.up} up</span>
+        <span style={{ fontSize: "13px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: T.red }}>{counts.down} down</span>
+      </div>
+      <div style={{ display: "flex", height: "10px", borderRadius: "5px", overflow: "hidden", background: T.surface }}>
+        <div style={{ width: `${upPct}%`, background: T.green }} />
+        <div style={{ width: `${100 - upPct}%`, background: T.red }} />
+      </div>
+      <div style={{ fontSize: "11px", color: T.muted, marginTop: "10px" }}>
+        breadth from NIFTY-50 sample
+      </div>
+    </div>
+  );
+}
+
 function IndiaGapNote({ label }: { label: string }) {
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px", color: T.muted, fontSize: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
@@ -1335,10 +1434,16 @@ export default function MarketsPage() {
             </div>
           )}
           <div style={{ marginBottom: "16px" }}>
-            <IndiaGapNote label="Sector rotation, breadth & leveraged-pair sentiment" />
+            <IndiaSectors onSymbol={setSelectedSymbol} />
+          </div>
+          <div style={{ marginBottom: "16px" }}>
+            <IndiaBreadth />
+          </div>
+          <div style={{ marginBottom: "16px" }}>
+            <IndiaGapNote label="TradingView sector overview, macro sentinel & leveraged-pair sentiment" />
           </div>
           <div style={{ fontSize: "11px", color: T.muted, textAlign: "right" }}>
-            India indices via Yahoo Finance · refreshed every 5 min
+            India indices &amp; sectors via Yahoo Finance · refreshed every 5 min
           </div>
         </>
       )}

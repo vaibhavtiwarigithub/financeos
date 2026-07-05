@@ -1,4 +1,6 @@
 import type { BrokerHolding } from "./brokers/types";
+import { fetchIndiaCandles } from "./india-data";
+import type { Candle } from "@/lib/data/technicals";
 
 // ── Sector reference data ────────────────────────────────────────────────────
 
@@ -183,6 +185,88 @@ function indiaSector(symbol: string): string {
 // (beta = 1 assumption) so the ₹ VaR figure is honest, not beta-scaled off SPY.
 const NIFTY_DAILY_VOL = 0.010;
 
+// ── India beta vs NIFTY (^NSEI) ──────────────────────────────────────────────
+// Real beta from 1y daily candles: cov(stock, NIFTY) / var(NIFTY) over the
+// shared trading days. Value-weighted across covered holdings; symbols with no
+// candles are dropped and the remaining weights renormalized so a missing name
+// doesn't silently pull beta toward zero.
+
+// NIFTY 50's worst historical drawdown proxy (~−38%, 2020 COVID crash). Beta
+// scales this the same way SPY's −34% scales the US book.
+const NIFTY_MAX_DRAWDOWN = 0.38;
+
+function dailyReturnsByDate(candles: Candle[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (let i = 1; i < candles.length; i++) {
+    const prev = candles[i - 1].close;
+    const curr = candles[i].close;
+    if (prev > 0 && curr > 0) out.set(candles[i].date, (curr - prev) / prev);
+  }
+  return out;
+}
+
+// Beta of one return series vs the benchmark over their shared trading days.
+// Needs ≥20 overlapping points to be meaningful; returns null otherwise.
+function betaVsNifty(
+  stockRet: Map<string, number>,
+  benchRet: Map<string, number>,
+): number | null {
+  const sx: number[] = [];
+  const bx: number[] = [];
+  for (const [date, r] of stockRet) {
+    const b = benchRet.get(date);
+    if (b != null) { sx.push(r); bx.push(b); }
+  }
+  const n = sx.length;
+  if (n < 20) return null;
+  const meanS = sx.reduce((a, b) => a + b, 0) / n;
+  const meanB = bx.reduce((a, b) => a + b, 0) / n;
+  let cov = 0, varB = 0;
+  for (let i = 0; i < n; i++) {
+    cov  += (sx[i] - meanS) * (bx[i] - meanB);
+    varB += (bx[i] - meanB) * (bx[i] - meanB);
+  }
+  if (varB <= 0) return null;
+  return cov / varB;
+}
+
+// Value-weighted portfolio beta vs NIFTY. Fetches 1y candles for ^NSEI + each
+// unique India holding symbol. Returns null if the ^NSEI benchmark itself has
+// no candles (caller then keeps the coming-soon fallback).
+async function computeIndiaPortfolioBeta(
+  holdings: BrokerHolding[],
+  totalValue: number,
+): Promise<number | null> {
+  const niftyCandles = await fetchIndiaCandles("^NSEI", "1y");
+  if (niftyCandles.length < 21) return null;
+  const benchRet = dailyReturnsByDate(niftyCandles);
+
+  const uniqueSymbols = Array.from(new Set(holdings.map(h => h.symbol)));
+  const betaBySymbol = new Map<string, number>();
+  await Promise.all(uniqueSymbols.map(async (sym) => {
+    const candles = await fetchIndiaCandles(sym, "1y");
+    if (candles.length < 21) return;
+    const b = betaVsNifty(dailyReturnsByDate(candles), benchRet);
+    if (b != null) betaBySymbol.set(sym, b);
+  }));
+
+  // Value-weight only over holdings we have a beta for; renormalize weights so
+  // dropped (uncovered) symbols don't dilute toward zero.
+  let coveredValue = 0;
+  for (const h of holdings) {
+    if (betaBySymbol.has(h.symbol)) coveredValue += h.marketValue;
+  }
+  if (coveredValue <= 0) return null;
+
+  let beta = 0;
+  for (const h of holdings) {
+    const b = betaBySymbol.get(h.symbol);
+    if (b == null) continue;
+    beta += (h.marketValue / coveredValue) * b;
+  }
+  return beta;
+}
+
 export interface RiskOptions {
   market?: "us" | "india";
   currency?: string; // "$" | "₹"
@@ -190,15 +274,15 @@ export interface RiskOptions {
 
 // ── Core computation ─────────────────────────────────────────────────────────
 
-export function computeRiskMetrics(
+export async function computeRiskMetrics(
   holdings: BrokerHolding[],
   pendingProposals?: Array<{ symbol: string; side: string; qty: number; priceAtProposal: number }>,
   opts: RiskOptions = {},
-): RiskMetrics {
+): Promise<RiskMetrics> {
   const market = opts.market ?? "us";
   const currency = opts.currency ?? (market === "india" ? "₹" : "$");
   const benchmarkLabel = market === "india" ? "NIFTY 50" : "S&P 500";
-  const betaComingSoon = market === "india"; // beta vs NIFTY not yet wired
+  let betaComingSoon = market === "india"; // real beta vs NIFTY set below when candles resolve
   if (!holdings.length) {
     return emptyMetrics(market, currency, benchmarkLabel, betaComingSoon);
   }
@@ -218,19 +302,38 @@ export function computeRiskMetrics(
   });
 
   // Portfolio beta = weighted average sector beta (proxy).
-  const portfolioBeta = enriched.reduce((s, h) => s + h.weightPct * h.beta, 0);
+  let portfolioBeta = enriched.reduce((s, h) => s + h.weightPct * h.beta, 0);
 
-  // VaR: US scales SPY daily vol by beta. India has no NIFTY beta wired, so use
-  // NIFTY's own daily vol directly (beta-1 assumption) — an honest ₹ figure that
-  // doesn't borrow SPY sensitivity.
+  // India: try to replace the sector-average proxy with a REAL beta vs NIFTY
+  // (^NSEI) from 1y daily candles. On success we clear the coming-soon flag and
+  // beta-scale VaR/drawdown just like the US path; on total failure (^NSEI
+  // candles unavailable) we keep the honest NIFTY-vol fallback (beta ≈ 1).
+  let realIndiaBeta: number | null = null;
+  if (isIndia) {
+    realIndiaBeta = await computeIndiaPortfolioBeta(holdings, totalValue);
+    if (realIndiaBeta != null) {
+      portfolioBeta = realIndiaBeta;
+      betaComingSoon = false;
+    }
+  }
+  const indiaBetaWired = isIndia && !betaComingSoon;
+
+  // VaR: US scales SPY daily vol by beta. India with a real NIFTY beta scales
+  // NIFTY's daily vol by that beta; India without a wired beta uses NIFTY's own
+  // daily vol directly (beta-1 assumption) — an honest ₹ figure either way.
   const dailyVol = isIndia ? NIFTY_DAILY_VOL : 0.0085;
-  const portfolioDailyVol = isIndia ? dailyVol : portfolioBeta * dailyVol;
+  const portfolioDailyVol = isIndia
+    ? (indiaBetaWired ? portfolioBeta * dailyVol : dailyVol)
+    : portfolioBeta * dailyVol;
   const var95_pct    = portfolioDailyVol * 1.645;
   const var95_dollar = totalValue * var95_pct; // amount is in `currency`, not always $
 
-  // Max drawdown estimate: benchmark historical max (~34%), scaled by beta for US;
-  // India uses a flat NIFTY drawdown proxy (~38%) since beta isn't wired.
-  const maxDrawdownEst = isIndia ? 0.38 : Math.min(0.60, portfolioBeta * 0.34);
+  // Max drawdown estimate: benchmark historical max scaled by beta. US uses SPY
+  // (~−34%); India with a real beta scales the NIFTY drawdown (~−38%); India
+  // without a wired beta uses the flat NIFTY proxy.
+  const maxDrawdownEst = isIndia
+    ? (indiaBetaWired ? Math.min(0.60, portfolioBeta * NIFTY_MAX_DRAWDOWN) : NIFTY_MAX_DRAWDOWN)
+    : Math.min(0.60, portfolioBeta * 0.34);
 
   // Sector breakdown
   const sectorTotals: Record<string, number> = {};

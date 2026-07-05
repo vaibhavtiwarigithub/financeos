@@ -205,7 +205,7 @@ export default function PortfolioRiskPage() {
                               <Bar pct={h.weightPct} color={weightColor} maxPct={0.25} />
                             </div>
                           </td>
-                          <td style={{ padding: "8px 10px", color: isIndia ? T.muted : betaColor(h.beta) }}>{isIndia ? "—" : h.beta.toFixed(2)}</td>
+                          <td style={{ padding: "8px 10px", color: risk.betaComingSoon ? T.muted : betaColor(h.beta) }}>{risk.betaComingSoon ? "—" : h.beta.toFixed(2)}</td>
                           <td style={{ padding: "8px 10px", color: pnlColor }}>
                             {h.unrealizedPnl != null ? (
                               <>

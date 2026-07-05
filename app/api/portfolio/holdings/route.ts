@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
   ]);
 
   const allHoldings = accounts.flatMap(a => a.holdings);
-  const risk = computeRiskMetrics(allHoldings, pendingProposals as any, { market, currency });
+  const risk = await computeRiskMetrics(allHoldings, pendingProposals as any, { market, currency });
 
   return NextResponse.json({
     accounts: accounts.map(a => ({
