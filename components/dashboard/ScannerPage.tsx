@@ -29,10 +29,24 @@ interface ScanResult {
 
 interface ScanResponse {
   strategy: { id: string; name: string } | null;
+  source?: string;
+  cache_count?: number;
+  cache_oldest_scored_at?: string | null;
   total_scanned: number;
   passing: number;
   results: ScanResult[];
   data_sources: { fundamentals: string; technicals: string };
+}
+
+// "3h ago" / "2d ago" from an ISO timestamp.
+function agoLabel(iso?: string | null): string {
+  if (!iso) return "unknown";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "unknown";
+  const h = Math.floor(ms / 3_600_000);
+  if (h < 1) return "just now";
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
 function ScoreBar({ value, color }: { value: number; color: string }) {
@@ -132,7 +146,11 @@ export default function ScannerPage() {
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px 24px", marginBottom: "20px" }}>
           <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>Scan Configuration {isIndia && <span style={{ color: T.accent }}>· 🇮🇳 India (₹)</span>}</div>
 
-          {isIndia && (
+          {isIndia && result?.source === "nse_cache" ? (
+            <div style={{ background: `${T.accent}10`, border: `1px solid ${T.accent}30`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.sub }}>
+              Screening the <strong style={{ color: T.text }}>full NSE market</strong> from the nightly pre-score cache ({result.cache_count ?? result.total_scanned} names, updated {agoLabel(result.cache_oldest_scored_at)}). Enter symbols above (e.g. RELIANCE, TCS) to force a live scan of specific names instead.
+            </div>
+          ) : isIndia && (
             <div style={{ background: `${T.accent}10`, border: `1px solid ${T.accent}30`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.sub }}>
               No free India screen API exists — this scans the <strong style={{ color: T.text }}>~NIFTY-100</strong> universe name-by-name via Yahoo (₹ prices, fundamentals + candles), applying the same filters. Coverage is honestly capped at NIFTY-100, not the full ~2000 NSE. Enter symbols above (e.g. RELIANCE, TCS) to scan specific names.
             </div>

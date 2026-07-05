@@ -3,6 +3,7 @@ import { indiaScreenUniverse } from "@/lib/india-universe";
 import { fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
 import { computeTechnicals } from "@/lib/data/technicals";
 import { STRATEGY_MAP } from "@/lib/strategy-definitions";
+import { createServiceClient } from "@/lib/supabase/service";
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +91,133 @@ function applyStrategyFilters(
   return { passes, notes };
 }
 
+// Read the nightly pre-scored full-NSE cache (india_screen_cache) and apply the
+// same filters the live scan applies. Returns a scan-response payload, or null if
+// the cache is empty / the table is missing (query error) — caller falls back to
+// the live ~NIFTY-100 scan. Never throws.
+async function scanFromCache(opts: {
+  rsiMin?: number;
+  rsiMax?: number;
+  aboveMa50?: boolean;
+  scanFilters: Array<{ field: string; operator: string; value: number }>;
+  strategy: { id: string; name: string } | null | undefined;
+  limit: number;
+}): Promise<Record<string, any> | null> {
+  try {
+    const sb = createServiceClient();
+    let q = sb.from("india_screen_cache").select("*");
+
+    // Push what we can into SQL (RSI range, MA50). Fundamentals filters are applied
+    // in JS below since strategy filters map onto several columns/operators.
+    if (opts.rsiMin != null) q = q.gte("rsi", opts.rsiMin);
+    if (opts.rsiMax != null) q = q.lte("rsi", opts.rsiMax);
+    if (opts.aboveMa50 === true) q = q.eq("above_ma50", true);
+    else if (opts.aboveMa50 === false) q = q.eq("above_ma50", false);
+
+    const { data, error } = await q;
+    if (error) return null;                    // missing table / query error → fall back
+    if (!Array.isArray(data) || data.length === 0) return null; // empty cache → fall back
+
+    // Map strategy fundamental filters onto cache columns.
+    const colFor: Record<string, string> = {
+      pe_ratio: "pe",
+      return_on_equity: "roe",
+      revenue_growth: "rev_growth",
+      profit_margin: "profit_margin",
+    };
+
+    const scored = data.map((row: Record<string, any>) => {
+      const filterNotes: string[] = [];
+      let passes = true;
+
+      const rsi: number | null = row.rsi;
+      const aboveMa50: boolean | null = row.above_ma50;
+
+      // Technical score (mirrors live scan)
+      let techScore: number | null = null;
+      if (rsi != null) {
+        if (rsi > 60)      techScore = 75;
+        else if (rsi < 40) techScore = 35;
+        else               techScore = 50 + (rsi - 50) * 0.5;
+      }
+
+      // Fundamental score from the pre-scored cache columns (same thresholds as live)
+      const ov: Record<string, string> = {};
+      if (row.pe != null)            ov.PERatio = String(row.pe);
+      if (row.roe != null)           ov.ReturnOnEquityTTM = String(row.roe);
+      if (row.rev_growth != null)    ov.QuarterlyRevenueGrowthYOY = String(row.rev_growth);
+      if (row.profit_margin != null) ov.ProfitMargin = String(row.profit_margin);
+      if (row.Sector != null)        ov.Sector = String(row.sector);
+      const fundScore = scoreIndiaFundamentals(ov);
+
+      // Strategy fundamental filters (applied in JS against cache columns)
+      for (const f of opts.scanFilters) {
+        const col = colFor[f.field];
+        if (!col) continue;                       // unmappable → skip, don't fail
+        const v = row[col];
+        if (v == null || Number.isNaN(v)) continue; // missing → skip
+        const ok =
+          f.operator === "gt" || f.operator === "gte" ? v >= f.value :
+          f.operator === "lt" || f.operator === "lte" ? v <= f.value :
+          f.operator === "eq" ? v === f.value : true;
+        if (!ok) { passes = false; filterNotes.push(`${f.field} ${Number(v).toFixed(2)} fails ${f.operator} ${f.value}`); }
+      }
+
+      if (passes && filterNotes.length === 0) filterNotes.push("All conditions met");
+
+      const combined =
+        techScore != null && fundScore != null ? Math.round(fundScore * 0.5 + techScore * 0.5)
+        : techScore != null ? Math.round(techScore)
+        : fundScore != null ? Math.round(fundScore)
+        : null;
+
+      return {
+        symbol: row.symbol,
+        rsi: rsi != null ? parseFloat(Number(rsi).toFixed(1)) : null,
+        price: row.price,
+        ema50: row.ema50,
+        price_above_ma50: aboveMa50,
+        fundamental_score: fundScore != null ? Math.round(fundScore) : null,
+        technical_score: techScore != null ? Math.round(techScore) : null,
+        combined_score: combined,
+        fundamentals: ov,
+        passes_filters: passes,
+        data_sufficient: true,
+        filter_notes: filterNotes,
+      };
+    });
+
+    scored.sort((a: any, b: any) => {
+      if (a.passes_filters && !b.passes_filters) return -1;
+      if (!a.passes_filters && b.passes_filters) return 1;
+      return (b.combined_score ?? -1) - (a.combined_score ?? -1);
+    });
+
+    // Oldest scored_at across the cache = how fresh the nightly pre-score is.
+    let oldest: string | null = null;
+    for (const row of data as Array<{ scored_at?: string }>) {
+      if (row.scored_at && (oldest == null || row.scored_at < oldest)) oldest = row.scored_at;
+    }
+
+    return {
+      strategy: opts.strategy ? { id: opts.strategy.id, name: opts.strategy.name } : null,
+      market: "india",
+      source: "nse_cache",
+      cache_count: data.length,
+      cache_oldest_scored_at: oldest,
+      total_scanned: data.length,
+      passing: scored.filter((r: any) => r.passes_filters).length,
+      results: scored.slice(0, opts.limit),
+      data_sources: {
+        fundamentals: "Yahoo Finance (India, ₹) — nightly cache",
+        technicals: "Yahoo candles → local RSI/EMA — nightly cache",
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -122,6 +250,23 @@ export async function POST(req: NextRequest) {
       .map(s => s.trim().toUpperCase())
       .filter(Boolean)
       .map(s => (s.endsWith(".NS") || s.endsWith(".BO") ? s : `${s}.NS`));
+
+    // Full-market path: with no manual symbol override, try the nightly pre-score
+    // cache (india_screen_cache) — the whole NSE market, pre-scored. Filter it in
+    // SQL where possible and return immediately. If the table is empty or missing
+    // (query errors), fall through to the live ~NIFTY-100 scan below.
+    if (!candidates.length) {
+      const cached = await scanFromCache({
+        rsiMin: effectiveRsiMin,
+        rsiMax: effectiveRsiMax,
+        aboveMa50: effectiveMa50,
+        scanFilters,
+        strategy,
+        limit,
+      });
+      if (cached) return NextResponse.json(cached);
+    }
+
     if (!candidates.length) candidates = indiaScreenUniverse();
     candidates = [...new Set(candidates)];
 
@@ -218,6 +363,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       strategy: strategy ? { id: strategy.id, name: strategy.name } : null,
       market: "india",
+      source: "live_nifty100",
       total_scanned: candidates.length,
       passing: results.filter(r => r.passes_filters).length,
       results: results.slice(0, limit),

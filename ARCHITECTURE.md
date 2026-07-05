@@ -543,6 +543,42 @@ Migration `057_multi_market.sql` plus code turns "market" from a fork into a **t
 
 **Guarded/resilient rollout.** Pre-057 (no `market` column, single pool) every path behaves byte-for-byte as the old US-only app; India activates automatically once 057 is applied and the pool row exists. **Operational note: 057 could NOT be auto-applied this session (Supabase MCP permission-denied, no psql/DATABASE_URL) — it must be applied manually in the Supabase SQL editor.** `system-map.json` was updated to split the paper pool + learner per market.
 
+### Phase 5 — India parity (global switcher + support registry + direct NSE feeds)
+
+Phase 4 gave India its own pool and champion; Phase 5 makes India a first-class citizen across the **whole dashboard**, and lifts the two remaining free-data ceilings (full-market scan, India insider/options) with direct NSE feeds. See Decision 32.
+
+**Global market switcher.** `lib/market-context.tsx` (`MarketProvider` / `useMarket()`) holds the selected market (`us | india`), persisted to `localStorage` + an `mkt` cookie. Rendered in the `DashboardShell` header, **hidden unless `market_focus` includes India** (single-market users never see it). Every client panel scopes to the selected market; server pages read the `mkt` cookie so first paint is already market-correct.
+
+**Per-page country-support footer.** `lib/market-support.ts` maps each route → `{ level, note }` where `level ∈ {full, partial, us-only, india-only}`. A badge at the bottom of every dashboard page renders that level honestly. This is the **single source of truth** for coverage — as a panel gains India support, flip its level in one place rather than hunting through components.
+
+**India-coverage table** (per panel: US path unchanged, India via free data):
+
+| Panel | India level | India data source |
+|---|---|---|
+| Markets | full | NIFTY / SENSEX / BankNifty / India-VIX via Yahoo |
+| Risk Analytics | partial | per-₹ book, VaR vs NIFTY (beta-vs-NIFTY still "coming soon") |
+| Backtest | full | Yahoo `.NS` candles, alpha vs NIFTY |
+| Scanner | full | full NSE market via nightly cache; NIFTY-100 live fallback |
+| Strategies | partial | market-scoped fit scores (India classification still US-only) |
+| Earnings | partial | India per-symbol dates via Yahoo — tracked names only, no full-market feed |
+| Smart Money | full | signals + trade queue both markets; India insider + option-chain PCR/OI live from NSE |
+
+**Direct NSE feeds (`lib/nse-data.ts`) — the ceiling fixes.** A cookie-handshake adapter for NSE's free public JSON: full equity list (`EQUITY_L.csv`), insider trades (`corporates-pit`), and option chain (`option-chain-indices` / `option-chain-equities`). This is what lifted the two earlier ceilings — **full-market scan** (was NIFTY-100 only) and **India insider + options** (were US-only). It **fails soft**: NSE geo-throttles some non-India IPs, so every caller falls back to Yahoo / NIFTY-100 with an honest note rather than 500ing. **Caveat: from a US IP the NSE feeds may be geo-blocked**, degrading those features to their fallback path.
+
+**Scanner cache.** Migration `058_india_screen_cache.sql` adds a new cache table; a nightly cron `POST /api/scan/india/refresh` scores the **full NSE list** in oldest-first 600-name slices. The Scanner reads the cache and falls back to a live NIFTY-100 scan when the cache is cold or NSE is unreachable.
+
+**Market-scoped agents + India crons.** `research` / `paper-trade` / `position-monitor` now accept `?market=us|india`. The US 9 AM tasks are pinned to `?market=us` so they no longer double-process India. India runs on its own Task Scheduler tasks (**PC clock = ET**), all post-NSE-close (15:30 IST = 06:00 ET):
+
+| India task | Time (ET) | Endpoint |
+|---|---|---|
+| scan-india-refresh | 5:30 AM | `POST /api/scan/india/refresh` |
+| research-india | 6:15 AM | `/api/agents/research/cron?market=india` |
+| position-monitor-india | 6:35 AM | `/api/agents/position-monitor?market=india` |
+
+See `scripts/run-agents.ps1` + `scripts/register-tasks.ps1`.
+
+**Guarded throughout.** Pre-migration (missing `058` column/table) every India-parity path degrades to US-only and never 500s. **Operational note: migration `058` must be applied manually** (Supabase MCP was permission-denied this session; `057` already applied by the user). `system-map.json` updated with NSE nodes (full-market equity list, insider, option chain) feeding the scanner cache and Smart Money.
+
 ---
 
 ## Planned Architecture — [REVIEW PENDING — ChatGPT]

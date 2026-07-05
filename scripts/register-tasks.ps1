@@ -25,6 +25,7 @@ $tasks = @(
   @{ Name="position-monitor"; Trigger=(WeekdayTrigger "4:15PM");  Agent="position-monitor" },
   # India market — fires after the NSE close (15:30 IST = 06:00 ET). Runs only do
   # work when market_focus includes India; otherwise the routes skip (0 symbols).
+  @{ Name="scan-india-refresh";     Trigger=(WeekdayTrigger "5:30AM");  Agent="scan-india-refresh"     },
   @{ Name="research-india";         Trigger=(WeekdayTrigger "6:15AM");  Agent="research-india"         },
   @{ Name="position-monitor-india"; Trigger=(WeekdayTrigger "6:35AM");  Agent="position-monitor-india" },
   @{ Name="brief-evening";    Trigger=(WeekdayTrigger "4:30PM");  Agent="brief-evening"    },
@@ -44,7 +45,7 @@ try { $root.GetFolder($TaskFolder) | Out-Null }
 catch { $root.CreateFolder($TaskFolder) | Out-Null; Write-Host "Created folder \$TaskFolder" }
 
 # Per-agent execution time limits (minutes). embed can run a large first backfill.
-$timeLimits = @{ "embed" = 10; "learner" = 15 }
+$timeLimits = @{ "embed" = 10; "learner" = 15; "scan-india-refresh" = 10 }
 function TimeLimitFor([string]$agent) {
   if ($timeLimits.ContainsKey($agent)) { return $timeLimits[$agent] } else { return 5 }
 }

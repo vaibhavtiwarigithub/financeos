@@ -43,6 +43,10 @@ $endpoints = @{
   # research chains its own ?market=india paper-trade automatically.
   "research-india"         = @{ method="POST"; url="$BASE/api/agents/research/cron?market=india";    headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "position-monitor-india" = @{ method="POST"; url="$BASE/api/agents/position-monitor?market=india"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
+  # Nightly full-NSE pre-score cache (india_screen_cache). Rotates ~600 names/run,
+  # oldest-scored-first, so the India scanner reads the whole market. Runs before
+  # research-india (6:15 AM) so candidates draw from a fresh cache.
+  "scan-india-refresh"     = @{ method="POST"; url="$BASE/api/scan/india/refresh"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}"; timeoutSec=300 }
   "nav-snapshot"     = @{ method="POST"; url="$BASE/api/agents/performance";           headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"action":"snapshot"}' }
   "stale-check"      = @{ method="GET";  url="$BASE/api/alerts/stale-check";           headers=@{}; body=$null }
   "embed"            = @{ method="POST"; url="$BASE/api/live-portfolio/embed";         headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"limit":200}'; timeoutSec=300 }

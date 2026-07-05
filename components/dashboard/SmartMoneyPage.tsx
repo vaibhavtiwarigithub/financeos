@@ -65,6 +65,34 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
   const [edgarError, setEdgarError] = useState<string | null>(null);
   const [edgarFetched, setEdgarFetched] = useState(false);
 
+  // India NSE state (insider PIT disclosures + option-chain flow)
+  const [nseInsider, setNseInsider] = useState<{ trades: any[]; available: boolean } | null>(null);
+  const [nseInsiderLoading, setNseInsiderLoading] = useState(false);
+  const [nseOptSymbol, setNseOptSymbol] = useState<"NIFTY" | "BANKNIFTY">("NIFTY");
+  const [nseOptions, setNseOptions] = useState<any | null>(null);
+  const [nseOptionsLoading, setNseOptionsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isIndia || tab !== "insider" || nseInsider !== null || nseInsiderLoading) return;
+    setNseInsiderLoading(true);
+    fetch("/api/india/insider")
+      .then((r) => r.json())
+      .then((d) => { setNseInsider(d); setNseInsiderLoading(false); })
+      .catch(() => { setNseInsider({ trades: [], available: false }); setNseInsiderLoading(false); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, isIndia]);
+
+  useEffect(() => {
+    if (!isIndia || tab !== "form4") return;
+    setNseOptions(null);
+    setNseOptionsLoading(true);
+    fetch(`/api/india/options?symbol=${nseOptSymbol}`)
+      .then((r) => r.json())
+      .then((d) => { setNseOptions(d); setNseOptionsLoading(false); })
+      .catch(() => { setNseOptions({ available: false }); setNseOptionsLoading(false); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, isIndia, nseOptSymbol]);
+
   useEffect(() => {
     if (isIndia || tab !== "form4" || edgarFetched || edgarLoading) return;
     setEdgarLoading(true);
@@ -286,8 +314,53 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
           </div>
         )}
 
-        {/* INSIDER FLOW */}
-        {tab === "insider" && isIndia && <IndiaUnavailable what="insider" />}
+        {/* INSIDER FLOW — INDIA (live NSE PIT disclosures) */}
+        {tab === "insider" && isIndia && (
+          nseInsiderLoading ? (
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "40px 20px", textAlign: "center" }}>
+              <div style={{ fontSize: "24px", marginBottom: "10px" }}>⏳</div>
+              <div style={{ fontSize: "13px", color: T.muted }}>Fetching insider disclosures from NSE…</div>
+            </div>
+          ) : nseInsider && nseInsider.available ? (
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+              <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "4px" }}>NSE Insider Disclosures (SEBI PIT)</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "14px" }}>Live from NSE (free, may be rate-limited)</div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", minWidth: "640px" }}>
+                  <thead>
+                    <tr style={{ color: T.muted }}>
+                      {["Symbol","Person","Type","Qty","₹ Value","Date"].map(h => (
+                        <th key={h} style={{ padding: "4px 10px 8px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", textAlign: "left", whiteSpace: "nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nseInsider.trades.map((t: any, i: number) => {
+                      const isBuy = String(t.type).toUpperCase().includes("BUY");
+                      const isSell = String(t.type).toUpperCase().includes("SELL");
+                      return (
+                        <tr key={i} style={{ borderTop: `1px solid ${T.border}` }}>
+                          <td style={{ padding: "8px 10px 8px 0", fontWeight: 700 }}>{t.symbol || "—"}</td>
+                          <td style={{ padding: "8px 10px 8px 0", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={t.person}>{t.person}</td>
+                          <td style={{ padding: "8px 10px 8px 0" }}>
+                            <span style={{ fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "4px", background: isBuy ? T.greenBg : isSell ? T.redBg : T.amberBg, color: isBuy ? T.green : isSell ? T.red : T.amber }}>
+                              {String(t.type).toUpperCase()}
+                            </span>
+                          </td>
+                          <td style={{ padding: "8px 10px 8px 0", fontFamily: "monospace" }}>{t.qty != null ? Number(t.qty).toLocaleString("en-IN") : "—"}</td>
+                          <td style={{ padding: "8px 10px 8px 0", fontFamily: "monospace" }}>{t.value != null ? `₹${Number(t.value).toLocaleString("en-IN")}` : "—"}</td>
+                          <td style={{ padding: "8px 0", color: T.muted, fontSize: "11px", whiteSpace: "nowrap" }}>{t.date ?? "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <IndiaUnavailable what="insider" />
+          )
+        )}
         {tab === "insider" && !isIndia && (
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
             <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "4px" }}>High Insider Score Signals (Last 7 Days)</div>
@@ -318,8 +391,70 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
           </div>
         )}
 
-        {/* FORM 4 — EDGAR */}
-        {tab === "form4" && isIndia && <IndiaUnavailable what="options / Form 4" />}
+        {/* FORM 4 → OPTIONS FLOW — INDIA (live NSE option chain) */}
+        {tab === "form4" && isIndia && (
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4px", gap: "12px", flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 700, fontSize: "14px" }}>NSE Options Flow — {nseOptSymbol}</div>
+              <div style={{ display: "flex", gap: "4px", background: T.surface, padding: "3px", borderRadius: "8px" }}>
+                {(["NIFTY", "BANKNIFTY"] as const).map(s => (
+                  <button key={s} onClick={() => setNseOptSymbol(s)}
+                    style={{ padding: "5px 12px", borderRadius: "6px", border: "none", cursor: "pointer", fontSize: "11px", fontWeight: 600, background: nseOptSymbol === s ? T.card : "transparent", color: nseOptSymbol === s ? T.text : T.muted }}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "16px" }}>Live from NSE (free, may be rate-limited)</div>
+
+            {nseOptionsLoading && (
+              <div style={{ textAlign: "center", padding: "40px 20px" }}>
+                <div style={{ fontSize: "24px", marginBottom: "10px" }}>⏳</div>
+                <div style={{ fontSize: "13px", color: T.muted }}>Fetching option chain from NSE…</div>
+              </div>
+            )}
+
+            {!nseOptionsLoading && nseOptions && !nseOptions.available && <IndiaUnavailable what="options / Form 4" />}
+
+            {!nseOptionsLoading && nseOptions && nseOptions.available && (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "18px" }}>
+                  {[
+                    { label: "Underlying", value: nseOptions.underlying != null ? `₹${Number(nseOptions.underlying).toLocaleString("en-IN")}` : "—", color: T.text },
+                    { label: "PCR (Put/Call OI)", value: nseOptions.pcr != null ? nseOptions.pcr : "—", color: nseOptions.pcr != null ? (nseOptions.pcr > 1 ? T.green : T.red) : T.muted },
+                    { label: "Total Call OI", value: Number(nseOptions.totalCallOI ?? 0).toLocaleString("en-IN"), color: T.red },
+                    { label: "Total Put OI", value: Number(nseOptions.totalPutOI ?? 0).toLocaleString("en-IN"), color: T.green },
+                  ].map(m => (
+                    <div key={m.label} style={{ background: T.surface, borderRadius: "10px", padding: "12px 14px" }}>
+                      <div style={{ fontSize: "18px", fontWeight: 700, color: m.color, fontFamily: "monospace" }}>{m.value}</div>
+                      <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>{m.label}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", minWidth: "440px" }}>
+                    <thead>
+                      <tr style={{ color: T.muted }}>
+                        {["Strike","Call OI","Put OI"].map(h => (
+                          <th key={h} style={{ padding: "4px 10px 8px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", textAlign: "left", whiteSpace: "nowrap" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(nseOptions.topStrikes ?? []).map((s: any, i: number) => (
+                        <tr key={i} style={{ borderTop: `1px solid ${T.border}` }}>
+                          <td style={{ padding: "8px 10px 8px 0", fontWeight: 700, fontFamily: "monospace" }}>₹{Number(s.strike).toLocaleString("en-IN")}</td>
+                          <td style={{ padding: "8px 10px 8px 0", fontFamily: "monospace", color: T.red }}>{Number(s.callOI).toLocaleString("en-IN")}</td>
+                          <td style={{ padding: "8px 10px 8px 0", fontFamily: "monospace", color: T.green }}>{Number(s.putOI).toLocaleString("en-IN")}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {tab === "form4" && !isIndia && (
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4px" }}>

@@ -20,6 +20,29 @@
 
 ---
 
+## ✅ Session 2026-07-05 (Phase 5 — India parity: global switcher + support registry + direct NSE feeds)
+
+> India goes from paper-trading/self-learning (Phase 4) to **first-class across the whole dashboard**, behind a global market switcher, with an honest per-page coverage badge. Direct NSE feeds lift the two remaining free-data ceilings (full-market scan + India insider/options), failing soft to Yahoo/NIFTY-100. See **Decision 32**.
+> **⚠️ OPEN ITEM: migration `058_india_screen_cache.sql` must be applied MANUALLY in the Supabase SQL editor** — Supabase MCP was permission-denied this session (`057` already applied by the user). Guarded code degrades to US-only until 058 lands.
+> **⚠️ OPEN ITEM: NSE feeds may be geo-blocked from a US IP** — `lib/nse-data.ts` fails soft, so full-market scan + India insider/options degrade to their Yahoo/NIFTY-100 fallback with an honest note when NSE is unreachable.
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Global market switcher + per-page support footer | Claude | 2026-07-05 | `lib/market-context.tsx` (`MarketProvider`/`useMarket()` → `us\|india`, persisted to `localStorage` + `mkt` cookie) in the `DashboardShell` header, **hidden unless `market_focus` includes India**; server pages read the `mkt` cookie. `lib/market-support.ts` maps route → `{level: full\|partial\|us-only\|india-only, note}` as the single source of truth → a coverage badge at the bottom of every page. See Decision 32. |
+| Markets panel — India | Claude | 2026-07-05 | India via Yahoo: NIFTY / SENSEX / BankNifty / India-VIX. Level: **full**. See Decision 32. |
+| Risk Analytics panel — India | Claude | 2026-07-05 | Per-₹ book, VaR vs NIFTY; beta-vs-NIFTY still "coming soon". Level: **partial**. See Decision 32. |
+| Backtest panel — India | Claude | 2026-07-05 | Yahoo `.NS` candles, alpha vs NIFTY. Level: **full**. See Decision 32. |
+| Scanner panel — India | Claude | 2026-07-05 | Full NSE market via nightly cache; NIFTY-100 live fallback. Level: **full**. See Decision 32. |
+| Strategies panel — India | Claude | 2026-07-05 | Market-scoped fit scores; India classification still US-only. Level: **partial**. See Decision 32. |
+| Earnings panel — India | Claude | 2026-07-05 | India per-symbol dates via Yahoo — tracked names only, no full-market feed. Level: **partial**. See Decision 32. |
+| Smart Money panel — India | Claude | 2026-07-05 | Signals + trade queue both markets; India insider + option-chain PCR/OI live from NSE. Level: **full**. See Decision 32. |
+| NSE direct feed adapter | Claude | 2026-07-05 | `lib/nse-data.ts` — cookie-handshake adapter for NSE's free JSON: full equity list (`EQUITY_L.csv`), insider (`corporates-pit`), option chain (`option-chain-indices`/`option-chain-equities`). **This lifted the two earlier ceilings** (full-market scan + India insider/options). Fails soft (NSE geo-throttles some non-India IPs) → callers fall back to Yahoo/NIFTY-100 with an honest note. See Decision 32. |
+| Scanner cache + migration 058 | Claude | 2026-07-05 | Migration `058_india_screen_cache.sql` (new table) + nightly cron `POST /api/scan/india/refresh` scores the full NSE list in 600-name oldest-first slices; Scanner reads the cache, falls back to live NIFTY-100. **NOT auto-applied — user must run 058 in the Supabase SQL editor.** See Decision 32. |
+| Market-scoped agents + India crons | Claude | 2026-07-05 | `research`/`paper-trade`/`position-monitor` accept `?market=us\|india`; US 9 AM tasks pinned to `?market=us` (no longer double-process India). India Task Scheduler tasks (PC clock = ET, all post-NSE-close 15:30 IST = 06:00 ET): scan-india-refresh 5:30 AM, research-india 6:15 AM, position-monitor-india 6:35 AM. See `scripts/run-agents.ps1` + `scripts/register-tasks.ps1`. See Decision 32. |
+| Guarded rollout + system-map.json | Claude | 2026-07-05 | Pre-058 (missing column/table) every India-parity path degrades to US-only, never 500s. `system-map.json` updated with NSE nodes (full equity list, insider, option chain) feeding the scanner cache + Smart Money. See Decision 32. |
+
+---
+
 ## ✅ Session 2026-07-05 (Phase 4 — multi-market learning: per-currency pools + per-market champions)
 
 > Market is now a **tag** (us | india), not a fork — one app, panels filter by market, currencies NEVER summed. Supersedes Decision 29 (India was score-only): India now paper-trades in its own ₹ pool, closing the India learning loop. See **Decision 31**.
