@@ -10,8 +10,14 @@ const T = {
   accent: "#6366F1", green: "#34D399", red: "#F87171", yellow: "#FBBF24",
 };
 
-const PROVIDERS = ["anthropic", "deepseek", "gemini", "openai", "groq", "massive", "alphavantage", "robinhood", "supabase", "other"] as const;
+const PROVIDERS = ["anthropic", "deepseek", "gemini", "openai", "groq", "massive", "alphavantage", "financialdatasets", "robinhood", "resend", "supabase", "other"] as const;
 const ALL_TASKS = ["research", "trade", "evaluate", "thesis", "chat", "summarize", "data", "embed", "market_data", "sentiment", "options"];
+// Model ID / cost-per-token / tasks-suitable only mean something for an LLM
+// provider — showing them for a data-API key (Massive, AlphaVantage,
+// FinancialDatasets, Robinhood, Resend) is what made editing
+// FINANCIAL_DATASETS_API_KEY confusing (fields pre-filled with leftover
+// LLM values like "anthropic" / "Claude Sonnet 4.6" that don't apply).
+const LLM_PROVIDERS = new Set(["anthropic", "deepseek", "gemini", "openai", "groq"]);
 
 interface VaultKey {
   id: string;
@@ -326,30 +332,37 @@ export default function VaultPage() {
                 onChange={e => setForm(f => ({ ...f, key_value: e.target.value }))}
                 placeholder="sk-ant-..." />
             </div>
-            <div>
-              <span style={label}>Primary Model ID</span>
-              <input style={inp} value={form.model_id}
-                onChange={e => setForm(f => ({ ...f, model_id: e.target.value }))}
-                placeholder="claude-sonnet-4-6" />
-            </div>
+            {LLM_PROVIDERS.has(form.provider) && (
+              <div>
+                <span style={label}>Primary Model ID</span>
+                <input style={inp} value={form.model_id}
+                  onChange={e => setForm(f => ({ ...f, model_id: e.target.value }))}
+                  placeholder="claude-sonnet-4-6" />
+              </div>
+            )}
             <div>
               <span style={label}>Notes</span>
               <input style={inp} value={form.notes}
                 onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                 placeholder="e.g. $10 budget loaded 2026-06-29" />
             </div>
-            <div>
-              <span style={label}>Cost per 1M input tokens ($)</span>
-              <input style={inp} type="number" step="0.01" value={form.cost_per_1m_input}
-                onChange={e => setForm(f => ({ ...f, cost_per_1m_input: parseFloat(e.target.value) || 0 }))} />
-            </div>
-            <div>
-              <span style={label}>Cost per 1M output tokens ($)</span>
-              <input style={inp} type="number" step="0.01" value={form.cost_per_1m_output}
-                onChange={e => setForm(f => ({ ...f, cost_per_1m_output: parseFloat(e.target.value) || 0 }))} />
-            </div>
+            {LLM_PROVIDERS.has(form.provider) && (
+              <>
+                <div>
+                  <span style={label}>Cost per 1M input tokens ($)</span>
+                  <input style={inp} type="number" step="0.01" value={form.cost_per_1m_input}
+                    onChange={e => setForm(f => ({ ...f, cost_per_1m_input: parseFloat(e.target.value) || 0 }))} />
+                </div>
+                <div>
+                  <span style={label}>Cost per 1M output tokens ($)</span>
+                  <input style={inp} type="number" step="0.01" value={form.cost_per_1m_output}
+                    onChange={e => setForm(f => ({ ...f, cost_per_1m_output: parseFloat(e.target.value) || 0 }))} />
+                </div>
+              </>
+            )}
           </div>
 
+          {LLM_PROVIDERS.has(form.provider) && (
           <div style={{ marginTop: "14px" }}>
             <span style={label}>Tasks Suitable</span>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "4px" }}>
@@ -370,6 +383,7 @@ export default function VaultPage() {
               })}
             </div>
           </div>
+          )}
 
           <div style={{ marginTop: "16px", display: "flex", gap: "10px", alignItems: "center" }}>
             <button onClick={saveKey} disabled={saving} style={btn(T.accent)}>
