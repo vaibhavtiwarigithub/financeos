@@ -1,87 +1,56 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useState } from "react";
+import TradingViewChart from "@/components/charts/TradingViewChart";
 
 const T = {
-  card: "#1A1D27",
-  border: "#252836",
+  card: "#1A1D27", border: "#252836", text: "#ECEDEF", textSub: "#9B9EA8",
+  muted: "#6B7280", accent: "#6366F1",
 };
 
-const SECTORS: [string, string][] = [
-  ["AMEX:XLK", "Technology"],
-  ["AMEX:XLF", "Financials"],
-  ["AMEX:XLE", "Energy"],
-  ["AMEX:XLV", "Healthcare"],
-  ["AMEX:XLI", "Industrials"],
-  ["AMEX:XLY", "Consumer Disc."],
-  ["AMEX:XLC", "Comm. Services"],
-  ["AMEX:XLP", "Consumer Staples"],
-  ["AMEX:XLU", "Utilities"],
-  ["AMEX:XLRE", "Real Estate"],
-  ["AMEX:XLB", "Materials"],
+const SECTORS: { symbol: string; name: string }[] = [
+  { symbol: "AMEX:XLK", name: "Technology" },
+  { symbol: "AMEX:XLF", name: "Financials" },
+  { symbol: "AMEX:XLE", name: "Energy" },
+  { symbol: "AMEX:XLV", name: "Healthcare" },
+  { symbol: "AMEX:XLI", name: "Industrials" },
+  { symbol: "AMEX:XLY", name: "Consumer Disc." },
+  { symbol: "AMEX:XLC", name: "Comm. Services" },
+  { symbol: "AMEX:XLP", name: "Consumer Staples" },
+  { symbol: "AMEX:XLU", name: "Utilities" },
+  { symbol: "AMEX:XLRE", name: "Real Estate" },
+  { symbol: "AMEX:XLB", name: "Materials" },
 ];
 
-// TradingView's own free "Symbol Overview" widget. Real historical depth and
-// TradingView's own period tabs (1D/1M/3M/1Y/5Y/ALL) — no Massive API calls,
-// no rate limits, no pagination to maintain. Renders each sector ETF as its
-// own mini-chart (TradingView doesn't offer a free multi-symbol overlay/
-// correlation widget — that needs custom data, which is what the old
-// lightweight-charts version did).
+// Same TradingViewChart component (real tv.js Advanced Chart widget) used on
+// the symbol detail page — full toolbar, indicators, real period buttons
+// (1D/5D/1M/3M/6M/YTD/1Y/5Y/All), TradingView's own data. One sector ETF at a
+// time via tabs; TradingView's free widgets don't support a single combined
+// multi-symbol overlay/correlation chart (that needs custom data).
 export default function SectorTradingViewOverview() {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    container.innerHTML = "";
-
-    const widgetDiv = document.createElement("div");
-    widgetDiv.className = "tradingview-widget-container__widget";
-    container.appendChild(widgetDiv);
-
-    const script = document.createElement("script");
-    script.type = "text/javascript";
-    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js";
-    script.async = true;
-    script.innerHTML = JSON.stringify({
-      symbols: SECTORS.map(([symbol, name]) => [`${name}|${symbol}`]),
-      chartOnly: false,
-      width: "100%",
-      height: "460",
-      locale: "en",
-      colorTheme: "dark",
-      autosize: false,
-      showVolume: false,
-      showMA: false,
-      hideDateRanges: false,
-      hideMarketStatus: false,
-      hideSymbolLogo: false,
-      scalePosition: "right",
-      scaleMode: "Normal",
-      fontFamily: "Trebuchet MS, sans-serif",
-      fontSize: "10",
-      noTimeScale: false,
-      valuesTracking: "1",
-      changeMode: "price-and-percent",
-      backgroundColor: T.card,
-      gridLineColor: T.border,
-      lineWidth: 2,
-      lineType: 0,
-      dateRanges: ["1d|1", "1m|30", "3m|60", "12m|1D", "60m|1W", "all|1M"],
-    });
-    container.appendChild(script);
-  }, []);
+  const [active, setActive] = useState(SECTORS[0]);
 
   return (
-    <div
-      style={{
-        background: T.card,
-        border: `1px solid ${T.border}`,
-        borderRadius: "12px",
-        padding: "12px",
-        minHeight: "460px",
-      }}
-    >
-      <div className="tradingview-widget-container" ref={containerRef} style={{ height: "460px", width: "100%" }} />
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+      <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "12px" }}>
+        Sector Charts · TradingView
+      </div>
+      <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", marginBottom: "16px" }}>
+        {SECTORS.map(s => (
+          <button
+            key={s.symbol}
+            onClick={() => setActive(s)}
+            style={{
+              padding: "6px 12px", borderRadius: "6px", fontSize: "12px", fontWeight: 600,
+              cursor: "pointer", border: "none",
+              background: active.symbol === s.symbol ? T.accent : "#13151C",
+              color: active.symbol === s.symbol ? "#fff" : T.textSub,
+            }}
+          >
+            {s.name}
+          </button>
+        ))}
+      </div>
+      <TradingViewChart key={active.symbol} symbol={active.symbol} height={460} />
     </div>
   );
 }
