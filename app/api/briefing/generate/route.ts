@@ -237,6 +237,29 @@ async function sendBriefingEmail(svc: any, d: BriefingData): Promise<{ sent: boo
       console.error(`[briefing-email] Resend ${res.status}: ${errBody}`);
       return { sent: false, error: `Resend ${res.status}: ${errBody.slice(0, 300)}` };
     }
+    const resendJson = await res.json().catch(() => ({}));
+
+    // Record the send into `newsletters` — this is the table the Intelligence
+    // page's Newsletter history tab actually reads. It was always empty
+    // because nothing wrote to it; the working email path (this function)
+    // only wrote to `briefings`. Best-effort — a logging failure shouldn't
+    // fail the email send itself.
+    try {
+      await svc.from("newsletters").insert({
+        edition: d.session,
+        subject,
+        html_body: html,
+        data_snapshot: d,
+        sent_to: process.env.BRIEFING_TO ?? ADMIN_EMAIL,
+        resend_id: resendJson?.id ?? null,
+        nav_at_send: d.paper.nav,
+        signals_count: d.signals.length,
+        positions_count: d.positions.length,
+      });
+    } catch (e) {
+      console.error("[briefing-email] newsletters insert failed:", e);
+    }
+
     return { sent: true };
   } catch (e) {
     console.error("[briefing-email] fetch error:", e);
@@ -290,8 +313,11 @@ export async function POST(req: NextRequest) {
   const dayName = etNow.toLocaleDateString("en-US", { weekday: "long" });
   const etH = etNow.getHours();
   const session: "morning" | "evening" = forceSession ?? (etH < 14 ? "morning" : "evening");
+  const etDay = etNow.getDay(); // 0 = Sunday, 6 = Saturday
+  const isWeekend = etDay === 0 || etDay === 6;
 
   const massiveKey = process.env.MASSIVE_API_KEY;
+  const since7dISO = new Date(now.getTime() - 7 * 86400_000).toISOString();
 
   // Pull all context in parallel
   const [
@@ -309,6 +335,10 @@ export async function POST(req: NextRequest) {
     vixData,
     { data: macroRow },
     { count: closedTradesCount },
+    { data: recentRuns },
+    { data: learnerRuns },
+    { data: mentorRow },
+    { data: weekTrades },
   ] = await Promise.all([
     svc.from("agent_runs").select("*").eq("agent_type", "research").order("created_at", { ascending: false }).limit(1).single(),
     svc.from("paper_portfolio").select("*").limit(1).single(),
@@ -324,7 +354,38 @@ export async function POST(req: NextRequest) {
     massiveKey ? fetchIndexClose("VIXY", massiveKey) : Promise.resolve(null),
     svc.from("macro_signals").select("regime, summary").order("created_at", { ascending: false }).limit(1).maybeSingle(),
     svc.from("paper_trades").select("*", { count: "exact", head: true }).not("closed_at", "is", null),
+    svc.from("agent_runs").select("agent_type, signals_written, started_at, trigger_source").gte("started_at", since7dISO).order("started_at", { ascending: false }).limit(200),
+    svc.from("learner_runs").select("run_date, hypotheses").gte("run_date", dateStr.slice(0, 8) + "01").order("run_date", { ascending: false }).limit(4),
+    svc.from("mentor_insights").select("grade, focus_areas, lesson, next_milestone").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    svc.from("paper_trades").select("symbol, side, pnl, closed_at").gte("executed_at", since7dISO).not("closed_at", "is", null).order("closed_at", { ascending: false }).limit(20),
   ]);
+
+  // 7-day agent-activity recap (used in context block + weekend prompt + email)
+  const recapByAgent: Record<string, { runs: number; signals: number; today: number }> = {};
+  for (const r of (recentRuns ?? []) as any[]) {
+    const k = r.agent_type ?? "agent";
+    recapByAgent[k] ??= { runs: 0, signals: 0, today: 0 };
+    recapByAgent[k].runs++;
+    recapByAgent[k].signals += r.signals_written ?? 0;
+    if (new Date(r.started_at).toISOString().slice(0, 10) === dateStr) recapByAgent[k].today++;
+  }
+  const recap7d = Object.entries(recapByAgent).map(([agent, v]) => ({ agent, ...v }));
+  const learnerHypotheses = ((learnerRuns ?? [])[0] as any)?.hypotheses;
+  const hypCount = Array.isArray(learnerHypotheses) ? learnerHypotheses.length : 0;
+  const mentorBlockData = mentorRow ? { grade: (mentorRow as any).grade, focus: (mentorRow as any).focus_areas, lesson: (mentorRow as any).lesson, milestone: (mentorRow as any).next_milestone } : null;
+  const weekTradesArr = (weekTrades ?? []) as any[];
+  const weekPnl = weekTradesArr.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
+  const weekWins = weekTradesArr.filter(t => Number(t.pnl) > 0).length;
+
+  const recapLines = recap7d.length
+    ? recap7d.map(r => `  • ${r.agent}: ${r.runs} run${r.runs === 1 ? "" : "s"} in the last 7 days (${r.today} today), ${r.signals} signals written`)
+    : ["  • No agent runs in the last 7 days"];
+  const mentorLine = mentorBlockData
+    ? `Grade: ${mentorBlockData.grade ?? "n/a"}/100. Lesson: ${mentorBlockData.lesson ?? "none yet"}. Focus: ${(mentorBlockData.focus ?? []).slice(0, 2).join("; ") || "none"}. Next milestone: ${mentorBlockData.milestone ?? "none"}`
+    : "No mentor evaluation yet";
+  const weekTradesLine = weekTradesArr.length
+    ? `${weekTradesArr.length} closed in last 7 days, ${weekWins} wins, net ${weekPnl >= 0 ? "+" : ""}$${weekPnl.toFixed(0)}`
+    : "No paper trades closed in the last 7 days";
 
   // Enrich positions with current price from price_cache
   const positions = rawPositions ?? [];
@@ -443,6 +504,15 @@ ${learningLines.join("\n")}
 
 WATCHLIST (research-enabled): ${watchlistSymbols || "empty"}
 
+MARKET REGIME (from macro signals): ${(macroRow as any)?.regime ?? "unavailable"} — ${(macroRow as any)?.summary ?? ""}
+
+LAST 7 DAYS — AGENT ACTIVITY:
+${recapLines.join("\n")}
+
+LAST 7 DAYS — PAPER TRADES CLOSED: ${weekTradesLine}
+
+MENTOR PROGRESS: ${mentorLine}
+
 === END CONTEXT ===
 `.trim();
 
@@ -461,10 +531,23 @@ ${contextBlock}
 
 Write a SHORT "Today's takeaway" note: 2-3 sentences max, ~45 words. Retrospective, past tense for today. Second person. Capture the one thing that mattered today from the actual index closes / position P&L / signals above, and what it sets up for tomorrow. Use ONLY the data above — do not say "markets were mixed" unless the index data supports it. No headings, no bullets, no disclaimers, no invented events. Just the note.`;
 
+  // Weekends: markets are closed and there's rarely anything "actionable today",
+  // so instead of a bland "nothing to do" note, give a real weekly recap +
+  // week-ahead outlook — this is the main thing checked when opening the app,
+  // it should never read as empty.
+  const weekendPrompt = `You are the editor of a personal markets briefing, writing the weekend edition. Below is the real account/agent/market data.
+
+${contextBlock}
+
+Write TWO short paragraphs (second person, ~60-90 words total, no headings, no bullets, no disclaimers, no invented events — use ONLY the data above):
+1. "Last 7 days": what actually happened — paper P&L, live account state, agent runs/signals written, any closed trades and their outcomes, mentor progress if graded.
+2. "Next 7 days": what to expect and prepare for — the market regime read, upcoming earnings, watchlist candidates, and what the agents will be doing while markets are closed (research/learning continues on a weekly cycle even though trading doesn't).
+If a category above has no data (e.g. no agent runs, no mentor grade), say so plainly rather than skipping it silently — the point is an honest, complete picture, not padding.`;
+
   const result = await callLLM({
     task: "summarize",
-    prompt: session === "morning" ? morningPrompt : eveningPrompt,
-    maxTokens: 150,
+    prompt: isWeekend ? weekendPrompt : (session === "morning" ? morningPrompt : eveningPrompt),
+    maxTokens: isWeekend ? 320 : 150,
   });
   const editorNote = result.text.trim();
   const content = editorNote; // in-app briefing shows the editor's note
@@ -514,28 +597,10 @@ Write a SHORT "Today's takeaway" note: 2-3 sentences max, ~45 words. Retrospecti
     researchRan: !!lastRun && new Date(lastRun.created_at).toISOString().slice(0, 10) === dateStr,
   };
 
-  // ── v2: 7-day agent-activity recap + mentor block + AI outlooks ─────────────
-  const since7d = new Date(Date.now() - 7 * 86400_000).toISOString();
-  const [{ data: recentRuns }, { data: learnerRuns }, { data: mentorRow }] = await Promise.all([
-    svc.from("agent_runs").select("agent_type, signals_written, started_at, trigger_source").gte("started_at", since7d).order("started_at", { ascending: false }).limit(200),
-    svc.from("learner_runs").select("run_date, hypotheses").gte("run_date", dateStr.slice(0, 8) + "01").order("run_date", { ascending: false }).limit(4),
-    svc.from("mentor_insights").select("grade, focus_areas, lesson, next_milestone").order("created_at", { ascending: false }).limit(1).maybeSingle(),
-  ]);
-
-  const recapByAgent: Record<string, { runs: number; signals: number; today: number }> = {};
-  for (const r of (recentRuns ?? []) as any[]) {
-    const k = r.agent_type ?? "agent";
-    recapByAgent[k] ??= { runs: 0, signals: 0, today: 0 };
-    recapByAgent[k].runs++;
-    recapByAgent[k].signals += r.signals_written ?? 0;
-    if (new Date(r.started_at).toISOString().slice(0, 10) === dateStr) recapByAgent[k].today++;
-  }
-  const recap7d = Object.entries(recapByAgent).map(([agent, v]) => ({ agent, ...v }));
-  const learnerHypotheses = ((learnerRuns ?? [])[0] as any)?.hypotheses;
-  const hypCount = Array.isArray(learnerHypotheses) ? learnerHypotheses.length : 0;
+  // 7-day agent recap / mentor block already computed above (before contextBlock)
   (briefingData as any).recap7d = recap7d;
   (briefingData as any).learnerHypCount = hypCount;
-  (briefingData as any).mentor = mentorRow ? { grade: (mentorRow as any).grade, focus: (mentorRow as any).focus_areas, lesson: (mentorRow as any).lesson, milestone: (mentorRow as any).next_milestone } : null;
+  (briefingData as any).mentor = mentorBlockData;
 
   // AI outlooks with confidence — one grounded call over the real data.
   try {

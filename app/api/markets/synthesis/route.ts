@@ -205,11 +205,16 @@ Be specific about which indicators are driving the read. No invented catalysts. 
   const generatedAt = new Date().toISOString();
   const payload = { regime, indicators, synthesis };
 
-  // Cache to Supabase — upsert by (date, session). Store JSON blob in content.
-  await svc.from("briefings").upsert(
-    { date: today, session: "synthesis", content: JSON.stringify(payload), model },
-    { onConflict: "date,session" }
-  );
+  // Only cache a real result — a transient Massive failure (all 8 quotes
+  // fail) must NOT get cached as "unavailable" for the rest of the day.
+  // That's exactly what happened before this fix: one hiccup poisoned the
+  // whole day's synthesis until someone manually force-refreshed.
+  if (hasData) {
+    await svc.from("briefings").upsert(
+      { date: today, session: "synthesis", content: JSON.stringify(payload), model },
+      { onConflict: "date,session" }
+    );
+  }
 
   return NextResponse.json({ ...payload, generatedAt, cached: false });
 }
