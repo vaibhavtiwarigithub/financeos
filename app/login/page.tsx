@@ -16,7 +16,7 @@ const inp: React.CSSProperties = {
 
 export default function LoginPage() {
   const supabase = createClient();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -30,6 +30,24 @@ export default function LoginPage() {
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
     if (error) { setError(error.message ?? "Google sign-in failed"); setLoading(false); }
+  }
+
+  async function handleForgotPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setSuccess("");
+    if (email !== "vterminater@gmail.com") {
+      setError("Access restricted.");
+      setLoading(false);
+      return;
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
+    });
+    if (error) setError(error.message ?? "Could not send reset email");
+    else setSuccess("Password reset link sent — check your email.");
+    setLoading(false);
   }
 
   async function handleEmail(e: React.FormEvent) {
@@ -76,42 +94,87 @@ export default function LoginPage() {
               Intelligence Platform
             </div>
             <h1 style={{ fontSize: "28px", fontWeight: 700, letterSpacing: "-0.02em" }}>
-              {mode === "signin" ? "Welcome back" : "Create account"}
+              {mode === "signin" ? "Welcome back" : mode === "signup" ? "Create account" : "Reset password"}
             </h1>
           </div>
 
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "32px" }}>
 
-            {/* Google */}
-            <button
-              onClick={handleGoogle}
-              disabled={loading}
-              style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", color: T.text, padding: "12px", fontSize: "14px", fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", marginBottom: "20px" }}
-            >
-              <svg width="18" height="18" viewBox="0 0 48 48">
-                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.36-8.16 2.36-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-              </svg>
-              Continue with Google
-            </button>
+            {mode !== "forgot" && (
+              <>
+                {/* Google */}
+                <button
+                  onClick={handleGoogle}
+                  disabled={loading}
+                  style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", color: T.text, padding: "12px", fontSize: "14px", fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", marginBottom: "20px" }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 48 48">
+                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.36-8.16 2.36-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+                  </svg>
+                  Continue with Google
+                </button>
 
-            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
-              <div style={{ flex: 1, height: "1px", background: T.border }} />
-              <span style={{ fontSize: "12px", color: T.muted }}>or</span>
-              <div style={{ flex: 1, height: "1px", background: T.border }} />
-            </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
+                  <div style={{ flex: 1, height: "1px", background: T.border }} />
+                  <span style={{ fontSize: "12px", color: T.muted }}>or</span>
+                  <div style={{ flex: 1, height: "1px", background: T.border }} />
+                </div>
+              </>
+            )}
 
+            {mode === "forgot" ? (
+              <form onSubmit={handleForgotPassword}>
+                <p style={{ fontSize: "13px", color: T.textSub, marginBottom: "16px" }}>
+                  Enter your email and we'll send you a link to reset your password.
+                </p>
+                <div style={{ marginBottom: "20px" }}>
+                  <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>Email</label>
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" style={inp} required />
+                </div>
+
+                {error && (
+                  <div style={{ background: "#3B0000", border: `1px solid ${T.red}`, borderRadius: "8px", padding: "10px 14px", color: T.red, fontSize: "13px", marginBottom: "16px" }}>
+                    {error}
+                  </div>
+                )}
+                {success && (
+                  <div style={{ background: "#052E16", border: `1px solid ${T.green}`, borderRadius: "8px", padding: "10px 14px", color: T.green, fontSize: "13px", marginBottom: "16px" }}>
+                    {success}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  style={{ width: "100%", background: T.accent, border: "none", borderRadius: "10px", color: "#fff", padding: "13px", fontSize: "15px", fontWeight: 600, cursor: "pointer", opacity: loading ? 0.7 : 1 }}
+                >
+                  {loading ? "Sending..." : "Send reset link"}
+                </button>
+              </form>
+            ) : (
             <form onSubmit={handleEmail}>
               <div style={{ marginBottom: "14px" }}>
                 <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>Email</label>
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" style={inp} required />
               </div>
-              <div style={{ marginBottom: "20px" }}>
+              <div style={{ marginBottom: "10px" }}>
                 <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>Password</label>
                 <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" style={inp} required minLength={6} />
               </div>
+              {mode === "signin" && (
+                <div style={{ textAlign: "right", marginBottom: "16px" }}>
+                  <button
+                    type="button"
+                    onClick={() => { setMode("forgot"); setError(""); setSuccess(""); }}
+                    style={{ background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: "12px" }}
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+              )}
 
               {error && (
                 <div style={{ background: "#3B0000", border: `1px solid ${T.red}`, borderRadius: "8px", padding: "10px 14px", color: T.red, fontSize: "13px", marginBottom: "16px" }}>
@@ -132,15 +195,27 @@ export default function LoginPage() {
                 {loading ? "Loading..." : mode === "signin" ? "Sign In" : "Create Account"}
               </button>
             </form>
+            )}
 
             <p style={{ fontSize: "12px", color: T.muted, textAlign: "center", marginTop: "20px" }}>
-              {mode === "signin" ? "Need an account? " : "Already have one? "}
-              <button
-                onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); setSuccess(""); }}
-                style={{ background: "none", border: "none", color: T.accent, cursor: "pointer", fontSize: "12px" }}
-              >
-                {mode === "signin" ? "Sign up" : "Sign in"}
-              </button>
+              {mode === "forgot" ? (
+                <button
+                  onClick={() => { setMode("signin"); setError(""); setSuccess(""); }}
+                  style={{ background: "none", border: "none", color: T.accent, cursor: "pointer", fontSize: "12px" }}
+                >
+                  ← Back to sign in
+                </button>
+              ) : (
+                <>
+                  {mode === "signin" ? "Need an account? " : "Already have one? "}
+                  <button
+                    onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); setSuccess(""); }}
+                    style={{ background: "none", border: "none", color: T.accent, cursor: "pointer", fontSize: "12px" }}
+                  >
+                    {mode === "signin" ? "Sign up" : "Sign in"}
+                  </button>
+                </>
+              )}
             </p>
           </div>
         </div>
