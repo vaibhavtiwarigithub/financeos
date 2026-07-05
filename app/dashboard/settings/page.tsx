@@ -73,12 +73,30 @@ export default function SettingsPage() {
   const [llmCosts, setLlmCosts] = useState<LLMCosts | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
 
+  // Zerodha Kite (India) connection state
+  const [kite, setKite] = useState<any | null>(null);
+  const [kiteMsg, setKiteMsg] = useState<string>("");
+  const loadKite = () => fetch("/api/kite/status").then(r => r.json()).then(setKite).catch(() => {});
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user) supabase.from("profiles").select("*").eq("id", user.id).single().then(({ data }) => setProfile(data));
     });
-    const t = new URLSearchParams(window.location.search).get("tab");
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get("tab");
     if (t) setTab(t);
+    // Post-Kite-redirect status flag
+    const k = params.get("kite");
+    if (k) {
+      const map: Record<string, string> = {
+        connected: "Zerodha Kite connected — token valid for today.",
+        login_failed: "Kite login failed or was cancelled.",
+        exchange_failed: "Kite token exchange failed — check API secret in the Vault.",
+        missing_key: "Add KITE_API_KEY and KITE_API_SECRET to Admin → API Vault first.",
+      };
+      setKiteMsg(map[k] ?? "");
+      setTab("agents");
+    }
 
     // Load current risk profile
     fetch("/api/settings/risk-profile")
@@ -95,9 +113,10 @@ export default function SettingsPage() {
       .catch(() => {});
   }, []);
 
-  // Fetch LLM costs when agents tab becomes active
+  // Fetch LLM costs + Kite status when agents tab becomes active
   useEffect(() => {
     if (tab !== "agents") return;
+    loadKite();
     if (llmCosts) return; // already loaded
     setLlmLoading(true);
     fetch("/api/admin/llm-costs")
@@ -364,6 +383,34 @@ export default function SettingsPage() {
             >
               {savingTrading ? "Saving..." : "Save Trading Config"}
             </button>
+          </div>
+
+          {/* Zerodha Kite (India) connection card */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginBottom: "20px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Zerodha Kite · India</div>
+            <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "16px" }}>
+              Connects Indian-market (NSE/BSE) execution. Kite's token expires daily — click Connect each trading morning to refresh it. Requires KITE_API_KEY / KITE_API_SECRET in Admin → API Vault.
+            </div>
+
+            {kiteMsg && (
+              <div style={{ fontSize: "13px", color: kiteMsg.includes("connected") ? T.green : T.amber, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "14px" }}>{kiteMsg}</div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" as const }}>
+              <div style={{ fontSize: "13px" }}>
+                {!kite ? <span style={{ color: T.muted }}>Checking…</span>
+                  : !kite.has_key ? <span style={{ color: T.red }}>● No API key in Vault</span>
+                  : kite.connected ? <span style={{ color: T.green }}>● Connected{kite.profile?.user_name ? ` — ${kite.profile.user_name}` : ""} (token valid today)</span>
+                  : kite.token_fresh ? <span style={{ color: T.amber }}>● Token present but a live call failed{kite.live_error ? `: ${kite.live_error}` : ""}</span>
+                  : <span style={{ color: T.amber }}>● Not connected today — daily token needed</span>}
+              </div>
+              <a
+                href="/api/kite/login"
+                style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "9px 20px", fontSize: "13px", fontWeight: 600, textDecoration: "none" }}
+              >
+                {kite?.connected ? "Re-login" : "Connect Kite"}
+              </a>
+            </div>
           </div>
 
           {/* Risk Profile Card */}
