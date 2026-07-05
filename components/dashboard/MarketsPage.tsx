@@ -3,10 +3,10 @@
 import { useEffect, useState, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import PageHeader from "@/components/dashboard/PageHeader";
+import SectorTradingViewOverview from "@/components/charts/SectorTradingViewOverview";
 const SectorTreemap = lazy(() => import("@/components/charts/SectorTreemap"));
 const PriceChart = lazy(() => import("@/components/charts/PriceChart"));
 const SectorPerformanceChart = lazy(() => import("@/components/charts/SectorPerformanceChart"));
-const SectorLineChart = lazy(() => import("@/components/charts/SectorLineChart"));
 const SectorBreadth = lazy(() => import("@/components/dashboard/SectorBreadth"));
 
 const T = {
@@ -1327,10 +1327,10 @@ export default function MarketsPage() {
       <div style={{ marginTop: "16px" }}>
         <Suspense fallback={
           <div style={{ height: "460px", background: T.surface, borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280", fontSize: "13px" }}>
-            Loading sector line chart…
+            Loading sector charts…
           </div>
         }>
-          <SectorLineChart />
+          <SectorTradingViewOverview />
         </Suspense>
       </div>
 
