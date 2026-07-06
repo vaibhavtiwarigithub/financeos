@@ -20,6 +20,22 @@
 
 ---
 
+## ✅ Session 2026-07-06 (Learning-core Phase 3 — genome, feature registry, shadow decisions, regime features, governance rewiring)
+
+> Completes the full learning-core roadmap (Phases 1–3 + all P0s + Execution Gateway paper-stage). See **Decision 37**.
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Typed strategy genome | Claude | 2026-07-06 | Migration 063 (`strategy_versions.genome`, `agent_signals.genome_hash`) + `lib/validation/genome.ts` (hard-bounded validation, diff counting, hashing). Genome-less rows unaffected. |
+| Feature registry + whitelisted compiler | Claude | 2026-07-06 | Migration 064 (`feature_registry`) + `lib/validation/feature-compiler.ts` (from-scratch tokenizer/parser/evaluator — `+ - * /`, `log/abs/min/max/lag` only, no eval/no dynamic code). New `propose_feature` learner tool. |
+| Feature IC-check job | Claude | 2026-07-06 | `lib/validation/feature-check.ts` (Spearman rank-IC + Fisher-z significance, pure/tested) + `app/api/validation/feature-check` (weekly cron) — promotes proposed→quarantined→active, auto-retires decayed features. |
+| Shadow decisions | Claude | 2026-07-06 | Migration 065 (`shadow_decisions`, extends `strategy_versions.state` with `shadow_paper`). ResearchAgent records what up to 3 shadow versions would decide alongside the champion's real decision — no fills, no cash. Off by default. |
+| Regime features | Claude | 2026-07-06 | `lib/validation/regime.ts` (trend/vol-tercile vs SPY/^NSEI, pure/tested) appended to every observation's `features.regime`. No hard bull/bear switch. |
+| Governance rewiring | Claude | 2026-07-06 | Learner auto-guard now trips on champion health (drawdown>15%/90d peak, calibration drift>0.25, data-availability<60%/10 obs) instead of a raw win-rate streak. Confirmed it only ever gated `update_signal_weight` — other tools unaffected. |
+| 85 tests passing, tsc + build clean | Claude | 2026-07-06 | 5 new test files this session alone (genome, feature-compiler, feature-check, regime + existing suite). |
+
+---
+
 ## ✅ Session 2026-07-06 (Execution Gateway — Alpaca paper orders + fixed a discovered Trade Queue bug)
 
 > Built the paper-stage of the Execution Gateway (spec Part A) and, in the same change, fixed a pre-existing (empty-table, no real-data-loss) bug: the Trade Queue UI read a dead `trade_queue` table while Approve/Reject/the Gateway all use `trade_proposals`. See **Decision 36**.

@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { fetchQuote } from "@/lib/market-data";
 import { runAgentLoop, ToolCall } from "@/lib/llm-router";
 import { loadLabeledDataset } from "@/lib/learning/dataset";
+import { validateFeatureInputs } from "@/lib/validation/feature-compiler";
 
 export const dynamic = "force-dynamic";
 
@@ -184,11 +185,44 @@ export async function POST(req: NextRequest) {
       dimConfig[(cfg as any).dimension] = cfg;
     }
 
-    // Auto-guard: check if last 3 runs had win_rate < 35% → pause mutations
-    const last3 = (recentRuns ?? []).slice(0, 3);
-    const autoGuardTripped = last3.length >= 3 && last3.every((r: any) =>
-      r.win_rate_snapshot !== null && r.win_rate_snapshot < 35
-    );
+    // Phase 3 governance rewiring: auto-guard is now CHAMPION HEALTH, not a raw
+    // win-rate streak (win-rate ignores payoff asymmetry and doesn't reflect
+    // actual risk). Trips (blocks update_signal_weight LIVE proposals only —
+    // hypothesis writing, validation, and shadow research are unaffected) on
+    // ANY of: (a) drawdown > 15% from the market's 90d NAV peak, (b) pwin
+    // calibration drift (max |predicted-realized| gap across deciles > 0.25),
+    // (c) data-availability < 60% over the last 10 decision_observations.
+    let autoGuardTripped = false;
+    let autoGuardReason = "OK";
+    try {
+      const since90 = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
+      const { data: perfRows } = await svc.from("paper_performance").select("nav, date").eq("market", LEARN_MARKET).gte("date", since90).order("date", { ascending: true });
+      if (perfRows && perfRows.length > 0) {
+        const navs = perfRows.map((r: any) => Number(r.nav)).filter(Number.isFinite);
+        const peak = Math.max(...navs);
+        const current = navs[navs.length - 1];
+        const drawdownPct = peak > 0 ? ((peak - current) / peak) * 100 : 0;
+        if (drawdownPct > 15) { autoGuardTripped = true; autoGuardReason = `drawdown ${drawdownPct.toFixed(1)}% > 15% from 90d peak`; }
+      }
+      if (!autoGuardTripped) {
+        const { data: modelRow } = await svc.from("model_artifacts").select("calibration").eq("market", LEARN_MARKET).eq("kind", "pwin_logistic").maybeSingle();
+        const deciles = (modelRow as any)?.calibration ?? [];
+        const maxGap = deciles.reduce((m: number, d: any) => Math.max(m, Math.abs((d.predictedMean ?? 0) - (d.realizedWinRate ?? 0))), 0);
+        if (deciles.length > 0 && maxGap > 0.25) { autoGuardTripped = true; autoGuardReason = `calibration drift: max decile gap ${maxGap.toFixed(2)} > 0.25`; }
+      }
+      if (!autoGuardTripped) {
+        const { data: recentObs } = await svc.from("decision_observations").select("availability_mask").eq("market", LEARN_MARKET).order("ts", { ascending: false }).limit(10);
+        if (recentObs && recentObs.length >= 10) {
+          const avail = recentObs.map((r: any) => {
+            const m = r.availability_mask ?? {};
+            const flags = Object.values(m);
+            return flags.length ? flags.filter(Boolean).length / flags.length : 1;
+          });
+          const avgAvail = avail.reduce((a: number, b: number) => a + b, 0) / avail.length;
+          if (avgAvail < 0.60) { autoGuardTripped = true; autoGuardReason = `data availability ${(avgAvail * 100).toFixed(0)}% < 60% over last 10 observations`; }
+        }
+      }
+    } catch { /* resilient — absent tables/columns (pre-Phase-2/3) just mean the guard can't trip yet */ }
 
     let learnerResult: any = null;
 
@@ -366,7 +400,7 @@ export async function POST(req: NextRequest) {
             if (!Number.isInteger(nTrades) || nTrades < 0) return JSON.stringify({ error: "n_trades must be a non-negative integer" });
             if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return JSON.stringify({ error: "confidence must be a number between 0 and 1" });
 
-            if (autoGuardTripped) return JSON.stringify({ error: "AUTO-GUARD: last 3 runs had win_rate < 35%. Weight mutations paused. Review strategy before re-enabling." });
+            if (autoGuardTripped) return JSON.stringify({ error: `AUTO-GUARD (champion health): ${autoGuardReason}. Weight mutations paused. Review strategy before re-enabling.` });
             if ((totalClosedTrades ?? 0) < 10) return JSON.stringify({ error: `Phase 0 gate: ${totalClosedTrades} closed trades. Need 10+.` });
             if (nTrades < 10) return JSON.stringify({ error: `Insufficient trades (N=${nTrades}). Need N≥10.` });
 
@@ -550,6 +584,47 @@ export async function POST(req: NextRequest) {
             });
           }
 
+          case "propose_feature": {
+            // Phase 3 learning-core: propose a NEW candidate feature as a
+            // machine-readable spec. The formula is NEVER executed here — it's
+            // stored as 'proposed' and only interpreted later, through the
+            // whitelisted grammar (lib/validation/feature-compiler.ts), by the
+            // deterministic feature-check job which decides promotion on
+            // out-of-sample IC. The LLM never runs code, ever.
+            const name = String(call.arguments.name ?? "").trim();
+            const formula = String(call.arguments.formula ?? "").trim();
+            const inputs = Array.isArray(call.arguments.inputs) ? call.arguments.inputs.map(String) : [];
+            const rationale = String(call.arguments.rationale ?? "");
+            if (!name || !formula || inputs.length === 0) {
+              return JSON.stringify({ error: "name, formula, and a non-empty inputs array are required" });
+            }
+            const inputCheck = validateFeatureInputs(formula, inputs);
+            if (!inputCheck.ok) {
+              return JSON.stringify({ error: `Formula rejected: ${inputCheck.reason}` });
+            }
+            const { data: existing } = await svc.from("feature_registry").select("id").eq("name", name).maybeSingle();
+            if (existing) return JSON.stringify({ error: `Feature '${name}' already exists (id ${(existing as any).id})` });
+
+            const { data: row, error: insErr } = await svc.from("feature_registry").insert({
+              name,
+              spec: {
+                rationale, formula, inputs,
+                lag_days: call.arguments.lag_days ?? 0,
+                expected_sign: call.arguments.expected_sign ?? null,
+                horizon: call.arguments.horizon ?? 10,
+                universe: call.arguments.universe ?? LEARN_MARKET,
+                falsification_test: call.arguments.falsification_test ?? null,
+              },
+              status: "proposed", proposed_by: "learner",
+            }).select("id").single();
+            if (insErr || !row) return JSON.stringify({ error: `Feature insert failed: ${insErr?.message ?? "no row"}` });
+
+            return JSON.stringify({
+              feature_created: true, feature_id: (row as any).id, name,
+              note: "Status 'proposed' — the feature-check job will test its out-of-sample IC before it can ever influence scoring. It does NOT affect analyst_score until it reaches 'active'.",
+            });
+          }
+
           case "finish": {
             return JSON.stringify(call.arguments);
           }
@@ -569,7 +644,7 @@ CURRENT DATE: ${today}
 TOTAL CLOSED TRADES ALL TIME: ${totalClosedTrades ?? 0}
 TRADES CLOSED THIS RUN: ${outcomes.length}
 TOTAL SIGNALS IN DB: ${signalCount ?? 0}
-AUTO-GUARD STATUS: ${autoGuardTripped ? "TRIPPED — win_rate < 35% for 3 consecutive runs. Weight mutations BLOCKED until manual review." : "OK"}
+AUTO-GUARD STATUS: ${autoGuardTripped ? `TRIPPED — ${autoGuardReason}. Weight mutations BLOCKED until manual review.` : "OK"}
 
 DIMENSION CONFIGURATION (from learner_config — set by user):
 - Learn from: ${enabledDims.join(", ") || "all"}
@@ -627,6 +702,15 @@ REASONING APPROACH:
         { name: "update_signal_weight", description: "Propose a weight change — creates an immutable challenger in strategy_versions. NOT applied until promoted via Strategy Registry. Gated by phase gate, per-dim config, and auto-guard.", parameters: { type: "object", properties: { dimension: { type: "string", enum: ["fundamental_weight", "technical_weight", "sentiment_weight", "macro_weight", "insider_weight"] }, new_weight: { type: "number", minimum: 0.05, maximum: 0.60 }, reason: { type: "string" }, n_trades: { type: "integer", minimum: 10 }, confidence: { type: "number", minimum: 0, maximum: 1 } }, required: ["dimension", "new_weight", "reason", "n_trades", "confidence"] } },
         { name: "query_trade_decisions", description: "Query enriched real trade history (CSV imports + Robinhood MCP). Returns outcome_score per trade (positive=good decision), regime breakdown, win/loss counts. Use to find behavioral patterns in the user's actual trading history.", parameters: { type: "object", properties: { limit: { type: "number", description: "Max trades to return (default 50)" }, action: { type: "string", enum: ["buy", "sell"], description: "Filter by buy or sell" }, regime: { type: "string", description: "Filter by macro regime name (partial match)" }, min_outcome_score: { type: "number", description: "Filter decisions with outcome_score >= this" }, max_outcome_score: { type: "number", description: "Filter decisions with outcome_score <= this" } } } },
         { name: "semantic_search_decisions", description: "Vector similarity search over enriched trade decisions using Voyage AI embeddings. Use to find trades similar to a situation ('tech sell-off Q4', 'rate hike momentum trade', 'earnings miss hold'), or to answer 'what did I do when X happened'. Returns top-K decisions with outcome data. Only works if embeddings have been built (POST /api/live-portfolio/embed).", parameters: { type: "object", properties: { query: { type: "string", minLength: 1, maxLength: 2000, description: "Natural language query describing the trade situation to search for" }, top_k: { type: "integer", minimum: 1, maximum: 20, description: "Number of results to return (default 8, max 20)" } }, required: ["query"] } },
+        { name: "propose_feature", description: "Propose a NEW candidate feature as a machine-readable spec (Phase 3). The formula is NEVER executed by you — it's stored as 'proposed' and only interpreted later by a whitelisted-grammar compiler (operators + - * / and functions log/abs/min/max/lag only). It has ZERO effect on scoring until a deterministic out-of-sample IC check promotes it to 'active'. Use this to propose a hypothesis-driven signal you can't express as a weight change.", parameters: { type: "object", properties: {
+          name: { type: "string", description: "Unique short name, e.g. 'pe_to_growth_ratio'" },
+          formula: { type: "string", description: "Whitelisted expression using ONLY: numbers, the declared inputs, + - * /, and log()/abs()/min()/max()/lag(field,n). No other syntax is interpreted." },
+          inputs: { type: "array", items: { type: "string" }, description: "Every identifier the formula references — anything not declared here is rejected even if it appears in the formula." },
+          rationale: { type: "string", description: "Economic rationale for why this might predict returns" },
+          expected_sign: { type: "string", enum: ["positive", "negative"] },
+          horizon: { type: "number", enum: [2, 5, 10, 20] },
+          falsification_test: { type: "string", description: "What observation would prove this feature is NOT predictive" },
+        }, required: ["name", "formula", "inputs", "rationale"] } },
         { name: "finish", description: "Complete the run. Must include summary, hypotheses array, and structured Mermaid diagram with inputs node.", parameters: { type: "object", properties: { summary: { type: "string" }, mermaid: { type: "string" }, hypotheses: { type: "array", items: { type: "object" } } }, required: ["summary", "mermaid", "hypotheses"] } },
       ];
 
@@ -670,7 +754,7 @@ REASONING APPROACH:
           tokens_in: loopResult.tokensIn,
           tokens_out: loopResult.tokensOut,
           mutations_paused: autoGuardTripped,
-          pause_reason: autoGuardTripped ? "Auto-guard: win_rate < 35% for 3 consecutive runs" : null,
+          pause_reason: autoGuardTripped ? `Auto-guard (champion health): ${autoGuardReason}` : null,
         }, { onConflict: "run_date" });
 
         learnerResult = { summary: finishArgs.summary, hypotheses, weightMutations, steps: loopResult.steps, tokensIn: loopResult.tokensIn, tokensOut: loopResult.tokensOut, autoGuardTripped };

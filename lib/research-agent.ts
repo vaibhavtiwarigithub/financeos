@@ -6,6 +6,32 @@ import { computeScores, type ComputedScores } from "@/lib/data/scores";
 import type { Candle } from "@/lib/data/technicals";
 import { isIndia, fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
 import { niftyCandidates } from "@/lib/india-universe";
+import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
+
+// Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
+// US, ^NSEI for India) — computed once per market per process, not per symbol.
+const regimeCache = new Map<string, { at: number; features: RegimeFeatures }>();
+const REGIME_CACHE_TTL_MS = 30 * 60_000;
+
+async function getRegimeFeatures(market: string, supabase: any): Promise<RegimeFeatures> {
+  const cached = regimeCache.get(market);
+  if (cached && Date.now() - cached.at < REGIME_CACHE_TTL_MS) return cached.features;
+  try {
+    let closes: number[] = [];
+    if (market === "india") {
+      const candles = await fetchIndiaCandles("^NSEI", "1y");
+      closes = candles.map(c => c.close);
+    } else {
+      const { data } = await supabase.from("price_cache").select("close").eq("symbol", "SPY").order("date", { ascending: true }).limit(260);
+      closes = (data ?? []).map((r: any) => parseFloat(r.close));
+    }
+    const features = computeRegimeFeatures(closes);
+    regimeCache.set(market, { at: Date.now(), features });
+    return features;
+  } catch {
+    return { trend: null, realizedVol: null, volTercile: null };
+  }
+}
 
 // Insider scoring: fetch from Alpha Vantage INSIDER_TRANSACTIONS
 async function scoreInsider(symbol: string, avKey: string): Promise<{ score: number; summary: string }> {
@@ -891,13 +917,17 @@ export async function processSymbol(
       macro:       scores.dataQuality?.macroDataAvailable ?? !(scores.evidence?.macro as any)?.note,
       insider:     scores.dataQuality?.insiderDataAvailable ?? !(scores.evidence?.insider as any)?.note,
     };
-    const { error: obsErr } = await supabase.from("decision_observations").insert({
+    // Phase 3: point-in-time regime features (trend/vol vs SPY or ^NSEI),
+    // appended under features.regime.* for later interaction terms — never a
+    // hard bull/bear switch, just observable numbers for the calibration fit.
+    const regime = await getRegimeFeatures(market, supabase);
+    const { data: obsRow, error: obsErr } = await supabase.from("decision_observations").insert({
       market,
       symbol,
       strategy_version_id: null,            // filled when champion row id is loaded; else null
       weights_used: { fundamental: fw, technical: tw, sentiment: sw, macro: mw, insider: iw },
       used_champion: usingChampion,
-      features: scores.evidence ?? {},
+      features: { ...(scores.evidence ?? {}), regime },
       availability_mask,
       analyst_score: analystScore,
       fundamental_score: scores.fundamental_score,
@@ -912,9 +942,41 @@ export async function processSymbol(
       price_at_decision: null,              // PaperTrader fetches price at fill time; not known here
       currency: market === "india" ? "INR" : "USD",
       signal_id: null,                      // agent_signals insert doesn't return id today — Phase 2 wires it
-    });
+    }).select("id").maybeSingle();
     if (obsErr && !/does not exist|could not find/i.test(obsErr.message ?? "")) {
       console.error("[research-agent] decision_observations insert failed:", obsErr.message);
+    }
+
+    // Phase 3 shadow A/B: up to 3 strategy_versions in state='shadow_paper' for
+    // this market get a pure scoring-replay record — what EACH would have
+    // decided, alongside the champion's real decision above. No fills, no cash.
+    // Off by default (nothing enters shadow_paper without explicit action).
+    if (obsRow?.id) {
+      try {
+        const { data: shadowVersions } = await supabase
+          .from("strategy_versions").select("id, weights_snapshot")
+          .eq("market", market).eq("state", "shadow_paper").limit(3);
+        for (const sv of (shadowVersions ?? []) as any[]) {
+          const wsnap = sv.weights_snapshot ?? {};
+          const cwShadow = (short: string, full: string) => {
+            const v = wsnap[short] ?? wsnap[full];
+            return typeof v === "number" ? v : undefined;
+          };
+          const sfw = cwShadow("fundamental", "fundamental_weight") ?? fw;
+          const stw = cwShadow("technical", "technical_weight") ?? tw;
+          const ssw = cwShadow("sentiment", "sentiment_weight") ?? sw;
+          const smw = cwShadow("macro", "macro_weight") ?? mw;
+          const siw = cwShadow("insider", "insider_weight") ?? iw;
+          const shadowScore = Math.round(
+            scores.fundamental_score * sfw + scores.technical_score * stw +
+            scores.sentiment_score * ssw + scores.macro_score * smw + scores.insider_score * siw
+          );
+          await supabase.from("shadow_decisions").insert({
+            market, symbol, observation_id: obsRow.id, policy_version_id: sv.id,
+            would_enter: shadowScore >= (scoreThreshold ?? 60), score: shadowScore,
+          });
+        }
+      } catch (e) { console.error("[research-agent] shadow decision write threw:", e); }
     }
   } catch (e) { console.error("[research-agent] observation write threw:", e); }
 

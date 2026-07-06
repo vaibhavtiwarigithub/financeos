@@ -49,6 +49,8 @@ $endpoints = @{
   "fit-calibration" = @{ method="POST"; url="$BASE/api/validation/fit-calibration"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}"; timeoutSec=120 }
   # Execution Gateway: polls Alpaca for order-status updates + position reconciliation.
   "broker-sync" = @{ method="POST"; url="$BASE/api/broker/orders/sync"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}"; timeoutSec=60 }
+  # Phase 3 learning-core: weekly feature-registry IC check (proposed/quarantined/active promotion+retirement).
+  "feature-check" = @{ method="POST"; url="$BASE/api/validation/feature-check"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}"; timeoutSec=120 }
   # Nightly full-NSE pre-score cache (india_screen_cache). Rotates ~600 names/run,
   # oldest-scored-first, so the India scanner reads the whole market. Runs before
   # research-india (6:15 AM) so candidates draw from a fresh cache.

@@ -42,6 +42,8 @@ $tasks = @(
   @{ Name="learner";          Trigger=(FridayTrigger  "5:00PM");  Agent="learner"           },
   # Phase 2 learning-core: weekly calibrated-sizing refit, before the learner runs.
   @{ Name="fit-calibration";  Trigger=(FridayTrigger  "4:45PM");  Agent="fit-calibration"   },
+  # Phase 3 learning-core: weekly feature-registry IC check.
+  @{ Name="feature-check";   Trigger=(FridayTrigger  "4:30PM");  Agent="feature-check"     },
   @{ Name="mentor-coach";     Trigger=(FridayTrigger  "5:15PM");  Agent="mentor-coach"      }
 )
 
