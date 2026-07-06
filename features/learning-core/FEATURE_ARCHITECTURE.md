@@ -1,6 +1,6 @@
 # Learning Core Rebuild — Feature Architecture
 
-**Status:** Phase 1 BUILT, pending migration apply (2026-07-06). Phases 2/3 + Execution Gateway + Portfolio Constructor specced, build in progress per approval "go build all".
+**Status (2026-07-06):** Phase 1 BUILT + migrations applied + verified live (decision ledger writing real feature rows). All P0 app-improvements BUILT + verified live: transactional paper-fill RPC (`execute_paper_fill`, migration 071), cron-gap detector, vitest money-math suite (43 tests). Portfolio Constructor BUILT + wired into PaperTrader. Also fixed a critical pre-existing bug found via live schema access: `paper_order_events.signal_id` bigint→uuid (Decision 34) — had silently blocked every fill's audit-event write since migration 034. Next: Phase 2 (validation engine, fail-closed promotion gate, calibrated sizing) per approval "go build all".
 **Origin:** Codex agent-architecture review (`CODEX_AGENT_REVIEW_RESULT.md`). Verdict: Kairos is a governed adaptive *scoring* system, not yet self-evolving. Blocker: no point-in-time, policy-aware, out-of-sample validation that proves a change *causes* reproducible improvement.
 
 **Goal:** Turn the learning plane into a statistically trustworthy, self-evolving engine — the "world-class evolving quant agent" bar — without weakening the existing control plane (deterministic scores, immutable challengers, per-market champions, human live-capital gate).
