@@ -103,6 +103,12 @@ export type SymbolEntry = {
   isHeld: boolean;
   isEtf: boolean;
   assetClass?: string; // "us_equity" | "etf" | "metal"
+  screenerBucket?: "momentum" | "value"; // which dual-bucket screener flagged this (Research Journal)
+};
+
+const BUCKET_CRITERIA: Record<"momentum" | "value", string[]> = {
+  momentum: ["revenue_growth>15%", "earnings_growth>10%", "gross_margin>25%", "ROE>15%", "market_cap>$2B"],
+  value: ["0<P/E<18", "FCF_yield>4%", "debt_to_equity<1.0", "market_cap>$1B"],
 };
 
 const METAL_ETF_SYMBOLS = new Set(["GLD","SLV","GDX","GDXJ","IAU","UGL","GLL"]);
@@ -230,7 +236,7 @@ async function screenBucket(
 // cannot do; every run silently returned []. Calls FinancialDatasets'
 // REST screener directly instead, same pattern already proven working in
 // app/api/agents/research/scan/route.ts.
-export async function runScreener(supabase: any): Promise<string[]> {
+export async function runScreener(supabase: any): Promise<{ symbol: string; bucket: "momentum" | "value" }[]> {
   const fdKey = await getFDKey(supabase);
   if (!fdKey) return [];
 
@@ -251,9 +257,11 @@ export async function runScreener(supabase: any): Promise<string[]> {
     ], fdKey, 10),
   ]);
 
-  return Array.from(new Set([...momentum, ...value]))
-    .filter(s => s.length > 0 && s.length <= 6)
-    .slice(0, 6);
+  const seen = new Map<string, "momentum" | "value">();
+  for (const s of momentum) if (s.length > 0 && s.length <= 6) seen.set(s, "momentum");
+  for (const s of value) if (s.length > 0 && s.length <= 6 && !seen.has(s)) seen.set(s, "value");
+
+  return Array.from(seen.entries()).slice(0, 6).map(([symbol, bucket]) => ({ symbol, bucket }));
 }
 
 // Region ETF baskets — appended when user's market_focus includes that region
@@ -312,9 +320,9 @@ export async function gatherSymbols(
   }
 
   let screenerAdded = 0;
-  for (const sym of screenerSymbols) {
+  for (const { symbol: sym, bucket } of screenerSymbols) {
     if (result.has(sym) || screenerAdded >= 3) continue;
-    result.set(sym, { symbol: sym, isHeld: false, isEtf: false, assetClass: "us_equity" });
+    result.set(sym, { symbol: sym, isHeld: false, isEtf: false, assetClass: "us_equity", screenerBucket: bucket });
     screenerAdded++;
   }
 
@@ -858,14 +866,25 @@ export async function processSymbol(
     asset_class:  assetClass,
     market, // Phase 4: routes the signal to its market's paper pool + champion
   };
+  // Capture the inserted row's id (Research Journal needs this to join
+  // decision_observations -> pipeline_stage_events -> trade_proposals ->
+  // paper_trades by a shared signal_id, instead of null throughout).
+  let insertedSignalId: string | null = null;
   {
-    const { error } = await supabase.from("agent_signals").insert(signalRow);
+    const { data, error } = await supabase.from("agent_signals").insert(signalRow).select("id").maybeSingle();
     // Strip `market` ONLY when the column is genuinely undefined (pre-057) — never
     // on a transient/constraint error, which would silently drop the market tag.
     const undefinedCol = error && (["42703", "PGRST204"].includes(String(error.code ?? "")) ||
       /column .* does not exist|could not find the '.*' column/i.test(String(error.message ?? "")));
-    if (undefinedCol) { delete signalRow.market; await supabase.from("agent_signals").insert(signalRow); }
-    else if (error) { console.error("[research-agent] agent_signals insert failed:", error.message); }
+    if (undefinedCol) {
+      delete signalRow.market;
+      const retry = await supabase.from("agent_signals").insert(signalRow).select("id").maybeSingle();
+      insertedSignalId = retry.data?.id ?? null;
+    } else if (error) {
+      console.error("[research-agent] agent_signals insert failed:", error.message);
+    } else {
+      insertedSignalId = data?.id ?? null;
+    }
   }
 
   // Append-only score history — the durable per-symbol score trajectory that
@@ -921,13 +940,19 @@ export async function processSymbol(
     // appended under features.regime.* for later interaction terms — never a
     // hard bull/bear switch, just observable numbers for the calibration fit.
     const regime = await getRegimeFeatures(market, supabase);
+    // Research Journal: record which screener bucket/criteria flagged this
+    // candidate (undefined for held/watchlist symbols — only screener adds get one).
+    const screener = entry.screenerBucket
+      ? { bucket: entry.screenerBucket, criteria_matched: BUCKET_CRITERIA[entry.screenerBucket] }
+      : undefined;
+    const entryEligible = signalDirection === "long" && analystScore >= (scoreThreshold ?? 60);
     const { data: obsRow, error: obsErr } = await supabase.from("decision_observations").insert({
       market,
       symbol,
       strategy_version_id: null,            // filled when champion row id is loaded; else null
       weights_used: { fundamental: fw, technical: tw, sentiment: sw, macro: mw, insider: iw },
       used_champion: usingChampion,
-      features: { ...(scores.evidence ?? {}), regime },
+      features: { ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}) },
       availability_mask,
       analyst_score: analystScore,
       fundamental_score: scores.fundamental_score,
@@ -936,15 +961,32 @@ export async function processSymbol(
       macro_score: scores.macro_score,
       insider_score: scores.insider_score,
       direction: signalDirection,
-      entry_eligible: signalDirection === "long" && analystScore >= (scoreThreshold ?? 60),
+      entry_eligible: entryEligible,
       action: "signal_written",             // this code path always writes a signal today
       score_threshold: scoreThreshold ?? 60,
       price_at_decision: null,              // PaperTrader fetches price at fill time; not known here
       currency: market === "india" ? "INR" : "USD",
-      signal_id: null,                      // agent_signals insert doesn't return id today — Phase 2 wires it
+      signal_id: insertedSignalId,
     }).select("id").maybeSingle();
     if (obsErr && !/does not exist|could not find/i.test(obsErr.message ?? "")) {
       console.error("[research-agent] decision_observations insert failed:", obsErr.message);
+    }
+
+    // Research Journal (Phase: pipeline instrumentation) — one stage event per
+    // candidate scored. Fail-soft: never blocks the actual research decision.
+    if (insertedSignalId) {
+      try {
+        await supabase.from("pipeline_stage_events").insert({
+          signal_id: insertedSignalId,
+          symbol, market,
+          stage: "research",
+          outcome: entryEligible ? "passed" : "rejected",
+          reason: entryEligible
+            ? `Score ${analystScore} >= threshold ${scoreThreshold ?? 60}`
+            : `Score ${analystScore} < threshold ${scoreThreshold ?? 60}${signalDirection !== "long" ? ` (direction: ${signalDirection})` : ""}`,
+          detail: { analyst_score: analystScore, score_threshold: scoreThreshold ?? 60, direction: signalDirection, screener },
+        });
+      } catch { /* fail-soft — pre-migration schema or transient error */ }
     }
 
     // Phase 3 shadow A/B: up to 3 strategy_versions in state='shadow_paper' for

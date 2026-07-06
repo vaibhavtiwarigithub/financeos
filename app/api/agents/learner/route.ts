@@ -620,6 +620,10 @@ export async function POST(req: NextRequest) {
             }).select("id").single();
             if (insErr || !row) return JSON.stringify({ error: `Feature insert failed: ${insErr?.message ?? "no row"}` });
 
+            await svc.from("feature_registry_history").insert({
+              feature_id: (row as any).id, from_status: null, to_status: "proposed", reason: rationale ?? "proposed by learner",
+            }).then(() => {}, () => {});
+
             return JSON.stringify({
               feature_created: true, feature_id: (row as any).id, name,
               note: "Status 'proposed' — the feature-check job will test its out-of-sample IC before it can ever influence scoring. It does NOT affect analyst_score until it reaches 'active'.",

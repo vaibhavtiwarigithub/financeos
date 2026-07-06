@@ -127,30 +127,36 @@ export async function GET(req: NextRequest) {
       rawHoldings.map((h) => getQuote(h.symbol, massiveKey))
     );
 
-    // 3. Compute contributions
-    const holdings: Holding[] = rawHoldings.map((h, i) => ({
-      symbol: h.symbol,
-      weightPct: h.weightPct,
-      changePct: quotes[i].changePct,
-      contribution: (h.weightPct * quotes[i].changePct) / 100,
-    }));
+    // 3. Compute contributions — ONLY for holdings whose quote actually
+    // succeeded. A failed fetch previously defaulted to changePct:0 and still
+    // populated topContributors/topDetractors, showing every constituent as a
+    // fake "flat 0.000%" mover instead of being excluded like a real failure.
+    const holdings: Holding[] = rawHoldings
+      .map((h, i) => ({
+        symbol: h.symbol,
+        weightPct: h.weightPct,
+        changePct: quotes[i].changePct,
+        contribution: (h.weightPct * quotes[i].changePct) / 100,
+        _ok: quotes[i].ok,
+      }))
+      .filter(h => h._ok)
+      .map(({ _ok, ...h }) => h);
 
     // 4. Sort by contribution
     const sorted = [...holdings].sort((a, b) => b.contribution - a.contribution);
     const topContributors = sorted.slice(0, 5);
     const topDetractors = sorted.slice(-5).reverse();
 
-    // 5. A/D counts — exclude holdings whose quote fetch failed from the
-    // breadth denominator. Previously a failed fetch silently returned
-    // changePct: 0 and was counted as "unchanged", inflating `total` and
-    // diluting breadthPct (e.g. 6 advancing / 4 declining out of 10 real
+    // 5. A/D counts — `holdings` is already filtered to quote-fetch successes
+    // above, so this is just those. Previously a failed fetch silently
+    // returned changePct:0 and was counted as "unchanged", inflating `total`
+    // and diluting breadthPct (e.g. 6 advancing / 4 declining out of 10 real
     // quotes showed as "30%" because 10 more holdings with failed quotes
     // were folded into a total of 20).
-    const validHoldings = holdings.filter((_, i) => quotes[i].ok);
-    const advanceCount = validHoldings.filter((h) => h.changePct > 0).length;
-    const declineCount = validHoldings.filter((h) => h.changePct < 0).length;
-    const unchangedCount = validHoldings.length - advanceCount - declineCount;
-    const total = validHoldings.length;
+    const advanceCount = holdings.filter((h) => h.changePct > 0).length;
+    const declineCount = holdings.filter((h) => h.changePct < 0).length;
+    const unchangedCount = holdings.length - advanceCount - declineCount;
+    const total = holdings.length;
     const breadthPct = total > 0 ? (advanceCount / total) * 100 : 0;
 
     const narrowTag =

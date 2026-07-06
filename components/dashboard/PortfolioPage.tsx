@@ -610,13 +610,31 @@ function LiveHoldingsTab() {
 }
 
 /** Rich position card — replaces plain table row */
-function PositionCard({ p, onChart, cur = "$" }: { p: any; onChart: (sym: string) => void; cur?: string }) {
+function PositionCard({ p, onChart, cur = "$", market = "us" }: { p: any; onChart: (sym: string) => void; cur?: string; market?: string }) {
   const px = p.current_price ?? p.avg_cost;
   const pnl = (px - p.avg_cost) * p.qty;
   const pnlPct = ((px - p.avg_cost) / p.avg_cost) * 100;
   const posValue = px * p.qty;
   const hasLive = !!p.current_price;
   const pColor = pnlColor(pnl);
+  const [closing, setClosing] = useState(false);
+  const [closeMsg, setCloseMsg] = useState("");
+
+  async function handleClose() {
+    if (!confirm(`Close ${p.qty} shares of ${p.symbol} at the current market price?`)) return;
+    setClosing(true);
+    try {
+      const res = await fetch("/api/paper-positions/close", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: p.symbol, market }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setCloseMsg(d.error ?? "Close failed"); return; }
+      setCloseMsg(`Closed @ ${cur}${d.closed_at_price.toFixed(2)} (${d.outcome})`);
+      setTimeout(() => window.location.reload(), 1200);
+    } finally { setClosing(false); }
+  }
+
   return (
     <div style={{
       background: T.surface, border: `1px solid ${T.border}`,
@@ -662,6 +680,14 @@ function PositionCard({ p, onChart, cur = "$" }: { p: any; onChart: (sym: string
           </span>
         </div>
         <div style={{ fontSize: "12px", color: T.muted }}>{cur}{posValue.toFixed(0)} value</div>
+        <button
+          onClick={handleClose}
+          disabled={closing}
+          style={{ marginTop: "4px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: "6px", color: T.textSub, padding: "4px 10px", fontSize: "11px", cursor: "pointer" }}
+        >
+          {closing ? "Closing..." : "Close Position"}
+        </button>
+        {closeMsg && <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>{closeMsg}</div>}
       </div>
     </div>
   );
@@ -820,7 +846,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               {positions.map((p: any) => (
-                <PositionCard key={p.id} p={p} cur={cur} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
+                <PositionCard key={p.id} p={p} cur={cur} market={market} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
               ))}
             </div>
           )}
@@ -848,6 +874,9 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
                       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                         {t.symbol}
                         <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#2D1B00", color: "#FBBF24", letterSpacing: "0.04em" }}>PAPER</span>
+                        {/seeded_at/i.test(t.rationale ?? "") && (
+                          <span title="Manually seeded demo data — not a real agent sizing/scoring decision" style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#3B0000", color: T.red, letterSpacing: "0.04em", cursor: "help" }}>SEEDED</span>
+                        )}
                       </div>
                     </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>

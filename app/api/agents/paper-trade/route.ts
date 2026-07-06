@@ -10,6 +10,17 @@ import { predictPWin } from "@/lib/validation/calibration";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
 import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
 
+// Research Journal — one stage event per signal per pipeline stage. Fail-soft:
+// never blocks the actual trading decision it's describing.
+async function logStage(supabase: any, args: { signal_id: string; symbol: string; market: string; stage: string; outcome: string; reason?: string; detail?: any }) {
+  try {
+    await supabase.from("pipeline_stage_events").insert({
+      signal_id: args.signal_id, symbol: args.symbol, market: args.market,
+      stage: args.stage, outcome: args.outcome, reason: args.reason ?? null, detail: args.detail ?? null,
+    });
+  } catch { /* fail-soft — pre-migration schema or transient error */ }
+}
+
 // PaperTrader: fills virtual long-only trades from qualifying signals.
 //
 // MULTI-MARKET (Phase 4): each market (us | india) has its OWN paper pool in its
@@ -290,9 +301,12 @@ export async function POST(req: NextRequest) {
       const sizedPct = constructed.orders[0]?.finalSizePct ?? 0;
       if (sizedPct <= 0) {
         await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
-        skipped.push({ symbol: signal.symbol, reason: `portfolio_constructor_denied: ${constructed.orders[0]?.adjustments.join("; ") ?? "no room"}` });
+        const reason = `portfolio_constructor_denied: ${constructed.orders[0]?.adjustments.join("; ") ?? "no room"}`;
+        skipped.push({ symbol: signal.symbol, reason });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason, detail: { proposedSizePct, adjustments: constructed.orders[0]?.adjustments } });
         continue;
       }
+      await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: sizedPct < proposedSizePct ? "shrunk" : "passed", reason: `Sized ${sizedPct.toFixed(1)}% (proposed ${proposedSizePct.toFixed(1)}%)`, detail: { proposedSizePct, sizedPct, adjustments: constructed.orders[0]?.adjustments } });
 
       // Size off THIS pool's cash, in its own currency
       const maxSpend = portfolio.cash_balance * (sizedPct / 100);
@@ -300,12 +314,14 @@ export async function POST(req: NextRequest) {
       if (qty < 1) {
         await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
         skipped.push({ symbol: signal.symbol, reason: "insufficient_cash_for_1_share" });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "insufficient_cash_for_1_share", detail: { maxSpend, fillPrice } });
         continue;
       }
       const totalCost = qty * fillPrice;
       if (totalCost > portfolio.cash_balance) {
         await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
         skipped.push({ symbol: signal.symbol, reason: "insufficient_cash" });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "insufficient_cash", detail: { totalCost, cash: portfolio.cash_balance } });
         continue;
       }
 
@@ -424,6 +440,8 @@ export async function POST(req: NextRequest) {
       if (existingBookIdx >= 0) currentBook[existingBookIdx].valuePct += bookEntry.valuePct;
       else currentBook.push(bookEntry);
       bookByMarket.set(market, currentBook);
+
+      await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "filled", reason: `${qty} @ ${fillPrice.toFixed(2)}`, detail: { qty, fillPrice, totalCost, sizedPct } });
 
       const sym = market === "india" ? "₹" : "$";
       const { error: journalErr } = await supabase.from("decision_journal").insert({

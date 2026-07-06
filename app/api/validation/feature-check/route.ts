@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
     const inputCheck = validateFeatureInputs(spec.formula ?? "", spec.inputs ?? []);
     if (!inputCheck.ok) {
       await supabase.from("feature_registry").update({ status: "retired", updated_at: new Date().toISOString() }).eq("id", feature.id);
+      await supabase.from("feature_registry_history").insert({ feature_id: feature.id, from_status: feature.status, to_status: "retired", reason: `invalid formula: ${inputCheck.reason}` }).then(() => {}, () => {});
       results[feature.name] = { status: "retired", reason: `invalid formula: ${inputCheck.reason}` };
       continue;
     }
@@ -69,6 +70,12 @@ export async function POST(req: NextRequest) {
     await supabase.from("feature_registry").update({
       status: newStatus, ic_history: icHistory, updated_at: new Date().toISOString(),
     }).eq("id", feature.id);
+    if (newStatus !== feature.status) {
+      await supabase.from("feature_registry_history").insert({
+        feature_id: feature.id, from_status: feature.status, to_status: newStatus,
+        reason: newStatus === "retired" ? "rolling IC decayed below retirement threshold" : `IC promotion rule passed (${foldICs.length} folds)`,
+      }).then(() => {}, () => {});
+    }
     results[feature.name] = { status: newStatus, folds: foldICs };
   }
 

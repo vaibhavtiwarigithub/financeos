@@ -40,6 +40,7 @@ const NAV_SECTIONS = [
       { href: "/dashboard/scores",       label: "Score Tracker",    icon: "📈", hint: "Per-stock AI score over time with drill-down", alertCat: "" },
       { href: "/dashboard/agents",       label: "Agents",           icon: "⬡", hint: "Run agents manually, view status",    alertCat: "" },
       { href: "/dashboard/agents/history", label: "Agent History",  icon: "◷", hint: "Every agent run: what it did, result, handoff, cost, tokens — filter & delete", alertCat: "" },
+      { href: "/dashboard/research-journal", label: "Research Journal", icon: "🔬", hint: "Daily funnel: why each symbol passed/failed at each stage, plus learning evolution over time", alertCat: "" },
       { href: "/dashboard/smart-money",  label: "Smart Money",      icon: "🦊", hint: "Trade queue, insider flow, multi-asset signals", alertCat: "" },
     ],
   },
@@ -71,7 +72,7 @@ const NAV_SECTIONS = [
     hint: "",
     items: [
       { href: "/dashboard/settings",              label: "Settings",   icon: "⚙", hint: "App configuration", alertCat: "" },
-      { href: "/dashboard/settings/automation",   label: "Automation", icon: "⏱", hint: "All scheduled jobs — times, runner (Windows Scheduler), next run", alertCat: "" },
+      { href: "/dashboard/settings/automation",   label: "Automation", icon: "⏱", hint: "All scheduled jobs — times, runner (Supabase pg_cron → Vercel), next run", alertCat: "" },
     ],
   },
 ];

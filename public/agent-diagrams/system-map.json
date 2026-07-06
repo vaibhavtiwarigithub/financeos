@@ -11,9 +11,9 @@
     },
     "RESEARCH": {
       "label": "ResearchAgent",
-      "description": "Daily (Mon-Fri, 9:00 ET). Scores each tracked symbol across 5 dimensions (fundamental/technical/sentiment/macro/insider) into an analyst_score, using the promoted CHAMPION weights when one exists (the closed learning loop) and each symbol's recent score TREND as context. Writes agent_signals + appends signal_score_history.",
+      "description": "Daily (Mon-Fri, 9:00 ET). Scores each tracked symbol across 5 dimensions (fundamental/technical/sentiment/macro/insider) into an analyst_score, using the promoted CHAMPION weights when one exists (the closed learning loop) and each symbol's recent score TREND as context. Writes agent_signals + appends signal_score_history. Research Journal: agent_signals inserts now capture the returned row id (signal_id was previously always null downstream), decision_observations.features.screener records which dual-bucket screener criteria flagged a candidate, and a pipeline_stage_events row is written per candidate (stage='research', passed/rejected + reason) — the first link in a full pipeline trail (research -> portfolio constructor -> execution).",
       "addedAt": "2026-06-25", "addReason": "Central scoring engine — everything downstream keys off its analyst_score.",
-      "status": "active", "changedAt": "2026-07-05", "changeReason": "Now consumes champion weights (closed loop) and its own score-history trend.", "removedAt": null, "removeReason": null
+      "status": "changed", "changedAt": "2026-07-06", "changeReason": "Research Journal — wired signal_id through and added screener/stage instrumentation (Decision 40).", "removedAt": null, "removeReason": null
     },
     "SCOREHIST": {
       "label": "signal_score_history",
@@ -29,9 +29,9 @@
     },
     "TRADER": {
       "label": "PaperTrader",
-      "description": "Deterministic flow (no LLM). Reads pending agent_signals with analyst_score >= threshold and direction long, and opens paper_positions + paper_trades via a transactional RPC (execute_paper_fill, migration 071 — one DB transaction, row-locked). Long-only. Phase 4: fills EACH signal into ITS market's own pool in native currency — US in USD, India in ₹; currencies never summed. Phase 2: sizing is conviction-scaled (half-Kelly from a calibrated P(win) model + the ledger's MFE/|MAE| payoff ratio, falling back to the flat position_size_pct until 60+ matured observations exist) and R:R is dynamic (stop/target from the ledger's actual MAE/MFE percentiles, falling back to the fixed profile stop/target) — both a signal's own price_target/stop_loss always win. The Portfolio Constructor (lib/portfolio/constructor.ts) then shrinks that proposed size against the live book (name/sector/gross/vol/correlation limits) before any cash moves.",
+      "description": "Deterministic flow (no LLM). Reads pending agent_signals with analyst_score >= threshold and direction long, and opens paper_positions + paper_trades via a transactional RPC (execute_paper_fill, migration 071 — one DB transaction, row-locked). Long-only. Phase 4: fills EACH signal into ITS market's own pool in native currency — US in USD, India in ₹; currencies never summed. Phase 2: sizing is conviction-scaled (half-Kelly from a calibrated P(win) model + the ledger's MFE/|MAE| payoff ratio, falling back to the flat position_size_pct until 60+ matured observations exist) and R:R is dynamic (stop/target from the ledger's actual MAE/MFE percentiles, falling back to the fixed profile stop/target) — both a signal's own price_target/stop_loss always win. The Portfolio Constructor (lib/portfolio/constructor.ts) then shrinks that proposed size against the live book (name/sector/gross/vol/correlation limits) before any cash moves. Research Journal: writes a pipeline_stage_events row at both decision points (stage='portfolio_constructor' passed/shrunk/rejected, stage='execution' filled/rejected), keyed by the same signal_id ResearchAgent originated — completing the funnel trail.",
       "addedAt": "2026-06-26", "addReason": "Turns qualifying signals into paper positions.",
-      "status": "changed", "changedAt": "2026-07-06", "changeReason": "Transactional fill RPC; conviction-scaled Kelly sizing + dynamic MAE/MFE R:R (Phase 2); Portfolio Constructor risk budgeting.", "removedAt": null, "removeReason": null
+      "status": "changed", "changedAt": "2026-07-06", "changeReason": "Research Journal instrumentation added on top of Phase 2 sizing (Decision 40).", "removedAt": null, "removeReason": null
     },
     "MONITOR": {
       "label": "PositionMonitor",
@@ -159,6 +159,8 @@
     { "date": "2026-07-06", "event": "added", "nodeId": "GENOME", "label": "Strategy Genome", "reason": "Phase 3 — evolvable surface beyond 5 weights (entry/horizon/exit/sizing/regime), bounded and hash-stamped." },
     { "date": "2026-07-06", "event": "added", "nodeId": "REGISTRY", "label": "Feature Registry", "reason": "Phase 3 — governed feature discovery via a whitelisted grammar, IC-gated promotion, never executes LLM code." },
     { "date": "2026-07-06", "event": "added", "nodeId": "SHADOW", "label": "Shadow Decisions", "reason": "Phase 3 — paired live comparison before a challenger risks paper capital; exploration stays bounded and off by default." },
-    { "date": "2026-07-06", "event": "changed", "nodeId": "GATEWAY", "label": "Execution Gateway (broker registry: Alpaca/Kite)", "reason": "Ops spec Decision 39 — Gateway routes now go through lib/brokers/registry.ts instead of a direct Alpaca import; multi-broker sync loop; per-market broker selection in Settings." }
+    { "date": "2026-07-06", "event": "changed", "nodeId": "GATEWAY", "label": "Execution Gateway (broker registry: Alpaca/Kite)", "reason": "Ops spec Decision 39 — Gateway routes now go through lib/brokers/registry.ts instead of a direct Alpaca import; multi-broker sync loop; per-market broker selection in Settings." },
+    { "date": "2026-07-06", "event": "changed", "nodeId": "RESEARCH", "label": "ResearchAgent", "reason": "Decision 40 — Research Journal: signal_id now flows from agent_signals into decision_observations (was always null); screener bucket/criteria recorded; pipeline_stage_events instrumentation added." },
+    { "date": "2026-07-06", "event": "changed", "nodeId": "TRADER", "label": "PaperTrader", "reason": "Decision 40 — Research Journal: pipeline_stage_events written at portfolio-constructor and execution decision points, completing the per-symbol funnel trail." }
   ]
 }
