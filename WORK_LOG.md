@@ -20,6 +20,20 @@
 
 ---
 
+## ✅ Session 2026-07-06 (Supabase MCP reconnected — migrations applied, critical fill-event bug fixed)
+
+> Reconnected Supabase MCP gave direct schema access for the first time in several sessions. Applied all pending migrations (060, 069) and one urgent live fix: **`paper_order_events.signal_id` was `bigint` while `agent_signals.id`/`paper_trades.signal_id` are `uuid`** — every paper fill's order-event insert had been failing since migration 034 (confirmed: zero rows ever in `paper_order_events`). Fixed live (migration 070, lossless — table was empty) and verified end-to-end: restarted the stale production server, re-ran ResearchAgent, confirmed `decision_observations` now writes real per-candidate feature rows. See **Decision 34**.
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Applied migration 060 (observation_labels) | Claude | 2026-07-06 | Previously blocked by Supabase SQL-editor Redis/RLS-dialog issues; applied directly via reconnected MCP. |
+| Applied migration 069 (portfolio_limits) | Claude | 2026-07-06 | `strategy_config` gains max_gross/sector/name_exposure_pct, max_portfolio_vol_pct, max_avg_pairwise_corr — Portfolio Constructor limits. |
+| Fixed paper_order_events.signal_id type bug | Claude | 2026-07-06 | Migration 070. Long-standing bug (predates this session) silently failing every fill's audit-event write. See Decision 34. |
+| Verified end-to-end on live DB | Claude | 2026-07-06 | Restarted stale `next start` server (was serving a pre-session build), re-triggered research, confirmed decision_observations populates with real feature blobs (5 dims × N candidates per run). |
+| Confirmed migrations 057/058 already live | Claude | 2026-07-06 | Multi-market + India screen cache both confirmed applied from earlier sessions. |
+
+---
+
 ## ✅ Session 2026-07-06 (Learning-core Phase 1 — decision ledger + matured horizon labels)
 
 > An independent architecture review (Codex) found LearnerAgent's dataset statistically untrustworthy: signal→trade join by symbol (collision-prone), label = policy P&L on filled-longs-only (selection bias, mixes alpha with beta/holding-time/exits), no valid out-of-sample evaluation. This is the keystone fix everything else (validation engine, calibrated sizing, genome, shadow A/B — see `features/learning-core/`) is built on. See **Decision 33**.
