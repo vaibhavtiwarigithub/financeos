@@ -14,11 +14,12 @@ async function getCrumb(): Promise<{ cookie: string; crumb: string } | null> {
   if (_crumb && Date.now() - _crumb.at < CRUMB_TTL_MS) return _crumb;
   try {
     // Grab a session cookie, then a crumb tied to it.
-    const cookieRes = await fetch("https://fc.yahoo.com/", { headers: { "User-Agent": "Mozilla/5.0" } });
+    const cookieRes = await fetch("https://fc.yahoo.com/", { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8000) });
     const setCookie = cookieRes.headers.get("set-cookie") ?? "";
     const cookie = setCookie.split(";")[0] || "";
     const crumbRes = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
       headers: { "User-Agent": "Mozilla/5.0", ...(cookie ? { Cookie: cookie } : {}) },
+      signal: AbortSignal.timeout(8000),
     });
     const crumb = (await crumbRes.text()).trim();
     if (!crumb || crumb.includes("<")) return null;
@@ -37,7 +38,7 @@ export async function fetchIndiaCandles(symbol: string, range = "6mo"): Promise<
   try {
     const res = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${range}`,
-      { headers: { "User-Agent": "Mozilla/5.0" }, next: { revalidate: 3600 } }
+      { headers: { "User-Agent": "Mozilla/5.0" }, next: { revalidate: 3600 }, signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) return [];
     const j = await res.json();
@@ -63,7 +64,7 @@ export async function fetchIndiaQuote(symbol: string): Promise<{ price: number; 
   try {
     const res = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`,
-      { headers: { "User-Agent": "Mozilla/5.0" }, next: { revalidate: 900 } }
+      { headers: { "User-Agent": "Mozilla/5.0" }, next: { revalidate: 900 }, signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) return null;
     const m = (await res.json())?.chart?.result?.[0]?.meta;
@@ -131,7 +132,7 @@ export async function fetchIndiaEarningsDate(symbol: string): Promise<string | n
   try {
     const res = await fetch(
       `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=calendarEvents&crumb=${encodeURIComponent(c.crumb)}`,
-      { headers: { "User-Agent": "Mozilla/5.0", Cookie: c.cookie }, next: { revalidate: 86400 } }
+      { headers: { "User-Agent": "Mozilla/5.0", Cookie: c.cookie }, next: { revalidate: 86400 }, signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) return null;
     const ev = (await res.json())?.quoteSummary?.result?.[0]?.calendarEvents?.earnings;
@@ -154,7 +155,7 @@ export async function fetchIndiaOverview(symbol: string): Promise<Record<string,
   try {
     const res = await fetch(
       `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=defaultKeyStatistics,financialData,summaryDetail,assetProfile,price&crumb=${encodeURIComponent(c.crumb)}`,
-      { headers: { "User-Agent": "Mozilla/5.0", Cookie: c.cookie }, next: { revalidate: 86400 } }
+      { headers: { "User-Agent": "Mozilla/5.0", Cookie: c.cookie }, next: { revalidate: 86400 }, signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) return {};
     const r = (await res.json())?.quoteSummary?.result?.[0];

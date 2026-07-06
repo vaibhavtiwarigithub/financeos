@@ -40,7 +40,9 @@ const REGISTRY: Record<string, MarketSupport> = {
 export function getMarketSupport(pathname: string): MarketSupport {
   let best = "";
   for (const prefix of Object.keys(REGISTRY)) {
-    if ((pathname === prefix || pathname.startsWith(prefix + "/") || pathname.startsWith(prefix)) && prefix.length > best.length) {
+    // Exact route or a true child path only — NOT a bare startsWith, so
+    // "/dashboard/markets-old" doesn't inherit the Markets entry.
+    if ((pathname === prefix || pathname.startsWith(prefix + "/")) && prefix.length > best.length) {
       best = prefix;
     }
   }

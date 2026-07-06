@@ -44,23 +44,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ skipped: true, reason: "App is paused — research cron disabled" });
   }
 
-  // Idempotency guard — the scheduled trigger fires once at 9 AM, but a manual
-  // re-trigger (or a duplicate Task Scheduler firing) minutes later should not
-  // re-run the full research pass. Skip if a research run already completed
-  // (or is currently running) within the last 30 minutes.
+  // Idempotency guard — a duplicate/manual re-trigger within 30 min shouldn't
+  // re-run the pass. But it must be PER MARKET: a US run at 9 AM must not suppress
+  // the India run, and vice-versa. agent_runs has no market column, so infer each
+  // recent run's market from its symbols (any .NS/.BO → India) and only block when
+  // a run for THIS market is in the window.
   const guardWindow = new Date(Date.now() - 30 * 60_000).toISOString();
-  const { data: recentRun } = await supabase
+  const { data: recentRuns } = await supabase
     .from("agent_runs")
-    .select("id, status, started_at")
+    .select("id, status, started_at, symbols")
     .eq("agent_type", "research")
     .gte("started_at", guardWindow)
     .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(5);
+  const runMarket = (r: any): string =>
+    (Array.isArray(r?.symbols) && r.symbols.some((s: string) => /\.(NS|BO)$/i.test(String(s)))) ? "india" : "us";
+  const guardMarket = marketScope ?? "us";
+  const recentRun = (recentRuns ?? []).find((r: any) => runMarket(r) === guardMarket);
   if (recentRun) {
     return NextResponse.json({
       skipped: true,
-      reason: `Research already ran (or is running) within the last 30 minutes — run ${(recentRun as any).id} started at ${(recentRun as any).started_at}`,
+      reason: `Research (${guardMarket}) already ran (or is running) within the last 30 minutes — run ${(recentRun as any).id} started at ${(recentRun as any).started_at}`,
     });
   }
 

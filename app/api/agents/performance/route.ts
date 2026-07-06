@@ -8,28 +8,38 @@ export async function GET() {
   try {
     const svc = createServiceClient();
 
-    // 1. NAV history ordered asc for chart
+    // This dashboard is the US ($) paper book — SPY benchmark, $10k baseline.
+    // Every aggregate MUST be scoped to market='us' or India (₹) rows corrupt the
+    // win rate / avg return / P&L / position count. Resilient: fall back to
+    // unscoped pre-057 (US-only world). paper_nav_history is written only by the
+    // US nav-snapshot cron, so it needs no market filter.
+    const usTrades = async () => {
+      const cols = "id, symbol, realized_pnl, pnl_pct, outcome, executed_at, closed_at, analyst_score, order_side";
+      let r = await svc.from("paper_trades").select(cols).eq("market", "us").order("executed_at", { ascending: false });
+      if (r.error) r = await svc.from("paper_trades").select(cols).order("executed_at", { ascending: false });
+      return r.data ?? [];
+    };
+    const usOpenCount = async () => {
+      let r = await svc.from("paper_positions").select("*", { count: "exact", head: true }).eq("market", "us");
+      if (r.error) r = await svc.from("paper_positions").select("*", { count: "exact", head: true });
+      return r.count ?? 0;
+    };
+
+    // 1. NAV history ordered asc for chart (US-only by write path)
     const { data: navHistory } = await svc
       .from("paper_nav_history")
       .select("date, nav, cash_balance, open_positions, realized_pnl")
       .order("date", { ascending: true });
 
-    // 2. Closed paper trades (outcome set OR closed_at set)
-    const { data: allTrades } = await svc
-      .from("paper_trades")
-      .select("id, symbol, realized_pnl, pnl_pct, outcome, executed_at, closed_at, analyst_score, order_side")
-      .order("executed_at", { ascending: false });
-
-    const trades = (allTrades ?? []) as any[];
+    // 2. Closed paper trades (US only)
+    const trades = (await usTrades()) as any[];
     const closedTrades = trades.filter(
       (t: any) => t.outcome != null || t.closed_at != null
     );
     const closedCount = closedTrades.length;
 
-    // 3. Open positions count
-    const { count: openCount } = await svc
-      .from("paper_positions")
-      .select("*", { count: "exact", head: true });
+    // 3. Open positions count (US only)
+    const openCount = await usOpenCount();
 
     // 4. Current portfolio nav + cash
     // Phase 4: prefer the US pool; fall back to any row pre-057 (no market column)
@@ -129,16 +139,15 @@ export async function POST(req: NextRequest) {
     const nav = Number(portfolio.nav ?? 10000);
     const cashBalance = Number(portfolio.cash_balance ?? 10000);
 
-    // Count open positions
-    const { count: openPositions } = await svc
-      .from("paper_positions")
-      .select("*", { count: "exact", head: true });
+    // Count open positions (US pool only — this snapshot is the $ book)
+    let posCount = await svc.from("paper_positions").select("*", { count: "exact", head: true }).eq("market", "us");
+    if (posCount.error) posCount = await svc.from("paper_positions").select("*", { count: "exact", head: true });
+    const openPositions = posCount.count ?? 0;
 
-    // Sum realized pnl from closed trades
-    const { data: closedRows } = await svc
-      .from("paper_trades")
-      .select("realized_pnl")
-      .not("outcome", "is", null);
+    // Sum realized pnl from closed trades (US only)
+    let closedRes = await svc.from("paper_trades").select("realized_pnl").not("outcome", "is", null).eq("market", "us");
+    if (closedRes.error) closedRes = await svc.from("paper_trades").select("realized_pnl").not("outcome", "is", null);
+    const closedRows = closedRes.data;
     const realizedPnl = (closedRows ?? []).reduce(
       (sum: number, t: any) => sum + (Number(t.realized_pnl) || 0),
       0

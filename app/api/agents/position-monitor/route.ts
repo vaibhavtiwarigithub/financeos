@@ -113,13 +113,21 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     const realizedPnl = (currentPrice - pos.avg_cost) * pos.qty;
     const pnlPct = pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0;
 
-    let tq = svc.from("paper_trades").select("id").eq("symbol", pos.symbol).is("closed_at", null);
+    // Close each open lot with ITS OWN realized P&L (qty × its own fill_price) —
+    // NOT the aggregated position-level figure, which would double-count P&L and
+    // mislabel each lot's return when a symbol was accumulated over >1 fill.
+    let tq = svc.from("paper_trades").select("id, qty, fill_price").eq("symbol", pos.symbol).is("closed_at", null);
     if (hasMarketCol) tq = tq.eq("market", market);
     const { data: openTrades } = await tq;
     for (const t of openTrades ?? []) {
+      const tQty = Number((t as any).qty ?? 0);
+      const tFill = Number((t as any).fill_price ?? pos.avg_cost);
+      const tPnl = (currentPrice - tFill) * tQty;
+      const tPnlPct = tFill > 0 ? ((currentPrice - tFill) / tFill) * 100 : 0;
+      const tOutcome = tPnl > 0.5 ? "win" : tPnl < -0.5 ? "loss" : "breakeven";
       await svc.from("paper_trades").update({
-        exit_price: currentPrice, realized_pnl: realizedPnl, pnl_pct: pnlPct,
-        outcome, closed_at: new Date().toISOString(),
+        exit_price: currentPrice, realized_pnl: tPnl, pnl_pct: tPnlPct,
+        outcome: tOutcome, closed_at: new Date().toISOString(),
       }).eq("id", (t as any).id);
     }
 

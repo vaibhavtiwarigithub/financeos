@@ -55,11 +55,6 @@ export async function POST(req: NextRequest) {
     const stopLossPctCfg  = (cfg as any)?.stop_loss_pct     ?? 7;
     const targetPctCfg    = (cfg as any)?.target_pct        ?? 20;
 
-    const ks = await checkKillSwitches(supabase);
-    if (!ks.safe) {
-      return NextResponse.json({ skipped: true, reason: ks.reason, tripped: ks.tripped });
-    }
-
     const { data: runRow } = await supabase.from("agent_runs").insert({
       agent_type: "paper_trader", status: "running",
       trigger_source: isCron ? "scheduled" : "manual",
@@ -82,6 +77,16 @@ export async function POST(req: NextRequest) {
     }
     let activeMarkets = [...poolByMarket.keys()]; // 'us' always; 'india' when 057 applied
     if (marketScope) activeMarkets = activeMarkets.filter(m => m === marketScope); // scoped cron run
+
+    // Kill-switches are evaluated PER MARKET (each on its own currency's NAV/
+    // drawdown/accuracy). A tripped market is skipped; the others still fill.
+    const ksByMarket: Record<string, { safe: boolean; reason?: string; tripped?: string }> = {};
+    for (const m of activeMarkets) ksByMarket[m] = await checkKillSwitches(supabase, m);
+    activeMarkets = activeMarkets.filter(m => ksByMarket[m].safe);
+    if (activeMarkets.length === 0) {
+      const first = Object.values(ksByMarket)[0];
+      return NextResponse.json({ skipped: true, reason: first?.reason ?? "All markets kill-switched", tripped: first?.tripped });
+    }
 
     // ── Qualifying signals across active markets ─────────────────────────────
     // India signals only get pulled when the India pool exists (hasMarketCol +
@@ -148,6 +153,33 @@ export async function POST(req: NextRequest) {
       return { ok: true, price: quote.price, fillPrice, source: quote.source, retrievedAt: quote.retrievedAt, bid: quote.bid, ask: quote.ask, spread: fillPrice / quote.price - 1 };
     }
 
+    // Insert with a resilient retry that strips OPTIONAL columns ONLY when the DB
+    // actually reports an undefined column (pre-migration). A transient/constraint
+    // error must NOT cause us to strip `market` and silently record an India row
+    // as US — in that case we surface the error and skip the fill.
+    const isUndefinedColumn = (err: any): boolean => {
+      if (!err) return false;
+      const code = String(err.code ?? "");
+      return code === "42703" || code === "PGRST204" ||
+        /column .* does not exist|could not find the '.*' column/i.test(String(err.message ?? ""));
+    };
+    async function insertOptional(table: string, row: Record<string, any>, optionalCols: string[], selectCols?: string):
+      Promise<{ data?: any; error?: any }> {
+      const attempt = { ...row };
+      // At most optionalCols.length+1 tries: strip one missing optional col each time.
+      for (let i = 0; i <= optionalCols.length; i++) {
+        const r = selectCols
+          ? await supabase.from(table).insert(attempt).select(selectCols).single()
+          : await supabase.from(table).insert(attempt);
+        if (!r.error) return r;
+        if (!isUndefinedColumn(r.error)) return r; // real error — do NOT strip market
+        const named = optionalCols.find(c => String(r.error.message ?? "").includes(`'${c}'`) || String(r.error.message ?? "").includes(` ${c} `));
+        const toStrip = named ?? optionalCols.find(c => c in attempt);
+        if (toStrip && toStrip in attempt) delete attempt[toStrip]; else return r;
+      }
+      return { error: { message: "exhausted optional-column retries" } };
+    }
+
     for (const signal of signals) {
       const market = hasMarketCol ? String(signal.market ?? (signal.asset_class === "india" ? "india" : "us")) : "us";
       const currency = market === "india" ? "INR" : "USD";
@@ -196,25 +228,26 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // Append-only fill event (market/currency tagged; drops those cols pre-057)
+      // Append-only fill event. NOTE: paper_order_events has `market` but NO
+      // `currency` column (057 only added market there) — currency is carried on
+      // paper_trades/paper_positions. Optional col that may be missing pre-057: market.
       const eventRow: Record<string, any> = {
         event_type: "fill", symbol: signal.symbol, side: "buy", qty,
         fill_price: fillPrice, total_value: totalCost, price_source: source,
         price_retrieved_at: retrievedAt, bid_at_fill: bid, ask_at_fill: ask,
         spread_applied: spread, signal_id: signal.id, analyst_score: signal.analyst_score,
         strategy_id: signal.source ?? "research", notes: signal.rationale?.slice(0, 500) ?? null,
-        market, currency,
+        market,
       };
-      let orderEvent: any = null;
-      {
-        const { data, error } = await supabase.from("paper_order_events").insert(eventRow).select("id").single();
-        if (error) { delete eventRow.market; delete eventRow.currency;
-          const retry = await supabase.from("paper_order_events").insert(eventRow).select("id").single();
-          orderEvent = retry.data;
-        } else orderEvent = data;
+      const evRes = await insertOptional("paper_order_events", eventRow, ["market"], "id");
+      if (evRes.error) { // real (non-column) failure — skip the fill rather than record a mis-tagged event
+        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+        skipped.push({ symbol: signal.symbol, reason: `order_event_failed: ${evRes.error.message}` });
+        continue;
       }
+      const orderEvent = evRes.data;
 
-      // paper_trades (market/currency tagged; retry without if pre-057)
+      // paper_trades (market + currency tagged; strip only genuinely-missing cols)
       const tradeRow: Record<string, any> = {
         symbol: signal.symbol, order_side: "buy", qty, fill_price: fillPrice,
         signal_id: signal.id, analyst_score: signal.analyst_score, direction: "long",
@@ -223,9 +256,11 @@ export async function POST(req: NextRequest) {
         price_source: source, price_retrieved_at: retrievedAt, spread_applied: spread,
         paper_event_id: (orderEvent as any)?.id ?? null, market, currency,
       };
-      {
-        const { error } = await supabase.from("paper_trades").insert(tradeRow);
-        if (error) { delete tradeRow.market; delete tradeRow.currency; await supabase.from("paper_trades").insert(tradeRow); }
+      const trRes = await insertOptional("paper_trades", tradeRow, ["currency", "market"]);
+      if (trRes.error) {
+        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+        skipped.push({ symbol: signal.symbol, reason: `trade_insert_failed: ${trRes.error.message}` });
+        continue;
       }
 
       // Position upsert (per market, so same symbol in two markets never collides)
@@ -243,12 +278,8 @@ export async function POST(req: NextRequest) {
           price_target: priceTarget, stop_loss: stopLoss, highest_price: fillPrice,
           sector: candSector, market, currency,
         };
-        const { error: posErr } = await supabase.from("paper_positions").insert(newPosRow);
-        if (posErr) {
-          // Columns not present yet (056/057 not applied) — strip and retry.
-          delete newPosRow.sector; delete newPosRow.market; delete newPosRow.currency;
-          await supabase.from("paper_positions").insert(newPosRow);
-        }
+        // Strip only genuinely-missing optional cols (sector=056, market/currency=057).
+        await insertOptional("paper_positions", newPosRow, ["sector", "currency", "market"]);
         if (candSector) sectorCount[candSector] = (sectorCount[candSector] ?? 0) + 1;
       }
 

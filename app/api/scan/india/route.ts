@@ -129,9 +129,10 @@ async function scanFromCache(opts: {
     const scored = data.map((row: Record<string, any>) => {
       const filterNotes: string[] = [];
       let passes = true;
+      let notEvaluated = false; // a requested condition referenced a field absent from this cache row
 
-      const rsi: number | null = row.rsi;
-      const aboveMa50: boolean | null = row.above_ma50;
+      const rsi: number | null = row.rsi != null && !Number.isNaN(Number(row.rsi)) ? Number(row.rsi) : null;
+      const aboveMa50: boolean | null = row.above_ma50 ?? null;
 
       // Technical score (mirrors live scan)
       let techScore: number | null = null;
@@ -141,29 +142,56 @@ async function scanFromCache(opts: {
         else               techScore = 50 + (rsi - 50) * 0.5;
       }
 
+      // RSI range filters — if requested but this row has no RSI, abstain (don't silently pass).
+      if (opts.rsiMin != null || opts.rsiMax != null) {
+        if (rsi == null) {
+          filterNotes.push("RSI unavailable — condition not evaluated"); notEvaluated = true;
+        } else {
+          if (opts.rsiMin != null && rsi < opts.rsiMin) {
+            filterNotes.push(`RSI ${rsi.toFixed(0)} < required ${opts.rsiMin}`); passes = false;
+          }
+          if (opts.rsiMax != null && rsi > opts.rsiMax) {
+            filterNotes.push(`RSI ${rsi.toFixed(0)} > max ${opts.rsiMax}`); passes = false;
+          }
+        }
+      }
+
+      // Price vs 50-day MA filter — abstain when the row lacks the flag.
+      if (opts.aboveMa50 != null) {
+        if (aboveMa50 == null) {
+          filterNotes.push("Price/MA50 unavailable — condition not evaluated"); notEvaluated = true;
+        } else if (opts.aboveMa50 === true && aboveMa50 === false) {
+          filterNotes.push("Price below 50-day MA"); passes = false;
+        } else if (opts.aboveMa50 === false && aboveMa50 === true) {
+          filterNotes.push("Price above 50-day MA (need below)"); passes = false;
+        }
+      }
+
       // Fundamental score from the pre-scored cache columns (same thresholds as live)
       const ov: Record<string, string> = {};
       if (row.pe != null)            ov.PERatio = String(row.pe);
       if (row.roe != null)           ov.ReturnOnEquityTTM = String(row.roe);
       if (row.rev_growth != null)    ov.QuarterlyRevenueGrowthYOY = String(row.rev_growth);
       if (row.profit_margin != null) ov.ProfitMargin = String(row.profit_margin);
-      if (row.Sector != null)        ov.Sector = String(row.sector);
+      if (row.sector != null)        ov.Sector = String(row.sector);
       const fundScore = scoreIndiaFundamentals(ov);
 
-      // Strategy fundamental filters (applied in JS against cache columns)
+      // Strategy fundamental filters (applied in JS against cache columns). A filter on a
+      // field that's null/missing in this row must ABSTAIN — never silently pass.
       for (const f of opts.scanFilters) {
         const col = colFor[f.field];
-        if (!col) continue;                       // unmappable → skip, don't fail
+        if (!col) continue;                       // field the cache doesn't model → skip, don't fail
         const v = row[col];
-        if (v == null || Number.isNaN(v)) continue; // missing → skip
+        if (v == null || Number.isNaN(Number(v))) {
+          filterNotes.push(`${f.field} unavailable — condition not evaluated`); notEvaluated = true; continue;
+        }
+        const num = Number(v);
         const ok =
-          f.operator === "gt" || f.operator === "gte" ? v >= f.value :
-          f.operator === "lt" || f.operator === "lte" ? v <= f.value :
-          f.operator === "eq" ? v === f.value : true;
-        if (!ok) { passes = false; filterNotes.push(`${f.field} ${Number(v).toFixed(2)} fails ${f.operator} ${f.value}`); }
+          f.operator === "gt" || f.operator === "gte" ? num >= f.value :
+          f.operator === "lt" || f.operator === "lte" ? num <= f.value :
+          f.operator === "eq" ? num === f.value : true;
+        if (!ok) { passes = false; filterNotes.push(`${f.field} ${num.toFixed(2)} fails ${f.operator} ${f.value}`); }
       }
-
-      if (passes && filterNotes.length === 0) filterNotes.push("All conditions met");
 
       const combined =
         techScore != null && fundScore != null ? Math.round(fundScore * 0.5 + techScore * 0.5)
@@ -171,9 +199,14 @@ async function scanFromCache(opts: {
         : fundScore != null ? Math.round(fundScore)
         : null;
 
+      const dataSufficient = !notEvaluated;
+      const passesFilters = passes && dataSufficient;
+      if (passesFilters && filterNotes.length === 0) filterNotes.push("All conditions met");
+      if (!dataSufficient && filterNotes.length === 0) filterNotes.push("Insufficient data to evaluate conditions");
+
       return {
         symbol: row.symbol,
-        rsi: rsi != null ? parseFloat(Number(rsi).toFixed(1)) : null,
+        rsi: rsi != null ? parseFloat(rsi.toFixed(1)) : null,
         price: row.price,
         ema50: row.ema50,
         price_above_ma50: aboveMa50,
@@ -181,8 +214,8 @@ async function scanFromCache(opts: {
         technical_score: techScore != null ? Math.round(techScore) : null,
         combined_score: combined,
         fundamentals: ov,
-        passes_filters: passes,
-        data_sufficient: true,
+        passes_filters: passesFilters,
+        data_sufficient: dataSufficient,
         filter_notes: filterNotes,
       };
     });

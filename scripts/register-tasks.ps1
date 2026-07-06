@@ -23,11 +23,16 @@ $tasks = @(
   @{ Name="research";         Trigger=(WeekdayTrigger "9:00AM");  Agent="research"          },
   @{ Name="trader";           Trigger=(WeekdayTrigger "9:45AM");  Agent="trader"            },
   @{ Name="position-monitor"; Trigger=(WeekdayTrigger "4:15PM");  Agent="position-monitor" },
-  # India market — fires after the NSE close (15:30 IST = 06:00 ET). Runs only do
-  # work when market_focus includes India; otherwise the routes skip (0 symbols).
-  @{ Name="scan-india-refresh";     Trigger=(WeekdayTrigger "5:30AM");  Agent="scan-india-refresh"     },
-  @{ Name="research-india";         Trigger=(WeekdayTrigger "6:15AM");  Agent="research-india"         },
-  @{ Name="position-monitor-india"; Trigger=(WeekdayTrigger "6:35AM");  Agent="position-monitor-india" },
+  # India market — must fire AFTER the 15:30 IST NSE close in BOTH US seasons.
+  # 15:30 IST = 05:00 ET (EST, winter) / 06:00 ET (EDT, summer). Earlier times
+  # (e.g. 5:30 AM EDT = 15:00 IST) would cache mid-session prices, so these are
+  # set to ≥6:45 AM ET — post-close year-round. Runs only do work when
+  # market_focus includes India; otherwise the routes skip (0 symbols).
+  # NOTE: no NSE holiday calendar yet — on an Indian market holiday these still
+  # fire but produce stale/no data (a future improvement is an NSE holiday gate).
+  @{ Name="scan-india-refresh";     Trigger=(WeekdayTrigger "6:45AM");  Agent="scan-india-refresh"     },
+  @{ Name="research-india";         Trigger=(WeekdayTrigger "7:00AM");  Agent="research-india"         },
+  @{ Name="position-monitor-india"; Trigger=(WeekdayTrigger "7:15AM");  Agent="position-monitor-india" },
   @{ Name="brief-evening";    Trigger=(WeekdayTrigger "4:30PM");  Agent="brief-evening"    },
   @{ Name="nav-snapshot";     Trigger=(WeekdayTrigger "5:00PM");  Agent="nav-snapshot"     },
   @{ Name="rescore";          Trigger=(WeekdayTrigger "4:45PM");  Agent="rescore"           },

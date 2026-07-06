@@ -16,6 +16,7 @@ async function nseCookie(): Promise<string | null> {
   try {
     const res = await fetch("https://www.nseindia.com/", {
       headers: { "User-Agent": UA, "Accept": "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9" },
+      signal: AbortSignal.timeout(8000),
     });
     // Collect all set-cookie name=value pairs.
     const raw = res.headers.get("set-cookie") ?? "";
@@ -37,6 +38,7 @@ async function nseApi(path: string): Promise<any | null> {
         Cookie: cookie,
       },
       next: { revalidate: 300 },
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return null;
     return await res.json();
@@ -50,7 +52,7 @@ export async function fetchNseEquityList(): Promise<string[]> {
   if (_eqList && Date.now() - _eqList.at < 24 * 3600 * 1000) return _eqList.list;
   try {
     const res = await fetch("https://archives.nseindia.com/content/equities/EQUITY_L.csv", {
-      headers: { "User-Agent": UA }, next: { revalidate: 86400 },
+      headers: { "User-Agent": UA }, next: { revalidate: 86400 }, signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return [];
     const text = await res.text();
@@ -74,10 +76,21 @@ export async function fetchNseInsider(symbol?: string): Promise<InsiderTrade[]> 
   const q = symbol ? `?index=equities&symbol=${encodeURIComponent(symbol.replace(/\.(NS|BO)$/i, ""))}` : `?index=equities`;
   const j = await nseApi(`/api/corporates-pit${q}`);
   const rows = j?.data ?? [];
+  // Classify BUY/SELL explicitly — the old `?? … != null ? …` chain mis-parsed
+  // (operator precedence) so any populated tdpTransactionType returned "BUY",
+  // hiding every sell/disposal disclosure.
+  const classify = (r: any): string => {
+    const t = String(r.tdpTransactionType ?? "").toLowerCase();
+    if (/acqui|buy|purchase/.test(t)) return "BUY";
+    if (/dispos|sell|sale/.test(t)) return "SELL";
+    if (r.buyValue != null) return "BUY";
+    if (r.sellValue != null) return "SELL";
+    return r.tdpTransactionType ? String(r.tdpTransactionType) : "—";
+  };
   return (Array.isArray(rows) ? rows : []).slice(0, 50).map((r: any) => ({
     symbol: r.symbol ?? symbol ?? "",
     person: r.acqName ?? r.name ?? "—",
-    type: r.tdpTransactionType ?? r.buyValue != null ? "BUY" : r.sellValue != null ? "SELL" : (r.tdpTransactionType ?? "—"),
+    type: classify(r),
     qty: r.secAcq != null ? Number(r.secAcq) : null,
     value: r.tdpValue != null ? Number(r.tdpValue) : null,
     date: r.date ?? r.acqfromDt ?? null,

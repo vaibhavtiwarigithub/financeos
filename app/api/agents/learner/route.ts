@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     // history today); India gets its own cohort + champion once it clears the same
     // 10+ closed-trade phase gate. `hasMarketCol` gates all market filters so this
     // degrades to the old US-only behavior pre-057.
-    const LEARN_MARKET = "us";
+    const LEARN_MARKET: "us" | "india" = "us";
     let hasMarketCol = true;
     { const { error } = await svc.from("paper_trades").select("market").limit(1); hasMarketCol = !error; }
     const scopeMkt = (q: any) => (hasMarketCol ? q.eq("market", LEARN_MARKET) : q);
@@ -81,8 +81,12 @@ export async function POST(req: NextRequest) {
     // definition — closing means deleting the row, see position-monitor's
     // closePosition) and no created_at (real column is opened_at). This
     // query silently errored on the old filter and always returned nothing.
+    // Phase A operates on THIS market's cohort only — otherwise an India position
+    // could be reassessed against a US signal (wrong market) or have its ₹ target
+    // logged as dollars.
+    const cur = (LEARN_MARKET as string) === "india" ? "₹" : "$";
     const positionReassessments: string[] = [];
-    const { data: openPositions } = await svc.from("paper_positions").select("*");
+    const { data: openPositions } = await scopeMkt(svc.from("paper_positions").select("*"));
 
     if (openPositions?.length) {
       for (const pos of openPositions) {
@@ -92,11 +96,11 @@ export async function POST(req: NextRequest) {
           ? (Date.now() - new Date(pos.target_updated_at).getTime()) / 86400_000 : 999;
         if (daysSince < 6) continue;
 
-        const { data: sig } = await svc.from("agent_signals")
+        const { data: sig } = await scopeMkt(svc.from("agent_signals")
           .select("analyst_score, direction")
           .eq("symbol", pos.symbol)
           .order("created_at", { ascending: false })
-          .limit(1).single();
+          .limit(1)).single();
 
         if (!sig) continue;
         if (sig.analyst_score < 40 || sig.direction === "short") {
@@ -105,7 +109,7 @@ export async function POST(req: NextRequest) {
         } else if (sig.analyst_score >= 65 && pos.price_target) {
           const newTarget = parseFloat((pos.price_target * 1.05).toFixed(2));
           await svc.from("paper_positions").update({ price_target: newTarget, target_updated_at: new Date().toISOString() }).eq("id", pos.id);
-          positionReassessments.push(`${pos.symbol}: target raised →$${newTarget}`);
+          positionReassessments.push(`${pos.symbol}: target raised →${cur}${newTarget}`);
         } else {
           await svc.from("paper_positions").update({ target_updated_at: new Date().toISOString() }).eq("id", pos.id);
         }
@@ -126,7 +130,7 @@ export async function POST(req: NextRequest) {
     // the trade row dangles). It never touches a trade whose position is still
     // open — that's a live holding the daily monitor manages.
     const cutoff = new Date(Date.now() - 14 * 86400_000).toISOString();
-    const { data: openTrades } = await svc.from("paper_trades").select("*").is("closed_at", null).lt("executed_at", cutoff);
+    const { data: openTrades } = await scopeMkt(svc.from("paper_trades").select("*").is("closed_at", null).lt("executed_at", cutoff));
 
     const outcomes: any[] = [];
     const priceFailures: string[] = [];

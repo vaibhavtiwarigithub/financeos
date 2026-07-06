@@ -18,13 +18,19 @@ const MarketCtx = createContext<Ctx>({ market: "us", setMarket: () => {}, indiaE
 export function MarketProvider({ children, indiaEnabled }: { children: ReactNode; indiaEnabled: boolean }) {
   const [market, setMarketState] = useState<Market>("us");
 
-  // Restore persisted choice on mount (only honor India if it's still enabled).
+  // Restore persisted choice on mount and keep state, localStorage AND the `mkt`
+  // cookie in agreement — otherwise server components (which read the cookie) can
+  // render US while the client shows India, or a stale India cookie survives after
+  // India is disabled in market_focus.
   useEffect(() => {
+    let saved: Market | null = null;
+    try { saved = localStorage.getItem("kairos_market") as Market | null; } catch { /* no localStorage */ }
+    const next: Market = saved === "india" && indiaEnabled ? "india" : "us";
+    setMarketState(next);
     try {
-      const saved = localStorage.getItem("kairos_market") as Market | null;
-      if (saved === "india" && indiaEnabled) setMarketState("india");
-      else setMarketState("us");
-    } catch { /* no localStorage */ }
+      localStorage.setItem("kairos_market", next);
+      document.cookie = `mkt=${next}; path=/; max-age=31536000; samesite=lax`;
+    } catch { /* ignore */ }
   }, [indiaEnabled]);
 
   const setMarket = (m: Market) => {

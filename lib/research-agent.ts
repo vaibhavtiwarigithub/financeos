@@ -830,7 +830,12 @@ export async function processSymbol(
   };
   {
     const { error } = await supabase.from("agent_signals").insert(signalRow);
-    if (error) { delete signalRow.market; await supabase.from("agent_signals").insert(signalRow); } // pre-057: no market column
+    // Strip `market` ONLY when the column is genuinely undefined (pre-057) — never
+    // on a transient/constraint error, which would silently drop the market tag.
+    const undefinedCol = error && (["42703", "PGRST204"].includes(String(error.code ?? "")) ||
+      /column .* does not exist|could not find the '.*' column/i.test(String(error.message ?? "")));
+    if (undefinedCol) { delete signalRow.market; await supabase.from("agent_signals").insert(signalRow); }
+    else if (error) { console.error("[research-agent] agent_signals insert failed:", error.message); }
   }
 
   // Append-only score history — the durable per-symbol score trajectory that
@@ -861,8 +866,13 @@ export async function processSymbol(
     market, // Phase 4: per-market score trajectory
   });
   if (scoreHistErr) {
-    const { error: fallbackErr } = await supabase.from("signal_score_history").insert(baseScoreRow);
-    if (fallbackErr) console.error("[research-agent] signal_score_history insert failed:", fallbackErr.message);
+    // Retry keeping the market tag (only the 055 self-explaining cols missing);
+    // fall to the bare base row only if that ALSO fails (pre-057, no market col).
+    const { error: e2 } = await supabase.from("signal_score_history").insert({ ...baseScoreRow, market });
+    if (e2) {
+      const { error: e3 } = await supabase.from("signal_score_history").insert(baseScoreRow);
+      if (e3) console.error("[research-agent] signal_score_history insert failed:", e3.message);
+    }
   }
 
   return {

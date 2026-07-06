@@ -8,23 +8,38 @@ export interface KillSwitchResult {
   tripped?: "daily_loss" | "accuracy" | "drawdown";
 }
 
-export async function checkKillSwitches(supabase: any): Promise<KillSwitchResult> {
+const START_NAV: Record<string, number> = { us: 10000, india: 1000000 };
+
+// Phase 4: kill-switches are evaluated PER MARKET. The daily-loss/drawdown/
+// accuracy inputs (paper_performance, paper_trades) MUST be scoped to one market
+// — mixing a ₹ NAV series with a $ one, or counting India trade outcomes toward
+// US accuracy, produces garbage trips. Callers pass the market being gated.
+// A helper that scopes a query to `market` but degrades to unscoped pre-057.
+async function scoped(q: any, market: string): Promise<any> {
+  const r = await q.eq("market", market);
+  if (r.error) return await q; // pre-057: no market column → unscoped (US-only world)
+  return r;
+}
+
+export async function checkKillSwitches(supabase: any, market: string = "us"): Promise<KillSwitchResult> {
+  const startNav = START_NAV[market] ?? 10000;
   const [
     { data: portfolio },
     { data: recentPerf },
     { data: closedTrades },
   ] = await Promise.all([
-    // Phase 4: US pool only — the kill-switch NAV/drawdown thresholds are USD. Post-057 an India ₹ row exists; reading ₹1,000,000 against USD thresholds would misfire. maybeSingle so a missing market column pre-057 yields null gracefully.
-    supabase.from("paper_portfolio").select("nav, updated_at").eq("market", "us").limit(1).maybeSingle(),
-    supabase.from("paper_performance").select("date, nav").order("date", { ascending: true }).limit(90),
-    supabase
-      .from("paper_trades")
-      .select("outcome, executed_at, realized_pnl")
-      .not("outcome", "is", null)
-      .gte("executed_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
+    supabase.from("paper_portfolio").select("nav, updated_at").eq("market", market).limit(1).maybeSingle(),
+    scoped(supabase.from("paper_performance").select("date, nav, market").order("date", { ascending: true }).limit(90), market),
+    scoped(
+      supabase.from("paper_trades")
+        .select("outcome, executed_at, realized_pnl, market")
+        .not("outcome", "is", null)
+        .gte("executed_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
+      market
+    ),
   ]);
 
-  const nav = portfolio?.nav ?? 10000;
+  const nav = portfolio?.nav ?? startNav;
 
   // --- Kill switch 1: single-day loss > 5% ---
   const today = new Date().toISOString().slice(0, 10);
@@ -51,7 +66,7 @@ export async function checkKillSwitches(supabase: any): Promise<KillSwitchResult
   // --- Kill switch 3: drawdown > 20% from peak ---
   if (recentPerf && recentPerf.length > 0) {
     const navHistory = recentPerf.map((p: any) => p.nav as number);
-    const peak = Math.max(...navHistory, 10000); // $10k = starting NAV
+    const peak = Math.max(...navHistory, startNav); // per-market starting NAV
     const drawdownPct = ((peak - nav) / peak) * 100;
     if (drawdownPct > 20) {
       await disableTrading(supabase, `Drawdown ${drawdownPct.toFixed(1)}% exceeds 20% from peak $${peak.toFixed(0)}`);

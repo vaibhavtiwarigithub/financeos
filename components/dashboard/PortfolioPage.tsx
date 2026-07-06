@@ -2,6 +2,7 @@
 import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import PageHeader from "@/components/dashboard/PageHeader";
+import { useMarket } from "@/lib/market-context";
 const BenchmarkChart = lazy(() => import("@/components/charts/BenchmarkChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
@@ -16,7 +17,6 @@ const T = {
 
 // Currency symbol per market — US pool is USD, India pool is INR. Never blend the two.
 const CURRENCY: Record<string, string> = { us: "$", india: "₹" };
-const MARKET_LABEL: Record<string, string> = { us: "🇺🇸 US", india: "🇮🇳 India" };
 
 function pnlColor(n: number) { return n >= 0 ? T.green : T.red; }
 function fmt(n: number, cur = "$") { return (n >= 0 ? "+" : "") + cur + Math.abs(n).toFixed(2); }
@@ -667,7 +667,7 @@ function PositionCard({ p, onChart, cur = "$" }: { p: any; onChart: (sym: string
   );
 }
 
-export default function PortfolioPage({ pools, positions: allPositions, trades: allTrades, perf: allPerf, signals, pendingSignals, strategy, tradeQueue }: {
+export default function PortfolioPage({ pools, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, strategy, tradeQueue: allTradeQueue }: {
   pools: any[]; positions: any[]; trades: any[]; perf: any[]; signals: any[];
   pendingSignals: any[]; strategy: any; tradeQueue: any[];
 }) {
@@ -677,21 +677,31 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
   const [vooReturn, setVooReturn] = useState<{ pct: number | null; loading: boolean }>({ pct: null, loading: true });
 
   // Phase 4: market-scoped pools. Each pool holds funds in its own currency
-  // (US=USD, India=INR) — NEVER blend a $ value with a ₹ value. Pre-057 there's
-  // one row with no market column: treat it as US (market ?? "us").
+  // (US=USD, India=INR) — NEVER blend a $ value with a ₹ value. Pre-057 rows
+  // have no market column: treat them as US (market ?? "us").
+  //
+  // The GLOBAL header switcher (DashboardShell → useMarket) is the SOLE market
+  // selector for this page — there is no page-local toggle. When India isn't
+  // enabled, useMarket() returns "us" and this page behaves exactly as the
+  // US-only original.
   const poolList = pools ?? [];
-  const hasIndia = poolList.some((p: any) => p.market === "india");
-  const [market, setMarket] = useState<"us" | "india">("us");
-  const activeMarket = market === "india" && hasIndia ? "india" : "us";
+  const { market } = useMarket();
+  const activeMarket = market === "india" ? "india" : "us";
   const cur = CURRENCY[activeMarket] ?? "$";
+  const inMarket = (row: any) => (row?.market ?? "us") === activeMarket;
   // Pick this market's pool; pre-057 (no market col) fall back to the sole row.
   const portfolio =
     poolList.find((p: any) => (p.market ?? "us") === activeMarket) ??
     (poolList.length === 1 && !poolList[0]?.market ? poolList[0] : null);
-  // Scope positions/trades/perf to the selected market (un-tagged rows = US).
-  const positions = (allPositions ?? []).filter((p: any) => (p.market ?? "us") === activeMarket);
-  const trades = (allTrades ?? []).filter((t: any) => (t.market ?? "us") === activeMarket);
-  const perf = (allPerf ?? []).filter((p: any) => (p.market ?? "us") === activeMarket);
+  // Scope EVERY market-tagged collection to the selected market (un-tagged = US).
+  const positions = (allPositions ?? []).filter(inMarket);
+  const trades = (allTrades ?? []).filter(inMarket);
+  const perf = (allPerf ?? []).filter(inMarket);
+  const signals = (allSignals ?? []).filter(inMarket);
+  const pendingSignals = (allPendingSignals ?? []).filter(inMarket);
+  // Trade queue is Robinhood-US only (no market column). Under the India view we
+  // show a "US only" note instead of leaking US rows; under US it renders as before.
+  const tradeQueue = activeMarket === "india" ? [] : (allTradeQueue ?? []);
 
   useEffect(() => {
     fetch("/api/charts/price-history?symbol=VOO&days=90")
@@ -741,27 +751,9 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
           <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "6px" }}>Paper Trading Portfolio</div>
           <h1 style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.02em" }}>Paper Portfolio</h1>
         </div>
-
-        {/* Market selector — only shows India when that ₹ pool exists (post-057).
-            US and India NAV are NEVER blended: each renders in its own currency. */}
-        {hasIndia && (
-          <div style={{ display: "flex", gap: "4px", background: T.card, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "3px" }}>
-            {(["us", "india"] as const).map(m => (
-              <button
-                key={m}
-                onClick={() => setMarket(m)}
-                style={{
-                  padding: "7px 16px", borderRadius: "7px", fontSize: "12px", fontWeight: 700,
-                  cursor: "pointer", border: "none",
-                  background: activeMarket === m ? T.accent : "transparent",
-                  color: activeMarket === m ? "#fff" : T.muted,
-                }}
-              >
-                {MARKET_LABEL[m]}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Market selection is driven by the global header switcher (DashboardShell
+            → useMarket). No page-local toggle here — US and India NAV are NEVER
+            blended: each renders in its own currency. */}
       </div>
 
       {/* Rich header: gauge cluster + key numbers + sparkline */}
@@ -935,13 +927,20 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
         </div>
       )}
 
-      {/* Trade Queue tab */}
+      {/* Trade Queue tab — Robinhood-US only. Under the India view there is no
+          equivalent order queue, so show a small note rather than US rows. */}
       {tab === "tradequeue" && (
-        <TradeQueueTab
-          pendingSignals={pendingSignals}
-          strategy={strategy}
-          tradeQueue={tradeQueue}
-        />
+        activeMarket === "india" ? (
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "32px", textAlign: "center", color: T.muted, fontSize: "13px" }}>
+            Trade Queue is US only — Robinhood order routing isn&apos;t available for the India (₹) pool.
+          </div>
+        ) : (
+          <TradeQueueTab
+            pendingSignals={pendingSignals}
+            strategy={strategy}
+            tradeQueue={tradeQueue}
+          />
+        )
       )}
 
       {/* Opportunity Cost tab */}
