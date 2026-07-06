@@ -208,6 +208,7 @@ Implementation notes: pure functions; fold logic operates on the `ts` field; def
 
 1. `npx tsc --noEmit` → exit 0.
 2. `npm run build` → compiles.
+2b. Unit tests (vitest — see improvement 1c in IMPLEMENTATION_SPEC_PHASE2_3.md): `walkForwardFolds` purge/embargo property (no train label-window overlaps its test window) + label math (fwd_return/MAE/MFE) on a hand-built candle fixture. `npm run test` → pass.
 3. Grep-verify (env glitch guard): `grep -c decision_observations lib/research-agent.ts` ≥ 1; `ls app/api/agents/label-maturation/route.ts`; `grep -c label-maturation scripts/run-agents.ps1 scripts/register-tasks.ps1` ≥ 1 each; `grep -c observation_ledger app/api/agents/learner/route.ts` ≥ 1.
 4. WITHOUT migrations applied, `POST /api/agents/research/cron?market=us` must behave exactly as before (observation insert fails soft).
 5. Hand the user: full paths of `059_decision_observations.sql` + `060_observation_labels.sql` to run in the Supabase SQL editor, and note to re-run `register-tasks.ps1`.

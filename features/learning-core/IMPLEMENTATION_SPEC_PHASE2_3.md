@@ -152,6 +152,21 @@ Auto-guard change (learner route): tripped guard blocks `update_signal_weight` L
 Ranked; each is a bounded task a basic model can execute against this description.
 
 1. **[P0] Transactional paper fills.** Review finding (accepted, deferred): fill = multiple unchecked writes. Create one Postgres RPC `execute_paper_fill(signal_id, market, qty, fill_price, ...)` (SECURITY DEFINER, migration `066`) doing claim→event→trade→position→cash in ONE transaction with `select ... for update` on the pool row; PaperTrader calls the RPC and falls back to the current JS sequence if the RPC is absent. Same for `close_paper_position`.
+
+1b. **[P0] Cron reliability = ledger integrity.** A missed research run (PC asleep/rebooting at trigger time) is no longer a convenience issue — it creates a HOLE in the decision-observation ledger and biases every downstream label/validation. Implement, in order of leverage:
+   - **Catch-up on wake:** all `\Kairos\` tasks already use `-StartWhenAvailable`; verify it is set on every task after re-registering (Get-ScheduledTask check documented in scripts/README.md).
+   - **Missed-run detector:** extend `app/api/alerts/stale-check` (runs every 4h) to compare today's expected agent runs (research us/india, paper-trade, position-monitor, label-maturation on weekdays) against `agent_runs`, and raise a red alert naming exactly which run is missing. The alert must state the recovery command (full path) to run manually.
+   - **Self-healing research:** in the research cron route, if the previous weekday has NO completed run for this market (query agent_runs), log a `gap_detected` note into the run's result_summary and write a `decision_journal` row (entry_type "cron_gap") so ledger gaps are journaled, queryable, and excluded from validation datasets later (Phase 2's dataset builder can filter days flagged as gaps).
+   - **(Optional, user choice)** second trigger 90 min after each primary (idempotency guards already make re-fires safe/no-op), halving the missed-window risk.
+
+1c. **[P0] Unit tests on money math.** There are currently ~zero automated tests guarding financial calculations; tsc+build cannot catch a wrong formula. Add `npm i -D vitest` (the ONE allowed new dev-dependency) + `npm run test` script, and cover at minimum, as pure-function tests:
+   - `computeFillPrice` / spread math (`lib/data/quotes.ts`)
+   - per-lot close P&L (extract the lot P&L computation from position-monitor into a pure helper `lib/paper/lot-math.ts` and test win/loss/breakeven, multi-lot, zero-cost edge cases)
+   - NAV = cash + Σ qty×price per market (extract to `lib/paper/nav-math.ts`, test currency isolation: mixing markets must throw)
+   - `kellyFraction` / `positionSizePct` bounds (Phase 2) — never exceeds cap, never negative, degrades to flat size without a model
+   - `walkForwardFolds` purge/embargo — no train row's label window overlaps its fold's test window (Phase 1)
+   - label math: fwd_return/MAE/MFE on a hand-built candle fixture
+   CI gate: `npm run test` must pass before any commit that touches these files; add to the acceptance-check lists of Phases 1 and 2.
 2. **[P1] Remaining execClaude call-sites.** ~7 non-order sites still spawn a text-completion subprocess that cannot call MCP tools (holdings/quotes/charts helpers). Replace each with direct REST (AV/FD/Yahoo) or delete if dead. Grep `execClaude(` to enumerate; port one at a time; each must keep its current output contract.
 3. **[P1] agent_runs.market column.** Migration `067`: add `market text default 'us'`; write it in every agent route that inserts agent_runs (research cron already infers it — store instead of inferring); replaces the symbols-based inference in the research idempotency guard.
 4. **[P2] NSE India-IP resilience.** If NSE stays geo-blocked from the US box: add `NSE_PROXY_URL` env support in `lib/nse-data.ts` (prefix all NSE calls when set). Doc-only until the user provides a proxy.
