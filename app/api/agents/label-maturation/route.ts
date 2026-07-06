@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchIndiaCandles } from "@/lib/india-data";
+import { computeLabel } from "@/lib/learning/label-math";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +12,6 @@ export const dynamic = "force-dynamic";
 // Fails soft everywhere — a missing table/candle never fails the whole run.
 
 const HORIZONS = [2, 5, 10, 20] as const;
-const COST_HAIRCUT = 0.001; // 10bps round-trip, matches spec
 
 // Approximate trading days as calendar days × 7/5, +1 buffer for weekends/holidays.
 function maturityCutoff(horizonDays: number): string {
@@ -91,12 +91,6 @@ async function runMaturation(marketScope: "us" | "india" | null) {
           const afterEntry = onOrAfter.filter(c => c.date > onOrAfter[0].date);
           if (afterEntry.length < horizonDays) { skipped++; return; } // not matured yet — next run
 
-          const window = afterEntry.slice(0, horizonDays);
-          const exitPrice = window[window.length - 1].close;
-          const fwdReturn = (exitPrice - entryPrice) / entryPrice - COST_HAIRCUT;
-          const mae = Math.min(...window.map(c => (c.low - entryPrice) / entryPrice), 0);
-          const mfe = Math.max(...window.map(c => (c.high - entryPrice) / entryPrice), 0);
-
           // Benchmark: SPY for us, ^NSEI for india, same window.
           let benchmarkReturn: number | null = null;
           try {
@@ -111,16 +105,19 @@ async function runMaturation(marketScope: "us" | "india" | null) {
             }
           } catch { /* benchmark optional — label still inserted */ }
 
+          const label = computeLabel(entryPrice, afterEntry, horizonDays, benchmarkReturn);
+          if (!label) { skipped++; return; }
+
           const { error: insErr } = await svc.from("observation_labels").upsert({
             observation_id: obs.id,
             horizon_days: horizonDays,
-            fwd_return: fwdReturn,
+            fwd_return: label.fwdReturn,
             benchmark_return: benchmarkReturn,
-            benchmark_neutral_return: benchmarkReturn != null ? fwdReturn - benchmarkReturn : null,
-            max_adverse_excursion: mae,
-            max_favorable_excursion: mfe,
-            entry_price: entryPrice,
-            exit_price: exitPrice,
+            benchmark_neutral_return: label.benchmarkNeutralReturn,
+            max_adverse_excursion: label.maxAdverseExcursion,
+            max_favorable_excursion: label.maxFavorableExcursion,
+            entry_price: label.entryPrice,
+            exit_price: label.exitPrice,
           }, { onConflict: "observation_id,horizon_days" });
           if (insErr) { skipped++; return; }
           matured++;
