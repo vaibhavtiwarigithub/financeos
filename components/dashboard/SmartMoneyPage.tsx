@@ -57,6 +57,7 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
   const router = useRouter();
   const [tab, setTab] = useState<"queue" | "insider" | "form4" | "signals" | "classes">("queue");
   const [acting, setActing] = useState<string | null>(null);
+  const [sendingToAlpaca, setSendingToAlpaca] = useState<string | null>(null);
   const [actionResult, setActionResult] = useState<string | null>(null);
 
   // Form 4 / EDGAR state
@@ -112,8 +113,11 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  const pending = tradeQueue.filter(t => t.status === "pending_approval");
-  const decided = tradeQueue.filter(t => t.status !== "pending_approval");
+  // trade_proposals' real pending status is "pending_review" (matches
+  // /api/agents/trader's insert). "pending_approval" checked too for any
+  // stale/legacy rows — harmless, never the actual value going forward.
+  const pending = tradeQueue.filter(t => t.status === "pending_review" || t.status === "pending_approval");
+  const decided = tradeQueue.filter(t => t.status !== "pending_review" && t.status !== "pending_approval");
 
   // Signal breakdown by asset class
   const byClass: Record<string, any[]> = {};
@@ -138,6 +142,28 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
       setActionResult("Error: " + e.message);
     }
     setActing(null);
+  }
+
+  // Execution Gateway (spec Part A) — sends an APPROVED proposal to Alpaca
+  // paper trading. Live-env sending is gated server-side by trading_enabled;
+  // this UI only ever fires the "paper" env (real-money live orders are a
+  // separate, explicitly-confirmed flow, not wired here).
+  async function handleSendToAlpaca(proposalId: string) {
+    if (!window.confirm(`Send this order to Alpaca (paper account)?`)) return;
+    setSendingToAlpaca(proposalId);
+    try {
+      const res = await fetch("/api/broker/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposal_id: parseInt(proposalId, 10), env: "paper" }),
+      });
+      const d = await res.json();
+      setActionResult(d.error ? `Error: ${d.error}` : `Sent to Alpaca — order ${d.broker_order_id ?? d.order_id}`);
+      router.refresh();
+    } catch (e: any) {
+      setActionResult("Error: " + e.message);
+    }
+    setSendingToAlpaca(null);
   }
 
   async function handleReject(tradeId: string) {
@@ -296,7 +322,19 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
                             {t.status}
                           </span>
                         </td>
-                        <td style={{ padding: "8px 0", color: T.muted, fontSize: "11px" }}>{timeAgo(t.created_at)}</td>
+                        <td style={{ padding: "8px 0", color: T.muted, fontSize: "11px" }}>
+                          {timeAgo(t.created_at)}
+                          {/* Execution Gateway: paper-only send button for approved-not-yet-executed proposals. */}
+                          {t.status === "approved" && (
+                            <button
+                              onClick={() => handleSendToAlpaca(t.id)}
+                              disabled={sendingToAlpaca === t.id}
+                              title="Sends this order to your Alpaca PAPER account via the Execution Gateway"
+                              style={{ marginLeft: "8px", padding: "3px 10px", background: T.accent + "18", border: `1px solid ${T.accent}40`, borderRadius: "6px", color: T.accent, fontSize: "10px", fontWeight: 600, cursor: sendingToAlpaca === t.id ? "default" : "pointer" }}>
+                              {sendingToAlpaca === t.id ? "Sending…" : "→ Alpaca (paper)"}
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

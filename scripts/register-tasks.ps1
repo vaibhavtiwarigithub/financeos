@@ -101,6 +101,15 @@ $backupTask     = New-ScheduledTask -Action $backupAction -Trigger $backupTrigge
 Register-ScheduledTask -TaskName "$TaskFolder\db-backup" -InputObject $backupTask -Force | Out-Null
 Write-Host "Registered: $TaskFolder\db-backup  -> nightly pg_dump at 3:00 AM"
 
+# Execution Gateway: sync every 30 min during market hours (9:30 AM - 4:00 PM ET).
+$syncBase = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At "9:30AM"
+$syncBase.Repetition = (New-ScheduledTaskTrigger -Once -At "9:30AM" -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration (New-TimeSpan -Hours 6.5)).Repetition
+$syncAction   = New-ScheduledTaskAction -Execute $PSExe -Argument "$PSArgs broker-sync"
+$syncSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
+$syncTask     = New-ScheduledTask -Action $syncAction -Trigger $syncBase -Settings $syncSettings -Description "Kairos: Alpaca order sync + reconciliation (every 30min, market hours)"
+Register-ScheduledTask -TaskName "$TaskFolder\broker-sync" -InputObject $syncTask -Force | Out-Null
+Write-Host "Registered: $TaskFolder\broker-sync  -> every 30 min, weekdays 9:30am-4pm"
+
 Write-Host ""
 Write-Host "Done. All Kairos tasks registered under \$TaskFolder in Task Scheduler."
 Write-Host "Verify with: Get-ScheduledTask -TaskPath `"\$TaskFolder\`""

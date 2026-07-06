@@ -37,11 +37,17 @@ export default async function Page() {
       return q.order("analyst_score", { ascending: false }).limit(60);
     }),
     selectScoped<any[]>((applyMarket) => {
+      // trade_proposals — the table /api/agents/trader (approve/reject) and the
+      // Execution Gateway actually operate on. (The old `trade_queue` table this
+      // used to read from was a separate, never-populated table with uuid ids —
+      // parseInt(uuid) in handleApprove silently sent proposal_id:null, so
+      // Approve/Reject never worked against it. Fixed to point at the real
+      // table.) Aliased to the column names the UI already expects.
       let q = svc
-        .from("trade_queue")
-        .select("*")
-        .in("status", ["pending_approval", "approved", "executed", "rejected"]);
-      if (applyMarket) q = q.eq("market", market);
+        .from("trade_proposals")
+        .select("id, symbol, order_side:side, qty, limit_price, analyst_score, rationale:thesis, status, created_at, account_number")
+        .in("status", ["pending_review", "approved", "executed", "rejected", "pending_approval"]);
+      if (applyMarket) q = q.eq("market", market); // no market column on trade_proposals yet — resiliently falls back unscoped
       return q.order("created_at", { ascending: false }).limit(30);
     }),
     selectScoped<any[]>((applyMarket) => {

@@ -47,6 +47,8 @@ $endpoints = @{
   "label-maturation" = @{ method="POST"; url="$BASE/api/agents/label-maturation"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}"; timeoutSec=300 }
   # Phase 2 learning-core: weekly refit of the calibrated P(win) sizing model (dormant until 60+ matured labels).
   "fit-calibration" = @{ method="POST"; url="$BASE/api/validation/fit-calibration"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}"; timeoutSec=120 }
+  # Execution Gateway: polls Alpaca for order-status updates + position reconciliation.
+  "broker-sync" = @{ method="POST"; url="$BASE/api/broker/orders/sync"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}"; timeoutSec=60 }
   # Nightly full-NSE pre-score cache (india_screen_cache). Rotates ~600 names/run,
   # oldest-scored-first, so the India scanner reads the whole market. Runs before
   # research-india (6:15 AM) so candidates draw from a fresh cache.

@@ -20,6 +20,20 @@
 
 ---
 
+## ✅ Session 2026-07-06 (Execution Gateway — Alpaca paper orders + fixed a discovered Trade Queue bug)
+
+> Built the paper-stage of the Execution Gateway (spec Part A) and, in the same change, fixed a pre-existing (empty-table, no real-data-loss) bug: the Trade Queue UI read a dead `trade_queue` table while Approve/Reject/the Gateway all use `trade_proposals`. See **Decision 36**.
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Alpaca order adapter | Claude | 2026-07-06 | `lib/brokers/alpaca-orders.ts` — submit/get/cancel, reuses the existing vault-key pattern from `lib/brokers/alpaca.ts`. |
+| broker_orders lifecycle + routes | Claude | 2026-07-06 | Migration 068. `POST /api/broker/orders` (human-click only, live gated on trading_enabled) + `/sync` (30-min cron, position reconciliation + alert). |
+| Fixed trade_queue/trade_proposals mismatch | Claude | 2026-07-06 | Repointed the Smart Money page's query to the real table (`trade_proposals`) and the correct pending status (`pending_review`). Approve/Reject now actually functional; both tables confirmed empty in prod, so no real data was ever affected. See Decision 36. |
+| "Send to Alpaca (paper)" UI | Claude | 2026-07-06 | Button on approved proposals in the Trade Queue history table. Confirm dialog, paper-env only from this UI. |
+| system-map.json — GATEWAY node | Claude | 2026-07-06 | New node; REALORDER description clarified as Robinhood-specific. |
+
+---
+
 ## ✅ Session 2026-07-06 (Learning-core Phase 2 — Validation Engine + calibrated Kelly sizing + transactional fill RPC, all verified live)
 
 > Validated live via the reconnected Supabase MCP: migrations 061/062 applied, `execute_paper_fill` RPC tested end-to-end (disposable signal, all 5 writes landed atomically, then fully reversed). See **Decision 35** (Validation Engine + sizing) and **Decision 34** (transactional-fill RPC + the pre-existing signal_id bug it uncovered).
