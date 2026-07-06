@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchQuote } from "@/lib/market-data";
 import { runAgentLoop, ToolCall } from "@/lib/llm-router";
+import { loadLabeledDataset } from "@/lib/learning/dataset";
 
 export const dynamic = "force-dynamic";
 
@@ -241,6 +242,35 @@ export async function POST(req: NextRequest) {
               return JSON.stringify({ skipped: true, reason: `Dimension ${dimension} is disabled in learner_config — turned off by user` });
             }
 
+            // Phase 1 learning-core: PREFER the decision-observation ledger — it
+            // covers every scored candidate (not just fills), is joined by
+            // horizon-matured labels, and uses benchmark_neutral_return (alpha,
+            // not raw P&L which mixes in market beta). Falls back to the legacy
+            // paper_trades join when the ledger has too few matured rows yet
+            // (fresh install / before migrations 059/060 are applied).
+            try {
+              const ledgerRows = await loadLabeledDataset(svc, LEARN_MARKET, 10);
+              if (ledgerRows.length >= 10) {
+                const ledgerPairs = ledgerRows
+                  .map(r => ({ score: (r as any)[dimension] as number | null, pnl: r.benchmark_neutral_return ?? r.fwd_return }))
+                  .filter(p => p.score != null && p.pnl != null) as { score: number; pnl: number }[];
+                if (ledgerPairs.length >= 10) {
+                  const n = ledgerPairs.length;
+                  const meanScore = ledgerPairs.reduce((a, b) => a + b.score, 0) / n;
+                  const meanPnl = ledgerPairs.reduce((a, b) => a + b.pnl, 0) / n;
+                  const num = ledgerPairs.reduce((a, b) => a + (b.score - meanScore) * (b.pnl - meanPnl), 0);
+                  const denScore = Math.sqrt(ledgerPairs.reduce((a, b) => a + Math.pow(b.score - meanScore, 2), 0));
+                  const denPnl = Math.sqrt(ledgerPairs.reduce((a, b) => a + Math.pow(b.pnl - meanPnl, 2), 0));
+                  const correlation = denScore * denPnl === 0 ? 0 : parseFloat((num / (denScore * denPnl)).toFixed(3));
+                  return JSON.stringify({
+                    source: "observation_ledger", horizon_days: 10, dimension, n, correlation,
+                    interpretation: correlation > 0.3 ? "positive — higher score = better benchmark-neutral return" : correlation < -0.3 ? "negative — higher score = worse benchmark-neutral return (consider reducing weight)" : "weak/no correlation",
+                    caveat: "INTERIM: univariate correlation on all scored candidates (incl. rejected). Phase 2 replaces this with a regularized multivariate walk-forward fit + validation gate before any weight change is trusted.",
+                  });
+                }
+              }
+            } catch { /* ledger unavailable (059/060 not applied) — fall through to legacy path */ }
+
             const { data: signals } = await scopeMkt(svc.from("agent_signals")
               .select(`id, ${dimension}, created_at`)
               .gte("created_at", since).not(dimension, "is", null).limit(100));
@@ -268,7 +298,7 @@ export async function POST(req: NextRequest) {
             const denScore = Math.sqrt(pairs.reduce((a, b) => a + Math.pow(b.score - meanScore, 2), 0));
             const denPnl = Math.sqrt(pairs.reduce((a, b) => a + Math.pow(b.pnl - meanPnl, 2), 0));
             const correlation = denScore * denPnl === 0 ? 0 : parseFloat((num / (denScore * denPnl)).toFixed(3));
-            return JSON.stringify({ dimension, n, correlation, interpretation: correlation > 0.3 ? "positive — higher score = better P&L" : correlation < -0.3 ? "negative — higher score = worse P&L (consider reducing weight)" : "weak/no correlation" });
+            return JSON.stringify({ source: "paper_trades_fallback", dimension, n, correlation, interpretation: correlation > 0.3 ? "positive — higher score = better P&L" : correlation < -0.3 ? "negative — higher score = worse P&L (consider reducing weight)" : "weak/no correlation" });
           }
 
           case "query_macro_context": {
@@ -458,6 +488,8 @@ export async function POST(req: NextRequest) {
               wins, losses, avg_outcome_score: parseFloat(avgScore.toFixed(2)),
               regime_breakdown: regimeBreakdown,
               decisions: (decisions ?? []).slice(0, 30),
+              role: "behavioral_evidence_only",
+              note: "Personal trade history is quarantined from alpha: it may inspire hypotheses but CANNOT satisfy n_trades or justify update_signal_weight. Any market-wide claim drawn from it must be re-tested against query_score_correlation / the observation ledger before it can support a weight change.",
             });
           }
 
@@ -498,7 +530,11 @@ export async function POST(req: NextRequest) {
               return JSON.stringify({ error: `Semantic search failed: ${sqlErr.message}. If no embeddings exist yet, run POST /api/live-portfolio/embed first.`, query: queryText });
             }
 
-            return JSON.stringify({ query: queryText, top_k: topK, results: rows ?? [] });
+            return JSON.stringify({
+              query: queryText, top_k: topK, results: rows ?? [],
+              role: "behavioral_evidence_only",
+              note: "Personal trade history is quarantined from alpha: it may inspire hypotheses but CANNOT satisfy n_trades or justify update_signal_weight.",
+            });
           }
 
           case "finish": {
@@ -549,6 +585,8 @@ flowchart TD
   INPUTS --> ANALYSIS --> HYPOTHESES --> MUTATIONS
 
 Always show real numbers. Never say "see DB" — embed the actual values.
+
+Personal trade history (query_trade_decisions / semantic_search_decisions) is BEHAVIORAL evidence only — never cite it as justification for update_signal_weight. Only query_score_correlation (observation ledger or paper-trades fallback) may support a weight change.
 
 REASONING APPROACH:
 1. Start with read_priors to load background market knowledge

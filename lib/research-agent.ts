@@ -823,8 +823,12 @@ export async function processSymbol(
     status: "pending",
     source,
     rationale: (thesis.summary ?? `Score: ${analystScore}/100`) + directionNote,
-    price_target: null, // PaperTrader sets targets at fill time using real price
-    stop_loss:    null,
+    // NOTE: no price_target / stop_loss here — those columns don't exist on
+    // agent_signals (only stop_loss_pct / take_profit_pct do). Including them made
+    // every PostgREST insert fail with PGRST204, and the undefined-column recovery
+    // below only strips `market`, so the retry failed too and the signal was
+    // silently dropped — zeroing out the whole pipeline. PaperTrader sets targets
+    // at fill time from the real price anyway.
     asset_class:  assetClass,
     market, // Phase 4: routes the signal to its market's paper pool + champion
   };
@@ -874,6 +878,45 @@ export async function processSymbol(
       if (e3) console.error("[research-agent] signal_score_history insert failed:", e3.message);
     }
   }
+
+  // Phase 1 learning-core: immutable decision observation for EVERY scored
+  // candidate (filled or rejected) — the point-in-time ground truth the learner
+  // will train on. Fail-soft: a missing table (059 not applied) must never fail
+  // a research run.
+  try {
+    const availability_mask = {
+      fundamental: scores.dataQuality?.fundamentalDataAvailable ?? !(scores.evidence?.fundamental as any)?.note,
+      technical:   (scores.dataQuality?.technicalDataPoints ?? 0) > 0,
+      sentiment:   scores.dataQuality?.sentimentDataAvailable ?? !(scores.evidence?.sentiment as any)?.note,
+      macro:       scores.dataQuality?.macroDataAvailable ?? !(scores.evidence?.macro as any)?.note,
+      insider:     scores.dataQuality?.insiderDataAvailable ?? !(scores.evidence?.insider as any)?.note,
+    };
+    const { error: obsErr } = await supabase.from("decision_observations").insert({
+      market,
+      symbol,
+      strategy_version_id: null,            // filled when champion row id is loaded; else null
+      weights_used: { fundamental: fw, technical: tw, sentiment: sw, macro: mw, insider: iw },
+      used_champion: usingChampion,
+      features: scores.evidence ?? {},
+      availability_mask,
+      analyst_score: analystScore,
+      fundamental_score: scores.fundamental_score,
+      technical_score: scores.technical_score,
+      sentiment_score: scores.sentiment_score,
+      macro_score: scores.macro_score,
+      insider_score: scores.insider_score,
+      direction: signalDirection,
+      entry_eligible: signalDirection === "long" && analystScore >= (scoreThreshold ?? 60),
+      action: "signal_written",             // this code path always writes a signal today
+      score_threshold: scoreThreshold ?? 60,
+      price_at_decision: null,              // PaperTrader fetches price at fill time; not known here
+      currency: market === "india" ? "INR" : "USD",
+      signal_id: null,                      // agent_signals insert doesn't return id today — Phase 2 wires it
+    });
+    if (obsErr && !/does not exist|could not find/i.test(obsErr.message ?? "")) {
+      console.error("[research-agent] decision_observations insert failed:", obsErr.message);
+    }
+  } catch (e) { console.error("[research-agent] observation write threw:", e); }
 
   return {
     symbol,

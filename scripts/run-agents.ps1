@@ -43,6 +43,8 @@ $endpoints = @{
   # research chains its own ?market=india paper-trade automatically.
   "research-india"         = @{ method="POST"; url="$BASE/api/agents/research/cron?market=india";    headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "position-monitor-india" = @{ method="POST"; url="$BASE/api/agents/position-monitor?market=india"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
+  # Phase 1 learning-core: nightly maturation of decision_observations -> observation_labels.
+  "label-maturation" = @{ method="POST"; url="$BASE/api/agents/label-maturation"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}"; timeoutSec=300 }
   # Nightly full-NSE pre-score cache (india_screen_cache). Rotates ~600 names/run,
   # oldest-scored-first, so the India scanner reads the whole market. Runs before
   # research-india (6:15 AM) so candidates draw from a fresh cache.

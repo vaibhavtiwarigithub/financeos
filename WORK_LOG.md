@@ -20,6 +20,22 @@
 
 ---
 
+## ✅ Session 2026-07-06 (Learning-core Phase 1 — decision ledger + matured horizon labels)
+
+> An independent architecture review (Codex) found LearnerAgent's dataset statistically untrustworthy: signal→trade join by symbol (collision-prone), label = policy P&L on filled-longs-only (selection bias, mixes alpha with beta/holding-time/exits), no valid out-of-sample evaluation. This is the keystone fix everything else (validation engine, calibrated sizing, genome, shadow A/B — see `features/learning-core/`) is built on. See **Decision 33**.
+> **⚠️ OPEN ITEM: migrations `059_decision_observations.sql` + `060_observation_labels.sql` must be applied MANUALLY in the Supabase SQL editor** — Supabase MCP permission-denied this session. Everything is guarded/additive: the app behaves byte-for-byte unchanged until they land, then the ledger starts accruing automatically.
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Migrations 059/060 — decision ledger + labels | Claude | 2026-07-06 | `decision_observations` (append-only via trigger; one row per scored candidate, filled or rejected — raw `computeScores().evidence`, availability mask, weights used, score, action) + `observation_labels` (forward 2/5/10/20-trading-day `fwd_return`/`benchmark_neutral_return`/MAE/MFE, written only after horizon maturity). **NOT auto-applied — user must run both in the Supabase SQL editor.** See Decision 33. |
+| ResearchAgent — observation write | Claude | 2026-07-06 | `lib/research-agent.ts` writes a `decision_observations` row for every scored candidate (fail-soft if 059 absent). Captures the full raw feature blob at zero refactor cost — future-proofs Phase 3 feature discovery. See Decision 33. |
+| Label-maturation cron | Claude | 2026-07-06 | New `app/api/agents/label-maturation/route.ts` (nightly, 6:00 PM ET) matures each horizon once enough calendar time has passed; US prices from `price_cache`, India from `fetchIndiaCandles`; benchmark = SPY (US) / `^NSEI` (India); 10bps cost haircut on `fwd_return`. Registered in `run-agents.ps1` + `register-tasks.ps1`. See Decision 33. |
+| Walk-forward dataset builder | Claude | 2026-07-06 | `lib/learning/dataset.ts` — `loadLabeledDataset` (ledger×labels join) + `walkForwardFolds` (pure function: purge = drop train rows whose label window overlaps the test window; embargo = skip a horizon's worth of time after each test window). Read-only; Phase 2's validation engine consumes it. See Decision 33. |
+| LearnerAgent — ledger-first correlation + personal-history quarantine | Claude | 2026-07-06 | `query_score_correlation` now reads the ledger FIRST (all scored candidates, horizon-aligned, benchmark-neutral — not just fills/policy-P&L), tagged `source: "observation_ledger"` with an explicit INTERIM caveat; falls back to the legacy paper-trades path (now correctly joined by `signal_id`, not symbol) while the ledger is thin. `query_trade_decisions`/`semantic_search_decisions` (10yr personal history) now return `role: "behavioral_evidence_only"` — cannot satisfy `n_trades` or justify `update_signal_weight`. System prompt updated to state this explicitly. See Decision 33. |
+| system-map.json — LEDGER node | Claude | 2026-07-06 | New `LEDGER` node (RESEARCH → LEDGER → LEARNER) documenting the ledger's role as the ground truth for the learning/evolution roadmap. See Decision 33. |
+
+---
+
 ## ✅ Session 2026-07-05 (Phase 5 — India parity: global switcher + support registry + direct NSE feeds)
 
 > India goes from paper-trading/self-learning (Phase 4) to **first-class across the whole dashboard**, behind a global market switcher, with an honest per-page coverage badge. Direct NSE feeds lift the two remaining free-data ceilings (full-market scan + India insider/options), failing soft to Yahoo/NIFTY-100. See **Decision 32**.

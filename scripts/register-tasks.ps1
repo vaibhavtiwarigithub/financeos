@@ -37,6 +37,8 @@ $tasks = @(
   @{ Name="nav-snapshot";     Trigger=(WeekdayTrigger "5:00PM");  Agent="nav-snapshot"     },
   @{ Name="rescore";          Trigger=(WeekdayTrigger "4:45PM");  Agent="rescore"           },
   @{ Name="embed";            Trigger=(WeekdayTrigger "4:50PM");  Agent="embed"             },
+  # Phase 1 learning-core: nightly label maturation (after market data settles).
+  @{ Name="label-maturation"; Trigger=(WeekdayTrigger "6:00PM");  Agent="label-maturation"  },
   @{ Name="learner";          Trigger=(FridayTrigger  "5:00PM");  Agent="learner"           },
   @{ Name="mentor-coach";     Trigger=(FridayTrigger  "5:15PM");  Agent="mentor-coach"      }
 )
@@ -50,7 +52,7 @@ try { $root.GetFolder($TaskFolder) | Out-Null }
 catch { $root.CreateFolder($TaskFolder) | Out-Null; Write-Host "Created folder \$TaskFolder" }
 
 # Per-agent execution time limits (minutes). embed can run a large first backfill.
-$timeLimits = @{ "embed" = 10; "learner" = 15; "scan-india-refresh" = 10 }
+$timeLimits = @{ "embed" = 10; "learner" = 15; "scan-india-refresh" = 10; "label-maturation" = 10 }
 function TimeLimitFor([string]$agent) {
   if ($timeLimits.ContainsKey($agent)) { return $timeLimits[$agent] } else { return 5 }
 }

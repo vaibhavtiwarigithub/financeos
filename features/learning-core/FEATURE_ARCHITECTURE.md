@@ -1,6 +1,6 @@
-# Learning Core Rebuild — Feature Architecture (DRAFT)
+# Learning Core Rebuild — Feature Architecture
 
-**Status:** DRAFT — Phase 1 pending approval (2026-07-06)
+**Status:** Phase 1 BUILT, pending migration apply (2026-07-06). Phases 2/3 + Execution Gateway + Portfolio Constructor specced, build in progress per approval "go build all".
 **Origin:** Codex agent-architecture review (`CODEX_AGENT_REVIEW_RESULT.md`). Verdict: Kairos is a governed adaptive *scoring* system, not yet self-evolving. Blocker: no point-in-time, policy-aware, out-of-sample validation that proves a change *causes* reproducible improvement.
 
 **Goal:** Turn the learning plane into a statistically trustworthy, self-evolving engine — the "world-class evolving quant agent" bar — without weakening the existing control plane (deterministic scores, immutable challengers, per-market champions, human live-capital gate).
