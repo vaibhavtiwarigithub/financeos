@@ -271,59 +271,106 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // Append-only fill event. NOTE: paper_order_events has `market` but NO
-      // `currency` column (057 only added market there) — currency is carried on
-      // paper_trades/paper_positions. Optional col that may be missing pre-057: market.
-      const eventRow: Record<string, any> = {
-        event_type: "fill", symbol: signal.symbol, side: "buy", qty,
-        fill_price: fillPrice, total_value: totalCost, price_source: source,
-        price_retrieved_at: retrievedAt, bid_at_fill: bid, ask_at_fill: ask,
-        spread_applied: spread, signal_id: signal.id, analyst_score: signal.analyst_score,
-        strategy_id: signal.source ?? "research", notes: signal.rationale?.slice(0, 500) ?? null,
-        market,
-      };
-      const evRes = await insertOptional("paper_order_events", eventRow, ["market"], "id");
-      if (evRes.error) { // real (non-column) failure — skip the fill rather than record a mis-tagged event
-        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
-        skipped.push({ symbol: signal.symbol, reason: `order_event_failed: ${evRes.error.message}` });
-        continue;
+      // Transactional fill: try the execute_paper_fill RPC first (one DB
+      // transaction, row-locked — see migration 071 / Decision 34). Falls back
+      // to the original multi-step JS sequence if the RPC is absent (pre-071).
+      let orderEventId: any = null;
+      let rpcSucceeded = false;
+      {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc("execute_paper_fill", {
+          p_signal_id: signal.id, p_market: market, p_currency: currency, p_symbol: signal.symbol,
+          p_qty: qty, p_fill_price: fillPrice, p_total_cost: totalCost, p_price_source: source,
+          p_price_retrieved_at: retrievedAt, p_bid: bid, p_ask: ask, p_spread: spread,
+          p_analyst_score: signal.analyst_score, p_strategy_id: signal.source ?? "research",
+          p_notes: signal.rationale?.slice(0, 500) ?? null,
+          p_rationale: `${signal.rationale ?? ""} [source: ${source}, at: ${retrievedAt}]`,
+          p_price_target: priceTarget, p_stop_loss: stopLoss, p_sector: candSector,
+        } as any);
+        const rpcMissing = rpcErr && (String((rpcErr as any).code ?? "") === "PGRST202" ||
+          /could not find the function|does not exist/i.test(String(rpcErr.message ?? "")));
+        if (rpcErr && !rpcMissing) {
+          await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+          skipped.push({ symbol: signal.symbol, reason: `rpc_fill_failed: ${rpcErr.message}` });
+          continue;
+        }
+        if (!rpcErr) {
+          const result = rpcData as any;
+          if (!result?.ok) {
+            await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+            skipped.push({ symbol: signal.symbol, reason: `rpc_fill_denied: ${result?.error ?? "unknown"}` });
+            continue;
+          }
+          orderEventId = result.event_id;
+          rpcSucceeded = true;
+          if (candSector && !bookByMarket.get(market)?.some(b => b.symbol === signal.symbol)) {
+            sectorCount[candSector] = (sectorCount[candSector] ?? 0) + 1;
+          }
+        }
       }
-      const orderEvent = evRes.data;
 
-      // paper_trades (market + currency tagged; strip only genuinely-missing cols)
-      const tradeRow: Record<string, any> = {
-        symbol: signal.symbol, order_side: "buy", qty, fill_price: fillPrice,
-        signal_id: signal.id, analyst_score: signal.analyst_score, direction: "long",
-        rationale: `${signal.rationale ?? ""} [source: ${source}, at: ${retrievedAt}]`,
-        fundamental_score: null, technical_score: null, sentiment_score: null, macro_score: null,
-        price_source: source, price_retrieved_at: retrievedAt, spread_applied: spread,
-        paper_event_id: (orderEvent as any)?.id ?? null, market, currency,
-      };
-      const trRes = await insertOptional("paper_trades", tradeRow, ["currency", "market"]);
-      if (trRes.error) {
-        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
-        skipped.push({ symbol: signal.symbol, reason: `trade_insert_failed: ${trRes.error.message}` });
-        continue;
-      }
-
-      // Position upsert (per market, so same symbol in two markets never collides)
-      let existingQ = supabase.from("paper_positions").select("*").eq("symbol", signal.symbol);
-      if (hasMarketCol) existingQ = existingQ.eq("market", market);
-      const { data: existing } = await existingQ.maybeSingle();
-
-      if (existing) {
-        const newQty = existing.qty + qty;
-        const newAvg = ((existing.qty * existing.avg_cost) + totalCost) / newQty;
-        await supabase.from("paper_positions").update({ qty: newQty, avg_cost: newAvg, current_price: fillPrice }).eq("id", existing.id);
-      } else {
-        const newPosRow: Record<string, any> = {
-          symbol: signal.symbol, qty, avg_cost: fillPrice, current_price: fillPrice,
-          price_target: priceTarget, stop_loss: stopLoss, highest_price: fillPrice,
-          sector: candSector, market, currency,
+      if (!rpcSucceeded) {
+        // ── Legacy fallback path (pre-071 migration) — unchanged behavior ──
+        const eventRow: Record<string, any> = {
+          event_type: "fill", symbol: signal.symbol, side: "buy", qty,
+          fill_price: fillPrice, total_value: totalCost, price_source: source,
+          price_retrieved_at: retrievedAt, bid_at_fill: bid, ask_at_fill: ask,
+          spread_applied: spread, signal_id: signal.id, analyst_score: signal.analyst_score,
+          strategy_id: signal.source ?? "research", notes: signal.rationale?.slice(0, 500) ?? null,
+          market,
         };
-        // Strip only genuinely-missing optional cols (sector=056, market/currency=057).
-        await insertOptional("paper_positions", newPosRow, ["sector", "currency", "market"]);
-        if (candSector) sectorCount[candSector] = (sectorCount[candSector] ?? 0) + 1;
+        const evRes = await insertOptional("paper_order_events", eventRow, ["market"], "id");
+        if (evRes.error) {
+          await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+          skipped.push({ symbol: signal.symbol, reason: `order_event_failed: ${evRes.error.message}` });
+          continue;
+        }
+        const orderEvent = evRes.data;
+        orderEventId = (orderEvent as any)?.id ?? null;
+
+        const tradeRow: Record<string, any> = {
+          symbol: signal.symbol, order_side: "buy", qty, fill_price: fillPrice,
+          signal_id: signal.id, analyst_score: signal.analyst_score, direction: "long",
+          rationale: `${signal.rationale ?? ""} [source: ${source}, at: ${retrievedAt}]`,
+          fundamental_score: null, technical_score: null, sentiment_score: null, macro_score: null,
+          price_source: source, price_retrieved_at: retrievedAt, spread_applied: spread,
+          paper_event_id: orderEventId, market, currency,
+        };
+        const trRes = await insertOptional("paper_trades", tradeRow, ["currency", "market"]);
+        if (trRes.error) {
+          await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+          skipped.push({ symbol: signal.symbol, reason: `trade_insert_failed: ${trRes.error.message}` });
+          continue;
+        }
+
+        let existingQ = supabase.from("paper_positions").select("*").eq("symbol", signal.symbol);
+        if (hasMarketCol) existingQ = existingQ.eq("market", market);
+        const { data: existing } = await existingQ.maybeSingle();
+
+        if (existing) {
+          const newQty = existing.qty + qty;
+          const newAvg = ((existing.qty * existing.avg_cost) + totalCost) / newQty;
+          await supabase.from("paper_positions").update({ qty: newQty, avg_cost: newAvg, current_price: fillPrice }).eq("id", existing.id);
+        } else {
+          const newPosRow: Record<string, any> = {
+            symbol: signal.symbol, qty, avg_cost: fillPrice, current_price: fillPrice,
+            price_target: priceTarget, stop_loss: stopLoss, highest_price: fillPrice,
+            sector: candSector, market, currency,
+          };
+          await insertOptional("paper_positions", newPosRow, ["sector", "currency", "market"]);
+          if (candSector) sectorCount[candSector] = (sectorCount[candSector] ?? 0) + 1;
+        }
+
+        portfolio.cash_balance -= totalCost;
+        await supabase.from("paper_portfolio").update({
+          cash_balance: portfolio.cash_balance,
+          total_invested: (portfolio.total_invested ?? 0) + totalCost,
+        }).eq("id", portfolio.id);
+
+        await supabase.from("agent_signals").update({ status: "paper_traded" }).eq("id", signal.id);
+      } else {
+        // RPC already committed cash/position/signal atomically — keep the
+        // in-memory `portfolio.cash_balance` mirror in sync for later iterations.
+        portfolio.cash_balance -= totalCost;
       }
 
       // Reflect this fill in the in-memory book so later signals THIS RUN see it
@@ -340,19 +387,10 @@ export async function POST(req: NextRequest) {
       else currentBook.push(bookEntry);
       bookByMarket.set(market, currentBook);
 
-      // Deduct from THIS pool's cash
-      portfolio.cash_balance -= totalCost;
-      await supabase.from("paper_portfolio").update({
-        cash_balance: portfolio.cash_balance,
-        total_invested: (portfolio.total_invested ?? 0) + totalCost,
-      }).eq("id", portfolio.id);
-
-      await supabase.from("agent_signals").update({ status: "paper_traded" }).eq("id", signal.id);
-
       const sym = market === "india" ? "₹" : "$";
       const { error: journalErr } = await supabase.from("decision_journal").insert({
         entry_type: "paper_fill", symbol: signal.symbol, signal_id: signal.id,
-        paper_event_id: (orderEvent as any)?.id ?? null,
+        paper_event_id: orderEventId,
         summary: `Paper buy (${market.toUpperCase()}): ${qty} × ${signal.symbol} @ ${sym}${fillPrice.toFixed(2)} (score ${signal.analyst_score}, source: ${source})`,
         calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, sizing: { proposed_pct: positionSizePct, final_pct: sizedPct, adjustments: constructed.orders[0]?.adjustments ?? [] } },
         evidence_refs: [{ table: "agent_signals", id: signal.id, description: "qualifying signal" }],
