@@ -4,6 +4,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { getQuote, getBatchQuotes, computeFillPrice } from "@/lib/data/quotes";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
+import { constructPortfolio, DEFAULT_LIMITS, type BookPosition } from "@/lib/portfolio/constructor";
+import { estimateDailyVolPct } from "@/lib/portfolio/inputs";
 
 // PaperTrader: fills virtual long-only trades from qualifying signals.
 //
@@ -120,10 +122,35 @@ export async function POST(req: NextRequest) {
 
     // Sector cap — count open positions per sector (across all markets; the cap
     // is a book-level concentration limit).
-    const { data: openPos } = await supabase.from("paper_positions").select("symbol, sector");
+    const { data: openPos } = await supabase.from("paper_positions").select("symbol, sector, qty, avg_cost, market");
     const sectorCount: Record<string, number> = {};
     for (const p of (openPos ?? []) as any[]) {
       if (p.sector) sectorCount[p.sector] = (sectorCount[p.sector] ?? 0) + 1;
+    }
+
+    // Portfolio Constructor: per-market book (name/sector/gross/vol/correlation
+    // budgeting — see lib/portfolio/constructor.ts). Human-set limits from
+    // strategy_config, falling back to DEFAULT_LIMITS when unset/pre-069.
+    const portfolioLimits = {
+      maxGrossExposurePct: (cfg as any)?.max_gross_exposure_pct ?? DEFAULT_LIMITS.maxGrossExposurePct,
+      maxSectorExposurePct: (cfg as any)?.max_sector_exposure_pct ?? DEFAULT_LIMITS.maxSectorExposurePct,
+      maxNameExposurePct: (cfg as any)?.max_name_exposure_pct ?? DEFAULT_LIMITS.maxNameExposurePct,
+      maxPortfolioVolPct: (cfg as any)?.max_portfolio_vol_pct ?? DEFAULT_LIMITS.maxPortfolioVolPct,
+      maxAvgPairwiseCorr: (cfg as any)?.max_avg_pairwise_corr ?? DEFAULT_LIMITS.maxAvgPairwiseCorr,
+    };
+    const bookByMarket = new Map<string, BookPosition[]>();
+    const constructorNavByMarket = new Map<string, number>();
+    for (const m of activeMarkets) {
+      const pool = poolByMarket.get(m);
+      const mktPositions = (openPos ?? []).filter((p: any) => (hasMarketCol ? (p.market ?? "us") : "us") === m);
+      const holdingsValue = mktPositions.reduce((s: number, p: any) => s + Number(p.qty ?? 0) * Number(p.avg_cost ?? 0), 0);
+      const nav = (pool?.cash_balance ?? 0) + holdingsValue;
+      constructorNavByMarket.set(m, nav > 0 ? nav : (pool?.cash_balance ?? 1));
+      bookByMarket.set(m, mktPositions.map((p: any) => ({
+        symbol: p.symbol, sector: p.sector ?? null,
+        valuePct: nav > 0 ? (Number(p.qty ?? 0) * Number(p.avg_cost ?? 0) / nav) * 100 : 0,
+        beta: null, dailyVol: null,
+      })));
     }
     async function resolveSector(sym: string, packetId: string | null): Promise<string | null> {
       try {
@@ -213,8 +240,24 @@ export async function POST(req: NextRequest) {
       const stopLoss = signal.stop_loss != null ? signal.stop_loss
         : parseFloat((fillPrice * (1 - stopLossPctCfg / 100)).toFixed(2));
 
+      // Portfolio Constructor: shrink the flat size against this market's book
+      // (name/sector/gross/vol/correlation limits) before spending cash. Never
+      // increases size; degrades to the flat positionSizePct when unconstrained.
+      const dailyVol = await estimateDailyVolPct(signal.symbol, market as "us" | "india", supabase);
+      const constructed = constructPortfolio(
+        bookByMarket.get(market) ?? [],
+        [{ symbol: signal.symbol, market: market as "us" | "india", proposedSizePct: positionSizePct, sector: candSector, beta: null, dailyVol }],
+        portfolioLimits
+      );
+      const sizedPct = constructed.orders[0]?.finalSizePct ?? 0;
+      if (sizedPct <= 0) {
+        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+        skipped.push({ symbol: signal.symbol, reason: `portfolio_constructor_denied: ${constructed.orders[0]?.adjustments.join("; ") ?? "no room"}` });
+        continue;
+      }
+
       // Size off THIS pool's cash, in its own currency
-      const maxSpend = portfolio.cash_balance * (positionSizePct / 100);
+      const maxSpend = portfolio.cash_balance * (sizedPct / 100);
       const qty = Math.floor(maxSpend / fillPrice);
       if (qty < 1) {
         await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
@@ -283,6 +326,20 @@ export async function POST(req: NextRequest) {
         if (candSector) sectorCount[candSector] = (sectorCount[candSector] ?? 0) + 1;
       }
 
+      // Reflect this fill in the in-memory book so later signals THIS RUN see it
+      // (matches the existing sectorCount accumulation pattern above).
+      const nav = constructorNavByMarket.get(market) ?? portfolio.cash_balance;
+      const bookEntry: BookPosition = {
+        symbol: signal.symbol, sector: candSector,
+        valuePct: nav > 0 ? (totalCost / nav) * 100 : 0,
+        beta: null, dailyVol,
+      };
+      const currentBook = bookByMarket.get(market) ?? [];
+      const existingBookIdx = currentBook.findIndex(b => b.symbol === signal.symbol);
+      if (existingBookIdx >= 0) currentBook[existingBookIdx].valuePct += bookEntry.valuePct;
+      else currentBook.push(bookEntry);
+      bookByMarket.set(market, currentBook);
+
       // Deduct from THIS pool's cash
       portfolio.cash_balance -= totalCost;
       await supabase.from("paper_portfolio").update({
@@ -297,7 +354,7 @@ export async function POST(req: NextRequest) {
         entry_type: "paper_fill", symbol: signal.symbol, signal_id: signal.id,
         paper_event_id: (orderEvent as any)?.id ?? null,
         summary: `Paper buy (${market.toUpperCase()}): ${qty} × ${signal.symbol} @ ${sym}${fillPrice.toFixed(2)} (score ${signal.analyst_score}, source: ${source})`,
-        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score },
+        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, sizing: { proposed_pct: positionSizePct, final_pct: sizedPct, adjustments: constructed.orders[0]?.adjustments ?? [] } },
         evidence_refs: [{ table: "agent_signals", id: signal.id, description: "qualifying signal" }],
         has_verified_facts: true, has_calculations: true, resolved: false,
       });
