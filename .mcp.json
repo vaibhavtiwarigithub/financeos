@@ -2,7 +2,10 @@
   "mcpServers": {
     "supabase-Kairos": {
       "command": "npx",
-      "args": ["-y", "@supabase/mcp-server-supabase@latest", "--access-token", "sbp_c2ee5278d797a88f52f08783c2581fd8b51800d0", "--project-ref", "dionkikgdmlaotvtbnfr"]
+      "args": ["-y", "@supabase/mcp-server-supabase@latest", "--project-ref", "dionkikgdmlaotvtbnfr"],
+      "env": {
+        "SUPABASE_ACCESS_TOKEN": "${SUPABASE_ACCESS_TOKEN}"
+      }
     }
   }
 }
