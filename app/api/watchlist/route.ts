@@ -18,14 +18,23 @@ async function fetchCompanyName(symbol: string): Promise<string | null> {
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const svc = createServiceClient();
   const now = new Date().toISOString();
-  const { data, error } = await svc
+  // ?market=us|india scopes the list to the global market switcher (lib/market-context.tsx).
+  // "us" also includes Global/Crypto rows (not India-specific); "india" shows only India rows.
+  // watchlist.market defaults to 'US' (migration 001), so rows written before this filter
+  // existed are unaffected — they simply appear under the US view, which matches prior
+  // (unfiltered) behavior for every US user.
+  const market = req.nextUrl.searchParams.get("market");
+  let q = svc
     .from("watchlist")
-    .select("id, symbol, source, theme, reason, notes, auto_added, expires_at, created_at, research_enabled, alert_on_signal, alert_on_earnings, company_name")
+    .select("id, symbol, source, theme, reason, notes, auto_added, expires_at, created_at, research_enabled, alert_on_signal, alert_on_earnings, company_name, market")
     .or(`expires_at.is.null,expires_at.gt.${now}`)
     .order("created_at", { ascending: false });
+  if (market === "india") q = q.eq("market", "India");
+  else if (market === "us") q = q.in("market", ["US", "Global", "Crypto"]);
+  const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   // Dedupe by symbol. Auto-added rows (theme-scout, briefing, etc.) can have a
@@ -59,6 +68,12 @@ export async function POST(req: NextRequest) {
   const company_name = body.company_name ?? await fetchCompanyName(symbol);
 
   const svc = createServiceClient();
+  // body.market ("us"|"india") lets the caller (WatchlistPanel, tagged with
+  // whatever the global market switcher is set to) mark a manually-added
+  // symbol correctly — otherwise it defaults to the column's 'US' default,
+  // which would make an India symbol added while the switcher is on India
+  // silently disappear from the India-filtered view.
+  const marketCol = body.market === "india" ? "India" : body.market === "us" ? "US" : undefined;
   const { error } = await svc.from("watchlist").upsert({
     user_id: user.id,
     symbol,
@@ -69,6 +84,7 @@ export async function POST(req: NextRequest) {
     company_name: company_name ?? null,
     auto_added: false,
     updated_at: new Date().toISOString(),
+    ...(marketCol ? { market: marketCol } : {}),
   }, { onConflict: "user_id,symbol" });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

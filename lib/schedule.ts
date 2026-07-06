@@ -58,12 +58,12 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
   {
     name: "research-india",
     agent: "research-india",
-    time: "7:00 AM ET",
+    time: "9:30 AM IST (~12:00 AM ET)",
     days: "Weekdays",
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "Pre-market signal generation for India (NSE), post-close. Chains its own ₹ paper-trade automatically.",
+      "India (NSE) signal generation, 15min after the 9:15 AM IST open — scores off yesterday's finalized close, then chains its own ₹ paper-trade fill using a live intraday quote. Realigned 2026-07-06 (migration 082) from a post-close time that scored and filled on the same closing print with no realistic gap between decision and fill.",
     handoff: "→ PaperTrader (India)",
     agentRunsType: "research",
   },

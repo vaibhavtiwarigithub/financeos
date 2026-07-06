@@ -4,6 +4,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from "recharts";
 import PageHeader from "@/components/dashboard/PageHeader";
+import { useMarket } from "@/lib/market-context";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -261,6 +262,7 @@ function DeltaText({ delta, size = 12 }: { delta: number; size?: number }) {
 }
 
 export default function ScoreTrackerPage() {
+  const { market } = useMarket();
   const [allSymbols, setAllSymbols] = useState<string[]>([]);
   const [selectedSymbols, setSelectedSymbols] = useState<string[]>([]);
   const [hydrated, setHydrated] = useState(false);
@@ -287,8 +289,12 @@ export default function ScoreTrackerPage() {
     async function loadCandidates() {
       const collected = new Set<string>();
       try {
+        // live-portfolio stays unscoped (US-only Robinhood holdings, by design —
+        // India's live holdings live on a separate page/broker). Watchlist now
+        // follows the global US/India switcher so the candidate pool (and thus
+        // the chart) matches whichever market's tab the switcher shows elsewhere.
         const [wRes, pRes] = await Promise.all([
-          fetch("/api/watchlist").then(r => r.json()).catch(() => ({})),
+          fetch(`/api/watchlist?market=${market}`).then(r => r.json()).catch(() => ({})),
           fetch("/api/live-portfolio").then(r => r.json()).catch(() => ({})),
         ]);
         for (const it of (wRes.items ?? [])) {
@@ -316,7 +322,7 @@ export default function ScoreTrackerPage() {
       .then(r => r.json())
       .then(d => setVersions(d.versions ?? []))
       .catch(() => {});
-  }, []);
+  }, [market]);
 
   // ── Persist selection ──────────────────────────────────────────────────────
   useEffect(() => {

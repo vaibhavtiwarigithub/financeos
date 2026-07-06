@@ -61,10 +61,14 @@ so it can't learn which sources/parameters are worth trusting:
 ## Scope
 
 This feature includes:
-- A `discovery_source` field recorded on every `decision_observations` row
-  (`theme_scout | momentum_bucket | value_bucket | watchlist | held_position |
-  india_nifty | metals | region_etf`), replacing the current flat
-  `source: "holding" | "screener"`.
+- A primary `discovery_source` field recorded on every new
+  `decision_observations` row (`held_position | manual_watchlist |
+  theme_scout | momentum_bucket | value_bucket | india_nifty |
+  india_screen_cache | metals | region_etf | unknown_legacy`) plus
+  `discovery_sources_all`/`discovery_metadata` for multi-source provenance.
+  This is additive. It does **not** remove or reinterpret the current
+  `agent_signals.source: "holding" | "screener"` field in v1, because that
+  field is already used by existing UI/reporting paths.
 - A read-only **Discovery Source Scorecard** (API + dashboard card) showing,
   per source: candidates researched, entry-eligible rate, and — once
   `observation_labels` mature — mean `benchmark_neutral_return`. Advisory
@@ -117,6 +121,39 @@ This feature does not include:
   India trade history to back them — CLAUDE.md's "don't run ahead of
   evidence" principle applies here as much as to weight changes.
 
+## Codex Review Amendments Required Before Build
+
+These amendments close ambiguity in the draft architecture and should be
+treated as part of the target design:
+
+1. **Do not collapse multi-source provenance into one lossy label.** A symbol
+   can be a held position, a manual watchlist item, a Theme Scout candidate,
+   and a screener hit on the same day. Persist one primary
+   `discovery_source` for grouping, but also persist `discovery_sources_all`
+   and `discovery_metadata` so source performance can be audited without
+   losing assisted-source credit.
+2. **Keep legacy `agent_signals.source` stable.** The new source fields belong
+   on the decision/research ledger. Do not rename or overload
+   `agent_signals.source` in this PR; existing UI expects the coarse
+   `holding | screener` meaning.
+3. **Scorecard must be statistically honest.** It must show sample size,
+   label coverage, benchmark-relative win rate, confidence interval, and
+   insufficient-sample status. A raw average return by source is too easy to
+   overread and will invite bad allocation decisions.
+4. **No source-budget feedback loop in v1.** Source performance can be shown to
+   the user, but cannot change `gatherSymbols()` allocation until a separate
+   exploration policy exists with a minimum exploration floor and shadow
+   validation.
+5. **Separate provisioned genome fields from live-consumed fields.**
+   `score_threshold` may be added to the genome schema and validation engine
+   in this PR, but ResearchAgent must continue using the current approved
+   runtime threshold path until a later approved promotion/consumption change
+   defines precedence against `strategy_config`.
+6. **India gates must fail closed for entry eligibility.** If the NSE calendar,
+   candle freshness, liquidity proxy, or required fundamentals are unknown,
+   the system may still record an observation, but it must not mark the India
+   candidate entry-eligible.
+
 ## Current Behavior
 
 - `gatherSymbols()` returns a flat `SymbolEntry[]` with only `isHeld`,
@@ -148,19 +185,41 @@ This feature does not include:
 
 - Extend `SymbolEntry` (`lib/research-agent.ts`) with a required
   `discoverySource` field, set at the point each source contributes a symbol
-  in `gatherSymbols()`: `held_position`, `watchlist` (manual, non-theme),
+  in `gatherSymbols()`: `held_position`, `manual_watchlist` (manual, non-theme),
   `theme_scout` (watchlist rows with `source: 'llm_theme'`), `momentum_bucket`
   / `value_bucket` (already tagged via `screenerBucket`, just renamed into
-  the same enum), `metals`, `region_etf`, `india_nifty`.
+  the same enum), `metals`, `region_etf`, `india_nifty`, and
+  `india_screen_cache` if the broader India scanner cache is later wired into
+  ResearchAgent.
+- Extend `SymbolEntry` with `discoverySourcesAll` and optional
+  `discoveryMetadata`. When a symbol appears from multiple sources in one run,
+  keep all sources. Pick the primary source by causal priority:
+  `held_position` > `manual_watchlist` > `theme_scout` > `momentum_bucket` /
+  `value_bucket` > `india_screen_cache` > `india_nifty` > `metals` >
+  `region_etf`. The scorecard should support both primary-source metrics and
+  assisted-source metrics once enough data exists.
 - Persist `discovery_source` on `decision_observations` (new column,
   migration) alongside the existing `features.screener` block — additive,
   does not replace the momentum/value bucket detail already recorded.
+- Persist `discovery_sources_all` and `discovery_metadata` next to
+  `discovery_source`. `discovery_sources_all` is required for new observations
+  and should include the primary source; `discovery_metadata` may include
+  contributing watchlist row IDs, screener bucket/rank, theme name, or scanner
+  run ID when available.
 - New read-only endpoint `/api/agents/discovery-scorecard`: per
   `discovery_source` × market, count of candidates researched (last 90d),
   entry-eligible rate, and mean `benchmark_neutral_return` where matured
   labels exist (reuses `lib/learning/dataset.ts`'s join, grouped by source
   instead of by fold). Surfaced as a card on the Research Journal's Evolution
   tab — extends existing UI, no new page.
+
+- The scorecard must report source/market/horizon rows across at least 30d and
+  90d windows, including `nResearched`, `nLabeled`, `labelCoveragePct`,
+  `entryEligibleRate`, `abstainRate`, `avgDataAvailability`,
+  `meanBenchmarkNeutralReturn`, `medianBenchmarkNeutralReturn`,
+  `winRateVsBenchmark`, `bootstrapCiLow`, `bootstrapCiHigh`, and
+  `sampleStatus`. If a row lacks enough matured labels, show
+  `sampleStatus: "insufficient_data"` instead of a performance verdict.
 
 ### 2. Genome expansion (validated, shadow-first)
 
@@ -185,6 +244,13 @@ expanding to the rest, rather than shipping all five/six new tunable fields
 in one PR. Each subsequent field follows once `score_threshold` has round-
 tripped through challenger → validate → promote at least once, on real data.
 
+Important runtime boundary: this PR may provision and validate
+`genome.entry.score_threshold`, but it must not silently make ResearchAgent
+consume that field. Runtime threshold precedence must be approved separately
+because today `strategy_config.score_threshold` acts as a user-visible manual
+control. Until that follow-up is approved, the genome threshold is a shadow
+candidate parameter only.
+
 ### 3. India evidence contract
 
 Documented (and code-enforced in `lib/data/scores.ts`/`lib/india-data.ts`)
@@ -199,6 +265,14 @@ minimum evidence before an India candidate is `entry_eligible`:
 - The `hasMinFundamentalFields` gate from Decision 43 already applies to
   India; this section formalizes it as a *documented* India-specific
   contract rather than an incidental side effect of a US-shaped check.
+- Fail-closed rule: if NSE calendar freshness, latest candle freshness,
+  liquidity proxy, or required fundamentals cannot be determined, the system
+  may still save the observation with an explicit reason code, but it must
+  set `entry_eligible = false` for that India candidate.
+- ResearchAgent v1 currently uses the static NIFTY candidate path; the broader
+  India scanner/cache path should not be assumed live for ResearchAgent unless
+  wired explicitly. If that cache is later used as a source, tag it as
+  `india_screen_cache` rather than mixing it into `india_nifty`.
 - Explicit open question, not resolved by this document: does India get its
   own `score_threshold` once enough India-labeled data exists? Recommendation
   is to instrument (via the Discovery Source Scorecard's `market` dimension,
@@ -240,6 +314,12 @@ minimum evidence before an India candidate is `entry_eligible`:
   (explicitly deferred to a follow-up PR, not built in this pass).
 - `lib/india-data.ts`, `lib/data/scores.ts` — India evidence contract checks.
 
+- `lib/learning/dataset.ts` - include source/provenance fields in the labeled
+  observation dataset used by scorecards and later validation.
+- Tests for source attribution precedence, legacy unknown-source handling,
+  scorecard insufficient-sample behavior, genome threshold bounds, and India
+  fail-closed gates.
+
 ## System Architecture
 
 ### Modules
@@ -256,12 +336,36 @@ minimum evidence before an India candidate is `entry_eligible`:
   sources: [{ source, market, n, entryEligibleRate, meanBenchmarkNeutralReturn
   | null }] }`. Read-only, no side effects.
 
+Required scorecard response shape:
+`GET /api/agents/discovery-scorecard?market=us|india&days=30|90&horizon=2|5|10|20`
+returns `{ sources: [{ source, market, horizonDays, windowDays, nResearched,
+nLabeled, labelCoveragePct, entryEligibleRate, abstainRate,
+avgDataAvailability, meanBenchmarkNeutralReturn, medianBenchmarkNeutralReturn,
+winRateVsBenchmark, bootstrapCiLow, bootstrapCiHigh, sampleStatus }] }`.
+Read-only, no side effects. `sampleStatus` must distinguish `sufficient`,
+`insufficient_labels`, and `legacy_unknown_source`.
+
 ### Data Models
 - `decision_observations.discovery_source text` (new, nullable — existing
   rows have no source recorded, must degrade gracefully, not backfilled).
 - `strategy_versions.genome` — already jsonb (migration 063); this feature
   adds `score_threshold` as a recognized, bounded key, validated by
   `lib/validation/genome.ts`'s existing bounds-checking pattern.
+
+- `decision_observations.discovery_source` is nullable in DB only for legacy
+  rows; new code paths must write one of the approved source values. Use a
+  check constraint or shared enum list for: `held_position`,
+  `manual_watchlist`, `theme_scout`, `momentum_bucket`, `value_bucket`,
+  `india_nifty`, `india_screen_cache`, `metals`, `region_etf`,
+  `unknown_legacy`.
+- `decision_observations.discovery_sources_all jsonb not null default '[]'`
+  records all contributing sources and must include the primary source on new
+  writes.
+- `decision_observations.discovery_metadata jsonb` records optional provenance:
+  watchlist row ID, theme, screener bucket/rank, scanner run ID, and stale/gate
+  reason codes.
+- Add indexes for scorecard reads: `(market, discovery_source, ts desc)` and,
+  if query plans require it, a GIN index on `discovery_sources_all`.
 
 ### Error Handling
 - Discovery Source Scorecard degrades to "insufficient data" per source
@@ -310,17 +414,32 @@ minimum evidence before an India candidate is `entry_eligible`:
 ## Acceptance Criteria
 
 - Every new `decision_observations` row has a non-null `discovery_source`
-  matching one of the 8 enum values.
+  matching one of the approved source values, and `discovery_sources_all`
+  includes the primary source. Legacy rows are surfaced as `unknown_legacy`,
+  never silently grouped into a real source.
 - Discovery Source Scorecard returns real, non-fabricated aggregates and
   clearly marks sources with insufficient sample size rather than showing a
   misleading number.
+- Discovery Source Scorecard exposes label coverage, abstain rate,
+  benchmark-relative win rate, median return, and confidence interval, not
+  only mean return.
+- Source scorecard output does not alter research allocation, candidate count,
+  paper trading, or live-trading eligibility in v1.
 - `score_threshold` is provisioned in the genome schema and validated by the
   existing walk-forward engine, but is NOT proposable by LearnerAgent until a
   separately-approved follow-up implements `propose_genome_field` end-to-end
   (this PR builds the plumbing/contract, not the LLM-facing tool).
+- ResearchAgent does not consume `genome.entry.score_threshold` until a
+  separate approved runtime-precedence decision says how it interacts with
+  `strategy_config.score_threshold`.
 - India evidence contract checks are documented in this file and enforced in
   code; no India-specific `score_threshold` divergence is introduced without
   a documented ledger-backed reason.
+- India candidates with unknown calendar/freshness/liquidity/fundamental
+  evidence are saved as observations but are not marked entry-eligible.
+- Tests cover source attribution precedence, multi-source provenance,
+  scorecard insufficient-sample behavior, legacy rows, genome threshold
+  bounds, and India fail-closed gates.
 
 ## Approval
 

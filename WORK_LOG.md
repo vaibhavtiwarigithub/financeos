@@ -20,6 +20,20 @@
 
 ---
 
+## ✅ Session 2026-07-06 (cont'd) — Market-switcher wiring gap, nav clarity badges, India cron realignment, India NSE status pill
+
+> User asked why it's hard to tell from the UI which left-nav sections actually respect the US/India switcher, asked to fix any unwired ones, and separately asked whether India's agents fire at the right time relative to NSE market hours (raised alongside a concern about Windows cron double-firing pg_cron, which was also resolved this session — all 15 `\Kairos\` Windows Scheduler jobs disabled).
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Windows Task Scheduler decommission | Claude | 2026-07-06 | Found all 15 `\Kairos\` jobs still `Ready`, hitting `localhost:3000` — the exact routes pg_cron now hits in the cloud. Duplicate trades were already prevented by paper-trade's signal-claiming idempotency (shared DB), but duplicate LLM/API spend was real whenever a local dev server happened to be running. Disabled all 15 with user approval. |
+| Market-switcher wiring audit | Claude | 2026-07-06 | Surveyed all ~20 dashboard routes: only 9 actually read `useMarket()` (Portfolio, Risk, Markets, Strategies, Calendar, Scanner, Backtest, Settings, Intelligence) despite the switcher's own tooltip claiming "across the app." Watchlist, Score Tracker, and Agent History wired to the global switcher this session (API + component changes, `lib/market-support.ts` registry corrected to stop overclaiming "full" support on Agents/Journal/Morning Briefing, which don't actually filter). |
+| Nav market-scope badges | Claude | 2026-07-06 | Added a small flag/warning badge directly in the left-nav sidebar (`components/dashboard/DashboardShell.tsx`), reading the existing `lib/market-support.ts` registry — previously that info only existed in a footer badge at the bottom of each page's content, which is exactly why it was "hard to tell from the UI." Distinguishes intentional single-market pages (🇺🇸/🇮🇳 flag) from known gaps that should respect the switcher but don't yet (⚠ US only). |
+| India NSE market-status pill | Claude | 2026-07-06 | Added a second status pill next to the existing US market-status pill (top bar), showing NSE open/closed/pre-open using IST hours (9:15 AM–3:30 PM) and the same fixed-date holiday list as the research cron's NSE gate. Shown only when India is enabled in `profile.market_focus`, mirroring `MarketSwitcher`'s own visibility rule. Both pills now explicitly flag-labeled (🇺🇸/🇮🇳) — previously the single pill had no country label at all. |
+| India research cron timing fix | Claude | 2026-07-06 | Found `kairos-research-india` fired at 16:30 IST — 1hr AFTER NSE's 15:30 close — meaning India's research (score off latest candle) and its internally-chained paper-trade fill (fetch a "live" quote) both landed on the exact same closing print, no realistic decision-to-fill gap. The US equivalent fires pre-open (scores off yesterday's close) and its chained fill lands on a genuinely live post-open quote. Realigned India to fire at 9:30 AM IST (15min after NSE's 9:15 open) instead — still scores off yesterday's finalized close, but the chained fill now gets a real intraday quote. `position-monitor-india` (15min after close) was already correctly timed and left unchanged. See migration 082. |
+
+---
+
 ## ✅ Session 2026-07-06 (cont'd) — Codex adversarial review fix pass: evidence semantics, shared scoring contract, Theme Scout, Kelly sizing, LearnerAgent evidence-binding
 
 > User requested an independent LLM (Codex) audit of the core scoring/trading/learning loop after the ultra-review pass, worried that missing/rate-limited external data (Alpha Vantage, Yahoo, etc.) could silently corrupt research/learning signals. Verified each finding against current code + live schema (several of Codex's line-number claims referenced pre-Decision-41 code and were stale/false — noted below), then fixed every confirmed issue in the requested priority order. See **Decision 43**.

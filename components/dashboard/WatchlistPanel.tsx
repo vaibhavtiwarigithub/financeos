@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { useMarket } from "@/lib/market-context";
 
 const T = {
   card: "#1A1D27", border: "#252836", text: "#ECEDEF", textSub: "#9B9EA8",
@@ -93,6 +94,7 @@ function parseCsvSymbols(text: string): string[] {
 
 export default function WatchlistPanel() {
   const router = useRouter();
+  const { market } = useMarket();
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [loading, setLoading] = useState(true);
@@ -121,7 +123,7 @@ export default function WatchlistPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch("/api/watchlist");
+      const r = await fetch(`/api/watchlist?market=${market}`);
       const d = await r.json();
       const list: WatchlistItem[] = d.items ?? [];
       setItems(list);
@@ -139,7 +141,7 @@ export default function WatchlistPanel() {
       }
     } catch {}
     setLoading(false);
-  }, []);
+  }, [market]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -177,7 +179,7 @@ export default function WatchlistPanel() {
     await fetch("/api/watchlist", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol: clean, source }),
+      body: JSON.stringify({ symbol: clean, source, market }),
     }).catch(() => {});
     setNewSymbol("");
     setAdding(false);
@@ -202,7 +204,7 @@ export default function WatchlistPanel() {
       await fetch("/api/watchlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: sym, source: "tradingview_import" }),
+        body: JSON.stringify({ symbol: sym, source: "tradingview_import", market }),
       }).catch(() => {});
       setCsvProgress(i + 1);
     }

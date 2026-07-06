@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
+import { useMarket } from "@/lib/market-context";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -28,6 +29,7 @@ interface Run {
 }
 
 export default function AgentHistoryPage() {
+  const { market } = useMarket();
   const [runs, setRuns] = useState<Run[]>([]);
   const [byAgent, setByAgent] = useState<Record<string, Run[]>>({});
   const [loading, setLoading] = useState(true);
@@ -38,14 +40,14 @@ export default function AgentHistoryPage() {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res = await fetch(`/api/agents/history?range=${range}`);
+      const res = await fetch(`/api/agents/history?range=${range}&market=${market}`);
       const d = await res.json();
       if (!res.ok) throw new Error(d.error ?? "Failed to load");
       setRuns(d.runs ?? []);
       setByAgent(d.byAgent ?? {});
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
-  }, [range]);
+  }, [range, market]);
 
   useEffect(() => { load(); }, [load]);
 

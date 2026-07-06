@@ -10,6 +10,12 @@ export type SupportLevel = "full" | "partial" | "us-only" | "india-only";
 export type MarketSupport = {
   level: SupportLevel;
   note: string; // one honest line: what works, what doesn't
+  // true = SHOULD respect the header market switcher but doesn't yet (a bug to
+  // fix); false/omitted = "us-only"/"india-only" is intentional by design
+  // (e.g. a live-broker page that only has one market's account connected).
+  // Lets the nav badge (DashboardShell) render these two very different
+  // situations differently instead of both just saying "US only".
+  knownGap?: boolean;
 };
 
 // Route prefix → support. Longest prefix wins (so /dashboard/agents/history beats
@@ -24,17 +30,17 @@ const REGISTRY: Record<string, MarketSupport> = {
   "/dashboard/calendar":       { level: "full",       note: "US full earnings feed; India = market-wide NSE results calendar (per-symbol Yahoo fallback if NSE blocked)." },
   "/dashboard/risk":           { level: "full",       note: "Both markets: per-currency book risk, VaR, real portfolio beta (US vs SPY, India vs NIFTY)." },
   "/dashboard/smart-money":    { level: "full",       note: "Both markets: signals + trade queue; India insider + option-chain PCR/OI live from NSE (US uses EDGAR)." },
-  "/dashboard/scores":         { level: "full",       note: "US + India both scored and tracked (market-tagged)." },
+  "/dashboard/scores":         { level: "full",       note: "US + India both scored and tracked — the symbol list now follows the header switcher (fixed 2026-07-06)." },
   "/dashboard/intelligence":   { level: "full",       note: "US + India agent signals + research runs." },
   "/dashboard/portfolio":      { level: "full",       note: "US ($) and India (₹) paper pools — switch markets in the header. Never blended." },
-  "/dashboard/agents/history": { level: "full",       note: "Every agent run across both markets." },
-  "/dashboard/agents":         { level: "full",       note: "Agents run for both markets (India via free Yahoo data)." },
-  "/dashboard/watchlist":      { level: "full",       note: "US and India symbols both trackable." },
-  "/dashboard/mentor":         { level: "full",       note: "Coaches on outcomes from both markets." },
-  "/dashboard/journal":        { level: "full",       note: "Audit trail spans US + India (market-tagged)." },
+  "/dashboard/agents/history": { level: "full",       note: "Every agent run — now filters by the header switcher (fixed 2026-07-06); agents that don't run per-market (learner, mentor) only ever show under US." },
+  "/dashboard/agents":         { level: "us-only", knownGap: true, note: "KNOWN GAP: this page doesn't yet read the header switcher — it always shows the US pool/signals regardless of what's selected. Use Research Journal or Agent History for an India-aware view meanwhile." },
+  "/dashboard/watchlist":      { level: "full",       note: "US and India symbols both trackable — now filters by the header switcher (fixed 2026-07-06)." },
+  "/dashboard/mentor":         { level: "full",       note: "Coaches on outcomes from both markets (not separately toggleable — reviews your judgment across everything, by design)." },
+  "/dashboard/journal":        { level: "us-only", knownGap: true, note: "KNOWN GAP: decision_journal has no market column yet, so every entry shows regardless of the header switcher and can't be split by market. Needs a migration to fix." },
   "/dashboard/settings":       { level: "full",       note: "Config applies to both markets. Turn India on/off under Market focus." },
   "/dashboard/admin":          { level: "full",       note: "Keys/vault/config for both markets." },
-  "/dashboard":                { level: "full",       note: "Morning Briefing shows both US and India sections." },
+  "/dashboard":                { level: "us-only", knownGap: true, note: "KNOWN GAP: Morning Briefing doesn't have an India section yet — it always shows the US pool regardless of the header switcher." },
 };
 
 export function getMarketSupport(pathname: string): MarketSupport {

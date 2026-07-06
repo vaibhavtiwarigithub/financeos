@@ -120,6 +120,29 @@ function getMarketStatus(): { label: string; color: string; bg: string; detail: 
   return { label: "Closed", color: T.muted, bg: "#1A1D27", detail: "Opens pre-market tomorrow at 4:00 AM ET" };
 }
 
+// NSE (India) session: 9:15 AM–3:30 PM IST, Mon–Fri. Same fixed-date-only
+// holiday list as app/api/agents/research/cron/route.ts's NSE gate (Republic
+// Day, Independence Day, Gandhi Jayanti) — floating festivals (Holi, Diwali)
+// are intentionally not modeled here either, for the same reason: guessing a
+// wrong date is worse than not gating at all.
+const NSE_FIXED_HOLIDAYS = ["01-26", "08-15", "10-02"];
+
+function getIndiaMarketStatus(): { label: string; color: string; bg: string; detail: string } {
+  const nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const day = nowIST.getDay(); // 0=Sun
+  const istTotal = nowIST.getHours() * 60 + nowIST.getMinutes();
+  const mmdd = `${String(nowIST.getMonth() + 1).padStart(2, "0")}-${String(nowIST.getDate()).padStart(2, "0")}`;
+
+  const OPEN = 9 * 60 + 15;   // 9:15 AM IST
+  const CLOSE = 15 * 60 + 30; // 3:30 PM IST
+
+  if (day === 0 || day === 6) return { label: "Closed", color: T.muted, bg: "#1A1D27", detail: "NSE closed — weekend" };
+  if (NSE_FIXED_HOLIDAYS.includes(mmdd)) return { label: "Closed", color: T.muted, bg: "#1A1D27", detail: "NSE closed — holiday" };
+  if (istTotal < OPEN)  return { label: "Pre-open",    color: T.yellow, bg: "#2D1B0033", detail: "NSE opens 9:15 AM IST" };
+  if (istTotal < CLOSE) return { label: "Market Open", color: T.green,  bg: "#052E1633", detail: "NSE closes 3:30 PM IST" };
+  return { label: "Closed", color: T.muted, bg: "#1A1D27", detail: "Opens tomorrow 9:15 AM IST (floating festival holidays not modeled — verify independently)" };
+}
+
 function useMarketClock() {
   const [tick, setTick] = useState(0);
   const [timeStr, setTimeStr] = useState("");
@@ -133,7 +156,7 @@ function useMarketClock() {
     const id = setInterval(update, 30000);
     return () => clearInterval(id);
   }, []);
-  return { timeStr, status: getMarketStatus() };
+  return { timeStr, status: getMarketStatus(), indiaStatus: getIndiaMarketStatus() };
 }
 
 const TIER_COLORS: Record<string, string> = { free: T.muted, pro: T.accent, elite: T.yellow };
@@ -169,7 +192,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
   const [pauseState, setPauseState] = useState<{ paused: boolean; paused_at: string | null; paused_reason: string | null } | null>(null);
   const bellRef = useRef<HTMLDivElement>(null);
   const seenProposalIds = useRef<Set<string>>(new Set());
-  const { timeStr, status: mktStatus } = useMarketClock();
+  const { timeStr, status: mktStatus, indiaStatus } = useMarketClock();
 
   useEffect(() => {
     fetch("/api/alerts/stale-check").catch(() => {});
@@ -450,11 +473,21 @@ export default function DashboardShell({ profile, children }: { profile: Profile
                   : catAlerts.find(a => a.severity === "warn") ? "warn"
                   : catAlerts.length > 0 ? "info" : null;
                 const catDotColor = catWorst ? SEV[catWorst].dot : null;
+                // Market-scope badge — answers "does the US/India switcher affect
+                // this page?" right in the nav, instead of only at the bottom of
+                // the page itself. "full" is the default expectation once India
+                // is on, so it gets no badge (avoids clutter); everything else
+                // (fixed to one market by design, or a known gap that doesn't
+                // respect the switcher yet) gets a small flag/warning pill.
+                const sup = indiaEnabled ? getMarketSupport(item.href) : null;
+                const badge = sup && sup.level !== "full"
+                  ? { flags: SUPPORT_META[sup.level].flags, color: sup.knownGap ? T.yellow : SUPPORT_META[sup.level].color, gap: !!sup.knownGap }
+                  : null;
                 return (
                   <button
                     key={item.href}
                     onClick={() => router.push(item.href)}
-                    title={item.hint}
+                    title={badge ? `${item.hint}\n\n${badge.gap ? "⚠ " : ""}${sup!.note}` : item.hint}
                     style={{
                       width: "100%", display: "flex", alignItems: "center", gap: "9px",
                       padding: "8px 10px", borderRadius: "7px", border: "none",
@@ -467,6 +500,15 @@ export default function DashboardShell({ profile, children }: { profile: Profile
                   >
                     <span style={{ fontSize: "13px", width: "16px", textAlign: "center", flexShrink: 0 }}>{item.icon}</span>
                     <span style={{ flex: 1 }}>{item.label}</span>
+                    {badge && (
+                      <span style={{
+                        fontSize: "9px", fontWeight: 700, padding: "1px 5px", borderRadius: "8px",
+                        background: `${badge.color}22`, color: badge.color, border: `1px solid ${badge.color}55`,
+                        flexShrink: 0, whiteSpace: "nowrap",
+                      }}>
+                        {badge.gap ? "⚠ US only" : badge.flags}
+                      </span>
+                    )}
                     {catDotColor && (
                       <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: catDotColor, flexShrink: 0 }} title={`${catAlerts.length} alert${catAlerts.length !== 1 ? "s" : ""}`} />
                     )}
@@ -531,12 +573,24 @@ export default function DashboardShell({ profile, children }: { profile: Profile
           background: T.surface, borderBottom: `1px solid ${T.border}`,
           padding: "7px 28px", display: "flex", alignItems: "center", gap: "16px",
         }}>
-          {/* Market status pill */}
+          {/* Market status pill — US, always shown */}
           <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
             <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: mktStatus.color, flexShrink: 0 }} />
+            <span style={{ fontSize: "12px", fontWeight: 700, color: T.textSub }}>🇺🇸</span>
             <span style={{ fontSize: "12px", fontWeight: 700, color: mktStatus.color }}>{mktStatus.label}</span>
             <span style={{ fontSize: "11px", color: T.muted }}>· {mktStatus.detail}</span>
           </div>
+
+          {/* Market status pill — India (NSE), only once India is enabled in
+              profile.market_focus, matching MarketSwitcher's own visibility rule */}
+          {indiaEnabled && (
+            <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+              <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: indiaStatus.color, flexShrink: 0 }} />
+              <span style={{ fontSize: "12px", fontWeight: 700, color: T.textSub }}>🇮🇳</span>
+              <span style={{ fontSize: "12px", fontWeight: 700, color: indiaStatus.color }}>{indiaStatus.label}</span>
+              <span style={{ fontSize: "11px", color: T.muted }}>· {indiaStatus.detail}</span>
+            </div>
+          )}
 
           {/* Pause chip — top bar */}
           {pauseState?.paused && (

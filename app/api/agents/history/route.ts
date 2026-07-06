@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
 
   const range = req.nextUrl.searchParams.get("range") ?? "1w";
   const agent = req.nextUrl.searchParams.get("agent");
+  const market = req.nextUrl.searchParams.get("market"); // us|india — global market switcher
 
   const svc = createServiceClient();
   let since: string | null = null;
@@ -33,11 +34,18 @@ export async function GET(req: NextRequest) {
   // "all" → no lower bound
 
   let q = svc.from("agent_runs")
-    .select("id, agent_type, status, trigger_source, symbols, result_summary, signals_written, error, started_at, completed_at, tokens_input, tokens_output, claude_calls")
+    .select("id, agent_type, status, trigger_source, symbols, result_summary, signals_written, error, started_at, completed_at, tokens_input, tokens_output, claude_calls, market")
     .order("started_at", { ascending: false })
     .limit(200);
   if (since) q = q.gte("started_at", since);
   if (agent) q = q.eq("agent_type", agent);
+  // agent_runs.market defaults to 'us' (migration 077 backfill) for every
+  // agent that isn't market-scoped (learner, mentor, macro-sentinel, etc.) —
+  // so filtering to "india" correctly shows only genuinely India-scoped runs
+  // (research/paper-trade/position-monitor triggered with ?market=india)
+  // instead of every agent's US-default run appearing under both tabs.
+  if (market === "india") q = q.eq("market", "india");
+  else if (market === "us") q = q.or("market.eq.us,market.is.null"); // a few pre-077 rows never got backfilled
 
   const { data: runs, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
