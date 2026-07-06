@@ -64,6 +64,7 @@ function FunnelTab() {
                 <div onClick={() => toggle(s.symbol)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", cursor: "pointer" }}>
                   <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
                     <span style={{ fontSize: "14px", fontWeight: 700, color: T.text }}>{s.symbol}</span>
+                    {s.run_count > 1 && <span title="Research ran more than once today (manual re-trigger or scheduled + test) — showing the latest scoring" style={{ fontSize: "11px", color: T.muted, cursor: "help" }}>×{s.run_count} runs</span>}
                     <span style={{ fontSize: "12px", color: T.textSub }}>score {s.analyst_score} (thresh {s.score_threshold})</span>
                     {s.screener && <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "4px", background: T.accentBg, color: T.accent }}>{s.screener.bucket}</span>}
                   </div>
@@ -72,14 +73,23 @@ function FunnelTab() {
                 {isOpen && (
                   <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${T.border}` }}>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "8px", margin: "12px 0", fontSize: "11px" }}>
-                      {Object.entries(s.scores).map(([dim, val]: [string, any]) => (
-                        <div key={dim}>
-                          <div style={{ color: T.muted, textTransform: "uppercase" as const }}>{dim}</div>
-                          <div style={{ color: T.text, fontWeight: 700 }}>{val ?? "—"}</div>
-                          {s.notes[dim] && <div style={{ color: T.muted, marginTop: "2px" }}>{s.notes[dim]}</div>}
-                        </div>
-                      ))}
+                      {Object.entries(s.scores).map(([dim, val]: [string, any]) => {
+                        const w = s.weighting?.applied_weights?.[dim];
+                        const excluded = s.weighting?.renormalized && !s.weighting.included_dims.includes(dim);
+                        return (
+                          <div key={dim} style={{ opacity: excluded ? 0.4 : 1 }}>
+                            <div style={{ color: T.muted, textTransform: "uppercase" as const }}>{dim}{w != null ? ` (${Math.round(w * 100)}%)` : ""}</div>
+                            <div style={{ color: T.text, fontWeight: 700 }}>{val ?? "—"}</div>
+                            {s.notes[dim] && <div style={{ color: T.muted, marginTop: "2px" }}>{s.notes[dim]}{excluded ? " — excluded from score" : ""}</div>}
+                          </div>
+                        );
+                      })}
                     </div>
+                    {s.weighting?.renormalized && (
+                      <div style={{ fontSize: "11px", color: T.blue, marginBottom: "10px" }}>
+                        Reweighted: {s.weighting.included_dims.join(", ")} only ({5 - s.weighting.included_dims.length} dimension{5 - s.weighting.included_dims.length === 1 ? "" : "s"} excluded as inapplicable/unavailable, not counted as neutral).
+                      </div>
+                    )}
                     {s.screener && (
                       <div style={{ fontSize: "12px", color: T.textSub, marginBottom: "10px" }}>
                         Screener: <b>{s.screener.bucket}</b> — {s.screener.criteria_matched?.join(", ")}

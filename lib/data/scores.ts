@@ -115,12 +115,33 @@ export function scoreSentiment(socialResult: any): { score: number; evidence: Re
     return { score: Math.round(sentScore), evidence: { source: "social", raw: socialResult } };
   }
 
-  // Compute from bull/bear pct
-  const bull = socialResult.bullish_pct ?? socialResult.bull_pct ?? null;
-  const bear = socialResult.bearish_pct ?? socialResult.bear_pct ?? null;
+  // Real shape from fetchSocialSentiment (research-agent.ts): stocktwits_bullish_pct /
+  // stocktwits_bearish_pct, already on a 0-100 scale (e.g. 100 = 100% bullish) — this
+  // block previously checked bullish_pct/bull_pct (never present) and multiplied by
+  // 100 assuming a 0-1 fraction, so it always fell through to the neutral-50 default
+  // below even when StockTwits showed e.g. 100% bullish / 0% bearish.
+  const bull = socialResult.stocktwits_bullish_pct ?? socialResult.bullish_pct ?? socialResult.bull_pct ?? null;
+  const bear = socialResult.stocktwits_bearish_pct ?? socialResult.bearish_pct ?? socialResult.bear_pct ?? null;
   if (bull != null && bear != null) {
-    const score = Math.round(bull * 100); // bull% mapped directly to 0-100
+    // bull/bear already 0-100; weight by message volume isn't available here, so
+    // use bullish share of the two directional percentages as the score.
+    const total = bull + bear;
+    const score = total > 0 ? Math.round((bull / total) * 100) : 50;
     return { score: Math.max(0, Math.min(100, score)), evidence: { bullish_pct: bull, bearish_pct: bear } };
+  }
+
+  // Fall back to Alpha Vantage news sentiment (-1..+1) if StockTwits pct is missing.
+  const avSent = socialResult.av_news_sentiment;
+  if (typeof avSent === "number") {
+    const score = Math.round((avSent + 1) * 50); // -1 -> 0, 0 -> 50, +1 -> 100
+    return { score: Math.max(0, Math.min(100, score)), evidence: { av_news_sentiment: avSent, source: "av_news" } };
+  }
+
+  // Last resort: the LLM-facing overall_sentiment label, if that's all that's present.
+  if (typeof socialResult.overall_sentiment === "string") {
+    const label = socialResult.overall_sentiment.toLowerCase();
+    const score = label.includes("bull") ? 65 : label.includes("bear") ? 35 : 50;
+    return { score, evidence: { overall_sentiment: socialResult.overall_sentiment, source: "label_fallback" } };
   }
 
   return { score: 50, evidence: { note: "sentiment format unknown", raw: socialResult } };

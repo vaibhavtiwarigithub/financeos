@@ -293,9 +293,13 @@ export async function gatherSymbols(
   // fetchAndStoreAccountSnapshot is truly fire-and-forget: not in Promise.all (avoids its 90s cold-start blocking the pipeline)
   void fetchAndStoreAccountSnapshot();
 
+  // expires_at filter mirrors app/api/watchlist/route.ts's GET — without this,
+  // an expired Theme Scout pick (30-day default) kept getting re-researched
+  // forever instead of retiring, since only the Watchlist UI page enforced it.
+  const nowIso = new Date().toISOString();
   const [holdings, watchlistResult, screenerSymbols, profileResult] = await Promise.all([
     fetchHoldings(supabase),
-    supabase.from("watchlist").select("symbol"),
+    supabase.from("watchlist").select("symbol").or(`expires_at.is.null,expires_at.gt.${nowIso}`),
     runScreener(supabase),
     supabase.from("profiles").select("market_focus").limit(1).single(),
   ]);
@@ -761,12 +765,42 @@ export async function processSymbol(
   const mw = cw("macro",       "macro_weight")       ?? profileWeights.macro       ?? weights?.macro_weight      ?? 0.15;
   const iw = cw("insider",     "insider_weight")     ?? profileWeights.insider     ?? weights?.insider_weight    ?? 0.10;
 
+  // Renormalize across only applicable + available dimensions instead of always
+  // applying the fixed 5-way split against a fabricated neutral-50 default.
+  // Two distinct reasons a dimension gets excluded:
+  //  - INAPPLICABLE: fundamental/insider are structurally meaningless for ETFs
+  //    (no company financials, no insiders) — scoreFundamentals/normalizeInsiderScore
+  //    already return a flat baseline for these, not a real signal.
+  //  - UNAVAILABLE: data fetch genuinely failed this run (e.g. macro rate-limited,
+  //    no sentiment data) — scores.dataQuality flags these.
+  // Below 2 included dimensions, renormalizing to 100% on one thin signal is
+  // riskier than the old diluted-by-neutral-50 behavior, so fall back to the
+  // fixed weights in that degenerate case.
+  const dq = scores.dataQuality ?? ({} as any);
+  const included: Record<string, boolean> = {
+    fundamental: !isEtf && (dq.fundamentalDataAvailable ?? true),
+    technical: (dq.technicalDataPoints ?? 0) > 0,
+    sentiment: dq.sentimentDataAvailable ?? true,
+    macro: dq.macroDataAvailable ?? true,
+    insider: dq.insiderDataAvailable ?? true,
+  };
+  const weightOf: Record<string, number> = { fundamental: fw, technical: tw, sentiment: sw, macro: mw, insider: iw };
+  const includedDims = Object.keys(included).filter(k => included[k]);
+  let effWeights = weightOf;
+  let renormalized = false;
+  if (includedDims.length >= 2 && includedDims.length < 5) {
+    const totalIncluded = includedDims.reduce((s, k) => s + weightOf[k], 0);
+    effWeights = { fundamental: 0, technical: 0, sentiment: 0, macro: 0, insider: 0 };
+    for (const k of includedDims) effWeights[k] = totalIncluded > 0 ? weightOf[k] / totalIncluded : 0;
+    renormalized = true;
+  }
+
   const analystScore = Math.round(
-    scores.fundamental_score * fw +
-    scores.technical_score   * tw +
-    scores.sentiment_score   * sw +
-    scores.macro_score       * mw +
-    scores.insider_score     * iw
+    scores.fundamental_score * effWeights.fundamental +
+    scores.technical_score   * effWeights.technical +
+    scores.sentiment_score   * effWeights.sentiment +
+    scores.macro_score       * effWeights.macro +
+    scores.insider_score     * effWeights.insider
   );
 
   const scoreThreshold = strategy?.score_threshold ?? strategy?.min_analyst_score ?? 60;
@@ -950,9 +984,12 @@ export async function processSymbol(
       market,
       symbol,
       strategy_version_id: null,            // filled when champion row id is loaded; else null
-      weights_used: { fundamental: fw, technical: tw, sentiment: sw, macro: mw, insider: iw },
+      weights_used: effWeights, // the ACTUALLY-APPLIED weights (post-renormalization), not the base profile split
       used_champion: usingChampion,
-      features: { ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}) },
+      features: {
+        ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}),
+        weighting: { renormalized, included_dims: includedDims, base_weights: weightOf, applied_weights: effWeights },
+      },
       availability_mask,
       analyst_score: analystScore,
       fundamental_score: scores.fundamental_score,

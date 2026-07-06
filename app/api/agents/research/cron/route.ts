@@ -5,7 +5,10 @@ import { isIndia } from "@/lib/india-data";
 import { prewarmPriceCache } from "@/lib/chart-data";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// Bumped from 60 -> 150s: Theme Scout is now awaited inline (before
+// gatherSymbols) instead of fired async, so its own AV/LLM round-trip now
+// counts against this run's budget too.
+export const maxDuration = 150;
 
 // Called by Windows Task Scheduler. US run ~9 AM ET; India run ~6:15 AM ET (after
 // the 15:30 IST / 06:00 ET NSE close). `?market=us|india` scopes the run to one
@@ -107,6 +110,21 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Theme Scout runs (and is awaited) BEFORE gatherSymbols so today's newly
+  // discovered theme tickers land in the watchlist in time to be researched
+  // THIS run, not tomorrow's. US-only (theme-scout has no India logic) — skip
+  // on an India-scoped run so it doesn't fire twice a day.
+  if (marketScope !== "india") {
+    const appUrlEarly = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    try {
+      await fetch(`${appUrlEarly}/api/agents/theme-scout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET ?? "" },
+        signal: AbortSignal.timeout(45000),
+      });
+    } catch { /* fail-soft — a Theme Scout hiccup must never block research */ }
+  }
+
   const allEntries = await gatherSymbols(supabase);
   // Scope to the requested market: India run researches only .NS/.BO names; US run
   // only non-India. No param → everything (legacy).
@@ -198,12 +216,6 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     paperTradeResult = { error: e instanceof Error ? e.message : String(e) };
   }
-
-  // Chain Theme Scout (fire async — don't block response, uses cheap Groq)
-  fetch(`${appUrl}/api/agents/theme-scout`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET ?? "" },
-  }).catch(() => {});
 
   // Pre-warm price_cache for researched symbols + benchmark ETFs (fire async, don't block response)
   const BENCHMARK_SYMBOLS = ["VOO", "QQQ", "SPY", "IWM", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLC", "XLP", "XLU", "XLRE", "XLB"];

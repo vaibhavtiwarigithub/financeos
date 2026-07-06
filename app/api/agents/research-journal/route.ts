@@ -22,14 +22,26 @@ export async function GET(req: NextRequest) {
   const dayStart = `${date}T00:00:00.000Z`;
   const dayEnd = `${date}T23:59:59.999Z`;
 
-  const { data: observations } = await svc
+  const { data: rawObservations } = await svc
     .from("decision_observations")
     .select("id, ts, symbol, analyst_score, score_threshold, entry_eligible, direction, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, features, signal_id")
     .eq("market", market)
     .gte("ts", dayStart).lte("ts", dayEnd)
-    .order("analyst_score", { ascending: false });
+    .order("ts", { ascending: true });
 
-  const signalIds = (observations ?? []).map((o: any) => o.signal_id).filter(Boolean);
+  // Research can legitimately fire more than once a day (manual re-triggers,
+  // testing) — group by symbol and keep only the latest observation, with a
+  // run count, instead of showing one flat duplicate row per run.
+  const bySymbol = new Map<string, { obs: any; runCount: number }>();
+  for (const obs of (rawObservations ?? []) as any[]) {
+    const existing = bySymbol.get(obs.symbol);
+    bySymbol.set(obs.symbol, { obs, runCount: (existing?.runCount ?? 0) + 1 });
+  }
+  const observations = Array.from(bySymbol.values())
+    .map(({ obs, runCount }) => ({ ...obs, runCount }))
+    .sort((a, b) => b.analyst_score - a.analyst_score);
+
+  const signalIds = observations.map((o: any) => o.signal_id).filter(Boolean);
   let stageEvents: any[] = [];
   if (signalIds.length > 0) {
     const { data } = await svc.from("pipeline_stage_events").select("*").in("signal_id", signalIds).order("created_at", { ascending: true });
@@ -49,8 +61,9 @@ export async function GET(req: NextRequest) {
     return `pending_${last.stage}`;
   }
 
-  const symbols = (observations ?? []).map((obs: any) => ({
+  const symbols = observations.map((obs: any) => ({
     symbol: obs.symbol,
+    run_count: obs.runCount,
     analyst_score: obs.analyst_score,
     score_threshold: obs.score_threshold,
     entry_eligible: obs.entry_eligible,
@@ -60,6 +73,7 @@ export async function GET(req: NextRequest) {
       sentiment: obs.sentiment_score, macro: obs.macro_score, insider: obs.insider_score,
     },
     screener: obs.features?.screener ?? null,
+    weighting: obs.features?.weighting ?? null,
     notes: {
       fundamental: obs.features?.fundamental?.note ?? null,
       technical: obs.features?.technical?.note ?? null,
