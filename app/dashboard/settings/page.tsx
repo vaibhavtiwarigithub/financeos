@@ -134,8 +134,7 @@ export default function SettingsPage() {
 
     // A3: does a promoted champion exist for the active market? (scoring weights overridden)
     supabase.from("strategy_versions").select("id").eq("is_champion", true).limit(1)
-      .then(({ data }) => setHasChampion(!!data && data.length > 0))
-      .catch(() => {});
+      .then(({ data }) => setHasChampion(!!data && data.length > 0), () => {});
 
     fetch("/api/brokers").then(r => r.json()).then(setBrokerList).catch(() => {});
   }, []);

@@ -53,18 +53,20 @@ export async function submitAlpacaOrder(o: {
   return { ok: true, brokerOrderId: res.data?.id, raw: res.data };
 }
 
+type AlpacaOrderStatus = "submitted" | "partially_filled" | "filled" | "canceled" | "expired" | "rejected";
+
 export async function getAlpacaOrder(brokerOrderId: string, env: "paper" | "live"):
-  Promise<{ ok: boolean; status?: string; filledQty?: number; avgFillPrice?: number; raw?: any; error?: string }> {
+  Promise<{ ok: boolean; status?: AlpacaOrderStatus; filledQty?: number; avgFillPrice?: number; raw?: any; error?: string }> {
   const res = await alpacaFetch(`/v2/orders/${brokerOrderId}`, env);
   if (!res.ok) return { ok: false, error: res.error };
   const d = res.data;
-  const statusMap: Record<string, string> = {
+  const statusMap: Record<string, AlpacaOrderStatus> = {
     new: "submitted", accepted: "submitted", pending_new: "submitted",
     partially_filled: "partially_filled", filled: "filled",
     canceled: "canceled", expired: "expired", rejected: "rejected",
   };
   return {
-    ok: true, status: statusMap[d?.status] ?? d?.status,
+    ok: true, status: statusMap[d?.status] ?? undefined,
     filledQty: d?.filled_qty != null ? parseFloat(d.filled_qty) : undefined,
     avgFillPrice: d?.filled_avg_price != null ? parseFloat(d.filled_avg_price) : undefined,
     raw: d,
