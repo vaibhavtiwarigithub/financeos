@@ -88,6 +88,17 @@ $staleTask     = New-ScheduledTask -Action $staleAction -Trigger $staleBase -Set
 Register-ScheduledTask -TaskName "$TaskFolder\stale-check" -InputObject $staleTask -Force | Out-Null
 Write-Host "Registered: $TaskFolder\stale-check  -> stale-check (every 4h)"
 
+# Nightly DB backup: Supabase Free tier has no automatic backups. Runs pg_dump
+# directly (not through run-agents.ps1 — this isn't an HTTP call to the app).
+# Requires SUPABASE_DB_URL in .env.local (see scripts/backup-db.ps1 header).
+$backupScript   = "$PSScriptRoot\backup-db.ps1"
+$backupAction   = New-ScheduledTaskAction -Execute $PSExe -Argument "-NonInteractive -ExecutionPolicy Bypass -File `"$backupScript`""
+$backupTrigger  = New-ScheduledTaskTrigger -Daily -At "3:00AM"
+$backupSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
+$backupTask     = New-ScheduledTask -Action $backupAction -Trigger $backupTrigger -Settings $backupSettings -Description "Kairos: nightly Postgres backup (pg_dump to backups/)"
+Register-ScheduledTask -TaskName "$TaskFolder\db-backup" -InputObject $backupTask -Force | Out-Null
+Write-Host "Registered: $TaskFolder\db-backup  -> nightly pg_dump at 3:00 AM"
+
 Write-Host ""
 Write-Host "Done. All Kairos tasks registered under \$TaskFolder in Task Scheduler."
 Write-Host "Verify with: Get-ScheduledTask -TaskPath `"\$TaskFolder\`""

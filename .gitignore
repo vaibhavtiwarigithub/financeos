@@ -8,6 +8,9 @@ node_modules/
 scripts/robin.env
 scripts/logs/
 
+# DB backups — real user data, never committed
+backups/
+
 # next-pwa generated service worker artifacts (built into public/ on prod build)
 public/sw.js
 public/sw.js.map
