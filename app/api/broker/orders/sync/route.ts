@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getBroker } from "@/lib/brokers/registry";
 import { fetchAlpacaAccount } from "@/lib/brokers/alpaca";
+import { getKiteHoldings } from "@/lib/kite";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -67,6 +68,28 @@ export async function POST(req: NextRequest) {
       if (Math.abs(actualQty - netQty) > 1) mismatches.push(`${symbol} (${env}): our ledger says ${netQty}, Alpaca says ${actualQty}`);
     }
   }
+  // Kite (India) reconciliation — was entirely missing before: only Alpaca's
+  // holdings were ever checked, so an India ledger/reality mismatch had no
+  // detection path at all. Kite is live-only (no paper env).
+  {
+    const holdings = await getKiteHoldings(supabase);
+    if (holdings.ok && Array.isArray(holdings.data)) {
+      const { data: filledOrders } = await supabase.from("broker_orders")
+        .select("symbol, side, filled_qty").eq("broker", "kite").eq("broker_env", "live").eq("status", "filled");
+      const netBySymbol: Record<string, number> = {};
+      for (const o of (filledOrders ?? []) as any[]) {
+        const sign = o.side === "buy" ? 1 : -1;
+        netBySymbol[o.symbol] = (netBySymbol[o.symbol] ?? 0) + sign * Number(o.filled_qty ?? 0);
+      }
+      for (const [symbol, netQty] of Object.entries(netBySymbol)) {
+        const bare = symbol.replace(/\.(NS|BO)$/i, "");
+        const holding = holdings.data.find((h: any) => h.tradingsymbol === bare);
+        const actualQty = holding?.quantity ?? 0;
+        if (Math.abs(actualQty - netQty) > 1) mismatches.push(`${symbol} (kite/live): our ledger says ${netQty}, Kite says ${actualQty}`);
+      }
+    }
+  }
+
   if (mismatches.length > 0) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     await fetch(`${appUrl}/api/alerts`, {

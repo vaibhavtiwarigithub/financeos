@@ -34,8 +34,12 @@ export async function GET(req: NextRequest) {
 
   const calibrationSeries = (calibration ?? []).map((c: any) => ({ date: c.fitted_at, n_observations: c.n_observations, brier: (c.calibration as any)?.brier_score ?? null }));
 
+  // NOT "agreement with the champion's real decision" (no such comparison is
+  // computed here) — this is the % of shadow evaluations that were bullish
+  // (would_enter=true). Renamed from the previous "agreementPct" name, which
+  // implied a comparison that wasn't actually being made.
   const shadowArr = (shadowDecisions ?? []) as any[];
-  const shadowAgreementPct = shadowArr.length > 0
+  const shadowWouldEnterPct = shadowArr.length > 0
     ? Math.round((shadowArr.filter((s: any) => s.would_enter).length / shadowArr.length) * 100)
     : null;
 
@@ -44,6 +48,6 @@ export async function GET(req: NextRequest) {
     learner: { runsCount: learnerRunsArr.length, weightSeries, enoughHistory: learnerRunsArr.length >= 3 },
     featureRegistry: { events: featureTimeline, enoughHistory: featureTimeline.length >= 3 },
     calibration: { series: calibrationSeries, enoughHistory: calibrationSeries.length >= 3 },
-    shadow: { decisionsCount: shadowArr.length, agreementPct: shadowAgreementPct, enoughHistory: shadowArr.length >= 10 },
+    shadow: { decisionsCount: shadowArr.length, wouldEnterPct: shadowWouldEnterPct, enoughHistory: shadowArr.length >= 10 },
   });
 }

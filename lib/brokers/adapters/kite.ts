@@ -30,7 +30,12 @@ export function kiteAdapter(): BrokerAdapter {
       if (!res.ok) return { ok: false, error: res.error };
       return { ok: true, brokerOrderId: res.data?.order_id, raw: res.data };
     },
-    async getOrder(brokerOrderId): Promise<BrokerOrderState> {
+    async getOrder(brokerOrderId, env): Promise<BrokerOrderState> {
+      // env intentionally unused today (Kite is live-only), but the parameter
+      // must be accepted — TS structural typing silently allows a function
+      // with fewer params to satisfy BrokerAdapter, so a caller passing env
+      // would have it silently dropped with no compile error until this.
+      void env;
       const res = await kiteGet(`/orders/${brokerOrderId}`);
       if (!res.ok) return { ok: false, error: res.error };
       const history = Array.isArray(res.data) ? res.data : [];
@@ -44,7 +49,8 @@ export function kiteAdapter(): BrokerAdapter {
         raw: latest,
       };
     },
-    async cancelOrder(brokerOrderId) {
+    async cancelOrder(brokerOrderId, env) {
+      void env;
       const res = await kiteDelete(`/orders/regular/${brokerOrderId}`);
       return { ok: res.ok, error: res.error };
     },

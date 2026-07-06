@@ -2,14 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { listBrokers } from "@/lib/brokers/registry";
+import { RISK_PROFILES as PROFILES } from "@/lib/risk-profiles";
 
 export const dynamic = "force-dynamic";
-
-const PROFILES = {
-  conservative: { score_threshold: 72, position_size_pct: 7, stop_loss_pct: 5, target_pct: 12, max_positions_per_sector: 2, ks_daily_loss_pct: -4, ks_drawdown_pct: 15, ks_accuracy_pct: 45, exit_hysteresis: 10 },
-  balanced:     { score_threshold: 60, position_size_pct: 10, stop_loss_pct: 7, target_pct: 20, max_positions_per_sector: 3, ks_daily_loss_pct: -5, ks_drawdown_pct: 20, ks_accuracy_pct: 40, exit_hysteresis: 15 },
-  aggressive:   { score_threshold: 52, position_size_pct: 15, stop_loss_pct: 10, target_pct: 35, max_positions_per_sector: 4, ks_daily_loss_pct: -7, ks_drawdown_pct: 25, ks_accuracy_pct: 35, exit_hysteresis: 20 },
-};
 
 const VALID_TRADING_MODES = ["disabled", "manual", "auto"] as const;
 const VALID_PROFILES = ["conservative", "balanced", "aggressive"] as const;
@@ -82,22 +77,13 @@ export async function PATCH(req: NextRequest) {
 
   const update: Record<string, any> = { ...defaults };
   if (risk_profile) update.risk_profile = risk_profile;
-  if (score_threshold !== undefined) update.score_threshold = score_threshold;
-  if (position_size_pct !== undefined) update.position_size_pct = position_size_pct;
-  if (stop_loss_pct !== undefined) update.stop_loss_pct = stop_loss_pct;
-  if (target_pct !== undefined) update.target_pct = target_pct;
-  if (trading_mode !== undefined) update.trading_mode = trading_mode;
-  if (broker !== undefined) update.broker = broker;
-  if (active_broker_us !== undefined) update.active_broker_us = active_broker_us;
-  if (active_broker_india !== undefined) update.active_broker_india = active_broker_india;
-  if (max_positions_per_sector !== undefined) update.max_positions_per_sector = max_positions_per_sector;
-  if (ks_daily_loss_pct !== undefined) update.ks_daily_loss_pct = ks_daily_loss_pct;
-  if (ks_drawdown_pct !== undefined) update.ks_drawdown_pct = ks_drawdown_pct;
-  if (ks_accuracy_pct !== undefined) update.ks_accuracy_pct = ks_accuracy_pct;
-  if (exit_hysteresis !== undefined) update.exit_hysteresis = exit_hysteresis;
 
   // Part B — time-bound posture. Setting one applies its dials with an expiry;
-  // the research cron auto-reverts to base_risk_profile once expired.
+  // the research cron auto-reverts to base_risk_profile once expired. This
+  // Object.assign runs BEFORE the individual per-field overrides below (not
+  // after) so an explicit override sent in the SAME request (e.g.
+  // {posture:'aggressive', position_size_pct:3}) always wins over the
+  // posture's fixed profile dials, instead of being silently clobbered.
   let journalEntry: { entry_type: string; summary: string } | null = null;
   if (posture) {
     const base = existing.posture ? existing.base_risk_profile : existing.risk_profile;
@@ -116,7 +102,25 @@ export async function PATCH(req: NextRequest) {
     update.posture_expires_at = null;
     update.base_risk_profile = null;
     journalEntry = { entry_type: "posture_change", summary: `Posture canceled early, reverted to ${base}` };
+  } else if (posture === null && !existing.posture) {
+    // Cancel request with nothing active to cancel — tell the caller instead
+    // of silently no-op'ing 200 OK, which could mask a stale-UI double-submit.
+    return NextResponse.json({ ok: true, no_op: true, reason: "No active posture to cancel" });
   }
+
+  if (score_threshold !== undefined) update.score_threshold = score_threshold;
+  if (position_size_pct !== undefined) update.position_size_pct = position_size_pct;
+  if (stop_loss_pct !== undefined) update.stop_loss_pct = stop_loss_pct;
+  if (target_pct !== undefined) update.target_pct = target_pct;
+  if (trading_mode !== undefined) update.trading_mode = trading_mode;
+  if (broker !== undefined) update.broker = broker;
+  if (active_broker_us !== undefined) update.active_broker_us = active_broker_us;
+  if (active_broker_india !== undefined) update.active_broker_india = active_broker_india;
+  if (max_positions_per_sector !== undefined) update.max_positions_per_sector = max_positions_per_sector;
+  if (ks_daily_loss_pct !== undefined) update.ks_daily_loss_pct = ks_daily_loss_pct;
+  if (ks_drawdown_pct !== undefined) update.ks_drawdown_pct = ks_drawdown_pct;
+  if (ks_accuracy_pct !== undefined) update.ks_accuracy_pct = ks_accuracy_pct;
+  if (exit_hysteresis !== undefined) update.exit_hysteresis = exit_hysteresis;
 
   // Resilient write — some columns may not exist on older schemas; retry
   // stripping the optional ones so saving a profile still works.

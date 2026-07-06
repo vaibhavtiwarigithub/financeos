@@ -60,13 +60,23 @@ export async function getAlpacaOrder(brokerOrderId: string, env: "paper" | "live
   const res = await alpacaFetch(`/v2/orders/${brokerOrderId}`, env);
   if (!res.ok) return { ok: false, error: res.error };
   const d = res.data;
+  // Cover Alpaca's full order-status enum, not just the common few — an
+  // unmapped status used to fall through to the raw string; a later type
+  // tightening changed that fallback to `undefined`, which made the sync
+  // route's `if (!res.status) continue` silently skip these orders forever
+  // instead of updating them. Map every real Alpaca status to the closest
+  // BrokerOrderState value rather than leaving any of them unmapped.
   const statusMap: Record<string, AlpacaOrderStatus> = {
     new: "submitted", accepted: "submitted", pending_new: "submitted",
     partially_filled: "partially_filled", filled: "filled",
     canceled: "canceled", expired: "expired", rejected: "rejected",
+    pending_cancel: "submitted", pending_replace: "submitted",
+    stopped: "submitted", suspended: "submitted", held: "submitted",
+    accepted_for_bidding: "submitted",
+    done_for_day: "expired", replaced: "canceled", calculated: "filled",
   };
   return {
-    ok: true, status: statusMap[d?.status] ?? undefined,
+    ok: true, status: statusMap[d?.status] ?? "submitted",
     filledQty: d?.filled_qty != null ? parseFloat(d.filled_qty) : undefined,
     avgFillPrice: d?.filled_avg_price != null ? parseFloat(d.filled_avg_price) : undefined,
     raw: d,

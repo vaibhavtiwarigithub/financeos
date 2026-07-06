@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { gatherSymbols, processSymbol } from "@/lib/research-agent";
 import { isIndia } from "@/lib/india-data";
 import { prewarmPriceCache } from "@/lib/chart-data";
+import { RISK_PROFILES } from "@/lib/risk-profiles";
 
 export const dynamic = "force-dynamic";
 // Bumped from 60 -> 150s: Theme Scout is now awaited inline (before
@@ -69,15 +70,10 @@ export async function POST(req: NextRequest) {
       .select("id, posture, posture_expires_at, base_risk_profile")
       .limit(1)
       .maybeSingle();
-    const PROFILE_DIALS: Record<string, any> = {
-      conservative: { score_threshold: 72, position_size_pct: 7, stop_loss_pct: 5, target_pct: 12, max_positions_per_sector: 2, ks_daily_loss_pct: -4, ks_drawdown_pct: 15, ks_accuracy_pct: 45, exit_hysteresis: 10 },
-      balanced:     { score_threshold: 60, position_size_pct: 10, stop_loss_pct: 7, target_pct: 20, max_positions_per_sector: 3, ks_daily_loss_pct: -5, ks_drawdown_pct: 20, ks_accuracy_pct: 40, exit_hysteresis: 15 },
-      aggressive:   { score_threshold: 52, position_size_pct: 15, stop_loss_pct: 10, target_pct: 35, max_positions_per_sector: 4, ks_daily_loss_pct: -7, ks_drawdown_pct: 25, ks_accuracy_pct: 35, exit_hysteresis: 20 },
-    };
     if (postureCfg?.posture && postureCfg.posture_expires_at && new Date(postureCfg.posture_expires_at) <= new Date()) {
-      const base = postureCfg.base_risk_profile ?? "balanced";
+      const base = (postureCfg.base_risk_profile ?? "balanced") as keyof typeof RISK_PROFILES;
       await supabase.from("strategy_config").update({
-        ...PROFILE_DIALS[base], risk_profile: base, posture: null, posture_expires_at: null, base_risk_profile: null,
+        ...RISK_PROFILES[base], risk_profile: base, posture: null, posture_expires_at: null, base_risk_profile: null,
       } as any).eq("id", postureCfg.id);
       await supabase.from("decision_journal").insert({
         entry_type: "posture_expired",
@@ -117,12 +113,18 @@ export async function POST(req: NextRequest) {
   if (marketScope !== "india") {
     const appUrlEarly = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     try {
-      await fetch(`${appUrlEarly}/api/agents/theme-scout`, {
+      const tsRes = await fetch(`${appUrlEarly}/api/agents/theme-scout`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET ?? "" },
         signal: AbortSignal.timeout(45000),
       });
-    } catch { /* fail-soft — a Theme Scout hiccup must never block research */ }
+      if (!tsRes.ok) console.error(`[research-cron] Theme Scout failed inline (${tsRes.status}) — proceeding without today's new theme picks`);
+    } catch (e) {
+      // Fail-soft — a Theme Scout hiccup must never block research — but
+      // silent failure here previously left zero signal that "0 signals
+      // written" or a slow run was actually caused by Theme Scout timing out.
+      console.error("[research-cron] Theme Scout timed out or errored inline — proceeding without today's new theme picks:", e instanceof Error ? e.message : e);
+    }
   }
 
   const allEntries = await gatherSymbols(supabase);

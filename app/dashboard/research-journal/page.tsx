@@ -182,7 +182,7 @@ function EvolutionTab() {
         {!data.shadow.enoughHistory ? (
           <div style={{ fontSize: "12px", color: T.muted }}>Only {data.shadow.decisionsCount} shadow decision(s) in the last 90 days — not enough history yet.</div>
         ) : (
-          <div style={{ fontSize: "12px", color: T.textSub }}>{data.shadow.decisionsCount} shadow decisions, {data.shadow.agreementPct}% would-enter rate.</div>
+          <div style={{ fontSize: "12px", color: T.textSub }}>{data.shadow.decisionsCount} shadow decisions, {data.shadow.wouldEnterPct}% would-enter rate (not champion agreement — no such comparison is computed yet).</div>
         )}
       </Card>
     </div>

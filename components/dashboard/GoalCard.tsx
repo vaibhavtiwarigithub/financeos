@@ -13,7 +13,7 @@ type GoalResp = {
     id: number; market: string; target_return_pct: number; horizon_days: number; start_nav: number; start_date: string; status: string;
   };
   currentNav?: number; progressPct?: number; requiredDailyPct?: number; realizedDailyPct?: number | null;
-  feasibility?: string; onTrack?: boolean; daysLeft?: number; daysElapsed?: number;
+  feasibility?: string; onTrack?: boolean | null; daysLeft?: number; daysElapsed?: number;
 };
 
 // Goal tracker — a MEASURED dashboard only. Never read by any agent route
@@ -70,7 +70,10 @@ export default function GoalCard() {
   const progress = data.progressPct ?? 0;
   const target = Number(g.target_return_pct);
   const pctOfTarget = Math.max(0, Math.min(100, (progress / target) * 100));
-  const statusColor = g.status === "achieved" ? T.green : g.status === "missed" ? T.red : data.onTrack ? T.green : T.amber;
+  // onTrack is null on the goal's creation day (0 elapsed days) — not enough
+  // history yet to claim on/off track either way; show neutral, not a fake green.
+  const statusColor = g.status === "achieved" ? T.green : g.status === "missed" ? T.red
+    : data.onTrack == null ? T.textSub : data.onTrack ? T.green : T.amber;
 
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>

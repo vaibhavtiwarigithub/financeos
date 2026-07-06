@@ -263,7 +263,7 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     name: "model-check",
     agent: "model-check",
     time: "Monday 7:30 AM ET",
-    days: "Friday",
+    days: "Weekdays",
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:

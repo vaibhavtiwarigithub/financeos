@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
 
   const { data: goal, error } = await svc.from("trading_goals").insert({
     market, target_return_pct: targetReturnPct, horizon_days: horizonDays, start_nav: startNav, note: body.note ?? null,
+    start_date: new Date().toISOString().slice(0, 10), // explicit, not relying solely on the column's DEFAULT CURRENT_DATE
   }).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -77,7 +78,10 @@ export async function GET(req: NextRequest) {
   const daysElapsed = Math.floor((Date.now() - new Date(goal.start_date).getTime()) / 86400_000);
   const daysLeft = Math.max(0, Number(goal.horizon_days) - daysElapsed);
   const expectedProgressPct = (daysElapsed / Number(goal.horizon_days)) * Number(goal.target_return_pct);
-  const onTrack = progressPct >= expectedProgressPct * 0.85; // small tolerance band
+  // daysElapsed === 0 makes expectedProgressPct 0, which made a same-day-created
+  // goal trivially "on track" with zero real signal. Require at least 1 elapsed
+  // day before claiming on-track either way.
+  const onTrack = daysElapsed > 0 ? progressPct >= expectedProgressPct * 0.85 : null;
 
   let status = goal.status;
   if (status === "active") {

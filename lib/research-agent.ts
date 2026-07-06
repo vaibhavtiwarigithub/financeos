@@ -257,9 +257,19 @@ export async function runScreener(supabase: any): Promise<{ symbol: string; buck
     ], fdKey, 10),
   ]);
 
+  // Interleave momentum/value round-robin before capping at 6 — a flat
+  // momentum-then-value order with slice(6) let momentum silently crowd out
+  // every value candidate whenever momentum alone returned 6+ hits (which it
+  // plausibly does most days), violating the locked "let ResearchAgent score
+  // both buckets" design rule (screening bias, not scoring bias).
   const seen = new Map<string, "momentum" | "value">();
-  for (const s of momentum) if (s.length > 0 && s.length <= 6) seen.set(s, "momentum");
-  for (const s of value) if (s.length > 0 && s.length <= 6 && !seen.has(s)) seen.set(s, "value");
+  const validMomentum = momentum.filter(s => s.length > 0 && s.length <= 6);
+  const validValue = value.filter(s => s.length > 0 && s.length <= 6);
+  const maxLen = Math.max(validMomentum.length, validValue.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (validMomentum[i] && !seen.has(validMomentum[i])) seen.set(validMomentum[i], "momentum");
+    if (validValue[i] && !seen.has(validValue[i])) seen.set(validValue[i], "value");
+  }
 
   return Array.from(seen.entries()).slice(0, 6).map(([symbol, bucket]) => ({ symbol, bucket }));
 }
@@ -791,7 +801,15 @@ export async function processSymbol(
   if (includedDims.length >= 2 && includedDims.length < 5) {
     const totalIncluded = includedDims.reduce((s, k) => s + weightOf[k], 0);
     effWeights = { fundamental: 0, technical: 0, sentiment: 0, macro: 0, insider: 0 };
-    for (const k of includedDims) effWeights[k] = totalIncluded > 0 ? weightOf[k] / totalIncluded : 0;
+    // If every included dimension's configured weight happens to be 0 (a
+    // deliberately zeroed custom config), fall back to an equal split across
+    // them instead of leaving every effWeight at 0 — which silently zeroed
+    // analystScore for every symbol that run with no error or fallback.
+    if (totalIncluded > 0) {
+      for (const k of includedDims) effWeights[k] = weightOf[k] / totalIncluded;
+    } else {
+      for (const k of includedDims) effWeights[k] = 1 / includedDims.length;
+    }
     renormalized = true;
   }
 

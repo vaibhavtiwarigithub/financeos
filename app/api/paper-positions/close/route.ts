@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getQuote } from "@/lib/data/quotes";
 import { fetchIndiaQuote } from "@/lib/india-data";
+import { classifyOutcome } from "@/lib/trade-outcome";
 
 export const dynamic = "force-dynamic";
 
@@ -41,18 +42,28 @@ export async function POST(req: NextRequest) {
 
   const realizedPnl = (currentPrice - Number(pos.avg_cost)) * Number(pos.qty);
   const pnlPct = Number(pos.avg_cost) > 0 ? ((currentPrice - Number(pos.avg_cost)) / Number(pos.avg_cost)) * 100 : 0;
-  const outcome = realizedPnl > 0.5 ? "win" : realizedPnl < -0.5 ? "loss" : "breakeven";
+  const outcome = classifyOutcome(pnlPct);
   const cur = market === "india" ? "₹" : "$";
 
   let tq = svc.from("paper_trades").select("id, qty, fill_price").eq("symbol", symbol).is("closed_at", null);
   if (hasMarketCol) tq = tq.eq("market", market);
   const { data: openTrades } = await tq;
+
+  // Cash credited below is based solely on pos.qty; if it doesn't match the
+  // sum of what we're actually marking closed in paper_trades, cash/NAV would
+  // silently drift from the ledger with no signal. Log loudly rather than
+  // fail the close (the position still needs to go away either way).
+  const openTradesQtySum = (openTrades ?? []).reduce((s: number, t: any) => s + Number(t.qty ?? 0), 0);
+  if (Math.abs(openTradesQtySum - Number(pos.qty)) > 0.001) {
+    console.error(`[paper-positions/close] qty mismatch for ${symbol}: paper_positions.qty=${pos.qty} vs sum(open paper_trades.qty)=${openTradesQtySum} — cash credited off pos.qty may not match what's actually being closed`);
+  }
+
   for (const t of (openTrades ?? []) as any[]) {
     const tQty = Number(t.qty ?? 0);
     const tFill = Number(t.fill_price ?? pos.avg_cost);
     const tPnl = (currentPrice - tFill) * tQty;
     const tPnlPct = tFill > 0 ? ((currentPrice - tFill) / tFill) * 100 : 0;
-    const tOutcome = tPnl > 0.5 ? "win" : tPnl < -0.5 ? "loss" : "breakeven";
+    const tOutcome = classifyOutcome(tPnlPct);
     await svc.from("paper_trades").update({
       exit_price: currentPrice, realized_pnl: tPnl, pnl_pct: tPnlPct,
       outcome: tOutcome, closed_at: new Date().toISOString(),

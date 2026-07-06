@@ -67,6 +67,19 @@ Notes: All 13 features shipped. Key governance choices: MacroSentinel is advisor
 
 ---
 
+### Entry 3 — 2026-07-06 (Session batch: cloud-cron + learning-core Phase 2-3 + 4 architecture decisions)
+
+Instruction: Migrate scheduling off the laptop onto Vercel + Supabase pg_cron so agents survive the machine being off; build the previously-approved Posture/Goals and Ops Calendar/Brokers/Models specs; build a Research Journal for pipeline transparency; then run an unbiased multi-agent code review of the whole session's diff and fix everything it found.
+Classification: Architecture rule / Feature request (batch, all approved) / Bug fix (large batch surfaced by review)
+Affected area: Deployment (Vercel silent trigger target), Supabase pg_cron (21 jobs), lib/research-agent.ts (scoring formula), lib/kill-switches.ts, lib/brokers/* (new adapter registry), app/api/goals/*, app/api/agents/research-journal/*, app/dashboard/research-journal, strategy_config (9 new columns), 3 new tables (trading_goals, pipeline_stage_events, feature_registry_history), profiles.market_focus (discovered missing entirely), lib/schedule.ts, DashboardShell nav.
+Impact: High
+Architecture impact: Major — Decisions 38 (Posture/Goals), 39 (Ops Calendar/Broker Registry/Model Freshness), 40 (Research Journal + signal_id join-key fix), 41 (scoring-weight renormalization) all logged in PROJECT_DECISIONS.md as Approved.
+Risk: Complexity (broker adapter registry, weight renormalization) offset by resilient fallbacks throughout; a multi-agent ultra-review of the full diff afterward surfaced 15+ real defects (a dormant same-day kill-switch bug that pre-dated this session, a screener bucket-ordering bias that pre-dated this session, a regression introduced mid-session in an Alpaca status-type fix, several fixed-currency/absolute-threshold bugs, ~10 schema changes applied live via MCP with no committed migration file until this entry) — all fixed in the same session; this build log itself hadn't been updated since Entry 2 despite 4 major decisions shipping, which the review also caught.
+Decision status: Implemented
+Notes: Key lesson reinforced twice this session: a local `npm run build` can falsely report success on a stale `tsconfig.tsbuildinfo` incremental cache — always `rm -rf .next` before trusting a "build passed" result before deploying. Also: schema changes applied directly via the Supabase MCP tool must ALSO be written as committed `supabase/migrations/*.sql` files in the same change — this was skipped for ~10 changes tonight (migrations 072-080 backfill them after the fact) and should not recur.
+
+---
+
 ### Entry 1 â€” 2026-06-27
 
 Instruction: Design a self-improving agentic quant platform that continuously researches markets, runs shadow experiments, teaches the user, and can eventually trade through the Robinhood agentic account.

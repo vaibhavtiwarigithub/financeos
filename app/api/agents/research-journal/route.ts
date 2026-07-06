@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     .select("id, ts, symbol, analyst_score, score_threshold, entry_eligible, direction, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, features, signal_id")
     .eq("market", market)
     .gte("ts", dayStart).lte("ts", dayEnd)
-    .order("ts", { ascending: true });
+    .order("ts", { ascending: true }).order("id", { ascending: true }); // id as tiebreaker — ts alone isn't unique when Phase 3 shadow-decision fan-out inserts land in the same millisecond
 
   // Research can legitimately fire more than once a day (manual re-triggers,
   // testing) — group by symbol and keep only the latest observation, with a

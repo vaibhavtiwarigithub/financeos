@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchIndiaQuote } from "@/lib/india-data";
+import { classifyOutcome } from "@/lib/trade-outcome";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -126,7 +127,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       const tFill = Number((t as any).fill_price ?? pos.avg_cost);
       const tPnl = (currentPrice - tFill) * tQty;
       const tPnlPct = tFill > 0 ? ((currentPrice - tFill) / tFill) * 100 : 0;
-      const tOutcome = tPnl > 0.5 ? "win" : tPnl < -0.5 ? "loss" : "breakeven";
+      const tOutcome = classifyOutcome(tPnlPct);
       await svc.from("paper_trades").update({
         exit_price: currentPrice, realized_pnl: tPnl, pnl_pct: tPnlPct,
         outcome: tOutcome, closed_at: new Date().toISOString(),
@@ -159,8 +160,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
 
     // Handle llm_exit flag set by LearnerAgent — close position if flagged and we have a price
     if (pos.exit_reason === "llm_exit" && currentPrice) {
-      const outcome = (currentPrice - pos.avg_cost) * pos.qty > 0.5 ? "win"
-        : (currentPrice - pos.avg_cost) * pos.qty < -0.5 ? "loss" : "breakeven";
+      const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
       await closePosition(pos, currentPrice, "llm_exit", outcome);
       continue;
     }
@@ -176,8 +176,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     // and let the mechanical stop/target below protect it.
     const sc = latestScore[pos.symbol];
     if (sc?.score != null && (sc.score < exitThreshold || (sc.direction && sc.direction !== "long"))) {
-      const outcome = (currentPrice - pos.avg_cost) * pos.qty > 0.5 ? "win"
-        : (currentPrice - pos.avg_cost) * pos.qty < -0.5 ? "loss" : "breakeven";
+      const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
       await closePosition(pos, currentPrice, `score_exit (${sc.score} < ${exitThreshold})`, outcome);
       continue;
     }

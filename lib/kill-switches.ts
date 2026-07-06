@@ -2,6 +2,8 @@
 // Call checkKillSwitches() before any paper or live trade execution.
 // Returns { safe: true } or { safe: false, reason, tripped }
 
+import { DEFAULT_KILL_SWITCH_DIALS } from "@/lib/risk-profiles";
+
 export interface KillSwitchResult {
   safe: boolean;
   reason?: string;
@@ -43,16 +45,23 @@ export async function checkKillSwitches(supabase: any, market: string = "us"): P
   ]);
 
   const nav = portfolio?.nav ?? startNav;
-  const dailyLossLimit = Number(cfg?.ks_daily_loss_pct) || -5;
-  const drawdownLimit = Number(cfg?.ks_drawdown_pct) || 20;
-  const accuracyLimit = Number(cfg?.ks_accuracy_pct) || 40;
+  const rawDailyLoss = Number(cfg?.ks_daily_loss_pct);
+  const rawDrawdown = Number(cfg?.ks_drawdown_pct);
+  const rawAccuracy = Number(cfg?.ks_accuracy_pct);
+  const dailyLossLimit = Number.isFinite(rawDailyLoss) && rawDailyLoss !== 0 ? rawDailyLoss : DEFAULT_KILL_SWITCH_DIALS.ks_daily_loss_pct;
+  const drawdownLimit = Number.isFinite(rawDrawdown) && rawDrawdown !== 0 ? rawDrawdown : DEFAULT_KILL_SWITCH_DIALS.ks_drawdown_pct;
+  const accuracyLimit = Number.isFinite(rawAccuracy) && rawAccuracy !== 0 ? rawAccuracy : DEFAULT_KILL_SWITCH_DIALS.ks_accuracy_pct;
 
   // --- Kill switch 1: single-day loss beyond profile threshold (default -5%) ---
+  // Compares CURRENT live NAV (already fetched above) against yesterday's
+  // persisted close — NOT today's own paper_performance row, which doesn't
+  // exist yet on the first (and often only) run of the day since paper-trade
+  // upserts it near the END of this same route. Using todayPerf here meant
+  // the same-day circuit breaker could never actually fire same-day.
   const today = new Date().toISOString().slice(0, 10);
-  const todayPerf = recentPerf?.find((p: any) => p.date === today);
   const yesterday = recentPerf?.filter((p: any) => p.date < today).at(-1);
-  if (todayPerf && yesterday) {
-    const dailyLossPct = ((todayPerf.nav - yesterday.nav) / yesterday.nav) * 100;
+  if (yesterday) {
+    const dailyLossPct = ((nav - yesterday.nav) / yesterday.nav) * 100;
     if (dailyLossPct < dailyLossLimit) {
       await disableTrading(supabase, `Daily loss ${dailyLossPct.toFixed(1)}% exceeds ${dailyLossLimit}% threshold`);
       return { safe: false, tripped: "daily_loss", reason: `Daily loss ${dailyLossPct.toFixed(1)}% > ${dailyLossLimit}%` };
