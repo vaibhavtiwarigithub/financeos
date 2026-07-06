@@ -80,6 +80,19 @@ Notes: Key lesson reinforced twice this session: a local `npm run build` can fal
 
 ---
 
+### Entry 4 - 2026-07-06 (Codex adversarial review fix pass + agent-evolution architecture proposal)
+
+Instruction: User ran an independent Codex review of the core scoring/trading/learning loop out of concern that missing/rate-limited data could silently corrupt signals; asked for every finding to be verified and fixed in priority order. Same thread, Codex sent a second addendum asking whether agent parameters/discovery sources/evolution surface are actually appropriate (not just bug-free) for a world-class US+India swing agent, requesting a written architecture note rather than immediate implementation.
+Classification: Bug fix batch (Decision 43, implemented) + Architecture rule (agent-evolution proposal, DRAFT only per Architecture-First Mode)
+Affected area: lib/social-sentiment.ts, lib/research-agent.ts, lib/data/scores.ts, new lib/scoring/weighted-score.ts, lib/validation/engine.ts, lib/learning/dataset.ts, app/api/agents/theme-scout/route.ts, lib/risk/sizing.ts, app/api/agents/paper-trade/route.ts, app/api/agents/learner/route.ts; new features/agent-evolution/FEATURE_ARCHITECTURE.md
+Impact: High (bug fixes touch every scored decision); architecture proposal not yet implemented
+Architecture impact: Major for the bug-fix batch (shared scoring contract now spans production + validation); the agent-evolution doc is DRAFT ONLY - no code shipped for discovery-source attribution, genome expansion, or India-specific thresholds
+Risk: None beyond what Decision 43 already carries - the architecture doc explicitly defers all new tunable surface behind the existing challenger/validate/promote gate and repeats the locked pushback items (3 candidates/day, no explicit regime switching, no loosening trade approval) as constraints on itself
+Decision status: Decision 43 (bug fixes) Implemented; agent-evolution architecture Proposed, awaiting approval
+Notes: Also disabled all 15 Windows Task Scheduler \Kairos\ jobs at the user's request - they were still Ready and pointed at localhost:3000, duplicating pg_cron's cloud-triggered calls (LLM/API spend) whenever a local dev server happened to be running at trigger time. Actual duplicate trades were already prevented by paper-trade's signal-claiming idempotency (shared DB), but duplicate outbound API calls were real. pg_cron is now the sole scheduler.
+
+---
+
 ### Entry 1 â€” 2026-06-27
 
 Instruction: Design a self-improving agentic quant platform that continuously researches markets, runs shadow experiments, teaches the user, and can eventually trade through the Robinhood agentic account.

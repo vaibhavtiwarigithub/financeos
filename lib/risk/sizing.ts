@@ -18,12 +18,16 @@ export interface SizingOptions {
 }
 
 // Position size as a fraction of pool cash (e.g. 0.10 = 10%), clamped to
-// [floorPct, halfKellyCap]. Negative/zero Kelly (no edge) clamps to the floor —
-// callers should gate entry separately (this only sizes bets already entered).
+// [floorPct, halfKellyCap] for a POSITIVE-edge bet. A no-edge result
+// (kellyFraction <= 0 — including NaN/invalid inputs, which kellyFraction
+// already zeroes) returns 0, not the floor: a calibrated model saying "no edge
+// here" must not still open a floor-sized real position. Callers gate entry
+// on the return value being > 0, not on invoking this at all.
 export function positionSizePct(pWin: number, payoffRatio: number, opts?: SizingOptions): number {
   const cap = opts?.halfKellyCap ?? 0.10;
   const floor = opts?.floorPct ?? 0.02;
   const full = kellyFraction(pWin, payoffRatio);
+  if (full <= 0) return 0;
   const half = full * 0.5; // never full-Kelly — ruin risk
   return Math.max(floor, Math.min(cap, half));
 }

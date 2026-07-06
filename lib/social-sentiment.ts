@@ -7,6 +7,11 @@ export interface SocialSentiment {
   av_news_articles: number | null;
   overall_sentiment: "Bullish" | "Bearish" | "Neutral";
   fetched_at: string;
+  // This object is ALWAYS returned (never null) even when both providers fail —
+  // has_data is the only reliable signal that real evidence backs the neutral-50
+  // "Neutral" default vs. a genuine absence of data. Do not use `!!socialResult`
+  // as an availability check; it is always true.
+  has_data: boolean;
 }
 
 interface StockTwitsResult {
@@ -73,6 +78,7 @@ export async function fetchSocialSentiment(symbol: string): Promise<SocialSentim
     av_news_articles: av?.article_count ?? null,
     overall_sentiment: bullishScore > 60 ? "Bullish" : bullishScore < 40 ? "Bearish" : "Neutral",
     fetched_at: new Date().toISOString(),
+    has_data: st != null || av != null,
   };
 }
 

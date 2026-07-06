@@ -232,6 +232,61 @@ export async function POST(req: NextRequest) {
 
       // ── Tool implementations ────────────────────────────────────────────────
 
+      // Shared by query_score_correlation (read-only diagnostic tool) AND
+      // update_signal_weight (the actual gate). Previously update_signal_weight
+      // trusted the LLM's OWN n_trades/confidence arguments for its numeric
+      // gates — the LLM could claim n_trades:10 with a stronger correlation than
+      // what query_score_correlation actually returned, since nothing bound the
+      // mutation to a specific correlation result. This recomputes the same
+      // correlation server-side so the gate is checked against ground truth,
+      // not LLM-reported numbers.
+      async function computeScoreCorrelation(dimension: string, days = 60): Promise<{ source: "observation_ledger" | "paper_trades_fallback" | "insufficient_data"; n: number; correlation: number }> {
+        const since = new Date(Date.now() - days * 86400_000).toISOString();
+        try {
+          const ledgerRows = await loadLabeledDataset(svc, LEARN_MARKET, 10);
+          if (ledgerRows.length >= 10) {
+            const ledgerPairs = ledgerRows
+              .map(r => ({ score: (r as any)[dimension] as number | null, pnl: r.benchmark_neutral_return ?? r.fwd_return }))
+              .filter(p => p.score != null && p.pnl != null) as { score: number; pnl: number }[];
+            if (ledgerPairs.length >= 10) {
+              const n = ledgerPairs.length;
+              const meanScore = ledgerPairs.reduce((a, b) => a + b.score, 0) / n;
+              const meanPnl = ledgerPairs.reduce((a, b) => a + b.pnl, 0) / n;
+              const num = ledgerPairs.reduce((a, b) => a + (b.score - meanScore) * (b.pnl - meanPnl), 0);
+              const denScore = Math.sqrt(ledgerPairs.reduce((a, b) => a + Math.pow(b.score - meanScore, 2), 0));
+              const denPnl = Math.sqrt(ledgerPairs.reduce((a, b) => a + Math.pow(b.pnl - meanPnl, 2), 0));
+              const correlation = denScore * denPnl === 0 ? 0 : parseFloat((num / (denScore * denPnl)).toFixed(3));
+              return { source: "observation_ledger", n, correlation };
+            }
+          }
+        } catch { /* ledger unavailable (059/060 not applied) — fall through to legacy path */ }
+
+        const { data: signals } = await scopeMkt(svc.from("agent_signals")
+          .select(`id, ${dimension}, created_at`)
+          .gte("created_at", since).not(dimension, "is", null).limit(100));
+        const { data: trades } = await scopeMkt(svc.from("paper_trades")
+          .select("signal_id, pnl_pct, executed_at")
+          .not("closed_at", "is", null).gte("executed_at", since));
+
+        const tradeMap = new Map<any, number | null>((trades ?? []).map((t: any) => [t.signal_id, t.pnl_pct as number | null]));
+        const pairs: { score: number; pnl: number }[] = [];
+        for (const s of signals ?? []) {
+          const pnl = tradeMap.get((s as any).id);
+          const score = (s as any)[dimension];
+          if (pnl != null && score != null) pairs.push({ score, pnl: pnl as number });
+        }
+        if (pairs.length < 3) return { source: "insufficient_data", n: pairs.length, correlation: 0 };
+
+        const n = pairs.length;
+        const meanScore = pairs.reduce((a, b) => a + b.score, 0) / n;
+        const meanPnl = pairs.reduce((a, b) => a + b.pnl, 0) / n;
+        const num = pairs.reduce((a, b) => a + (b.score - meanScore) * (b.pnl - meanPnl), 0);
+        const denScore = Math.sqrt(pairs.reduce((a, b) => a + Math.pow(b.score - meanScore, 2), 0));
+        const denPnl = Math.sqrt(pairs.reduce((a, b) => a + Math.pow(b.pnl - meanPnl, 2), 0));
+        const correlation = denScore * denPnl === 0 ? 0 : parseFloat((num / (denScore * denPnl)).toFixed(3));
+        return { source: "paper_trades_fallback", n, correlation };
+      }
+
       async function toolExecutor(call: ToolCall): Promise<string> {
         switch (call.name) {
 
@@ -269,7 +324,6 @@ export async function POST(req: NextRequest) {
           case "query_score_correlation": {
             const dimension = call.arguments.dimension as string;
             const days = (call.arguments.days as number) ?? 60;
-            const since = new Date(Date.now() - days * 86400_000).toISOString();
 
             // Check if this dimension is enabled in learner_config
             const cfg = dimConfig[dimension];
@@ -277,63 +331,21 @@ export async function POST(req: NextRequest) {
               return JSON.stringify({ skipped: true, reason: `Dimension ${dimension} is disabled in learner_config — turned off by user` });
             }
 
-            // Phase 1 learning-core: PREFER the decision-observation ledger — it
-            // covers every scored candidate (not just fills), is joined by
-            // horizon-matured labels, and uses benchmark_neutral_return (alpha,
-            // not raw P&L which mixes in market beta). Falls back to the legacy
-            // paper_trades join when the ledger has too few matured rows yet
-            // (fresh install / before migrations 059/060 are applied).
-            try {
-              const ledgerRows = await loadLabeledDataset(svc, LEARN_MARKET, 10);
-              if (ledgerRows.length >= 10) {
-                const ledgerPairs = ledgerRows
-                  .map(r => ({ score: (r as any)[dimension] as number | null, pnl: r.benchmark_neutral_return ?? r.fwd_return }))
-                  .filter(p => p.score != null && p.pnl != null) as { score: number; pnl: number }[];
-                if (ledgerPairs.length >= 10) {
-                  const n = ledgerPairs.length;
-                  const meanScore = ledgerPairs.reduce((a, b) => a + b.score, 0) / n;
-                  const meanPnl = ledgerPairs.reduce((a, b) => a + b.pnl, 0) / n;
-                  const num = ledgerPairs.reduce((a, b) => a + (b.score - meanScore) * (b.pnl - meanPnl), 0);
-                  const denScore = Math.sqrt(ledgerPairs.reduce((a, b) => a + Math.pow(b.score - meanScore, 2), 0));
-                  const denPnl = Math.sqrt(ledgerPairs.reduce((a, b) => a + Math.pow(b.pnl - meanPnl, 2), 0));
-                  const correlation = denScore * denPnl === 0 ? 0 : parseFloat((num / (denScore * denPnl)).toFixed(3));
-                  return JSON.stringify({
-                    source: "observation_ledger", horizon_days: 10, dimension, n, correlation,
-                    interpretation: correlation > 0.3 ? "positive — higher score = better benchmark-neutral return" : correlation < -0.3 ? "negative — higher score = worse benchmark-neutral return (consider reducing weight)" : "weak/no correlation",
-                    caveat: "INTERIM: univariate correlation on all scored candidates (incl. rejected). Phase 2 replaces this with a regularized multivariate walk-forward fit + validation gate before any weight change is trusted.",
-                  });
-                }
-              }
-            } catch { /* ledger unavailable (059/060 not applied) — fall through to legacy path */ }
-
-            const { data: signals } = await scopeMkt(svc.from("agent_signals")
-              .select(`id, ${dimension}, created_at`)
-              .gte("created_at", since).not(dimension, "is", null).limit(100));
-            const { data: trades } = await scopeMkt(svc.from("paper_trades")
-              .select("signal_id, pnl_pct, executed_at")
-              .not("closed_at", "is", null).gte("executed_at", since));
-
-            // Join by signal_id (the trade opened from THIS score), not symbol —
-            // symbol-keying overwrote duplicate signals and paired scores with the
-            // wrong trade's P&L, poisoning the correlation.
-            const tradeMap = new Map<any, number | null>((trades ?? []).map((t: any) => [t.signal_id, t.pnl_pct as number | null]));
-            const pairs: { score: number; pnl: number }[] = [];
-            for (const s of signals ?? []) {
-              const pnl = tradeMap.get((s as any).id);
-              const score = (s as any)[dimension];
-              if (pnl != null && score != null) pairs.push({ score, pnl: pnl as number });
+            const result = await computeScoreCorrelation(dimension, days);
+            if (result.source === "insufficient_data") {
+              return JSON.stringify({ error: "Insufficient data", n: result.n, dimension });
             }
-
-            if (pairs.length < 3) return JSON.stringify({ error: "Insufficient data", n: pairs.length, dimension });
-
-            const n = pairs.length;
-            const meanScore = pairs.reduce((a, b) => a + b.score, 0) / n;
-            const meanPnl = pairs.reduce((a, b) => a + b.pnl, 0) / n;
-            const num = pairs.reduce((a, b) => a + (b.score - meanScore) * (b.pnl - meanPnl), 0);
-            const denScore = Math.sqrt(pairs.reduce((a, b) => a + Math.pow(b.score - meanScore, 2), 0));
-            const denPnl = Math.sqrt(pairs.reduce((a, b) => a + Math.pow(b.pnl - meanPnl, 2), 0));
-            const correlation = denScore * denPnl === 0 ? 0 : parseFloat((num / (denScore * denPnl)).toFixed(3));
-            return JSON.stringify({ source: "paper_trades_fallback", dimension, n, correlation, interpretation: correlation > 0.3 ? "positive — higher score = better P&L" : correlation < -0.3 ? "negative — higher score = worse P&L (consider reducing weight)" : "weak/no correlation" });
+            const interpretation = result.correlation > 0.3
+              ? `positive — higher score = better ${result.source === "observation_ledger" ? "benchmark-neutral return" : "P&L"}`
+              : result.correlation < -0.3
+              ? `negative — higher score = worse ${result.source === "observation_ledger" ? "benchmark-neutral return" : "P&L"} (consider reducing weight)`
+              : "weak/no correlation";
+            return JSON.stringify({
+              source: result.source, dimension, n: result.n, correlation: result.correlation, interpretation,
+              caveat: result.source === "observation_ledger"
+                ? "INTERIM: univariate correlation on all scored candidates (incl. rejected). Phase 2 replaces this with a regularized multivariate walk-forward fit + validation gate before any weight change is trusted."
+                : "Legacy paper_trades fallback — filled trades only, smaller sample than the observation ledger. NOTE: update_signal_weight refuses to mutate on this source; the ledger (10+ matured observations) is required for an actual weight change.",
+            });
           }
 
           case "query_macro_context": {
@@ -390,33 +402,66 @@ export async function POST(req: NextRequest) {
             const dimension = String(call.arguments.dimension ?? "");
             const newWeight = Number(call.arguments.new_weight);
             const reason = String(call.arguments.reason ?? "");
-            const nTrades = Number(call.arguments.n_trades);
-            const confidence = Number(call.arguments.confidence ?? 0);
+            // n_trades/confidence are the LLM's OWN claims — kept only for the
+            // human-readable log line below. They are NOT trusted for any gate:
+            // nothing previously bound them to a specific query_score_correlation
+            // result, so the LLM could claim n_trades:10 / confidence:0.9 for a
+            // dimension whose actual correlation was computed on fewer usable
+            // pairs (or came from the weaker paper_trades fallback). Every gate
+            // below is checked against a FRESH server-side recomputation instead.
+            const llmClaimedNTrades = Number(call.arguments.n_trades);
+            const llmClaimedConfidence = Number(call.arguments.confidence ?? 0);
 
             // Runtime validation — tool args come from the LLM and are untrusted.
-            // NaN/missing values must not slip past the numeric gates below.
             const WEIGHT_DIMS = ["fundamental_weight", "technical_weight", "sentiment_weight", "macro_weight", "insider_weight"];
             if (!WEIGHT_DIMS.includes(dimension)) return JSON.stringify({ error: `Invalid dimension '${dimension}'. Must be one of: ${WEIGHT_DIMS.join(", ")}` });
             if (!Number.isFinite(newWeight)) return JSON.stringify({ error: "new_weight must be a finite number" });
-            if (!Number.isInteger(nTrades) || nTrades < 0) return JSON.stringify({ error: "n_trades must be a non-negative integer" });
-            if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return JSON.stringify({ error: "confidence must be a number between 0 and 1" });
 
             if (autoGuardTripped) return JSON.stringify({ error: `AUTO-GUARD (champion health): ${autoGuardReason}. Weight mutations paused. Review strategy before re-enabling.` });
             if ((totalClosedTrades ?? 0) < 10) return JSON.stringify({ error: `Phase 0 gate: ${totalClosedTrades} closed trades. Need 10+.` });
-            if (nTrades < 10) return JSON.stringify({ error: `Insufficient trades (N=${nTrades}). Need N≥10.` });
+
+            // Server-side evidence binding: recompute the SAME correlation
+            // query_score_correlation would return for this dimension, right
+            // now, and gate on that — never on the LLM's claimed n_trades/confidence.
+            const scoreCol = dimension.replace(/_weight$/, "_score");
+            const evidence = await computeScoreCorrelation(scoreCol, 60);
+            if (evidence.source !== "observation_ledger") {
+              // Fail closed: the decision-observation ledger (10+ matured,
+              // horizon-labeled rows) is the only source trusted to justify an
+              // actual weight mutation. The paper_trades fallback remains
+              // available for read-only diagnosis via query_score_correlation,
+              // but a weaker/smaller sample must not move live scoring weights.
+              return JSON.stringify({ error: `Ledger unavailable for ${scoreCol} (source=${evidence.source}, n=${evidence.n}) — weight mutations require the observation ledger (10+ matured rows), not the paper_trades fallback. Use query_score_correlation for read-only diagnosis only.` });
+            }
+            if (evidence.n < 10) return JSON.stringify({ error: `Insufficient ledger evidence for ${scoreCol} (N=${evidence.n}). Need N≥10.` });
 
             // Check per-dimension config
             const cfg = dimConfig[dimension];
             const dimAllowMutation = cfg?.allow_mutation ?? true;
             const dimMinConfidence = cfg?.min_confidence ?? 0.70;
             if (!dimAllowMutation) return JSON.stringify({ error: `Dimension ${dimension} has allow_mutation=false — disabled by user in learner_config` });
-            if (confidence < dimMinConfidence) return JSON.stringify({ error: `Confidence ${confidence} < min_confidence ${dimMinConfidence} for ${dimension}` });
+            // |correlation| stands in for confidence here — it's the actual,
+            // server-computed effect size, not a number the LLM asserts.
+            const effectSize = Math.abs(evidence.correlation);
+            if (effectSize < dimMinConfidence) return JSON.stringify({ error: `Effect size |correlation|=${effectSize} < min_confidence ${dimMinConfidence} for ${dimension} (server-recomputed from ${evidence.n} ledger rows, not the LLM's claimed confidence)` });
+
+            const nTrades = evidence.n; // server-verified, not the LLM's claim
+            const confidence = effectSize;
 
             // Select ONLY the weight columns — never spread metadata (ids/timestamps)
             // into weights_snapshot, or promotion code that iterates keys breaks.
             const { data: current, error: curErr } = await svc.from("signal_weights").select(WEIGHT_DIMS.join(", ")).single();
             if (curErr) return JSON.stringify({ error: `Failed to read current weights: ${curErr.message}` });
             const currentVal = Number((current as any)?.[dimension] ?? 0.25);
+
+            // Direction sanity: raising a weight requires the ledger to show a
+            // POSITIVE score->return correlation for that dimension; lowering
+            // requires negative. A weight change that fights its own evidence
+            // is exactly the failure mode evidence-binding exists to prevent.
+            const raisingWeight = newWeight > currentVal;
+            if (raisingWeight && evidence.correlation <= 0) return JSON.stringify({ error: `Cannot raise ${dimension} — ledger shows correlation ${evidence.correlation} (not positive) for ${scoreCol}` });
+            if (!raisingWeight && evidence.correlation >= 0) return JSON.stringify({ error: `Cannot lower ${dimension} — ledger shows correlation ${evidence.correlation} (not negative) for ${scoreCol}` });
+
             const clamped = Math.max(0.05, Math.min(0.60, Math.max(currentVal - 0.05, Math.min(currentVal + 0.05, newWeight))));
             const proposedWeights: Record<string, number> = {};
             for (const d of WEIGHT_DIMS) proposedWeights[d] = Number((current as any)?.[d] ?? 0.25);
@@ -451,7 +496,7 @@ export async function POST(req: NextRequest) {
               is_champion:       false,
               weights_snapshot:  proposedWeights,
               market:            LEARN_MARKET, // Phase 4: challenger belongs to this market
-              notes:             `Proposed by LearnerAgent on ${today} for ${LEARN_MARKET.toUpperCase()}. N=${nTrades} trades, confidence=${Math.round(confidence * 100)}%. NOT active until promoted.`,
+              notes:             `Proposed by LearnerAgent on ${today} for ${LEARN_MARKET.toUpperCase()}. N=${nTrades} trades (server-verified via observation ledger), effect_size=${Math.round(confidence * 100)}%. LLM claimed N=${llmClaimedNTrades}/confidence=${Math.round((Number.isFinite(llmClaimedConfidence) ? llmClaimedConfidence : 0) * 100)}% — informational only, not trusted for gating. NOT active until promoted.`,
             };
             let challengerRow: any = null, insErr: any = null;
             {
@@ -679,7 +724,7 @@ flowchart TD
 
 Always show real numbers. Never say "see DB" — embed the actual values.
 
-Personal trade history (query_trade_decisions / semantic_search_decisions) is BEHAVIORAL evidence only — never cite it as justification for update_signal_weight. Only query_score_correlation (observation ledger or paper-trades fallback) may support a weight change.
+Personal trade history (query_trade_decisions / semantic_search_decisions) is BEHAVIORAL evidence only — never cite it as justification for update_signal_weight. update_signal_weight independently recomputes the observation-ledger correlation for the target dimension server-side and refuses to run at all if only the weaker paper-trades fallback is available — your n_trades/confidence arguments are logged for context only and are not what gates the mutation.
 
 REASONING APPROACH:
 1. Start with read_priors to load background market knowledge
@@ -704,7 +749,7 @@ REASONING APPROACH:
         { name: "query_macro_context", description: "Get recent macro signals (rates, geopolitical events, sector rotations) from MacroSentinel", parameters: { type: "object", properties: { days: { type: "number" } } } },
         { name: "read_past_learnings", description: "Read past learning log and previous learner run summaries", parameters: { type: "object", properties: { limit: { type: "number" } } } },
         { name: "write_hypothesis", description: "Save a finding or hypothesis", parameters: { type: "object", properties: { claim: { type: "string" }, evidence: { type: "string" }, confidence: { type: "number" }, action_taken: { type: "string" }, category: { type: "string", enum: ["fundamental", "technical", "macro", "insider", "general"] } }, required: ["claim", "evidence", "confidence"] } },
-        { name: "update_signal_weight", description: "Propose a weight change — creates an immutable challenger in strategy_versions. NOT applied until promoted via Strategy Registry. Gated by phase gate, per-dim config, and auto-guard.", parameters: { type: "object", properties: { dimension: { type: "string", enum: ["fundamental_weight", "technical_weight", "sentiment_weight", "macro_weight", "insider_weight"] }, new_weight: { type: "number", minimum: 0.05, maximum: 0.60 }, reason: { type: "string" }, n_trades: { type: "integer", minimum: 10 }, confidence: { type: "number", minimum: 0, maximum: 1 } }, required: ["dimension", "new_weight", "reason", "n_trades", "confidence"] } },
+        { name: "update_signal_weight", description: "Propose a weight change — creates an immutable challenger in strategy_versions. NOT applied until promoted via Strategy Registry. Gated by phase gate, per-dim config, auto-guard, AND a server-side recomputation of the observation-ledger correlation for this dimension (refuses if only the paper-trades fallback is available, or if the ledger's correlation sign contradicts the direction of your proposed change). n_trades/confidence are recorded for context only — the actual gate uses the server's own fresh correlation query, not these values.", parameters: { type: "object", properties: { dimension: { type: "string", enum: ["fundamental_weight", "technical_weight", "sentiment_weight", "macro_weight", "insider_weight"] }, new_weight: { type: "number", minimum: 0.05, maximum: 0.60 }, reason: { type: "string" }, n_trades: { type: "integer", minimum: 10, description: "Your own estimate — informational only, not used for gating" }, confidence: { type: "number", minimum: 0, maximum: 1, description: "Your own estimate — informational only, not used for gating" } }, required: ["dimension", "new_weight", "reason", "n_trades", "confidence"] } },
         { name: "query_trade_decisions", description: "Query enriched real trade history (CSV imports + Robinhood MCP). Returns outcome_score per trade (positive=good decision), regime breakdown, win/loss counts. Use to find behavioral patterns in the user's actual trading history.", parameters: { type: "object", properties: { limit: { type: "number", description: "Max trades to return (default 50)" }, action: { type: "string", enum: ["buy", "sell"], description: "Filter by buy or sell" }, regime: { type: "string", description: "Filter by macro regime name (partial match)" }, min_outcome_score: { type: "number", description: "Filter decisions with outcome_score >= this" }, max_outcome_score: { type: "number", description: "Filter decisions with outcome_score <= this" } } } },
         { name: "semantic_search_decisions", description: "Vector similarity search over enriched trade decisions using Voyage AI embeddings. Use to find trades similar to a situation ('tech sell-off Q4', 'rate hike momentum trade', 'earnings miss hold'), or to answer 'what did I do when X happened'. Returns top-K decisions with outcome data. Only works if embeddings have been built (POST /api/live-portfolio/embed).", parameters: { type: "object", properties: { query: { type: "string", minLength: 1, maxLength: 2000, description: "Natural language query describing the trade situation to search for" }, top_k: { type: "integer", minimum: 1, maximum: 20, description: "Number of results to return (default 8, max 20)" } }, required: ["query"] } },
         { name: "propose_feature", description: "Propose a NEW candidate feature as a machine-readable spec (Phase 3). The formula is NEVER executed by you — it's stored as 'proposed' and only interpreted later by a whitelisted-grammar compiler (operators + - * / and functions log/abs/min/max/lag only). It has ZERO effect on scoring until a deterministic out-of-sample IC check promotes it to 'active'. Use this to propose a hypothesis-driven signal you can't express as a weight change.", parameters: { type: "object", properties: {

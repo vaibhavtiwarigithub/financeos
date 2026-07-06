@@ -14,6 +14,7 @@ function makeRow(daysFromEpoch: number, overrides: Partial<LabeledObservation> =
     direction: "long",
     entry_eligible: true,
     score_threshold: 60,
+    availability_mask: null,
     horizon_days: 10,
     fwd_return: 0.01,
     benchmark_return: 0,

@@ -34,6 +34,23 @@ export interface ComputedScores {
 
 // ── Fundamental scoring from AV OVERVIEW ──────────────────────────────────────
 
+// Requires at least 2 of the real valuation/quality fields to be present before
+// treating fundamentals as "available." AV's OVERVIEW only returns a populated
+// object when the symbol resolves, so `!!overview.Symbol` was a reasonable
+// proxy there — but lib/india-data.ts's Yahoo mapper always sets `Symbol` on
+// any quoteSummary hit, even when every real field (P/E, margin, ROE, etc.) is
+// empty, which made sparse Yahoo responses look like real evidence.
+const FUNDAMENTAL_FIELDS = ["PERatio", "ProfitMargin", "ReturnOnEquityTTM", "EPS", "QuarterlyRevenueGrowthYOY"] as const;
+export function hasMinFundamentalFields(overview: Record<string, string> | null | undefined, min = 2): boolean {
+  if (!overview) return false;
+  let count = 0;
+  for (const f of FUNDAMENTAL_FIELDS) {
+    const v = parseFloat(overview[f] ?? "");
+    if (!isNaN(v)) count++;
+  }
+  return count >= min;
+}
+
 function scoreFundamentals(overview: Record<string, string>, isEtf: boolean): { score: number; evidence: Record<string, unknown> } {
   if (isEtf) {
     // ETFs have no P/E/earnings — use a neutral baseline (momentum drives the score elsewhere).
@@ -147,16 +164,22 @@ export function scoreSentiment(socialResult: any): { score: number; evidence: Re
   return { score: 50, evidence: { note: "sentiment format unknown", raw: socialResult } };
 }
 
-// ── Macro scoring from macro_signals table (MacroSentinel) ────────────────────
+// ── Macro scoring from macro_regime (MacroSentinel's weekly regime assessment) ─
+// danger_score/regime live on macro_regime (migration 028), NOT macro_signals —
+// macro_signals holds per-indicator rows (one per indicator per week, no
+// danger_score/regime columns at all). Querying macro_signals for those columns
+// always errors, so macro silently fell back to "macro query failed" -> neutral
+// 50 -> excluded every single run, meaning the macro dimension never contributed
+// real signal despite MacroSentinel running weekly and populating macro_regime.
 
 async function fetchMacroScore(supabase: any): Promise<{ score: number; evidence: Record<string, unknown> }> {
   try {
     const { data } = await supabase
-      .from("macro_signals")
-      .select("danger_score, regime, created_at")
-      .order("created_at", { ascending: false })
+      .from("macro_regime")
+      .select("danger_score, regime, week_of")
+      .order("week_of", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     if (!data) return { score: 50, evidence: { note: "no macro data" } };
 
@@ -168,7 +191,7 @@ async function fetchMacroScore(supabase: any): Promise<{ score: number; evidence
 
     return {
       score: Math.max(0, Math.min(100, macroScore)),
-      evidence: { danger_score: dangerScore, regime, source: "macro_sentinel", as_of: data.created_at },
+      evidence: { danger_score: dangerScore, regime, source: "macro_sentinel", as_of: data.week_of },
     };
   } catch {
     return { score: 50, evidence: { note: "macro query failed" } };
@@ -177,11 +200,16 @@ async function fetchMacroScore(supabase: any): Promise<{ score: number; evidence
 
 // ── Insider scoring (reuse existing scoreInsider output) ──────────────────────
 
-export function normalizeInsiderScore(insiderResult: any): { score: number; evidence: Record<string, unknown> } {
-  if (!insiderResult) return { score: 50, evidence: { note: "no insider data" } };
-  if (typeof insiderResult === "number") return { score: Math.max(0, Math.min(100, insiderResult)), evidence: {} };
+export function normalizeInsiderScore(insiderResult: any): { score: number; evidence: Record<string, unknown>; available: boolean } {
+  if (!insiderResult) return { score: 50, evidence: { note: "no insider data" }, available: false };
+  if (typeof insiderResult === "number") return { score: Math.max(0, Math.min(100, insiderResult)), evidence: {}, available: true };
   const score = insiderResult.score ?? insiderResult.insider_score ?? 50;
-  return { score: Math.max(0, Math.min(100, Math.round(score))), evidence: insiderResult };
+  // scoreInsider() (research-agent.ts) sets `available: false` for no-data/
+  // fetch-failed/rate-limited outcomes, which all otherwise return the same
+  // neutral score:50 shape — `available` is the only field that tells them
+  // apart from genuinely-balanced real insider activity.
+  const available = typeof insiderResult.available === "boolean" ? insiderResult.available : true;
+  return { score: Math.max(0, Math.min(100, Math.round(score))), evidence: insiderResult, available };
 }
 
 // ── Master score computation ──────────────────────────────────────────────────
@@ -208,7 +236,7 @@ export async function computeScores(opts: {
 
   const { score: macro_score, evidence: macroEvidence } = await fetchMacroScore(supabase);
 
-  const { score: insider_score, evidence: insiderEvidence } = normalizeInsiderScore(insiderResult);
+  const { score: insider_score, evidence: insiderEvidence, available: insiderAvailable } = normalizeInsiderScore(insiderResult);
 
   const result: ComputedScores = {
     fundamental_score,
@@ -224,11 +252,19 @@ export async function computeScores(opts: {
       insider: insiderEvidence,
     },
     dataQuality: {
-      fundamentalDataAvailable: !!avOverview?.Symbol || isEtf,
+      // isEtf is INAPPLICABLE (structural), not merely unavailable — kept
+      // separate from real per-symbol fundamental fetch success so a sparse
+      // Yahoo/AV response can't masquerade as real evidence.
+      fundamentalDataAvailable: isEtf || hasMinFundamentalFields(avOverview),
       technicalDataPoints: candles.length,
-      sentimentDataAvailable: !!socialResult,
+      // socialResult is ALWAYS a non-null object (fetchSocialSentiment never
+      // returns null) — has_data is the real signal for whether either
+      // provider actually returned something.
+      sentimentDataAvailable: socialResult?.has_data === true,
       macroDataAvailable: !!macroEvidence?.regime,
-      insiderDataAvailable: !!insiderResult,
+      // scoreInsider() always returns a non-null {score:50,...} shape on
+      // failure/no-data too — `available` is the real signal.
+      insiderDataAvailable: insiderAvailable,
     },
   };
 

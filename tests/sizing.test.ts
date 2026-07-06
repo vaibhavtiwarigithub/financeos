@@ -29,9 +29,9 @@ describe("positionSizePct (never exceeds cap, never negative, degrades to flat f
     expect(size).toBeLessThanOrEqual(0.10);
   });
 
-  it("never goes negative or below the floor when there is no edge", () => {
+  it("sizes to zero when there is no edge — a no-edge bet must not still open a floor-sized position", () => {
     const size = positionSizePct(0.3, 1, { halfKellyCap: 0.10, floorPct: 0.02 });
-    expect(size).toBeGreaterThanOrEqual(0.02);
+    expect(size).toBe(0);
   });
 
   it("uses half of full Kelly, not full Kelly (ruin-risk guard)", () => {
@@ -40,8 +40,14 @@ describe("positionSizePct (never exceeds cap, never negative, degrades to flat f
     expect(sized).toBeCloseTo(full * 0.5, 5);
   });
 
-  it("degrades to the floor (flat minimum) when no calibrated edge exists", () => {
+  it("sizes to zero for a coin-flip/1:1 payoff (no calibrated edge)", () => {
     const size = positionSizePct(0.5, 1);
-    expect(size).toBe(0.02); // default floorPct
+    expect(size).toBe(0);
+  });
+
+  it("still applies the floor once there IS a positive edge, however small", () => {
+    // p=0.51, b=1 -> kelly = 0.02 (a real, tiny positive edge) — floor applies here, not to no-edge bets.
+    const size = positionSizePct(0.51, 1, { halfKellyCap: 0.10, floorPct: 0.02 });
+    expect(size).toBe(0.02);
   });
 });

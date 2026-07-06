@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     const { data: cfg } = await supabase
       .from("strategy_config")
-      .select("app_paused, score_threshold, position_size_pct, stop_loss_pct, target_pct")
+      .select("app_paused, score_threshold, position_size_pct, stop_loss_pct, target_pct, max_gross_exposure_pct, max_sector_exposure_pct, max_name_exposure_pct, max_portfolio_vol_pct, max_avg_pairwise_corr")
       .limit(1)
       .single();
     if ((cfg as any)?.app_paused) {
@@ -267,6 +267,14 @@ export async function POST(req: NextRequest) {
       // + p75 MFE) from the ledger's actual outcome distribution, replacing the
       // fixed profile stop/target — but a signal-provided value ALWAYS wins.
       const maeMfe = maeMfeByMarket.get(market);
+      if (!maeMfe && signal.price_target == null && signal.stop_loss == null) {
+        // getGlobalMaeMfePercentiles() silently returns null on any query
+        // failure/insufficient data and PaperTrader falls back to fixed
+        // profile stop/target — safe, but previously invisible. Record it so
+        // the briefing/Research Journal can tell the user whether sizing used
+        // learned risk or static defaults for this fill.
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "passed", reason: "dynamic_rr_unavailable — using fixed profile stop/target", detail: { stopLossPctCfg, targetPctCfg } });
+      }
       const priceTarget = signal.price_target != null ? signal.price_target
         : maeMfe ? parseFloat((fillPrice * (1 + maeMfe.targetMfePctile)).toFixed(2))
         : parseFloat((fillPrice * (1 + targetPctCfg / 100)).toFixed(2));
@@ -298,27 +306,34 @@ export async function POST(req: NextRequest) {
         [{ symbol: signal.symbol, market: market as "us" | "india", proposedSizePct, sector: candSector, beta: null, dailyVol }],
         portfolioLimits
       );
-      const sizedPct = constructed.orders[0]?.finalSizePct ?? 0;
-      if (sizedPct <= 0) {
+      const rawSizedPct = constructed.orders[0]?.finalSizePct ?? 0;
+      // Finite-number gate — NaN fails every `<= 0` / `< 1` comparison below
+      // (NaN <= 0 is false), so a NaN from an upstream model coefficient,
+      // percentile, or config value would otherwise sail through every guard
+      // and reach the RPC fill call with a NaN qty/totalCost.
+      if (!Number.isFinite(rawSizedPct) || rawSizedPct <= 0) {
         await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
-        const reason = `portfolio_constructor_denied: ${constructed.orders[0]?.adjustments.join("; ") ?? "no room"}`;
+        const reason = Number.isFinite(rawSizedPct)
+          ? `portfolio_constructor_denied: ${constructed.orders[0]?.adjustments.join("; ") ?? "no room"}`
+          : "portfolio_constructor_denied: non-finite sizedPct";
         skipped.push({ symbol: signal.symbol, reason });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason, detail: { proposedSizePct, adjustments: constructed.orders[0]?.adjustments } });
         continue;
       }
+      const sizedPct = rawSizedPct;
       await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: sizedPct < proposedSizePct ? "shrunk" : "passed", reason: `Sized ${sizedPct.toFixed(1)}% (proposed ${proposedSizePct.toFixed(1)}%)`, detail: { proposedSizePct, sizedPct, adjustments: constructed.orders[0]?.adjustments } });
 
       // Size off THIS pool's cash, in its own currency
       const maxSpend = portfolio.cash_balance * (sizedPct / 100);
       const qty = Math.floor(maxSpend / fillPrice);
-      if (qty < 1) {
+      if (!Number.isFinite(fillPrice) || fillPrice <= 0 || !Number.isFinite(maxSpend) || !Number.isFinite(qty) || qty < 1) {
         await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
         skipped.push({ symbol: signal.symbol, reason: "insufficient_cash_for_1_share" });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "insufficient_cash_for_1_share", detail: { maxSpend, fillPrice } });
         continue;
       }
       const totalCost = qty * fillPrice;
-      if (totalCost > portfolio.cash_balance) {
+      if (!Number.isFinite(totalCost) || totalCost > portfolio.cash_balance) {
         await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
         skipped.push({ symbol: signal.symbol, reason: "insufficient_cash" });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "insufficient_cash", detail: { totalCost, cash: portfolio.cash_balance } });
@@ -362,8 +377,20 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      if (!rpcSucceeded && process.env.VERCEL_ENV === "production") {
+        // execute_paper_fill (migration 071) is expected to exist in production.
+        // If it's ever missing there (dropped/renamed function, RPC grant
+        // revoked), a multi-step non-transactional fallback risks leaving
+        // partial event/trade/position/cash state on a crash — fail closed
+        // instead. The fallback below remains available for local/dev/preview.
+        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+        skipped.push({ symbol: signal.symbol, reason: "execute_paper_fill_rpc_missing_in_production" });
+        console.error("[paper-trade] execute_paper_fill RPC missing in production — refusing legacy fallback fill for", signal.symbol);
+        continue;
+      }
+
       if (!rpcSucceeded) {
-        // ── Legacy fallback path (pre-071 migration) — unchanged behavior ──
+        // ── Legacy fallback path (pre-071 migration, local/dev only) ──
         const eventRow: Record<string, any> = {
           event_type: "fill", symbol: signal.symbol, side: "buy", qty,
           fill_price: fillPrice, total_value: totalCost, price_source: source,

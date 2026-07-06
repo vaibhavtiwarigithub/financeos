@@ -15,6 +15,11 @@ export interface LabeledObservation {
   direction: string | null;
   entry_eligible: boolean;
   score_threshold: number | null;
+  // The availability_mask ResearchAgent actually used to weight this
+  // observation live (lib/scoring/weighted-score.ts) — required so the
+  // Validation Engine can replay the EXACT same scoring rule instead of
+  // coalescing missing scores to 50 with a fixed weight split.
+  availability_mask: Record<string, boolean> | null;
   // label fields for ONE horizon
   horizon_days: number;
   fwd_return: number | null;
@@ -40,7 +45,7 @@ export async function loadLabeledDataset(
 ): Promise<LabeledObservation[]> {
   const { data: obsRows, error: obsErr } = await supabase
     .from("decision_observations")
-    .select("id, ts, market, symbol, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, direction, entry_eligible, score_threshold")
+    .select("id, ts, market, symbol, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, direction, entry_eligible, score_threshold, availability_mask")
     .eq("market", market)
     .order("ts", { ascending: true })
     .limit(5000);
@@ -69,6 +74,7 @@ export async function loadLabeledDataset(
       insider_score: o.insider_score != null ? Number(o.insider_score) : null,
       direction: o.direction, entry_eligible: !!o.entry_eligible,
       score_threshold: o.score_threshold != null ? Number(o.score_threshold) : null,
+      availability_mask: o.availability_mask ?? null,
       horizon_days: horizonDays,
       fwd_return: l.fwd_return != null ? Number(l.fwd_return) : null,
       benchmark_return: l.benchmark_return != null ? Number(l.benchmark_return) : null,

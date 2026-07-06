@@ -60,6 +60,22 @@ async function screenForTheme(theme: string, criteria: string): Promise<string[]
   } catch { return []; }
 }
 
+// Deterministic existence check — the LLM can hallucinate a plausible-looking
+// ticker (wrong exchange, delisted, wrong company). Confirms the symbol
+// actually resolves to a real, tradeable US equity via Alpha Vantage OVERVIEW
+// before it's allowed into the research universe, independent of whether AV's
+// theme-relevance news search (screenForTheme) happened to also mention it.
+async function tickerExists(symbol: string): Promise<boolean> {
+  if (!AV_KEY) return false;
+  try {
+    const url = `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(symbol)}&apikey=${AV_KEY}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return typeof data?.Symbol === "string" && data.Symbol.length > 0;
+  } catch { return false; }
+}
+
 interface ThemeResult {
   theme: string;
   rationale: string;
@@ -128,24 +144,43 @@ Rules:
     return NextResponse.json({ added: 0, themes: [] });
   }
 
-  // Step 2: For each theme, confirm/expand candidates via AV news sentiment
+  // Step 2: For each theme, confirm/expand candidates via AV news sentiment,
+  // then require EVERY candidate — LLM-suggested or AV-mentioned — to pass a
+  // deterministic existence check before it's trusted. Previously LLM
+  // candidates were merged in unconditionally even when AV theme-relevance
+  // confirmation came back empty (rate-limited/no feed), letting hallucinated
+  // or non-existent tickers seed the research universe.
   const enriched: ThemeResult[] = [];
+  const quarantined: string[] = [];
   for (const t of themes.slice(0, MAX_THEMES)) {
     const avCandidates = await screenForTheme(t.theme, t.criteria);
-    // Merge LLM candidates + AV-confirmed, dedupe, cap at MAX_THEME_STOCKS
-    const merged = [...new Set([...t.candidates, ...avCandidates])].slice(0, MAX_THEME_STOCKS);
-    enriched.push({ ...t, candidates: merged });
+    const candidateSet = [...new Set([...t.candidates, ...avCandidates])];
+    const verified: string[] = [];
+    for (const sym of candidateSet) {
+      const clean = sym.trim().toUpperCase();
+      if (!clean || clean.length > 10) continue;
+      if (await tickerExists(clean)) verified.push(clean);
+      else quarantined.push(clean);
+    }
+    enriched.push({ ...t, candidates: verified.slice(0, MAX_THEME_STOCKS) });
   }
 
-  // Step 3: Upsert to watchlist
+  // Step 3: Upsert to watchlist, owned by the app's profile (single-user app —
+  // matches the pattern research/cron and paper-trade use). Previously these
+  // rows were inserted with no user_id at all while watchlist.user_id is a
+  // not-null FK in the original schema — an owned row lets research/watchlist
+  // read paths and the unique(user_id,symbol) constraint work as designed
+  // instead of relying on incidental NULL-tolerant columns.
+  const { data: ownerProfile } = await supabase.from("profiles").select("id").limit(1).maybeSingle();
+  const ownerId = (ownerProfile as any)?.id ?? null;
+
   const expiry = new Date(Date.now() + EXPIRE_DAYS * 24 * 3600 * 1000).toISOString();
   const rows: any[] = [];
 
   for (const t of enriched) {
-    for (const sym of t.candidates) {
-      const clean = sym.trim().toUpperCase();
-      if (!clean || clean.length > 10) continue;
+    for (const clean of t.candidates) {
       rows.push({
+        user_id: ownerId,
         symbol: clean,
         source: "llm_theme",
         theme: t.theme,
@@ -159,10 +194,20 @@ Rules:
   }
 
   if (rows.length) {
-    await supabase.from("watchlist").upsert(rows, {
+    const { error: upsertErr } = await supabase.from("watchlist").upsert(rows, {
       onConflict: "user_id,symbol",
       ignoreDuplicates: false,
     });
+    if (upsertErr) {
+      console.error("[theme-scout] watchlist upsert failed:", upsertErr.message);
+      await supabase.from("agent_alerts").insert({
+        severity: "warning",
+        category: "watchlist",
+        title: "Theme Scout: watchlist write failed",
+        detail: upsertErr.message,
+        auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+      });
+    }
   }
 
   // Emit info alert
@@ -183,6 +228,7 @@ Rules:
     themes: enriched,
     added: rows.length,
     symbols: rows.map(r => r.symbol),
+    quarantined, // candidates the LLM/AV surfaced that failed the existence check — never inserted
   });
 }
 

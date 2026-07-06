@@ -10,6 +10,7 @@
 
 import crypto from "crypto";
 import { loadLabeledDataset, walkForwardFolds, type LabeledObservation } from "@/lib/learning/dataset";
+import { computeWeightedAnalystScore, type DimensionRecord } from "@/lib/scoring/weighted-score";
 
 export interface ValidationResult {
   passed: boolean;
@@ -31,7 +32,7 @@ function readWeight(snapshot: Record<string, any> | null, short: string): number
   return typeof v === "number" ? v : BALANCED_WEIGHTS[short];
 }
 
-function weightsFromSnapshot(snapshot: Record<string, any> | null): Record<string, number> {
+function weightsFromSnapshot(snapshot: Record<string, any> | null): DimensionRecord<number> {
   return {
     fundamental: readWeight(snapshot, "fundamental"),
     technical: readWeight(snapshot, "technical"),
@@ -41,19 +42,36 @@ function weightsFromSnapshot(snapshot: Record<string, any> | null): Record<strin
   };
 }
 
-function scoreRow(weights: Record<string, number>, row: LabeledObservation): number {
-  return (
-    (row.fundamental_score ?? 50) * weights.fundamental +
-    (row.technical_score ?? 50) * weights.technical +
-    (row.sentiment_score ?? 50) * weights.sentiment +
-    (row.macro_score ?? 50) * weights.macro +
-    (row.insider_score ?? 50) * weights.insider
-  );
+// Replays the EXACT scoring rule ResearchAgent used live (lib/scoring/weighted-score.ts)
+// instead of coalescing missing scores to 50 with the fixed BALANCED_WEIGHTS
+// split. Rows recorded before availability_mask existed (pre-059, or written by
+// a path that skipped it) fall back to "everything with a real score is
+// included" — still better than blanket-including missing dims as neutral 50,
+// since a null score can no longer silently count as evidence.
+function scoreRow(weights: DimensionRecord<number>, row: LabeledObservation): number {
+  const scores: DimensionRecord<number> = {
+    fundamental: row.fundamental_score ?? 50, technical: row.technical_score ?? 50,
+    sentiment: row.sentiment_score ?? 50, macro: row.macro_score ?? 50, insider: row.insider_score ?? 50,
+  };
+  const mask = row.availability_mask as Partial<DimensionRecord<boolean>> | null;
+  const included: DimensionRecord<boolean> = mask
+    ? {
+        fundamental: mask.fundamental ?? (row.fundamental_score != null),
+        technical: mask.technical ?? (row.technical_score != null),
+        sentiment: mask.sentiment ?? (row.sentiment_score != null),
+        macro: mask.macro ?? (row.macro_score != null),
+        insider: mask.insider ?? (row.insider_score != null),
+      }
+    : {
+        fundamental: row.fundamental_score != null, technical: row.technical_score != null,
+        sentiment: row.sentiment_score != null, macro: row.macro_score != null, insider: row.insider_score != null,
+      };
+  return computeWeightedAnalystScore(scores, included, weights).score;
 }
 
 // Objective term for one row under one weight set: log-growth if the score
 // would have cleared this row's OWN recorded entry threshold, else 0 (not taken).
-function objectiveTerm(weights: Record<string, number>, row: LabeledObservation): number {
+function objectiveTerm(weights: DimensionRecord<number>, row: LabeledObservation): number {
   const score = scoreRow(weights, row);
   const threshold = row.score_threshold ?? 60;
   if (score < threshold) return 0;

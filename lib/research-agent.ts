@@ -7,6 +7,7 @@ import type { Candle } from "@/lib/data/technicals";
 import { isIndia, fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
 import { niftyCandidates } from "@/lib/india-universe";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
+import { computeWeightedAnalystScore, isThinEvidence, type DimensionRecord } from "@/lib/scoring/weighted-score";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
 // US, ^NSEI for India) — computed once per market per process, not per symbol.
@@ -33,15 +34,19 @@ async function getRegimeFeatures(market: string, supabase: any): Promise<RegimeF
   }
 }
 
-// Insider scoring: fetch from Alpha Vantage INSIDER_TRANSACTIONS
-async function scoreInsider(symbol: string, avKey: string): Promise<{ score: number; summary: string }> {
+// Insider scoring: fetch from Alpha Vantage INSIDER_TRANSACTIONS. `available`
+// distinguishes "genuinely balanced insider activity" (real data, neutral 50)
+// from "we have no signal at all" (fetch failure / rate limit / no data) — the
+// latter must NOT be scored as if it were neutral evidence; it must be
+// excluded from weighting entirely (see availability_mask below).
+async function scoreInsider(symbol: string, avKey: string): Promise<{ score: number; summary: string; available: boolean }> {
   try {
     const url = `https://www.alphavantage.co/query?function=INSIDER_TRANSACTIONS&symbol=${symbol}&apikey=${avKey}`;
     const res = await fetch(url);
     const data = await res.json();
     const transactions: any[] = data?.data ?? [];
 
-    if (!transactions.length) return { score: 50, summary: "No insider transaction data available." };
+    if (!transactions.length) return { score: 50, summary: "No insider transaction data available.", available: false };
 
     // Score based on recent 90 days
     const cutoff = Date.now() - 90 * 86400000;
@@ -49,7 +54,7 @@ async function scoreInsider(symbol: string, avKey: string): Promise<{ score: num
       new Date(t.transactionDate ?? t.transaction_date ?? "").getTime() > cutoff
     );
 
-    if (!recent.length) return { score: 50, summary: "No insider transactions in past 90 days." };
+    if (!recent.length) return { score: 50, summary: "No insider transactions in past 90 days.", available: false };
 
     let buyValue = 0, sellValue = 0, buyCount = 0, sellCount = 0;
     for (const t of recent) {
@@ -62,15 +67,15 @@ async function scoreInsider(symbol: string, avKey: string): Promise<{ score: num
     }
 
     const total = buyValue + sellValue;
-    if (total === 0) return { score: 50, summary: `${recent.length} insider transactions found but no buy/sell value calculable.` };
+    if (total === 0) return { score: 50, summary: `${recent.length} insider transactions found but no buy/sell value calculable.`, available: false };
     const buyRatio = buyValue / total;
     // 100% buying = score 90, 100% selling = score 10, balanced = 50
     const score = Math.round(10 + buyRatio * 80);
     const fmtVal = (v: number) => v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `$${(v / 1_000).toFixed(0)}K` : `$${v.toFixed(0)}`;
     const summary = `${buyCount} buys (${fmtVal(buyValue)}) vs ${sellCount} sells (${fmtVal(sellValue)}) in past 90 days. Buy ratio: ${(buyRatio * 100).toFixed(0)}%.`;
-    return { score, summary };
+    return { score, summary, available: true };
   } catch {
-    return { score: 50, summary: "Insider data fetch failed." };
+    return { score: 50, summary: "Insider data fetch failed.", available: false };
   }
 }
 
@@ -783,43 +788,23 @@ export async function processSymbol(
   //    already return a flat baseline for these, not a real signal.
   //  - UNAVAILABLE: data fetch genuinely failed this run (e.g. macro rate-limited,
   //    no sentiment data) — scores.dataQuality flags these.
-  // Below 2 included dimensions, renormalizing to 100% on one thin signal is
-  // riskier than the old diluted-by-neutral-50 behavior, so fall back to the
-  // fixed weights in that degenerate case.
+  // Shared with lib/validation/engine.ts (computeWeightedAnalystScore) so a
+  // challenger is validated against the SAME scoring rule that runs live.
   const dq = scores.dataQuality ?? ({} as any);
-  const included: Record<string, boolean> = {
+  const included: DimensionRecord<boolean> = {
     fundamental: !isEtf && (dq.fundamentalDataAvailable ?? true),
     technical: (dq.technicalDataPoints ?? 0) > 0,
     sentiment: dq.sentimentDataAvailable ?? true,
     macro: dq.macroDataAvailable ?? true,
     insider: dq.insiderDataAvailable ?? true,
   };
-  const weightOf: Record<string, number> = { fundamental: fw, technical: tw, sentiment: sw, macro: mw, insider: iw };
-  const includedDims = Object.keys(included).filter(k => included[k]);
-  let effWeights = weightOf;
-  let renormalized = false;
-  if (includedDims.length >= 2 && includedDims.length < 5) {
-    const totalIncluded = includedDims.reduce((s, k) => s + weightOf[k], 0);
-    effWeights = { fundamental: 0, technical: 0, sentiment: 0, macro: 0, insider: 0 };
-    // If every included dimension's configured weight happens to be 0 (a
-    // deliberately zeroed custom config), fall back to an equal split across
-    // them instead of leaving every effWeight at 0 — which silently zeroed
-    // analystScore for every symbol that run with no error or fallback.
-    if (totalIncluded > 0) {
-      for (const k of includedDims) effWeights[k] = weightOf[k] / totalIncluded;
-    } else {
-      for (const k of includedDims) effWeights[k] = 1 / includedDims.length;
-    }
-    renormalized = true;
-  }
-
-  const analystScore = Math.round(
-    scores.fundamental_score * effWeights.fundamental +
-    scores.technical_score   * effWeights.technical +
-    scores.sentiment_score   * effWeights.sentiment +
-    scores.macro_score       * effWeights.macro +
-    scores.insider_score     * effWeights.insider
-  );
+  const weightOf: DimensionRecord<number> = { fundamental: fw, technical: tw, sentiment: sw, macro: mw, insider: iw };
+  const scoreOf: DimensionRecord<number> = {
+    fundamental: scores.fundamental_score, technical: scores.technical_score,
+    sentiment: scores.sentiment_score, macro: scores.macro_score, insider: scores.insider_score,
+  };
+  const { score: analystScore, effWeights, renormalized, includedDims } = computeWeightedAnalystScore(scoreOf, included, weightOf);
+  const thinEvidence = isThinEvidence(includedDims);
 
   const scoreThreshold = strategy?.score_threshold ?? strategy?.min_analyst_score ?? 60;
   const stopLossPct    = strategy?.stop_loss_pct ?? 7;
@@ -858,9 +843,23 @@ export async function processSymbol(
     if (match) thesis = JSON.parse(match[0]);
   } catch { /* fallback to empty — scores are still written */ }
 
-  const rawDirection: string = thesis.direction ?? (analystScore >= scoreThreshold ? "long" : "neutral");
+  // Force abstain when evidence is too thin (fewer than 2 usable dimensions —
+  // e.g. India with fundamentals unavailable leaves only technical) OR the LLM
+  // thesis parse failed. Previously a missing/unparseable thesis fell back to
+  // `analystScore >= threshold ? "long" : "neutral"`, which could still open a
+  // long position on a single technical-only signal with no thesis backing it.
+  // Held positions must always retain SELL/exit capability (CLAUDE.md locked
+  // rule) — thin-evidence abstention applies only to NEW long entries, never
+  // suppresses an exit signal on an existing holding.
+  const llmParseFailed = !thesis.direction;
+  const isExitSignal = isHeld && thesis.direction === "short";
+  const forcedAbstain = (thinEvidence || llmParseFailed) && !isExitSignal;
+  const rawDirection: string = forcedAbstain ? "neutral" : (thesis.direction ?? "neutral");
   const signalDirection = !isHeld && rawDirection === "short" ? "neutral" : rawDirection;
-  const directionNote   = rawDirection !== signalDirection ? ` [short→neutral: not a held position]` : "";
+  const abstainNote = forcedAbstain
+    ? ` [abstained: ${thinEvidence ? `thin evidence (${includedDims.length}/5 dims)` : "thesis parse failed"}]`
+    : "";
+  const directionNote   = (rawDirection !== signalDirection ? ` [short→neutral: not a held position]` : "") + abstainNote;
 
   const { data: packet } = await supabase
     .from("research_packets")
@@ -981,13 +980,13 @@ export async function processSymbol(
   // will train on. Fail-soft: a missing table (059 not applied) must never fail
   // a research run.
   try {
-    const availability_mask = {
-      fundamental: scores.dataQuality?.fundamentalDataAvailable ?? !(scores.evidence?.fundamental as any)?.note,
-      technical:   (scores.dataQuality?.technicalDataPoints ?? 0) > 0,
-      sentiment:   scores.dataQuality?.sentimentDataAvailable ?? !(scores.evidence?.sentiment as any)?.note,
-      macro:       scores.dataQuality?.macroDataAvailable ?? !(scores.evidence?.macro as any)?.note,
-      insider:     scores.dataQuality?.insiderDataAvailable ?? !(scores.evidence?.insider as any)?.note,
-    };
+    // Reuse the SAME `included` object that actually drove the weighting above
+    // — this used to be recomputed independently from raw dataQuality flags,
+    // which disagreed for ETFs (dataQuality.fundamentalDataAvailable is true
+    // for ETFs by design, but `included.fundamental` correctly excludes them
+    // as inapplicable). A validation replay reading availability_mask must see
+    // the real basis for the live weighting, not a second, drifted copy of it.
+    const availability_mask = included;
     // Phase 3: point-in-time regime features (trend/vol vs SPY or ^NSEI),
     // appended under features.regime.* for later interaction terms — never a
     // hard bull/bear switch, just observable numbers for the calibration fit.
