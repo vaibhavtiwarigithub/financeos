@@ -20,6 +20,24 @@
 
 ---
 
+## ✅ Session 2026-07-06 (Learning-core Phase 2 — Validation Engine + calibrated Kelly sizing + transactional fill RPC, all verified live)
+
+> Validated live via the reconnected Supabase MCP: migrations 061/062 applied, `execute_paper_fill` RPC tested end-to-end (disposable signal, all 5 writes landed atomically, then fully reversed). See **Decision 35** (Validation Engine + sizing) and **Decision 34** (transactional-fill RPC + the pre-existing signal_id bug it uncovered).
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Transactional paper-fill RPC | Claude | 2026-07-06 | `execute_paper_fill` (migration 071) — claim-reverify → event → trade → position → cash → signal-flip in ONE transaction, row-locked. Verified live end-to-end; falls back to the legacy multi-step JS sequence if absent. See Decision 34. |
+| P0: cron-gap detector, vitest suite, Portfolio Constructor | Claude | 2026-07-06 | All three P0 app-improvements from the learning-core spec completed and verified (47 tests passing across 8 files by end of session). |
+| Validation Engine | Claude | 2026-07-06 | `lib/validation/engine.ts` (migration 061 `validation_experiments`) — deterministic walk-forward replay, 1000-draw block bootstrap (seed 42), pass rule: p_improvement>=0.80, CI floor, n_effective>=12, >=3/5 folds won. See Decision 35. |
+| Fail-closed promotion gate | Claude | 2026-07-06 | `promote_champion` now HTTP 412s without a passed validation experiment (journaled `force_unvalidated` override exists, not the default path). See Decision 35. |
+| Calibrated P(win) + Kelly sizing | Claude | 2026-07-06 | `lib/validation/calibration.ts` (migration 062 `model_artifacts`) — logistic regression replaces raw analyst_score as the sizing input; half-Kelly via `lib/risk/sizing.ts`, capped at the flat position_size_pct. Dormant until 60+ matured observations/market. |
+| Dynamic MAE/MFE R:R | Claude | 2026-07-06 | `lib/risk/percentiles.ts` — stop/target from the ledger's actual outcome-percentile distribution, replacing the fixed 7%/20% profile constants. Signal-provided values always win. |
+| Learner auto-fires validation | Claude | 2026-07-06 | `update_signal_weight` fires `/api/validation/run` the moment a challenger is created — evidence is usually ready before a human looks at the Strategy Registry. |
+| Weekly fit-calibration cron | Claude | 2026-07-06 | New `app/api/validation/fit-calibration` route, Fridays 4:45 PM ET (before the 5 PM learner). |
+| system-map.json — VALIDATE node | Claude | 2026-07-06 | New node between CHALLENGER and PROMOTE; TRADER + PROMOTE descriptions updated to reflect the gate + Kelly sizing. |
+
+---
+
 ## ✅ Session 2026-07-06 (Supabase MCP reconnected — migrations applied, critical fill-event bug fixed)
 
 > Reconnected Supabase MCP gave direct schema access for the first time in several sessions. Applied all pending migrations (060, 069) and one urgent live fix: **`paper_order_events.signal_id` was `bigint` while `agent_signals.id`/`paper_trades.signal_id` are `uuid`** — every paper fill's order-event insert had been failing since migration 034 (confirmed: zero rows ever in `paper_order_events`). Fixed live (migration 070, lossless — table was empty) and verified end-to-end: restarted the stale production server, re-ran ResearchAgent, confirmed `decision_observations` now writes real per-candidate feature rows. See **Decision 34**.

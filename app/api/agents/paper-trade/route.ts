@@ -6,6 +6,9 @@ import { fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { constructPortfolio, DEFAULT_LIMITS, type BookPosition } from "@/lib/portfolio/constructor";
 import { estimateDailyVolPct } from "@/lib/portfolio/inputs";
+import { predictPWin } from "@/lib/validation/calibration";
+import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
+import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
 
 // PaperTrader: fills virtual long-only trades from qualifying signals.
 //
@@ -207,6 +210,20 @@ export async function POST(req: NextRequest) {
       return { error: { message: "exhausted optional-column retries" } };
     }
 
+    // Phase 2: calibrated conviction-scaled sizing + dynamic MAE/MFE-percentile
+    // R:R, per market. Both are OPTIONAL — absent until model_artifacts/enough
+    // observation_labels exist (needs 60+ matured labels), so this ships dormant
+    // and degrades to the existing flat positionSizePct + profile stop/target.
+    const pwinModelByMarket = new Map<string, import("@/lib/validation/calibration").CalibrationCoefficients | null>();
+    const maeMfeByMarket = new Map<string, Awaited<ReturnType<typeof import("@/lib/risk/percentiles").getGlobalMaeMfePercentiles>>>();
+    for (const m of activeMarkets) {
+      try {
+        const { data: modelRow } = await supabase.from("model_artifacts").select("coefficients").eq("market", m).eq("kind", "pwin_logistic").maybeSingle();
+        pwinModelByMarket.set(m, (modelRow as any)?.coefficients ?? null);
+      } catch { pwinModelByMarket.set(m, null); }
+      maeMfeByMarket.set(m, await getGlobalMaeMfePercentiles(supabase, m as "us" | "india", 10));
+    }
+
     for (const signal of signals) {
       const market = hasMarketCol ? String(signal.market ?? (signal.asset_class === "india" ? "india" : "us")) : "us";
       const currency = market === "india" ? "INR" : "USD";
@@ -235,18 +252,39 @@ export async function POST(req: NextRequest) {
       }
       const { price, fillPrice, source, retrievedAt, bid, ask, spread } = pf;
 
+      // Dynamic R:R (Phase 2): stop = entry x (1 + p25 MAE), target = entry x (1
+      // + p75 MFE) from the ledger's actual outcome distribution, replacing the
+      // fixed profile stop/target — but a signal-provided value ALWAYS wins.
+      const maeMfe = maeMfeByMarket.get(market);
       const priceTarget = signal.price_target != null ? signal.price_target
+        : maeMfe ? parseFloat((fillPrice * (1 + maeMfe.targetMfePctile)).toFixed(2))
         : parseFloat((fillPrice * (1 + targetPctCfg / 100)).toFixed(2));
       const stopLoss = signal.stop_loss != null ? signal.stop_loss
+        : maeMfe ? parseFloat((fillPrice * (1 + maeMfe.stopMaePctile)).toFixed(2))
         : parseFloat((fillPrice * (1 - stopLossPctCfg / 100)).toFixed(2));
 
-      // Portfolio Constructor: shrink the flat size against this market's book
-      // (name/sector/gross/vol/correlation limits) before spending cash. Never
-      // increases size; degrades to the flat positionSizePct when unconstrained.
+      // Conviction-scaled sizing (Phase 2): when a calibrated P(win) model
+      // exists for this market, size via half-Kelly using this signal's own
+      // dimension scores + the ledger's MFE/|MAE| median as the payoff ratio.
+      // Falls back to the flat positionSizePct otherwise (unchanged default).
+      const pwinModel = pwinModelByMarket.get(market);
+      let proposedSizePct = positionSizePct;
+      if (pwinModel && maeMfe) {
+        const pWin = predictPWin(pwinModel, {
+          fundamental_score: signal.fundamental_score, technical_score: signal.technical_score,
+          sentiment_score: signal.sentiment_score, macro_score: signal.macro_score, insider_score: signal.insider_score,
+        } as any);
+        const payoffRatio = Math.abs(maeMfe.targetMfePctile) / Math.max(0.001, Math.abs(maeMfe.stopMaePctile));
+        proposedSizePct = kellyPositionSizePct(pWin, payoffRatio, { halfKellyCap: positionSizePct, floorPct: Math.min(2, positionSizePct) }) ;
+      }
+
+      // Portfolio Constructor: shrink the (possibly Kelly-scaled) proposed size
+      // against this market's book (name/sector/gross/vol/correlation limits)
+      // before spending cash. Never increases size.
       const dailyVol = await estimateDailyVolPct(signal.symbol, market as "us" | "india", supabase);
       const constructed = constructPortfolio(
         bookByMarket.get(market) ?? [],
-        [{ symbol: signal.symbol, market: market as "us" | "india", proposedSizePct: positionSizePct, sector: candSector, beta: null, dailyVol }],
+        [{ symbol: signal.symbol, market: market as "us" | "india", proposedSizePct, sector: candSector, beta: null, dailyVol }],
         portfolioLimits
       );
       const sizedPct = constructed.orders[0]?.finalSizePct ?? 0;
@@ -392,7 +430,7 @@ export async function POST(req: NextRequest) {
         entry_type: "paper_fill", symbol: signal.symbol, signal_id: signal.id,
         paper_event_id: orderEventId,
         summary: `Paper buy (${market.toUpperCase()}): ${qty} × ${signal.symbol} @ ${sym}${fillPrice.toFixed(2)} (score ${signal.analyst_score}, source: ${source})`,
-        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, sizing: { proposed_pct: positionSizePct, final_pct: sizedPct, adjustments: constructed.orders[0]?.adjustments ?? [] } },
+        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, sizing: { flat_pct: positionSizePct, kelly_proposed_pct: proposedSizePct, final_pct: sizedPct, used_calibrated_model: !!pwinModel, adjustments: constructed.orders[0]?.adjustments ?? [] } },
         evidence_refs: [{ table: "agent_signals", id: signal.id, description: "qualifying signal" }],
         has_verified_facts: true, has_calculations: true, resolved: false,
       });

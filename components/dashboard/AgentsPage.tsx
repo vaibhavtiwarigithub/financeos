@@ -78,6 +78,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [strategyVersions, setStrategyVersions] = useState<any[]>([]);
   const [proposals, setProposals] = useState<any[]>([]);
   const [backtestRunning, setBacktestRunning] = useState(false);
+  const [validatingId, setValidatingId] = useState<number | null>(null);
   const [backtestResult, setBacktestResult] = useState<any | null>(null);
   const [proposalToast, setProposalToast] = useState("");
 
@@ -1341,7 +1342,28 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                         {v.is_champion && <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: T.accent + "18", color: T.accent }}>CHAMPION</span>}
                         <span style={{ fontSize: "10px", padding: "2px 8px", borderRadius: "4px", background: T.surface, border: `1px solid ${T.border}`, color: T.muted }}>{v.state}</span>
                       </div>
-                      <div style={{ fontSize: "11px", color: T.muted }}>{v.direction} · {v.horizon_days_min}–{v.horizon_days_max}d hold</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        {/* Phase 2: validation gate status (see Decision — promotion is fail-closed on this) */}
+                        {v.validation ? (
+                          <span title={v.validation.fail_reason ?? ""} style={{ fontSize: "10px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: v.validation.passed ? T.accent + "18" : T.red + "18", color: v.validation.passed ? T.green : T.red }}>
+                            {v.validation.passed ? "✓ VALIDATED" : "✗ NOT VALIDATED"} · p={v.validation.p_improvement?.toFixed(2) ?? "—"}
+                          </span>
+                        ) : !v.is_champion ? (
+                          <button
+                            disabled={validatingId === v.id}
+                            onClick={async () => {
+                              setValidatingId(v.id);
+                              try {
+                                await fetch("/api/validation/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ challenger_id: v.id, market: v.market ?? "us" }) });
+                                const d = await fetch("/api/strategies/versions").then(r => r.json());
+                                if (d.versions) setStrategyVersions(d.versions);
+                              } finally { setValidatingId(null); }
+                            }}
+                            style={{ fontSize: "10px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: T.surface, border: `1px solid ${T.border}`, color: T.muted, cursor: validatingId === v.id ? "default" : "pointer" }}
+                          >{validatingId === v.id ? "Validating…" : "Validate"}</button>
+                        ) : null}
+                        <div style={{ fontSize: "11px", color: T.muted }}>{v.direction} · {v.horizon_days_min}–{v.horizon_days_max}d hold</div>
+                      </div>
                     </div>
                     {/* Experiment runs for this version */}
                     {v.experiment_runs?.length > 0 && (

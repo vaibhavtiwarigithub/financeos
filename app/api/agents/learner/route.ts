@@ -438,12 +438,25 @@ export async function POST(req: NextRequest) {
               weight_snapshot: proposedWeights,
               trades_evaluated: nTrades,
             });
+
+            // Phase 2: kick off validation immediately (fire-and-forget — don't
+            // block the learner's tool response on it). The challenger cannot be
+            // promoted until this produces a PASSED validation_experiments row
+            // (see the fail-closed gate in app/api/strategies/versions/route.ts).
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+            fetch(`${appUrl}/api/validation/run`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET ?? "" },
+              body: JSON.stringify({ challenger_id: (challengerRow as any).id, market: LEARN_MARKET }),
+            }).catch(() => {});
+
             return JSON.stringify({
               challenger_created: true,
               challenger_id: (challengerRow as any).id,
               dimension, old: currentVal, new: clamped, reason,
               log_warning: logErr?.message,
-              note: "Weight NOT applied yet. Promoted to champion via /dashboard/strategies to take effect.",
+              validation: "queued — challenger cannot be promoted until it passes",
+              note: "Weight NOT applied yet. Promoted to champion via /dashboard/strategies to take effect, and only after validation passes.",
             });
           }
 
