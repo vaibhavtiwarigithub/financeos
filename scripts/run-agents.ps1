@@ -1,8 +1,8 @@
 ﻿# Kairos Agent Runner — Windows Task Scheduler trigger script
 # Schedule (all times ET, weekdays only unless noted):
-#   08:00  brief-morning     — email briefing before market open
 #   09:00  research          — pre-market signal generation (all weekdays)
 #   09:45  trader            — proposal generation after research settles
+#   10:00  brief-morning     — email briefing, after research+trader settle
 #   16:15  position-monitor  — post-close exit/trailing-stop checks
 #   16:30  brief-evening     — email recap
 #   16:50  embed             — RAG embeddings for newly-enriched trade_decisions (before learner)

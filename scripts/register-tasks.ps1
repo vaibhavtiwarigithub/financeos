@@ -19,7 +19,7 @@ function FridayTrigger([string]$time) {
 }
 
 $tasks = @(
-  @{ Name="brief-morning";    Trigger=(WeekdayTrigger "8:00AM");  Agent="brief-morning"    },
+  @{ Name="brief-morning";    Trigger=(WeekdayTrigger "10:00AM"); Agent="brief-morning"    },
   @{ Name="research";         Trigger=(WeekdayTrigger "9:00AM");  Agent="research"          },
   @{ Name="trader";           Trigger=(WeekdayTrigger "9:45AM");  Agent="trader"            },
   @{ Name="position-monitor"; Trigger=(WeekdayTrigger "4:15PM");  Agent="position-monitor" },

@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { runAgentLoop, ToolCall } from "@/lib/llm-router";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // MentorAgent — a true tool-use AI coach. Reasons over the user's actual
 // behavior + learning progress + market regime + trading principles and returns

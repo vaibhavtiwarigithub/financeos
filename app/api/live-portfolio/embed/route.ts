@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createHash } from "crypto";
 
 export const dynamic = "force-dynamic";
+// Large first-time backfills need Vercel Pro (300s cap) or higher.
+export const maxDuration = 300;
 
 // Batch-embed enriched trade_decisions using Voyage AI (voyage-finance-2, 1024-dim).
 // Skips rows that already have an embedding (idempotent).

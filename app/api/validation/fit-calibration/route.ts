@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { fitAndStoreCalibration } from "@/lib/validation/calibration";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // Phase 2 learning-core: weekly refit of the calibrated P(win) model per market.
 // Dormant until 60+ matured labeled observations exist for a market (fitCalibration

@@ -6,6 +6,7 @@ import { computeSpearmanIC, passesPromotionRule, shouldRetire, type ICResult } f
 import { walkForwardFolds, loadLabeledDataset, type LabeledObservation } from "@/lib/learning/dataset";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // Phase 3 learning-core: nightly-ish job that moves feature_registry rows
 // through proposed -> quarantined -> active -> retired based on rolling

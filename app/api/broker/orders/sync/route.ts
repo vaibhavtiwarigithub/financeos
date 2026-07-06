@@ -4,6 +4,7 @@ import { getAlpacaOrder } from "@/lib/brokers/alpaca-orders";
 import { fetchAlpacaAccount } from "@/lib/brokers/alpaca";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // Execution Gateway (spec Part A) — polls Alpaca for order-status updates on
 // every in-flight broker_order, then reconciles positions and raises an alert

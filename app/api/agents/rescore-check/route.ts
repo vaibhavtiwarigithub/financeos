@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // Re-scoring check: did the research agent mis-score anything?
 // Compares each symbol's latest analyst_score to its realized price move since,

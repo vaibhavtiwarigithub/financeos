@@ -268,6 +268,7 @@ async function sendBriefingEmail(svc: any, d: BriefingData): Promise<{ sent: boo
 }
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 async function fetchIndexClose(ticker: string, apiKey: string): Promise<{ price: number; changePct: number } | null> {
   try {

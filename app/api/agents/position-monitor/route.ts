@@ -13,6 +13,7 @@ import { fetchIndiaQuote } from "@/lib/india-data";
 // never cross. Guarded: pre-057 (single pool, no market column) it runs exactly
 // as the old US-only path.
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const marketOf = (p: any, hasMarketCol: boolean) => (hasMarketCol ? String(p.market ?? "us") : "us");
 

@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const AV_KEY = process.env.ALPHA_VANTAGE_API_KEY ?? "";
 const MAX_THEME_STOCKS = 2;  // per theme

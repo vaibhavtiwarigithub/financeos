@@ -6,6 +6,9 @@ import { computeTechnicals } from "@/lib/data/technicals";
 import { createServiceClient } from "@/lib/supabase/service";
 
 export const dynamic = "force-dynamic";
+// Rotates ~600 NSE names/run — needs Vercel Pro (300s cap) or higher; Hobby's
+// lower ceiling will truncate this mid-run.
+export const maxDuration = 300;
 
 // Nightly pre-score cache for the FULL NSE market.
 //

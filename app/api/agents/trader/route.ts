@@ -8,6 +8,7 @@ import { notifyTradeAction } from "@/lib/trade-notify";
 import { sendTradeAlertEmail } from "@/lib/trade-alert";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // SAFETY: account number HARDCODED — never read from env or request.
 // Must match CONNECTIONS.md and migration 037 default.

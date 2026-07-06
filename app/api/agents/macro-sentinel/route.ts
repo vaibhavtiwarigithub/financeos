@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const AV = process.env.ALPHA_VANTAGE_API_KEY ?? "";
 

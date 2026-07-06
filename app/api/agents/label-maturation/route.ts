@@ -5,6 +5,8 @@ import { fetchIndiaCandles } from "@/lib/india-data";
 import { computeLabel } from "@/lib/learning/label-math";
 
 export const dynamic = "force-dynamic";
+// Needs Vercel Pro (300s cap) or higher for large backlogs.
+export const maxDuration = 300;
 
 // Phase 1 learning-core: nightly maturation of decision_observations into
 // observation_labels. A horizon (2/5/10/20 trading days) is "matured" once

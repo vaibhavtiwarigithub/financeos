@@ -5,6 +5,7 @@ import { isIndia } from "@/lib/india-data";
 import { prewarmPriceCache } from "@/lib/chart-data";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // Called by Windows Task Scheduler. US run ~9 AM ET; India run ~6:15 AM ET (after
 // the 15:30 IST / 06:00 ET NSE close). `?market=us|india` scopes the run to one
