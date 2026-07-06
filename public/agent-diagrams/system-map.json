@@ -100,10 +100,10 @@
       "status": "changed", "changedAt": "2026-07-06", "changeReason": "GATEWAY (below) now covers Alpaca-backed paper orders; Robinhood stays manual since it has no API.", "removedAt": null, "removeReason": null
     },
     "GATEWAY": {
-      "label": "Execution Gateway (Alpaca)",
-      "description": "Typed broker order lifecycle (lib/brokers/alpaca-orders.ts, migration 068 broker_orders) for approved trade_proposals: submit -> pending_submit/submitted/partially_filled/filled/canceled/rejected, polled + reconciled every 30 min during market hours (app/api/broker/orders/sync). A 'Send to Alpaca (paper)' button on Smart Money's Trade Queue (only for status='approved' proposals) fires this — human click required, never cron-fired. Fixed a discovered pre-existing bug in the same change: the Trade Queue UI was reading a separate, never-populated `trade_queue` table (uuid ids) while Approve/Reject/the Gateway all operate on `trade_proposals` (bigint ids) — parseInt(uuid) silently sent proposal_id:null, so Approve never actually worked. Repointed to trade_proposals. Live-env orders require strategy_config.trading_enabled=true (still off by default); this session only built and verified the PAPER path.",
+      "label": "Execution Gateway (broker registry: Alpaca/Kite)",
+      "description": "Typed broker order lifecycle for approved trade_proposals, routed through lib/brokers/registry.ts (getActiveBroker per market, strategy_config.active_broker_us/india) instead of a direct Alpaca import: submit -> pending_submit/submitted/partially_filled/filled/canceled/rejected, polled + reconciled every 30 min (app/api/broker/orders/sync — now iterates DISTINCT brokers present in open orders, so Alpaca and Kite orders can be in-flight simultaneously). A 'Send to Alpaca (paper)' button on Smart Money's Trade Queue (status='approved' only) fires this — human click required, never cron-fired. Adding a future broker (E*TRADE etc.) is one adapter file + one registry line, zero route changes. Fixed a discovered pre-existing bug in the original build: the Trade Queue UI read a separate, never-populated `trade_queue` table while Approve/Reject/the Gateway all operate on `trade_proposals` — repointed. Live-env orders still require strategy_config.trading_enabled=true (off by default); only the PAPER path is verified live.",
       "addedAt": "2026-07-06", "addReason": "First typed (non-manual) execution path — the honest gap flagged when auditing risk-reward/execution architecture earlier this session. Broker-swappable by design (see lib/brokers registry pattern already used for Alpaca/Kite reads).",
-      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "status": "changed", "changedAt": "2026-07-06", "changeReason": "Ops spec Part 2: routes now go through a typed broker adapter registry instead of a direct Alpaca import — multi-broker (Alpaca US / Kite India) support with zero-route-change swapping.", "removedAt": null, "removeReason": null
     },
     "YAHOO": {
       "label": "Yahoo .NS data (India)",
@@ -158,6 +158,7 @@
     { "date": "2026-07-06", "event": "changed", "nodeId": "REALORDER", "label": "Manual real-order execution (Robinhood)", "reason": "Clarified this is Robinhood-specific (no public API) now that GATEWAY covers Alpaca." },
     { "date": "2026-07-06", "event": "added", "nodeId": "GENOME", "label": "Strategy Genome", "reason": "Phase 3 — evolvable surface beyond 5 weights (entry/horizon/exit/sizing/regime), bounded and hash-stamped." },
     { "date": "2026-07-06", "event": "added", "nodeId": "REGISTRY", "label": "Feature Registry", "reason": "Phase 3 — governed feature discovery via a whitelisted grammar, IC-gated promotion, never executes LLM code." },
-    { "date": "2026-07-06", "event": "added", "nodeId": "SHADOW", "label": "Shadow Decisions", "reason": "Phase 3 — paired live comparison before a challenger risks paper capital; exploration stays bounded and off by default." }
+    { "date": "2026-07-06", "event": "added", "nodeId": "SHADOW", "label": "Shadow Decisions", "reason": "Phase 3 — paired live comparison before a challenger risks paper capital; exploration stays bounded and off by default." },
+    { "date": "2026-07-06", "event": "changed", "nodeId": "GATEWAY", "label": "Execution Gateway (broker registry: Alpaca/Kite)", "reason": "Ops spec Decision 39 — Gateway routes now go through lib/brokers/registry.ts instead of a direct Alpaca import; multi-broker sync loop; per-market broker selection in Settings." }
   ]
 }

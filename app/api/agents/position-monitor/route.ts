@@ -82,9 +82,10 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
   // and exit any whose conviction has fallen below the exit threshold.
   // Exit threshold sits below the entry threshold (hysteresis) so a position
   // isn't churned out the moment it dips one point under the buy bar.
-  const { data: strategyCfg } = await svc.from("strategy_config").select("score_threshold, min_analyst_score").maybeSingle();
+  const { data: strategyCfg } = await svc.from("strategy_config").select("score_threshold, min_analyst_score, exit_hysteresis").maybeSingle();
   const entryThreshold = Number((strategyCfg as any)?.score_threshold ?? (strategyCfg as any)?.min_analyst_score ?? 60);
-  const exitThreshold = Math.max(35, entryThreshold - 15); // e.g. enter 60, exit below 45
+  const hysteresis = Number((strategyCfg as any)?.exit_hysteresis) || 15; // profile-scaled (Part A2); resilient default
+  const exitThreshold = Math.max(35, entryThreshold - hysteresis); // e.g. enter 60, exit below 45
   const latestScore: Record<string, { score: number | null; direction: string | null }> = {};
   for (const pos of positions) {
     const sym = String(pos.symbol);

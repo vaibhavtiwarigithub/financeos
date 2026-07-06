@@ -20,6 +20,19 @@
 
 ---
 
+## ✅ Session 2026-07-06 (cont'd) — Cloud-cron migration, pg_net timeout fix, Posture/Goals spec
+
+> Vercel deployed as a silent cron-trigger target; 21 `pg_cron` jobs in Supabase now fire every agent independent of the laptop. Posture/Goals spec built in full. See **Decision 38**.
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Vercel deployment + Supabase `pg_cron` migration | Claude | 2026-07-06 | Repo deployed to Vercel (git-integration auto-deploy), Deployment Protection disabled, `CRON_SECRET` gate verified live. 21 cron jobs registered via `kairos_call_agent()` (vault-stored secret, never hardcoded). Includes `macro-sentinel`/`theme-scout` which had never been scheduled anywhere before. |
+| pg_net timeout bug fix | Claude | 2026-07-06 | Default 5s pg_net timeout would've silently killed every LLM-backed cron call. Added `maxDuration` to 16 Vercel routes + configurable `timeout_ms` param on the Supabase helper function; 3 heaviest jobs bumped to 300s. |
+| Posture/Goals spec (Decision 38) | Claude | 2026-07-06 | Part A: kill-switch + exit-hysteresis now scale per risk profile (resilient fallback to old hardcoded defaults). Part B: time-bound postures with auto-revert (`decision_journal` logged), checked in the research cron. Part C: `trading_goals` table (agent-unread by design) + `/api/goals` feasibility math + dashboard `GoalCard`. |
+| Ops Calendar + Broker Registry + Model Freshness (Decision 39) | Claude | 2026-07-06 | 30-day agent calendar (top of dashboard, expected-set derived from actual `pg_cron` schedule since `market_focus` never existed). Broker adapter registry (`lib/brokers/registry.ts` + alpaca/kite adapters) — Gateway routes now go through it, sync loop handles multiple brokers. Weekly model-freshness check (`/api/models/check`, informational only, never auto-switches). |
+
+---
+
 ## ✅ Session 2026-07-06 (Learning-core Phase 3 — genome, feature registry, shadow decisions, regime features, governance rewiring)
 
 > Completes the full learning-core roadmap (Phases 1–3 + all P0s + Execution Gateway paper-stage). See **Decision 37**.

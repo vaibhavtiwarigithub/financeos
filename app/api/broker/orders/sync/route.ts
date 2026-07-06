@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { getAlpacaOrder } from "@/lib/brokers/alpaca-orders";
+import { getBroker } from "@/lib/brokers/registry";
 import { fetchAlpacaAccount } from "@/lib/brokers/alpaca";
 
 export const dynamic = "force-dynamic";
@@ -16,14 +16,18 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createServiceClient();
+  // Iterates DISTINCT brokers present in open orders (Part 2d) — so an
+  // Alpaca order and a Kite order can both be in-flight and sync correctly.
   const { data: openOrders } = await supabase.from("broker_orders").select("*")
-    .in("status", ["submitted", "partially_filled"]).eq("broker", "alpaca");
+    .in("status", ["submitted", "partially_filled"]);
 
   let updated = 0, filled = 0;
   for (const order of (openOrders ?? []) as any[]) {
     if (!order.broker_order_id) continue;
+    const broker = getBroker(order.broker ?? "alpaca");
+    if (!broker) continue;
     const env = order.broker_env === "live" ? "live" : "paper";
-    const res = await getAlpacaOrder(order.broker_order_id, env);
+    const res = await broker.getOrder(order.broker_order_id, env);
     if (!res.ok || !res.status) continue;
 
     await supabase.from("broker_orders").update({
@@ -37,7 +41,7 @@ export async function POST(req: NextRequest) {
       filled++;
       await supabase.from("decision_journal").insert({
         entry_type: "broker_order_filled", symbol: order.symbol,
-        summary: `Alpaca order filled: ${order.side} ${res.filledQty ?? order.qty} × ${order.symbol} @ avg ${res.avgFillPrice ?? "?"}`,
+        summary: `${broker.id} order filled: ${order.side} ${res.filledQty ?? order.qty} × ${order.symbol} @ avg ${res.avgFillPrice ?? "?"}`,
         calculations: { broker_order_id: order.broker_order_id, filled_qty: res.filledQty, avg_fill_price: res.avgFillPrice },
         has_verified_facts: true, resolved: true, resolved_at: new Date().toISOString(),
       });

@@ -61,6 +61,12 @@ export default function SettingsPage() {
   const [broker, setBroker] = useState<"robinhood" | "alpaca_paper" | "alpaca_live">("robinhood");
   const [savingTrading, setSavingTrading] = useState(false);
 
+  // Broker registry (Ops spec Part 2) — per-market active broker
+  const [brokerList, setBrokerList] = useState<{ us: { id: string; envs: string[]; configured: boolean }[]; india: { id: string; envs: string[]; configured: boolean }[] } | null>(null);
+  const [activeBrokerUs, setActiveBrokerUs] = useState("alpaca");
+  const [activeBrokerIndia, setActiveBrokerIndia] = useState("kite");
+  const [savingBroker, setSavingBroker] = useState(false);
+
   // Risk profile state
   const [riskProfile, setRiskProfile] = useState<RiskProfileKey>("balanced");
   const [scoreThreshold, setScoreThreshold] = useState(60);
@@ -68,6 +74,15 @@ export default function SettingsPage() {
   const [stopLossPct, setStopLossPct] = useState(7);
   const [targetPct, setTargetPct] = useState(20);
   const [savingRisk, setSavingRisk] = useState(false);
+
+  // Posture (Part B) + champion-override note (A3) state
+  const [posture, setPosture] = useState<RiskProfileKey | null>(null);
+  const [postureExpiresAt, setPostureExpiresAt] = useState<string | null>(null);
+  const [baseRiskProfile, setBaseRiskProfile] = useState<RiskProfileKey | null>(null);
+  const [postureSelect, setPostureSelect] = useState<RiskProfileKey>("aggressive");
+  const [postureDays, setPostureDays] = useState(30);
+  const [savingPosture, setSavingPosture] = useState(false);
+  const [hasChampion, setHasChampion] = useState(false);
 
   // LLM cost monitor state
   const [llmCosts, setLlmCosts] = useState<LLMCosts | null>(null);
@@ -109,9 +124,65 @@ export default function SettingsPage() {
         if (d.position_size_pct != null) setPositionSizePct(parseFloat(d.position_size_pct));
         if (d.stop_loss_pct != null) setStopLossPct(parseFloat(d.stop_loss_pct));
         if (d.target_pct != null) setTargetPct(parseFloat(d.target_pct));
+        if (d.posture) setPosture(d.posture as RiskProfileKey);
+        if (d.posture_expires_at) setPostureExpiresAt(d.posture_expires_at);
+        if (d.base_risk_profile) setBaseRiskProfile(d.base_risk_profile as RiskProfileKey);
+        if (d.active_broker_us) setActiveBrokerUs(d.active_broker_us);
+        if (d.active_broker_india) setActiveBrokerIndia(d.active_broker_india);
       })
       .catch(() => {});
+
+    // A3: does a promoted champion exist for the active market? (scoring weights overridden)
+    supabase.from("strategy_versions").select("id").eq("is_champion", true).limit(1)
+      .then(({ data }) => setHasChampion(!!data && data.length > 0))
+      .catch(() => {});
+
+    fetch("/api/brokers").then(r => r.json()).then(setBrokerList).catch(() => {});
   }, []);
+
+  async function saveBrokerRegistry() {
+    setSavingBroker(true);
+    try {
+      await fetch("/api/settings/risk-profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active_broker_us: activeBrokerUs, active_broker_india: activeBrokerIndia }),
+      });
+      setToast("Broker selection saved!");
+      setTimeout(() => setToast(""), 2500);
+    } finally { setSavingBroker(false); }
+  }
+
+  async function applyPosture() {
+    setSavingPosture(true);
+    try {
+      const res = await fetch("/api/settings/risk-profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ posture: postureSelect, posture_days: postureDays }),
+      });
+      const d = await res.json();
+      if (d.posture) { setPosture(d.posture); setPostureExpiresAt(d.posture_expires_at); setBaseRiskProfile(d.base_risk_profile); setRiskProfile(d.posture); }
+      setToast(`Posture ${postureSelect} applied for ${postureDays}d`);
+      setTimeout(() => setToast(""), 2500);
+    } finally { setSavingPosture(false); }
+  }
+
+  async function cancelPosture() {
+    setSavingPosture(true);
+    try {
+      const res = await fetch("/api/settings/risk-profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ posture: null }),
+      });
+      const d = await res.json();
+      setPosture(null); setPostureExpiresAt(null); setBaseRiskProfile(null);
+      if (d.risk_profile) setRiskProfile(d.risk_profile);
+      setToast("Posture canceled — reverted to base profile");
+      setTimeout(() => setToast(""), 2500);
+    } finally { setSavingPosture(false); }
+  }
 
   // Fetch LLM costs + Kite status when agents tab becomes active
   useEffect(() => {
@@ -383,6 +454,33 @@ export default function SettingsPage() {
             >
               {savingTrading ? "Saving..." : "Save Trading Config"}
             </button>
+
+            {/* Broker registry (Ops spec Part 2) — per-market execution adapter */}
+            <div style={{ borderTop: `1px solid ${T.border}`, marginTop: "20px", paddingTop: "16px" }}>
+              <div style={{ fontSize: "12px", color: T.muted, marginBottom: "10px", letterSpacing: "0.06em", textTransform: "uppercase" as const }}>Execution Gateway broker (per market)</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "10px" }}>Keys go in Admin → Vault / .env — never entered here.</div>
+              <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" as const }}>
+                <div>
+                  <label style={{ fontSize: "12px", color: T.textSub, display: "block", marginBottom: "6px" }}>US</label>
+                  <select value={activeBrokerUs} onChange={e => setActiveBrokerUs(e.target.value)} style={numInp}>
+                    {(brokerList?.us ?? [{ id: "alpaca", configured: false }]).map(b => (
+                      <option key={b.id} value={b.id}>{b.id} {b.configured ? "✓" : "(not configured)"}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: "12px", color: T.textSub, display: "block", marginBottom: "6px" }}>India</label>
+                  <select value={activeBrokerIndia} onChange={e => setActiveBrokerIndia(e.target.value)} style={numInp}>
+                    {(brokerList?.india ?? [{ id: "kite", configured: false }]).map(b => (
+                      <option key={b.id} value={b.id}>{b.id} {b.configured ? "✓" : "(not configured)"}</option>
+                    ))}
+                  </select>
+                </div>
+                <button onClick={saveBrokerRegistry} disabled={savingBroker} style={{ alignSelf: "flex-end", background: "transparent", border: `1px solid ${T.accent}`, borderRadius: "8px", color: T.accent, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+                  {savingBroker ? "..." : "Save"}
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Zerodha Kite (India) connection card */}
@@ -417,6 +515,23 @@ export default function SettingsPage() {
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginBottom: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Risk Profile</div>
             <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "20px" }}>How aggressive should the agent be when picking and sizing trades?</div>
+
+            {hasChampion && (
+              <div style={{ background: T.amberBg, border: `1px solid ${T.amber}44`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.amber }}>
+                ⚠ A promoted champion currently overrides this profile's scoring weights (profile still controls sizing/exits/kill-switches).
+              </div>
+            )}
+
+            {posture && (
+              <div style={{ background: T.accentBg, border: `1px solid ${T.accent}66`, borderRadius: "8px", padding: "12px 16px", marginBottom: "16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" as const, gap: "8px" }}>
+                <div style={{ fontSize: "13px", color: T.accent }}>
+                  Posture: <b>{posture.toUpperCase()}</b>{postureExpiresAt ? ` until ${new Date(postureExpiresAt).toLocaleDateString()}` : ""} → reverts to {baseRiskProfile ?? "balanced"}
+                </div>
+                <button onClick={cancelPosture} disabled={savingPosture} style={{ background: "transparent", border: `1px solid ${T.accent}`, borderRadius: "6px", color: T.accent, padding: "5px 12px", fontSize: "12px", cursor: "pointer" }}>
+                  {savingPosture ? "..." : "Cancel"}
+                </button>
+              </div>
+            )}
 
             {/* Profile chips */}
             <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap" as const }}>
@@ -493,6 +608,33 @@ export default function SettingsPage() {
             >
               {savingRisk ? "Saving..." : "Save Profile"}
             </button>
+
+            {/* Time-bound posture (Part B) — applies a profile with an expiry, auto-reverts */}
+            {!posture && (
+              <div style={{ borderTop: `1px solid ${T.border}`, marginTop: "20px", paddingTop: "16px" }}>
+                <div style={{ fontSize: "12px", color: T.muted, marginBottom: "10px", letterSpacing: "0.06em", textTransform: "uppercase" as const }}>Time-bound posture (auto-reverts)</div>
+                <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" as const }}>
+                  <select value={postureSelect} onChange={e => setPostureSelect(e.target.value as RiskProfileKey)} style={numInp}>
+                    {(Object.keys(RISK_PROFILES) as RiskProfileKey[]).map(key => (
+                      <option key={key} value={key}>{RISK_PROFILES[key].label}</option>
+                    ))}
+                  </select>
+                  <select value={postureDays} onChange={e => setPostureDays(parseInt(e.target.value))} style={numInp}>
+                    <option value={7}>1 week</option>
+                    <option value={14}>2 weeks</option>
+                    <option value={30}>1 month</option>
+                    <option value={60}>2 months</option>
+                  </select>
+                  <button
+                    onClick={applyPosture}
+                    disabled={savingPosture}
+                    style={{ background: "transparent", border: `1px solid ${T.accent}`, borderRadius: "8px", color: T.accent, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}
+                  >
+                    {savingPosture ? "..." : "Apply Posture"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* LLM Cost Monitor Card */}

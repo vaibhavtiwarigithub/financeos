@@ -27,6 +27,7 @@ export async function checkKillSwitches(supabase: any, market: string = "us"): P
     { data: portfolio },
     { data: recentPerf },
     { data: closedTrades },
+    { data: cfg },
   ] = await Promise.all([
     supabase.from("paper_portfolio").select("nav, updated_at").eq("market", market).limit(1).maybeSingle(),
     scoped(supabase.from("paper_performance").select("date, nav, market").order("date", { ascending: true }).limit(90), market),
@@ -37,40 +38,45 @@ export async function checkKillSwitches(supabase: any, market: string = "us"): P
         .gte("executed_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
       market
     ),
+    // Profile-scaled thresholds (Part A1) — resilient: absent columns/row → hardcoded defaults below.
+    supabase.from("strategy_config").select("ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct").maybeSingle(),
   ]);
 
   const nav = portfolio?.nav ?? startNav;
+  const dailyLossLimit = Number(cfg?.ks_daily_loss_pct) || -5;
+  const drawdownLimit = Number(cfg?.ks_drawdown_pct) || 20;
+  const accuracyLimit = Number(cfg?.ks_accuracy_pct) || 40;
 
-  // --- Kill switch 1: single-day loss > 5% ---
+  // --- Kill switch 1: single-day loss beyond profile threshold (default -5%) ---
   const today = new Date().toISOString().slice(0, 10);
   const todayPerf = recentPerf?.find((p: any) => p.date === today);
   const yesterday = recentPerf?.filter((p: any) => p.date < today).at(-1);
   if (todayPerf && yesterday) {
     const dailyLossPct = ((todayPerf.nav - yesterday.nav) / yesterday.nav) * 100;
-    if (dailyLossPct < -5) {
-      await disableTrading(supabase, `Daily loss ${dailyLossPct.toFixed(1)}% exceeds -5% threshold`);
-      return { safe: false, tripped: "daily_loss", reason: `Daily loss ${dailyLossPct.toFixed(1)}% > -5%` };
+    if (dailyLossPct < dailyLossLimit) {
+      await disableTrading(supabase, `Daily loss ${dailyLossPct.toFixed(1)}% exceeds ${dailyLossLimit}% threshold`);
+      return { safe: false, tripped: "daily_loss", reason: `Daily loss ${dailyLossPct.toFixed(1)}% > ${dailyLossLimit}%` };
     }
   }
 
-  // --- Kill switch 2: 30-day accuracy < 40% ---
+  // --- Kill switch 2: 30-day accuracy below profile threshold (default 40%) ---
   if (closedTrades && closedTrades.length >= 5) {
     const wins = closedTrades.filter((t: any) => t.outcome === "win").length;
     const accuracy = (wins / closedTrades.length) * 100;
-    if (accuracy < 40) {
-      await disableTrading(supabase, `30-day accuracy ${accuracy.toFixed(0)}% below 40% threshold`);
-      return { safe: false, tripped: "accuracy", reason: `30d accuracy ${accuracy.toFixed(0)}% < 40% (${closedTrades.length} trades)` };
+    if (accuracy < accuracyLimit) {
+      await disableTrading(supabase, `30-day accuracy ${accuracy.toFixed(0)}% below ${accuracyLimit}% threshold`);
+      return { safe: false, tripped: "accuracy", reason: `30d accuracy ${accuracy.toFixed(0)}% < ${accuracyLimit}% (${closedTrades.length} trades)` };
     }
   }
 
-  // --- Kill switch 3: drawdown > 20% from peak ---
+  // --- Kill switch 3: drawdown beyond profile threshold (default 20%) from peak ---
   if (recentPerf && recentPerf.length > 0) {
     const navHistory = recentPerf.map((p: any) => p.nav as number);
     const peak = Math.max(...navHistory, startNav); // per-market starting NAV
     const drawdownPct = ((peak - nav) / peak) * 100;
-    if (drawdownPct > 20) {
-      await disableTrading(supabase, `Drawdown ${drawdownPct.toFixed(1)}% exceeds 20% from peak $${peak.toFixed(0)}`);
-      return { safe: false, tripped: "drawdown", reason: `Drawdown ${drawdownPct.toFixed(1)}% > 20% from peak` };
+    if (drawdownPct > drawdownLimit) {
+      await disableTrading(supabase, `Drawdown ${drawdownPct.toFixed(1)}% exceeds ${drawdownLimit}% from peak $${peak.toFixed(0)}`);
+      return { safe: false, tripped: "drawdown", reason: `Drawdown ${drawdownPct.toFixed(1)}% > ${drawdownLimit}% from peak` };
     }
   }
 

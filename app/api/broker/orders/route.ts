@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { submitAlpacaOrder } from "@/lib/brokers/alpaca-orders";
+import { getActiveBroker } from "@/lib/brokers/registry";
+import { isIndia } from "@/lib/india-data";
 
 export const dynamic = "force-dynamic";
 
@@ -44,14 +45,23 @@ export async function POST(req: NextRequest) {
     const symbol = (proposal as any).symbol;
     const side = (proposal as any).side === "sell" ? "sell" : "buy";
     const qty = (proposal as any).qty;
+    const market: "us" | "india" = isIndia(symbol) ? "india" : "us";
+
+    const broker = await getActiveBroker(supabase, market);
+    if (orderEnv === "live" && !broker.envs.includes("live")) {
+      return NextResponse.json({ error: `${broker.id} does not support live orders` }, { status: 400 });
+    }
+    if (!(await broker.isConfigured())) {
+      return NextResponse.json({ error: `${broker.id} has no API keys configured — add them in Admin → Vault` }, { status: 400 });
+    }
 
     const { data: orderRow } = await supabase.from("broker_orders").insert({
-      proposal_id, market: "us", broker: "alpaca", broker_env: orderEnv,
+      proposal_id, market, broker: broker.id, broker_env: orderEnv,
       symbol, side, qty, order_type: "market", status: "pending_submit", approved_by_user: true,
     }).select("id").single();
     const orderId = (orderRow as any)?.id;
 
-    const result = await submitAlpacaOrder({ symbol, side, qty, env: orderEnv });
+    const result = await broker.submitOrder({ symbol, side, qty, env: orderEnv });
     if (!result.ok) {
       await supabase.from("broker_orders").update({ status: "error", error: result.error }).eq("id", orderId);
       return NextResponse.json({ error: result.error }, { status: 502 });
@@ -63,8 +73,8 @@ export async function POST(req: NextRequest) {
 
     await supabase.from("decision_journal").insert({
       entry_type: "broker_order", symbol,
-      summary: `Alpaca ${orderEnv.toUpperCase()} order: ${side} ${qty} × ${symbol} (proposal ${proposal_id}) → order ${result.brokerOrderId}`,
-      calculations: { proposal_id, broker: "alpaca", env: orderEnv, side, qty, broker_order_id: result.brokerOrderId },
+      summary: `${broker.id} ${orderEnv.toUpperCase()} order: ${side} ${qty} × ${symbol} (proposal ${proposal_id}) → order ${result.brokerOrderId}`,
+      calculations: { proposal_id, broker: broker.id, env: orderEnv, side, qty, broker_order_id: result.brokerOrderId },
       has_verified_facts: true, resolved: false,
     });
 

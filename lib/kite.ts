@@ -121,6 +121,21 @@ export async function kitePost(path: string, body: Record<string, string>, svc?:
   }
 }
 
+// Authenticated DELETE (order cancellation).
+export async function kiteDelete(path: string, svc?: any): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const s = svc ?? createServiceClient();
+  const h = await authHeaders(s);
+  if (!h.ok) return { ok: false, error: h.error };
+  try {
+    const res = await fetch(`https://api.kite.trade${path}`, { method: "DELETE", headers: h.headers });
+    const json = await res.json();
+    if (!res.ok || json?.status !== "success") return { ok: false, error: json?.message ?? `Kite ${res.status}` };
+    return { ok: true, data: json.data };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
 export async function getKiteHoldings(svc?: any) {
   return kiteGet("/portfolio/holdings", svc);
 }

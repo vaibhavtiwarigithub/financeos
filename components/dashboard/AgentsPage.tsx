@@ -6,6 +6,7 @@ import AgentComparisonCard from "@/components/dashboard/AgentComparisonCard";
 import PageHeader from "@/components/dashboard/PageHeader";
 import AgentDiagram from "@/components/dashboard/AgentDiagram";
 import InfoTooltip from "@/components/dashboard/InfoTooltip";
+import ModelFreshnessCard from "@/components/dashboard/ModelFreshnessCard";
 const SignalCharts = lazy(() => import("@/components/charts/SignalChartsWrapper"));
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 const MermaidChart = lazy(() => import("@/components/dashboard/MermaidChart"));
@@ -258,6 +259,8 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         actions={[{ label: saving ? "…" : tradingEnabled ? "⚡ Kill Switch" : "🔴 Enable Trading", onClick: toggleTrading }]}
       />
       <div style={{ padding: "0 28px 32px" }}>
+
+      <ModelFreshnessCard />
 
       {/* Paper portfolio hero */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "24px", marginBottom: "20px", display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "24px" }}>

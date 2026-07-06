@@ -30,12 +30,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ skipped: true, reason: "Weekend — market closed" });
   }
   // US holiday calendar only gates US runs — an India run must not be skipped on
-  // a US holiday (and vice versa; India has its own holidays, not yet modeled).
+  // a US holiday (and vice versa).
   if (marketScope !== "india") {
     const mmdd = `${String(nowET.getMonth() + 1).padStart(2, "0")}-${String(nowET.getDate()).padStart(2, "0")}`;
     const US_HOLIDAYS = ["01-01","01-20","02-17","04-18","05-26","06-19","07-04","09-01","11-27","12-25"]; // 2026 approx
     if (US_HOLIDAYS.includes(mmdd)) {
       return NextResponse.json({ skipped: true, reason: `US market holiday (${mmdd})` });
+    }
+  }
+  // NSE holiday calendar — FIXED-DATE holidays only (Republic Day, Independence
+  // Day, Gandhi Jayanti). Floating festival holidays (Holi, Diwali, Eid, etc.)
+  // are NOT modeled here — they shift yearly and guessing wrong dates is worse
+  // than not gating at all. On an unmodeled NSE holiday this still fires and
+  // produces stale/no data; a proper fix needs a verified annual NSE holiday
+  // calendar (API or manually-updated list), not a guess.
+  if (marketScope === "india") {
+    const nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const mmddIST = `${String(nowIST.getMonth() + 1).padStart(2, "0")}-${String(nowIST.getDate()).padStart(2, "0")}`;
+    const NSE_FIXED_HOLIDAYS = ["01-26", "08-15", "10-02"]; // Republic Day, Independence Day, Gandhi Jayanti
+    if (NSE_FIXED_HOLIDAYS.includes(mmddIST)) {
+      return NextResponse.json({ skipped: true, reason: `NSE fixed-date holiday (${mmddIST})` });
     }
   }
 
@@ -44,6 +58,30 @@ export async function POST(req: NextRequest) {
   if ((cfg as any)?.app_paused) {
     return NextResponse.json({ skipped: true, reason: "App is paused — research cron disabled" });
   }
+
+  // Posture auto-revert (Part B) — resilient: absent columns pre-migration → no-op.
+  try {
+    const { data: postureCfg } = await supabase
+      .from("strategy_config")
+      .select("id, posture, posture_expires_at, base_risk_profile")
+      .limit(1)
+      .maybeSingle();
+    const PROFILE_DIALS: Record<string, any> = {
+      conservative: { score_threshold: 72, position_size_pct: 7, stop_loss_pct: 5, target_pct: 12, max_positions_per_sector: 2, ks_daily_loss_pct: -4, ks_drawdown_pct: 15, ks_accuracy_pct: 45, exit_hysteresis: 10 },
+      balanced:     { score_threshold: 60, position_size_pct: 10, stop_loss_pct: 7, target_pct: 20, max_positions_per_sector: 3, ks_daily_loss_pct: -5, ks_drawdown_pct: 20, ks_accuracy_pct: 40, exit_hysteresis: 15 },
+      aggressive:   { score_threshold: 52, position_size_pct: 15, stop_loss_pct: 10, target_pct: 35, max_positions_per_sector: 4, ks_daily_loss_pct: -7, ks_drawdown_pct: 25, ks_accuracy_pct: 35, exit_hysteresis: 20 },
+    };
+    if (postureCfg?.posture && postureCfg.posture_expires_at && new Date(postureCfg.posture_expires_at) <= new Date()) {
+      const base = postureCfg.base_risk_profile ?? "balanced";
+      await supabase.from("strategy_config").update({
+        ...PROFILE_DIALS[base], risk_profile: base, posture: null, posture_expires_at: null, base_risk_profile: null,
+      } as any).eq("id", postureCfg.id);
+      await supabase.from("decision_journal").insert({
+        entry_type: "posture_expired",
+        summary: `Posture ${postureCfg.posture} expired, reverted to ${base}`,
+      } as any);
+    }
+  } catch { /* pre-migration schema — no-op */ }
 
   // Idempotency guard — a duplicate/manual re-trigger within 30 min shouldn't
   // re-run the pass. But it must be PER MARKET: a US run at 9 AM must not suppress
@@ -84,6 +122,7 @@ export async function POST(req: NextRequest) {
   const { data: runRow } = await supabase.from("agent_runs").insert({
     agent_type: "research",
     status: "running",
+    market: marketScope ?? "us",
     symbols: batch,
     trigger_source: "scheduled",
   } as any).select().single();

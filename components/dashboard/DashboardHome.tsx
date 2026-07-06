@@ -2,6 +2,8 @@
 import { useState, useEffect } from "react";
 import WatchlistPanel from "@/components/dashboard/WatchlistPanel";
 import BriefingSection from "@/components/dashboard/BriefingSection";
+import GoalCard from "@/components/dashboard/GoalCard";
+import AgentCalendar from "@/components/dashboard/AgentCalendar";
 import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
 
 const T = {
@@ -205,6 +207,8 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
   return (
     <div style={{ padding: "28px", color: T.text, fontFamily: "'Inter', sans-serif" }}>
 
+      <AgentCalendar />
+
       {/* Hero — two-section: paper left, live right */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "12px", marginBottom: "20px" }}>
 
@@ -302,6 +306,9 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
           </div>
         </div>
       </div>
+
+      {/* Goal tracker — measured dashboard only, never an agent input (Decision 34) */}
+      <GoalCard />
 
       {/* Briefing section */}
       <div style={{ marginBottom: "16px" }}>
