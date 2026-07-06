@@ -146,6 +146,17 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await runMaturation(marketScope);
+    // Bookkeeping row so stale-check (P0 improvement) can see this ran today.
+    try {
+      const svc = createServiceClient();
+      await svc.from("agent_runs").insert({
+        agent_type: "label_maturation",
+        status: "done",
+        trigger_source: isCron ? "scheduled" : "manual",
+        result_summary: `Matured ${result.matured}, skipped ${result.skipped} (${result.market}).`,
+        completed_at: new Date().toISOString(),
+      } as any);
+    } catch { /* best-effort */ }
     return NextResponse.json({ success: true, ...result });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

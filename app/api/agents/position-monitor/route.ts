@@ -233,6 +233,19 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     }).eq("id", pool.id);
   }
 
+  // Bookkeeping row so stale-check (P0 improvement) can tell this ran today and
+  // which market — matches the symbols-suffix heuristic research-cron uses.
+  try {
+    await svc.from("agent_runs").insert({
+      agent_type: "position_monitor",
+      status: "done",
+      symbols: positions.map((p: any) => String(p.symbol)),
+      trigger_source: marketScope ? "scheduled" : "manual",
+      result_summary: `Checked ${positions.length}, closed ${closed.length}, updated ${updated.length}.`,
+      completed_at: new Date().toISOString(),
+    } as any);
+  } catch { /* best-effort — never fail the monitor run over bookkeeping */ }
+
   return {
     checked: positions.length,
     closed: closed.length,
