@@ -41,8 +41,16 @@ export async function POST(req: NextRequest) {
     // action: "promote_champion", "retire", "reject", or default = create new
     if (action === "promote_champion") {
       const { version_id } = fields as { version_id: number };
-      // Demote current champion
-      await supabase.from("strategy_versions").update({ is_champion: false }).eq("is_champion", true);
+      // Phase 4: champions are PER MARKET. Demote only the SAME market's champion —
+      // an unscoped demote would knock out the US champion when promoting an India
+      // challenger (and vice-versa). Read the challenger's market first.
+      const { data: challenger } = await supabase
+        .from("strategy_versions").select("market").eq("id", version_id).maybeSingle();
+      const mkt = (challenger as any)?.market ?? "us";
+      let demote = supabase.from("strategy_versions").update({ is_champion: false }).eq("is_champion", true);
+      // Scope to the challenger's market when the column exists; fall back unscoped pre-057.
+      const demoteRes = await demote.eq("market", mkt);
+      if (demoteRes.error) await supabase.from("strategy_versions").update({ is_champion: false }).eq("is_champion", true);
       // Promote new champion
       const { error } = await supabase.from("strategy_versions").update({
         is_champion: true,
@@ -50,7 +58,7 @@ export async function POST(req: NextRequest) {
         promoted_at: new Date().toISOString(),
       }).eq("id", version_id);
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-      return NextResponse.json({ success: true, promoted: version_id });
+      return NextResponse.json({ success: true, promoted: version_id, market: mkt });
     }
 
     if (action === "retire") {

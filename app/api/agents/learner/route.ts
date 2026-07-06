@@ -206,7 +206,7 @@ export async function POST(req: NextRequest) {
             const since = new Date(Date.now() - days * 86400_000).toISOString();
 
             let query = scopeMkt(svc.from("agent_signals")
-              .select("symbol, direction, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, created_at, source, asset_class")
+              .select("id, symbol, direction, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, created_at, source, asset_class")
               .gte("created_at", since)
               .gte("analyst_score", minScore)
               .order("created_at", { ascending: false })
@@ -215,14 +215,18 @@ export async function POST(req: NextRequest) {
 
             const { data: signals } = await query;
             const { data: trades } = await scopeMkt(svc.from("paper_trades")
-              .select("symbol, outcome, pnl_pct, realized_pnl, executed_at, closed_at")
+              .select("symbol, signal_id, outcome, pnl_pct, realized_pnl, executed_at, closed_at")
               .not("closed_at", "is", null)
               .gte("executed_at", since));
 
-            const tradeMap = new Map((trades ?? []).map((t: any) => [t.symbol, t]));
-            const enriched = (signals ?? []).map((s: any) => ({
-              ...s, trade_outcome: (tradeMap.get(s.symbol) as any)?.outcome ?? null, trade_pnl_pct: (tradeMap.get(s.symbol) as any)?.pnl_pct ?? null,
-            }));
+            // Link each signal to the trade ACTUALLY OPENED FROM IT (signal_id) — not
+            // by symbol, which collided every repeat signal for the same ticker onto
+            // one arbitrary trade and corrupted the outcome attribution.
+            const tradeMap = new Map((trades ?? []).map((t: any) => [t.signal_id, t]));
+            const enriched = (signals ?? []).map((s: any) => {
+              const t = tradeMap.get(s.id) as any;
+              return { ...s, trade_outcome: t?.outcome ?? null, trade_pnl_pct: t?.pnl_pct ?? null };
+            });
             return JSON.stringify({ count: enriched.length, signals: enriched.slice(0, 50) });
           }
 
@@ -238,16 +242,19 @@ export async function POST(req: NextRequest) {
             }
 
             const { data: signals } = await scopeMkt(svc.from("agent_signals")
-              .select(`symbol, ${dimension}, created_at`)
+              .select(`id, ${dimension}, created_at`)
               .gte("created_at", since).not(dimension, "is", null).limit(100));
             const { data: trades } = await scopeMkt(svc.from("paper_trades")
-              .select("symbol, pnl_pct, executed_at")
+              .select("signal_id, pnl_pct, executed_at")
               .not("closed_at", "is", null).gte("executed_at", since));
 
-            const tradeMap = new Map<string, number | null>((trades ?? []).map((t: any) => [t.symbol as string, t.pnl_pct as number | null]));
+            // Join by signal_id (the trade opened from THIS score), not symbol —
+            // symbol-keying overwrote duplicate signals and paired scores with the
+            // wrong trade's P&L, poisoning the correlation.
+            const tradeMap = new Map<any, number | null>((trades ?? []).map((t: any) => [t.signal_id, t.pnl_pct as number | null]));
             const pairs: { score: number; pnl: number }[] = [];
             for (const s of signals ?? []) {
-              const pnl = tradeMap.get(s.symbol);
+              const pnl = tradeMap.get((s as any).id);
               const score = (s as any)[dimension];
               if (pnl != null && score != null) pairs.push({ score, pnl: pnl as number });
             }
