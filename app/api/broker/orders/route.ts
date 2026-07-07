@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     }).eq("id", orderId);
 
     await supabase.from("decision_journal").insert({
-      entry_type: "broker_order", symbol,
+      entry_type: "broker_order", symbol, market,
       summary: `${broker.id} ${orderEnv.toUpperCase()} order: ${side} ${qty} × ${symbol} (proposal ${proposal_id}) → order ${result.brokerOrderId}`,
       calculations: { proposal_id, broker: broker.id, env: orderEnv, side, qty, broker_order_id: result.brokerOrderId },
       has_verified_facts: true, resolved: false,

@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     if (res.status === "filled") {
       filled++;
       await supabase.from("decision_journal").insert({
-        entry_type: "broker_order_filled", symbol: order.symbol,
+        entry_type: "broker_order_filled", symbol: order.symbol, market: order.market ?? null,
         summary: `${broker.id} order filled: ${order.side} ${res.filledQty ?? order.qty} × ${order.symbol} @ avg ${res.avgFillPrice ?? "?"}`,
         calculations: { broker_order_id: order.broker_order_id, filled_qty: res.filledQty, avg_fill_price: res.avgFillPrice },
         has_verified_facts: true, resolved: true, resolved_at: new Date().toISOString(),

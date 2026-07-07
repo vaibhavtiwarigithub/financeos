@@ -34,14 +34,14 @@ const REGISTRY: Record<string, MarketSupport> = {
   "/dashboard/intelligence":   { level: "full",       note: "US + India agent signals + research runs." },
   "/dashboard/portfolio":      { level: "full",       note: "US ($) and India (₹) paper pools — switch markets in the header. Never blended." },
   "/dashboard/agents/history": { level: "full",       note: "Every agent run — now filters by the header switcher (fixed 2026-07-06); agents that don't run per-market (learner, mentor) only ever show under US." },
-  "/dashboard/agents":         { level: "partial", knownGap: true, note: "Underlying data (signals, trades, runs) now filters by the header switcher (fixed 2026-07-06), but prices still display with a hardcoded $ — not yet currency-converted for India (₹). Numbers are correct for the selected market; the symbol isn't." },
+  "/dashboard/agents":         { level: "full",       note: "Agents run for both markets (India via free Yahoo data) — data and currency (₹) both now follow the header switcher (fixed 2026-07-06). Live Robinhood trade proposals stay $-denominated regardless of the switcher, since that account is US-only by design." },
   "/dashboard/research-journal": { level: "full",     note: "US + India both journaled — has its own in-page market picker (Funnel/Evolution tabs), separate from but consistent with the header switcher." },
   "/dashboard/watchlist":      { level: "full",       note: "US and India symbols both trackable — now filters by the header switcher (fixed 2026-07-06)." },
   "/dashboard/mentor":         { level: "full",       note: "Coaches on outcomes from both markets (not separately toggleable — reviews your judgment across everything, by design)." },
-  "/dashboard/journal":        { level: "full",       note: "Audit trail spans US + India (fixed 2026-07-06 — migration 084 added the missing market column AND fixed a dormant type-mismatch bug that had silently failed every paper_fill/paper_exit journal insert). A few entry types with no derivable market (settings changes, broker-order/cron-gap alerts) default to the US view." },
+  "/dashboard/journal":        { level: "full",       note: "Audit trail spans US + India (fixed 2026-07-06 — migration 084 added the missing market column AND fixed a dormant type-mismatch bug that had silently failed every paper_fill/paper_exit journal insert). Broker orders/fills, paper fills/exits, and Kite orders are all market-tagged; risk-profile and cron-gap alerts are genuinely global (not market-specific) and show under the US view." },
   "/dashboard/settings":       { level: "full",       note: "Config applies to both markets. Turn India on/off under Market focus." },
   "/dashboard/admin":          { level: "full",       note: "Keys/vault/config for both markets." },
-  "/dashboard":                { level: "us-only", knownGap: true, note: "KNOWN GAP: Morning Briefing doesn't have an India section yet — it always shows the US pool regardless of the header switcher." },
+  "/dashboard":                { level: "full",       note: "Morning Briefing shows both US and India sections (fixed 2026-07-06) — an India Paper Portfolio card (NAV/P&L/cash/positions/signals) now appears below the US hero when India is enabled." },
 };
 
 export function getMarketSupport(pathname: string): MarketSupport {

@@ -29,7 +29,7 @@ const AGENTS = [
 ];
 
 function pnlColor(n: number) { return n >= 0 ? T.green : T.red; }
-function fmt(n: number) { return (n >= 0 ? "+" : "") + "$" + Math.abs(n).toFixed(2); }
+function fmt(n: number, cur = "$") { return (n >= 0 ? "+" : "") + cur + Math.abs(n).toFixed(2); }
 function fmtPct(n: number) { return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
 
 function dirBadge(d: string) {
@@ -47,11 +47,13 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export default function AgentsPage({ signals, weights, strategy, learningLog, paperPortfolio, paperPositions, paperTrades, paperPerf, agentRuns }: {
+export default function AgentsPage({ signals, weights, strategy, learningLog, paperPortfolio, paperPositions, paperTrades, paperPerf, agentRuns, market = "us" }: {
   signals: any[]; weights: any; strategy: any; learningLog: any[];
   paperPortfolio: any; paperPositions: any[]; paperTrades: any[]; paperPerf: any[];
   agentRuns?: Record<string, any[]>;
+  market?: "us" | "india";
 }) {
+  const currency = market === "india" ? "₹" : "$";
   const supabase = createClient();
   const router = useRouter();
   const [tradingEnabled, setTradingEnabled] = useState(strategy?.trading_enabled ?? true);
@@ -266,17 +268,17 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "24px", marginBottom: "20px", display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "24px" }}>
         <div>
           <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Paper NAV</div>
-          <div style={{ fontSize: "24px", fontWeight: 700 }}>${currentNAV.toFixed(0)}</div>
+          <div style={{ fontSize: "24px", fontWeight: 700 }}>{currency}{currentNAV.toFixed(0)}</div>
           <div style={{ fontSize: "12px", color: T.muted }}>started $10,000</div>
         </div>
         <div>
           <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Total P&L</div>
-          <div style={{ fontSize: "24px", fontWeight: 700, color: pnlColor(totalPnl) }}>{fmt(totalPnl)}</div>
+          <div style={{ fontSize: "24px", fontWeight: 700, color: pnlColor(totalPnl) }}>{fmt(totalPnl, currency)}</div>
           <div style={{ fontSize: "12px", color: pnlColor(totalPnlPct) }}>{fmtPct(totalPnlPct)}</div>
         </div>
         <div>
           <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Cash</div>
-          <div style={{ fontSize: "24px", fontWeight: 700 }}>${(paperPortfolio?.cash_balance ?? 10000).toFixed(0)}</div>
+          <div style={{ fontSize: "24px", fontWeight: 700 }}>{currency}{(paperPortfolio?.cash_balance ?? 10000).toFixed(0)}</div>
           <div style={{ fontSize: "12px", color: T.muted }}>{paperPositions.length} position{paperPositions.length !== 1 ? "s" : ""}</div>
         </div>
         <div>
@@ -410,9 +412,9 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                       <tr key={p.id} style={{ borderTop: `1px solid ${T.border}` }}>
                         <td style={{ padding: "9px 12px 9px 0", fontWeight: 700 }}>{p.symbol}</td>
                         <td style={{ padding: "9px 12px 9px 0" }}>{p.qty}</td>
-                        <td style={{ padding: "9px 12px 9px 0" }}>${p.avg_cost.toFixed(2)}</td>
-                        <td style={{ padding: "9px 12px 9px 0" }}>{p.current_price ? "$" + p.current_price.toFixed(2) : "—"}</td>
-                        <td style={{ padding: "9px 12px 9px 0", fontWeight: 600, color: pnlColor(pnl) }}>{fmt(pnl)}</td>
+                        <td style={{ padding: "9px 12px 9px 0" }}>{currency}{p.avg_cost.toFixed(2)}</td>
+                        <td style={{ padding: "9px 12px 9px 0" }}>{p.current_price ? currency + p.current_price.toFixed(2) : "—"}</td>
+                        <td style={{ padding: "9px 12px 9px 0", fontWeight: 600, color: pnlColor(pnl) }}>{fmt(pnl, currency)}</td>
                         <td style={{ padding: "9px 0", color: pnlColor(pnlPct) }}>{fmtPct(pnlPct)}</td>
                       </tr>
                     );
@@ -443,10 +445,10 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                       <td style={{ padding: "9px 12px 9px 0", fontWeight: 700 }}>{t.symbol}</td>
                       <td style={{ padding: "9px 12px 9px 0" }}>{dirBadge(t.order_side)}</td>
                       <td style={{ padding: "9px 12px 9px 0" }}>{t.qty}</td>
-                      <td style={{ padding: "9px 12px 9px 0" }}>${t.fill_price?.toFixed(2)}</td>
-                      <td style={{ padding: "9px 12px 9px 0" }}>{t.exit_price ? "$" + t.exit_price.toFixed(2) : <span style={{ color: T.amber }}>Open</span>}</td>
+                      <td style={{ padding: "9px 12px 9px 0" }}>{currency}{t.fill_price?.toFixed(2)}</td>
+                      <td style={{ padding: "9px 12px 9px 0" }}>{t.exit_price ? currency + t.exit_price.toFixed(2) : <span style={{ color: T.amber }}>Open</span>}</td>
                       <td style={{ padding: "9px 12px 9px 0", fontWeight: 600, color: t.realized_pnl != null ? pnlColor(t.realized_pnl) : T.muted }}>
-                        {t.realized_pnl != null ? fmt(t.realized_pnl) : "—"}
+                        {t.realized_pnl != null ? fmt(t.realized_pnl, currency) : "—"}
                       </td>
                       <td style={{ padding: "9px 12px 9px 0" }}>
                         {t.outcome ? (
@@ -780,13 +782,13 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                           {row.score ?? "—"}
                         </td>
                         <td style={{ padding: "9px 12px 9px 0", fontFamily: "monospace" }}>
-                          {row.entryPrice ? "$" + row.entryPrice.toFixed(2) : <span style={{ color: T.muted }}>—</span>}
+                          {row.entryPrice ? currency + row.entryPrice.toFixed(2) : <span style={{ color: T.muted }}>—</span>}
                         </td>
                         <td style={{ padding: "9px 12px 9px 0", fontFamily: "monospace", color: T.muted }}>
-                          {row.targetPrice ? "$" + row.targetPrice.toFixed(2) : <span style={{ color: T.muted }}>—</span>}
+                          {row.targetPrice ? currency + row.targetPrice.toFixed(2) : <span style={{ color: T.muted }}>—</span>}
                         </td>
                         <td style={{ padding: "9px 12px 9px 0", fontFamily: "monospace" }}>
-                          {row.exitPrice ? "$" + row.exitPrice.toFixed(2) : <span style={{ color: T.amber }}>—</span>}
+                          {row.exitPrice ? currency + row.exitPrice.toFixed(2) : <span style={{ color: T.amber }}>—</span>}
                         </td>
                         <td style={{ padding: "9px 12px 9px 0", fontWeight: 600, color: row.actualPct !== null ? (row.actualPct >= 0 ? T.green : T.red) : T.muted }}>
                           {row.actualPct !== null ? (row.actualPct >= 0 ? "+" : "") + row.actualPct.toFixed(1) + "%" : "—"}

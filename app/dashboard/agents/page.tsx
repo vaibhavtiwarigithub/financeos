@@ -62,6 +62,7 @@ export default async function Page() {
       paperTrades={paperTrades ?? []}
       paperPerf={paperPerf ?? []}
       agentRuns={runsByAgent}
+      market={market}
     />
   );
 }

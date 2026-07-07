@@ -128,7 +128,7 @@ function nextFridayLabel(): string {
   return next.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + " 5:00 PM ET";
 }
 
-export default function DashboardHome({ profile, paperPortfolio, positions, recentTrades, recentRuns, recentSignals, pendingSignals, recentLog, liveSnap, latestBriefing }: {
+export default function DashboardHome({ profile, paperPortfolio, positions, recentTrades, recentRuns, recentSignals, pendingSignals, recentLog, liveSnap, latestBriefing, indiaData }: {
   profile: any;
   paperPortfolio: any;
   positions: any[];
@@ -139,11 +139,29 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
   recentLog: any[];
   liveSnap: any | null;
   latestBriefing: any | null;
+  indiaData?: { paperPortfolio: any; positions: any[]; pendingSignals: any[]; recentRuns: any[] };
 }) {
   const nav = paperPortfolio?.nav ?? 10000;
   const cash = paperPortfolio?.cash_balance ?? 10000;
   const totalPnl = nav - 10000;
   const { masked: liveNumbersMasked, setRevealed: setLiveRevealed } = useRevealToggle();
+
+  // Was US-only regardless of profile.market_focus (a real gap — the header
+  // switcher never affected this page at all). Same enabled-check DashboardShell
+  // uses for the switcher itself.
+  const indiaEnabled = (profile?.market_focus ?? "US").toLowerCase().includes("india");
+  const indiaNav = indiaData?.paperPortfolio?.nav ?? 10000;
+  const indiaCash = indiaData?.paperPortfolio?.cash_balance ?? 10000;
+  const indiaTotalPnl = indiaNav - 10000;
+  const indiaPositions = indiaData?.positions ?? [];
+  const indiaPositionsValue = indiaPositions.reduce((s: number, p: any) => s + p.qty * (p.current_price ?? p.avg_cost), 0);
+  const indiaHighConviction = (indiaData?.pendingSignals ?? []).filter((s: any) => s.analyst_score >= 60);
+  const indiaLastResearchRun = (indiaData?.recentRuns ?? []).find((r: any) => r.agent_type === "research");
+  function fmtRs(n: number) {
+    const abs = Math.abs(n);
+    const s = abs >= 1000 ? "₹" + (abs / 1000).toFixed(1) + "k" : "₹" + abs.toFixed(0);
+    return n < 0 ? "-" + s : s;
+  }
 
   // LLM burn rate banner
   const [llmAlert, setLlmAlert] = useState(false);
@@ -306,6 +324,50 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
           </div>
         </div>
       </div>
+
+      {/* India paper portfolio snapshot — only when India is enabled in
+          profile.market_focus. Was missing entirely (a real gap: this page
+          always showed the US pool regardless of the header switcher). */}
+      {indiaEnabled && (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "20px 24px", marginBottom: "20px", position: "relative", overflow: "hidden" }}>
+          <div style={{ position: "absolute", top: 0, right: 0, width: "220px", height: "100%", background: `linear-gradient(135deg, ${T.green}08 0%, #FF993308 100%)`, pointerEvents: "none" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
+            <span style={{ fontSize: "14px" }}>🇮🇳</span>
+            <div style={{ fontSize: "13px", fontWeight: 700 }}>India Paper Portfolio</div>
+            <span style={{ fontSize: "10px", fontWeight: 800, padding: "2px 8px", borderRadius: "4px", background: T.amberBg, color: T.amber, letterSpacing: "0.08em" }}>PAPER</span>
+            <a href="/dashboard/portfolio" style={{ marginLeft: "auto", fontSize: "10px", fontWeight: 700, color: T.blue, textDecoration: "none" }}>VIEW →</a>
+          </div>
+          <div style={{ display: "flex", gap: "28px", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>NAV</div>
+              <div style={{ fontSize: "20px", fontWeight: 700 }}>{fmtRs(indiaNav)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>P&L</div>
+              <div style={{ fontSize: "20px", fontWeight: 700, color: indiaTotalPnl >= 0 ? T.green : T.red }}>
+                {fmtRs(indiaTotalPnl)} <span style={{ fontSize: "12px" }}>({fmtPct((indiaTotalPnl / 10000) * 100)})</span>
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>Cash</div>
+              <div style={{ fontSize: "20px", fontWeight: 700 }}>{fmtRs(indiaCash)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>Positions</div>
+              <div style={{ fontSize: "20px", fontWeight: 700 }}>{indiaPositions.length} <span style={{ fontSize: "12px", color: T.muted }}>({fmtRs(indiaPositionsValue)})</span></div>
+            </div>
+            <div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "2px" }}>High-conviction signals</div>
+              <div style={{ fontSize: "20px", fontWeight: 700 }}>{indiaHighConviction.length}</div>
+            </div>
+          </div>
+          <div style={{ fontSize: "10px", color: T.muted, marginTop: "12px" }}>
+            {indiaLastResearchRun
+              ? `Last India research run: ${fmtDate(indiaLastResearchRun.completed_at ?? indiaLastResearchRun.started_at, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
+              : "No India research run in the last 7 days"}
+          </div>
+        </div>
+      )}
 
       {/* Goal tracker — measured dashboard only, never an agent input (Decision 34) */}
       <GoalCard />

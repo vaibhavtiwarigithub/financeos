@@ -20,6 +20,20 @@
 
 ---
 
+## ✅ Session 2026-07-06 (cont'd) — Closed every remaining market-switcher gap: Agents currency (₹), Morning Briefing India section, remaining Decision Journal write sites
+
+> User said "fix all" on the three remaining disclosed gaps from the prior entry.
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Agents page currency (₹) | Claude | 2026-07-06 | Passed `market` down from the server page; `AgentsPage` now computes `currency = market === "india" ? "₹" : "$"` and every price display (NAV, cash, positions, trades, backtest rows) uses it. Live Robinhood trade proposals deliberately stay `$` — that account is US-only regardless of the switcher. Registry updated to "full". |
+| Decision Journal — broker order/fill sites | Claude | 2026-07-06 | `app/api/broker/orders/route.ts` and `.../sync/route.ts` now tag `market` at insert time (trivially available: `market` var / `order.market`). Settings/risk-profile changes and cron-gap alerts remain genuinely global (not market-specific) — left untagged, documented as such rather than a bug. |
+| Morning Briefing — India section | Claude | 2026-07-06 | `app/dashboard/page.tsx` now also fetches India's paper_portfolio/positions/pending-signals/recent-runs (cheap, unconditional). `DashboardHome` renders an "India Paper Portfolio" card (NAV/P&L/cash/positions/high-conviction signals/last research run) below the US hero, shown only when `profile.market_focus` enables India. Also fixed a real bug found while doing this: the page's `positions`/`recentTrades`/`recentRuns`/`recentSignals` queries were UNFILTERED by market, silently blending India data into what the US hero card presented as pure-US NAV/positions — now scoped to `market=us` to match `paperPortfolio`. |
+
+Every dashboard page the switcher touches is now genuinely wired, or explicitly documented as intentionally single-market (Live Portfolio, India page) via the nav badge system from the prior entry.
+
+---
+
 ## ✅ Session 2026-07-06 (cont'd) — Critical: kairos_call_agent overload ambiguity (most cron jobs failing), decision_journal type-mismatch bug, remaining market-switcher wiring
 
 > User asked why the evening briefing didn't generate and pushed to finish wiring the remaining unwired pages (Research Journal mislabel, Agents, Decision Journal, Morning Briefing).
