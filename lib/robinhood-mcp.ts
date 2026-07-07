@@ -327,6 +327,18 @@ function buildArgsFromSchema(schema: any, canonical: Record<string, any>): Recor
       const coerced = coerceEnum(props[hit], ["gfd", "GFD", "day", "DAY", "gtc", "GTC"]);
       if (coerced !== undefined) v = coerced;
     }
+    // Coerce to the schema's DECLARED json type. Robinhood's schema wants some
+    // numeric-looking fields (e.g. quantity) as STRINGS — sending a raw number
+    // is rejected ("has type integer, want string"). Cast per props[hit].type.
+    // `type` can be a string OR an array (e.g. ["string","null"]).
+    const rawType = props[hit]?.type;
+    const declType: string | undefined = Array.isArray(rawType)
+      ? rawType.find((t: string) => t !== "null")
+      : rawType;
+    if (declType === "string") v = typeof v === "string" ? v : String(v);
+    else if (declType === "integer") v = Math.trunc(Number(v));
+    else if (declType === "number") v = Number(v);
+    else if (declType === "boolean") v = Boolean(v);
     out[hit] = v;
   }
   const missing = required.filter(r => !(r in out));
@@ -420,13 +432,31 @@ function reviewEchoMismatch(content: any, o: RobinhoodOrderInput): string | null
   return null;
 }
 
+// MCP tool results come back as [{type:"text", text:"<JSON string>"}]. Pull the
+// text payload(s) and parse the embedded JSON if possible.
+function mcpToolText(content: any): string {
+  if (Array.isArray(content)) return content.map((c: any) => (typeof c?.text === "string" ? c.text : JSON.stringify(c))).join("\n");
+  return typeof content === "string" ? content : JSON.stringify(content ?? "");
+}
+function mcpToolJson(content: any): any {
+  const text = mcpToolText(content);
+  try { return JSON.parse(text); } catch { /* not a clean JSON string */ }
+  return null;
+}
+
 function extractOrderId(content: any): string | undefined {
   try {
-    const s = typeof content === "string" ? content : JSON.stringify(content);
-    const m = s.match(/"(?:order_id|id)"\s*:\s*"([^"]+)"/);
+    const obj = mcpToolJson(content);
+    const nested = obj?.data?.order?.id ?? obj?.order?.id ?? obj?.data?.id ?? obj?.id;
+    if (typeof nested === "string" && nested.length >= 8) return nested;
+    // Fallback: regex on the (possibly escaped) text.
+    const un = mcpToolText(content).replace(/\\"/g, '"');
+    const m = un.match(/"(?:order[_-]?id|id)"\s*:\s*"([0-9A-Za-z-]{8,})"/);
     return m?.[1];
   } catch { return undefined; }
 }
+
+export { mcpToolText, mcpToolJson };
 // Strip anything token-shaped before persisting a raw payload.
 function redact(v: any): any {
   try {
