@@ -175,7 +175,7 @@ Rules: BUY only if RSI<70 and fundamentals support growth. SELL if RSI>80 or det
   const llmResult = await callLLM({
     task: "summarize",
     prompt,
-    model: "deepseek-chat",
+    model: "deepseek-v4-flash",
     symbol,
     agentLabel: "deepseek",
   });

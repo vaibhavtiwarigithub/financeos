@@ -62,9 +62,9 @@ ${priorsText || "none"}
 Write the read now. Do not give trade instructions or invent figures not shown above.`;
 
   let content = "";
-  let model = "deepseek-reasoner";
+  let model = "deepseek-v4-pro";
   try {
-    model = await getConfiguredModel(svc, "macro-read", "deepseek-reasoner");
+    model = await getConfiguredModel(svc, "macro-read", "deepseek-v4-pro");
     const res = await callLLM({ task: "summarize", prompt, model, maxTokens: 600, agentLabel: "macro-read" });
     content = res.text?.trim() ?? "";
   } catch (e) {

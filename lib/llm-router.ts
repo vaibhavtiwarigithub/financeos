@@ -33,8 +33,8 @@ const MODEL_ROUTING: Record<LLMTask, string> = {
   thesis:    "claude-sonnet-4-6",
   optimize:  "claude-haiku-4-5-20251001",
   screen:    "llama-3.3-70b-versatile",  // Groq free — fast screener pre-filter
-  chat:      "deepseek-chat",
-  summarize: "deepseek-chat",
+  chat:      "deepseek-v4-flash",
+  summarize: "deepseek-v4-flash",
 }
 
 // Cost per 1M tokens [input, output] in USD (Groq free tier = $0)
@@ -43,8 +43,13 @@ const PRICING: Record<string, [number, number]> = {
   "claude-haiku-4-5":          [0.25,   1.25],
   "claude-haiku-4-5-20251001": [0.25,   1.25],
   "claude-opus-4-8":           [5.00,  25.00],
+  // DeepSeek deprecated chat(V3)/reasoner(R1) → V4 flash/pro (2026-07). Old
+  // keys kept for historical llm_call_log rows. V4 prices below are estimates
+  // mirroring the tier each replaces — verify against DeepSeek's price page.
   "deepseek-chat":             [0.07,   0.28],
   "deepseek-reasoner":         [0.55,   2.19],
+  "deepseek-v4-flash":         [0.07,   0.28],
+  "deepseek-v4-pro":           [0.55,   2.19],
   "gemini-2.5-flash":          [0.075,  0.30],
   "llama-3.3-70b-versatile":   [0,      0],
   "llama-3.1-8b-instant":      [0,      0],
@@ -305,7 +310,7 @@ export async function runAgentLoop(opts: {
   runId?: string
   symbol?: string
 }): Promise<AgentLoopResult> {
-  const model = opts.model ?? "deepseek-chat"
+  const model = opts.model ?? "deepseek-v4-flash"
   const maxIter = opts.maxIterations ?? 12
   const start = Date.now()
   let result: AgentLoopResult | undefined

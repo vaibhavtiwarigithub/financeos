@@ -109,7 +109,7 @@ Be specific, warm but honest, and concrete. Tie the ONE lesson to BOTH the curre
 
   try {
     const loop = await runAgentLoop({
-      model: "deepseek-reasoner",
+      model: "deepseek-v4-pro",
       systemPrompt, initialMessage,
       tools: MENTOR_TOOLS, toolExecutor,
       maxIterations: 10, task: "evaluate", agentLabel: "mentor",
@@ -134,7 +134,7 @@ Be specific, warm but honest, and concrete. Tie the ONE lesson to BOTH the curre
       lesson: a.lesson ?? null,
       market_note: a.market_note ?? null,
       next_milestone: a.next_milestone ?? null,
-      model: "deepseek-reasoner",
+      model: "deepseek-v4-pro",
       tokens_in: loop.tokensIn, tokens_out: loop.tokensOut,
     }).select("id, created_at").single();
 
