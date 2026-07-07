@@ -71,6 +71,12 @@ async function scoreInsider(symbol: string, avKey: string): Promise<{ score: num
 
     const total = buyValue + sellValue;
     if (total === 0) return { score: 50, summary: `${recent.length} insider transactions found but no buy/sell value calculable.`, available: false };
+    // A single transaction (e.g. one small buy) reads as 100% bullish with no
+    // caveat despite being statistically meaningless. Require a minimum sample.
+    const MIN_INSIDER_TRANSACTIONS = 3;
+    if (buyCount + sellCount < MIN_INSIDER_TRANSACTIONS) {
+      return { score: 50, summary: `Only ${buyCount + sellCount} insider transaction(s) in past 90 days — too few to score, treated as unavailable.`, available: false };
+    }
     const buyRatio = buyValue / total;
     // 100% buying = score 90, 100% selling = score 10, balanced = 50
     const score = Math.round(10 + buyRatio * 80);
@@ -98,6 +104,14 @@ const KNOWN_ETFS = new Set([
   "USO","GLD","SLV","UNG","PDBC","IAU",
   // Bonds
   "TLT","SHY","IEF","HYG","LQD","BND","AGG","GOVT",
+  // Crypto trusts/ETFs
+  "IBIT","BITO","GBTC",
+  // Region ETFs (mirrors REGION_ETFS below — INFY/WIT/HDB are real ADR
+  // equities, not funds, so they're deliberately excluded here)
+  "INDA","EPI","INDY",
+  "VGK","EWG","EWL","EWU","EWQ",
+  "EWJ","EWT","EWY","EWH","FXI",
+  "VT","ACWI","EFA",
 ]);
 
 const LEVERAGED_BEAR_ETFS = new Set([
@@ -871,7 +885,11 @@ export async function processSymbol(
   const dq = scores.dataQuality ?? ({} as any);
   const included: DimensionRecord<boolean> = {
     fundamental: !isEtf && (dq.fundamentalDataAvailable ?? true),
-    technical: (dq.technicalDataPoints ?? 0) > 0,
+    // scoreTechnicals/computeTechnicals both require >=15 candles before
+    // computing a real RSI(14)/EMA20 — below that they already return neutral
+    // 50 internally, but this check previously only required >0 candles, so a
+    // 1-14 candle sliver counted as "available" real technical evidence.
+    technical: (dq.technicalDataPoints ?? 0) >= 15,
     sentiment: dq.sentimentDataAvailable ?? true,
     macro: dq.macroDataAvailable ?? true,
     insider: dq.insiderDataAvailable ?? true,

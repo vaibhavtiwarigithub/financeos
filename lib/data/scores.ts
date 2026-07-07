@@ -69,10 +69,13 @@ function scoreFundamentals(overview: Record<string, string>, isEtf: boolean): { 
   const pe = parseFloat(overview.PERatio ?? "");
   if (!isNaN(pe) && pe > 0) {
     evidence.pe_ratio = pe;
+    // P/E 25-40 was previously unscored (a cliff: 24.99->+10, 25->0, 40.01->-15),
+    // making a fairly-priced P/E=30 stock indistinguishable from no-data-neutral.
     if (pe < 15) score += 20;
     else if (pe < 25) score += 10;
-    else if (pe > 40) score -= 15;
-    else if (pe > 60) score -= 25;
+    else if (pe < 40) score -= 5;
+    else if (pe < 60) score -= 15;
+    else score -= 25;
   }
 
   const profitMargin = parseFloat(overview.ProfitMargin ?? "");
@@ -220,8 +223,10 @@ export function normalizeInsiderScore(insiderResult: any): { score: number; evid
   // scoreInsider() (research-agent.ts) sets `available: false` for no-data/
   // fetch-failed/rate-limited outcomes, which all otherwise return the same
   // neutral score:50 shape — `available` is the only field that tells them
-  // apart from genuinely-balanced real insider activity.
-  const available = typeof insiderResult.available === "boolean" ? insiderResult.available : true;
+  // apart from genuinely-balanced real insider activity. Fail CLOSED when the
+  // field is missing entirely (an unrecognized shape is a data-quality
+  // problem, not evidence of real balanced insider activity).
+  const available = typeof insiderResult.available === "boolean" ? insiderResult.available : false;
   return { score: Math.max(0, Math.min(100, Math.round(score))), evidence: insiderResult, available };
 }
 

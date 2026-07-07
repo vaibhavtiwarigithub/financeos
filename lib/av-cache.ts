@@ -27,15 +27,24 @@ function isThrottled(json: any): boolean {
 // per symbol land before the budget is exhausted, and nothing throws.
 const AV_DAILY_BUDGET = Number(process.env.AV_DAILY_BUDGET ?? 25);
 
+// Serving an arbitrarily old cached payload as if it were current data is its
+// own failure mode — a symbol nobody's fetched in weeks (budget exhausted or
+// throttled every day since) would silently return real-looking-but-ancient
+// insider/fundamental data with no signal that it's stale. Cap the fallback.
+const MAX_STALE_CACHE_DAYS = 7;
+
 async function lastCached(svc: any, cacheKey: string): Promise<any | null> {
   const { data: last } = await svc
     .from("av_cache")
-    .select("payload")
+    .select("payload, cache_date")
     .eq("cache_key", cacheKey)
     .order("cache_date", { ascending: false })
     .limit(1)
     .maybeSingle();
-  return last?.payload ?? null;
+  if (!last?.payload) return null;
+  const ageDays = (Date.now() - new Date(last.cache_date).getTime()) / 86400000;
+  if (ageDays > MAX_STALE_CACHE_DAYS) return null;
+  return last.payload;
 }
 
 export async function avCachedFetch(cacheKey: string, url: string, timeoutMs = 6000, headers?: Record<string, string>): Promise<any | null> {

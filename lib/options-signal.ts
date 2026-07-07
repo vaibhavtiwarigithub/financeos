@@ -98,8 +98,14 @@ export async function fetchOptionsSignal(symbol: string): Promise<OptionsSignal 
       .map(c => c.impliedVolatility ?? 0)
       .filter(iv => iv > 0);
     let ivPercentile: number | null = null;
-    if (allIVs.length > 5) {
-      const atm = calls.find(c => Math.abs(c.strike - currentPrice) < currentPrice * 0.05);
+    if (allIVs.length > 5 && calls.length > 0) {
+      // A rigid 5% window can miss every strike on a wide-spaced chain (e.g.
+      // underlyings >$500) even though a usable ATM proxy exists — fall back
+      // to the nearest available strike instead of reporting unavailable.
+      const withinWindow = calls.find(c => Math.abs(c.strike - currentPrice) < currentPrice * 0.05);
+      const atm = withinWindow ?? calls.reduce((closest, c) =>
+        Math.abs(c.strike - currentPrice) < Math.abs(closest.strike - currentPrice) ? c : closest
+      );
       const atmIV = atm?.impliedVolatility ?? 0;
       const minIV = Math.min(...allIVs);
       const maxIV = Math.max(...allIVs);

@@ -161,6 +161,12 @@ async function buildProposals(supabase: any, isCron: boolean) {
 
     const created: any[] = [];
     const skipped: any[] = [];
+    // NAV is fetched once per run (below) but up to 3 proposals can be created
+    // in the same run — each individually passed the 15%-of-NAV check against
+    // the SAME stale snapshot, so 3 proposals at 10% each looked safe alone
+    // but summed to 30% of real NAV. Track this run's own allocations and
+    // treat them as already-spent capital for every subsequent proposal.
+    let allocatedThisRun = 0;
 
     // Fetch Alpha Vantage key once for earnings blackout checks
     let avKey: string | null = null;
@@ -236,8 +242,14 @@ async function buildProposals(supabase: any, isCron: boolean) {
               const sym = cols[0]?.trim().toUpperCase();
               const reportDate = cols[2]?.trim();
               if (sym !== signal.symbol.toUpperCase() || !reportDate) return false;
+              // Compare CALENDAR days at UTC midnight, not exact timestamps —
+              // "today" carries the current time-of-day, so a same-day earnings
+              // report could read as up to ~1 day off depending on what time
+              // this cron happens to run, shifting the blackout window boundary.
               const rd = new Date(reportDate);
-              const diffDays = (rd.getTime() - today.getTime()) / 86400000;
+              const rdUtcDay = Date.UTC(rd.getUTCFullYear(), rd.getUTCMonth(), rd.getUTCDate());
+              const todayUtcDay = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+              const diffDays = (rdUtcDay - todayUtcDay) / 86400000;
               return diffDays >= -2 && diffDays <= 5; // 2 days past, 5 days upcoming
             });
             if (inBlackout) {
@@ -264,14 +276,19 @@ async function buildProposals(supabase: any, isCron: boolean) {
       let { data: portfolio } = await supabase.from("paper_portfolio").select("nav, cash_balance").eq("market", "us").limit(1).maybeSingle();
       if (!portfolio) ({ data: portfolio } = await supabase.from("paper_portfolio").select("nav, cash_balance").limit(1).maybeSingle());
       const nav = (portfolio as any)?.nav ?? 10000;
-      const estimatedValue = nav * (effectiveSizePct / 100);
+      const navRemaining = Math.max(0, nav - allocatedThisRun);
+      const estimatedValue = navRemaining * (effectiveSizePct / 100);
       const qty = Math.floor(estimatedValue / quote.price);
       if (qty < 1) {
         skipped.push({ symbol: signal.symbol, reason: "qty_too_small" });
         continue;
       }
 
-      // Risk check: position would be within size limit
+      // Risk check: position would be within size limit. pctOfNav is checked
+      // against total NAV (the real single-position limit), but qty was sized
+      // off navRemaining, so earlier proposals in this run correctly shrink
+      // the capital available to later ones instead of each being sized as if
+      // it were the only proposal.
       const pctOfNav = (qty * quote.price) / nav;
       const riskPass = pctOfNav <= 0.15; // max 15% single position
       const riskReasons: any = {
@@ -304,6 +321,7 @@ async function buildProposals(supabase: any, isCron: boolean) {
       }).select().single();
 
       created.push({ symbol: signal.symbol, qty, price: quote.price, risk_pass: riskPass });
+      allocatedThisRun += qty * quote.price;
 
       // Fire-and-forget rich trade alert email
       if (proposal) {

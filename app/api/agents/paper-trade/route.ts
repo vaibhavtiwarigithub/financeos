@@ -293,7 +293,14 @@ export async function POST(req: NextRequest) {
           fundamental_score: signal.fundamental_score, technical_score: signal.technical_score,
           sentiment_score: signal.sentiment_score, macro_score: signal.macro_score, insider_score: signal.insider_score,
         } as any);
-        const payoffRatio = Math.abs(maeMfe.targetMfePctile) / Math.max(0.001, Math.abs(maeMfe.stopMaePctile));
+        // Use the ACTUAL priceTarget/stopLoss distances (which already prefer a
+        // signal-provided value per the block above), not the learned MAE/MFE
+        // percentiles directly — those two can disagree whenever the signal
+        // supplies its own stop/target, silently discarding a real 2:1 edge in
+        // favor of a stale/mismatched learned ratio.
+        const targetPctActual = (priceTarget - fillPrice) / fillPrice;
+        const stopPctActual = (fillPrice - stopLoss) / fillPrice;
+        const payoffRatio = Math.abs(targetPctActual) / Math.max(0.001, Math.abs(stopPctActual));
         // kellyPositionSizePct works in FRACTIONS (0.10 = 10%) and returns a
         // fraction; positionSizePct here is a PERCENT (e.g. 10). Convert the
         // caps to fractions and scale the result back to percent. (Previously
