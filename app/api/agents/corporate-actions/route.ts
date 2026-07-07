@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 
@@ -8,8 +9,7 @@ export const dynamic = "force-dynamic";
 // Writes to corporate_actions table. Used by paper-trade NAV adjustment.
 
 export async function POST(req: NextRequest) {
-  const cronSecret = req.headers.get("x-cron-secret");
-  if (cronSecret !== process.env.CRON_SECRET) {
+  if (!verifyCronSecret(req)) {
     const supabase = await import("@/lib/supabase/server").then(m => m.createClient());
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

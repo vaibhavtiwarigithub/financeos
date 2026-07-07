@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fitAndStoreCalibration } from "@/lib/validation/calibration";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -10,8 +11,7 @@ export const maxDuration = 60;
 // Dormant until 60+ matured labeled observations exist for a market (fitCalibration
 // returns null below that, and fitAndStoreCalibration reports insufficient_data).
 export async function POST(req: NextRequest) {
-  const cronSecret = req.headers.get("x-cron-secret");
-  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  const isCron = verifyCronSecret(req);
   if (!isCron) {
     const userClient = await createClient();
     const { data: { user } } = await userClient.auth.getUser();

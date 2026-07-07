@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { callLLM } from "@/lib/llm-router";
 import { fetchIndiaIndices } from "@/lib/india-data";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "vterminater@gmail.com";
 
@@ -297,8 +298,7 @@ async function fetchIndexClose(ticker: string, apiKey: string): Promise<{ price:
 export async function POST(req: NextRequest) {
   // Proper auth — NEVER infer from a cookie substring (that let any cookie
   // containing "sb-" through). Cron via secret; users via a real session.
-  const cronSecret = req.headers.get("x-cron-secret");
-  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  const isCron = verifyCronSecret(req);
   if (!isCron) {
     const userClient = await createClient();
     const { data: { user } } = await userClient.auth.getUser();

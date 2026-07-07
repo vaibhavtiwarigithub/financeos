@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchAndStoreAccountSnapshot } from "@/lib/research-agent";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 100;
@@ -21,8 +22,7 @@ export const maxDuration = 100;
 // would fail the same way execClaude always does outside a Windows+Claude
 // Code environment.
 export async function POST(req: NextRequest) {
-  const cronSecret = req.headers.get("x-cron-secret");
-  if (!cronSecret || cronSecret !== process.env.CRON_SECRET) {
+  if (!verifyCronSecret(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const result = await fetchAndStoreAccountSnapshot();

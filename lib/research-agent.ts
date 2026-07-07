@@ -6,8 +6,10 @@ import { computeScores, type ComputedScores } from "@/lib/data/scores";
 import type { Candle } from "@/lib/data/technicals";
 import { isIndia, fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
 import { niftyCandidates } from "@/lib/india-universe";
+import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
 import { computeWeightedAnalystScore, isThinEvidence, type DimensionRecord } from "@/lib/scoring/weighted-score";
+import { avCachedFetch } from "@/lib/av-cache";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
 // US, ^NSEI for India) — computed once per market per process, not per symbol.
@@ -42,8 +44,8 @@ async function getRegimeFeatures(market: string, supabase: any): Promise<RegimeF
 async function scoreInsider(symbol: string, avKey: string): Promise<{ score: number; summary: string; available: boolean }> {
   try {
     const url = `https://www.alphavantage.co/query?function=INSIDER_TRANSACTIONS&symbol=${symbol}&apikey=${avKey}`;
-    const res = await fetch(url);
-    const data = await res.json();
+    // Day-cached + budget-guarded: insider filings don't change intraday.
+    const data = await avCachedFetch(`INSIDER:${symbol}`, url);
     const transactions: any[] = data?.data ?? [];
 
     if (!transactions.length) return { score: 50, summary: "No insider transaction data available.", available: false };
@@ -382,13 +384,26 @@ export async function gatherSymbols(
     }
   }
 
-  // India: when the user's focus includes India, add direct NSE stocks (from
-  // the NIFTY list) scored via Yahoo — real Indian equities, not just US-listed
-  // India ETFs. asset_class "india" so PaperTrader skips them (they're priced
-  // in INR and must not enter the USD paper pool — India acts via Kite).
+  // India: when the user's focus includes India, add direct NSE stocks scored
+  // via Yahoo — real Indian equities, not just US-listed India ETFs. asset_class
+  // "india" so PaperTrader skips them (INR-priced; India acts via Kite).
   const indiaSymbols: SymbolEntry[] = [];
   if (focusRegions.includes("India")) {
-    for (const sym of niftyCandidates(8)) {
+    // Holdings-first (parity with US): real Kite holdings enter the batch as
+    // isHeld:true so SELL/exit signals are possible on owned India positions —
+    // long-only enforcement applies only to NEW positions, not exits.
+    const indiaHeld = await fetchIndiaHoldings(supabase);
+    for (const sym of indiaHeld) {
+      if (seenAll.has(sym)) continue;
+      seenAll.add(sym);
+      indiaSymbols.push({ symbol: sym, isHeld: true, isEtf: false, assetClass: "india" });
+    }
+    // Candidates from the nightly full-market india_screen_cache (dual-bucket:
+    // momentum + value), not the static first-8 NIFTY names. Falls back to the
+    // static list only when the cache is empty.
+    const cacheCandidates = await fetchIndiaScreenCandidates(supabase, 8);
+    const candidateList = cacheCandidates.length > 0 ? cacheCandidates : niftyCandidates(8);
+    for (const sym of candidateList) {
       if (seenAll.has(sym)) continue;
       seenAll.add(sym);
       indiaSymbols.push({ symbol: sym, isHeld: false, isEtf: false, assetClass: "india" });
@@ -396,6 +411,57 @@ export async function gatherSymbols(
   }
 
   return [...nonMetals, ...metals, ...regionEtfs, ...indiaSymbols];
+}
+
+// Real India holdings from Kite (/portfolio/holdings), mapped to the .NS
+// symbols the Yahoo-based India scorer expects. Empty on any error (no Kite
+// token today, market closed, etc.) — never throws into gatherSymbols.
+async function fetchIndiaHoldings(svc: any): Promise<string[]> {
+  try {
+    const res: any = await getKiteHoldings(svc);
+    const rows: any[] = res?.data ?? res ?? [];
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .map(r => String(r?.tradingsymbol ?? "").toUpperCase().trim())
+      .filter(Boolean)
+      .filter(s => Number(rows.find(x => String(x?.tradingsymbol).toUpperCase().trim() === s)?.quantity ?? 0) > 0)
+      .map(s => (s.endsWith(".NS") || s.endsWith(".BO") ? s : `${s}.NS`));
+  } catch { return []; }
+}
+
+// Dual-bucket candidate pull from the nightly india_screen_cache. Momentum:
+// RSI>60 and above the 50-day MA. Value: low P/E with positive ROE. Interleaved
+// so neither bucket crowds the other — mirrors the US screener's approach.
+async function fetchIndiaScreenCandidates(svc: any, limit: number): Promise<string[]> {
+  try {
+    const { data } = await svc
+      .from("india_screen_cache")
+      .select("symbol, pe, rsi, above_ma50, roe")
+      .not("symbol", "is", null)
+      .limit(1500);
+    const rows: any[] = data ?? [];
+    if (!rows.length) return [];
+    const momentum = rows
+      .filter(r => Number(r.rsi) > 60 && r.above_ma50 === true)
+      .sort((a, b) => Number(b.rsi) - Number(a.rsi));
+    const value = rows
+      .filter(r => Number(r.pe) > 0 && Number(r.pe) < 35 && Number(r.roe) > 0)
+      .sort((a, b) => Number(a.pe) - Number(b.pe));
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; out.length < limit && (i < momentum.length || i < value.length); i++) {
+      for (const src of [momentum[i], value[i]]) {
+        const raw = src?.symbol ? String(src.symbol).toUpperCase().trim() : "";
+        if (!raw || seen.has(raw)) continue;
+        const sym = raw.endsWith(".NS") || raw.endsWith(".BO") ? raw : `${raw}.NS`;
+        if (seen.has(sym)) continue;
+        seen.add(raw); seen.add(sym);
+        out.push(sym);
+        if (out.length >= limit) break;
+      }
+    }
+    return out;
+  } catch { return []; }
 }
 
 const DOCTRINE_PREAMBLE = `## Reasoning doctrine (non-negotiable)
@@ -523,11 +589,11 @@ ${heldNote}`;
 async function fetchAVOverview(symbol: string, avKey: string): Promise<Record<string, string>> {
   if (!avKey) return {};
   try {
-    const r = await fetch(
-      `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${avKey}`,
-      { next: { revalidate: 0 } }
+    // Day-cached + budget-guarded: company fundamentals are day-stable.
+    const json = await avCachedFetch(
+      `OVERVIEW:${symbol}`,
+      `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${avKey}`
     );
-    const json = await r.json();
     return json?.Symbol ? (json as Record<string, string>) : {};
   } catch { return {}; }
 }
@@ -537,11 +603,11 @@ async function fetchAVOverview(symbol: string, avKey: string): Promise<Record<st
 async function fetchAVCandles(symbol: string, avKey: string): Promise<Candle[]> {
   if (!avKey) return [];
   try {
-    const r = await fetch(
-      `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${symbol}&outputsize=compact&apikey=${avKey}`,
-      { next: { revalidate: 0 } }
+    // Day-cached + budget-guarded: daily candles settle once per session.
+    const json = await avCachedFetch(
+      `DAILY_ADJ:${symbol}`,
+      `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${symbol}&outputsize=compact&apikey=${avKey}`
     );
-    const json = await r.json();
     const series = json?.["Time Series (Daily)"];
     if (!series || typeof series !== "object") return [];
     return Object.entries(series as Record<string, Record<string, string>>)

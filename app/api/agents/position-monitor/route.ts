@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { classifyOutcome } from "@/lib/trade-outcome";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -185,10 +186,19 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     // Update highest_price (trailing stop anchor)
     const newHighest = Math.max(pos.highest_price ?? pos.avg_cost, currentPrice);
 
-    // Trailing stop: 93% of highest price, but never below original stop_loss
+    // Trail at the position's OWN stop distance (the MAE-derived stop
+    // PaperTrader set at fill, preserved immutably as initial_stop_loss), not a
+    // hardcoded 7%. A volatile name whose initial stop sat 12% below cost keeps
+    // a 12% trail; a tight 4% stop trails 4%. This stops the fixed-7% trail from
+    // silently overwriting Phase 2 dynamic R:R. Clamp guards a bad anchor.
+    const anchorPct = pos.initial_stop_loss != null && pos.avg_cost > 0
+      ? Math.min(0.99, Math.max(0.5, pos.initial_stop_loss / pos.avg_cost))
+      : 0.93;
+
+    // Trailing stop: anchorPct of highest price, but never below original stop_loss
     const trailingStop = Math.max(
-      pos.stop_loss ?? (pos.avg_cost * 0.93),
-      newHighest * 0.93
+      pos.stop_loss ?? (pos.avg_cost * anchorPct),
+      newHighest * anchorPct
     );
 
     const priceTarget = pos.price_target;
@@ -259,8 +269,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
 export async function POST(req: NextRequest) {
   try {
     // Allow cron calls via x-cron-secret header
-    const cronSecret = req.headers.get("x-cron-secret");
-    const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+    const isCron = verifyCronSecret(req);
 
     if (!isCron) {
       const userClient = await createClient();
@@ -281,8 +290,7 @@ export async function POST(req: NextRequest) {
 // anyone (or a crawler/prefetch) hitting this URL could close real positions.
 // Require the same auth as POST before running the monitor.
 export async function GET(req: NextRequest) {
-  const cronSecret = req.headers.get("x-cron-secret");
-  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  const isCron = verifyCronSecret(req);
   if (!isCron) {
     const userClient = await createClient();
     const { data: { user } } = await userClient.auth.getUser();

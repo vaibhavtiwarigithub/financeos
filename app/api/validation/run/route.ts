@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { validateChallenger } from "@/lib/validation/engine";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +11,7 @@ export const dynamic = "force-dynamic";
 // a challenger earns the right to be promoted (see app/api/strategies/versions
 // promote_champion's fail-closed gate).
 export async function POST(req: NextRequest) {
-  const cronSecret = req.headers.get("x-cron-secret");
-  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  const isCron = verifyCronSecret(req);
   if (!isCron) {
     const userClient = await createClient();
     const { data: { user } } = await userClient.auth.getUser();

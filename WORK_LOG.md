@@ -20,6 +20,22 @@
 
 ---
 
+## ✅ Session 2026-07-07 — Security audit fixes + agent-system bug sweep
+
+> Two parallel audits (security review of the Robinhood MCP feature vs. real code; agent-system + API-budget audit). Feature stays Draft/unapproved; these are the standalone bugs/vulnerabilities the audits surfaced in shipped code.
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Vault + broker_orders RLS lockdown (migration 089) | Claude | 2026-07-07 | `api_key_vault` had a `USING(true)` policy for ALL roles + anon/authenticated write grants — anyone with the public anon key could overwrite/delete broker tokens without logging in. `broker_orders` had RLS disabled. Both now service-role-only. Applied live; non-breaking (all app access is service-client). |
+| Owner-gated snapshot GET + open-redirect + timing-safe cron secret | Claude + agent | 2026-07-07 | `GET /api/live-account/snapshot` returned live equity/positions with NO auth → now `requireOwner()`. `/auth/callback` `next` param validated (blocked `?next=@evil.com` open redirect). New `verifyCronSecret()` (crypto.timingSafeEqual, fails closed on unset secret) applied across 25 cron routes. |
+| Both Kelly sizing bugs | Claude | 2026-07-07 | paper-trade passed percent-scale caps into the fraction-based `lib/risk/sizing.ts` → every position pinned to the 2% floor once the calibrated model activated (conviction scaling dead). trader reimplemented Kelly with Thorp's `p/a−q/b` fed per-trade returns → leverage-scale numbers that always pegged the ceiling. Both now use the shared correct impl (payoff-ratio Kelly), caps as fractions, result scaled to percent. |
+| AV free-tier budget: cache heavy fetchers + budget guard (migration 090) | Claude | 2026-07-07 | Four heaviest AV callers (INSIDER/OVERVIEW/DAILY_ADJUSTED/NEWS_SENTIMENT) bypassed the day-cache → ~60-100 calls/day vs the 25/day free budget, starving the scorer. Routed all through `avCachedFetch`; theme-scout's global feeds cached + its OVERVIEW check shares research's cache key (dedupe); removed theme-scout's free-text `topics=` no-op call. Added `av_budget` daily counter — stops spending real calls past the ceiling, serves cached instead. |
+| Trailing-stop vs dynamic-stop conflict (migration 091) | Claude | 2026-07-07 | PositionMonitor trailed every stop at a hardcoded 7% and overwrote stop_loss each run, discarding the MAE-derived stop distance from fill. Now persists the initial stop (immutable, via trigger) and trails at the position's own distance. |
+| Legacy trade_queue generator hardened | Claude | 2026-07-07 | `/api/agents/trade` (writes trade_queue, parallel to trade_proposals) lacked the kill-switch + owner gates the main trader has. Added both. Its approve path only emits a manual paste command (no autonomous execution). Full UI consolidation onto trade_proposals flagged as a separate architecture-gated change. |
+| India learner + Kite holdings-first + wire india_screen_cache (migration 092) | Claude | 2026-07-07 | Learner was hardcoded `LEARN_MARKET="us"` — India never evolved. Now market is a per-run param (body/query), idempotency + run record scoped by market, new Friday `kairos-learner-india` cron passing `{"market":"india"}`. Research India block now pulls real Kite holdings (isHeld→SELL enabled) + dual-bucket candidates from the nightly india_screen_cache (was static first-8 NIFTY names). |
+
+---
+
 ## ✅ Session 2026-07-06 (cont'd) — Mobile-responsive pass + per-market trading toggle
 
 > User: whole app looked bad on mobile ("don't miss anything, remember same for future feature work") + wanted a per-market live-trading on/off separate from the existing Kite disconnect kill-switch (view holdings always, toggle auto-trading independently for US/India).

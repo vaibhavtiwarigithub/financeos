@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -19,8 +20,7 @@ const UNDERSCORE_MOVE = 12;    // % up while scored low
 const OVERSCORE_MOVE = -10;    // % down while scored high
 
 export async function POST(req: NextRequest) {
-  const cronSecret = req.headers.get("x-cron-secret");
-  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  const isCron = verifyCronSecret(req);
   if (!isCron) {
     const userClient = await createClient();
     const { data: { user } } = await userClient.auth.getUser();

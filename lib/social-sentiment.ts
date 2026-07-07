@@ -1,3 +1,5 @@
+import { avCachedFetch } from "@/lib/av-cache";
+
 export interface SocialSentiment {
   symbol: string;
   stocktwits_bullish_pct: number | null;   // 0-100
@@ -104,11 +106,14 @@ async function fetchStockTwits(symbol: string): Promise<StockTwitsResult | null>
 async function fetchAVNewsSentiment(symbol: string): Promise<AVNewsResult | null> {
   const key = process.env.ALPHA_VANTAGE_API_KEY;
   if (!key) return null;
-  const res = await fetch(
+  // Day-cached + budget-guarded via avCachedFetch (imported below) — news
+  // sentiment is refreshed once/day here rather than on every research pass,
+  // which was one of the four heaviest uncached AV callers.
+  const data: AVNewsResponse | null = await avCachedFetch(
+    `NEWS:${symbol}`,
     `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=${symbol}&limit=20&apikey=${key}`
   );
-  if (!res.ok) return null;
-  const data: AVNewsResponse = await res.json();
+  if (!data) return null;
   const feed: AVArticle[] = data.feed ?? [];
   if (feed.length === 0) return null;
 

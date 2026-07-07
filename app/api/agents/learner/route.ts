@@ -5,14 +5,14 @@ import { fetchQuote } from "@/lib/market-data";
 import { runAgentLoop, ToolCall } from "@/lib/llm-router";
 import { loadLabeledDataset } from "@/lib/learning/dataset";
 import { validateFeatureInputs } from "@/lib/validation/feature-compiler";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
-    const cronSecret = req.headers.get("x-cron-secret");
-    const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+    const isCron = verifyCronSecret(req);
     if (!isCron) {
       const userClient = await createClient();
       const { data: { user } } = await userClient.auth.getUser();
@@ -38,7 +38,16 @@ export async function POST(req: NextRequest) {
     // history today); India gets its own cohort + champion once it clears the same
     // 10+ closed-trade phase gate. `hasMarketCol` gates all market filters so this
     // degrades to the old US-only behavior pre-057.
-    const LEARN_MARKET: "us" | "india" = "us";
+    // Market is a per-run parameter (body { market } or ?market=), so India can
+    // evolve its own champion on its own cron/manual trigger. Defaults to US.
+    // Still ONE market per run — a bad India run never shifts US scoring.
+    let reqMarket: "us" | "india" = "us";
+    try {
+      const body = await req.clone().json();
+      if (body?.market === "india") reqMarket = "india";
+    } catch { /* no body */ }
+    if (new URL(req.url).searchParams.get("market") === "india") reqMarket = "india";
+    const LEARN_MARKET: "us" | "india" = reqMarket;
     let hasMarketCol = true;
     { const { error } = await svc.from("paper_trades").select("market").limit(1); hasMarketCol = !error; }
     const scopeMkt = (q: any) => (hasMarketCol ? q.eq("market", LEARN_MARKET) : q);
@@ -57,10 +66,13 @@ export async function POST(req: NextRequest) {
     if (!forceRerun) {
       const todayStr = new Date().toISOString().slice(0, 10);
       const dayStart = `${todayStr}T00:00:00.000Z`;
+      // Scope the idempotency guard to THIS market so a US run doesn't block
+      // the same day's India run (and vice versa).
       const { data: todaysRun } = await svc
         .from("agent_runs")
         .select("id, status, started_at, trigger_source")
         .eq("agent_type", "learner")
+        .eq("market", LEARN_MARKET)
         .gte("started_at", dayStart)
         .order("started_at", { ascending: false })
         .limit(1)
@@ -68,7 +80,7 @@ export async function POST(req: NextRequest) {
       if (todaysRun) {
         return NextResponse.json({
           skipped: true,
-          reason: `Learner already ran today (run ${(todaysRun as any).id}, ${(todaysRun as any).trigger_source} at ${(todaysRun as any).started_at}). Pass { force: true } to re-run.`,
+          reason: `Learner already ran today for ${LEARN_MARKET.toUpperCase()} (run ${(todaysRun as any).id}, ${(todaysRun as any).trigger_source} at ${(todaysRun as any).started_at}). Pass { force: true } to re-run.`,
         });
       }
     }
@@ -76,6 +88,7 @@ export async function POST(req: NextRequest) {
     const { data: runRow } = await svc.from("agent_runs").insert({
       agent_type: "learner", status: "running",
       trigger_source: isCron ? "scheduled" : "manual",
+      market: LEARN_MARKET,
     } as any).select().single();
     const runId = (runRow as any)?.id ?? null;
 

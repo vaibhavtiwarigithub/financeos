@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { getBroker } from "@/lib/brokers/registry";
 import { fetchAlpacaAccount } from "@/lib/brokers/alpaca";
 import { getKiteHoldings } from "@/lib/kite";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -11,8 +12,7 @@ export const maxDuration = 60;
 // every in-flight broker_order, then reconciles positions and raises an alert
 // on a mismatch. Cron-only (never places or cancels an order itself).
 export async function POST(req: NextRequest) {
-  const cronSecret = req.headers.get("x-cron-secret");
-  if (!cronSecret || cronSecret !== process.env.CRON_SECRET) {
+  if (!verifyCronSecret(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 
@@ -39,8 +40,7 @@ export async function POST(req: NextRequest) {
   const supabase = createServiceClient();
 
   // Validate cron or user session
-  const cronSecret = req.headers.get("x-cron-secret");
-  if (cronSecret !== process.env.CRON_SECRET) {
+  if (!verifyCronSecret(req)) {
     const client = await import("@/lib/supabase/server").then(m => m.createClient());
     const { data: { user } } = await client.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

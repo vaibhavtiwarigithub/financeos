@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
 import { avCachedFetch } from "@/lib/av-cache";
 import { getConfiguredModel } from "@/lib/agent-model-config";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 
@@ -54,8 +55,7 @@ function tally(acc: Acc, r: { tokensIn: number; tokensOut: number; costUsd: numb
 }
 
 export async function POST(req: NextRequest) {
-  const cronSecret = req.headers.get("x-cron-secret");
-  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  const isCron = verifyCronSecret(req);
   if (!isCron) {
     const userClient = await createClient();
     const { data: { user } } = await userClient.auth.getUser();

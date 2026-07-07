@@ -4,6 +4,7 @@ import { indiaScreenUniverse } from "@/lib/india-universe";
 import { fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
 import { computeTechnicals } from "@/lib/data/technicals";
 import { createServiceClient } from "@/lib/supabase/service";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 // Rotates ~600 NSE names/run — needs Vercel Pro (300s cap) or higher; Hobby's
@@ -30,8 +31,7 @@ const BATCH_PAUSE_MS = 400;
 const MAX_PER_RUN = 600;
 
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret");
-  if (!secret || secret !== process.env.CRON_SECRET) {
+  if (!verifyCronSecret(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

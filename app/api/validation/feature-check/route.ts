@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { evaluateFeature, validateFeatureInputs } from "@/lib/validation/feature-compiler";
 import { computeSpearmanIC, passesPromotionRule, shouldRetire, type ICResult } from "@/lib/validation/feature-check";
 import { walkForwardFolds, loadLabeledDataset, type LabeledObservation } from "@/lib/learning/dataset";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -13,8 +14,7 @@ export const maxDuration = 60;
 // out-of-sample Spearman IC vs benchmark_neutral_return. Never executes
 // arbitrary code — evaluateFeature only interprets the whitelisted grammar.
 export async function POST(req: NextRequest) {
-  const cronSecret = req.headers.get("x-cron-secret");
-  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  const isCron = verifyCronSecret(req);
   if (!isCron) {
     const userClient = await createClient();
     const { data: { user } } = await userClient.auth.getUser();

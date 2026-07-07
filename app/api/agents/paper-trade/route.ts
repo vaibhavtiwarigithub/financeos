@@ -9,6 +9,7 @@ import { estimateDailyVolPct } from "@/lib/portfolio/inputs";
 import { predictPWin } from "@/lib/validation/calibration";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
 import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -36,8 +37,7 @@ const START_NAV: Record<string, number> = { us: 10000, india: 1000000 };
 
 export async function POST(req: NextRequest) {
   try {
-    const cronSecret = req.headers.get("x-cron-secret");
-    const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+    const isCron = verifyCronSecret(req);
 
     // Optional ?market=us|india — scope a run to one pool (India cron fills only
     // the ₹ pool, US cron only the $ pool). No param = all active markets.
@@ -294,7 +294,19 @@ export async function POST(req: NextRequest) {
           sentiment_score: signal.sentiment_score, macro_score: signal.macro_score, insider_score: signal.insider_score,
         } as any);
         const payoffRatio = Math.abs(maeMfe.targetMfePctile) / Math.max(0.001, Math.abs(maeMfe.stopMaePctile));
-        proposedSizePct = kellyPositionSizePct(pWin, payoffRatio, { halfKellyCap: positionSizePct, floorPct: Math.min(2, positionSizePct) }) ;
+        // kellyPositionSizePct works in FRACTIONS (0.10 = 10%) and returns a
+        // fraction; positionSizePct here is a PERCENT (e.g. 10). Convert the
+        // caps to fractions and scale the result back to percent. (Previously
+        // percent-scale caps were passed into the fraction API, so the clamp
+        // floor pinned every position to exactly the floor value regardless of
+        // edge — conviction scaling was silently dead.) A no-edge result is 0,
+        // which the finite/≤0 guard below correctly turns into a skip rather
+        // than opening a floor-sized position.
+        const kellyFrac = kellyPositionSizePct(pWin, payoffRatio, {
+          halfKellyCap: positionSizePct / 100,
+          floorPct: Math.min(2, positionSizePct) / 100,
+        });
+        proposedSizePct = kellyFrac * 100;
       }
 
       // Portfolio Constructor: shrink the (possibly Kelly-scaled) proposed size

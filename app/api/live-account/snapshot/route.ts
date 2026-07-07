@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 
-// GET — returns latest snapshot (no Robinhood call, just reads cache)
+// GET — returns latest snapshot (no Robinhood call, just reads cache).
+// Owner-gated: this returns live equity, buying power, and full positions —
+// /api/* is not covered by the middleware page gate, so it must guard itself.
 export async function GET() {
+  const gate = await requireOwner();
+  if (gate) return gate;
+
   const svc = createServiceClient();
   // Filter to the Trading account (••••8641) — the table holds one row per
   // account_id (unique constraint); without this filter, "most recent" could
@@ -24,8 +31,7 @@ export async function GET() {
 // POST — write a new snapshot (called by research agent after fetching positions)
 // Body: { equity, buying_power, portfolio_value, position_count, positions_json }
 export async function POST(req: NextRequest) {
-  const cronSecret = req.headers.get("x-cron-secret");
-  if (cronSecret !== process.env.CRON_SECRET) {
+  if (!verifyCronSecret(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

@@ -6,6 +6,8 @@ import { checkKillSwitches } from "@/lib/kill-switches";
 import { guardOrderRequest } from "@/lib/request-guards";
 import { notifyTradeAction } from "@/lib/trade-notify";
 import { sendTradeAlertEmail } from "@/lib/trade-alert";
+import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -41,8 +43,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const supabase = createServiceClient();
 
-  const cronSecret = req.headers.get("x-cron-secret");
-  const isCron = cronSecret === process.env.CRON_SECRET;
+  const isCron = verifyCronSecret(req);
 
   if (!isCron) {
     const userClient = await createClient();
@@ -171,8 +172,13 @@ async function buildProposals(supabase: any, isCron: boolean) {
     } catch { avKey = process.env.ALPHA_VANTAGE_API_KEY ?? null; }
 
     // Half-Kelly position sizing: requires ≥10 closed trades; falls back to flat positionSizePct.
-    // Kelly fraction f = win_rate/avg_loss - loss_rate/avg_win. Use f*0.5 (Half-Kelly) for safety.
-    // Cap at positionSizePct (config ceiling); floor at 2%.
+    // Uses the shared, correct implementation in lib/risk/sizing.ts
+    // (f* = (p·R − q)/R with R = avg_win/avg_loss payoff ratio, then half).
+    // The previous inline formula here was Thorp's p/a − q/b form fed
+    // per-trade fractional returns, which produces leverage-scale numbers
+    // (e.g. 3.25) that pegged every proposal to the positionSizePct ceiling —
+    // silently defeating conviction scaling. positionSizePct here is a PERCENT,
+    // so caps go in as fractions and the fraction result scales back to percent.
     let effectiveSizePct = positionSizePct;
     let kellySizingSource = "flat";
     try {
@@ -189,13 +195,21 @@ async function buildProposals(supabase: any, isCron: boolean) {
         const wins   = pnls.filter((p: number) => p > 0);
         const losses = pnls.filter((p: number) => p <= 0);
         if (wins.length > 0 && losses.length > 0) {
-          const win_rate  = wins.length / pnls.length;
-          const avg_win   = wins.reduce((a: number, b: number) => a + b, 0) / wins.length / 100;  // as fraction
-          const avg_loss  = Math.abs(losses.reduce((a: number, b: number) => a + b, 0) / losses.length) / 100;
-          const kelly_f   = win_rate / avg_loss - (1 - win_rate) / avg_win;
-          const half_kelly_pct = Math.max(2, Math.min(positionSizePct, kelly_f * 50)); // *0.5 and *100
-          effectiveSizePct = parseFloat(half_kelly_pct.toFixed(1));
-          kellySizingSource = `half-kelly (n=${pnls.length}, wr=${(win_rate*100).toFixed(0)}%, f=${(kelly_f*100).toFixed(1)}%)`;
+          const win_rate    = wins.length / pnls.length;
+          const avg_win     = wins.reduce((a: number, b: number) => a + b, 0) / wins.length / 100;   // fraction
+          const avg_loss    = Math.abs(losses.reduce((a: number, b: number) => a + b, 0) / losses.length) / 100; // fraction
+          const payoffRatio = avg_win / Math.max(0.001, avg_loss);
+          const kellyFrac   = kellyPositionSizePct(win_rate, payoffRatio, {
+            halfKellyCap: positionSizePct / 100,
+            floorPct: Math.min(2, positionSizePct) / 100,
+          });
+          // Positive edge → conviction-scaled size; no edge (0) → keep flat
+          // fallback (these already passed the score-threshold gate and a human
+          // approves, so we don't suppress the proposal entirely here).
+          if (kellyFrac > 0) {
+            effectiveSizePct = parseFloat((kellyFrac * 100).toFixed(1));
+            kellySizingSource = `half-kelly (n=${pnls.length}, wr=${(win_rate*100).toFixed(0)}%, R=${payoffRatio.toFixed(2)}, size=${effectiveSizePct}%)`;
+          }
         }
       }
     } catch { /* sizing falls back to flat */ }

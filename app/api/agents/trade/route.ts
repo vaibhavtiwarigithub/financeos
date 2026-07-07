@@ -1,11 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { fetchQuote } from "@/lib/market-data";
+import { checkKillSwitches } from "@/lib/kill-switches";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 const execFileAsync = promisify(execFile);
 
+// ⚠️ DEPRECATED legacy generator — writes to the `trade_queue` table, a parallel
+// system to `trade_proposals` (which the Execution Gateway + main TraderAgent in
+// app/api/agents/trader/route.ts use). It historically lacked the kill-switch,
+// earnings-blackout, macro-threshold, and proposal-expiry gates the main path
+// has. This route's approve path only emits a manual paste command (no
+// autonomous execution), but it is still gated below so it can never be a
+// weaker path than the main one. Consolidating the Trading/Portfolio UI onto
+// trade_proposals is an architecture-gated change tracked separately; until
+// then this stays, hardened.
+//
 // TraderAgent: reads high-conviction LONG signals, generates buy-only proposals → trade_queue
 // Phase 0 hard rules:
 //   - Long-only: only buy orders, direction must be "long"
@@ -13,11 +26,11 @@ const execFileAsync = promisify(execFile);
 //   - Sizing from real account + real quote, not hardcoded $10k
 export async function POST(req: NextRequest) {
   try {
-    const supabase = await createClient();
+    // Owner-only (matches the main trader route's guarantee).
+    const ownerGate = await requireOwner();
+    if (ownerGate) return ownerGate;
 
-    // Auth guard — personal tool but API must be owner-only
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const supabase = await createClient();
 
     // Get strategy config
     const { data: strategyArr } = await supabase.from("strategy_config").select("*").limit(1);
@@ -25,6 +38,13 @@ export async function POST(req: NextRequest) {
 
     if (!strategy?.trading_enabled) {
       return NextResponse.json({ skipped: true, reason: "Trading disabled in strategy_config" });
+    }
+
+    // Kill-switch gate — the main trader route runs this before generating
+    // proposals; the legacy generator previously did not. Parity fix.
+    const ks = await checkKillSwitches(createServiceClient());
+    if (!ks.safe) {
+      return NextResponse.json({ skipped: true, reason: `Kill switch active: ${ks.reason}` });
     }
 
     // Check daily trade limit

@@ -4,6 +4,7 @@ import { gatherSymbols, processSymbol } from "@/lib/research-agent";
 import { isIndia } from "@/lib/india-data";
 import { prewarmPriceCache } from "@/lib/chart-data";
 import { RISK_PROFILES } from "@/lib/risk-profiles";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 // Bumped from 60 -> 150s: Theme Scout is now awaited inline (before
@@ -17,8 +18,7 @@ export const maxDuration = 150;
 // symbols. No param = legacy all-symbols behavior.
 // curl -X POST "http://localhost:3000/api/agents/research/cron?market=india" -H "x-cron-secret: <CRON_SECRET>"
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret");
-  if (!secret || secret !== process.env.CRON_SECRET) {
+  if (!verifyCronSecret(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchIndiaCandles } from "@/lib/india-data";
 import { computeLabel } from "@/lib/learning/label-math";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 // Needs Vercel Pro (300s cap) or higher for large backlogs.
@@ -135,8 +136,7 @@ async function runMaturation(marketScope: "us" | "india" | null) {
 }
 
 export async function POST(req: NextRequest) {
-  const cronSecret = req.headers.get("x-cron-secret");
-  const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+  const isCron = verifyCronSecret(req);
   if (!isCron) {
     const userClient = await createClient();
     const { data: { user } } = await userClient.auth.getUser();

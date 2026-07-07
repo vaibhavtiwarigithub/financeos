@@ -272,6 +272,18 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: "learner",
   },
   {
+    name: "learner-india",
+    agent: "learner",
+    time: "3:30 PM ET",
+    days: "Friday",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Weekly weight learning for the India market (market=india). Runs the same LearnerAgent over India's own closed-trade cohort and proposes challengers for India's champion only — a bad India run can never shift US scoring. Same 10+ closed-trade phase gate.",
+    handoff: "→ Strategy Registry (India weight challengers await promotion)",
+    agentRunsType: "learner",
+  },
+  {
     name: "mentor-coach",
     agent: "mentor-coach",
     time: "5:15 PM ET",

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { runDeepSeekResearch, ResearchResult } from "@/lib/deepseek-agent";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 
@@ -13,8 +14,7 @@ const ADMIN_EMAIL = "vterminater@gmail.com";
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     // Allow cron/internal calls with secret header (skips user auth)
-    const cronSecret = req.headers.get("x-cron-secret");
-    const isCron = cronSecret && cronSecret === process.env.CRON_SECRET;
+    const isCron = verifyCronSecret(req);
 
     if (!isCron) {
       const userClient = await createClient();

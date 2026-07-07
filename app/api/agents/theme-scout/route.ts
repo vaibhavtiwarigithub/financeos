@@ -3,6 +3,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
+import { verifyCronSecret } from "@/lib/auth/cron";
+import { avCachedFetch } from "@/lib/av-cache";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -15,50 +17,34 @@ const EXPIRE_DAYS = 30;
 async function fetchMarketNews(): Promise<string> {
   if (!AV_KEY) return "";
   try {
-    const url = `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&limit=20&sort=LATEST&apikey=${AV_KEY}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return "";
-    const data = await res.json();
-    const articles = (data.feed ?? []).slice(0, 15).map((a: any) =>
-      `${a.title} [${a.source}]`
-    ).join("\n");
-    return articles;
+    // Day-cached + budget-guarded (shared AV budget with research).
+    const data = await avCachedFetch(
+      "NEWS_LATEST",
+      `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&limit=20&sort=LATEST&apikey=${AV_KEY}`,
+      10000
+    );
+    return ((data?.feed ?? []).slice(0, 15).map((a: any) => `${a.title} [${a.source}]`).join("\n")) || "";
   } catch { return ""; }
 }
 
 async function fetchTopGainersLosers(): Promise<string> {
   if (!AV_KEY) return "";
   try {
-    const url = `https://www.alphavantage.co/query?function=TOP_GAINERS_LOSERS&apikey=${AV_KEY}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return "";
-    const data = await res.json();
-    const gainers = (data.top_gainers ?? []).slice(0, 5).map((g: any) => `${g.ticker} +${g.change_percentage}`).join(", ");
-    const sectors = `Top gainers: ${gainers}`;
-    return sectors;
+    const data = await avCachedFetch(
+      "TOP_GAINERS_LOSERS",
+      `https://www.alphavantage.co/query?function=TOP_GAINERS_LOSERS&apikey=${AV_KEY}`,
+      10000
+    );
+    const gainers = (data?.top_gainers ?? []).slice(0, 5).map((g: any) => `${g.ticker} +${g.change_percentage}`).join(", ");
+    return gainers ? `Top gainers: ${gainers}` : "";
   } catch { return ""; }
 }
 
-async function screenForTheme(theme: string, criteria: string): Promise<string[]> {
-  // Use Alpha Vantage LISTING_STATUS to validate symbols exist, then return LLM-suggested ones
-  // (FinancialDatasets screen_stocks via HTTP if available)
-  if (!AV_KEY) return [];
-  try {
-    const url = `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&topics=${encodeURIComponent(theme)}&limit=10&sort=RELEVANCE&apikey=${AV_KEY}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return [];
-    const data = await res.json();
-    const mentioned = new Set<string>();
-    for (const article of (data.feed ?? []).slice(0, 10)) {
-      for (const ts of (article.ticker_sentiment ?? [])) {
-        if (ts.relevance_score > 0.3 && ts.ticker_sentiment_score > 0.1) {
-          mentioned.add(ts.ticker);
-        }
-      }
-    }
-    return [...mentioned].slice(0, MAX_THEME_STOCKS);
-  } catch { return []; }
-}
+// NOTE: the previous AV-topics screen was removed. AV NEWS_SENTIMENT `topics=`
+// only accepts a fixed enum (technology, earnings, ipo, …); passing a free-text
+// theme name returned nothing useful while still spending ~3 AV calls/day. The
+// LLM's own per-theme candidates are the real source and are still gated by the
+// deterministic tickerExists() check below, so nothing of value was lost.
 
 // Deterministic existence check — the LLM can hallucinate a plausible-looking
 // ticker (wrong exchange, delisted, wrong company). Confirms the symbol
@@ -68,10 +54,13 @@ async function screenForTheme(theme: string, criteria: string): Promise<string[]
 async function tickerExists(symbol: string): Promise<boolean> {
   if (!AV_KEY) return false;
   try {
-    const url = `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(symbol)}&apikey=${AV_KEY}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return false;
-    const data = await res.json();
+    // Same `OVERVIEW:<sym>` cache key research uses — if research already
+    // fetched this symbol's overview today, this costs zero AV calls.
+    const data = await avCachedFetch(
+      `OVERVIEW:${symbol.toUpperCase()}`,
+      `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(symbol)}&apikey=${AV_KEY}`,
+      8000
+    );
     return typeof data?.Symbol === "string" && data.Symbol.length > 0;
   } catch { return false; }
 }
@@ -84,8 +73,7 @@ interface ThemeResult {
 }
 
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret");
-  if (!secret || secret !== process.env.CRON_SECRET) {
+  if (!verifyCronSecret(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -153,8 +141,7 @@ Rules:
   const enriched: ThemeResult[] = [];
   const quarantined: string[] = [];
   for (const t of themes.slice(0, MAX_THEMES)) {
-    const avCandidates = await screenForTheme(t.theme, t.criteria);
-    const candidateSet = [...new Set([...t.candidates, ...avCandidates])];
+    const candidateSet = [...new Set(t.candidates)];
     const verified: string[] = [];
     for (const sym of candidateSet) {
       const clean = sym.trim().toUpperCase();
