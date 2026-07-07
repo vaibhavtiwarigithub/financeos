@@ -494,10 +494,13 @@ export async function queryRobinhoodAccount(): Promise<{ ok: boolean; error?: st
 
 // Held share quantity for a symbol on the live Robinhood account, fetched
 // fresh via MCP. Used by the Execution Gateway to gate SELLs against the ACTUAL
-// account that will trade (not the cached read-only snapshot). Returns:
+// account that will trade (not the cached read-only snapshot).
+// account param: the active trading account number — positions filtered to that
+// account when the parsed JSON includes account-level metadata.
+// Returns:
 //   { ok:true, qty:number }  — parsed a definite position quantity (0 = none)
 //   { ok:false }             — could not determine → caller must fail closed
-export async function robinhoodHeldQty(symbol: string): Promise<{ ok: boolean; qty?: number; error?: string }> {
+export async function robinhoodHeldQty(symbol: string, account?: string): Promise<{ ok: boolean; qty?: number; error?: string }> {
   const svc = createServiceClient();
   const tk = await getValidAccessToken(svc);
   if (!tk.ok || !tk.token) return { ok: false, error: tk.error ?? "not connected" };
@@ -507,10 +510,35 @@ export async function robinhoodHeldQty(symbol: string): Promise<{ ok: boolean; q
   if (!res.ok) return { ok: false, error: res.error };
   try {
     const content = res.result?.content ?? res.result;
-    const text = typeof content === "string" ? content : JSON.stringify(content ?? "");
     const sym = symbol.toUpperCase();
-    // Find a {...symbol...quantity...} object mentioning this symbol; pull the
-    // nearest quantity. If the symbol isn't mentioned at all, treat as 0 held.
+
+    // Prefer structured JSON parse (handles Robinhood MCP escaped text content).
+    const parsed = mcpToolJson(content);
+    if (parsed) {
+      const positions: any[] =
+        Array.isArray(parsed?.positions) ? parsed.positions
+        : Array.isArray(parsed?.results) ? parsed.results
+        : Array.isArray(parsed) ? parsed
+        : [];
+      const filtered = account
+        ? positions.filter((p: any) =>
+            String(p.account ?? p.account_number ?? p.account_id ?? "").includes(account))
+        : positions;
+      // Use filtered if it yielded any rows; else fall back to all positions
+      // (the agentic OAuth token should only see its own account's positions).
+      const pool = filtered.length > 0 ? filtered : positions;
+      const pos = pool.find((p: any) => {
+        const s = String(p.symbol ?? p.instrument_id ?? "").toUpperCase();
+        return s === sym || s.startsWith(sym + "/");
+      });
+      if (!pos) return { ok: true, qty: 0 };
+      const qty = parseFloat(pos.quantity ?? pos.qty ?? pos.shares ?? "0");
+      return Number.isFinite(qty) ? { ok: true, qty } : { ok: false, error: "position found but quantity non-finite" };
+    }
+
+    // Regex fallback on raw text — less safe, but preserves prior behavior when
+    // JSON parse fails (e.g. Robinhood returns plain text).
+    const text = typeof content === "string" ? content : JSON.stringify(content ?? "");
     if (!text.toUpperCase().includes(sym)) return { ok: true, qty: 0 };
     const re = new RegExp(`${sym}["'\\s\\S]{0,200}?"?(?:quantity|qty|shares)"?\\s*[:=]\\s*"?(\\d+(?:\\.\\d+)?)`, "i");
     const m = text.match(re);

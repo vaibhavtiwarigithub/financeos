@@ -152,7 +152,11 @@ export async function POST(req: NextRequest) {
       // real-money order.
       let notionalCap = (cfg as any)?.max_order_notional != null ? Number((cfg as any).max_order_notional) : null;
       if (notionalCap == null) {
-        const { data: snap } = await supabase.from("live_account_snapshots").select("equity").order("captured_at", { ascending: false }).limit(1).maybeSingle();
+        // Filter by the resolved trading account — prevents the read-only account's
+        // larger equity from raising the live order cap for the agentic account.
+        const { data: snap } = await supabase.from("live_account_snapshots").select("equity")
+          .eq("account_id", acct.account)
+          .order("captured_at", { ascending: false }).limit(1).maybeSingle();
         const equity = Number((snap as any)?.equity);
         if (Number.isFinite(equity) && equity > 0) notionalCap = equity * DEFAULT_NOTIONAL_FRAC;
       }
@@ -179,7 +183,7 @@ export async function POST(req: NextRequest) {
       // account; fail closed if that can't be determined.
       if (side === "sell") {
         if (broker.id === "robinhood_mcp") {
-          const heldRes = await robinhoodHeldQty(symbol);
+          const heldRes = await robinhoodHeldQty(symbol, acct.account);
           if (!heldRes.ok) return NextResponse.json({ error: `Refusing SELL of ${symbol}: could not verify live holdings (${heldRes.error})` }, { status: 403 });
           if ((heldRes.qty ?? 0) < qty) return NextResponse.json({ error: `Refusing SELL of ${qty} ${symbol}: only ${heldRes.qty ?? 0} held on the live trading account` }, { status: 403 });
         } else {

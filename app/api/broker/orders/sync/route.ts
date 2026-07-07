@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   // Iterates DISTINCT brokers present in open orders (Part 2d) — so an
   // Alpaca order and a Kite order can both be in-flight and sync correctly.
   const { data: openOrders } = await supabase.from("broker_orders").select("*")
-    .in("status", ["submitted", "partially_filled"]);
+    .in("status", ["submitted", "partially_filled", "unknown_needs_reconcile"]);
 
   let updated = 0, filled = 0;
   for (const order of (openOrders ?? []) as any[]) {

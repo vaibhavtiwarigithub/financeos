@@ -71,7 +71,7 @@ const MODEL_ROUTING: Record<LLMTask, string> = {
   evaluate:  "claude-sonnet-4-6",
   thesis:    "claude-sonnet-4-6",
   optimize:  "claude-haiku-4-5-20251001",
-  screen:    "llama-3.3-70b-versatile",  // Groq free — fast screener pre-filter
+  screen:    "deepseek-v4-flash",
   chat:      "deepseek-v4-flash",
   summarize: "deepseek-v4-flash",
 }

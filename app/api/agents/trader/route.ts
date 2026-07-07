@@ -116,13 +116,13 @@ async function buildProposals(supabase: any, isCron: boolean) {
     try {
       const { data: macro } = await supabase
         .from("macro_regime")
-        .select("danger_score, regime_label")
+        .select("danger_score, regime")
         .order("created_at", { ascending: false })
         .limit(1)
         .single();
       if (macro) {
         const ds: number = (macro as any).danger_score ?? 0;
-        const label: string = (macro as any).regime_label ?? "UNKNOWN";
+        const label: string = (macro as any).regime ?? "UNKNOWN";
         if (ds >= 80) {
           // RED: hard suppress — proposals require much higher conviction
           scoreThreshold = Math.min(95, baseThreshold + 20);

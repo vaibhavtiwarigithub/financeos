@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireOwner } from "@/lib/auth/require-owner";
 import { getKiteHoldings } from "@/lib/kite";
 
 export const dynamic = "force-dynamic";
@@ -7,8 +7,8 @@ export const dynamic = "force-dynamic";
 // Real Zerodha holdings (INR). Degrades to a clear "reconnect" state when the
 // daily token is stale, rather than erroring.
 export async function GET() {
-  const { data: { user } } = await (await createClient()).auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ownerGate = await requireOwner();
+  if (ownerGate) return ownerGate;
 
   const res = await getKiteHoldings();
   if (!res.ok) return NextResponse.json({ holdings: [], connected: false, error: res.error });

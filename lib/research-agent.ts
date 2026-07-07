@@ -903,10 +903,10 @@ export async function processSymbol(
   const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus) + trendNote;
   const llmResult = await callLLM({
     task: "screen",
-    model: "llama-3.3-70b-versatile",
+    model: "deepseek-v4-flash",
     prompt: thesisPrompt,
     symbol,
-    agentLabel: "groq",
+    agentLabel: "deepseek",
     maxTokens: 512,
   });
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 import { getKiteCreds, getAccessToken, kiteGet } from "@/lib/kite";
 
 export const dynamic = "force-dynamic";
@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic";
 // live, and — if live — a one-line profile confirmation from Kite so the user
 // sees a real successful call, not just a stored string.
 export async function GET() {
-  const { data: { user } } = await (await createClient()).auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ownerGate = await requireOwner();
+  if (ownerGate) return ownerGate;
 
   const svc = createServiceClient();
   const { apiKey, apiSecret } = await getKiteCreds(svc);

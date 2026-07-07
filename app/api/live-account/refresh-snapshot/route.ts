@@ -2,33 +2,76 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchAndStoreAccountSnapshot } from "@/lib/research-agent";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
-import { queryRobinhoodAccount } from "@/lib/robinhood-mcp";
+import { queryRobinhoodAccount, mcpToolJson } from "@/lib/robinhood-mcp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 100;
 
-// Persist the MCP-fetched account snapshot to live_account_snapshots directly
-// via the service client (NOT the loopback HTTP hop that ships CRON_SECRET to
-// NEXT_PUBLIC_APP_URL). Parses accounts/positions defensively; on any shape it
-// can't read, leaves the snapshot stale rather than writing garbage.
+// Persist the MCP-fetched account snapshot to live_account_snapshots.
+// Uses mcpToolJson (not regex) for safe parse of Robinhood's escaped MCP text.
+// Stores against the active trading account, not the hardcoded read-only one.
 async function refreshViaMcp(): Promise<{ ok: boolean; error?: string }> {
   const svc = createServiceClient();
-  const { data: cfg } = await svc.from("strategy_config").select("robinhood_mcp_enabled").limit(1).maybeSingle();
+  const { data: cfg } = await svc
+    .from("strategy_config")
+    .select("robinhood_mcp_enabled, active_account_us")
+    .limit(1)
+    .maybeSingle();
   if (!(cfg as any)?.robinhood_mcp_enabled) return { ok: false, error: "robinhood_mcp_enabled is off" };
+
+  // Use the configured trading account — never the hardcoded read-only account.
+  const tradingAccount: string = (cfg as any)?.active_account_us ?? "605420660";
+
   const res = await queryRobinhoodAccount();
   if (!res.ok) return { ok: false, error: res.error };
   try {
-    const acct = res.data?.accounts?.content ?? res.data?.accounts;
-    const positions = res.data?.positions?.content ?? res.data?.positions;
-    const asText = (v: any) => (typeof v === "string" ? v : JSON.stringify(v ?? ""));
-    const acctStr = asText(acct);
-    const num = (re: RegExp) => { const m = acctStr.match(re); return m ? Number(m[1]) : null; };
+    // Parse accounts via mcpToolJson (handles Robinhood's escaped MCP text content).
+    const acctRaw = res.data?.accounts?.content ?? res.data?.accounts;
+    const posRaw = res.data?.positions?.content ?? res.data?.positions;
+
+    const acctObj = mcpToolJson(acctRaw);
+    const posObj = mcpToolJson(posRaw);
+
+    // Account fields — try structured parse first, fall back to regex on the text.
+    let equity: number | null = null;
+    let buyingPower: number | null = null;
+    let portfolioValue: number | null = null;
+
+    if (acctObj) {
+      // Robinhood MCP may return { accounts: [...] } or direct account fields.
+      const acct =
+        Array.isArray(acctObj?.accounts)
+          ? acctObj.accounts.find((a: any) => String(a.account_number) === tradingAccount || !tradingAccount) ?? acctObj.accounts[0]
+          : acctObj;
+      equity = parseFloat(acct?.equity ?? acct?.portfolio_value) || null;
+      buyingPower = parseFloat(acct?.buying_power) || null;
+      portfolioValue = parseFloat(acct?.portfolio_value ?? acct?.equity) || null;
+    } else {
+      // Regex fallback on raw text (pre-mcpToolJson path).
+      const text = typeof acctRaw === "string" ? acctRaw : JSON.stringify(acctRaw ?? "");
+      const num = (re: RegExp) => { const m = text.match(re); return m ? Number(m[1]) : null; };
+      equity = num(/"(?:equity|portfolio_value)"\s*:\s*"?([\d.]+)"?/);
+      buyingPower = num(/"buying_power"\s*:\s*"?([\d.]+)"?/);
+      portfolioValue = num(/"portfolio_value"\s*:\s*"?([\d.]+)"?/);
+    }
+
+    // Positions — structured array preferred.
+    let positionsJson: any = null;
+    if (posObj) {
+      positionsJson = Array.isArray(posObj?.positions) ? posObj.positions
+        : Array.isArray(posObj?.results) ? posObj.results
+        : Array.isArray(posObj) ? posObj
+        : posRaw ?? null;
+    } else {
+      positionsJson = posRaw ?? null;
+    }
+
     await svc.from("live_account_snapshots").upsert({
-      account_id: "965848641",
-      equity: num(/"(?:equity|portfolio_value)"\s*:\s*"?([\d.]+)"?/),
-      buying_power: num(/"buying_power"\s*:\s*"?([\d.]+)"?/),
-      portfolio_value: num(/"portfolio_value"\s*:\s*"?([\d.]+)"?/),
-      positions_json: positions ?? null,
+      account_id: tradingAccount,
+      equity,
+      buying_power: buyingPower,
+      portfolio_value: portfolioValue,
+      positions_json: positionsJson,
       captured_at: new Date().toISOString(),
     }, { onConflict: "account_id" });
     return { ok: true };

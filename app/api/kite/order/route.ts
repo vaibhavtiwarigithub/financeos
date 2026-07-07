@@ -1,19 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { placeEquityOrder } from "@/lib/kite";
+import { placeEquityOrder, getKiteHoldings } from "@/lib/kite";
+import { requireOwner } from "@/lib/auth/require-owner";
+import { guardOrderRequest } from "@/lib/request-guards";
 
 export const dynamic = "force-dynamic";
 
 // Places a REAL Zerodha order. Safety model, deliberately human-in-the-loop:
-//  - Authenticated user only (never cron/agent-triggered).
-//  - Requires an explicit confirm:true in the body — a bare call won't fire.
-//  - This is invoked from a user click after reviewing the order, mirroring the
-//    "human approves every real order" principle used on the US side. Nothing
-//    auto-executes India orders.
+//  - Owner-only (requireOwner) — same standard as the US Execution Gateway.
+//  - CSRF/origin guard (guardOrderRequest) — prevents cross-site live order.
+//  - Requires explicit confirm:true in the body — a bare call won't fire.
+//  - Creates a broker_orders ledger row so the sync loop can track/reconcile.
+//  - SELL gated against current Kite holdings (long-only for new positions).
 export async function POST(req: NextRequest) {
-  const { data: { user } } = await (await createClient()).auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ownerGate = await requireOwner();
+  if (ownerGate) return ownerGate;
+  const guardErr = guardOrderRequest(req);
+  if (guardErr) return guardErr;
 
   const body = await req.json().catch(() => ({}));
   const { symbol, transaction_type, quantity, order_type, price, confirm } = body as {
@@ -24,35 +27,89 @@ export async function POST(req: NextRequest) {
   if (confirm !== true) {
     return NextResponse.json({ error: "confirm:true required — this places a real order with real money." }, { status: 400 });
   }
-  if (!symbol || !transaction_type || !quantity || quantity < 1) {
-    return NextResponse.json({ error: "symbol, transaction_type (BUY/SELL) and quantity (>=1) are required." }, { status: 400 });
+
+  // Strict input validation — never clamp or silently coerce on a live-money path.
+  if (!symbol || typeof symbol !== "string" || !/^[A-Z0-9._-]{1,20}$/.test(symbol.toUpperCase())) {
+    return NextResponse.json({ error: "symbol required and must be a valid ticker" }, { status: 400 });
   }
-  if ((order_type ?? "MARKET") === "LIMIT" && (price == null || price <= 0)) {
-    return NextResponse.json({ error: "price required for a LIMIT order." }, { status: 400 });
+  if (transaction_type !== "BUY" && transaction_type !== "SELL") {
+    return NextResponse.json({ error: "transaction_type must be BUY or SELL" }, { status: 400 });
   }
+  if (!Number.isFinite(quantity) || !Number.isInteger(quantity) || (quantity as number) < 1) {
+    return NextResponse.json({ error: "quantity must be a positive integer" }, { status: 400 });
+  }
+  if ((order_type ?? "MARKET") === "LIMIT" && (!Number.isFinite(price) || (price as number) <= 0)) {
+    return NextResponse.json({ error: "price required for a LIMIT order" }, { status: 400 });
+  }
+
+  const svc = createServiceClient();
+
+  // Long-only gate: SELL requires confirmed current holding >= requested qty.
+  if (transaction_type === "SELL") {
+    const holdings = await getKiteHoldings(svc);
+    if (!holdings.ok) {
+      return NextResponse.json({ error: `Refusing SELL of ${symbol}: could not verify Kite holdings (${holdings.error ?? "connection failed"})` }, { status: 403 });
+    }
+    const sym = symbol.toUpperCase().replace(/\.(NS|BO)$/i, "");
+    const pos = (holdings.data ?? []).find((h: any) => {
+      const ts = String(h.tradingsymbol ?? "").toUpperCase();
+      return ts === sym || ts === symbol.toUpperCase();
+    });
+    const heldQty = Number(pos?.quantity ?? pos?.qty ?? 0);
+    if (heldQty < (quantity as number)) {
+      return NextResponse.json({ error: `Refusing SELL of ${quantity} ${symbol}: only ${heldQty} held on Kite` }, { status: 403 });
+    }
+  }
+
+  // Pre-insert a broker_orders row before broker submission — creates a durable
+  // order id ledger entry so the sync cron can track and reconcile this order.
+  const { data: orderRow, error: insertErr } = await svc.from("broker_orders").insert({
+    market: "india",
+    broker: "kite",
+    broker_env: "live",
+    symbol: symbol.toUpperCase(),
+    side: transaction_type === "BUY" ? "buy" : "sell",
+    qty: quantity,
+    order_type: order_type ?? "MARKET",
+    limit_price: order_type === "LIMIT" ? price : null,
+    status: "pending_submit",
+    approved_by_user: true,
+    submitted_at: new Date().toISOString(),
+  }).select("id").single();
+
+  if (insertErr) {
+    return NextResponse.json({ error: `Failed to create order ledger entry: ${insertErr.message}` }, { status: 500 });
+  }
+  const ledgerId: number = (orderRow as any).id;
 
   const res = await placeEquityOrder({
     tradingsymbol: symbol,
     transaction_type,
-    quantity: Math.floor(quantity),
+    quantity: quantity as number,
     order_type: order_type ?? "MARKET",
     price,
     product: "CNC",
   });
 
-  // Best-effort audit trail (real orders should always leave a record).
+  // Update the ledger row with the outcome (submitted or failed).
+  await svc.from("broker_orders").update({
+    status: res.ok ? "submitted" : "failed",
+    broker_order_id: res.ok ? String(res.data?.order_id ?? "") : null,
+    error: res.ok ? null : res.error,
+  }).eq("id", ledgerId);
+
+  // Audit trail in decision_journal (best-effort, non-fatal).
   try {
-    const svc = createServiceClient();
     await svc.from("decision_journal").insert({
       entry_type: "kite_order",
-      symbol, market: "india", // Kite is India-only
+      symbol, market: "india",
       summary: `Kite ${transaction_type} ${quantity} ${symbol} (${order_type ?? "MARKET"}${price ? ` @ ₹${price}` : ""}) → ${res.ok ? `order ${res.data?.order_id}` : `FAILED: ${res.error}`}`,
-      calculations: { transaction_type, quantity, order_type: order_type ?? "MARKET", price: price ?? null, order_id: res.data?.order_id ?? null },
+      calculations: { transaction_type, quantity, order_type: order_type ?? "MARKET", price: price ?? null, order_id: res.data?.order_id ?? null, broker_order_ledger_id: ledgerId },
       has_verified_facts: true,
       resolved: res.ok,
     });
   } catch { /* audit is best-effort */ }
 
   if (!res.ok) return NextResponse.json({ success: false, error: res.error }, { status: 502 });
-  return NextResponse.json({ success: true, order_id: res.data?.order_id });
+  return NextResponse.json({ success: true, order_id: res.data?.order_id, broker_order_id: ledgerId });
 }

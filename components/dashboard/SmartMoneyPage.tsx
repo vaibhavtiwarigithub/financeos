@@ -58,6 +58,7 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
   const [tab, setTab] = useState<"queue" | "insider" | "form4" | "signals" | "classes">("queue");
   const [acting, setActing] = useState<string | null>(null);
   const [sendingToAlpaca, setSendingToAlpaca] = useState<string | null>(null);
+  const [sendingLive, setSendingLive] = useState<string | null>(null);
   const [actionResult, setActionResult] = useState<string | null>(null);
 
   // Form 4 / EDGAR state
@@ -164,6 +165,35 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
       setActionResult("Error: " + e.message);
     }
     setSendingToAlpaca(null);
+  }
+
+  // REAL-MONEY live send. Double-confirm; routes through the Execution Gateway
+  // with env:live, which enforces every gate (kill switches, notional cap,
+  // drift, sell-if-held, allowlist, robinhood_mcp_enabled). Broker is whatever
+  // active_broker_us resolves to (Robinhood MCP once selected).
+  async function handleSendLive(t: any) {
+    const acct = t.account_number ?? "605420660";
+    const side = t.side ?? t.order_side ?? "?";
+    if (!window.confirm(`⚠️ REAL-MONEY LIVE ORDER\n\n${String(side).toUpperCase()} ${t.qty} ${t.symbol}  (market)\nAccount: ${acct}\n\nThis places an ACTUAL order with real money. Continue?`)) return;
+    if (!window.confirm(`Final confirmation — place LIVE ${String(side).toUpperCase()} ${t.qty} ${t.symbol} now?`)) return;
+    setSendingLive(t.id);
+    try {
+      const res = await fetch("/api/broker/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposal_id: parseInt(t.id, 10), env: "live" }),
+      });
+      const d = await res.json();
+      setActionResult(
+        d.error && d.needs_reconcile ? `LIVE ambiguous — reconcile before retry: ${d.error}`
+        : d.error ? `LIVE error: ${d.error}`
+        : `LIVE order placed — broker order ${d.broker_order_id ?? d.order_id}`
+      );
+      router.refresh();
+    } catch (e: any) {
+      setActionResult("LIVE error: " + e.message);
+    }
+    setSendingLive(null);
   }
 
   async function handleReject(tradeId: string) {
@@ -333,6 +363,15 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
                               title="Sends this order to your Alpaca PAPER account via the Execution Gateway"
                               style={{ marginLeft: "8px", padding: "3px 10px", background: T.accent + "18", border: `1px solid ${T.accent}40`, borderRadius: "6px", color: T.accent, fontSize: "10px", fontWeight: 600, cursor: sendingToAlpaca === t.id ? "default" : "pointer" }}>
                               {sendingToAlpaca === t.id ? "Sending…" : "→ Alpaca (paper)"}
+                            </button>
+                          )}
+                          {t.status === "approved" && (
+                            <button
+                              onClick={() => handleSendLive(t)}
+                              disabled={sendingLive === t.id}
+                              title="Places a REAL live order (real money) via the active US broker (Robinhood MCP). Double-confirmed."
+                              style={{ marginLeft: "6px", padding: "3px 10px", background: "#F8717118", border: "1px solid #F8717155", borderRadius: "6px", color: "#F87171", fontSize: "10px", fontWeight: 700, cursor: sendingLive === t.id ? "default" : "pointer" }}>
+                              {sendingLive === t.id ? "Placing…" : "⚠ Send LIVE"}
                             </button>
                           )}
                         </td>

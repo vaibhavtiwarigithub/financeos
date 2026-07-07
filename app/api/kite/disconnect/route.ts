@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 import { disconnectKite } from "@/lib/kite";
 
 export const dynamic = "force-dynamic";
@@ -13,8 +13,8 @@ export const dynamic = "force-dynamic";
 // -- that works even if this app or its database were compromised -- this is
 // the in-app-triggered complement to that, not a replacement.
 export async function POST() {
-  const { data: { user } } = await (await createClient()).auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ownerGate = await requireOwner();
+  if (ownerGate) return ownerGate;
 
   const result = await disconnectKite(createServiceClient());
   return NextResponse.json(result, { status: result.ok ? 200 : 500 });
