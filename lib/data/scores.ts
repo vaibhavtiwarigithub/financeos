@@ -184,7 +184,20 @@ async function fetchMacroScore(supabase: any): Promise<{ score: number; evidence
     if (!data) return { score: 50, evidence: { note: "no macro data" } };
 
     const dangerScore = data.danger_score ?? 50;
-    const regime = data.regime ?? "UNKNOWN";
+    const regime = data.regime ?? "unknown";
+
+    // A regime of "unknown" means MacroSentinel itself couldn't classify this
+    // run (e.g. too few indicators fetched) — its danger_score in that case is
+    // a placeholder 0, NOT a real "calm markets" read. Scoring that as 100
+    // (maximally bullish, full confidence) silently made every symbol's macro
+    // dimension pin to 100 whenever MacroSentinel's weekly run failed, with no
+    // availability flag to catch it. Treat "unknown" as no verdict = unavailable.
+    if (String(regime).toLowerCase() === "unknown") {
+      return {
+        score: 50,
+        evidence: { danger_score: dangerScore, regime, note: "MacroSentinel reported no verdict this run — treated as unavailable", source: "macro_sentinel", as_of: data.week_of },
+      };
+    }
 
     // Convert danger score (0-100 where 100 = most dangerous) to macro_score (0-100 where 100 = bullish)
     const macroScore = Math.round(100 - dangerScore);
@@ -261,7 +274,7 @@ export async function computeScores(opts: {
       // returns null) — has_data is the real signal for whether either
       // provider actually returned something.
       sentimentDataAvailable: socialResult?.has_data === true,
-      macroDataAvailable: !!macroEvidence?.regime,
+      macroDataAvailable: typeof macroEvidence?.regime === "string" && (macroEvidence.regime as string).toLowerCase() !== "unknown",
       // scoreInsider() always returns a non-null {score:50,...} shape on
       // failure/no-data too — `available` is the real signal.
       insiderDataAvailable: insiderAvailable,

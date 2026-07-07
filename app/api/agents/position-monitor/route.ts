@@ -250,6 +250,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
   try {
     await svc.from("agent_runs").insert({
       agent_type: "position_monitor",
+      market: marketScope ?? "us",
       status: "done",
       symbols: positions.map((p: any) => String(p.symbol)),
       trigger_source: marketScope ? "scheduled" : "manual",

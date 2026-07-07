@@ -20,7 +20,13 @@ interface StockTwitsResult {
   bullish_pct: number;
   bearish_pct: number;
   message_count: number;
+  sentiment_sample_size: number;
 }
+
+// Below this many sentiment-tagged messages, a bullish/bearish % is noise —
+// e.g. 1 tagged message reads as "100% bullish" with full apparent confidence.
+// Require a real sample before treating the split as directional evidence.
+const MIN_SENTIMENT_SAMPLE = 5;
 
 interface AVNewsResult {
   sentiment: number;
@@ -58,8 +64,13 @@ export async function fetchSocialSentiment(symbol: string): Promise<SocialSentim
     fetchAVNewsSentiment(symbol),
   ]);
 
-  const st = stocktwits.status === "fulfilled" ? stocktwits.value : null;
+  const stRaw = stocktwits.status === "fulfilled" ? stocktwits.value : null;
   const av = avNews.status === "fulfilled" ? avNews.value : null;
+  // A thin sample (< MIN_SENTIMENT_SAMPLE tagged messages) already reads as a
+  // fake-neutral 50/50 from fetchStockTwits — but it must ALSO not count as
+  // real evidence here, or "1 bullish message = has_data:true" would still
+  // pass a coin-flip through as a directional signal downstream.
+  const st = stRaw && stRaw.sentiment_sample_size >= MIN_SENTIMENT_SAMPLE ? stRaw : null;
 
   // Combine signals: weight stocktwits 40%, AV news 60%
   let bullishScore = 50; // neutral default
@@ -75,7 +86,7 @@ export async function fetchSocialSentiment(symbol: string): Promise<SocialSentim
     symbol,
     stocktwits_bullish_pct: st?.bullish_pct ?? null,
     stocktwits_bearish_pct: st?.bearish_pct ?? null,
-    stocktwits_message_count: st?.message_count ?? null,
+    stocktwits_message_count: stRaw?.message_count ?? null,
     av_news_sentiment: av?.sentiment ?? null,
     av_news_articles: av?.article_count ?? null,
     overall_sentiment: bullishScore > 60 ? "Bullish" : bullishScore < 40 ? "Bearish" : "Neutral",
@@ -96,10 +107,12 @@ async function fetchStockTwits(symbol: string): Promise<StockTwitsResult | null>
   const bullish = withSentiment.filter((m) => m.entities?.sentiment?.basic === "Bullish").length;
   const bearish = withSentiment.filter((m) => m.entities?.sentiment?.basic === "Bearish").length;
   const total = bullish + bearish;
+  const hasSample = total >= MIN_SENTIMENT_SAMPLE;
   return {
-    bullish_pct: total > 0 ? Math.round((bullish / total) * 100) : 50,
-    bearish_pct: total > 0 ? Math.round((bearish / total) * 100) : 50,
+    bullish_pct: hasSample ? Math.round((bullish / total) * 100) : 50,
+    bearish_pct: hasSample ? Math.round((bearish / total) * 100) : 50,
     message_count: messages.length,
+    sentiment_sample_size: total,
   };
 }
 

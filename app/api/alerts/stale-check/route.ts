@@ -77,15 +77,24 @@ export async function GET() {
     // guard does; resiliently treats "can't tell" as a US-shaped run).
     const { data: todaysRuns } = await svc
       .from("agent_runs")
-      .select("id, created_at, status, symbols, result_summary")
+      .select("id, started_at, status, symbols, market, result_summary")
       .eq("agent_type", job.agentType)
-      .gte("created_at", todayStart.toISOString())
-      .order("created_at", { ascending: false })
+      .gte("started_at", todayStart.toISOString())
+      .order("started_at", { ascending: false })
       .limit(10);
 
+    // Prefer the real `market` column (populated since migration 067). Only
+    // fall back to symbol-sniffing for older rows that predate it — sniffing
+    // alone misclassifies a "us" run whose symbol batch happens to include
+    // held .NS/.BO tickers (e.g. India ETF proxies or cross-market holdings).
     const isIndiaRun = (r: any) =>
       Array.isArray(r?.symbols) && r.symbols.some((s: string) => /\.(NS|BO)$/i.test(String(s)));
-    const matchesMarket = (r: any) => job.label.includes("India") ? isIndiaRun(r) : !isIndiaRun(r);
+    const matchesMarket = (r: any) => {
+      if (r?.market === "us" || r?.market === "india") {
+        return job.label.includes("India") ? r.market === "india" : r.market === "us";
+      }
+      return job.label.includes("India") ? isIndiaRun(r) : !isIndiaRun(r);
+    };
 
     const ran = (todaysRuns ?? []).some(matchesMarket);
     results.push({ job: job.label, ran });
