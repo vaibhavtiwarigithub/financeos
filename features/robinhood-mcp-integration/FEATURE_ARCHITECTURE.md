@@ -1,234 +1,285 @@
-# Feature Architecture: In-App Robinhood MCP Client (DeepSeek-driven, coexisting with the existing manual Claude Code flow)
+# Feature Architecture: In-App Robinhood MCP Client — read-only snapshot + human-gated live order execution + allowlist-backed account selector
 
 ## Status
 
-Architecture status: Draft
+Architecture status: Draft (security-hardened rewrite, 2026-07-07)
 Architecture approved: No
 Approved scope: None
 Approved date: None
 Implementation allowed: No
 
+## Revision history
+
+- 2026-07-06 — original draft: read-only snapshot via DeepSeek+MCP, no order execution.
+- 2026-07-07 (a) — scope expanded at user request: live order execution via the existing broker-adapter/Gateway pattern; `live_account_source` switch; `broker_accounts` allowlist + per-market active-account selector.
+- 2026-07-07 (b) — **this rewrite**: full security review (18 findings) folded in as binding rules. Biggest changes: **no LLM anywhere in the order write path** (direct typed `client.callTool()` instead of a "DeepSeek tool-calling loop"), OAuth hardening (state+PKCE+authenticated callback — the Kite route-pair is NOT a safe template for OAuth 2.1), the Execution Gateway is explicitly MODIFIED (not "unchanged") to add kill-switch/guard/env/notional checks it does not have today, `robinhood_mcp_enabled` defaults OFF, fail-closed account resolution, and reconcile-before-resubmit semantics for ambiguous order timeouts. Prerequisite vault lockdown (migration 089) was applied live 2026-07-07: `api_key_vault` had a `USING (true)` policy for all roles with client write grants, and `broker_orders` had RLS disabled — both now service-role-only.
+
 ## Feature Purpose
 
 Today, refreshing the live Robinhood account snapshot (equity, buying power,
 positions for the read-only Trading account `965848641`) depends on
-`execClaude` (`lib/claude-exec.ts`), which shells out to a local Claude Code
-CLI process with Robinhood MCP configured in the user's own `.claude.json`.
-This only runs on the user's Windows machine — every invocation from
-Vercel/cloud cron fails immediately (no PowerShell, no `claude.cmd` binary in
-that environment). Since Windows Task Scheduler was disabled this session
-(Decision 44), this snapshot has no working automatic refresh path at all.
+`execClaude` (`lib/claude-exec.ts`) — Windows-desktop-only, fails on Vercel.
+Robinhood order execution (account `605420660`) is fully manual: approving a
+proposal generates a natural-language command the user pastes into their own
+Claude Code session with Robinhood MCP access.
 
-This feature adds a second, in-app path: a direct MCP client (official
-`@modelcontextprotocol/sdk`) connecting to Robinhood's real remote MCP server
-(`https://agent.robinhood.com/mcp/trading`, confirmed via the user's own
-`.claude.json` — `{"type":"http","url":"https://agent.robinhood.com/mcp/trading"}`),
-driven by DeepSeek's tool-calling (DeepSeek's API is OpenAI/Anthropic
-tool-calling compatible, confirmed via DeepSeek's own docs — no custom bridge
-protocol needed), running server-side on Vercel. Read-only scope only, same
-as `execClaude`'s current scope — this feature does not touch order placement.
+This feature adds an in-app path for both concerns, using Robinhood's real
+remote MCP server (`https://agent.robinhood.com/mcp/trading`, confirmed via
+the user's `.claude.json`; it exposes `get_accounts`, `get_equity_positions`,
+`place_equity_order`, `review_equity_order`, `cancel_equity_order`,
+`get_equity_orders`, among others):
 
-## User/System Questions This Feature Answers
+1. **Read path** — a deterministic MCP client fetches the account snapshot
+   server-side (Vercel or local), replacing/coexisting with `execClaude`,
+   selected by a new `strategy_config.live_account_source` switch
+   (`'claude_exec' | 'robinhood_mcp'`, default `'claude_exec'`).
+2. **Write path** — Robinhood becomes a third broker adapter in
+   `lib/brokers/registry.ts` (alongside Alpaca and Kite), flowing through the
+   Execution Gateway with the same two-human-click gate (Approve →
+   Send to broker). The only change vs today is transport: a typed MCP call
+   instead of a manual paste. **Who decides never changes.**
+3. **Account selector** — a `broker_accounts` allowlist table +
+   `active_account_us`/`active_account_india` so future additional accounts
+   are user-selectable but never implicitly tradable.
 
-- How does the live Robinhood snapshot refresh once the local machine isn't
-  required to be on/running Claude Code?
-- Can the user still use the existing manual Claude-Code-paste flow if they
-  prefer it, or does this feature force a migration?
-- If the stored credential for this integration is ever suspected
-  compromised, how does the user cut it off — from inside the app, and
-  independently from inside Robinhood itself?
+## BINDING IMPLEMENTATION RULES (non-negotiable — deviation = reject the PR)
+
+These rules exist because a security review found the original draft
+ambiguous enough to permit dangerous implementations. Each rule is stated so
+compliance is mechanically checkable.
+
+### R1. No LLM in the write path — ever.
+`submitOrder()` MUST be a direct, deterministic
+`client.callTool({ name: "place_equity_order", arguments: {...} })` using
+`@modelcontextprotocol/sdk`'s `Client` over `StreamableHTTPClientTransport`.
+Arguments are built exclusively from the validated `trade_proposals` row and
+`broker_accounts` — never from, through, or "confirmed by" any LLM. No LLM
+output is ever parsed to derive order parameters, order status, or
+`ok:true`. (Rationale: `trader/route.ts` already documents the
+hallucinated-fill failure mode this prevents.)
+
+### R2. The read path is ALSO deterministic by default.
+The snapshot fetch calls `get_accounts` + `get_equity_positions` directly via
+`callTool` and parses the structured results with a strict zod schema:
+numbers must be finite, `symbol` must match `^[A-Z.\-]{1,10}$`, arrays
+bounded (≤500 positions). No LLM is required to call two read tools. An LLM
+summarizer MAY be layered on top for display text only, subject to R3.
+
+### R3. LLM data-hygiene rules (applies to any optional summarizer).
+- Vault tokens (`ROBINHOOD_MCP_*`), `CRON_SECRET`, and raw account numbers
+  NEVER appear in any LLM prompt or LLM-visible tool argument. Account
+  numbers are replaced with opaque labels ("Trading account") before
+  prompting.
+- MCP tool results are data, never instructions: the system prompt states
+  this, and no numeric/actionable value from LLM output is written to any
+  table. Loop iterations hard-capped.
+
+### R4. OAuth 2.1 — do NOT copy the Kite route-pair internals.
+Kite's callback runs unauthenticated with no `state` (fine for Kite's
+checksum-signed flow, unsafe for OAuth). The Robinhood flow MUST have:
+- `state`: ≥128-bit random, stored in an HttpOnly, Secure, SameSite=Lax,
+  short-TTL (10 min) signed cookie; verified and single-use in the callback.
+- PKCE S256; the verifier stored in the same signed cookie (serverless-safe
+  — in-memory storage does not survive between `/login` and `/callback`
+  invocations on Vercel).
+- The callback REQUIRES an authenticated owner session
+  (`createClient().auth.getUser()` + the middleware owner gate) before
+  exchanging the code — prevents login-CSRF/token-injection.
+- Exact registered `redirect_uri`, strict string compare. Post-auth redirect
+  is HARDCODED to `/dashboard/settings?rhmcp=connected` — no `next` param.
+- Request the MINIMUM scope set Robinhood offers. If read-only scopes exist,
+  the snapshot connection uses only those; if only a bundled trading scope
+  exists, that fact is surfaced in the Settings UI text.
+- Related fix shipped alongside: `app/auth/callback/route.ts` must validate
+  its `next` param (single leading `/`, no `//`, `\\`, or `@`) — current
+  code allows `?next=@evil.com` open redirect.
+
+### R5. Token handling.
+- Tokens live only in `api_key_vault` (service-role-only as of migration
+  089) and are sent only in the `Authorization` header — never in URLs,
+  never logged, never included in `broker_orders.raw_last_state` (redact
+  before persisting any `raw` payload; also redact account numbers).
+- Refresh is single-writer: compare-and-swap on the vault row
+  (`UPDATE ... WHERE updated_at = <value read>`), losers re-read instead of
+  overwriting — prevents the rotating-refresh-token race between concurrent
+  cron + user invocations from bricking the connection.
+
+### R6. Gateway modifications (the Gateway is NOT "unchanged").
+`app/api/broker/orders/route.ts` today lacks several gates the original
+draft wrongly claimed it had. This feature MUST add, in order, before
+`submitOrder`:
+1. `guardOrderRequest(req)` (Host/Origin check) — extended to read the
+   allowed host from an `APP_BASE_URL` env var so it works on Vercel
+   (current guard allowlists localhost only; do NOT delete the guard to
+   "fix" Vercel).
+2. `env` MUST be explicitly present in the request body; reject if absent.
+   No silent `?? "paper"` default on an order-placing route.
+3. `broker.envs.includes(orderEnv)` checked in BOTH directions (a live-only
+   broker rejects paper; a paper-only broker rejects live). The adapter
+   additionally self-rejects wrong env (defense in depth).
+4. `checkKillSwitches(supabase)` — kill switches currently run only at
+   proposal build/approve, not at submission. They MUST also run here.
+5. Existing checks retained: proposal `status='approved'`,
+   `approval_expires_at`, global `trading_enabled` + per-market
+   `trading_enabled_us`/`trading_enabled_india` (live env).
+6. Submit-time re-validation (live env): `qty` positive integer ≤ hard cap;
+   fresh quote fetched and `qty × quote ≤ max_order_notional` (new
+   `strategy_config` column, default ≤15% of latest
+   `live_account_snapshots.equity`); price drift vs
+   `proposal.price_at_proposal` ≤ the same threshold `trader/route.ts` uses
+   at approval; `symbol` matches `^[A-Z.\-]{1,10}$`; `side='sell'` allowed
+   only if the symbol exists in the current holdings snapshot (long-only for
+   new positions per CLAUDE.md).
+7. Duplicate-submit hardening: partial unique index
+   `broker_orders(proposal_id) WHERE status IN ('pending_submit',
+   'submitted','partially_filled')` — the existing check-then-insert race
+   allows double-submit on concurrent clicks.
+
+### R7. Ambiguous-failure semantics (the case that duplicates real orders).
+If `place_equity_order` times out or errors AFTER possibly succeeding, the
+adapter MUST NOT resubmit. It marks the order row
+`status='unknown_needs_reconcile'` and the sync loop (or a manual button)
+calls `get_equity_orders` to reconcile before any human is allowed to retry.
+Where Robinhood's MCP supports it, use `review_equity_order` → place
+sequence and/or a client-order-id for idempotency. No automatic retry of
+any write call, ever.
+
+### R8. Account allowlist — fail closed, hardcode stays.
+- Validation lives in BOTH the Gateway (before `submitOrder`) and inside
+  `submitRobinhoodOrder()` (last code before the wire): resolved account
+  must exist in `broker_accounts` with `role='trading'` and matching market.
+- ANY error reading `broker_accounts`/`active_account_us` ABORTS the order.
+  The silent fallback-to-default pattern used by `getActiveBroker()` for
+  broker selection is explicitly FORBIDDEN for account selection.
+- The existing hardcode (`AGENTIC_ACCOUNT = "605420660"` in
+  `trader/route.ts`) is NOT removed in this feature. Removal is a separate,
+  later change gated on the allowlist being verified live. Until then both
+  checks run.
+- New accounts default `role='view_only'`. Becoming a trading target
+  requires BOTH explicitly setting `role='trading'` AND selecting it as
+  `active_account_us`/`active_account_india`. No auto-discovery from broker
+  APIs marks anything tradable.
+- `broker_accounts` ships service-role-only (no anon/authenticated grants,
+  no permissive policy) — a client-side writer to this table would defeat
+  the entire allowlist. Migration must be verified applied to the live DB
+  before the validation code merges (global schema rule).
+
+### R9. Kill switches and flags (contradiction in prior draft resolved).
+- `robinhood_mcp_enabled` (new, **default FALSE** — a live-order
+  integration's kill switch must not ship pre-armed ON; user flips it on in
+  Settings after connecting): when false, BOTH the MCP snapshot fetch and
+  the MCP order path are blocked. The last cached snapshot in
+  `live_account_snapshots` remains viewable — "blocked" means no new MCP
+  calls, not hidden data.
+- `trading_enabled_us` off: blocks live orders (all US brokers), never
+  blocks any read.
+- In-app Disconnect: deletes vault tokens even if Robinhood's revocation
+  endpoint is unreachable (same contract as `disconnectKite()`), and the
+  Settings UI states that Robinhood's own Agentic Trading dashboard is the
+  authoritative, app-independent kill switch.
+
+### R10. Cron/auth surface fixes shipped with this feature.
+- New shared `verifyCronSecret(req)` helper using `crypto.timingSafeEqual`
+  and rejecting when `CRON_SECRET` is unset/empty; used by the new routes
+  (and the snapshot routes it touches). Repo-wide migration of the other
+  ~30 `===` comparisons can follow separately.
+- `GET /api/live-account/snapshot` currently returns live equity/positions
+  with NO auth — it MUST require an authenticated owner session before this
+  feature writes fresher data into it.
+- The `robinhood_mcp` snapshot branch writes to `live_account_snapshots`
+  directly via the service client — NOT via the existing loopback HTTP POST
+  that ships `CRON_SECRET` to `NEXT_PUBLIC_APP_URL`.
 
 ## Scope
 
-This feature includes:
-- A new OAuth 2.1 client (using `@modelcontextprotocol/sdk`'s `auth()` helper,
-  which implements MCP's standard discovery/PKCE/token-exchange/refresh flow)
-  connecting to Robinhood's MCP server, following the same route-pair pattern
-  already used for Kite (`/api/kite/login` + `/api/kite/callback`):
-  `/api/robinhood-mcp/login` (redirect to Robinhood's authorization endpoint)
-  and `/api/robinhood-mcp/callback` (exchange code, store token).
-- Token storage in the existing `api_key_vault` table (same pattern as
-  `KITE_ACCESS_TOKEN`) — access token + refresh token + expiry.
-- A runtime client: `experimental_createMCPClient` (Vercel AI SDK) or the
-  official SDK's `StreamableHTTPClientTransport` directly, wired to
-  `@ai-sdk/deepseek` (or `callLLM`'s existing DeepSeek routing) for the actual
-  tool-calling loop ("get my positions and buying power").
-- Replaces `execClaude` inside `fetchAndStoreAccountSnapshot()`
-  (`lib/research-agent.ts`) — or, more likely, replaces the standalone
-  `/api/live-account/refresh-snapshot` endpoint's implementation (decoupled
-  from `execClaude` earlier this session) with this new client.
-- **A first-class in-app kill switch** (see "Kill Switch Design" below).
+- OAuth 2.1 client per R4: `/api/robinhood-mcp/login` + `/api/robinhood-mcp/callback`.
+- Token storage per R5 in `api_key_vault`.
+- `lib/robinhood-mcp.ts`: OAuth helpers, vault-backed token storage/refresh
+  (CAS), `queryRobinhoodAccount()` (read, R2), `submitRobinhoodOrder()`
+  (write, R1/R7/R8 — called only by the broker adapter).
+- `lib/brokers/robinhood-mcp.ts`: adapter implementing the standard
+  interface (`id: 'robinhood_mcp'`, `envs: ['live']`, `isConfigured()`,
+  `submitOrder()`), registered as a second US-market option.
+- Gateway modifications per R6.
+- `strategy_config.live_account_source` + Settings selector ("Local —
+  Windows Scheduler + Claude Code" vs "Cloud — Robinhood MCP").
+- `broker_accounts` table + `active_account_us`/`active_account_india` +
+  Settings UI per R8 (manual add form: user types the account number and
+  picks the role explicitly; no bulk import).
+- Settings card "Robinhood MCP (Live Account + Orders)": connection status
+  (`connected: boolean` + `updated_at` only — never token material),
+  Connect/Re-authorize, Disconnect, `robinhood_mcp_enabled` toggle,
+  `live_account_source` selector, authoritative-kill-switch note.
 
 ## Non-Goals
 
-This feature does not include:
-- **Removing, deprecating, or replacing the existing manual Claude-Code-paste
-  flow.** Both remain available as independent, user-choosable paths. The
-  existing `execClaude`-based flow (used today for `mentor` ask/thesis/evaluate,
-  `portfolio/robinhood`, `portfolio/live-holdings`, `chart-data`, and the
-  order-execution instruction-paste flow in `trader/route.ts`) is untouched by
-  this feature. The user can keep using their own interactive Claude Code
-  session for any of these at any time, in addition to or instead of this
-  in-app path.
-- **Any change to live order execution.** `app/api/agents/trader/route.ts`'s
-  manual-paste-into-Claude-Code flow for real orders on account `605420660`
-  is explicitly out of scope and unchanged. This feature is read-only account
-  data only (equity, buying power, positions) — CLAUDE.md's locked rule
-  ("Running real TraderAgent orders without approval_required mode" requires
-  pushback) applies with full force; nothing here proposes automating order
-  placement via this new MCP client.
-- **Storing the Robinhood OAuth token anywhere outside the existing vault
-  pattern**, and no new credential-storage mechanism beyond what Kite already
-  uses.
-- Building this before the user has reviewed and confirmed the Robinhood
-  Agentic Trading dashboard's actual auth requirements (the exact OAuth
-  authorization/token endpoints, scopes, and whether the flow truly requires
-  a desktop browser redirect the way Robinhood's docs state) — this document
-  assumes the standard MCP OAuth 2.1 flow per spec, but Robinhood may have
-  particulars (e.g., additional device-binding step) not yet confirmed against
-  the actual dashboard.
+- **Any autonomous order placement.** Every order still requires (1) human
+  Approve on the proposal, then (2) human "Send to broker" click. This
+  feature changes transport for step 2 only.
+- Removing the manual Claude-Code-paste flow (stays available: simply don't
+  select `robinhood_mcp` as `active_broker_us`).
+- Removing the `605420660` hardcode (separate later change, R8).
+- Options trading: `place_option_order` is never called; the adapter
+  supports equities only.
+- Auto-discovery of accounts from broker APIs.
+- Building the OAuth routes before the user has confirmed Robinhood's
+  actual endpoints/scopes against the Agentic Trading dashboard.
 
-## Kill Switch Design (explicit requirement from the user, not an afterthought)
+## Data Models
 
-Three independent layers, from least to most trustworthy:
+- `api_key_vault`: `ROBINHOOD_MCP_ACCESS_TOKEN`, `ROBINHOOD_MCP_REFRESH_TOKEN` (service-role-only per migration 089 — already applied live).
+- `strategy_config.live_account_source` — text, `'claude_exec' | 'robinhood_mcp'`, default `'claude_exec'`.
+- `strategy_config.robinhood_mcp_enabled` — boolean, **default false** (R9).
+- `strategy_config.max_order_notional` — numeric, default null → computed as 15% of latest live equity (R6.6).
+- `strategy_config.active_account_us` / `active_account_india` — text, default today's hardcoded values.
+- `broker_accounts` — `id, broker, market, account_number, label, role ('trading'|'view_only'), created_at`; service-role-only; seeded `605420660`→trading/us, `965848641`→view_only/us, current Kite account→india.
+- `broker_orders` — new partial unique index per R6.7; new status value `unknown_needs_reconcile` (R7). RLS enabled + client grants revoked (migration 089 — already applied live).
 
-1. **App-level pause flag** — `strategy_config` (or a new
-   `robinhood_mcp_enabled` boolean) checked before every call this client
-   makes. Fast, reversible, but only as trustworthy as this app's own code —
-   insufficient alone.
-2. **In-app "Disconnect" button** (Settings, same UI location/pattern as the
-   Kite disconnect button added this session) — deletes the stored
-   access/refresh token from `api_key_vault` AND calls Robinhood's OAuth
-   token-revocation endpoint if one is exposed (to be confirmed against
-   Robinhood's actual OAuth metadata — MCP's auth spec expects a
-   `/.well-known/oauth-authorization-server` document that may list a
-   revocation endpoint). Mirrors `disconnectKite()`'s "wipe locally
-   regardless of whether the remote call succeeds" behavior — a failed
-   network call to Robinhood must never leave a stale token looking
-   "connected" in this app.
-3. **Revoking from Robinhood's own Agentic Trading dashboard directly** — the
-   authoritative kill switch. This works even if this app or its database
-   were fully compromised, because the grant lives on Robinhood's side, not
-   this app's. This must be documented prominently in the Settings UI (same
-   as the Kite disconnect card now says for Zerodha) so the user always knows
-   the real, unconditional way out regardless of what this app's code does.
+## Error Handling
 
-Acceptance criteria for this feature explicitly include: (1) is there a working
-in-app Disconnect action, (2) does it wipe the local token even if Robinhood's
-API is unreachable, (3) does the Settings UI clearly state that revoking from
-Robinhood's own dashboard is the authoritative, app-independent kill switch.
-
-## Current Behavior
-
-- `lib/claude-exec.ts`'s `execClaude()` shells out to `powershell.exe` +
-  `claude.cmd` — Windows-desktop-only, throws immediately on Vercel.
-- `fetchAndStoreAccountSnapshot()` (`lib/research-agent.ts`) used to fire
-  automatically inside `gatherSymbols()`; decoupled this session into
-  `/api/live-account/refresh-snapshot` (POST, cron-secret gated) so the user
-  can control where it runs from (Decision 45 follow-up). It still uses
-  `execClaude` internally — this feature is what would replace that
-  internal implementation.
-- Robinhood MCP today is configured only in the user's local
-  `.claude.json` (`{"type":"http","url":"https://agent.robinhood.com/mcp/trading"}`)
-  — confirmed real, remote, OAuth-authenticated (not a local stdio process).
-- No credential for this exists anywhere in Supabase/`api_key_vault` today —
-  this feature would be the first time a Robinhood-scoped token lives in this
-  app's own storage, which is exactly why the kill-switch section above is
-  written as a first-class requirement, not an add-on.
-
-## Proposed Behavior
-
-### 1. OAuth handshake
-- `GET /api/robinhood-mcp/login` — begins the MCP OAuth 2.1 flow: discovery
-  (`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`
-  per MCP's auth spec), dynamic client registration if required, PKCE
-  challenge, redirect to Robinhood's authorization page.
-- `GET /api/robinhood-mcp/callback` — exchanges the authorization code (+ PKCE
-  verifier) for an access token (and refresh token, if issued), stores both in
-  `api_key_vault` (new key names, e.g. `ROBINHOOD_MCP_ACCESS_TOKEN` /
-  `ROBINHOOD_MCP_REFRESH_TOKEN`, mirroring `KITE_ACCESS_TOKEN`'s pattern).
-- Token refresh handled by the SDK's `auth()` helper when the stored token is
-  near expiry, re-persisting the refreshed token to the vault.
-
-### 2. Runtime snapshot fetch
-- `/api/live-account/refresh-snapshot`'s implementation swaps from
-  `execClaude` to: construct an MCP client (`StreamableHTTPClientTransport`
-  pointed at `https://agent.robinhood.com/mcp/trading` with the stored
-  bearer token) → list available tools → hand them to a DeepSeek tool-calling
-  loop (`callLLM`'s existing DeepSeek routing, or `@ai-sdk/deepseek` directly)
-  with a prompt equivalent to today's ("call get_equity_positions /
-  get_accounts, return equity/buying_power/portfolio_value/positions as
-  JSON") → parse the result → POST to `/api/live-account/snapshot` exactly as
-  today.
-- Runs identically whether triggered by pg_cron (cloud) or a local Windows
-  Task — no longer environment-dependent, since it's a plain HTTPS call with
-  no local process dependency.
-
-### 3. Settings UI
-- New card (Settings, next to the Kite card) — "Robinhood MCP (Live Account
-  Read)": connection status, Connect/Re-authorize button, Disconnect button
-  (per Kill Switch Design above), and the same "revoke from Robinhood's own
-  dashboard is authoritative" note the Kite card now has.
-
-## Screen / Page / Module Inventory
-
-- `app/api/robinhood-mcp/login/route.ts` (new)
-- `app/api/robinhood-mcp/callback/route.ts` (new)
-- `app/api/robinhood-mcp/disconnect/route.ts` (new, mirrors `/api/kite/disconnect`)
-- `lib/robinhood-mcp.ts` (new — OAuth client, token storage/refresh, MCP tool-call wrapper; mirrors `lib/kite.ts`'s shape)
-- `app/api/live-account/refresh-snapshot/route.ts` (modify — swap `execClaude` for the new client)
-- `app/dashboard/settings/page.tsx` (modify — new connection card)
-
-## System Architecture
-
-### Modules
-- `lib/robinhood-mcp.ts` owns: OAuth flow helpers, vault-backed token
-  storage/refresh, and a single `queryRobinhoodAccount()` function that runs
-  the MCP-tools-via-DeepSeek loop and returns the same shape
-  `fetchAndStoreAccountSnapshot()` already parses today (equity, buying_power,
-  portfolio_value, position_count, positions[]) — so
-  `/api/live-account/refresh-snapshot` barely changes its own code, just its
-  data source.
-
-### API Contracts
-- `POST /api/robinhood-mcp/disconnect` → `{ ok: boolean, remoteInvalidated: boolean, error?: string }` (same shape as the new `/api/kite/disconnect`).
-
-### Data Models
-- `api_key_vault` — two new rows (`ROBINHOOD_MCP_ACCESS_TOKEN`,
-  `ROBINHOOD_MCP_REFRESH_TOKEN`), no schema change (reuses the existing table,
-  same as Kite).
-
-### Error Handling
-- Any MCP/OAuth failure degrades to: leave `live_account_snapshots` stale
-  (exactly today's failure mode), log the real error (unlike `execClaude`'s
-  historically-silent failures — Decision 45 already fixed
-  `fetchAndStoreAccountSnapshot()` to return `{ok, error}` instead of `void`).
+- Read-path MCP/OAuth failure → snapshot stays stale, `{ok:false, error}`
+  logged (Decision 45 contract). Never throws away the cached snapshot.
+- Write-path failure before the wire → order row `status='error'` with the
+  real message. Possible-success ambiguity → R7 reconcile flow. No silent
+  retry anywhere.
+- Account/allowlist resolution failure → abort (fail closed, R8).
 
 ## Files / Behavior That Must Not Change
 
-- `app/api/agents/trader/route.ts`'s manual-paste order-execution flow —
-  completely untouched.
-- The existing `execClaude`-based mentor/portfolio/chart-data features —
-  untouched; they remain available on the user's local machine exactly as
-  today.
-- No change to which Robinhood account can place orders (`605420660` only,
-  enforced today at the gateway level — this feature doesn't touch that gate
-  at all since it never places orders).
+- Phase 0: proposals always `pending_approval`; auto-approve never permitted.
+- Long-only enforcement for new positions; SELL only on held positions —
+  now also enforced at Gateway submit time (R6.6).
+- The existing `execClaude`-based mentor/portfolio/chart-data features.
+- `trader/route.ts`'s manual-paste flow remains available and unchanged
+  except for adding allowlist validation alongside (not replacing) the
+  account hardcode.
 
-## Acceptance Criteria
+## Acceptance Criteria (each is a hard review gate)
 
-- User can still choose the manual Claude-Code-paste route for any
-  Robinhood-related feature at any time — nothing is removed or gated behind
-  this new integration.
-- A working in-app Disconnect action exists for this integration before it
-  ships, not as a follow-up.
-- Disconnect wipes the local token even when Robinhood's revocation endpoint
-  is unreachable.
-- Settings UI states plainly that revoking from Robinhood's own dashboard is
-  the authoritative, app-independent kill switch.
-- This feature never proposes, and CLAUDE.md's push-back mandate applies if
-  anyone later suggests, using this same MCP connection for automated order
-  placement without a separately-approved architecture change.
+1. No code path derives order parameters or order status from LLM output
+   (R1). Grep-level check: `place_equity_order` appears only inside
+   `submitRobinhoodOrder()`, and that function contains no LLM call.
+2. Snapshot fetch works with zero LLM calls (R2); any summarizer failure
+   cannot block or alter stored numbers.
+3. OAuth callback rejects: missing/mismatched `state`, replayed `state`,
+   absent owner session (R4).
+4. Tokens never appear in URLs, logs, LLM prompts, or persisted `raw`
+   payloads (R5) — verified by grep + a redaction unit test.
+5. Gateway rejects: absent `env`, env not in `broker.envs`, kill-switch
+   tripped, notional over cap, price drift over threshold, sell of unheld
+   symbol, account not in allowlist (R6, R8) — each with a unit test.
+6. Ambiguous submit timeout produces `unknown_needs_reconcile`, never a
+   resubmit (R7) — unit test with a mocked timeout.
+7. `robinhood_mcp_enabled=false` blocks new MCP calls (read+write) while
+   cached snapshot stays viewable; default is false (R9).
+8. Disconnect wipes local tokens even when Robinhood is unreachable;
+   Settings names Robinhood's own dashboard as the authoritative kill
+   switch (R9).
+9. `GET /api/live-account/snapshot` requires owner auth (R10).
+10. Adding a `broker_accounts` row never makes it tradable without explicit
+    `role='trading'` + active-account selection (R8).
+11. All new tables/columns verified applied to the live DB before dependent
+    code merges (global schema rule).
 
 ## Approval
 
