@@ -2,11 +2,32 @@
 
 ## Status
 
-Architecture status: Draft (security-hardened rewrite, 2026-07-07)
-Architecture approved: No
-Approved scope: None
-Approved date: None
-Implementation allowed: No
+Architecture status: Implemented (OAuth + deterministic MCP path), 2026-07-07
+Architecture approved: Yes (user, 2026-07-07)
+Approved scope: OAuth 2.1 flow + deterministic MCP client + Gateway hardening + account allowlist. Live order execution stays behind robinhood_mcp_enabled (default OFF) + all Gateway gates + human Approve/Send.
+Approved date: 2026-07-07
+Implementation allowed: Yes
+
+## Verified OAuth metadata (Robinhood live well-known, 2026-07-07)
+
+Confirmed by fetching the endpoints directly — NOT guessed:
+- authorization_endpoint = https://robinhood.com/oauth
+- token_endpoint = https://api.robinhood.com/oauth2/token/
+- registration_endpoint = https://agent.robinhood.com/oauth/trading/register
+- scope = internal · PKCE S256 · token_endpoint_auth_method = none (public client)
+- resource = https://agent.robinhood.com/mcp/trading
+- No revocation_endpoint is published → Robinhood's own Agentic Trading
+  dashboard is the authoritative remote revoke; in-app Disconnect wipes local
+  tokens.
+
+## Remaining runtime unknown (fail-closed, not guessed)
+
+The exact `place_equity_order` / `review_equity_order` argument *schema* over
+MCP is discovered at runtime via `tools/list`; the adapter maps canonical
+order fields onto the returned inputSchema and ABORTS if a required field
+can't be confidently filled — it never sends a guessed real-money payload.
+There is no Robinhood sandbox, so the FIRST live order should be a tiny qty,
+watched, to confirm the field mapping before trusting it.
 
 ## Revision history
 

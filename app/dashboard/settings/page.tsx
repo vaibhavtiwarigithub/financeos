@@ -72,6 +72,18 @@ export default function SettingsPage() {
   const [tradingEnabledIndia, setTradingEnabledIndia] = useState(true);
   const [savingTradingEnabled, setSavingTradingEnabled] = useState(false);
 
+  // Robinhood MCP scaffolding (OAuth connect is not yet wired — blocked on
+  // Robinhood's real endpoints). Account allowlist + snapshot-source switch.
+  const [rhMcp, setRhMcp] = useState<{ connected: boolean; enabled: boolean; live_account_source: string; oauth_ready: boolean } | null>(null);
+  const [brokerAccounts, setBrokerAccounts] = useState<{ broker: string; market: string; account_number: string; label?: string; role: string }[]>([]);
+  const [activeAccountUs, setActiveAccountUs] = useState<string>("");
+  const [activeAccountIndia, setActiveAccountIndia] = useState<string>("");
+  const [rhMcpMsg, setRhMcpMsg] = useState<string>("");
+  const loadRhMcp = () => {
+    fetch("/api/robinhood-mcp/status").then(r => r.json()).then(setRhMcp).catch(() => {});
+    fetch("/api/broker-accounts").then(r => r.json()).then(d => setBrokerAccounts(d.accounts ?? [])).catch(() => {});
+  };
+
   // Risk profile state
   const [riskProfile, setRiskProfile] = useState<RiskProfileKey>("balanced");
   const [scoreThreshold, setScoreThreshold] = useState(60);
@@ -117,6 +129,19 @@ export default function SettingsPage() {
       setKiteMsg(map[k] ?? "");
       setTab("agents");
     }
+    // Post-Robinhood-MCP-OAuth status flag
+    const rh = params.get("rhmcp");
+    if (rh) {
+      const rmap: Record<string, string> = {
+        connected: "Robinhood MCP connected — token stored.",
+        register_failed: "Robinhood dynamic client registration failed.",
+        state_mismatch: "OAuth state check failed — please retry the connect.",
+        exchange_failed: "Token exchange failed — please retry.",
+        no_client: "No registered client — retry the connect.",
+      };
+      setRhMcpMsg(rmap[rh] ?? "");
+      setTab("agents");
+    }
 
     // Load current risk profile
     fetch("/api/settings/risk-profile")
@@ -136,6 +161,8 @@ export default function SettingsPage() {
         if (d.active_broker_india) setActiveBrokerIndia(d.active_broker_india);
         if (d.trading_enabled_us !== undefined && d.trading_enabled_us !== null) setTradingEnabledUs(d.trading_enabled_us);
         if (d.trading_enabled_india !== undefined && d.trading_enabled_india !== null) setTradingEnabledIndia(d.trading_enabled_india);
+        if (d.active_account_us) setActiveAccountUs(d.active_account_us);
+        if (d.active_account_india) setActiveAccountIndia(d.active_account_india);
       })
       .catch(() => {});
 
@@ -181,6 +208,41 @@ export default function SettingsPage() {
     } finally { setSavingTradingEnabled(false); }
   }
 
+  async function patchRisk(payload: Record<string, any>, okMsg: string) {
+    const res = await fetch("/api/settings/risk-profile", {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { setRhMcpMsg(d.error ?? "Save failed"); }
+    else { setRhMcpMsg(okMsg); }
+    setTimeout(() => setRhMcpMsg(""), 3000);
+    return res.ok;
+  }
+
+  async function toggleRhMcpEnabled(next: boolean) {
+    const ok = await patchRisk({ robinhood_mcp_enabled: next }, `Robinhood MCP ${next ? "enabled" : "disabled"}`);
+    if (ok) setRhMcp(m => m ? { ...m, enabled: next } : m);
+  }
+
+  async function setLiveAccountSource(src: string) {
+    const ok = await patchRisk({ live_account_source: src }, `Snapshot source: ${src === "robinhood_mcp" ? "Cloud (Robinhood MCP)" : "Local (Claude Code)"}`);
+    if (ok) setRhMcp(m => m ? { ...m, live_account_source: src } : m);
+  }
+
+  async function setActiveAccount(market: "us" | "india", account: string) {
+    if (market === "us") setActiveAccountUs(account); else setActiveAccountIndia(account);
+    await patchRisk(market === "us" ? { active_account_us: account } : { active_account_india: account }, "Active trading account saved");
+  }
+
+  async function disconnectRhMcp() {
+    if (!confirm("Wipe the stored Robinhood MCP token from this app? The authoritative kill switch is still Robinhood's own Agentic Trading dashboard.")) return;
+    const res = await fetch("/api/robinhood-mcp/disconnect", { method: "POST" });
+    const d = await res.json().catch(() => ({}));
+    setRhMcpMsg(res.ok ? "Robinhood MCP token wiped." : (d.error ?? "Disconnect failed"));
+    setTimeout(() => setRhMcpMsg(""), 3000);
+    loadRhMcp();
+  }
+
   async function applyPosture() {
     setSavingPosture(true);
     try {
@@ -216,6 +278,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (tab !== "agents") return;
     loadKite();
+    loadRhMcp();
     if (llmCosts) return; // already loaded
     setLlmLoading(true);
     fetch("/api/admin/llm-costs")
@@ -538,6 +601,88 @@ export default function SettingsPage() {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+
+          {/* Robinhood MCP (US live account + orders) — scaffolding */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginBottom: "20px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Robinhood MCP · US</div>
+            <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "16px" }}>
+              In-app Robinhood connection for the live-account snapshot and (once approved & connected) human-clicked order submission. Read-only viewing is unaffected by the auto-trading toggles above.
+            </div>
+
+            {rhMcpMsg && (
+              <div style={{ fontSize: "13px", color: rhMcpMsg.toLowerCase().includes("fail") ? T.red : T.green, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "14px" }}>{rhMcpMsg}</div>
+            )}
+
+            {/* Connection status + connect/disconnect */}
+            <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" as const, marginBottom: "18px" }}>
+              <div style={{ fontSize: "13px" }}>
+                {!rhMcp ? <span style={{ color: T.muted }}>Checking…</span>
+                  : rhMcp.connected ? <span style={{ color: T.green }}>● Connected</span>
+                  : <span style={{ color: T.muted }}>○ Not connected</span>}
+              </div>
+              <button
+                disabled={!rhMcp?.oauth_ready}
+                title={rhMcp?.oauth_ready ? "" : "OAuth connect flow not yet configured — blocked on Robinhood's OAuth endpoints"}
+                onClick={() => { if (rhMcp?.oauth_ready) window.location.href = "/api/robinhood-mcp/login"; }}
+                style={{ background: rhMcp?.oauth_ready ? T.accent : T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: rhMcp?.oauth_ready ? "#fff" : T.muted, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: rhMcp?.oauth_ready ? "pointer" : "not-allowed" }}
+              >
+                {rhMcp?.oauth_ready ? "Connect" : "Connect (coming soon)"}
+              </button>
+              {rhMcp?.connected && (
+                <button onClick={disconnectRhMcp} style={{ background: "transparent", border: `1px solid ${T.red}`, borderRadius: "8px", color: T.red, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>Disconnect</button>
+              )}
+            </div>
+
+            {/* Auto-trading enable for this integration (default off) */}
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "18px" }}>
+              <button
+                onClick={() => toggleRhMcpEnabled(!(rhMcp?.enabled))}
+                style={{ position: "relative", width: "42px", height: "24px", borderRadius: "12px", border: "none", cursor: "pointer", background: rhMcp?.enabled ? T.green : T.border }}
+              >
+                <div style={{ position: "absolute", top: "2px", left: rhMcp?.enabled ? "20px" : "2px", width: "20px", height: "20px", borderRadius: "50%", background: "#fff", transition: "left 0.15s" }} />
+              </button>
+              <div style={{ fontSize: "13px", color: rhMcp?.enabled ? T.green : T.muted }}>
+                Robinhood MCP {rhMcp?.enabled ? "enabled" : "disabled"} — dedicated kill switch (default off). When off, no new MCP calls; cached snapshot stays viewable.
+              </div>
+            </div>
+
+            {/* Snapshot source switch */}
+            <div style={{ marginBottom: "18px" }}>
+              <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "8px" }}>Live-account snapshot source</label>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" as const }}>
+                {([
+                  { key: "claude_exec", label: "Local — Windows Scheduler + Claude Code" },
+                  { key: "robinhood_mcp", label: "Cloud — Robinhood MCP" },
+                ] as const).map(s => {
+                  const active = (rhMcp?.live_account_source ?? "claude_exec") === s.key;
+                  return (
+                    <button key={s.key} onClick={() => setLiveAccountSource(s.key)}
+                      style={{ flex: "1 1 200px", padding: "10px 12px", borderRadius: "8px", cursor: "pointer", textAlign: "left" as const, fontSize: "12px", fontWeight: 600, background: active ? T.accentBg : T.surface, border: `2px solid ${active ? T.accent : T.border}`, color: active ? T.accent : T.textSub }}>
+                      {s.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Active trading account selector (allowlist) */}
+            <div style={{ marginBottom: "14px" }}>
+              <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "8px" }}>Active trading account (US)</label>
+              <select value={activeAccountUs} onChange={e => setActiveAccount("us", e.target.value)} style={sel}>
+                <option value="">— select —</option>
+                {brokerAccounts.filter(a => a.market === "us" && a.role === "trading").map(a => (
+                  <option key={a.account_number} value={a.account_number}>{a.label ?? a.account_number} ({a.account_number})</option>
+                ))}
+              </select>
+              <div style={{ fontSize: "11px", color: T.muted, marginTop: "6px" }}>
+                Only accounts you've marked <strong>trading</strong> in the allowlist appear here. View-only accounts can never be an order target.
+              </div>
+            </div>
+
+            <div style={{ fontSize: "11px", color: T.muted, borderTop: `1px solid ${T.border}`, paddingTop: "12px" }}>
+              The authoritative, app-independent kill switch is revoking access from Robinhood's own Agentic Trading dashboard — that works even if this app or its database were compromised. Order placement is deliberately human-in-the-loop: no order is ever sent without your explicit approval + Send click.
             </div>
           </div>
 

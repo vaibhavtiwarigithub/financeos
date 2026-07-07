@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Allowed hosts for localhost-only operation.
-// DNS rebinding attack arrives with Host: evil.com — this check kills it.
+// Allowed hosts. DNS rebinding attack arrives with Host: evil.com — this kills
+// it. Localhost for dev; the deployed host comes from APP_BASE_URL so the guard
+// works on Vercel instead of tempting a "just drop the guard" fix in prod.
 const ALLOWED_HOSTS = new Set(["localhost:3000", "localhost:3001", "127.0.0.1:3000"]);
 
 // Allowed origins for state-mutating requests (CSRF protection).
@@ -11,6 +12,17 @@ const ALLOWED_ORIGINS = new Set([
   "http://localhost:3001",
   "http://127.0.0.1:3000",
 ]);
+
+// Fold in the deployed origin/host from APP_BASE_URL (e.g.
+// "https://financeos.vercel.app"), if set, so live order clicks aren't 403'd.
+const APP_BASE_URL = process.env.APP_BASE_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+if (APP_BASE_URL) {
+  try {
+    const u = new URL(APP_BASE_URL);
+    ALLOWED_ORIGINS.add(u.origin);
+    ALLOWED_HOSTS.add(u.host);
+  } catch { /* malformed env — ignore, localhost still allowed */ }
+}
 
 /**
  * Call at the top of any order-placing API route.

@@ -6,10 +6,14 @@
 import { BrokerAdapter } from "@/lib/brokers/adapter-types";
 import { alpacaAdapter } from "@/lib/brokers/adapters/alpaca";
 import { kiteAdapter } from "@/lib/brokers/adapters/kite";
+import { robinhoodMcpAdapter } from "@/lib/brokers/adapters/robinhood-mcp";
 
 const ADAPTERS: Record<string, () => BrokerAdapter> = {
   alpaca: alpacaAdapter,
   kite: kiteAdapter,
+  // US live via Robinhood MCP. isConfigured() is false until the (blocked)
+  // OAuth flow stores a token, so selecting it today yields "not configured".
+  robinhood_mcp: robinhoodMcpAdapter,
 };
 
 export function getBroker(id: string): BrokerAdapter | null {

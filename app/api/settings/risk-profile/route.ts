@@ -17,7 +17,11 @@ export async function PATCH(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
-  const { risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_mode, broker, max_positions_per_sector, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_days, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india } = body;
+  const { risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_mode, broker, max_positions_per_sector, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_days, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional } = body;
+
+  if (live_account_source !== undefined && !["claude_exec", "robinhood_mcp"].includes(live_account_source)) {
+    return NextResponse.json({ error: "live_account_source must be 'claude_exec' or 'robinhood_mcp'" }, { status: 400 });
+  }
 
   if (active_broker_us !== undefined && !listBrokers("us").some(b => b.id === active_broker_us)) {
     return NextResponse.json({ error: "Invalid active_broker_us" }, { status: 400 });
@@ -118,6 +122,23 @@ export async function PATCH(req: NextRequest) {
   if (active_broker_india !== undefined) update.active_broker_india = active_broker_india;
   if (trading_enabled_us !== undefined) update.trading_enabled_us = !!trading_enabled_us;
   if (trading_enabled_india !== undefined) update.trading_enabled_india = !!trading_enabled_india;
+  if (live_account_source !== undefined) update.live_account_source = live_account_source;
+  if (robinhood_mcp_enabled !== undefined) update.robinhood_mcp_enabled = !!robinhood_mcp_enabled;
+  if (max_order_notional !== undefined) update.max_order_notional = max_order_notional === null ? null : Number(max_order_notional);
+
+  // Active trading account must be an allowlisted role='trading' account for the
+  // matching market — never free-text. Fail the request rather than point the
+  // agent at an unvetted account.
+  for (const [field, mkt] of [["active_account_us", "us"], ["active_account_india", "india"]] as const) {
+    const val = field === "active_account_us" ? active_account_us : active_account_india;
+    if (val === undefined) continue;
+    if (val === null) { update[field] = null; continue; }
+    const { data: acct } = await svc.from("broker_accounts").select("role").eq("account_number", val).eq("market", mkt).maybeSingle();
+    if (!acct || (acct as any).role !== "trading") {
+      return NextResponse.json({ error: `${field} '${val}' is not an allowlisted trading account for ${mkt}` }, { status: 400 });
+    }
+    update[field] = val;
+  }
   if (max_positions_per_sector !== undefined) update.max_positions_per_sector = max_positions_per_sector;
   if (ks_daily_loss_pct !== undefined) update.ks_daily_loss_pct = ks_daily_loss_pct;
   if (ks_drawdown_pct !== undefined) update.ks_drawdown_pct = ks_drawdown_pct;
@@ -126,7 +147,7 @@ export async function PATCH(req: NextRequest) {
 
   // Resilient write — some columns may not exist on older schemas; retry
   // stripping the optional ones so saving a profile still works.
-  const OPTIONAL_COLS = ["max_positions_per_sector", "ks_daily_loss_pct", "ks_drawdown_pct", "ks_accuracy_pct", "exit_hysteresis", "posture", "posture_expires_at", "base_risk_profile", "active_broker_us", "active_broker_india", "trading_enabled_us", "trading_enabled_india"];
+  const OPTIONAL_COLS = ["max_positions_per_sector", "ks_daily_loss_pct", "ks_drawdown_pct", "ks_accuracy_pct", "exit_hysteresis", "posture", "posture_expires_at", "base_risk_profile", "active_broker_us", "active_broker_india", "trading_enabled_us", "trading_enabled_india", "active_account_us", "active_account_india", "live_account_source", "robinhood_mcp_enabled", "max_order_notional"];
   const { error: updErr } = await svc.from("strategy_config").update(update).eq("id", existing.id);
   if (updErr) {
     const rest = { ...update };
@@ -148,7 +169,7 @@ export async function GET() {
   const svc = createServiceClient();
   const { data } = await svc
     .from("strategy_config")
-    .select("risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_expires_at, base_risk_profile, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india")
+    .select("risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_expires_at, base_risk_profile, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional")
     .single();
   return NextResponse.json(data ?? {});
 }

@@ -20,6 +20,21 @@
 
 ---
 
+## ✅ Session 2026-07-07 (cont'd) — Robinhood MCP feature: unblocked parts (OAuth still pending)
+
+> User approved building the parts of the Robinhood MCP feature that DON'T depend on Robinhood's real OAuth endpoints (which we don't have yet). The OAuth /login+/callback + live token acquisition + SDK transport stay stubbed until the user provides the endpoints/scopes. No order can reach Robinhood today: robinhood_mcp_enabled defaults off, isConfigured() is false with no token, and submitRobinhoodOrder() returns not-connected.
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Migration 093 — scaffolding | Claude | 2026-07-07 | `broker_accounts` allowlist (service-role-only, seeded with today's two hardcoded RH accounts: 605420660=trading, 965848641=view_only); `strategy_config.active_account_us/india`, `live_account_source` (default claude_exec), `robinhood_mcp_enabled` (default FALSE), `max_order_notional`. |
+| Migration 094 — dup-submit guard | Claude | 2026-07-07 | Partial unique index on broker_orders(proposal_id) WHERE active — hard backstop against the concurrent-double-click race. |
+| Execution Gateway hardening (R6) | Claude | 2026-07-07 | app/api/broker/orders/route.ts now: requireOwner + guardOrderRequest (request-guards extended to read APP_BASE_URL so it works on Vercel), env must be explicit (no silent paper default), both-direction broker.envs check, checkKillSwitches at submit, fresh-quote notional cap (max_order_notional or 15% of live equity), price-drift re-check vs approval, sell-only-if-held, symbol/qty validation, fail-closed account-allowlist resolution. Benefits the existing Alpaca/Kite path too. |
+| robinhood_mcp broker adapter (deterministic, stubbed) | Claude | 2026-07-07 | lib/robinhood-mcp.ts + lib/brokers/adapters/robinhood-mcp.ts + registry entry. Write path is a direct typed callTool sketch (R1: NO LLM ever) — currently returns not-connected. isConfigured()=hasRobinhoodToken() (false until OAuth stores a token). disconnectRobinhoodMcp() wipes locally regardless of remote reachability. Fail-closed account allowlist re-checked inside the adapter (last line before the wire). |
+| Settings scaffolding | Claude | 2026-07-07 | Robinhood MCP card (status, Connect [disabled until oauth_ready], Disconnect, robinhood_mcp_enabled toggle, snapshot-source switch, US active-trading-account selector from the allowlist), + supporting owner-gated routes: /api/robinhood-mcp/status, /api/robinhood-mcp/disconnect, /api/broker-accounts. risk-profile PATCH/GET extended with the new fields (active_account_* validated against the allowlist server-side). |
+| OAuth flow — UNBLOCKED & built | Claude | 2026-07-07 | User provided (and I verified against Robinhood's live well-known metadata) the real endpoints: auth https://robinhood.com/oauth, token https://api.robinhood.com/oauth2/token/, register https://agent.robinhood.com/oauth/trading/register, scope=internal, PKCE S256, public client (auth_method none), resource=…/mcp/trading. Built: dynamic client registration (RFC 7591), /api/robinhood-mcp/login (owner-gated, PKCE + HMAC-signed HttpOnly state cookie), /api/robinhood-mcp/callback (state verify + code exchange + vault token storage), refresh with expiry check. lib/robinhood-mcp.ts rewritten from stub to full OAuth + a deterministic MCP JSON-RPC client (initialize → tools/list → review_equity_order → place_equity_order), NO LLM in the write path. Arg schema discovered at runtime via tools/list; FAILS CLOSED if a required order field can't be mapped (no sandbox exists, so no guessing a real order). refresh-snapshot route now branches on live_account_source (cloud MCP writes the snapshot directly via service client, no loopback CRON_SECRET hop). oauth_ready=true; Connect button live. Still gated: robinhood_mcp_enabled default OFF + all Gateway checks + human Approve/Send. |
+
+---
+
 ## ✅ Session 2026-07-07 — Security audit fixes + agent-system bug sweep
 
 > Two parallel audits (security review of the Robinhood MCP feature vs. real code; agent-system + API-budget audit). Feature stays Draft/unapproved; these are the standalone bugs/vulnerabilities the audits surfaced in shipped code.
