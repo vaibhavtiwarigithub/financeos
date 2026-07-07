@@ -14,7 +14,7 @@ const T = {
 
 type Alert = {
   id: string;
-  severity: "info" | "warn" | "error" | "success";
+  severity: "info" | "warn" | "error" | "critical" | "success";
   category: string;
   title: string;
   detail?: string;
@@ -22,10 +22,11 @@ type Alert = {
 };
 
 const SEV: Record<string, { color: string; dot: string; bg: string }> = {
-  error:   { color: T.red,    dot: T.red,    bg: "#3B000033" },
-  warn:    { color: T.yellow, dot: T.yellow, bg: "#2D1B0033" },
-  info:    { color: T.blue,   dot: T.blue,   bg: "#0F1A2E33" },
-  success: { color: T.green,  dot: T.green,  bg: "#052E1633" },
+  critical: { color: T.red,    dot: T.red,    bg: "#3B000055" },
+  error:    { color: T.red,    dot: T.red,    bg: "#3B000033" },
+  warn:     { color: T.yellow, dot: T.yellow, bg: "#2D1B0033" },
+  info:     { color: T.blue,   dot: T.blue,   bg: "#0F1A2E33" },
+  success:  { color: T.green,  dot: T.green,  bg: "#052E1633" },
 };
 
 // â"€â"€ Nav sections â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -304,7 +305,8 @@ export default function DashboardShell({ profile, children }: { profile: Profile
   const isAdmin = ["admin", "superadmin"].includes(profile.role);
   const unreadCount = alerts.length;
 
-  const worstSeverity = alerts.find(a => a.severity === "error") ? "error"
+  const worstSeverity = alerts.find(a => a.severity === "critical") ? "critical"
+    : alerts.find(a => a.severity === "error") ? "error"
     : alerts.find(a => a.severity === "warn") ? "warn"
     : alerts.find(a => a.severity === "info") ? "info"
     : null;
@@ -510,7 +512,8 @@ export default function DashboardShell({ profile, children }: { profile: Profile
               {section.items.map(item => {
                 const active = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
                 const catAlerts = item.alertCat ? alerts.filter(a => a.category === item.alertCat) : [];
-                const catWorst = catAlerts.find(a => a.severity === "error") ? "error"
+                const catWorst = catAlerts.find(a => a.severity === "critical") ? "critical"
+                  : catAlerts.find(a => a.severity === "error") ? "error"
                   : catAlerts.find(a => a.severity === "warn") ? "warn"
                   : catAlerts.length > 0 ? "info" : null;
                 const catDotColor = catWorst ? SEV[catWorst].dot : null;

@@ -1,5 +1,6 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 // Robinhood MCP client — OAuth 2.1 (PKCE, public client) + a deterministic
 // JSON-RPC MCP client. Endpoints below are VERIFIED against Robinhood's live
@@ -210,15 +211,28 @@ async function refreshAccessToken(svc: any): Promise<{ ok: boolean; error?: stri
 
 async function getValidAccessToken(svc: any): Promise<{ ok: boolean; token?: string; error?: string }> {
   const token = await vaultGet(svc, VK.access);
+  // No token at all = simply not connected (not a fault) — don't alert.
   if (!token) return { ok: false, error: "not connected" };
   const expiry = await vaultGet(svc, VK.expiry);
   const expMs = expiry ? Date.parse(expiry) : 0;
   if (expMs && Date.now() > expMs - 60_000) {
     const r = await refreshAccessToken(svc);
-    if (!r.ok) return { ok: false, error: r.error };
+    if (!r.ok) {
+      // A previously-working connection whose refresh broke IS a fault — live
+      // trading and the account snapshot silently stop working until reconnect.
+      await reportIssue({
+        issueKey: "broker-token:robinhood",
+        severity: "critical", category: "broker",
+        title: "Robinhood connection expired — reconnect required",
+        detail: `Token refresh failed: ${r.error}. Live Robinhood orders and the account snapshot will fail until you reconnect in Settings → Robinhood.`,
+      }, svc);
+      return { ok: false, error: r.error };
+    }
     const fresh = await vaultGet(svc, VK.access);
-    return fresh ? { ok: true, token: fresh } : { ok: false, error: "no token after refresh" };
+    if (fresh) { await resolveIssue("broker-token:robinhood", svc); return { ok: true, token: fresh }; }
+    return { ok: false, error: "no token after refresh" };
   }
+  await resolveIssue("broker-token:robinhood", svc);
   return { ok: true, token };
 }
 

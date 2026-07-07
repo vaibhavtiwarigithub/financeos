@@ -2,8 +2,47 @@
 // Langfuse observability: enabled when LANGFUSE_SECRET_KEY + LANGFUSE_PUBLIC_KEY are set in .env.local.
 // No-ops gracefully if keys are absent — zero runtime impact.
 import type Anthropic from "@anthropic-ai/sdk"
+import { reportIssue } from "@/lib/system-health"
 
 export type LLMTask = "research" | "chat" | "summarize" | "trade" | "evaluate" | "thesis" | "screen" | "optimize"
+
+// ── Tier aliases (System Health / Model Resilience, Phase 3) ──────────────────
+// A ROLE ("fast" / "reasoning" per provider) → the current concrete model. This
+// is the ONE place to update when a provider renames or deprecates a model, so a
+// rename is a one-line change here instead of editing every agent_config row.
+// callLLM/runAgentLoop resolve a tier alias to its concrete model, so a caller
+// (or an agent_config row) may store either a concrete id OR a tier name.
+export const TIER_MODELS: Record<string, string> = {
+  "fast":         "deepseek-v4-flash",
+  "reasoning":    "deepseek-v4-pro",
+  "claude-fast":  "claude-haiku-4-5-20251001",
+  "claude-smart": "claude-sonnet-4-6",
+}
+
+function resolveModel(model: string): string {
+  return TIER_MODELS[model] ?? model
+}
+
+// Same-tier sibling to fall back to when a model is deprecated/unavailable. The
+// fallback is ALWAYS same-tier (comparable capability) — never a blind jump to
+// "latest" — and is loudly, persistently flagged via the System Health funnel so
+// a human reviews the swap. Keeps the flow from hard-breaking on a rename.
+const SAME_TIER_FALLBACK: Record<string, string> = {
+  "deepseek-chat":             "deepseek-v4-flash",
+  "deepseek-reasoner":         "deepseek-v4-pro",
+  "deepseek-v4-flash":         "deepseek-v4-pro",
+  "deepseek-v4-pro":           "deepseek-v4-flash",
+  "claude-sonnet-4-6":         "claude-haiku-4-5-20251001",
+  "claude-haiku-4-5-20251001": "claude-sonnet-4-6",
+  "claude-opus-4-8":           "claude-sonnet-4-6",
+}
+
+// Does this error mean "the model doesn't exist / is deprecated" (vs a transient
+// network/rate error we should NOT paper over with a different model)?
+function isModelUnavailable(err: unknown): boolean {
+  const s = String((err as any)?.message ?? err).toLowerCase()
+  return /model.*(not exist|not found|does not exist|deprecat|invalid)|invalid_model|not_found_error|unknown model|\b404\b|\b400\b/.test(s)
+}
 
 export interface LLMCallOpts {
   task: LLMTask
@@ -65,6 +104,30 @@ const GROQ_MODELS = new Set([
   "deepseek-r1-distill-llama-70b",
 ])
 
+// Price a model, falling back to its same-tier sibling's price when a new model
+// has no PRICING entry yet — so cost logging never silently records $0 for a real
+// call. Flags the gap once (dedup'd) so the price gets verified. Never throws.
+function priceFor(model: string): [number, number] {
+  if (PRICING[model]) return PRICING[model]
+  const sib = SAME_TIER_FALLBACK[model]
+  if (sib && PRICING[sib]) {
+    reportIssue({
+      issueKey: `pricing-unverified:${model}`,
+      severity: "info", category: "models",
+      title: `No pricing for ${model} — logging cost at ${sib}'s rate`,
+      detail: `${model} has no PRICING entry, so llm_call_log is using ${sib}'s rate as an estimate. Add ${model} to PRICING in lib/llm-router.ts to make cost exact.`,
+    }).catch(() => {})
+    return PRICING[sib]
+  }
+  reportIssue({
+    issueKey: `pricing-unverified:${model}`,
+    severity: "info", category: "models",
+    title: `No pricing for ${model} — cost logged as $0`,
+    detail: `${model} has no PRICING entry and no known sibling, so its cost is logged as $0. Add it to PRICING in lib/llm-router.ts.`,
+  }).catch(() => {})
+  return [0, 0]
+}
+
 // Lazy Langfuse singleton — created once per process, reused across calls.
 // Returns null if keys not configured (graceful no-op).
 let _langfuse: unknown = null
@@ -81,8 +144,16 @@ function getLangfuse() {
   return _langfuse as any
 }
 
+async function dispatchProvider(model: string, opts: LLMCallOpts): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+  if (model.startsWith("claude")) return callClaude(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
+  if (model.startsWith("deepseek")) return callDeepSeek(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
+  if (GROQ_MODELS.has(model)) return callGroq(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
+  throw new Error(`Unknown model: ${model}`)
+}
+
 export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
-  const model = opts.model ?? MODEL_ROUTING[opts.task] ?? "claude-sonnet-4-6"
+  // Resolve a tier alias ("fast"/"reasoning") to its concrete model.
+  let model = resolveModel(opts.model ?? MODEL_ROUTING[opts.task] ?? "claude-sonnet-4-6")
   const start = Date.now()
   let tokensIn = 0, tokensOut = 0, text = "", success = true, errorMsg = ""
 
@@ -101,24 +172,30 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
   })
 
   try {
-    if (model.startsWith("claude")) {
-      const result = await callClaude(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
-      text = result.text
-      tokensIn = result.tokensIn
-      tokensOut = result.tokensOut
-    } else if (model.startsWith("deepseek")) {
-      const result = await callDeepSeek(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
-      text = result.text
-      tokensIn = result.tokensIn
-      tokensOut = result.tokensOut
-    } else if (GROQ_MODELS.has(model)) {
-      const result = await callGroq(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
-      text = result.text
-      tokensIn = result.tokensIn
-      tokensOut = result.tokensOut
-    } else {
-      throw new Error(`Unknown model: ${model}`)
+    let result
+    try {
+      result = await dispatchProvider(model, opts)
+    } catch (err) {
+      // Graceful, LOUD fallback: a deprecated/unknown model swaps to its
+      // same-tier sibling and raises a persistent System Health issue — the run
+      // completes instead of hard-failing, and the swap is flagged for review.
+      const fb = SAME_TIER_FALLBACK[model]
+      if (isModelUnavailable(err) && fb && fb !== model) {
+        await reportIssue({
+          issueKey: `model-fallback:${model}`,
+          severity: "warn", category: "models",
+          title: `${model} unavailable — ran ${opts.agentLabel ?? opts.task} on ${fb} instead`,
+          detail: `${model} failed as unavailable/deprecated (${String(err).slice(0, 160)}). Fell back to the same-tier model ${fb}. Update the model assignment (Agents → Model Config) or the TIER_MODELS map in lib/llm-router.ts.`,
+        })
+        model = fb
+        result = await dispatchProvider(fb, opts)
+      } else {
+        throw err
+      }
     }
+    text = result.text
+    tokensIn = result.tokensIn
+    tokensOut = result.tokensOut
   } catch (err) {
     success = false
     errorMsg = String(err)
@@ -126,7 +203,7 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
     throw err
   } finally {
     const durationMs = Date.now() - start
-    const [inRate, outRate] = PRICING[model] ?? [0, 0]
+    const [inRate, outRate] = priceFor(model)
     const costUsd = (tokensIn / 1_000_000 * inRate) + (tokensOut / 1_000_000 * outRate)
     if (success) {
       generation?.end({
@@ -152,7 +229,7 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
   }
 
   const durationMs = Date.now() - start
-  const [inRate, outRate] = PRICING[model] ?? [0, 0]
+  const [inRate, outRate] = priceFor(model)
   const costUsd = (tokensIn / 1_000_000 * inRate) + (tokensOut / 1_000_000 * outRate)
   return { text, model, tokensIn, tokensOut, costUsd, durationMs }
 }
@@ -310,7 +387,7 @@ export async function runAgentLoop(opts: {
   runId?: string
   symbol?: string
 }): Promise<AgentLoopResult> {
-  const model = opts.model ?? "deepseek-v4-flash"
+  const model = resolveModel(opts.model ?? "deepseek-v4-flash")
   const maxIter = opts.maxIterations ?? 12
   const start = Date.now()
   let result: AgentLoopResult | undefined
@@ -348,7 +425,7 @@ export async function runAgentLoop(opts: {
     // Without this, tool-loop agents (learner/research/mentor/…) are invisible
     // to /dashboard/admin/llm-history and total cost is undercounted.
     const durationMs = Date.now() - start
-    const [inRate, outRate] = PRICING[model] ?? [0, 0]
+    const [inRate, outRate] = priceFor(model)
     const tIn = result?.tokensIn ?? 0
     const tOut = result?.tokensOut ?? 0
     const costUsd = (tIn / 1_000_000 * inRate) + (tOut / 1_000_000 * outRate)

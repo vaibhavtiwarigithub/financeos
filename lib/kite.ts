@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { createServiceClient } from "@/lib/supabase/service";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 // Zerodha Kite Connect — auth + session helpers.
 //
@@ -122,8 +123,20 @@ export async function disconnectKite(svc?: any): Promise<{ ok: boolean; remoteIn
 async function authHeaders(s: any): Promise<{ ok: true; headers: Record<string, string> } | { ok: false; error: string }> {
   const { apiKey } = await getKiteCreds(s);
   const { token, fresh } = await getAccessToken(s);
+  // No creds/token = simply not connected (not a fault) — don't alert.
   if (!apiKey || !token) return { ok: false, error: "Kite not connected — log in via /api/kite/login" };
-  if (!fresh) return { ok: false, error: "Kite token expired (daily) — re-login via /api/kite/login" };
+  if (!fresh) {
+    // A connected Kite session whose daily token expired IS a fault — India
+    // holdings + live orders stop working until the user re-logs in.
+    await reportIssue({
+      issueKey: "broker-token:kite",
+      severity: "warn", category: "broker",
+      title: "Kite session expired (daily) — re-login required",
+      detail: "Zerodha access tokens expire every morning. India holdings and live orders will fail until you re-login via Settings → Kite.",
+    }, s);
+    return { ok: false, error: "Kite token expired (daily) — re-login via /api/kite/login" };
+  }
+  await resolveIssue("broker-token:kite", s);
   return { ok: true, headers: { "X-Kite-Version": "3", Authorization: `token ${apiKey}:${token}` } };
 }
 

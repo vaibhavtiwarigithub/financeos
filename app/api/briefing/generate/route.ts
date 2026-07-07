@@ -49,6 +49,7 @@ interface BriefingData {
   learnerHypCount?: number;
   mentor?: { grade: number | null; focus: string[]; lesson: string | null; milestone: string | null } | null;
   outlook?: { market: string | null; positions: string | null; future: string | null } | null;
+  openIssues?: { severity: string; title: string; detail: string | null }[];
 }
 
 function regimeTone(regime: string): string {
@@ -142,6 +143,17 @@ function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string;
 
       <!-- Editor's note -->
       <div style="background:${E.surface};border:1px solid ${E.border};border-radius:10px;padding:14px 16px;font-size:13.5px;color:${E.text};line-height:1.6">${d.editorNote}</div>
+
+      <!-- Open Issues (System Health funnel) — persists until resolved -->
+      ${d.openIssues && d.openIssues.length ? `${bandHeader(`⚠ Open Issues (${d.openIssues.length})`)}
+      ${d.openIssues.map(i => {
+        const c = i.severity === "critical" || i.severity === "error" ? E.red : i.severity === "warn" ? E.amber : E.blue;
+        return `<div style="background:${c}0D;border:1px solid ${c}44;border-left:3px solid ${c};border-radius:8px;padding:10px 13px;margin-bottom:7px">
+          <div style="font-size:12.5px;font-weight:700;color:${E.text}">${chip(i.severity.toUpperCase(), c)} ${i.title}</div>
+          ${i.detail ? `<div style="font-size:11.5px;color:${E.sub};line-height:1.5;margin-top:5px">${i.detail}</div>` : ""}
+        </div>`;
+      }).join("")}
+      <div style="font-size:11px;color:${E.muted};margin-top:2px">These stay here every day until fixed. <a href="${baseUrl}/dashboard" style="color:${E.accent};text-decoration:none">Resolve on the dashboard »</a></div>` : ""}
 
       <!-- Health + P&L hero -->
       ${bandHeader("Portfolio Health")}
@@ -666,6 +678,23 @@ No invented events. Ground every claim in the data above.`;
     const grab = (k: string) => { const m = t.match(new RegExp(k + ":\\s*([\\s\\S]*?)(?=\\n(?:MARKET|POSITIONS|FUTURE):|$)", "i")); return m ? m[1].trim() : null; };
     (briefingData as any).outlook = { market: grab("MARKET"), positions: grab("POSITIONS"), future: grab("FUTURE") };
   } catch { (briefingData as any).outlook = null; }
+
+  // Open Issues (System Health funnel) — every unresolved fault, severity-ranked,
+  // so they surface in the brief every day until fixed. Not market-scoped: a model
+  // deprecation or broker-token expiry matters to both the US and India briefings.
+  try {
+    const nowIso = new Date().toISOString();
+    const { data: openAlerts } = await svc
+      .from("agent_alerts")
+      .select("severity, title, detail")
+      .eq("resolved", false)
+      .or(`auto_expire_at.is.null,auto_expire_at.gt.${nowIso}`)
+      .limit(20);
+    const rank: Record<string, number> = { critical: 4, error: 3, warn: 2, info: 1 };
+    (briefingData as any).openIssues = (openAlerts ?? [])
+      .map((a: any) => ({ severity: String(a.severity ?? "info"), title: a.title, detail: a.detail ?? null }))
+      .sort((a: any, b: any) => (rank[b.severity] ?? 0) - (rank[a.severity] ?? 0));
+  } catch { (briefingData as any).openIssues = []; }
 
   // Send email — briefing IS the email, so await and report the real result.
   const emailResult = await sendBriefingEmail(svc, briefingData);

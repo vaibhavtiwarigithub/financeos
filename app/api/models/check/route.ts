@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -103,19 +104,47 @@ export async function POST(req: NextRequest) {
     findings, providers_ok: { anthropic: anthropic.ok, groq: groq.ok, deepseek: deepseek.ok },
   } as any);
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-  if (findings.length > 0) {
-    const deprecated = findings.filter(f => f.kind === "deprecated");
-    await fetch(`${appUrl}/api/alerts`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        severity: deprecated.length > 0 ? "warn" : "info",
-        category: "models",
-        title: deprecated.length > 0 ? `Model check: ${deprecated.length} in-use model(s) may be deprecated` : `Model check: ${findings.length} newer model(s) available`,
-        detail: findings.map(f => `${f.agent}: ${f.detail}`).join(" · "),
-        auto_expire_at: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
-      }),
-    }).catch(() => {});
+  // Funnel into System Health. Deprecated models are one PERSISTENT open issue
+  // per (agent, model). They self-resolve the moment the agent is reassigned or
+  // the model reappears — but ONLY for providers we actually reached this run, so
+  // a transient provider outage never mass-resolves real deprecations.
+  const reachable = new Set(
+    Object.entries(providers).filter(([, r]) => (r as ProviderResult)?.ok).map(([p]) => p),
+  );
+  const deprecatedActive = findings
+    .filter(f => f.kind === "deprecated" && reachable.has(providerOf(f.assigned)))
+    .map(f => ({
+      issueKey: `model-deprecated:${f.agent}:${f.assigned}`,
+      severity: "critical" as const,
+      category: "models",
+      title: `${f.agent} points at a deprecated model (${f.assigned})`,
+      detail: `${f.detail} Reassign in Agents → Model Config. Until then the agent falls back to a same-tier model (see llm-router).`,
+    }));
+  const activeKeys = new Set(deprecatedActive.map(a => a.issueKey));
+  for (const a of deprecatedActive) await reportIssue(a, svc);
+  // Resolve stale deprecation alerts — but skip keys whose provider was
+  // unreachable this run (we can't prove they're fixed).
+  const { data: openDep } = await svc.from("agent_alerts")
+    .select("issue_key").eq("resolved", false).like("issue_key", "model-deprecated:%");
+  for (const row of openDep ?? []) {
+    const k = (row as any).issue_key as string;
+    if (!k || activeKeys.has(k)) continue;
+    const model = k.split(":").slice(2).join(":"); // model-deprecated:<agent>:<model>
+    if (reachable.has(providerOf(model))) await resolveIssue(k, svc);
+  }
+
+  // Newer-available is advisory, not a fault — one info issue, auto-expiring.
+  const newer = findings.filter(f => f.kind === "newer_available");
+  if (newer.length > 0) {
+    await reportIssue({
+      issueKey: "model-newer-available",
+      severity: "info", category: "models",
+      title: `${newer.length} newer model(s) available for review`,
+      detail: newer.map(f => `${f.agent}: ${f.detail}`).join(" · "),
+      autoExpireAt: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
+    }, svc);
+  } else {
+    await resolveIssue("model-newer-available", svc);
   }
 
   return NextResponse.json({ success: true, findings, providers_ok: { anthropic: anthropic.ok, groq: groq.ok, deepseek: deepseek.ok } });

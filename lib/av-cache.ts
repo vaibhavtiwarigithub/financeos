@@ -1,4 +1,12 @@
 import { createServiceClient } from "@/lib/supabase/service";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
+
+// Start of the next UTC day — an AV-budget alert self-clears when the quota resets.
+function nextUtcMidnight(): string {
+  const d = new Date();
+  d.setUTCHours(24, 0, 0, 0);
+  return d.toISOString();
+}
 
 // Alpha Vantage is 25 calls/day (free). This wrapper makes every (function,symbol)
 // cost at MOST one real AV call per day, shares that result across all features,
@@ -54,6 +62,15 @@ export async function avCachedFetch(cacheKey: string, url: string, timeoutMs = 6
     // quota does not get silently exhausted.)
     if (error) return lastCached(svc, cacheKey);
     if (typeof count === "number" && count > AV_DAILY_BUDGET) {
+      // Quota spent for the day — surface it so the user knows scoring inputs
+      // are running on cached (staler) data. Self-clears at the next UTC reset.
+      await reportIssue({
+        issueKey: "av-budget-exhausted",
+        severity: "warn", category: "data",
+        title: "Alpha Vantage daily budget exhausted",
+        detail: `Used ${count}/${AV_DAILY_BUDGET} AV calls today. Further fetches serve cached payloads until the quota resets (00:00 UTC). Scoring inputs may be staler than usual.`,
+        autoExpireAt: nextUtcMidnight(),
+      }, svc);
       return lastCached(svc, cacheKey);
     }
   } catch { return lastCached(svc, cacheKey); }

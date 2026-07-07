@@ -3,6 +3,7 @@
 // Returns { safe: true } or { safe: false, reason, tripped }
 
 import { DEFAULT_KILL_SWITCH_DIALS } from "@/lib/risk-profiles";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 export interface KillSwitchResult {
   safe: boolean;
@@ -63,7 +64,7 @@ export async function checkKillSwitches(supabase: any, market: string = "us"): P
   if (yesterday) {
     const dailyLossPct = ((nav - yesterday.nav) / yesterday.nav) * 100;
     if (dailyLossPct < dailyLossLimit) {
-      await disableTrading(supabase, `Daily loss ${dailyLossPct.toFixed(1)}% exceeds ${dailyLossLimit}% threshold`);
+      await disableTrading(supabase, market, `Daily loss ${dailyLossPct.toFixed(1)}% exceeds ${dailyLossLimit}% threshold`);
       return { safe: false, tripped: "daily_loss", reason: `Daily loss ${dailyLossPct.toFixed(1)}% > ${dailyLossLimit}%` };
     }
   }
@@ -73,7 +74,7 @@ export async function checkKillSwitches(supabase: any, market: string = "us"): P
     const wins = closedTrades.filter((t: any) => t.outcome === "win").length;
     const accuracy = (wins / closedTrades.length) * 100;
     if (accuracy < accuracyLimit) {
-      await disableTrading(supabase, `30-day accuracy ${accuracy.toFixed(0)}% below ${accuracyLimit}% threshold`);
+      await disableTrading(supabase, market, `30-day accuracy ${accuracy.toFixed(0)}% below ${accuracyLimit}% threshold`);
       return { safe: false, tripped: "accuracy", reason: `30d accuracy ${accuracy.toFixed(0)}% < ${accuracyLimit}% (${closedTrades.length} trades)` };
     }
   }
@@ -84,18 +85,29 @@ export async function checkKillSwitches(supabase: any, market: string = "us"): P
     const peak = Math.max(...navHistory, startNav); // per-market starting NAV
     const drawdownPct = ((peak - nav) / peak) * 100;
     if (drawdownPct > drawdownLimit) {
-      await disableTrading(supabase, `Drawdown ${drawdownPct.toFixed(1)}% exceeds ${drawdownLimit}% from peak $${peak.toFixed(0)}`);
+      await disableTrading(supabase, market, `Drawdown ${drawdownPct.toFixed(1)}% exceeds ${drawdownLimit}% from peak $${peak.toFixed(0)}`);
       return { safe: false, tripped: "drawdown", reason: `Drawdown ${drawdownPct.toFixed(1)}% > ${drawdownLimit}% from peak` };
     }
   }
 
+  // All clear this market — auto-resolve any open kill-switch alert. (Note: the
+  // switch that auto-disabled trading is NOT auto-re-enabled here; a human
+  // re-enables in Settings. This only clears the health alert once the metric
+  // recovers, so a stale trip doesn't linger on the dashboard.)
+  await resolveIssue(`killswitch:${market}`);
   return { safe: true };
 }
 
-async function disableTrading(supabase: any, reason: string) {
-  console.error(`[kill-switch] TRADING DISABLED: ${reason}`);
+async function disableTrading(supabase: any, market: string, reason: string) {
+  console.error(`[kill-switch] TRADING DISABLED (${market}): ${reason}`);
   await supabase
     .from("strategy_config")
     .update({ trading_enabled: false, notes: `Auto-disabled: ${reason}` })
     .not("id", "is", null);
+  await reportIssue({
+    issueKey: `killswitch:${market}`,
+    severity: "critical", category: "trading",
+    title: `Kill switch tripped (${market.toUpperCase()}) — trading auto-disabled`,
+    detail: `${reason}. Trading is halted for ${market.toUpperCase()} until you review and re-enable it in Settings → Trading.`,
+  });
 }

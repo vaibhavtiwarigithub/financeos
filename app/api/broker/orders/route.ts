@@ -7,6 +7,7 @@ import { guardOrderRequest } from "@/lib/request-guards";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { getQuote } from "@/lib/data/quotes";
 import { robinhoodHeldQty } from "@/lib/robinhood-mcp";
+import { reportIssue } from "@/lib/system-health";
 
 // Adapter id → the brokerage key used in the broker_accounts allowlist.
 function allowlistBrokerKey(brokerId: string): string {
@@ -219,6 +220,15 @@ export async function POST(req: NextRequest) {
       // resubmitted until reconciled via get_equity_orders.
       if (result.needsReconcile) {
         await supabase.from("broker_orders").update({ status: "unknown_needs_reconcile", error: result.error, raw_last_state: result.raw ?? null }).eq("id", orderId);
+        // A real order MAY have been placed at the broker but we can't confirm
+        // its id — persist a CRITICAL open issue until a human reconciles it
+        // (resolved by the order-sync loop / manual reconcile). Money is at risk.
+        await reportIssue({
+          issueKey: `order-needs-reconcile:${orderId}`,
+          severity: "critical", category: "trading",
+          title: `Order #${orderId} needs reconciliation (${side} ${qty} ${symbol})`,
+          detail: `A live ${broker.id} order may have been placed but its id couldn't be confirmed: ${result.error}. Check the broker and reconcile broker_orders #${orderId} before re-submitting proposal ${proposal_id}.`,
+        }, supabase);
         return NextResponse.json({ error: result.error, needs_reconcile: true }, { status: 202 });
       }
       await supabase.from("broker_orders").update({ status: "error", error: result.error }).eq("id", orderId);

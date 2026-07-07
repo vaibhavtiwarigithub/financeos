@@ -4,6 +4,7 @@ import WatchlistPanel from "@/components/dashboard/WatchlistPanel";
 import BriefingSection from "@/components/dashboard/BriefingSection";
 import GoalCard from "@/components/dashboard/GoalCard";
 import AgentCalendar from "@/components/dashboard/AgentCalendar";
+import SystemHealthCard from "@/components/dashboard/SystemHealthCard";
 import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
 
 const T = {
@@ -226,6 +227,8 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
     <div style={{ padding: "clamp(12px, 4vw, 28px)", color: T.text, fontFamily: "'Inter', sans-serif" }}>
 
       <AgentCalendar />
+
+      <SystemHealthCard />
 
       {/* Hero — two-section: paper left, live right */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px", marginBottom: "20px" }}>
