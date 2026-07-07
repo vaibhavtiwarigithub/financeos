@@ -323,7 +323,7 @@ export default function AgentComparisonCard() {
       )}
 
       {!loading && !error && (
-        <div style={{ display: "flex", gap: "12px" }}>
+        <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
           {stats.map((s) => (
             <AgentColumn key={s.label} stat={s} />
           ))}

@@ -380,7 +380,7 @@ function OptionsTab({ symbol }: { symbol: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       {/* Summary row */}
-      <div style={{ display: "flex", gap: "16px" }}>
+      <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
         {putCallRatio != null && (
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 18px" }}>
             <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Put/Call Ratio</div>
@@ -412,7 +412,7 @@ function OptionsTab({ symbol }: { symbol: string }) {
       </div>
 
       {/* Calls + Puts tables */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "16px" }}>
         {[
           { label: "Calls", rows: data.calls ?? [], color: T.green },
           { label: "Puts", rows: data.puts ?? [], color: T.red },
@@ -549,9 +549,9 @@ export default function SymbolDetailPage({
   });
 
   return (
-    <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "24px 28px", display: "flex", flexDirection: "column", gap: "20px" }}>
+    <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "clamp(12px, 4vw, 24px) clamp(12px, 4vw, 28px)", display: "flex", flexDirection: "column", gap: "20px" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", gap: "16px" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "16px", flexWrap: "wrap" }}>
         <button
           onClick={() => router.back()}
           style={{ background: T.card, border: `1px solid ${T.border}`, color: T.textSub, padding: "8px 14px", borderRadius: "8px", cursor: "pointer", fontSize: "12px", marginTop: "4px" }}
@@ -579,7 +579,7 @@ export default function SymbolDetailPage({
       </div>
 
       {/* Tab bar */}
-      <div style={{ display: "flex", gap: "4px", borderBottom: `1px solid ${T.border}`, paddingBottom: "4px" }}>
+      <div style={{ display: "flex", gap: "4px", borderBottom: `1px solid ${T.border}`, paddingBottom: "4px", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         <button style={tabStyle(tab === "chart")} onClick={() => setTab("chart")}>Chart</button>
         <button style={tabStyle(tab === "deepdive")} onClick={() => setTab("deepdive")}>🔬 Deep Dive</button>
         <button style={tabStyle(tab === "signals")} onClick={() => setTab("signals")}>

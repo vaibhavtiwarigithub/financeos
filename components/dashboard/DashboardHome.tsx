@@ -223,12 +223,12 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
   const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 
   return (
-    <div style={{ padding: "28px", color: T.text, fontFamily: "'Inter', sans-serif" }}>
+    <div style={{ padding: "clamp(12px, 4vw, 28px)", color: T.text, fontFamily: "'Inter', sans-serif" }}>
 
       <AgentCalendar />
 
       {/* Hero — two-section: paper left, live right */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "12px", marginBottom: "20px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px", marginBottom: "20px" }}>
 
         {/* Paper portfolio */}
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "24px 28px", position: "relative", overflow: "hidden" }}>
@@ -263,7 +263,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
         </div>
 
         {/* Live accounts panel */}
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "20px 22px", minWidth: "220px", display: "flex", flexDirection: "column", gap: "10px" }}>
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "20px 22px", minWidth: "220px", maxWidth: "100%", display: "flex", flexDirection: "column", gap: "10px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
             <div style={{ fontSize: "10px", fontWeight: 800, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase" }}>Live Robinhood</div>
             <EyeToggle masked={liveNumbersMasked} onToggle={() => setLiveRevealed(r => !r)} />
@@ -276,7 +276,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
             </div>
             {liveSnap ? (
               <>
-                <div style={{ display: "flex", gap: "16px", marginBottom: "5px" }}>
+                <div style={{ display: "flex", gap: "16px", marginBottom: "5px", flexWrap: "wrap" }}>
                   <div>
                     <div style={{ fontSize: "9px", color: T.muted, marginBottom: "1px" }}>Live Equity</div>
                     <div style={{ fontSize: "14px", fontWeight: 700 }}>{maskText(`$${Number(liveSnap.equity ?? liveSnap.portfolio_value ?? 0).toFixed(0)}`, liveNumbersMasked)}</div>
@@ -403,7 +403,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
       )}
 
       {/* 3-col grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px", marginBottom: "16px" }}>
 
         {/* Last week */}
         <SectionCard title="Last 7 Days">

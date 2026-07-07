@@ -211,7 +211,7 @@ function PaperPerformancePanel({ strategy }: { strategy: any }) {
       )}
 
       {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "20px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "12px", marginBottom: "20px" }}>
         {[
           {
             label: "Win Rate",
@@ -402,13 +402,13 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
         ]}
         actions={[{ label: running ? "Running…" : "Run PaperTrader", onClick: runPaperTrade, primary: true }]}
       />
-      <div style={{ padding: "0 28px 32px" }}>
+      <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 32px" }}>
 
       {/* Paper Performance Panel */}
       <PaperPerformancePanel strategy={strategy} />
 
       {/* Stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "20px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "16px", marginBottom: "20px" }}>
         {[
           { label: "Paper NAV", value: "$" + nav.toFixed(0), sub: pnl >= 0 ? "+" + pnl.toFixed(0) : "-" + Math.abs(pnl).toFixed(0), color: pnlColor(pnl) },
           { label: "Cash Available", value: "$" + cash.toFixed(0), sub: ((cash / nav) * 100).toFixed(1) + "% liquid" },
@@ -568,6 +568,7 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
           {tradeLog.length === 0 ? (
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>No paper trades yet.</div>
           ) : (
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
               <thead>
                 <tr style={{ color: T.muted }}>
@@ -599,6 +600,7 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}

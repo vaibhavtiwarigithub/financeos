@@ -206,7 +206,7 @@ export default function BriefingSection({ initialBriefing }: Props) {
       ) : (
         <>
           {/* Tab bar */}
-          <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "20px", flexWrap: "wrap" }}>
             <TabButton
               active={expanded === "morning"}
               onClick={() => setExpanded(expanded === "morning" ? null : "morning")}
@@ -393,7 +393,7 @@ function BriefingContent({ briefing, session, isToday }: { briefing: Briefing | 
       )}
 
       {/* Remaining sections as grid cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px" }}>
         {sections
           .filter(s => s.key !== "ONE THING" && s.key !== "RISK WATCH" && s.key !== "POSITIONS CHECK")
           .map((section) => (

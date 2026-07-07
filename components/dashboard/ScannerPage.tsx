@@ -141,7 +141,7 @@ export default function ScannerPage() {
         ]}
       />
 
-      <div style={{ padding: "0 28px 40px" }}>
+      <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 40px" }}>
         {/* Config */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px 24px", marginBottom: "20px" }}>
           <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>Scan Configuration {isIndia && <span style={{ color: T.accent }}>· 🇮🇳 India (₹)</span>}</div>

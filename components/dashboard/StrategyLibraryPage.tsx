@@ -91,7 +91,7 @@ function StrategyCard({ strategy, onScan }: { strategy: AlgoStrategy; onScan: (i
         </div>
 
         {/* Quick stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: "8px" }}>
           {[
             { label: "Win Rate", value: `${wr.win_rate_low}–${wr.win_rate_high}%` },
             { label: "Sharpe",   value: `${wr.sharpe_low}–${wr.sharpe_high}` },
@@ -119,7 +119,7 @@ function StrategyCard({ strategy, onScan }: { strategy: AlgoStrategy; onScan: (i
         <div style={{ borderTop: `1px solid ${T.border}`, padding: "18px 20px" }}>
           <p style={{ fontSize: "13px", color: T.sub, lineHeight: 1.6, marginBottom: "16px" }}>{strategy.description}</p>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px", marginBottom: "16px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "14px", marginBottom: "16px" }}>
             <div>
               <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "6px" }}>Works when</div>
               <ul style={{ margin: 0, padding: "0 0 0 14px" }}>
@@ -150,7 +150,7 @@ function StrategyCard({ strategy, onScan }: { strategy: AlgoStrategy; onScan: (i
           </div>
 
           {/* Backtest defaults */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "6px", marginBottom: "16px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: "6px", marginBottom: "16px" }}>
             {Object.entries(strategy.backtest_defaults).map(([k, v]) => (
               <div key={k} style={{ background: `${T.accent}15`, border: `1px solid ${T.accent}30`, borderRadius: "6px", padding: "6px 8px", textAlign: "center" }}>
                 <div style={{ fontSize: "9px", color: T.muted, marginBottom: "2px" }}>{k.replace(/_/g, " ")}</div>
@@ -201,7 +201,7 @@ export default function StrategyLibraryPage() {
         ]}
       />
 
-      <div style={{ padding: "0 28px 40px" }}>
+      <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 40px" }}>
         {/* Sub-nav: Fit Scores ↔ Algo Library (this page) */}
         <div style={{ display: "flex", gap: "8px", marginBottom: "20px", borderBottom: `1px solid ${T.border}`, paddingBottom: "0" }}>
           <a href="/dashboard/strategies" style={{ padding: "8px 14px", fontSize: "13px", fontWeight: 600, color: T.muted, textDecoration: "none", borderBottom: "2px solid transparent" }}>← Fit Scores</a>

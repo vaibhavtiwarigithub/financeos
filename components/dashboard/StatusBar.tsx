@@ -96,6 +96,8 @@ export default function StatusBar() {
         color: "#6B7280",
         fontFamily: "'Inter', system-ui, sans-serif",
         userSelect: "none",
+        overflowX: "auto",
+        WebkitOverflowScrolling: "touch",
       }}
     >
       {/* Market status */}

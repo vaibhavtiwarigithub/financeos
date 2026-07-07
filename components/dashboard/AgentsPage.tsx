@@ -260,12 +260,12 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         ]}
         actions={[{ label: saving ? "…" : tradingEnabled ? "⚡ Kill Switch" : "🔴 Enable Trading", onClick: toggleTrading }]}
       />
-      <div style={{ padding: "0 28px 32px" }}>
+      <div style={{ padding: "0 clamp(12px, 4vw, 28px) 32px" }}>
 
       <ModelFreshnessCard />
 
       {/* Paper portfolio hero */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "24px", marginBottom: "20px", display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "24px" }}>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "24px", marginBottom: "20px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "24px" }}>
         <div>
           <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Paper NAV</div>
           <div style={{ fontSize: "24px", fontWeight: 700 }}>{currency}{currentNAV.toFixed(0)}</div>
@@ -294,7 +294,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
       </div>
 
       {/* Agent runner cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px", marginBottom: "20px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px", marginBottom: "20px" }}>
         {AGENTS.map(a => {
           const runKey = a.id === "paper-trade" ? "paper_trader" : a.id;
           const runs = agentRuns?.[runKey] ?? [];
@@ -364,7 +364,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: "4px", marginBottom: "16px", background: T.surface, padding: "4px", borderRadius: "10px", width: "fit-content" }}>
+      <div style={{ display: "flex", gap: "4px", marginBottom: "16px", background: T.surface, padding: "4px", borderRadius: "10px", width: "fit-content", maxWidth: "100%", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         {([
           { key: "paper", label: "Paper Trades" },
           { key: "signals", label: `Signals (${signals.length})` },
@@ -396,6 +396,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
             {paperPositions.length === 0 ? (
               <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "20px 0" }}>No open positions. Run PaperTrader to start shadow trading.</div>
             ) : (
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
                 <thead>
                   <tr style={{ color: T.muted }}>
@@ -421,6 +422,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                   })}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
 
@@ -431,6 +433,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
             {paperTrades.length === 0 ? (
               <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "20px 0" }}>No paper trades yet.</div>
             ) : (
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
                 <thead>
                   <tr style={{ color: T.muted }}>
@@ -462,6 +465,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         </div>
@@ -736,7 +740,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         return (
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
             {/* Stats row */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "12px" }}>
               {[
                 { label: "Hit Rate", value: closed.length ? `${hits}/${closed.length}` : "—", sub: closed.length ? `${Math.round((hits / closed.length) * 100)}%` : "no closed trades", color: hits > misses ? T.green : T.muted },
                 { label: "Misses", value: misses > 0 ? String(misses) : "0", sub: "hit stop or closed negative", color: misses > 0 ? T.red : T.muted },
@@ -904,7 +908,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
             <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "14px" }}>Section 2</div>
             <div style={{ fontWeight: 700, fontSize: "16px", marginBottom: "20px" }}>Data Sources</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px" }}>
               {[
                 {
                   name: "FinancialDatasets MCP",
@@ -984,7 +988,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
               <div style={{ fontWeight: 700, fontSize: "16px" }}>Phase 0 Constraints</div>
               <span style={{ fontSize: "11px", fontWeight: 600, padding: "3px 10px", borderRadius: "20px", background: T.amberBg, color: T.amber, border: `1px solid ${T.amber}40` }}>LOCKED</span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "10px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
               {[
                 { icon: "🔒", label: "Long-only", detail: "Only BUY signals — no shorts on screener candidates" },
                 { icon: "✅", label: "approval_required", detail: "All real trades need manual approval before execution" },
@@ -1036,7 +1040,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                 return (
                   <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
                     {/* Stats */}
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "12px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "12px" }}>
                       {[
                         { label: "Run Date", value: run.run_date, color: T.text },
                         { label: "Signals Analyzed", value: run.signals_analyzed ?? 0, color: T.accent },
@@ -1126,7 +1130,8 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                 Apply migration 031 in Supabase dashboard first — creates the agent_config table.
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", minWidth: "560px" }}>
                 {agentConfigs.map(cfg => (
                   <div key={cfg.agent_name} style={{ background: T.surface, borderRadius: "10px", padding: "14px 16px", display: "grid", gridTemplateColumns: "140px 1fr 80px 80px 100px", gap: "12px", alignItems: "center" }}>
                     <div>
@@ -1176,6 +1181,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                   </div>
                 ))}
               </div>
+              </div>
             )}
           </div>
         </div>
@@ -1197,7 +1203,8 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                 Apply migration 033 in Supabase dashboard — creates learner_config table.
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", minWidth: "560px" }}>
                 <div style={{ display: "grid", gridTemplateColumns: "180px 1fr 1fr 100px", gap: "10px", padding: "6px 12px", fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>
                   <div>Dimension</div><div>Learn From</div><div>Allow Mutation</div><div>Min Confidence</div>
                 </div>
@@ -1228,6 +1235,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                       style={{ width: "80px", background: T.card, border: `1px solid ${T.border}`, borderRadius: "5px", color: T.text, fontSize: "12px", padding: "4px 8px", outline: "none", textAlign: "right" }} />
                   </div>
                 ))}
+              </div>
               </div>
             )}
           </div>
@@ -1265,7 +1273,8 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                 No weight history yet — LearnerAgent saves a snapshot before each mutation (migration 033 required).
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", minWidth: "700px" }}>
                 <div style={{ display: "grid", gridTemplateColumns: "110px 90px 80px 80px 80px 80px 80px 100px", gap: "8px", padding: "6px 12px", fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>
                   <div>Date</div><div>Trigger</div><div>Fund.</div><div>Tech.</div><div>Sent.</div><div>Macro</div><div>Insider</div><div>Action</div>
                 </div>
@@ -1287,6 +1296,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                 {weightHistory.length === 0 && (
                   <div style={{ color: T.muted, fontSize: "12px", textAlign: "center", padding: "20px 0" }}>Nothing yet. Run LearnerAgent to generate history.</div>
                 )}
+              </div>
               </div>
             )}
           </div>
@@ -1372,7 +1382,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                     </div>
                     {/* Experiment runs for this version */}
                     {v.experiment_runs?.length > 0 && (
-                      <div style={{ marginTop: "10px", borderTop: `1px solid ${T.border}`, paddingTop: "10px", display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "8px" }}>
+                      <div style={{ marginTop: "10px", borderTop: `1px solid ${T.border}`, paddingTop: "10px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: "8px" }}>
                         {[
                           { label: "Win Rate", val: v.experiment_runs[0]?.win_rate != null ? (v.experiment_runs[0].win_rate * 100).toFixed(0) + "%" : "—", color: (v.experiment_runs[0]?.win_rate ?? 0) >= 0.4 ? T.green : T.red },
                           { label: "Avg Return", val: v.experiment_runs[0]?.avg_return_pct != null ? (v.experiment_runs[0].avg_return_pct >= 0 ? "+" : "") + v.experiment_runs[0].avg_return_pct.toFixed(1) + "%" : "—", color: (v.experiment_runs[0]?.avg_return_pct ?? 0) >= 0 ? T.green : T.red },
@@ -1406,7 +1416,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                       {backtestResult.gate_pass ? "✓ ELIGIBLE" : "✗ NOT ELIGIBLE"}
                     </span>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "12px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: "12px" }}>
                     {[
                       { label: "Trades", val: backtestResult.total_trades ?? "—", color: T.text },
                       { label: "Win Rate", val: backtestResult.win_rate != null ? (backtestResult.win_rate * 100).toFixed(0) + "%" : "—", color: (backtestResult.win_rate ?? 0) >= 0.4 ? T.green : T.red },
@@ -1480,9 +1490,9 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
 
                   return (
                     <div key={p.id} style={{ background: T.surface, borderRadius: "10px", padding: "16px", border: `1px solid ${expired ? T.muted : p.risk_check_pass ? T.border : T.red + "40"}` }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px" }}>
                         <div>
-                          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px", flexWrap: "wrap" }}>
                             <span style={{ fontWeight: 700, fontSize: "16px" }}>{p.symbol}</span>
                             {dirBadge(p.side)}
                             <span style={{ fontWeight: 600, fontSize: "14px" }}>{p.qty} shares</span>

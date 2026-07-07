@@ -161,6 +161,21 @@ function useMarketClock() {
 
 const TIER_COLORS: Record<string, string> = { free: T.muted, pro: T.accent, elite: T.yellow };
 
+// Mobile breakpoint hook. Starts `false` (matches server render — avoids a
+// hydration mismatch) and updates on mount via matchMedia, which also fires
+// live on rotation/resize instead of only reading window.innerWidth once.
+function useIsMobile(breakpoint = 860): boolean {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 function fmtAlertTime(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -193,6 +208,11 @@ export default function DashboardShell({ profile, children }: { profile: Profile
   const bellRef = useRef<HTMLDivElement>(null);
   const seenProposalIds = useRef<Set<string>>(new Set());
   const { timeStr, status: mktStatus, indiaStatus } = useMarketClock();
+  const isMobile = useIsMobile();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Close the drawer automatically on navigation — otherwise it stays open
+  // over the newly-loaded page.
+  useEffect(() => { setMobileNavOpen(false); }, [pathname]);
 
   useEffect(() => {
     fetch("/api/alerts/stale-check").catch(() => {});
@@ -294,10 +314,31 @@ export default function DashboardShell({ profile, children }: { profile: Profile
 
   return (
    <MarketProvider indiaEnabled={indiaEnabled}>
-    <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: "'Inter', sans-serif", color: T.text }}>
+    <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: "'Inter', sans-serif", color: T.text, position: "relative" }}>
 
-      {/* â"€â"€ Sidebar â"€â"€ */}
-      <aside style={{ width: "224px", background: T.surface, borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", flexShrink: 0 }}>
+      {/* Backdrop — mobile only, tapping it closes the drawer */}
+      {isMobile && mobileNavOpen && (
+        <div
+          onClick={() => setMobileNavOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "#000000AA", zIndex: 199 }}
+        />
+      )}
+
+      {/* ── Sidebar ── On mobile this becomes a fixed-position slide-in drawer
+          (translateX off-screen when closed) instead of pushing content —
+          a permanently-visible 224px sidebar would eat most of a phone's
+          width. Desktop behavior (sticky, always visible) is unchanged. */}
+      <aside style={{
+        width: "224px", background: T.surface, borderRight: `1px solid ${T.border}`,
+        display: "flex", flexDirection: "column", flexShrink: 0,
+        ...(isMobile
+          ? {
+              position: "fixed", top: 0, left: 0, height: "100vh", zIndex: 200,
+              transform: mobileNavOpen ? "translateX(0)" : "translateX(-100%)",
+              transition: "transform 0.2s ease",
+            }
+          : { position: "sticky", top: 0, height: "100vh" }),
+      }}>
 
         {/* Logo + bell row */}
         <div style={{ padding: "18px 16px 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -571,8 +612,24 @@ export default function DashboardShell({ profile, children }: { profile: Profile
         <div style={{
           position: "sticky", top: 0, zIndex: 100,
           background: T.surface, borderBottom: `1px solid ${T.border}`,
-          padding: "7px 28px", display: "flex", alignItems: "center", gap: "16px",
+          padding: isMobile ? "7px 12px" : "7px 28px", display: "flex", alignItems: "center", gap: "12px",
+          flexWrap: "wrap",
         }}>
+          {/* Hamburger — mobile only, opens the sidebar drawer */}
+          {isMobile && (
+            <button
+              onClick={() => setMobileNavOpen(o => !o)}
+              aria-label="Open navigation menu"
+              style={{
+                background: "none", border: `1px solid ${T.border}`, borderRadius: "7px",
+                color: T.text, width: "32px", height: "32px", fontSize: "16px",
+                cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+              }}
+            >
+              ☰
+            </button>
+          )}
+
           {/* Market status pill — US, always shown */}
           <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
             <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: mktStatus.color, flexShrink: 0 }} />

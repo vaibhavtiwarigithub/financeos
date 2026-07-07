@@ -462,7 +462,7 @@ export default function ActivityPage({
           "If runs stopped appearing, check that pg_cron is scheduled and CRON_SECRET is set.",
         ]}
       />
-      <div style={{ padding: "0 28px 32px" }}>
+      <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 32px" }}>
 
       {/* Empty state */}
       {events.length === 0 && (

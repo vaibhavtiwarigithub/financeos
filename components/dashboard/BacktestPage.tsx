@@ -189,7 +189,7 @@ export default function BacktestPage() {
         ]}
       />
 
-      <div style={{ padding: "0 28px 40px" }}>
+      <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 40px" }}>
 
         {/* India universe note — the ₹ backtest replays India signals against free
             Yahoo .NS candles, drawn from the NIFTY-100 screen universe. */}

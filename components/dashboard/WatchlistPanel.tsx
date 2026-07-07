@@ -368,8 +368,8 @@ export default function WatchlistPanel() {
           AI Scout also auto-adds symbols from daily market themes (purple).
         </div>
 
-        <div style={{ display: "flex", gap: "8px" }}>
-          <div style={{ flex: 1, position: "relative" }}>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <div style={{ flex: 1, position: "relative", minWidth: "160px" }}>
             <input
               value={newSymbol}
               onChange={e => { setNewSymbol(e.target.value.toUpperCase()); setShowSuggestions(true); }}

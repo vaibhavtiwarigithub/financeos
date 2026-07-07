@@ -49,7 +49,7 @@ export default function AgentCalendar() {
       </div>
 
       {!collapsed && (
-        <div style={{ marginTop: "12px", overflowX: "auto" as const }}>
+        <div style={{ marginTop: "12px", overflowX: "auto" as const, WebkitOverflowScrolling: "touch" as const }}>
           {!days ? (
             <div style={{ fontSize: "12px", color: T.muted, padding: "8px 0" }}>Loading…</div>
           ) : agentNames.length === 0 ? (
@@ -104,9 +104,9 @@ export default function AgentCalendar() {
       {popover && (
         <div
           onClick={() => setPopover(null)}
-          style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)" }}
+          style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", padding: "16px" }}
         >
-          <div onClick={e => e.stopPropagation()} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "16px 20px", maxWidth: "360px" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "16px 20px", maxWidth: "360px", width: "100%" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, color: T.text, marginBottom: "6px" }}>{popover.agent} — {popover.date}</div>
             <div style={{ fontSize: "12px", color: STATUS_COLOR[popover.cell.status] ?? T.muted, marginBottom: "8px", fontWeight: 600 }}>{popover.cell.status.toUpperCase()} · {popover.cell.runs} run{popover.cell.runs === 1 ? "" : "s"}{popover.cell.trigger ? ` · ${popover.cell.trigger}` : ""}</div>
             <div style={{ fontSize: "12px", color: T.textSub, lineHeight: 1.5 }}>{popover.cell.summary || "No details recorded."}</div>

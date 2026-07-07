@@ -234,7 +234,7 @@ function SentimentPairs() {
           ))}
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "10px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" }}>
           {pairs.map(p => {
             const dirColor = p.direction === "BULL" ? T.green : p.direction === "BEAR" ? T.red : T.amber;
             const dirBg   = p.direction === "BULL" ? T.greenBg : p.direction === "BEAR" ? T.redBg : "#2D2000";
@@ -1343,7 +1343,7 @@ export default function MarketsPage() {
           "Sector strength tells you which bucket (momentum vs value) is working this week.",
         ]}
       />
-      <div style={{ padding: "0 28px 28px" }}>
+      <div style={{ padding: "clamp(12px, 4vw, 28px)" }}>
       {/* Header (legacy — kept for refresh button) */}
       <div style={{ marginBottom: "24px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>

@@ -173,4 +173,38 @@
 
   .text-balance { text-wrap: balance; }
   .text-pretty  { text-wrap: pretty; }
+
+  /* Wrap any wide table/flex-row content in this so it scrolls horizontally
+     on narrow viewports instead of blowing out the page width. */
+  .fo-scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MOBILE SAFETY NET
+   Most page layouts in this app use inline styles (raw `style={{}}`, not
+   Tailwind classes), so per-page fixes still matter — but this catches the
+   most common overflow failure modes globally so nothing is ever missed:
+   a bare <table> with many columns, or an image/svg wider than its container.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+html, body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+@media (max-width: 640px) {
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+    white-space: nowrap;
+  }
+  img, svg, video, iframe {
+    max-width: 100%;
+    height: auto;
+  }
 }

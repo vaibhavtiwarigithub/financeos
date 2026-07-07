@@ -82,7 +82,7 @@ function DecisionCard({ packet, signal, trade }: { packet: any; signal?: any; tr
           )}
 
           {/* Score breakdown */}
-          <div style={{ marginTop: "16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+          <div style={{ marginTop: "16px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "24px" }}>
             <div>
               <div style={{ fontSize: "11px", color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>Score breakdown</div>
               <ScoreBar label="Fundamental" value={packet.fundamental_score} />
@@ -241,7 +241,7 @@ function LearningContent({
       {/* How analyst_score works */}
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "24px" }}>
         <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>How analyst_score works</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "16px" }}>
           <div>
             <div style={{ fontSize: "11px", fontWeight: 600, color: T.accent, marginBottom: "8px", letterSpacing: "0.05em" }}>STOCKS</div>
             {[
@@ -294,7 +294,7 @@ function LearningContent({
       </div>
 
       {/* Stat cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "16px", marginBottom: "24px" }}>
         {[
           { label: "Total Trades", value: String(totalTrades), sub: "paper closed" },
           { label: "Win Rate", value: winRate > 0 ? winRate.toFixed(1) + "%" : "—", sub: "target: 60%", color: winRate >= 60 ? T.green : winRate > 0 ? T.amber : T.muted },
@@ -320,7 +320,7 @@ function LearningContent({
 
       {/* Accuracy trend */}
       {innerTab === "accuracy" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "16px" }}>
           <LearningCard title="Win Rate Over Time">
             {accData.length === 0
               ? <LearningEmpty msg="Accuracy builds after first trades close (7 days)" />
@@ -366,7 +366,7 @@ function LearningContent({
 
       {/* Signal weights */}
       {innerTab === "weights" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "16px" }}>
           <LearningCard title="Current Signal Weights">
             {weightBars.length === 0
               ? <LearningEmpty msg="No weights configured" />
@@ -653,7 +653,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
           "If answers seem generic, add more symbols to your watchlist for richer context.",
         ]}
       />
-      <div style={{ padding: "0 28px 32px" }}>
+      <div style={{ padding: "0 clamp(12px, 4vw, 28px) 32px" }}>
 
       {/* ── Judgment Score History ───────────────────────────────────────── */}
       {(() => {
@@ -884,7 +884,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
             <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
 
               {/* Coach Panel */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "16px" }}>
                 <div style={{ background: T.card, border: `1px solid ${T.red}40`, borderRadius: "12px", padding: "18px" }}>
                   <div style={{ fontSize: "10px", fontWeight: 700, color: T.red, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>Weakest Area</div>
                   <div style={{ fontSize: "18px", fontWeight: 700, color: T.text, marginBottom: "4px" }}>{DIM_META[dimData.weakest]?.label}</div>
@@ -1138,7 +1138,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
                 </div>
 
                 {/* Three-panel breakdown */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "16px", marginBottom: "16px" }}>
                   {[
                     { label: "✓ What's Right", text: jResult.what_is_right, color: T.green, bg: T.greenBg },
                     { label: "✗ What's Wrong", text: jResult.what_is_wrong, color: T.red, bg: T.redBg },
@@ -1163,7 +1163,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
                 {jResult.dimensions && (
                   <div style={{ marginTop: "16px" }}>
                     <div style={{ fontSize: "10px", fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "10px" }}>Behavior Dimensions</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "8px" }}>
                       {DIM_KEYS.map(dim => {
                         const v = jResult.dimensions[dim] ?? 50;
                         const meta = DIM_META[dim];

@@ -128,7 +128,7 @@ export default function CalendarPage() {
           "Review every Monday — prep exits or hedges before big earnings week.",
         ]}
       />
-      <div style={{ padding: "4px 28px 28px" }}>
+      <div style={{ padding: "4px clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px)" }}>
       {/* Header */}
       <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ fontSize: "11px", color: "#4B5563" }}>

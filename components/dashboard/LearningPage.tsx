@@ -123,7 +123,7 @@ export default function LearningPage({
           "If no notes appear, no trades have closed yet — check the Trading page.",
         ]}
       />
-      <div style={{ padding: "0 28px 32px" }}>
+      <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 32px" }}>
 
       {/* Agent Pipeline Diagram */}
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "24px" }}>
@@ -200,7 +200,7 @@ export default function LearningPage({
       {/* How analyst_score works */}
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "24px" }}>
         <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>How analyst_score works</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "16px" }}>
           {/* Stocks */}
           <div>
             <div style={{ fontSize: "11px", fontWeight: 600, color: T.accent, marginBottom: "8px", letterSpacing: "0.05em" }}>STOCKS</div>
@@ -256,7 +256,7 @@ export default function LearningPage({
       </div>
 
       {/* Stat cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "16px", marginBottom: "24px" }}>
         {[
           { label: "Total Trades", value: String(totalTrades), sub: "paper closed" },
           { label: "Win Rate", value: winRate > 0 ? winRate.toFixed(1) + "%" : "—", sub: "target: 60%", color: winRate >= 60 ? T.green : winRate > 0 ? T.amber : T.muted },
@@ -282,7 +282,7 @@ export default function LearningPage({
 
       {/* Accuracy trend */}
       {tab === "accuracy" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px" }}>
           <Card title="Win Rate Over Time">
             {accData.length === 0
               ? <Empty msg="Accuracy builds after first trades close (7 days)" />
@@ -328,7 +328,7 @@ export default function LearningPage({
 
       {/* Signal weights */}
       {tab === "weights" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px" }}>
           <Card title="Current Signal Weights">
             {weightBars.length === 0
               ? <Empty msg="No weights configured" />

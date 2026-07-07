@@ -76,8 +76,8 @@ export default function PortfolioRiskPage() {
   // Refetch whenever the global market switcher changes (US ↔ India).
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <div style={{ padding: "28px", color: T.muted, fontSize: "14px" }}>Fetching holdings from all accounts…</div>;
-  if (error)   return <div style={{ padding: "28px", color: T.red, fontSize: "14px" }}>Error: {error}</div>;
+  if (loading) return <div style={{ padding: "clamp(12px, 4vw, 28px)", color: T.muted, fontSize: "14px" }}>Fetching holdings from all accounts…</div>;
+  if (error)   return <div style={{ padding: "clamp(12px, 4vw, 28px)", color: T.red, fontSize: "14px" }}>Error: {error}</div>;
   if (!data)   return null;
 
   const { accounts, risk } = data;
@@ -99,7 +99,7 @@ export default function PortfolioRiskPage() {
         ]}
       />
 
-      <div style={{ padding: "0 28px 40px" }}>
+      <div style={{ padding: "0 clamp(12px, 4vw, 28px) clamp(20px, 5vw, 40px)" }}>
 
         {/* Refresh */}
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "16px" }}>
@@ -267,7 +267,7 @@ export default function PortfolioRiskPage() {
                   {risk.correlatedPairs.map(p => {
                     const c = p.severity === "high" ? T.red : T.amber;
                     return (
-                      <div key={`${p.symbol1}:${p.symbol2}`} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 14px", background: p.severity === "high" ? T.redBg : T.amberBg, border: `1px solid ${c}33`, borderRadius: "8px" }}>
+                      <div key={`${p.symbol1}:${p.symbol2}`} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 14px", background: p.severity === "high" ? T.redBg : T.amberBg, border: `1px solid ${c}33`, borderRadius: "8px", flexWrap: "wrap" }}>
                         <span style={{ fontWeight: 700, color: T.text }}>{p.symbol1}</span>
                         <span style={{ color: T.muted }}>+</span>
                         <span style={{ fontWeight: 700, color: T.text }}>{p.symbol2}</span>

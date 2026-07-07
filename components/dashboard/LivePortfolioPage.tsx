@@ -243,10 +243,10 @@ export default function LivePortfolioPage({
     : null;
 
   return (
-    <div style={{ padding: "28px", color: T.text, fontFamily: "'Inter', sans-serif", maxWidth: "1400px" }}>
+    <div style={{ padding: "clamp(12px, 4vw, 28px)", color: T.text, fontFamily: "'Inter', sans-serif", maxWidth: "1400px" }}>
 
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "24px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "24px", flexWrap: "wrap", gap: "12px" }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
             <h1 style={{ fontSize: "22px", fontWeight: 700, margin: 0 }}>Live Portfolio</h1>
@@ -326,7 +326,7 @@ export default function LivePortfolioPage({
       </div>
 
       {/* Stats row */}
-      <div style={{ display: "flex", gap: "12px", marginBottom: "20px" }}>
+      <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
         <StatCard label="Total Equity" value={maskText(fmt$(Number(totalEquity)), masked)} sub="Live Robinhood" />
         <StatCard label="Buying Power" value={maskText(fmt$(Number(buyingPower)), masked)} color={T.green} />
         <StatCard label="Positions" value={masked ? "••" : String(positionCount)} sub={holdings.length > 0 ? maskText(fmt$(totalInvested) + " invested", masked) : undefined} />
@@ -352,7 +352,7 @@ export default function LivePortfolioPage({
             </div>
             {loadingChart && <span style={{ fontSize: "11px", color: T.muted }}>Loading…</span>}
           </div>
-          <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "4px", alignItems: "center", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
             {/* Timeframe buttons */}
             {TIMEFRAMES.map(tf => (
               <button
@@ -533,7 +533,7 @@ export default function LivePortfolioPage({
               </div>
 
               {/* Upload button */}
-              <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "16px" }}>
+              <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "16px", flexWrap: "wrap" }}>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -630,7 +630,7 @@ export default function LivePortfolioPage({
       {/* Trade Decision Analysis */}
       {statsLocal.total > 0 && (
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
             <div>
               <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "4px" }}>
                 Transaction Analysis
@@ -657,7 +657,7 @@ export default function LivePortfolioPage({
 
           {statsLocal.pending > 0 && (
             <div style={{ background: T.amberBg, border: `1px solid ${T.amber}33`, borderRadius: "10px", padding: "12px 14px", marginBottom: "16px", fontSize: "12px", color: T.amber }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
                 <div>
                   <div style={{ fontWeight: 600, marginBottom: "3px" }}>📊 {statsLocal.pending} trades awaiting analysis</div>
                   <div style={{ color: T.textSub }}>

@@ -360,7 +360,7 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
     <div>
       {/* Strategy config card */}
       {strategy && (
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px", marginBottom: "16px", display: "flex", gap: "32px", alignItems: "center" }}>
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px", marginBottom: "16px", display: "flex", gap: "32px", alignItems: "center", flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Trading</div>
             <span style={{ fontSize: "13px", fontWeight: 700, color: strategy.trading_enabled ? T.green : T.red }}>
@@ -399,7 +399,7 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
       )}
 
       {/* Inner tabs */}
-      <div style={{ display: "flex", gap: "4px", marginBottom: "16px" }}>
+      <div style={{ display: "flex", gap: "4px", marginBottom: "16px", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         {(["queue", "signals"] as const).map(t => (
           <button key={t} onClick={() => setInnerTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: innerTab === t ? T.accent : T.card, color: innerTab === t ? "#fff" : T.muted, textTransform: "capitalize" }}>
             {t === "queue" ? `Trade Queue (${queueItems.length})` : `Pending Signals (${pendingSignals.length})`}
@@ -551,6 +551,7 @@ function LiveHoldingsTab() {
         </div>
       ) : (
         <>
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
             <thead>
               <tr style={{ color: T.muted }}>
@@ -588,7 +589,8 @@ function LiveHoldingsTab() {
               })}
             </tbody>
           </table>
-          <div style={{ borderTop: `1px solid ${T.border}`, marginTop: "12px", paddingTop: "12px", display: "flex", gap: "32px" }}>
+          </div>
+          <div style={{ borderTop: `1px solid ${T.border}`, marginTop: "12px", paddingTop: "12px", display: "flex", gap: "32px", flexWrap: "wrap" }}>
             <div>
               <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Value</div>
               <div style={{ fontSize: "18px", fontWeight: 700, color: T.text }}>${totalValue.toFixed(0)}</div>
@@ -770,9 +772,9 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
           "Compare NAV vs VOO benchmark — are you beating the index?",
         ]}
       />
-      <div style={{ padding: "4px 28px 28px" }}>
+      <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px)" }}>
 
-      <div style={{ marginBottom: "20px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "16px" }}>
+      <div style={{ marginBottom: "20px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
         <div>
           <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "6px" }}>Paper Trading Portfolio</div>
           <h1 style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.02em" }}>Paper Portfolio</h1>
@@ -819,7 +821,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: "4px", marginBottom: "16px" }}>
+      <div style={{ display: "flex", gap: "4px", marginBottom: "16px", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         {(["positions", "trades", "signals"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === t ? T.accent : T.card, color: tab === t ? "#fff" : T.muted, textTransform: "capitalize" }}>
             {t}{t === "positions" ? ` (${positions.length})` : t === "trades" ? ` (${trades.length})` : ` (${signals.length})`}
@@ -859,6 +861,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
           {trades.length === 0 ? (
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>No paper trades yet.</div>
           ) : (
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
               <thead>
                 <tr style={{ color: T.muted }}>
@@ -903,6 +906,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}
@@ -923,6 +927,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
           {signals.length === 0 ? (
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>No signals yet. Run ResearchAgent to generate signals.</div>
           ) : (
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
               <thead>
                 <tr style={{ color: T.muted }}>
@@ -952,6 +957,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}
@@ -988,7 +994,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
 
         return (
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
-            <div style={{ display: "flex", gap: "24px", marginBottom: "20px", paddingBottom: "16px", borderBottom: `1px solid ${T.border}` }}>
+            <div style={{ display: "flex", gap: "24px", marginBottom: "20px", paddingBottom: "16px", borderBottom: `1px solid ${T.border}`, flexWrap: "wrap" }}>
               <div>
                 <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Signals Taken</div>
                 <div style={{ fontSize: "22px", fontWeight: 700, color: T.green }}>{taken.length}</div>
@@ -1009,6 +1015,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
             {rows.length === 0 ? (
               <div style={{ color: T.muted, textAlign: "center", padding: "24px 0", fontSize: "13px" }}>No signals yet. Run ResearchAgent to generate signals.</div>
             ) : (
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
                 <thead>
                   <tr style={{ color: T.muted }}>
@@ -1043,6 +1050,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         );

@@ -176,7 +176,7 @@ export default function AgentDiagram({ agentId }: { agentId: string }) {
       <div style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
         {tab === "diagram" && (
           <>
-            <div style={{ flex: 1, overflow: "auto", padding: 12, position: "relative" }}>
+            <div style={{ flex: 1, overflow: "auto", overflowX: "auto", WebkitOverflowScrolling: "touch", padding: 12, position: "relative" }}>
               {/* Zoom toolbar */}
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, position: "sticky", top: 0, zIndex: 10, background: "#0D0F14", padding: "4px 0" }}>
                 <button onClick={() => setZoom(z => Math.max(0.3, z - 0.15))} style={zoomBtnStyle}>−</button>

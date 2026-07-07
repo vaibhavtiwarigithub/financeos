@@ -62,10 +62,10 @@ export default function YouPage({ profile, predictions, journal, quizHistory }: 
           "Knowledge level affects Mentor explanation depth — update it in Settings if it feels off.",
         ]}
       />
-      <div style={{ padding: "0 28px 32px" }}>
+      <div style={{ padding: "0 clamp(12px, 4vw, 28px) 32px" }}>
 
       {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "20px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "16px", marginBottom: "20px" }}>
         {[
           { label: "DNA Score", value: dnaAvg + "%", sub: "avg knowledge", color: T.accent },
           { label: "Open Predictions", value: String(openPredictions.length), sub: "pending outcome" },
@@ -91,7 +91,7 @@ export default function YouPage({ profile, predictions, journal, quizHistory }: 
 
       {/* DNA tab */}
       {tab === "dna" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "20px" }}>
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "16px" }}>Knowledge DNA</div>
             {dnaKeys.map(k => (
@@ -123,6 +123,7 @@ export default function YouPage({ profile, predictions, journal, quizHistory }: 
           {predictions.length === 0 ? (
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>No predictions yet.</div>
           ) : (
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
               <thead>
                 <tr style={{ color: T.muted }}>
@@ -159,6 +160,7 @@ export default function YouPage({ profile, predictions, journal, quizHistory }: 
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}
@@ -195,6 +197,7 @@ export default function YouPage({ profile, predictions, journal, quizHistory }: 
           {quizHistory.length === 0 ? (
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>No quiz history yet.</div>
           ) : (
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
               <thead>
                 <tr style={{ color: T.muted }}>
@@ -218,6 +221,7 @@ export default function YouPage({ profile, predictions, journal, quizHistory }: 
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}

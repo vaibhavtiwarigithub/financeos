@@ -198,10 +198,10 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
         actions={[]}
       />
 
-      <div style={{ padding: "0 28px 32px" }}>
+      <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 32px" }}>
 
         {/* Hero stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "20px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "12px", marginBottom: "20px" }}>
           {([
             {
               label: "Pending Approval", value: pending.length, color: pending.length > 0 ? T.amber : T.muted, icon: "⏳",
@@ -301,6 +301,7 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
             {decided.length > 0 && (
               <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
                 <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "14px" }}>History</div>
+                <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
                   <thead>
                     <tr style={{ color: T.muted }}>
@@ -339,6 +340,7 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             )}
 
@@ -456,7 +458,7 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
 
             {!nseOptionsLoading && nseOptions && nseOptions.available && (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "18px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: "10px", marginBottom: "18px" }}>
                   {[
                     { label: "Underlying", value: nseOptions.underlying != null ? `₹${Number(nseOptions.underlying).toLocaleString("en-IN")}` : "—", color: T.text },
                     { label: "PCR (Put/Call OI)", value: nseOptions.pcr != null ? nseOptions.pcr : "—", color: nseOptions.pcr != null ? (nseOptions.pcr > 1 ? T.green : T.red) : T.muted },
