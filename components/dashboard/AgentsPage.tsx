@@ -22,7 +22,7 @@ const T = {
 const AGENTS = [
   { id: "research",     label: "ResearchAgent",  icon: "🔍", desc: "Analyzes stocks, writes signals",          apiPath: "/api/agents/research" },
   { id: "paper-trade",  label: "PaperTrader",    icon: "📄", desc: "Shadow-trades signals on $10k virtual",    apiPath: "/api/agents/paper-trade" },
-  { id: "trader",       label: "TraderAgent",    icon: "⚡", desc: "Proposes real trades for approval",        apiPath: "/api/agents/trade" },
+  { id: "trader",       label: "TraderAgent",    icon: "⚡", desc: "Proposes real trades for approval",        apiPath: "/api/agents/trader" },
   { id: "learner",      label: "LearnerAgent",   icon: "🧠", desc: "Closes paper trades, adjusts weights",     apiPath: "/api/agents/learner" },
   { id: "theme-scout",  label: "ThemeScout",     icon: "🎯", desc: "Finds AI/thematic watchlist candidates",   apiPath: "/api/agents/theme-scout" },
   { id: "deepseek",     label: "DeepSeek Research", icon: "🤖", desc: "Runs parallel research via DeepSeek LLM", apiPath: "/api/agents/deepseek-research" },

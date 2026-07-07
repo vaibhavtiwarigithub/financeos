@@ -1,5 +1,5 @@
 import { BrokerAdapter, BrokerOrderResult, BrokerOrderState } from "@/lib/brokers/adapter-types";
-import { hasRobinhoodToken, submitRobinhoodOrder } from "@/lib/robinhood-mcp";
+import { hasRobinhoodToken, submitRobinhoodOrder, queryRobinhoodOrder } from "@/lib/robinhood-mcp";
 import { createServiceClient } from "@/lib/supabase/service";
 
 // Robinhood via its remote MCP server — US, live-only. Deterministic write path
@@ -43,8 +43,11 @@ export function robinhoodMcpAdapter(): BrokerAdapter {
       if (!res.ok) return { ok: false, error: res.error, needsReconcile: res.needsReconcile, raw: res.raw };
       return { ok: true, brokerOrderId: res.brokerOrderId, raw: res.raw };
     },
-    async getOrder(_brokerOrderId, _env): Promise<BrokerOrderState> {
-      return { ok: false, error: "Robinhood MCP order-status not implemented in this build" };
+    async getOrder(brokerOrderId, env): Promise<BrokerOrderState> {
+      if (env !== "live") return { ok: false, error: "Robinhood MCP is live-only (no paper env)" };
+      const r = await queryRobinhoodOrder(brokerOrderId);
+      if (!r.ok) return { ok: false, error: r.error };
+      return { ok: true, status: r.status, filledQty: r.filledQty, avgFillPrice: r.avgFillPrice, raw: r.raw };
     },
     async cancelOrder(_brokerOrderId, _env) {
       return { ok: false, error: "Robinhood MCP cancel not implemented in this build" };

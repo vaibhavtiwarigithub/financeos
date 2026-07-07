@@ -519,6 +519,54 @@ export async function robinhoodHeldQty(symbol: string): Promise<{ ok: boolean; q
   } catch (e) { return { ok: false, error: String(e) }; }
 }
 
+// Order-status query for the sync loop. Deterministic (no LLM): calls
+// get_equity_orders, finds the order by id, and maps Robinhood's `state` to the
+// adapter's status union. Returns ok:false (never guesses) if the order isn't in
+// the response or the state is unmapped, so the sync loop leaves the row untouched.
+type RhOrderStatus = "submitted" | "partially_filled" | "filled" | "canceled" | "rejected" | "expired";
+function mapRhOrderState(state: string): RhOrderStatus | undefined {
+  const s = state.toLowerCase();
+  if (s === "filled") return "filled";
+  if (s === "partially_filled" || s === "partial") return "partially_filled";
+  if (s === "cancelled" || s === "canceled") return "canceled";
+  if (s === "rejected" || s === "failed") return "rejected";
+  if (s === "expired") return "expired";
+  if (["unconfirmed", "confirmed", "queued", "pending", "new", "open", "accepted"].includes(s)) return "submitted";
+  return undefined;
+}
+function finiteNum(v: any): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+export async function queryRobinhoodOrder(brokerOrderId: string): Promise<{
+  ok: boolean; error?: string; status?: RhOrderStatus; filledQty?: number; avgFillPrice?: number; raw?: any;
+}> {
+  const svc = createServiceClient();
+  const tk = await getValidAccessToken(svc);
+  if (!tk.ok || !tk.token) return { ok: false, error: tk.error ?? "not connected" };
+  const sess = await openSession(tk.token);
+  if (!sess.ok) return { ok: false, error: sess.error };
+  const res = await mcpRpc(tk.token, "tools/call", { name: "get_equity_orders", arguments: {} }, sess.sessionId);
+  if (!res.ok) return { ok: false, error: res.error };
+
+  const content = res.result?.content ?? res.result;
+  const obj = mcpToolJson(content);
+  const list: any[] = Array.isArray(obj) ? obj
+    : (obj?.data?.orders ?? obj?.orders ?? obj?.data?.results ?? obj?.results ?? (Array.isArray(obj?.data) ? obj.data : []));
+  const order = Array.isArray(list)
+    ? list.find((o: any) => String(o?.id ?? o?.order?.id ?? "") === brokerOrderId)
+    : null;
+  if (!order) return { ok: false, error: "order not found in get_equity_orders response (may be outside the returned window)" };
+
+  const state = String(order.state ?? order.status ?? "");
+  const status = mapRhOrderState(state);
+  if (!status) return { ok: false, error: `unmapped Robinhood order state '${state}'` };
+  const filledQty = finiteNum(order.cumulative_quantity ?? order.filled_quantity ?? order.filled_qty ?? (status === "filled" ? order.quantity : undefined));
+  const avgFillPrice = finiteNum(order.average_price ?? order.avg_fill_price ?? order.executed_price ?? order.price);
+  return { ok: true, status, filledQty, avgFillPrice, raw: redact(order) };
+}
+
 // Kill switch: wipe local tokens regardless of remote reachability. (The
 // metadata exposes no revocation_endpoint, so there is no remote revoke to
 // call — Robinhood's own Agentic Trading dashboard is the authoritative revoke.)

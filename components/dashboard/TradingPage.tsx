@@ -312,11 +312,12 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
   const [queueItems, setQueueItems] = useState<any[]>(queue);
   const [actionLog, setActionLog] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
 
+  // Approve/reject go through the canonical trade_proposals route (/api/agents/trader).
   async function approveTradeItem(tradeId: string) {
     setActionLog(null);
-    const res = await fetch("/api/agents/trade/approve", {
+    const res = await fetch("/api/agents/trader", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tradeId }),
+      body: JSON.stringify({ action: "approve", proposal_id: parseInt(tradeId, 10) }),
     });
     const data = await res.json();
     setActionLog({ id: tradeId, msg: data.message ?? data.error ?? "Done", ok: !!data.success });
@@ -326,9 +327,9 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
 
   async function rejectTradeItem(tradeId: string) {
     setActionLog(null);
-    const res = await fetch("/api/agents/trade/reject", {
+    const res = await fetch("/api/agents/trader", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tradeId, reason: "Rejected by user" }),
+      body: JSON.stringify({ action: "reject", proposal_id: parseInt(tradeId, 10), reason: "Rejected by user" }),
     });
     const data = await res.json();
     setActionLog({ id: tradeId, msg: data.message ?? data.error ?? "Done", ok: !!data.success });

@@ -4,6 +4,7 @@ import { getBroker } from "@/lib/brokers/registry";
 import { fetchAlpacaAccount } from "@/lib/brokers/alpaca";
 import { getKiteHoldings } from "@/lib/kite";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -40,12 +41,24 @@ export async function POST(req: NextRequest) {
 
     if (res.status === "filled") {
       filled++;
+      // Write the real fill back to the originating proposal so the UI/ledger
+      // reflect the actual price/qty (not just the broker_orders row).
+      if (order.proposal_id) {
+        await supabase.from("trade_proposals").update({
+          status: "executed",
+          fill_price: res.avgFillPrice ?? null,
+          fill_qty: res.filledQty ?? order.qty,
+          filled_at: new Date().toISOString(),
+        }).eq("id", order.proposal_id);
+      }
       await supabase.from("decision_journal").insert({
         entry_type: "broker_order_filled", symbol: order.symbol, market: order.market ?? null,
         summary: `${broker.id} order filled: ${order.side} ${res.filledQty ?? order.qty} × ${order.symbol} @ avg ${res.avgFillPrice ?? "?"}`,
-        calculations: { broker_order_id: order.broker_order_id, filled_qty: res.filledQty, avg_fill_price: res.avgFillPrice },
+        calculations: { broker_order_id: order.broker_order_id, filled_qty: res.filledQty, avg_fill_price: res.avgFillPrice, proposal_id: order.proposal_id ?? null },
         has_verified_facts: true, resolved: true, resolved_at: new Date().toISOString(),
       });
+      // Any needs-reconcile alert for this order is now moot — the order confirmed.
+      await resolveIssue(`order-needs-reconcile:${order.id}`, supabase);
     }
   }
 

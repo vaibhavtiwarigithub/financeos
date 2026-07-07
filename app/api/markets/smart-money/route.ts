@@ -38,11 +38,13 @@ export async function GET(req: NextRequest) {
     .order("insider_score", { ascending: false })
     .limit(50);
 
-  // Get pending trade queue
+  // Pending proposals — read the CANONICAL trade_proposals table (the one
+  // /api/agents/trader + the Execution Gateway operate on), aliased to the
+  // field names the UI expects. The legacy trade_queue table is retired.
   const { data: tradeQueue } = await svc
-    .from("trade_queue")
-    .select("*")
-    .in("status", ["pending_approval", "approved"])
+    .from("trade_proposals")
+    .select("id, symbol, order_side:side, qty, order_type, limit_price, analyst_score, rationale:thesis, status, created_at, account_number")
+    .in("status", ["pending_review", "approved"])
     .order("created_at", { ascending: false })
     .limit(20);
 
