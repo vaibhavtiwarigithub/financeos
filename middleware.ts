@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { OWNER_EMAIL } from "@/lib/auth/owner";
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -22,6 +23,18 @@ export async function middleware(request: NextRequest) {
   );
 
   const { data: { user } } = await supabase.auth.getUser();
+
+  // Personal tool, single owner. This is the real access gate — the
+  // client-side email checks in app/login/page.tsx are cosmetic only (a
+  // bypassed/direct Supabase Auth call, or a Google OAuth sign-in, would
+  // skip them entirely). Any authenticated session that isn't the owner is
+  // rejected here, regardless of how the session was created.
+  if (user && user.email !== OWNER_EMAIL) {
+    await supabase.auth.signOut();
+    if (request.nextUrl.pathname !== "/login") {
+      return NextResponse.redirect(new URL("/login?error=restricted", request.url));
+    }
+  }
 
   // Protect dashboard routes
   if (!user && request.nextUrl.pathname.startsWith("/dashboard")) {

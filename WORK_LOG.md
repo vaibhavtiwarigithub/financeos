@@ -20,6 +20,20 @@
 
 ---
 
+## ✅ Session 2026-07-06 (cont'd) — Mobile-responsive pass + per-market trading toggle
+
+> User: whole app looked bad on mobile ("don't miss anything, remember same for future feature work") + wanted a per-market live-trading on/off separate from the existing Kite disconnect kill-switch (view holdings always, toggle auto-trading independently for US/India).
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Mobile-responsive: DashboardShell + global CSS | Claude | 2026-07-06 | `useIsMobile()` matchMedia hook + slide-in drawer nav (`DashboardShell.tsx`); global overflow-x safety net + table/img overflow rules in `globals.css`. |
+| Mobile-responsive: all ~30 dashboard pages/components | Claude + parallel agents | 2026-07-06 | CSS-only fixes (grid `auto-fit/minmax`, `clamp()` padding, table `overflowX` wrappers, `flexWrap`) — no JS breakpoint logic per-page. Verified via `tsc`, `vitest` (86/86), clean `next build`. |
+| Kite disconnect kill-switch | Claude | 2026-07-06 | `disconnectKite()` wipes local token even if Kite's revoke call fails/unreachable; Settings UI Disconnect button + note that revoking at kite.zerodha.com is the authoritative, app-independent kill switch. |
+| Robinhood MCP integration — architecture draft only | Claude | 2026-07-06 | `features/robinhood-mcp-integration/FEATURE_ARCHITECTURE.md`, Status: Draft, unapproved, unimplemented. Coexists with (does not replace) the manual Claude-Code-paste flow; read-only account-snapshot scope only. |
+| Migration 088 — per-market trading enable/disable | Claude | 2026-07-06 | `strategy_config.trading_enabled_us` / `trading_enabled_india` (both default true). Gated in `app/api/broker/orders/route.ts` for live orders only — reordered the check to run after `market` is resolved from the symbol, alongside the pre-existing global `trading_enabled`. Viewing holdings/balances was already market-agnostic and untouched. Settings → Agents now has an independent toggle pair, distinct from the Kite Disconnect kill-switch (this never revokes a credential, just pauses new live orders for that market). |
+
+---
+
 ## ✅ Session 2026-07-06 (cont'd) — India-specific morning/evening email briefings (NSE-hour anchored)
 
 > User asked whether the emailed morning/evening briefings fire separately for US vs India, matching each market's own open/close, like research/position-monitor already do.

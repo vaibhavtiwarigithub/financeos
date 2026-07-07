@@ -1,6 +1,11 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
+
+// Google sign-in is disabled for now (no email gate on that path) — flip
+// this back to true to re-enable once it's wired to the same restriction
+// middleware.ts enforces server-side.
+const GOOGLE_SIGNIN_ENABLED = false;
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -22,6 +27,13 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("error") === "restricted") {
+      setError("This account isn't authorized for this app.");
+    }
+  }, []);
 
   async function handleGoogle() {
     setLoading(true);
@@ -104,7 +116,7 @@ export default function LoginPage() {
 
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "32px" }}>
 
-            {mode !== "forgot" && (
+            {mode !== "forgot" && GOOGLE_SIGNIN_ENABLED && (
               <>
                 {/* Google */}
                 <button

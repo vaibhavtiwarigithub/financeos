@@ -67,6 +67,11 @@ export default function SettingsPage() {
   const [activeBrokerIndia, setActiveBrokerIndia] = useState("kite");
   const [savingBroker, setSavingBroker] = useState(false);
 
+  // Per-market auto-trading on/off (view-only holdings unaffected either way)
+  const [tradingEnabledUs, setTradingEnabledUs] = useState(true);
+  const [tradingEnabledIndia, setTradingEnabledIndia] = useState(true);
+  const [savingTradingEnabled, setSavingTradingEnabled] = useState(false);
+
   // Risk profile state
   const [riskProfile, setRiskProfile] = useState<RiskProfileKey>("balanced");
   const [scoreThreshold, setScoreThreshold] = useState(60);
@@ -129,6 +134,8 @@ export default function SettingsPage() {
         if (d.base_risk_profile) setBaseRiskProfile(d.base_risk_profile as RiskProfileKey);
         if (d.active_broker_us) setActiveBrokerUs(d.active_broker_us);
         if (d.active_broker_india) setActiveBrokerIndia(d.active_broker_india);
+        if (d.trading_enabled_us !== undefined && d.trading_enabled_us !== null) setTradingEnabledUs(d.trading_enabled_us);
+        if (d.trading_enabled_india !== undefined && d.trading_enabled_india !== null) setTradingEnabledIndia(d.trading_enabled_india);
       })
       .catch(() => {});
 
@@ -150,6 +157,28 @@ export default function SettingsPage() {
       setToast("Broker selection saved!");
       setTimeout(() => setToast(""), 2500);
     } finally { setSavingBroker(false); }
+  }
+
+  async function saveTradingEnabled(market: "us" | "india", value: boolean) {
+    setSavingTradingEnabled(true);
+    const prevUs = tradingEnabledUs, prevIndia = tradingEnabledIndia;
+    if (market === "us") setTradingEnabledUs(value); else setTradingEnabledIndia(value);
+    try {
+      const res = await fetch("/api/settings/risk-profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(market === "us" ? { trading_enabled_us: value } : { trading_enabled_india: value }),
+      });
+      if (!res.ok) throw new Error("save failed");
+      setToast(`${market === "us" ? "US" : "India"} auto-trading ${value ? "enabled" : "disabled"}`);
+      setTimeout(() => setToast(""), 2500);
+    } catch {
+      // revert optimistic update on failure
+      setTradingEnabledUs(prevUs);
+      setTradingEnabledIndia(prevIndia);
+      setToast("Failed to save — try again");
+      setTimeout(() => setToast(""), 2500);
+    } finally { setSavingTradingEnabled(false); }
   }
 
   async function applyPosture() {
@@ -478,6 +507,36 @@ export default function SettingsPage() {
                 <button onClick={saveBrokerRegistry} disabled={savingBroker} style={{ alignSelf: "flex-end", background: "transparent", border: `1px solid ${T.accent}`, borderRadius: "8px", color: T.accent, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
                   {savingBroker ? "..." : "Save"}
                 </button>
+              </div>
+            </div>
+
+            {/* Per-market auto-trading on/off — separate from Disconnect below.
+                Turning this off never blocks viewing holdings/balances; it only
+                blocks new live order placement for that market. */}
+            <div style={{ borderTop: `1px solid ${T.border}`, marginTop: "20px", paddingTop: "16px" }}>
+              <div style={{ fontSize: "12px", color: T.muted, marginBottom: "4px", letterSpacing: "0.06em", textTransform: "uppercase" as const }}>Auto-Trading On/Off (per market)</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "12px" }}>
+                Off = you can still view holdings/balances and generate paper proposals, but no live order can be placed for that market. Different from Disconnect — this doesn't revoke any credential.
+              </div>
+              <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" as const }}>
+                {([
+                  { key: "us" as const, label: "🇺🇸 US (Robinhood/Alpaca)", enabled: tradingEnabledUs, setEnabled: setTradingEnabledUs },
+                  { key: "india" as const, label: "🇮🇳 India (Kite)", enabled: tradingEnabledIndia, setEnabled: setTradingEnabledIndia },
+                ]).map(m => (
+                  <div key={m.key} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <button
+                      onClick={() => saveTradingEnabled(m.key, !m.enabled)}
+                      disabled={savingTradingEnabled}
+                      style={{
+                        position: "relative", width: "42px", height: "24px", borderRadius: "12px", border: "none", cursor: "pointer",
+                        background: m.enabled ? T.green : T.border, opacity: savingTradingEnabled ? 0.6 : 1,
+                      }}
+                    >
+                      <div style={{ position: "absolute", top: "2px", left: m.enabled ? "20px" : "2px", width: "20px", height: "20px", borderRadius: "50%", background: "#fff", transition: "left 0.15s" }} />
+                    </button>
+                    <div style={{ fontSize: "13px", color: m.enabled ? T.green : T.muted }}>{m.label} — {m.enabled ? "auto-trading ON" : "view-only"}</div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

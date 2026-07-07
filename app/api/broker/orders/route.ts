@@ -21,13 +21,6 @@ export async function POST(req: NextRequest) {
 
     const supabase = createServiceClient();
 
-    if (orderEnv === "live") {
-      const { data: cfg } = await supabase.from("strategy_config").select("trading_enabled").limit(1).maybeSingle();
-      if (!(cfg as any)?.trading_enabled) {
-        return NextResponse.json({ error: "Live trading is disabled (strategy_config.trading_enabled = false)" }, { status: 403 });
-      }
-    }
-
     const { data: proposal } = await supabase.from("trade_proposals").select("*").eq("id", proposal_id).maybeSingle();
     if (!proposal) return NextResponse.json({ error: "Proposal not found" }, { status: 404 });
     if ((proposal as any).status !== "approved") {
@@ -46,6 +39,17 @@ export async function POST(req: NextRequest) {
     const side = (proposal as any).side === "sell" ? "sell" : "buy";
     const qty = (proposal as any).qty;
     const market: "us" | "india" = isIndia(symbol) ? "india" : "us";
+
+    if (orderEnv === "live") {
+      const { data: cfg } = await supabase.from("strategy_config").select("trading_enabled, trading_enabled_us, trading_enabled_india").limit(1).maybeSingle();
+      const marketFlag = market === "india" ? (cfg as any)?.trading_enabled_india : (cfg as any)?.trading_enabled_us;
+      if (!(cfg as any)?.trading_enabled) {
+        return NextResponse.json({ error: "Live trading is disabled (strategy_config.trading_enabled = false)" }, { status: 403 });
+      }
+      if (marketFlag === false) {
+        return NextResponse.json({ error: `Live trading is disabled for ${market.toUpperCase()} (view-only mode — turn it back on in Settings → Agents)` }, { status: 403 });
+      }
+    }
 
     const broker = await getActiveBroker(supabase, market);
     if (orderEnv === "live" && !broker.envs.includes("live")) {
