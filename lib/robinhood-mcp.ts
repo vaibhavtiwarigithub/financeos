@@ -34,7 +34,13 @@ async function vaultGet(svc: any, key: string): Promise<string | null> {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 async function vaultSet(svc: any, key: string, value: string): Promise<void> {
-  const { error } = await svc.from("api_key_vault").upsert({ key_name: key, key_value: value }, { onConflict: "key_name" });
+  // api_key_vault.display_name and .provider are NOT NULL with no default —
+  // must be set on insert or the write throws a not-null violation (which is
+  // what silently broke registration + token storage before this fix).
+  const { error } = await svc.from("api_key_vault").upsert(
+    { key_name: key, key_value: value, display_name: key, provider: "robinhood_mcp" },
+    { onConflict: "key_name" }
+  );
   if (error) throw new Error(`vault write failed for ${key}: ${error.message}`);
 }
 // Read the refresh token together with its updated_at for compare-and-swap.
