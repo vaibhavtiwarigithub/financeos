@@ -284,6 +284,30 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: "learner",
   },
   {
+    name: "macro-read-us",
+    agent: "macro-read",
+    time: "9:30 AM ET",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Agent Mind Phase 3: generates the plain-English 'what the macro backdrop means for your book' read (US) — macro regime + holdings + macro priors → one cheap cached LLM call/day. Advisory only; shown on Markets. Never trades or sizes.",
+    handoff: "→ Markets page 'What this means for your book' card",
+    agentRunsType: null,
+  },
+  {
+    name: "macro-read-india",
+    agent: "macro-read",
+    time: "10:00 AM IST",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Agent Mind Phase 3: India macro-to-holdings read (market=india). Same cheap cached daily call, scoped to the India book and regime.",
+    handoff: "→ Markets page (India)",
+    agentRunsType: null,
+  },
+  {
     name: "mentor-coach",
     agent: "mentor-coach",
     time: "5:15 PM ET",

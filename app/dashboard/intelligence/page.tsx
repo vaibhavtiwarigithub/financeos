@@ -99,6 +99,200 @@ const T = {
   accent: "#6366F1", accentBg: "#1E1F3A", green: "#34D399", red: "#F87171", blue: "#60A5FA",
 };
 
+const TM = {
+  bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
+  text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280",
+  accent: "#6366F1", green: "#34D399", red: "#F87171", amber: "#FBBF24", blue: "#60A5FA",
+};
+
+const CAT_LABEL: Record<string, string> = {
+  fundamental: "Fundamental", technical: "Technical", macro: "Macro", insider: "Insider / Flows", general: "General / Meta",
+};
+
+// ── Beliefs tab — surface + curate learning_priors ──────────────────────────
+function BeliefsTab() {
+  const [priors, setPriors] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<number | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [form, setForm] = useState({ category: "fundamental", principle: "", confidence: "0.6", source: "user" });
+  const [msg, setMsg] = useState("");
+
+  const load = () => { setLoading(true); fetch("/api/agent-mind/priors").then(r => r.json()).then(d => { setPriors(d.priors ?? []); setLoading(false); }).catch(() => setLoading(false)); };
+  useEffect(() => { load(); }, []);
+
+  async function toggle(p: any) {
+    setSaving(p.id);
+    await fetch("/api/agent-mind/priors", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: p.id, enabled: !p.enabled }) }).catch(() => {});
+    setSaving(null); load();
+  }
+  async function addPrior() {
+    setMsg("");
+    const res = await fetch("/api/agent-mind/priors", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "add", ...form, confidence: parseFloat(form.confidence) }) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { setMsg(d.error ?? "Failed"); return; }
+    setAddOpen(false); setForm({ category: "fundamental", principle: "", confidence: "0.6", source: "user" }); load();
+  }
+
+  if (loading) return <div style={{ color: TM.muted, padding: "40px", textAlign: "center" }}>Loading beliefs…</div>;
+  const byCat: Record<string, any[]> = {};
+  for (const p of priors) (byCat[p.category] ??= []).push(p);
+  const cats = Object.keys(CAT_LABEL).filter(c => byCat[c]?.length);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+        <div style={{ fontSize: "13px", color: TM.textSub }}>
+          The background principles the LearnerAgent reasons from ({priors.length} total). Confidence is earned over time as predictions resolve — the learner adjusts it; you can enable/disable or add your own.
+        </div>
+        <button onClick={() => setAddOpen(o => !o)} style={{ background: TM.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "8px 16px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>{addOpen ? "Cancel" : "+ Add belief"}</button>
+      </div>
+
+      {addOpen && (
+        <div style={{ background: TM.card, border: `1px solid ${TM.border}`, borderRadius: "12px", padding: "16px", marginBottom: "16px" }}>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "10px" }}>
+            <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} style={{ background: TM.surface, border: `1px solid ${TM.border}`, borderRadius: "8px", color: TM.text, padding: "8px 10px" }}>
+              {Object.entries(CAT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <input type="number" step="0.05" min="0" max="1" value={form.confidence} onChange={e => setForm(f => ({ ...f, confidence: e.target.value }))} style={{ width: "90px", background: TM.surface, border: `1px solid ${TM.border}`, borderRadius: "8px", color: TM.text, padding: "8px 10px" }} placeholder="conf" />
+            <input value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} style={{ width: "140px", background: TM.surface, border: `1px solid ${TM.border}`, borderRadius: "8px", color: TM.text, padding: "8px 10px" }} placeholder="source" />
+          </div>
+          <textarea value={form.principle} onChange={e => setForm(f => ({ ...f, principle: e.target.value }))} placeholder="One testable claim, e.g. 'Positive earnings-estimate revisions over 1-3 months predict continued outperformance.'" style={{ width: "100%", minHeight: "70px", background: TM.surface, border: `1px solid ${TM.border}`, borderRadius: "8px", color: TM.text, padding: "10px", boxSizing: "border-box" }} />
+          {msg && <div style={{ color: TM.red, fontSize: "12px", marginTop: "8px" }}>{msg}</div>}
+          <button onClick={addPrior} style={{ marginTop: "10px", background: TM.green, border: "none", borderRadius: "8px", color: "#04150c", padding: "8px 18px", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>Save belief</button>
+        </div>
+      )}
+
+      {cats.map(cat => (
+        <div key={cat} style={{ marginBottom: "22px" }}>
+          <div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.08em", color: TM.muted, textTransform: "uppercase", marginBottom: "10px" }}>{CAT_LABEL[cat]} · {byCat[cat].length}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {byCat[cat].map(p => {
+              const pct = Math.round((p.confidence ?? 0) * 100);
+              const barColor = pct >= 70 ? TM.green : pct >= 55 ? TM.amber : TM.red;
+              return (
+                <div key={p.id} style={{ background: TM.card, border: `1px solid ${TM.border}`, borderRadius: "10px", padding: "12px 14px", opacity: p.enabled ? 1 : 0.5 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
+                    <div style={{ fontSize: "13px", color: TM.text, lineHeight: 1.5, flex: 1 }}>{p.principle}</div>
+                    <button onClick={() => toggle(p)} disabled={saving === p.id} style={{ flexShrink: 0, background: p.enabled ? `${TM.green}22` : TM.surface, border: `1px solid ${p.enabled ? TM.green + "55" : TM.border}`, borderRadius: "6px", color: p.enabled ? TM.green : TM.muted, padding: "4px 10px", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>{p.enabled ? "ON" : "OFF"}</button>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
+                    <div style={{ flex: 1, height: "6px", background: TM.surface, borderRadius: "3px", overflow: "hidden" }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: barColor }} />
+                    </div>
+                    <div style={{ fontSize: "12px", color: barColor, fontWeight: 700, minWidth: "34px", textAlign: "right" }}>{pct}%</div>
+                    <div style={{ fontSize: "11px", color: TM.muted, minWidth: "90px", textAlign: "right" }}>{p.source}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Brain tab — the unified evolving-belief view ────────────────────────────
+function BrainTab() {
+  const [market, setMarket] = useState<"us" | "india">("us");
+  const [data, setData] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { setLoading(true); fetch(`/api/agent-mind/brain?market=${market}`).then(r => r.json()).then(d => { setData(d); setLoading(false); }).catch(() => setLoading(false)); }, [market]);
+
+  if (loading) return <div style={{ color: TM.muted, padding: "40px", textAlign: "center" }}>Loading the brain…</div>;
+  if (!data) return <div style={{ color: TM.muted, padding: "40px", textAlign: "center" }}>No brain data.</div>;
+
+  const weights = data.champion?.weights_snapshot ?? data.live_weights ?? null;
+  const dims = weights ? Object.entries(weights).filter(([k]) => /fundamental|technical|sentiment|macro|insider/i.test(k)) : [];
+  const Section = ({ title, sub, children }: any) => (
+    <div style={{ background: TM.card, border: `1px solid ${TM.border}`, borderRadius: "12px", padding: "18px", marginBottom: "16px" }}>
+      <div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.07em", color: TM.muted, textTransform: "uppercase", marginBottom: sub ? "2px" : "12px" }}>{title}</div>
+      {sub && <div style={{ fontSize: "12px", color: TM.muted, marginBottom: "12px" }}>{sub}</div>}
+      {children}
+    </div>
+  );
+
+  const ev = data.evidence_context ?? {};
+  return (
+    <div>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+        {(["us", "india"] as const).map(m => (
+          <button key={m} onClick={() => setMarket(m)} style={{ background: market === m ? TM.accent : TM.surface, border: `1px solid ${market === m ? TM.accent : TM.border}`, borderRadius: "8px", color: market === m ? "#fff" : TM.textSub, padding: "6px 16px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>{m === "us" ? "🇺🇸 US" : "🇮🇳 India"}</button>
+        ))}
+      </div>
+
+      <div style={{ background: "#1a1200", border: `1px solid ${TM.amber}44`, borderRadius: "10px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: TM.amber }}>
+        Evidence context: {ev.resolved_trades ?? 0} resolved trades, {ev.prior_count ?? 0} beliefs. Confidence is only as strong as the evidence behind it — treat everything below as a working view, not certainty.
+      </div>
+
+      <Section title="Current conviction" sub={data.champion ? `Champion strategy v${data.champion.version} — the current working theory of how much each dimension should matter` : "No promoted champion yet — using live default weights"}>
+        {dims.length ? dims.map(([k, v]: any) => {
+          const pct = Math.round(Number(v) * 100);
+          return (
+            <div key={k} style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+              <div style={{ width: "110px", fontSize: "12px", color: TM.textSub, textTransform: "capitalize" }}>{k.replace(/_weight/, "").replace(/_/g, " ")}</div>
+              <div style={{ flex: 1, height: "8px", background: TM.surface, borderRadius: "4px", overflow: "hidden" }}><div style={{ width: `${pct}%`, height: "100%", background: TM.accent }} /></div>
+              <div style={{ width: "40px", textAlign: "right", fontSize: "12px", color: TM.text, fontWeight: 700 }}>{pct}%</div>
+            </div>
+          );
+        }) : <div style={{ color: TM.muted, fontSize: "13px" }}>No weight data.</div>}
+        {data.champion?.notes && <div style={{ marginTop: "12px", fontSize: "12px", color: TM.textSub, lineHeight: 1.6, borderTop: `1px solid ${TM.border}`, paddingTop: "10px" }}>Why this is the theory: {data.champion.notes}</div>}
+      </Section>
+
+      <Section title="Strengthening / weakening beliefs" sub="How the confidence in each principle has moved as predictions resolved">
+        {data.belief_drift?.length ? data.belief_drift.map((d: any) => (
+          <div key={d.id} style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+            <div style={{ width: "56px", fontSize: "12px", fontWeight: 700, color: d.delta > 0 ? TM.green : TM.red }}>{d.delta > 0 ? "▲" : "▼"} {Math.abs(Math.round(d.delta * 100))}%</div>
+            <div style={{ flex: 1, fontSize: "12px", color: TM.textSub, lineHeight: 1.4 }}>{d.principle}</div>
+            <div style={{ fontSize: "12px", color: TM.muted }}>{Math.round(d.current * 100)}%</div>
+          </div>
+        )) : <div style={{ color: TM.muted, fontSize: "13px" }}>No belief movement yet — drift appears once the learner has resolved predictions and adjusted confidence.</div>}
+      </Section>
+
+      <Section title="What the learner did recently" sub="Weight moves and notes from recent LearnerAgent runs">
+        {data.learning_log?.length ? data.learning_log.map((l: any, i: number) => (
+          <div key={i} style={{ borderBottom: i < data.learning_log.length - 1 ? `1px solid ${TM.border}` : "none", padding: "8px 0", fontSize: "12px", color: TM.textSub, lineHeight: 1.5 }}>
+            <span style={{ color: TM.text, fontWeight: 600 }}>{l.signal_adjusted ?? "note"}</span>
+            {l.old_weight != null && l.new_weight != null && <span> · {Number(l.old_weight).toFixed(2)} → {Number(l.new_weight).toFixed(2)}</span>}
+            {l.trades_evaluated != null && <span style={{ color: TM.muted }}> · {l.trades_evaluated} trades</span>}
+            <div>{l.reason ?? l.note ?? ""}</div>
+          </div>
+        )) : <div style={{ color: TM.muted, fontSize: "13px" }}>No learner activity logged yet.</div>}
+      </Section>
+
+      <Section title="Self-invented features" sub="Signals the system proposed for itself and where they sit in the IC-gated pipeline">
+        {data.features?.length ? data.features.map((f: any, i: number) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: "12px", color: TM.textSub }}>
+            <span>{f.name}</span>
+            <span style={{ color: f.status === "promoted" ? TM.green : f.status === "killed" ? TM.red : TM.amber, fontWeight: 700 }}>{f.status}</span>
+          </div>
+        )) : <div style={{ color: TM.muted, fontSize: "13px" }}>No self-proposed features yet.</div>}
+      </Section>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px" }}>
+        <Section title="Regime posture">
+          {data.regime ? (
+            <div style={{ fontSize: "13px", color: TM.textSub, lineHeight: 1.6 }}>
+              <div><span style={{ color: TM.text, fontWeight: 700, textTransform: "uppercase" }}>{data.regime.regime}</span> · danger {data.regime.danger_score}/100</div>
+              {data.regime.summary && <div style={{ marginTop: "6px", fontSize: "12px" }}>{data.regime.summary}</div>}
+            </div>
+          ) : <div style={{ color: TM.muted, fontSize: "13px" }}>No macro regime yet.</div>}
+        </Section>
+        <Section title="Track record">
+          {data.performance ? (
+            <div style={{ fontSize: "13px", color: TM.textSub, lineHeight: 1.7 }}>
+              <div>Total P&L: <span style={{ color: (data.performance.total_pnl_pct ?? 0) >= 0 ? TM.green : TM.red, fontWeight: 700 }}>{Number(data.performance.total_pnl_pct ?? 0).toFixed(1)}%</span></div>
+              <div>Win rate: {data.performance.win_rate != null ? Math.round(data.performance.win_rate * (data.performance.win_rate <= 1 ? 100 : 1)) + "%" : "—"} ({(data.performance.win_count ?? 0)}W / {(data.performance.loss_count ?? 0)}L)</div>
+              <div>Alpha vs benchmark: {data.performance.alpha_pct != null ? Number(data.performance.alpha_pct).toFixed(1) + "%" : "—"}</div>
+            </div>
+          ) : <div style={{ color: TM.muted, fontSize: "13px" }}>No performance data for this market yet.</div>}
+        </Section>
+      </div>
+    </div>
+  );
+}
+
 export default function IntelligencePage() {
   const supabase = createClient();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -179,7 +373,7 @@ Rules:
       </div>
 
       <div style={{ display: "flex", gap: "6px", borderBottom: `1px solid ${T.border}`, marginBottom: "24px" }}>
-        {["analysis", "newsletter"].map(t => (
+        {["analysis", "beliefs", "brain", "newsletter"].map(t => (
           <button key={t} onClick={() => setTab(t)} style={{ background: "none", border: "none", borderBottom: tab === t ? `2px solid ${T.accent}` : "2px solid transparent", color: tab === t ? T.accent : T.muted, padding: "8px 16px", fontSize: "14px", cursor: "pointer", textTransform: "capitalize", marginBottom: "-1px" }}>{t}</button>
         ))}
       </div>
@@ -222,6 +416,9 @@ Rules:
 
         </div>
       )}
+
+      {tab === "beliefs" && <BeliefsTab />}
+      {tab === "brain" && <BrainTab />}
 
       {tab === "newsletter" && (
         <NewsletterTab />

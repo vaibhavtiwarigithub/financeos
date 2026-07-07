@@ -20,6 +20,23 @@
 
 ---
 
+## ✅ Session 2026-07-07 (cont'd) — Agent Mind (all 3 phases) + learning_priors seed
+
+> User approved the Agent Mind feature (surface what the agents believe, how it evolves, macro-to-holdings read). Also seeded/cleaned learning_priors.
+
+| Piece | Notes |
+|---|---|
+| learning_priors cleanup + seed | Fixed a data bug (every prior was duplicated — 15 unique stored twice). Added 15 new source-tagged priors (12-1 momentum, low-vol, quality, earnings revisions, PEAD, credit spreads, ISM/PMI, real yields, VIX term structure, cycle rotation, cluster insider buying, breadth-over-depth, regime-first). 30 clean rows. |
+| Migration 096 | learning_priors_history (belief-drift), unique(category,principle), macro_interpretations. All service-role-only. strategy_versions already had parent_version_id. |
+| Migration 097 | Daily macro-read crons (us 9:30 ET, india 10:00 IST). |
+| Phase 1 — Beliefs | /api/agent-mind/priors (GET/PATCH, owner-only) + Intelligence "Beliefs" tab. View/toggle/add priors; every change writes learning_priors_history + decision_journal. No LLM writes a belief. |
+| Phase 2 — Brain | /api/agent-mind/brain (GET, owner-only) + Intelligence "Brain" tab: champion weights + why, belief drift, learner log, self-invented features, regime posture, track record, evidence-context banner (confidence shown next to N so small samples never read as authoritative). Pure DB reads. |
+| Phase 3 — Macro read | /api/agent-mind/macro-read (GET owner / POST owner+cron) + Markets "What this means for your book" card. Cheap model over macro regime + holdings + macro priors; cached ≤1 call/day/market; advisory only, degrades to raw data if model down. |
+
+Guardrails held: nothing here trades/sizes; no LLM mutates a belief; owner-gated; no hot-path market-data spend.
+
+---
+
 ## ✅ Session 2026-07-07 (cont'd) — Codex review of Robinhood MCP: all 12 findings fixed
 
 > External Codex adversarial review of the real-money path (CODEX_ROBINHOOD_MCP_REVIEW.md). Verdict: don't enable live orders until findings 1–8 fixed. All 12 + the AV note now fixed.

@@ -875,6 +875,55 @@ const SIGNAL_COLORS: Record<string, string> = {
   red:    "#F87171",
 };
 
+// Agent Mind Phase 3 — plain-English read of what the current macro backdrop
+// means for the current book. Advisory only; generated at most once/day.
+function MacroReadCard({ market }: { market: "us" | "india" }) {
+  const [read, setRead] = useState<{ content: string; created_at: string } | null>(null);
+  const [stale, setStale] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/agent-mind/macro-read?market=${market}`);
+      if (res.ok) { const d = await res.json(); setRead(d.interpretation ?? null); setStale(!!d.stale); }
+    } catch {}
+    setLoading(false);
+  }
+  async function generate() {
+    setRunning(true);
+    try {
+      const res = await fetch(`/api/agent-mind/macro-read?market=${market}&force=1`, { method: "POST" });
+      if (res.ok) await load();
+    } catch {}
+    setRunning(false);
+  }
+  useEffect(() => { load(); }, [market]);
+
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "10px" }}>
+        <div>
+          <div style={{ fontSize: "14px", fontWeight: 700, color: T.text }}>What this means for your book</div>
+          <div style={{ fontSize: "12px", color: T.muted }}>Macro regime + your holdings + the system's macro beliefs → plain-English read (advisory only)</div>
+        </div>
+        <button onClick={generate} disabled={running} style={{ background: running ? T.border : "transparent", border: `1px solid ${T.accent}`, borderRadius: "8px", color: T.accent, padding: "7px 14px", fontSize: "12px", fontWeight: 600, cursor: running ? "not-allowed" : "pointer" }}>{running ? "Generating…" : read ? "Regenerate" : "Generate"}</button>
+      </div>
+      {loading ? (
+        <div style={{ color: T.muted, fontSize: "13px" }}>Loading…</div>
+      ) : read ? (
+        <>
+          <div style={{ fontSize: "13px", color: T.textSub, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{read.content}</div>
+          <div style={{ fontSize: "11px", color: T.muted, marginTop: "10px" }}>{stale ? "From a previous day — click Regenerate for today. " : ""}Generated {new Date(read.created_at).toLocaleString()}</div>
+        </>
+      ) : (
+        <div style={{ color: T.muted, fontSize: "13px" }}>No read yet — click Generate. Needs macro data + at least the current regime.</div>
+      )}
+    </div>
+  );
+}
+
 function MacroSentinelCard() {
   const [macroData, setMacroData] = useState<{ regimes: MacroRegime[]; latest_signals: MacroSignal[] } | null>(null);
   const [macroLoading, setMacroLoading] = useState(true);
@@ -1558,6 +1607,11 @@ export default function MarketsPage() {
       {/* Macro Recession Sentinel */}
       <div style={{ marginTop: "16px", marginBottom: "16px" }}>
         <MacroSentinelCard />
+      </div>
+
+      {/* What the macro backdrop means for your book (Agent Mind, Phase 3) */}
+      <div style={{ marginBottom: "16px" }}>
+        <MacroReadCard market={market} />
       </div>
 
       {/* Smart Money Trades */}
