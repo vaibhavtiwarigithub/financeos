@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { callLLM } from "@/lib/llm-router";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
+import { getConfiguredModel } from "@/lib/agent-model-config";
 
 export const dynamic = "force-dynamic";
 
@@ -198,7 +199,8 @@ Be specific about which indicators are driving the read. No invented catalysts. 
 
     const llmResult = await callLLM({
       task: "thesis",
-      model: "deepseek-chat",
+      // Configurable from Settings -> Agents -> LLM Config (agent_name="markets-synthesis").
+      model: await getConfiguredModel(svc, "markets-synthesis"),
       prompt,
       maxTokens: 350,
     });

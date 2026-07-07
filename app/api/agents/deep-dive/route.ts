@@ -3,17 +3,16 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
 import { avCachedFetch } from "@/lib/av-cache";
+import { getConfiguredModel } from "@/lib/agent-model-config";
 
 export const dynamic = "force-dynamic";
 
 // Deep-Dive Debate — adversarial multi-agent analysis for one symbol.
 // Analyst layer → Bull/Bear debate → Risk debate → Portfolio Manager verdict.
 // Reasons over data we already have (live quote + our own signal scores + macro),
-// so it burns no Alpha Vantage budget. On-demand only. No ANTHROPIC_API_KEY, so
-// analysts/advocates run on deepseek-chat, evaluator/PM on deepseek-reasoner.
-
-const CHAT = "deepseek-chat";
-const REASONER = "deepseek-reasoner";
+// so it burns no Alpha Vantage budget. On-demand only. Model is configurable
+// from Settings -> Agents -> LLM Config (agent_config, agent_name="deep-dive")
+// — defaults to deepseek-reasoner since there's no ANTHROPIC_API_KEY today.
 
 async function fetchQuote(symbol: string): Promise<{ price: number; changePct: number; source: string } | null> {
   const apiKey = process.env.MASSIVE_API_KEY;
@@ -72,6 +71,7 @@ export async function POST(req: NextRequest) {
   if (!process.env.DEEPSEEK_API_KEY) return NextResponse.json({ error: "DEEPSEEK_API_KEY not set" }, { status: 503 });
 
   const svc = createServiceClient();
+  const model = await getConfiguredModel(svc, "deep-dive");
 
   // ── Data bundle: quote + fundamentals + our signal scores + macro + holding ──
   const [quote, fundamentals, { data: sig }, { data: macro }, { data: pos }, { data: wl }] = await Promise.all([
@@ -108,25 +108,25 @@ export async function POST(req: NextRequest) {
   try {
     // ── Analyst layer (parallel) ──────────────────────────────────────────────
     const [market, sentiment, fundamentals, macroReport] = await Promise.all([
-      run("market", CHAT, `${dataHeader}You are a MARKET/TECHNICAL analyst. In 4-6 sentences, assess ${symbol}'s price action, momentum, and technical posture from the data. State one bullish and one bearish technical point. Be concrete.`),
-      run("sentiment", CHAT, `${dataHeader}You are a SENTIMENT/NEWS analyst. In 4-6 sentences, assess the sentiment picture for ${symbol} from the signal scores and rationale. Note what would shift sentiment. If sentiment data is thin, say so.`),
-      run("fundamentals", CHAT, `${dataHeader}You are a FUNDAMENTALS analyst. In 4-6 sentences, assess ${symbol}'s fundamental case from the fundamental score and rationale. State the core bull thesis and the main fundamental risk.`),
-      run("macro", CHAT, `${dataHeader}You are a MACRO analyst. In 3-5 sentences, assess how the current macro regime affects ${symbol} specifically. Is the macro backdrop a tailwind or headwind for this name/sector?`),
+      run("market", model, `${dataHeader}You are a MARKET/TECHNICAL analyst. In 4-6 sentences, assess ${symbol}'s price action, momentum, and technical posture from the data. State one bullish and one bearish technical point. Be concrete.`),
+      run("sentiment", model, `${dataHeader}You are a SENTIMENT/NEWS analyst. In 4-6 sentences, assess the sentiment picture for ${symbol} from the signal scores and rationale. Note what would shift sentiment. If sentiment data is thin, say so.`),
+      run("fundamentals", model, `${dataHeader}You are a FUNDAMENTALS analyst. In 4-6 sentences, assess ${symbol}'s fundamental case from the fundamental score and rationale. State the core bull thesis and the main fundamental risk.`),
+      run("macro", model, `${dataHeader}You are a MACRO analyst. In 3-5 sentences, assess how the current macro regime affects ${symbol} specifically. Is the macro backdrop a tailwind or headwind for this name/sector?`),
     ]);
 
     const analystBlock = `ANALYST REPORTS:\n[MARKET/TECHNICAL]\n${market}\n\n[SENTIMENT]\n${sentiment}\n\n[FUNDAMENTALS]\n${fundamentals}\n\n[MACRO]\n${macroReport}\n\n`;
 
     // ── Research debate (parallel advocates) ──────────────────────────────────
     const [bull, bear] = await Promise.all([
-      run("bull", CHAT, `${dataHeader}${analystBlock}You are the BULL advocate. Build the strongest evidence-based case to BUY ${symbol}. 4-6 sentences. Cite the analyst reports. No hype — argue from the data.`),
-      run("bear", CHAT, `${dataHeader}${analystBlock}You are the BEAR advocate. Build the strongest evidence-based case to AVOID or SELL ${symbol}. 4-6 sentences. Cite the analyst reports. Focus on real risks, not generic caution.`),
+      run("bull", model, `${dataHeader}${analystBlock}You are the BULL advocate. Build the strongest evidence-based case to BUY ${symbol}. 4-6 sentences. Cite the analyst reports. No hype — argue from the data.`),
+      run("bear", model, `${dataHeader}${analystBlock}You are the BEAR advocate. Build the strongest evidence-based case to AVOID or SELL ${symbol}. 4-6 sentences. Cite the analyst reports. Focus on real risks, not generic caution.`),
     ]);
 
-    const research_evaluator = await run("evaluator", REASONER,
+    const research_evaluator = await run("evaluator", model,
       `${dataHeader}${analystBlock}BULL CASE:\n${bull}\n\nBEAR CASE:\n${bear}\n\nYou are the RESEARCH EVALUATOR. Weigh both cases. Which is stronger and why? State a lean (Bullish / Bearish / Neutral) with the single most decisive factor. 4-6 sentences.`, 650);
 
     // ── Risk debate (one call, three perspectives) ────────────────────────────
-    const risk = await run("risk", REASONER,
+    const risk = await run("risk", model,
       `${dataHeader}RESEARCH EVALUATION:\n${research_evaluator}\n\nYou are the RISK DESK. Give three brief perspectives on entering ${symbol} now:\n- RISKY (aggressive): why act now\n- SAFE (conservative): what could impair capital\n- NEUTRAL: the balanced staged approach\nThen one line: the key risk that must be watched. Keep each to 1-2 sentences.`, 650);
 
     // ── Portfolio Manager verdict ─────────────────────────────────────────────
@@ -134,7 +134,7 @@ export async function POST(req: NextRequest) {
       ? `${symbol} IS currently held. Allowed verdicts: HOLD, SELL, or BUY (add).`
       : `${symbol} is NOT held. This is a LONG-ONLY system for new positions. Allowed verdicts: BUY or PASS (never SELL a name you don't own).`;
 
-    const pm = await run("pm", REASONER,
+    const pm = await run("pm", model,
       `${dataHeader}RESEARCH EVALUATION:\n${research_evaluator}\n\nRISK DESK:\n${risk}\n\nYou are the PORTFOLIO MANAGER. Make the final call for ${symbol}.\n${longOnlyRule}\n\nWrite 4-6 sentences of rationale synthesizing the debate, then end with EXACTLY this line and nothing after:\nVERDICT: <BUY|HOLD|SELL|PASS> | CONVICTION: <integer 0-100>`, 700);
 
     // Parse verdict + conviction
@@ -147,7 +147,6 @@ export async function POST(req: NextRequest) {
     const summary = pm.replace(/VERDICT:[\s\S]*$/i, "").trim();
 
     const reports = { market, sentiment, fundamentals, macro: macroReport, bull, bear, research_evaluator, risk, portfolio_manager: pm };
-    const model = `${CHAT}+${REASONER}`;
 
     const { data: saved, error: saveErr } = await svc.from("deep_analyses").insert({
       symbol, verdict, conviction, summary, reports, model,

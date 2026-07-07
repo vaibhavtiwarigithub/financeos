@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callLLM } from "@/lib/llm-router";
 import { createServiceClient } from "@/lib/supabase/service";
+import { getConfiguredModel } from "@/lib/agent-model-config";
 import type { MarketOverview } from "@/app/api/markets/overview/route";
 
 export const dynamic = "force-dynamic";
@@ -169,17 +170,17 @@ export async function GET(req: NextRequest) {
     contextString = sections.join("\n");
   }
 
-  // Route to DeepSeek: there is no ANTHROPIC_API_KEY, so a Claude-routed task
-  // would fall back to the CLI subprocess and can fail → 500. DeepSeek works and
-  // is fine for a market-summary. Wrap so an LLM failure never 500s the endpoint —
-  // return the market data with a null thesis instead.
+  // Model is configurable from Settings -> Agents -> LLM Config
+  // (agent_config, agent_name="markets-thesis") — defaults to deepseek-reasoner
+  // since there's no ANTHROPIC_API_KEY today. Wrap so an LLM failure never
+  // 500s the endpoint — return the market data with a null thesis instead.
   let thesis = "";
-  let model = "deepseek-chat";
+  let model = await getConfiguredModel(svc, "markets-thesis");
   let llmError: string | null = null;
   try {
     const llmResult = await callLLM({
       task: "thesis",
-      model: "deepseek-chat",
+      model,
       prompt: `You are a macro analyst. Based on the following real market data from the most recent session, write a concise market thesis.
 
 MARKET DATA:

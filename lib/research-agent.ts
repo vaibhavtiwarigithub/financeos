@@ -160,7 +160,7 @@ export async function fetchHoldings(supabase: any): Promise<string[]> {
 }
 
 // Phase 1B — fetch account snapshot (equity, buying power, positions) and cache it
-export async function fetchAndStoreAccountSnapshot(): Promise<void> {
+export async function fetchAndStoreAccountSnapshot(): Promise<{ ok: boolean; error?: string }> {
   const prompt = `Call the Robinhood MCP tool get_equity_positions with account_number: "${TRADING_ACCOUNT}"
 Then call get_accounts to get buying_power and portfolio_value for that account.
 
@@ -182,11 +182,12 @@ If any field is unavailable, use null.`;
     const stdout = await execClaude(prompt, 90000);
     const text = parseClaudeOutput(stdout);
     const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return;
+    if (!match) return { ok: false, error: "no JSON in Claude output" };
     const snap = JSON.parse(match[0]);
 
     // POST to our own API to store the snapshot
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    let postError: string | undefined;
     await fetch(`${baseUrl}/api/live-account/snapshot`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET ?? "" },
@@ -198,9 +199,13 @@ If any field is unavailable, use null.`;
         position_count: snap.position_count,
         positions_json: snap.positions ?? null,
       }),
-    }).catch(() => {});
-  } catch {
-    // Non-critical — don't fail research run
+    }).catch((e) => { postError = String(e); });
+    return postError ? { ok: false, error: postError } : { ok: true };
+  } catch (e) {
+    // Non-critical when called from inside a research run — but the
+    // standalone /api/live-account/refresh-snapshot endpoint needs the real
+    // reason (e.g. execClaude/Claude Code CLI not present in this environment).
+    return { ok: false, error: String(e) };
   }
 }
 
@@ -305,9 +310,15 @@ export async function gatherSymbols(
     });
   }
 
-  // fetchAndStoreAccountSnapshot is truly fire-and-forget: not in Promise.all (avoids its 90s cold-start blocking the pipeline)
-  void fetchAndStoreAccountSnapshot();
-
+  // fetchAndStoreAccountSnapshot() used to fire here automatically, but it
+  // shells out to a local Claude Code CLI + Robinhood MCP (lib/claude-exec.ts)
+  // -- that only exists on a Windows machine with Claude Code installed, so
+  // every invocation from Vercel/cloud cron threw immediately and did
+  // nothing (silently, since it was fire-and-forget). Decoupled into its own
+  // endpoint (/api/live-account/refresh-snapshot) so the user can choose
+  // where this runs from (a local Windows Task Scheduler entry hitting
+  // localhost) independent of where research itself runs (cloud).
+  //
   // expires_at filter mirrors app/api/watchlist/route.ts's GET — without this,
   // an expired Theme Scout pick (30-day default) kept getting re-researched
   // forever instead of retiring, since only the Watchlist UI page enforced it.
