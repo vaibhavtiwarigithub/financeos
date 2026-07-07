@@ -20,6 +20,19 @@
 
 ---
 
+## ✅ Session 2026-07-06 (cont'd) — India-specific morning/evening email briefings (NSE-hour anchored)
+
+> User asked whether the emailed morning/evening briefings fire separately for US vs India, matching each market's own open/close, like research/position-monitor already do.
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| Briefing route made market-aware | Claude | 2026-07-06 | `app/api/briefing/generate/route.ts` was 100% US-only and ET-anchored (hardcoded `paper_portfolio.market='us'`, SPY/QQQ/DIA/VIXY via Massive, no market param at all). Now accepts `market: "us"\|"india"` in the cron body: uses the market's own timezone (IST for India, no DST) for date/session logic, filters every market-scoped query (paper_portfolio/positions/signals/trades/runs), swaps the index snapshot to NIFTY/SENSEX via `fetchIndiaIndices()` (India indices are raw point levels, not $-priced ETPs, so no currency prefix), and threads currency (₹/$) through every dollar-formatted line in both the email HTML and the LLM's data context. India has no live-broker section (Kite live state isn't wired into this briefing) — that block is simply omitted for India rather than showing US Robinhood data mislabeled. |
+| Migration 085 — briefings market column | Claude | 2026-07-06 | `briefings`/`newsletters` had no market column and a `(date,session)` unique constraint — would have silently clobbered India's brief against the same day's US one. Added `market`, changed the constraint to `(date,session,market)`. |
+| Migration 086 — India briefing cron | Claude | 2026-07-06 | New `kairos-brief-morning-india` (9:50 AM IST, 20min after `kairos-research-india`) and `kairos-brief-evening-india` (4:30 PM IST, 45min after `kairos-position-monitor-india`/NSE close) — mirrors the existing US brief-morning/brief-evening pattern (fire after the relevant agent activity has landed, not on a fixed clock disconnected from it). |
+| Position price source for India | Claude | 2026-07-06 | Found while wiring this: India position price enrichment fell back to `price_cache`, a US-only-populated table — India positions with no `current_price` set would always show "price unavailable". Now uses `fetchIndiaQuote()` (the same Yahoo source PaperTrader itself fills India orders from) when the market is India. |
+
+---
+
 ## ✅ Session 2026-07-06 (cont'd) — Closed every remaining market-switcher gap: Agents currency (₹), Morning Briefing India section, remaining Decision Journal write sites
 
 > User said "fix all" on the three remaining disclosed gaps from the prior entry.

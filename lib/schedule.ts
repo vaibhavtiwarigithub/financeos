@@ -92,6 +92,18 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: null,
   },
   {
+    name: "brief-morning-india",
+    agent: "brief-morning-india",
+    time: "9:50 AM IST (~12:20 AM ET)",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "India's own morning briefing (added 2026-07-06) — fires 20min after kairos-research-india so the day's India signals/paper-fill have already landed. Briefing/generate now accepts market:india and pulls the India paper pool + NIFTY/SENSEX instead of US indices.",
+    handoff: null,
+    agentRunsType: null,
+  },
+  {
     name: "research",
     agent: "research",
     time: "9:00 AM ET",
@@ -160,6 +172,18 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     editable: false,
     description:
       "Generates and emails the evening summary — how the book did today, realized/unrealized P&L, exits taken and what to watch tomorrow.",
+    handoff: null,
+    agentRunsType: null,
+  },
+  {
+    name: "brief-evening-india",
+    agent: "brief-evening-india",
+    time: "4:30 PM IST (~7:00 AM ET)",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "India's own evening summary (added 2026-07-06) — fires 45min after kairos-position-monitor-india and NSE's 3:30 PM close, once the day's exits/closing prices have settled.",
     handoff: null,
     agentRunsType: null,
   },

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { callLLM } from "@/lib/llm-router";
+import { fetchIndiaIndices } from "@/lib/india-data";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "vterminater@gmail.com";
 
@@ -25,6 +26,9 @@ function mdToHtml(md: string): string {
 
 interface BriefingData {
   session: "morning" | "evening";
+  market_scope: "us" | "india";
+  currency: string; // "$" or "₹" — every paper/live $-amount in this briefing
+  indexUnit: string; // prefix for the Market Snapshot row prices — "$" for US ETPs, "" for India (raw index points, not ETF prices)
   dateStr: string; dayName: string; timestamp: string;
   editorNote: string;
   paper: { nav: number; cash: number; pnl: number; pnlPct: number; positionsCount: number };
@@ -66,20 +70,25 @@ function bandHeader(label: string): string {
 
 function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string; html: string } {
   const icon = d.session === "morning" ? "📈" : "🌙";
-  const label = d.session === "morning" ? "Morning Briefing" : "Evening Summary";
+  const label = `${d.market_scope === "india" ? "🇮🇳 India " : ""}${d.session === "morning" ? "Morning Briefing" : "Evening Summary"}`;
   const topSig = d.signals[0];
 
+  const cur = d.currency;
+  const marketLabelWord = d.market_scope === "india" ? "NSE" : "US markets";
+
   const subject = d.session === "morning"
-    ? `${icon} Your portfolio ${sign(d.paper.pnlPct)}${d.paper.pnlPct.toFixed(1)}%${topSig ? ` · Plus: ${topSig.direction.toUpperCase()} ${topSig.symbol} flagged` : " · pre-market scan"}`
-    : `${icon} Close ${sign(d.paper.pnl)}$${Math.abs(d.paper.pnl).toFixed(0)} (${sign(d.paper.pnlPct)}${d.paper.pnlPct.toFixed(1)}%) · ${d.signals.length} signal${d.signals.length === 1 ? "" : "s"}`;
+    ? `${icon} ${d.market_scope === "india" ? "India " : ""}portfolio ${sign(d.paper.pnlPct)}${d.paper.pnlPct.toFixed(1)}%${topSig ? ` · Plus: ${topSig.direction.toUpperCase()} ${topSig.symbol} flagged` : ` · pre-market scan (${marketLabelWord})`}`
+    : `${icon} ${d.market_scope === "india" ? "India " : ""}close ${sign(d.paper.pnl)}${cur}${Math.abs(d.paper.pnl).toFixed(0)} (${sign(d.paper.pnlPct)}${d.paper.pnlPct.toFixed(1)}%) · ${d.signals.length} signal${d.signals.length === 1 ? "" : "s"}`;
 
   const healthColor = d.healthVerdict === "Healthy" ? E.green : d.healthVerdict === "Watch" ? E.amber : E.red;
 
-  // Market snapshot rows
+  // Market snapshot rows — indexUnit is "$" for US ETPs (SPY/QQQ/DIA are real
+  // dollar-priced securities) and "" for India (NIFTY/SENSEX are index point
+  // levels, not a priced instrument).
   const marketRows = d.market.map(m => `
     <td style="padding:8px 6px;text-align:center;border:1px solid ${E.border};background:${E.surface}">
       <div style="font-size:10px;color:${E.muted};margin-bottom:3px">${m.label}</div>
-      <div style="font-size:14px;font-weight:700;color:${E.text}">${m.price != null ? "$" + m.price.toFixed(0) : "—"}</div>
+      <div style="font-size:14px;font-weight:700;color:${E.text}">${m.price != null ? d.indexUnit + m.price.toFixed(0) : "—"}</div>
       <div style="font-size:11px;font-weight:600;color:${pctColor(m.changePct)}">${m.changePct != null ? sign(m.changePct) + m.changePct.toFixed(2) + "%" : "n/a"}</div>
     </td>`).join("");
 
@@ -92,14 +101,14 @@ function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string;
       ${why ? `<div style="font-size:12px;color:${E.sub};line-height:1.55;margin-top:6px"><b style="color:${E.muted}">Why it matters:</b> ${why}</div>` : ""}
       <a href="${baseUrl}/dashboard/symbol/${s.symbol}" style="font-size:11px;color:${E.accent};text-decoration:none">Open ${s.symbol} »</a>
     </div>`;
-  }).join("") : `<div style="font-size:13px;color:${E.muted};padding:8px 0">No agent signals yet — the pre-market research scan runs at 9:00 AM ET.</div>`;
+  }).join("") : `<div style="font-size:13px;color:${E.muted};padding:8px 0">No agent signals yet — the ${d.market_scope === "india" ? "India research run fires 15min after NSE open (9:15 AM IST)" : "pre-market research scan runs at 9:00 AM ET"}.</div>`;
 
   // Positions table
   const positionsBlock = d.positions.length ? `<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">
     ${d.positions.map(p => `<tr>
       <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;font-weight:700;color:${E.text}">${p.symbol}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;color:${E.sub}">${p.qty} @ $${p.entry.toFixed(2)}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;color:${E.text};text-align:right">${p.current != null ? "$" + p.current.toFixed(2) : "—"}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;color:${E.sub}">${p.qty} @ ${cur}${p.entry.toFixed(2)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;color:${E.text};text-align:right">${p.current != null ? cur + p.current.toFixed(2) : "—"}</td>
       <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;font-weight:700;text-align:right;color:${pctColor(p.pnlPct)}">${p.pnlPct != null ? sign(p.pnlPct) + p.pnlPct.toFixed(1) + "%" : "—"}</td>
     </tr>`).join("")}
   </table>` : `<div style="font-size:13px;color:${E.muted};padding:8px 0">No open positions.</div>`;
@@ -142,8 +151,8 @@ function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string;
         </td>
         <td style="vertical-align:middle">
           <div style="font-size:11px;color:${E.muted}">Paper</div>
-          <div style="font-size:15px;font-weight:700;color:${pctColor(d.paper.pnl)}">${sign(d.paper.pnl)}$${Math.abs(d.paper.pnl).toFixed(0)} <span style="font-size:12px">(${sign(d.paper.pnlPct)}${d.paper.pnlPct.toFixed(1)}%)</span></div>
-          <div style="font-size:11px;color:${E.muted};margin-top:2px">NAV $${d.paper.nav.toFixed(0)} · ${d.paper.positionsCount} pos · cash $${d.paper.cash.toFixed(0)}</div>
+          <div style="font-size:15px;font-weight:700;color:${pctColor(d.paper.pnl)}">${sign(d.paper.pnl)}${cur}${Math.abs(d.paper.pnl).toFixed(0)} <span style="font-size:12px">(${sign(d.paper.pnlPct)}${d.paper.pnlPct.toFixed(1)}%)</span></div>
+          <div style="font-size:11px;color:${E.muted};margin-top:2px">NAV ${cur}${d.paper.nav.toFixed(0)} · ${d.paper.positionsCount} pos · cash ${cur}${d.paper.cash.toFixed(0)}</div>
           ${d.live ? `<div style="font-size:11px;color:${E.muted};margin-top:6px">Live ●●●●8641: $${d.live.equity.toFixed(0)} · ${d.live.positions} pos</div>` : ""}
         </td>
       </tr></table>
@@ -247,6 +256,7 @@ async function sendBriefingEmail(svc: any, d: BriefingData): Promise<{ sent: boo
     try {
       await svc.from("newsletters").insert({
         edition: d.session,
+        market: d.market_scope,
         subject,
         html_body: html,
         data_snapshot: d,
@@ -303,19 +313,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "session must be 'morning' or 'evening'" }, { status: 400 });
   }
   const forceSession: "morning" | "evening" | undefined = rawSession ?? undefined;
+  const market: "us" | "india" = body.market === "india" ? "india" : "us";
+  const cur = market === "india" ? "₹" : "$";
+  const tz = market === "india" ? "Asia/Kolkata" : "America/New_York";
 
   const svc = createServiceClient();
   const now = new Date();
 
-  // Compute ET wall-clock via the timezone DB (handles EDT/EST DST automatically),
-  // not a fixed -4 offset which is wrong for half the year.
-  const etNow = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
-  const dateStr = `${etNow.getFullYear()}-${String(etNow.getMonth() + 1).padStart(2, "0")}-${String(etNow.getDate()).padStart(2, "0")}`;
-  const dayName = etNow.toLocaleDateString("en-US", { weekday: "long" });
-  const etH = etNow.getHours();
-  const session: "morning" | "evening" = forceSession ?? (etH < 14 ? "morning" : "evening");
-  const etDay = etNow.getDay(); // 0 = Sunday, 6 = Saturday
-  const isWeekend = etDay === 0 || etDay === 6;
+  // Compute the market's own wall-clock via the timezone DB (handles EDT/EST
+  // DST automatically for US; India has no DST). Previously this was always
+  // ET regardless of market -- a real gap, since India's own morning/evening
+  // never existed as a concept here at all.
+  const localNow = new Date(now.toLocaleString("en-US", { timeZone: tz }));
+  const dateStr = `${localNow.getFullYear()}-${String(localNow.getMonth() + 1).padStart(2, "0")}-${String(localNow.getDate()).padStart(2, "0")}`;
+  const dayName = localNow.toLocaleDateString("en-US", { weekday: "long" });
+  const localH = localNow.getHours();
+  // India's own trading day ends earlier in local-clock terms (3:30 PM IST)
+  // than the US's (4:00 PM ET) -- the morning/evening cutoff is set relative
+  // to each market's own close, not a shared hour.
+  const eveningCutoffHour = market === "india" ? 12 : 14;
+  const session: "morning" | "evening" = forceSession ?? (localH < eveningCutoffHour ? "morning" : "evening");
+  const localDay = localNow.getDay(); // 0 = Sunday, 6 = Saturday
+  const isWeekend = localDay === 0 || localDay === 6;
 
   const massiveKey = process.env.MASSIVE_API_KEY;
   const since7dISO = new Date(now.getTime() - 7 * 86400_000).toISOString();
@@ -334,6 +353,7 @@ export async function POST(req: NextRequest) {
     qqqData,
     diaData,
     vixData,
+    indiaIndices,
     { data: macroRow },
     { count: closedTradesCount },
     { data: recentRuns },
@@ -341,28 +361,31 @@ export async function POST(req: NextRequest) {
     { data: mentorRow },
     { data: weekTrades },
   ] = await Promise.all([
-    svc.from("agent_runs").select("*").eq("agent_type", "research").order("created_at", { ascending: false }).limit(1).single(),
-    // Phase 4: US pool only (post-057 there's also an India ₹ row). maybeSingle so a missing market column pre-057 yields null gracefully.
-    svc.from("paper_portfolio").select("*").eq("market", "us").limit(1).maybeSingle(),
-    svc.from("paper_positions").select("*").limit(10),
-    svc.from("agent_signals").select("symbol,direction,analyst_score,reasoning").eq("status", "pending").gte("analyst_score", 50).order("analyst_score", { ascending: false }).limit(8),
-    // Filter to the Trading account (••••8641) — see app/dashboard/page.tsx
-    // for why: without this, the most-recent-snapshot query could silently
-    // return a different account's row.
-    svc.from("live_account_snapshots").select("*").eq("account_id", "965848641").order("captured_at", { ascending: false }).limit(1).single(),
+    svc.from("agent_runs").select("*").eq("agent_type", "research").eq("market", market).order("created_at", { ascending: false }).limit(1).single(),
+    svc.from("paper_portfolio").select("*").eq("market", market).limit(1).maybeSingle(),
+    svc.from("paper_positions").select("*").eq("market", market).limit(10),
+    svc.from("agent_signals").select("symbol,direction,analyst_score,reasoning").eq("market", market).eq("status", "pending").gte("analyst_score", 50).order("analyst_score", { ascending: false }).limit(8),
+    // Live account snapshot is US-only (Robinhood) -- India has no live
+    // broker snapshot wired into this briefing yet (Kite live state lives on
+    // the India dashboard page). Skipping the query for India avoids
+    // fetching and then discarding a US-only account's data.
+    market === "us"
+      ? svc.from("live_account_snapshots").select("*").eq("account_id", "965848641").order("captured_at", { ascending: false }).limit(1).single()
+      : Promise.resolve({ data: null }),
     svc.from("earnings_calendar").select("symbol,report_date,estimate_eps,period").gte("report_date", dateStr).order("report_date").limit(5),
     // learning_log has no symbol/outcome columns (it's the learner's own
     // weight-mutation audit log) — recently closed trades actually live in
     // paper_trades (which does have symbol/outcome/closed_at).
-    svc.from("paper_trades").select("symbol,outcome,rationale,closed_at").not("closed_at", "is", null).order("closed_at", { ascending: false }).limit(3),
+    svc.from("paper_trades").select("symbol,outcome,rationale,closed_at").eq("market", market).not("closed_at", "is", null).order("closed_at", { ascending: false }).limit(3),
     svc.from("watchlist").select("symbol,company_name").eq("research_enabled", true).limit(20),
-    massiveKey ? fetchIndexClose("SPY", massiveKey) : Promise.resolve(null),
-    massiveKey ? fetchIndexClose("QQQ", massiveKey) : Promise.resolve(null),
-    massiveKey ? fetchIndexClose("DIA", massiveKey) : Promise.resolve(null),
-    massiveKey ? fetchIndexClose("VIXY", massiveKey) : Promise.resolve(null),
+    market === "us" && massiveKey ? fetchIndexClose("SPY", massiveKey) : Promise.resolve(null),
+    market === "us" && massiveKey ? fetchIndexClose("QQQ", massiveKey) : Promise.resolve(null),
+    market === "us" && massiveKey ? fetchIndexClose("DIA", massiveKey) : Promise.resolve(null),
+    market === "us" && massiveKey ? fetchIndexClose("VIXY", massiveKey) : Promise.resolve(null),
+    market === "india" ? fetchIndiaIndices().catch(() => []) : Promise.resolve([]),
     svc.from("macro_signals").select("regime, summary").order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    svc.from("paper_trades").select("*", { count: "exact", head: true }).not("closed_at", "is", null),
-    svc.from("agent_runs").select("agent_type, signals_written, started_at, trigger_source").gte("started_at", since7dISO).order("started_at", { ascending: false }).limit(200),
+    svc.from("paper_trades").select("*", { count: "exact", head: true }).eq("market", market).not("closed_at", "is", null),
+    svc.from("agent_runs").select("agent_type, signals_written, started_at, trigger_source").eq("market", market).gte("started_at", since7dISO).order("started_at", { ascending: false }).limit(200),
     svc.from("learner_runs").select("run_date, hypotheses").gte("run_date", dateStr.slice(0, 8) + "01").order("run_date", { ascending: false }).limit(4),
     svc.from("mentor_insights").select("grade, focus_areas, lesson, next_milestone").order("created_at", { ascending: false }).limit(1).maybeSingle(),
     svc.from("paper_trades").select("symbol, side, pnl, closed_at").gte("executed_at", since7dISO).not("closed_at", "is", null).order("closed_at", { ascending: false }).limit(20),
@@ -392,54 +415,65 @@ export async function POST(req: NextRequest) {
     ? `Grade: ${mentorBlockData.grade ?? "n/a"}/100. Lesson: ${mentorBlockData.lesson ?? "none yet"}. Focus: ${(mentorBlockData.focus ?? []).slice(0, 2).join("; ") || "none"}. Next milestone: ${mentorBlockData.milestone ?? "none"}`
     : "No mentor evaluation yet";
   const weekTradesLine = weekTradesArr.length
-    ? `${weekTradesArr.length} closed in last 7 days, ${weekWins} wins, net ${weekPnl >= 0 ? "+" : ""}$${weekPnl.toFixed(0)}`
+    ? `${weekTradesArr.length} closed in last 7 days, ${weekWins} wins, net ${weekPnl >= 0 ? "+" : ""}${cur}${weekPnl.toFixed(0)}`
     : "No paper trades closed in the last 7 days";
 
-  // Enrich positions with current price from price_cache
+  // Enrich positions with current price. India has no price_cache coverage
+  // (that table is populated from US-only feeds) -- Yahoo's live quote is
+  // used instead, same source PaperTrader itself fills India orders from.
   const positions = rawPositions ?? [];
   const positionLines: string[] = [];
   const positionsStruct: { symbol: string; direction: string; qty: number; entry: number; current: number | null; pnl: number | null; pnlPct: number | null }[] = [];
   for (const p of positions) {
-    const { data: cache } = await svc
-      .from("price_cache")
-      .select("close")
-      .eq("symbol", p.symbol)
-      .order("date", { ascending: false })
-      .limit(1)
-      .single();
+    let currentPrice: number | null = p.current_price ? Number(p.current_price) : null;
+    if (currentPrice == null) {
+      if (market === "india") {
+        const { fetchIndiaQuote } = await import("@/lib/india-data");
+        const q = await fetchIndiaQuote(p.symbol).catch(() => null);
+        currentPrice = q?.price ?? null;
+      } else {
+        const { data: cache } = await svc
+          .from("price_cache")
+          .select("close")
+          .eq("symbol", p.symbol)
+          .order("date", { ascending: false })
+          .limit(1)
+          .single();
+        currentPrice = cache?.close ? Number(cache.close) : null;
+      }
+    }
     // paper_positions columns: qty, avg_cost, current_price (no status/direction/
-    // entry_price/quantity — it's long-only, and open = present). Prefer the row's
-    // current_price, fall back to price_cache.
-    const currentPrice = (p.current_price ? Number(p.current_price) : null) ?? (cache?.close ? Number(cache.close) : null);
+    // entry_price/quantity — it's long-only, and open = present).
     const entryPrice = Number(p.avg_cost);
     const qty = Number(p.qty);
     if (currentPrice && Number.isFinite(entryPrice) && entryPrice > 0) {
       const pnlDollar = (currentPrice - entryPrice) * qty;
       const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
       positionLines.push(
-        `  • ${p.symbol} LONG: ${qty} shares @ $${entryPrice.toFixed(2)} entry → $${currentPrice.toFixed(2)} now = ${pnlDollar >= 0 ? "+" : ""}$${pnlDollar.toFixed(0)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%)`
+        `  • ${p.symbol} LONG: ${qty} shares @ ${cur}${entryPrice.toFixed(2)} entry → ${cur}${currentPrice.toFixed(2)} now = ${pnlDollar >= 0 ? "+" : ""}${cur}${pnlDollar.toFixed(0)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%)`
       );
       positionsStruct.push({ symbol: p.symbol, direction: "long", qty, entry: entryPrice, current: currentPrice, pnl: pnlDollar, pnlPct });
     } else {
-      positionLines.push(`  • ${p.symbol} LONG: ${qty} shares @ $${Number.isFinite(entryPrice) ? entryPrice.toFixed(2) : "?"} entry (price unavailable)`);
+      positionLines.push(`  • ${p.symbol} LONG: ${qty} shares @ ${cur}${Number.isFinite(entryPrice) ? entryPrice.toFixed(2) : "?"} entry (price unavailable)`);
       positionsStruct.push({ symbol: p.symbol, direction: "long", qty, entry: entryPrice, current: null, pnl: null, pnlPct: null });
     }
   }
 
-  // Market context block
+  // Market context block. US indices are dollar-priced ETPs (fmt prefixes
+  // "$"); India's are raw NIFTY/SENSEX index point levels (no currency unit).
   const fmt = (d: { price: number; changePct: number } | null, label: string) =>
     d ? `${label}: $${d.price.toFixed(0)} (${d.changePct >= 0 ? "+" : ""}${d.changePct.toFixed(2)}%)` : `${label}: unavailable`;
+  const fmtIndex = (d: { price: number; changePct: number } | null, label: string) =>
+    d ? `${label}: ${d.price.toFixed(0)} (${d.changePct >= 0 ? "+" : ""}${d.changePct.toFixed(2)}%)` : `${label}: unavailable`;
 
-  const marketBlock = [
-    fmt(spyData, "S&P 500 (SPY)"),
-    fmt(qqqData, "Nasdaq (QQQ)"),
-    fmt(diaData, "Dow (DIA)"),
-  ].join(" | ");
+  const marketBlock = market === "india"
+    ? (indiaIndices as any[]).map((idx: any) => fmtIndex({ price: idx.price, changePct: idx.changePct }, idx.label)).join(" | ") || "unavailable"
+    : [fmt(spyData, "S&P 500 (SPY)"), fmt(qqqData, "Nasdaq (QQQ)"), fmt(diaData, "Dow (DIA)")].join(" | ");
 
   // /prev returns the PREVIOUS completed session close — label accordingly
   const marketLabel = session === "morning"
-    ? "YESTERDAY'S CLOSE (prior session — /prev data, pre-market context)"
-    : "MOST RECENT CLOSE (prior session via /prev — today's final data may lag by ~15 min)";
+    ? "YESTERDAY'S CLOSE (prior session, pre-market context)"
+    : "MOST RECENT CLOSE (today's final data may lag by ~15 min)";
 
   // Portfolio block
   const nav = portfolio?.nav ?? 10000;
@@ -447,7 +481,7 @@ export async function POST(req: NextRequest) {
   const pnl = nav - 10000;
   const pnlPct = (pnl / 10000) * 100;
 
-  const portfolioBlock = `NAV: $${nav.toFixed(0)} | Cash: $${cash.toFixed(0)} | Total P&L: ${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(0)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%) | ${positions.length} open positions`;
+  const portfolioBlock = `NAV: ${cur}${nav.toFixed(0)} | Cash: ${cur}${cash.toFixed(0)} | Total P&L: ${pnl >= 0 ? "+" : ""}${cur}${Math.abs(pnl).toFixed(0)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%) | ${positions.length} open positions`;
 
   // Signal block with reasoning
   const signalLines = (signals ?? []).map((s: any) => {
@@ -457,7 +491,7 @@ export async function POST(req: NextRequest) {
 
   // Earnings block
   const earningsLines = (tomorrowEarnings ?? []).map((e: any) =>
-    `  • ${e.symbol}${e.report_date === dateStr ? " (TODAY)" : ` (${e.report_date})`}${e.estimate_eps != null ? ` — EPS est. $${Number(e.estimate_eps).toFixed(2)}` : ""}`
+    `  • ${e.symbol}${e.report_date === dateStr ? " (TODAY)" : ` (${e.report_date})`}${e.estimate_eps != null ? ` — EPS est. ${cur}${Number(e.estimate_eps).toFixed(2)}` : ""}`
   );
 
   // Learning block
@@ -465,10 +499,11 @@ export async function POST(req: NextRequest) {
     ? (learningLog ?? []).map((l: any) => `  • ${l.symbol} [${l.outcome}]: ${l.rationale ?? ""}`)
     : ["  • No closed trades yet (Phase 0 — learning starts after 10+ closed paper trades)"];
 
-  // Live account block
+  // Live account block — US only (Robinhood); India's live account state
+  // lives on the India dashboard page, not wired into this briefing yet.
   const liveBlock = liveSnap
     ? `Equity: $${Number(liveSnap.equity).toFixed(2)} | Buying power: $${Number(liveSnap.buying_power).toFixed(2)} | Positions: ${liveSnap.position_count} | Synced: ${new Date(liveSnap.captured_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`
-    : "Not synced";
+    : market === "india" ? "N/A — India briefing (Robinhood is US-only)" : "Not synced";
 
   // Research run block
   const researchBlock = lastRun
@@ -478,13 +513,14 @@ export async function POST(req: NextRequest) {
   // Watchlist
   const watchlistSymbols = (watchlist ?? []).map((w: any) => w.symbol).join(", ");
 
-  const sessionLabel = session === "morning" ? "Morning Briefing (pre-market)" : "Evening Summary (post-market close)";
+  const sessionLabel = `${market === "india" ? "India " : ""}${session === "morning" ? "Morning Briefing (pre-market)" : "Evening Summary (post-market close)"}`;
 
   const contextBlock = `
 === REAL DATA CONTEXT — DO NOT INVENT ANYTHING NOT IN THIS BLOCK ===
 
 DATE: ${dayName}, ${dateStr}
 SESSION: ${sessionLabel}
+MARKET: ${market === "india" ? "India (NSE)" : "United States"}
 
 ${marketLabel}:
 ${marketBlock}
@@ -561,17 +597,19 @@ If a category above has no data (e.g. no agent runs, no mentor grade), say so pl
   const content = editorNote; // in-app briefing shows the editor's note
 
   await svc.from("briefings").upsert(
-    { date: dateStr, session, content, model: "auto" },
-    { onConflict: "date,session" }
+    { date: dateStr, session, market, content, model: "auto" },
+    { onConflict: "date,session,market" }
   );
 
   // ── Derived blocks for the rich email (rendered deterministically) ──────────
-  const market = [
-    { label: "S&P 500", price: spyData?.price ?? null, changePct: spyData?.changePct ?? null },
-    { label: "Nasdaq",  price: qqqData?.price ?? null, changePct: qqqData?.changePct ?? null },
-    { label: "Dow",     price: diaData?.price ?? null, changePct: diaData?.changePct ?? null },
-    { label: "VIX (VIXY)", price: vixData?.price ?? null, changePct: vixData?.changePct ?? null },
-  ];
+  const indexRows = market === "india"
+    ? (indiaIndices as any[]).slice(0, 4).map((idx: any) => ({ label: idx.label, price: idx.price ?? null, changePct: idx.changePct ?? null }))
+    : [
+        { label: "S&P 500", price: spyData?.price ?? null, changePct: spyData?.changePct ?? null },
+        { label: "Nasdaq",  price: qqqData?.price ?? null, changePct: qqqData?.changePct ?? null },
+        { label: "Dow",     price: diaData?.price ?? null, changePct: diaData?.changePct ?? null },
+        { label: "VIX (VIXY)", price: vixData?.price ?? null, changePct: vixData?.changePct ?? null },
+      ];
 
   const regimeRaw = (macroRow as any)?.regime ?? null;
   const regime = regimeRaw ? { label: String(regimeRaw), tone: regimeTone(String(regimeRaw)) } : null;
@@ -590,12 +628,13 @@ If a category above has no data (e.g. no agent runs, no mentor grade), say so pl
 
   const briefingData: BriefingData = {
     session, dateStr, dayName,
-    timestamp: etNow.toISOString().slice(11, 16) + " ET",
+    market_scope: market, currency: cur, indexUnit: market === "india" ? "" : "$",
+    timestamp: localNow.toISOString().slice(11, 16) + (market === "india" ? " IST" : " ET"),
     editorNote,
     paper: { nav, cash, pnl, pnlPct, positionsCount: positions.length },
     live: liveSnap ? { equity: Number(liveSnap.equity), buyingPower: Number(liveSnap.buying_power), positions: liveSnap.position_count ?? 0 } : null,
     healthScore: Number(healthScore.toFixed(1)), healthVerdict,
-    market, regime, distribution,
+    market: indexRows, regime, distribution,
     positions: positionsStruct,
     signals: pendingSignals.slice(0, 5),
     candidates: pendingSignals.slice(0, 3),
@@ -631,16 +670,19 @@ No invented events. Ground every claim in the data above.`;
   // Send email — briefing IS the email, so await and report the real result.
   const emailResult = await sendBriefingEmail(svc, briefingData);
 
-  // Only stamp email_sent_at when the send actually succeeded.
+  // Only stamp email_sent_at when the send actually succeeded. Scoped by
+  // market too now — US and India can both have a row for the same
+  // date/session since the unique constraint became (date,session,market).
   if (emailResult.sent) {
     await svc.from("briefings")
       .update({ email_sent_at: new Date().toISOString() })
       .eq("date", dateStr)
-      .eq("session", session);
+      .eq("session", session)
+      .eq("market", market);
   }
 
   return NextResponse.json({
-    session, date: dateStr, content,
+    session, market, date: dateStr, content,
     email_sent: emailResult.sent,
     email_error: emailResult.error,
   });
