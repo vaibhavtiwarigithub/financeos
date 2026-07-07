@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
   }
 
   await svc.from("decision_journal").insert({
-    entry_type: "paper_exit", symbol,
+    entry_type: "paper_exit", symbol, market,
     summary: `Manual close (${market.toUpperCase()}): ${pos.qty} × ${symbol} @ ${cur}${currentPrice.toFixed(2)} (user-initiated), P&L ${cur}${realizedPnl.toFixed(2)} (${outcome})`,
     calculations: { market, qty: pos.qty, exit_price: currentPrice, avg_cost: pos.avg_cost, realized_pnl: realizedPnl, pnl_pct: pnlPct, exit_reason: "manual_close" },
     has_verified_facts: true, has_calculations: true, resolved: true, resolved_at: new Date().toISOString(),

@@ -472,7 +472,7 @@ export async function POST(req: NextRequest) {
 
       const sym = market === "india" ? "₹" : "$";
       const { error: journalErr } = await supabase.from("decision_journal").insert({
-        entry_type: "paper_fill", symbol: signal.symbol, signal_id: signal.id,
+        entry_type: "paper_fill", symbol: signal.symbol, signal_id: signal.id, market,
         paper_event_id: orderEventId,
         summary: `Paper buy (${market.toUpperCase()}): ${qty} × ${signal.symbol} @ ${sym}${fillPrice.toFixed(2)} (score ${signal.analyst_score}, source: ${source})`,
         calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, sizing: { flat_pct: positionSizePct, kelly_proposed_pct: proposedSizePct, final_pct: sizedPct, used_calibrated_model: !!pwinModel, adjustments: constructed.orders[0]?.adjustments ?? [] } },

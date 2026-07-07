@@ -142,6 +142,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     const { error: journalError } = await svc.from("decision_journal").insert({
       entry_type: "paper_exit",
       symbol: pos.symbol,
+      market,
       summary: `Paper exit (${market.toUpperCase()}): ${pos.qty} × ${pos.symbol} @ ${cur}${currentPrice.toFixed(2)} (${exitReason}), P&L ${cur}${realizedPnl.toFixed(2)} (${outcome})`,
       calculations: { market, qty: pos.qty, exit_price: currentPrice, avg_cost: pos.avg_cost, realized_pnl: realizedPnl, pnl_pct: pnlPct, exit_reason: exitReason },
       has_verified_facts: true,

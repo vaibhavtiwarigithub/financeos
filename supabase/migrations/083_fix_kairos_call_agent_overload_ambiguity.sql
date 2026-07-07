@@ -1,0 +1,20 @@
+-- CRITICAL LIVE BUG: kairos_call_agent had two overloads --
+--   (endpoint text, body jsonb default, method text default)          -- 3-arg, no timeout param (old, pre pg_net-timeout-fix version)
+--   (endpoint text, body jsonb default, method text default, timeout_ms int default)  -- 4-arg, the fixed version
+-- Any pg_cron call that didn't pass ALL FOUR arguments explicitly (i.e.
+-- every job except kairos-research/kairos-research-india/kairos-scan-india-refresh,
+-- which happen to pass all 4) failed with "function kairos_call_agent(...) is
+-- not unique" -- Postgres could not disambiguate which overload's defaults to
+-- fill in. Confirmed live via cron.job_run_details: kairos-proposal-reminder,
+-- kairos-broker-sync, kairos-position-monitor, kairos-nav-snapshot,
+-- kairos-rescore, and kairos-brief-evening were all failing on effectively
+-- every scheduled fire (2026-07-06) -- this is why the evening briefing did
+-- not generate on schedule.
+--
+-- Fix: drop the redundant 3-arg overload. The 4-arg overload's timeout_ms
+-- defaults to 70000, a strict superset of the 3-arg version's behavior (which
+-- didn't pass a timeout at all, silently falling back to pg_net's dangerous
+-- 5s default -- the exact problem the timeout fix was supposed to eliminate).
+-- Every existing call site (1, 2, 3, or 4 explicit args) now resolves
+-- unambiguously to this single definition.
+drop function if exists kairos_call_agent(text, jsonb, text);

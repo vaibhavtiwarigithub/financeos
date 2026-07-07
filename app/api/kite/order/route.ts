@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     const svc = createServiceClient();
     await svc.from("decision_journal").insert({
       entry_type: "kite_order",
-      symbol,
+      symbol, market: "india", // Kite is India-only
       summary: `Kite ${transaction_type} ${quantity} ${symbol} (${order_type ?? "MARKET"}${price ? ` @ ₹${price}` : ""}) → ${res.ok ? `order ${res.data?.order_id}` : `FAILED: ${res.error}`}`,
       calculations: { transaction_type, quantity, order_type: order_type ?? "MARKET", price: price ?? null, order_id: res.data?.order_id ?? null },
       has_verified_facts: true,

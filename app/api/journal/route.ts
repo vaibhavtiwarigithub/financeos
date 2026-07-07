@@ -12,6 +12,7 @@ export async function GET(req: NextRequest) {
   const symbol   = req.nextUrl.searchParams.get("symbol");
   const type     = req.nextUrl.searchParams.get("type");
   const resolved = req.nextUrl.searchParams.get("resolved");
+  const market   = req.nextUrl.searchParams.get("market"); // us|india — global market switcher
   const limit    = parseInt(req.nextUrl.searchParams.get("limit") ?? "50");
 
   let query = supabase
@@ -23,6 +24,11 @@ export async function GET(req: NextRequest) {
   if (symbol)   query = query.eq("symbol", symbol);
   if (type)     query = query.eq("entry_type", type);
   if (resolved !== null) query = query.eq("resolved", resolved === "true");
+  // Entries with no derivable market (settings changes, broker-order alerts,
+  // cron-gap alerts) stay null and are treated as US, same pattern as
+  // agent_runs.market.
+  if (market === "india") query = query.eq("market", "india");
+  else if (market === "us") query = query.or("market.eq.us,market.is.null");
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

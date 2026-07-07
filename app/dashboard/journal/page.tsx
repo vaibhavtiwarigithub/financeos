@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
+import { useMarket } from "@/lib/market-context";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -80,6 +81,7 @@ function EvidenceFlags({ entry }: { entry: JournalEntry }) {
 }
 
 export default function JournalPage() {
+  const { market } = useMarket();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -90,13 +92,13 @@ export default function JournalPage() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [market]);
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ limit: "100" });
+      const params = new URLSearchParams({ limit: "100", market });
       if (typeFilter !== "all") params.set("type", typeFilter);
       if (resolvedFilter !== "all") params.set("resolved", resolvedFilter);
       const res = await fetch(`/api/journal?${params}`);

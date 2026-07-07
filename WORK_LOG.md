@@ -20,6 +20,21 @@
 
 ---
 
+## ✅ Session 2026-07-06 (cont'd) — Critical: kairos_call_agent overload ambiguity (most cron jobs failing), decision_journal type-mismatch bug, remaining market-switcher wiring
+
+> User asked why the evening briefing didn't generate and pushed to finish wiring the remaining unwired pages (Research Journal mislabel, Agents, Decision Journal, Morning Briefing).
+
+| Task | Agent | Completed | Notes |
+|---|---|---|---|
+| **CRITICAL: kairos_call_agent overload ambiguity** | Claude | 2026-07-06 | Two Postgres overloads of `kairos_call_agent` existed (an old 3-arg version with no timeout param, and the fixed 4-arg version) — any pg_cron call that didn't pass all 4 args explicitly failed with "function is not unique." Confirmed via `cron.job_run_details`: proposal-reminder, broker-sync, position-monitor, nav-snapshot, rescore, and brief-evening were failing on nearly every scheduled fire — this is why the evening briefing didn't generate. Dropped the redundant 3-arg overload live + migration 083. |
+| **CRITICAL: decision_journal type-mismatch bug** | Claude | 2026-07-06 | Found while adding the market column: `signal_id`/`paper_trade_id` were typed `bigint` but `agent_signals.id`/`paper_trades.id` are `uuid` — every `paper_fill`/`paper_exit` insert (which pass the real uuid) has been silently failing since the table existed. Confirmed live: 0 of 7 ever-created rows had these populated. Fixed both column types + added `market` (backfilled via join) in migration 084, applied live. |
+| Decision Journal market wiring | Claude | 2026-07-06 | `/api/journal` now accepts `?market=`, page wired to `useMarket()`. Write sites tagged with `market` at insert time where available (paper-trade, position-monitor, manual close, strategy promotion override, Kite orders — hardcoded `india`). A few entry types with no derivable market (settings changes, broker-order/cron-gap alerts) default to the US view. |
+| Agents page — partial wiring | Claude | 2026-07-06 | Server component now reads the `mkt` cookie and filters signals/trades/positions/performance/runs by market. NOT marked "full" — ~15 price displays in the 1500-line client component still hardcode `$`, not yet currency-converted for India. Registry marked "partial" honestly rather than overclaiming. |
+| Research Journal mislabel fix | Claude | 2026-07-06 | Was falling through to the home page's registry entry (which is `us-only knownGap`) because I forgot to add its own entry last turn — it actually already works for both markets via its own in-page picker. Added the missing entry. |
+| Morning Briefing | — | Deferred | Needs actual new UI (India NAV/signal/activity sections), not just a data filter — banked as a follow-up rather than rushed. |
+
+---
+
 ## ✅ Session 2026-07-06 (cont'd) — Market-switcher wiring gap, nav clarity badges, India cron realignment, India NSE status pill
 
 > User asked why it's hard to tell from the UI which left-nav sections actually respect the US/India switcher, asked to fix any unwired ones, and separately asked whether India's agents fire at the right time relative to NSE market hours (raised alongside a concern about Windows cron double-firing pg_cron, which was also resolved this session — all 15 `\Kairos\` Windows Scheduler jobs disabled).

@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
           entry_type: "governance_override",
           summary: `Champion promoted WITHOUT a passed validation experiment (force_unvalidated) — strategy_versions.id ${version_id}, market ${mkt}`,
           resolved: true,
+          market: mkt,
         });
       }
 
