@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 // Allowed hosts. DNS rebinding attack arrives with Host: evil.com — this kills
 // it. Localhost for dev; the deployed host comes from APP_BASE_URL so the guard
@@ -36,11 +37,13 @@ if (APP_BASE_URL) {
 export function guardOrderRequest(req: NextRequest): NextResponse | null {
   const host = req.headers.get("host") ?? "";
   const origin = req.headers.get("origin");
-  const cronSecret = req.headers.get("x-cron-secret");
 
-  // Cron-triggered requests (internal server→server) skip browser-level checks.
-  // They are already validated by cron secret in the route handler.
-  if (cronSecret === process.env.CRON_SECRET) return null;
+  // Cron-triggered requests (internal server→server, e.g. proposal generation)
+  // skip browser-level checks. Timing-safe + fails closed on an unset/empty
+  // CRON_SECRET (an empty header can never satisfy it). NOTE: the live-order
+  // Gateway calls requireOwner() BEFORE this guard, so this cron path can never
+  // by itself place an order.
+  if (verifyCronSecret(req)) return null;
 
   // Host header validation — blocks DNS rebinding
   if (!ALLOWED_HOSTS.has(host)) {

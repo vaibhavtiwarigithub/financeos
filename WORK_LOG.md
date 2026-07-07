@@ -20,6 +20,30 @@
 
 ---
 
+## ✅ Session 2026-07-07 (cont'd) — Codex review of Robinhood MCP: all 12 findings fixed
+
+> External Codex adversarial review of the real-money path (CODEX_ROBINHOOD_MCP_REVIEW.md). Verdict: don't enable live orders until findings 1–8 fixed. All 12 + the AV note now fixed.
+
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| F1 | CRIT | buildArgsFromSchema could emit valid-but-wrong order (esp. `amount`=dollars vs shares) | Dropped `amount` from qty aliases; enum-coerce side/type/tif to the schema's exact spelling (fail closed if unresolvable); verify `review_equity_order` preview ECHOES intended symbol/qty before place. |
+| F2 | CRIT | robinhood_mcp_enabled not enforced on order path (only snapshot) | Enforced in Gateway (broker.id==robinhood_mcp) + inside the adapter (defense in depth). |
+| F3 | CRIT | needsReconcile dropped → duplicate order after ambiguous timeout | Added to BrokerOrderResult; adapter preserves it; Gateway sets status `unknown_needs_reconcile` (HTTP 202); migration 095 adds that status to the active-order unique index + the friendly dup-check. |
+| F4 | HIGH | risk-profile route only auth'd, not owner-gated | requireOwner() on PATCH + GET. |
+| F5 | HIGH | SELL checked the read-only 965848641 snapshot, not the 605420660 trading account | For robinhood_mcp live sells, verify held qty via live MCP (robinhoodHeldQty) for the active account; fail closed if unverifiable. |
+| F6 | HIGH | getActiveBroker silent fallback in order path | New getActiveBrokerForOrder (fail closed); Gateway uses it. |
+| F7 | HIGH | refresh claimed CAS but did plain read/upsert | Real CAS on the refresh-token row's updated_at; loser re-reads; vaultSet now throws on write error. |
+| F8 | HIGH | success with no order id treated as success | Live place with no parseable order id → needsReconcile, not success. |
+| F9 | MED | allowlist lookups didn't filter by broker | Added .eq("broker", …) everywhere (adapter id robinhood_mcp → allowlist key 'robinhood'). |
+| F10 | MED | OAuth state secret insecure fallback (cron/service-role/hardcoded) | Require OAUTH_STATE_SECRET ≥32 chars in prod; dev-only fallback; no cross-secret reuse. |
+| F11 | MED | mcpRpc could misread partial/error responses as success | Require JSON-RPC id match + result present; treat tools/call result.isError===true as failure. |
+| F12 | MED | guardOrderRequest cron bypass used plain `===` | Now verifyCronSecret (timing-safe, fail-closed). |
+| note | LOW | AV budget counter failed OPEN on error | Now fails closed (serves cached) to protect the free-tier quota. |
+
+Codex confirmed the notional-cap fallback (already fixed to fail closed) and the Kelly/trailing-stop/verifyCronSecret fixes are correct. Live orders still require: robinhood_mcp_enabled ON + all Gateway gates + human Approve/Send. First live order should be a tiny watched qty (no RH sandbox).
+
+---
+
 ## ✅ Session 2026-07-07 (cont'd) — Robinhood MCP feature: unblocked parts (OAuth still pending)
 
 > User approved building the parts of the Robinhood MCP feature that DON'T depend on Robinhood's real OAuth endpoints (which we don't have yet). The OAuth /login+/callback + live token acquisition + SDK transport stay stubbed until the user provides the endpoints/scopes. No order can reach Robinhood today: robinhood_mcp_enabled defaults off, isConfigured() is false with no token, and submitRobinhoodOrder() returns not-connected.

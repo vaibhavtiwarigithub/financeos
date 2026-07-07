@@ -34,7 +34,13 @@ async function vaultGet(svc: any, key: string): Promise<string | null> {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 async function vaultSet(svc: any, key: string, value: string): Promise<void> {
-  await svc.from("api_key_vault").upsert({ key_name: key, key_value: value }, { onConflict: "key_name" });
+  const { error } = await svc.from("api_key_vault").upsert({ key_name: key, key_value: value }, { onConflict: "key_name" });
+  if (error) throw new Error(`vault write failed for ${key}: ${error.message}`);
+}
+// Read the refresh token together with its updated_at for compare-and-swap.
+async function vaultGetWithVersion(svc: any, key: string): Promise<{ value: string | null; updatedAt: string | null }> {
+  const { data } = await svc.from("api_key_vault").select("key_value, updated_at").eq("key_name", key).maybeSingle();
+  return { value: (data as any)?.key_value ?? null, updatedAt: (data as any)?.updated_at ?? null };
 }
 async function vaultDel(svc: any, keys: string[]): Promise<{ error?: string }> {
   const { error } = await svc.from("api_key_vault").delete().in("key_name", keys);
@@ -57,7 +63,12 @@ export function makePkce(): { verifier: string; challenge: string } {
 export function makeState(): string { return b64url(randomBytes(24)); }
 
 function stateSecret(): string {
-  return process.env.OAUTH_STATE_SECRET ?? process.env.CRON_SECRET ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? "insecure-dev-fallback";
+  const secret = process.env.OAUTH_STATE_SECRET;
+  if (secret && secret.length >= 32) return secret;
+  // Never fall back to CRON_SECRET / service-role key (couples OAuth cookie
+  // integrity to broader high-value secrets) or a hardcoded string in prod.
+  if (process.env.NODE_ENV !== "production") return "local-dev-only-oauth-state-secret-please-set-OAUTH_STATE_SECRET";
+  throw new Error("OAUTH_STATE_SECRET must be set to >=32 chars in production");
 }
 // Sign {state, verifier, exp} into a compact tamper-proof cookie value.
 export function signOAuthCookie(payload: { state: string; verifier: string; exp: number }): string {
@@ -149,13 +160,28 @@ export async function exchangeCode(svc: any, o: { code: string; verifier: string
   } catch (e) { return { ok: false, error: `token exchange error: ${String(e)}` }; }
 }
 
-// Single-writer refresh: re-read the expiry after acquiring, and only refresh if
-// still stale (compare-and-swap on the vault's updated_at guards against two
-// concurrent refreshers racing and one persisting a dead rotated token).
+// Single-writer refresh via compare-and-swap on the refresh-token row's
+// updated_at: claim the refresh by CAS-updating updated_at to now; if the row
+// changed under us (another process refreshed first) we lose the race and
+// re-read instead of calling the token endpoint with a possibly-rotated token.
 async function refreshAccessToken(svc: any): Promise<{ ok: boolean; error?: string }> {
   const clientId = await vaultGet(svc, VK.clientId);
-  const refresh = await vaultGet(svc, VK.refresh);
+  const { value: refresh, updatedAt } = await vaultGetWithVersion(svc, VK.refresh);
   if (!clientId || !refresh) return { ok: false, error: "no refresh token" };
+
+  // CAS claim: only proceed if this row's updated_at is still what we read.
+  const nowIso = new Date().toISOString();
+  const { data: claimed } = await svc
+    .from("api_key_vault")
+    .update({ updated_at: nowIso })
+    .eq("key_name", VK.refresh)
+    .eq("updated_at", updatedAt)
+    .select("key_name");
+  if (!claimed || (Array.isArray(claimed) && claimed.length === 0)) {
+    // Lost the race — another writer is refreshing. Don't call the endpoint.
+    return { ok: true }; // caller re-reads the (freshly stored) access token
+  }
+
   try {
     const body = new URLSearchParams({
       grant_type: "refresh_token",
@@ -214,15 +240,26 @@ async function mcpRpc(token: string, method: string, params: any, sessionId?: st
     "MCP-Protocol-Version": "2025-06-18",
   };
   if (sessionId) headers["Mcp-Session-Id"] = sessionId;
-  const body: any = { jsonrpc: "2.0", method, ...(isNotification ? {} : { id: b64url(randomBytes(8)) }), ...(params !== undefined ? { params } : {}) };
+  const reqId = b64url(randomBytes(8));
+  const body: any = { jsonrpc: "2.0", method, ...(isNotification ? {} : { id: reqId }), ...(params !== undefined ? { params } : {}) };
   const res = await fetch(MCP_URL, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
   const sid = res.headers.get("mcp-session-id") ?? sessionId;
   if (isNotification) return { ok: res.ok, sessionId: sid ?? undefined };
   const text = await res.text();
   const parsed = parseMcpBody(text, res.headers.get("content-type") ?? "");
   if (!res.ok) return { ok: false, error: `MCP ${method} HTTP ${res.status}: ${text.slice(0, 300)}`, sessionId: sid ?? undefined };
-  if (parsed?.error) return { ok: false, error: `MCP ${method} error: ${JSON.stringify(parsed.error).slice(0, 300)}`, sessionId: sid ?? undefined };
-  return { ok: true, result: parsed?.result, sessionId: sid ?? undefined };
+  if (!parsed) return { ok: false, error: `MCP ${method}: empty/unparseable response`, sessionId: sid ?? undefined };
+  if (parsed.error) return { ok: false, error: `MCP ${method} error: ${JSON.stringify(parsed.error).slice(0, 300)}`, sessionId: sid ?? undefined };
+  // JSON-RPC id must echo the request id — guards against a mismatched/stale
+  // message being read out of an SSE stream as this call's result.
+  if (parsed.id !== undefined && parsed.id !== reqId) return { ok: false, error: `MCP ${method}: response id mismatch`, sessionId: sid ?? undefined };
+  if (!("result" in parsed)) return { ok: false, error: `MCP ${method}: response missing result`, sessionId: sid ?? undefined };
+  // An MCP tools/call that failed reports it via result.isError, not a JSON-RPC
+  // error — treat that as a failure, not a success.
+  if (method === "tools/call" && parsed.result?.isError === true) {
+    return { ok: false, error: `MCP tool error: ${JSON.stringify(parsed.result?.content ?? parsed.result).slice(0, 300)}`, sessionId: sid ?? undefined };
+  }
+  return { ok: true, result: parsed.result, sessionId: sid ?? undefined };
 }
 
 async function openSession(token: string): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
@@ -250,10 +287,14 @@ async function listTools(token: string, sessionId?: string): Promise<{ ok: boole
 function buildArgsFromSchema(schema: any, canonical: Record<string, any>): Record<string, any> | { __error: string } {
   const props = schema?.properties ?? {};
   const required: string[] = schema?.required ?? [];
+  // Deliberately NARROW aliases. Notably `qty` does NOT map to `amount` —
+  // `amount` on many broker APIs means DOLLAR notional, not share count, so
+  // mapping 10 shares → amount:10 could place a $10 order. If the schema only
+  // offers a dollar-notional field, we fail closed below rather than guess.
   const alias: Record<string, string[]> = {
     symbol: ["symbol", "ticker", "instrument", "instrument_symbol"],
     side: ["side", "transaction_type", "direction"],
-    qty: ["quantity", "qty", "shares", "amount"],
+    qty: ["quantity", "qty", "shares"],
     type: ["order_type", "type"],
     limitPrice: ["limit_price", "price"],
     account: ["account_number", "account", "account_id"],
@@ -261,19 +302,41 @@ function buildArgsFromSchema(schema: any, canonical: Record<string, any>): Recor
   };
   const out: Record<string, any> = {};
   for (const [canonKey, names] of Object.entries(alias)) {
-    if (canonical[canonKey] === undefined || canonical[canonKey] === null) continue;
+    let v = canonical[canonKey];
+    if (v === undefined || v === null) continue;
     const hit = names.find(n => n in props);
-    if (hit) out[hit] = canonical[canonKey];
-  }
-  // Default a required time_in_force if the schema wants one and we didn't set it.
-  for (const tifName of ["time_in_force", "tif"]) {
-    if (required.includes(tifName) && !(tifName in out)) out[tifName] = "gfd";
+    if (!hit) continue;
+    // Coerce enum-valued fields to whatever the schema's enum spells (BUY vs
+    // buy vs B), instead of assuming lowercase. If the schema declares an enum
+    // and none of our candidate spellings match, fail closed.
+    if (canonKey === "side") {
+      const coerced = coerceEnum(props[hit], v === "buy" ? ["buy", "BUY", "B", "Buy"] : ["sell", "SELL", "S", "Sell"]);
+      if (coerced === undefined) return { __error: `side enum not resolvable against schema for '${hit}' (enum=${JSON.stringify(props[hit]?.enum)})` };
+      v = coerced;
+    } else if (canonKey === "type") {
+      const coerced = coerceEnum(props[hit], v === "limit" ? ["limit", "LIMIT", "Limit"] : ["market", "MARKET", "Market"]);
+      if (coerced === undefined) return { __error: `order_type enum not resolvable against schema for '${hit}'` };
+      v = coerced;
+    } else if (canonKey === "timeInForce") {
+      const coerced = coerceEnum(props[hit], ["gfd", "GFD", "day", "DAY", "gtc", "GTC"]);
+      if (coerced !== undefined) v = coerced;
+    }
+    out[hit] = v;
   }
   const missing = required.filter(r => !(r in out));
   if (missing.length) {
-    return { __error: `cannot fill required order fields ${JSON.stringify(missing)} from schema ${JSON.stringify(Object.keys(props))} — refusing to guess a real order` };
+    return { __error: `cannot fill required order fields ${JSON.stringify(missing)} from schema ${JSON.stringify(Object.keys(props))} — refusing to guess a real order (do NOT map share qty onto a dollar-amount field)` };
   }
   return out;
+}
+
+// If the schema property declares an enum, return the first candidate that is
+// actually in that enum (so we send the exact spelling the server expects). If
+// there is no enum, return the first candidate as-is. undefined = no match.
+function coerceEnum(prop: any, candidates: string[]): string | undefined {
+  const en: string[] | undefined = prop?.enum;
+  if (Array.isArray(en) && en.length) return candidates.find(c => en.includes(c));
+  return candidates[0];
 }
 
 export interface RobinhoodOrderInput { account: string; symbol: string; side: "buy" | "sell"; qty: number; type: "market" | "limit"; limitPrice?: number }
@@ -304,27 +367,51 @@ export async function submitRobinhoodOrder(o: RobinhoodOrderInput): Promise<Robi
   };
 
   // Review first (if the server exposes it) — never send an order we couldn't
-  // review, and never guess review args either.
+  // review, and verify the broker's preview ECHOES the exact order we intend.
+  // A review that comes back with a different symbol/side/qty means our schema
+  // mapping is wrong (e.g. a dollar-amount field) — abort rather than place.
   if (reviewTool) {
     const rArgs = buildArgsFromSchema(reviewTool.inputSchema, canonical);
     if ("__error" in rArgs) return { ok: false, error: `review: ${rArgs.__error}` };
     const review = await mcpRpc(tk.token, "tools/call", { name: "review_equity_order", arguments: rArgs }, sid);
     if (!review.ok) return { ok: false, error: `review_equity_order failed: ${review.error}` };
+    const echo = reviewEchoMismatch(review.result?.content ?? review.result, o);
+    if (echo) return { ok: false, error: `review preview did not match the intended order (${echo}) — refusing to place` };
   }
 
   const pArgs = buildArgsFromSchema(placeTool.inputSchema, canonical);
   if ("__error" in pArgs) return { ok: false, error: `place: ${pArgs.__error}` };
 
+  let place;
   try {
-    const place = await mcpRpc(tk.token, "tools/call", { name: "place_equity_order", arguments: pArgs }, sid);
-    if (!place.ok) return { ok: false, error: `place_equity_order failed: ${place.error}` };
-    const content = place.result?.content ?? place.result;
-    const brokerOrderId = extractOrderId(content);
-    return { ok: true, brokerOrderId, raw: redact(content) };
+    place = await mcpRpc(tk.token, "tools/call", { name: "place_equity_order", arguments: pArgs }, sid);
   } catch (e) {
     // Timed out AFTER possibly placing — never auto-resubmit; force reconcile.
     return { ok: false, needsReconcile: true, error: `place ambiguous (possible success): ${String(e)} — reconcile via get_equity_orders before any retry` };
   }
+  if (!place.ok) return { ok: false, error: `place_equity_order failed: ${place.error}` };
+  const content = place.result?.content ?? place.result;
+  const brokerOrderId = extractOrderId(content);
+  // A "success" with no parseable order id can't be tracked/reconciled — treat
+  // it as ambiguous, not success, so it isn't blindly retried.
+  if (!brokerOrderId) {
+    return { ok: false, needsReconcile: true, raw: redact(content), error: "place response had no parseable order id — reconcile via get_equity_orders before any retry" };
+  }
+  return { ok: true, brokerOrderId, raw: redact(content) };
+}
+
+// Returns a human-readable mismatch string if the review preview text does not
+// contain our intended symbol/side/qty; null if it looks consistent. Best-
+// effort text scan — if the fields aren't present at all we do NOT hard-fail
+// (some servers return opaque previews), but a PRESENT-and-WRONG value aborts.
+function reviewEchoMismatch(content: any, o: RobinhoodOrderInput): string | null {
+  const s = (typeof content === "string" ? content : JSON.stringify(content ?? "")).toUpperCase();
+  if (!s) return null;
+  if (s.includes("SYMBOL") && !s.includes(o.symbol.toUpperCase())) return `symbol ${o.symbol} not in preview`;
+  // qty: if a quantity field is present, require our exact integer to appear.
+  const qtyM = s.match(/"?(?:QUANTITY|QTY|SHARES)"?\s*[:=]\s*"?(\d+(?:\.\d+)?)"?/);
+  if (qtyM && Math.trunc(Number(qtyM[1])) !== Math.trunc(o.qty)) return `qty ${o.qty} != preview ${qtyM[1]}`;
+  return null;
 }
 
 function extractOrderId(content: any): string | undefined {
@@ -353,6 +440,33 @@ export async function queryRobinhoodAccount(): Promise<{ ok: boolean; error?: st
   const accounts = await mcpRpc(tk.token, "tools/call", { name: "get_accounts", arguments: {} }, sess.sessionId);
   const positions = await mcpRpc(tk.token, "tools/call", { name: "get_equity_positions", arguments: {} }, sess.sessionId);
   return { ok: true, data: { accounts: accounts.result, positions: positions.result } };
+}
+
+// Held share quantity for a symbol on the live Robinhood account, fetched
+// fresh via MCP. Used by the Execution Gateway to gate SELLs against the ACTUAL
+// account that will trade (not the cached read-only snapshot). Returns:
+//   { ok:true, qty:number }  — parsed a definite position quantity (0 = none)
+//   { ok:false }             — could not determine → caller must fail closed
+export async function robinhoodHeldQty(symbol: string): Promise<{ ok: boolean; qty?: number; error?: string }> {
+  const svc = createServiceClient();
+  const tk = await getValidAccessToken(svc);
+  if (!tk.ok || !tk.token) return { ok: false, error: tk.error ?? "not connected" };
+  const sess = await openSession(tk.token);
+  if (!sess.ok) return { ok: false, error: sess.error };
+  const res = await mcpRpc(tk.token, "tools/call", { name: "get_equity_positions", arguments: {} }, sess.sessionId);
+  if (!res.ok) return { ok: false, error: res.error };
+  try {
+    const content = res.result?.content ?? res.result;
+    const text = typeof content === "string" ? content : JSON.stringify(content ?? "");
+    const sym = symbol.toUpperCase();
+    // Find a {...symbol...quantity...} object mentioning this symbol; pull the
+    // nearest quantity. If the symbol isn't mentioned at all, treat as 0 held.
+    if (!text.toUpperCase().includes(sym)) return { ok: true, qty: 0 };
+    const re = new RegExp(`${sym}["'\\s\\S]{0,200}?"?(?:quantity|qty|shares)"?\\s*[:=]\\s*"?(\\d+(?:\\.\\d+)?)`, "i");
+    const m = text.match(re);
+    if (!m) return { ok: false, error: "symbol present but quantity unparseable" };
+    return { ok: true, qty: Number(m[1]) };
+  } catch (e) { return { ok: false, error: String(e) }; }
 }
 
 // Kill switch: wipe local tokens regardless of remote reachability. (The

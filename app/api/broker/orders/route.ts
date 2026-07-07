@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { getActiveBroker } from "@/lib/brokers/registry";
+import { getActiveBrokerForOrder } from "@/lib/brokers/registry";
 import { isIndia, fetchIndiaQuote } from "@/lib/india-data";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { guardOrderRequest } from "@/lib/request-guards";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { getQuote } from "@/lib/data/quotes";
+import { robinhoodHeldQty } from "@/lib/robinhood-mcp";
+
+// Adapter id → the brokerage key used in the broker_accounts allowlist.
+function allowlistBrokerKey(brokerId: string): string {
+  return brokerId === "robinhood_mcp" ? "robinhood" : brokerId;
+}
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +26,7 @@ const SYMBOL_RE = /^[A-Z.\-]{1,10}$/;
 // Resolve the live trading account for a market from the broker_accounts
 // allowlist. FAIL CLOSED: any error, a missing selection, or an account that
 // isn't role='trading' aborts — no silent fallback (unlike broker selection).
-async function resolveTradingAccount(svc: any, market: "us" | "india"): Promise<{ ok: true; account: string } | { ok: false; error: string }> {
+async function resolveTradingAccount(svc: any, market: "us" | "india", brokerKey: string): Promise<{ ok: true; account: string } | { ok: false; error: string }> {
   try {
     const col = market === "india" ? "active_account_india" : "active_account_us";
     const { data: cfg, error: cfgErr } = await svc.from("strategy_config").select(col).limit(1).maybeSingle();
@@ -30,11 +36,12 @@ async function resolveTradingAccount(svc: any, market: "us" | "india"): Promise<
     const { data: allowed, error: allowErr } = await svc
       .from("broker_accounts")
       .select("role")
+      .eq("broker", brokerKey)
       .eq("account_number", account)
       .eq("market", market)
       .maybeSingle();
     if (allowErr) return { ok: false, error: `allowlist read failed: ${allowErr.message}` };
-    if (!allowed) return { ok: false, error: `Account ${account} is not in the broker_accounts allowlist` };
+    if (!allowed) return { ok: false, error: `Account ${account} is not an allowlisted ${brokerKey} account for ${market}` };
     if ((allowed as any).role !== "trading") return { ok: false, error: `Account ${account} is view_only — not a permitted order target` };
     return { ok: true, account };
   } catch (e) {
@@ -79,9 +86,9 @@ export async function POST(req: NextRequest) {
     // partial unique index on broker_orders(proposal_id) WHERE status in
     // (pending_submit,submitted,partially_filled) is the hard backstop against
     // the concurrent-click race (migration 094); this is the friendly check.
-    const { data: activeOrder } = await supabase.from("broker_orders").select("id")
-      .eq("proposal_id", proposal_id).in("status", ["pending_submit", "submitted", "partially_filled"]).maybeSingle();
-    if (activeOrder) return NextResponse.json({ error: `An active order already exists for this proposal (id ${(activeOrder as any).id})` }, { status: 409 });
+    const { data: activeOrder } = await supabase.from("broker_orders").select("id, status")
+      .eq("proposal_id", proposal_id).in("status", ["pending_submit", "submitted", "partially_filled", "unknown_needs_reconcile"]).maybeSingle();
+    if (activeOrder) return NextResponse.json({ error: `An active/unreconciled order already exists for this proposal (id ${(activeOrder as any).id}, status ${(activeOrder as any).status})` }, { status: 409 });
 
     const symbol = String((proposal as any).symbol ?? "").toUpperCase();
     const side = (proposal as any).side === "sell" ? "sell" : "buy";
@@ -94,8 +101,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Invalid qty '${(proposal as any).qty}' — must be a positive integer` }, { status: 400 });
     }
 
+    // STRICT broker resolution — never falls back to a default broker on a
+    // config read error (that could route a live order to the wrong account).
+    const brokerRes = await getActiveBrokerForOrder(supabase, market);
+    if (!brokerRes.ok) return NextResponse.json({ error: brokerRes.error }, { status: 403 });
+    const broker = brokerRes.broker;
+    const brokerKey = allowlistBrokerKey(broker.id);
+
     if (orderEnv === "live") {
-      const { data: cfg } = await supabase.from("strategy_config").select("trading_enabled, trading_enabled_us, trading_enabled_india, max_order_notional").limit(1).maybeSingle();
+      const { data: cfg } = await supabase.from("strategy_config").select("trading_enabled, trading_enabled_us, trading_enabled_india, max_order_notional, robinhood_mcp_enabled").limit(1).maybeSingle();
       const marketFlag = market === "india" ? (cfg as any)?.trading_enabled_india : (cfg as any)?.trading_enabled_us;
       if (!(cfg as any)?.trading_enabled) {
         return NextResponse.json({ error: "Live trading is disabled (strategy_config.trading_enabled = false)" }, { status: 403 });
@@ -104,14 +118,21 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `Live trading is disabled for ${market.toUpperCase()} (view-only mode — turn it back on in Settings → Agents)` }, { status: 403 });
       }
 
+      // Robinhood MCP has its own dedicated kill switch (default off) — enforce
+      // it on the ORDER path, not only the snapshot path.
+      if (broker.id === "robinhood_mcp" && (cfg as any)?.robinhood_mcp_enabled !== true) {
+        return NextResponse.json({ error: "Robinhood MCP is disabled (enable it in Settings → Agents before placing live orders)" }, { status: 403 });
+      }
+
       // Kill switches run at proposal build/approve; run them again at submit —
       // conditions (daily loss, drawdown, accuracy) can trip between approval
       // and the human clicking Send.
       const ks = await checkKillSwitches(supabase, market);
       if (!ks.safe) return NextResponse.json({ error: `Kill switch active: ${ks.reason}` }, { status: 403 });
 
-      // Account must be an allowlisted role='trading' account (fail closed).
-      const acct = await resolveTradingAccount(supabase, market);
+      // Account must be an allowlisted role='trading' account for THIS broker
+      // (fail closed).
+      const acct = await resolveTradingAccount(supabase, market, brokerKey);
       if (!acct.ok) return NextResponse.json({ error: acct.error }, { status: 403 });
 
       // Fresh quote → notional cap + price-drift re-check.
@@ -151,16 +172,26 @@ export async function POST(req: NextRequest) {
       }
 
       // Long-only for NEW positions: a SELL is only allowed on a currently-held
-      // symbol (CLAUDE.md locked rule). Check the latest live snapshot.
+      // symbol (CLAUDE.md locked rule), verified against the ACTUAL account that
+      // will trade — not the cached read-only snapshot (which is a different RH
+      // account). For Robinhood MCP, fetch live positions for the active trading
+      // account; fail closed if that can't be determined.
       if (side === "sell") {
-        const { data: snap } = await supabase.from("live_account_snapshots").select("positions_json").order("captured_at", { ascending: false }).limit(1).maybeSingle();
-        const positions: any[] = (snap as any)?.positions_json ?? [];
-        const held = Array.isArray(positions) && positions.some(p => String(p?.symbol ?? p?.ticker ?? "").toUpperCase() === symbol && Number(p?.qty ?? p?.quantity ?? 0) > 0);
-        if (!held) return NextResponse.json({ error: `Refusing SELL of ${symbol}: not found in current holdings (long-only for new positions)` }, { status: 403 });
+        if (broker.id === "robinhood_mcp") {
+          const heldRes = await robinhoodHeldQty(symbol);
+          if (!heldRes.ok) return NextResponse.json({ error: `Refusing SELL of ${symbol}: could not verify live holdings (${heldRes.error})` }, { status: 403 });
+          if ((heldRes.qty ?? 0) < qty) return NextResponse.json({ error: `Refusing SELL of ${qty} ${symbol}: only ${heldRes.qty ?? 0} held on the live trading account` }, { status: 403 });
+        } else {
+          // Other brokers: best-effort snapshot check (their own holdings source
+          // isn't wired here yet). Fail closed if no snapshot exists.
+          const { data: snap } = await supabase.from("live_account_snapshots").select("positions_json").order("captured_at", { ascending: false }).limit(1).maybeSingle();
+          const positions: any[] = (snap as any)?.positions_json ?? [];
+          const held = Array.isArray(positions) && positions.some(p => String(p?.symbol ?? p?.ticker ?? "").toUpperCase() === symbol && Number(p?.qty ?? p?.quantity ?? 0) >= qty);
+          if (!held) return NextResponse.json({ error: `Refusing SELL of ${symbol}: not confirmed held in the latest snapshot (long-only for new positions)` }, { status: 403 });
+        }
       }
     }
 
-    const broker = await getActiveBroker(supabase, market);
     // Both directions: a live-only broker rejects paper; a paper-only broker
     // rejects live. Prevents a mis-typed/missing env from routing to the wrong
     // environment past the gates above.
@@ -182,6 +213,14 @@ export async function POST(req: NextRequest) {
 
     const result = await broker.submitOrder({ symbol, side, qty, env: orderEnv });
     if (!result.ok) {
+      // AMBIGUOUS outcome (possible-success timeout, or success with no order
+      // id): mark unknown_needs_reconcile — the dup-submit unique index (mig
+      // 095) treats this as an active status, so the proposal can't be
+      // resubmitted until reconciled via get_equity_orders.
+      if (result.needsReconcile) {
+        await supabase.from("broker_orders").update({ status: "unknown_needs_reconcile", error: result.error, raw_last_state: result.raw ?? null }).eq("id", orderId);
+        return NextResponse.json({ error: result.error, needs_reconcile: true }, { status: 202 });
+      }
       await supabase.from("broker_orders").update({ status: "error", error: result.error }).eq("id", orderId);
       return NextResponse.json({ error: result.error }, { status: 502 });
     }

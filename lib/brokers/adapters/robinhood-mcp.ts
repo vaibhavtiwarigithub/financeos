@@ -20,9 +20,15 @@ export function robinhoodMcpAdapter(): BrokerAdapter {
       // anything).
       if (o.env !== "live") return { ok: false, error: "Robinhood MCP is live-only (no paper env)" };
 
+      // Defense in depth: enforce the integration's own kill switch here too,
+      // not only at the Gateway.
+      const svc = createServiceClient();
+      const { data: cfg, error: cfgErr } = await svc.from("strategy_config").select("robinhood_mcp_enabled").limit(1).maybeSingle();
+      if (cfgErr || (cfg as any)?.robinhood_mcp_enabled !== true) return { ok: false, error: "Robinhood MCP is disabled (robinhood_mcp_enabled)" };
+
       // Re-resolve + re-validate the trading account at the last code before the
       // wire (the Gateway checks it too — this is the redundant last line).
-      const acct = await resolveTradingAccount();
+      const acct = await resolveTradingAccount(svc);
       if (!acct.ok) return { ok: false, error: acct.error };
 
       const res = await submitRobinhoodOrder({
@@ -33,7 +39,8 @@ export function robinhoodMcpAdapter(): BrokerAdapter {
         type: o.type === "limit" ? "limit" : "market",
         limitPrice: o.limitPrice,
       });
-      if (!res.ok) return { ok: false, error: res.error };
+      // Preserve needsReconcile — the Gateway needs it to avoid a duplicate.
+      if (!res.ok) return { ok: false, error: res.error, needsReconcile: res.needsReconcile, raw: res.raw };
       return { ok: true, brokerOrderId: res.brokerOrderId, raw: res.raw };
     },
     async getOrder(_brokerOrderId, _env): Promise<BrokerOrderState> {
@@ -46,18 +53,19 @@ export function robinhoodMcpAdapter(): BrokerAdapter {
 }
 
 // Fail-closed account resolution (US trading account from the allowlist),
-// mirroring the Gateway's own check so this last layer can't be bypassed.
-async function resolveTradingAccount(): Promise<{ ok: true; account: string } | { ok: false; error: string }> {
+// mirroring the Gateway's own check so this last layer can't be bypassed. The
+// allowlist row must match broker='robinhood' (the brokerage), not just the
+// account number + market.
+async function resolveTradingAccount(svc: any): Promise<{ ok: true; account: string } | { ok: false; error: string }> {
   try {
-    const svc = createServiceClient();
     const { data: cfg, error: cfgErr } = await svc.from("strategy_config").select("active_account_us").limit(1).maybeSingle();
     if (cfgErr) return { ok: false, error: `account config read failed: ${cfgErr.message}` };
     const account = (cfg as any)?.active_account_us;
     if (!account) return { ok: false, error: "No active US trading account set" };
     const { data: allowed, error: allowErr } = await svc
-      .from("broker_accounts").select("role").eq("account_number", account).eq("market", "us").maybeSingle();
+      .from("broker_accounts").select("role").eq("broker", "robinhood").eq("account_number", account).eq("market", "us").maybeSingle();
     if (allowErr) return { ok: false, error: `allowlist read failed: ${allowErr.message}` };
-    if (!allowed || (allowed as any).role !== "trading") return { ok: false, error: `Account ${account} is not an allowlisted trading account` };
+    if (!allowed || (allowed as any).role !== "trading") return { ok: false, error: `Account ${account} is not an allowlisted robinhood trading account` };
     return { ok: true, account };
   } catch (e) { return { ok: false, error: `account resolution error: ${String(e)}` }; }
 }

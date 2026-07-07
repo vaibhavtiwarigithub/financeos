@@ -7,7 +7,10 @@
 // Safety unchanged: trading_enabled + human click + confirm sit ABOVE this
 // layer in every caller — adapters never gate, they only execute.
 
-export interface BrokerOrderResult { ok: boolean; brokerOrderId?: string; raw?: any; error?: string }
+// needsReconcile: the submit outcome is AMBIGUOUS (possible-success timeout, or
+// a success with no parseable order id). Callers must NOT auto-retry — the
+// order may already exist at the broker; reconcile before any resubmission.
+export interface BrokerOrderResult { ok: boolean; brokerOrderId?: string; raw?: any; error?: string; needsReconcile?: boolean }
 export interface BrokerOrderState {
   ok: boolean;
   status?: "submitted" | "partially_filled" | "filled" | "canceled" | "rejected" | "expired";

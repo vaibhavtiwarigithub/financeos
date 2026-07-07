@@ -31,6 +31,21 @@ export function listBrokers(market: "us" | "india"): BrokerAdapter[] {
 // from any other error (transient network/auth failure) — those still fall
 // back too (an order can't be blocked on a config-read glitch), but are
 // logged loudly so a misrouted-broker risk is visible, not silent.
+// STRICT resolver for the ORDER path — never falls back. A transient config
+// read error or an unset/unknown broker ABORTS the order rather than silently
+// routing it to the default broker (which could be a different live account).
+// Use getActiveBroker (below) only for non-order UI display.
+export async function getActiveBrokerForOrder(supabase: any, market: "us" | "india"): Promise<{ ok: true; broker: BrokerAdapter } | { ok: false; error: string }> {
+  const col = market === "india" ? "active_broker_india" : "active_broker_us";
+  const { data, error } = await supabase.from("strategy_config").select(col).maybeSingle();
+  if (error) return { ok: false, error: `Could not read ${col}: ${error.message}` };
+  const id = (data as any)?.[col];
+  if (!id) return { ok: false, error: `No active broker configured for ${market}` };
+  const broker = getBroker(id);
+  if (!broker) return { ok: false, error: `Unknown active broker '${id}'` };
+  return { ok: true, broker };
+}
+
 export async function getActiveBroker(supabase: any, market: "us" | "india"): Promise<BrokerAdapter> {
   const col = market === "india" ? "active_broker_india" : "active_broker_us";
   const fallback = market === "india" ? "kite" : "alpaca";

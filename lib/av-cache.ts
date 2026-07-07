@@ -47,11 +47,16 @@ export async function avCachedFetch(cacheKey: string, url: string, timeoutMs = 6
   //    the daily ceiling, don't spend a real call; serve the last-known payload.
   //    (Reserve-before-spend: a rare over-count is safer than an over-spend.)
   try {
-    const { data: count } = await svc.rpc("av_budget_increment", { p_date: todayStr });
+    const { data: count, error } = await svc.rpc("av_budget_increment", { p_date: todayStr });
+    // Fail CLOSED for free-tier preservation: if the counter is unavailable we
+    // can't prove we're under budget, so serve the last cached payload rather
+    // than risk blowing the 25/day cap. (Freshness degrades gracefully; the
+    // quota does not get silently exhausted.)
+    if (error) return lastCached(svc, cacheKey);
     if (typeof count === "number" && count > AV_DAILY_BUDGET) {
       return lastCached(svc, cacheKey);
     }
-  } catch { /* counter unavailable → fall through and spend (fail open, cache still limits) */ }
+  } catch { return lastCached(svc, cacheKey); }
 
   // 3. Spend one real call.
   let json: any = null;

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { createClient } from "@/lib/supabase/server";
+import { requireOwner } from "@/lib/auth/require-owner";
 import { listBrokers } from "@/lib/brokers/registry";
 import { RISK_PROFILES as PROFILES } from "@/lib/risk-profiles";
 
@@ -11,10 +11,10 @@ const VALID_PROFILES = ["conservative", "balanced", "aggressive"] as const;
 
 // PATCH: set risk profile (and optionally override individual params)
 export async function PATCH(req: NextRequest) {
-  // Require authenticated owner — risk and trading config must not be publicly mutable
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // OWNER-only — this mutates trading config (broker/account/enable/notional).
+  // Any-authenticated-user is not enough.
+  const gate = await requireOwner();
+  if (gate) return gate;
 
   const body = await req.json();
   const { risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_mode, broker, max_positions_per_sector, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_days, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional } = body;
@@ -160,11 +160,10 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({ ok: true, ...update });
 }
 
-// GET: return current profile
+// GET: return current profile (owner-only — exposes trading config)
 export async function GET() {
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const gate = await requireOwner();
+  if (gate) return gate;
 
   const svc = createServiceClient();
   const { data } = await svc
