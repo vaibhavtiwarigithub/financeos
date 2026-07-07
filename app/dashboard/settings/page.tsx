@@ -507,6 +507,30 @@ export default function SettingsPage() {
               >
                 {kite?.connected ? "Re-login" : "Connect Kite"}
               </a>
+              {(kite?.connected || kite?.token_fresh) && (
+                <button
+                  onClick={async () => {
+                    if (!confirm("Disconnect Kite now? This invalidates today's session with Zerodha and wipes the stored token — every Kite-dependent feature (India paper/live orders, position sync) stops working until you log in again.")) return;
+                    setKiteMsg("Disconnecting…");
+                    try {
+                      const res = await fetch("/api/kite/disconnect", { method: "POST" });
+                      const d = await res.json();
+                      setKiteMsg(d.ok ? `Disconnected${d.remoteInvalidated ? " (session invalidated with Zerodha)" : " (local token cleared — Zerodha session invalidation failed, revoke manually at kite.zerodha.com if concerned)"}.` : `Disconnect failed: ${d.error ?? "unknown error"}`);
+                    } catch (e) {
+                      setKiteMsg(`Disconnect failed: ${String(e)}`);
+                    }
+                    loadKite();
+                  }}
+                  style={{ background: "transparent", border: `1px solid ${T.red}`, borderRadius: "8px", color: T.red, padding: "9px 20px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}
+                >
+                  Disconnect
+                </button>
+              )}
+            </div>
+            <div style={{ fontSize: "11px", color: T.muted, marginTop: "10px" }}>
+              The most reliable kill switch is revoking access directly at{" "}
+              <a href="https://kite.zerodha.com" target="_blank" rel="noopener noreferrer" style={{ color: T.accent }}>kite.zerodha.com</a>
+              {" "}or your Kite Connect apps page — that works even if this app were ever compromised. Disconnect above is the in-app-triggered complement to that.
             </div>
           </div>
 

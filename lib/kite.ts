@@ -79,6 +79,46 @@ export async function getAccessToken(svc?: any): Promise<{ token: string; fresh:
   return { token: value, fresh, updatedAt };
 }
 
+// Kill switch: invalidate the session with Kite itself (DELETE /session/token
+// — Kite's documented endpoint takes api_key/access_token as query params, not
+// the usual Authorization header, so this doesn't reuse kiteDelete) AND wipe
+// the stored token locally regardless of whether the remote call succeeds —
+// an unreachable Kite API must never leave a stale token sitting in the vault
+// looking "connected". The most reliable kill switch is still revoking from
+// Zerodha's own console (works even if this app/DB is fully compromised);
+// this is the in-app-triggered complement to that, not a replacement for it.
+export async function disconnectKite(svc?: any): Promise<{ ok: boolean; remoteInvalidated: boolean; error?: string }> {
+  const s = svc ?? createServiceClient();
+  const { apiKey } = await getKiteCreds(s);
+  const { token } = await getAccessToken(s);
+
+  let remoteInvalidated = false;
+  let remoteError: string | undefined;
+  if (apiKey && token) {
+    try {
+      const res = await fetch(`https://api.kite.trade/session/token?api_key=${encodeURIComponent(apiKey)}&access_token=${encodeURIComponent(token)}`, {
+        method: "DELETE",
+        headers: { "X-Kite-Version": "3" },
+      });
+      const json = await res.json().catch(() => ({}));
+      remoteInvalidated = res.ok && json?.status === "success";
+      if (!remoteInvalidated) remoteError = json?.message ?? `Kite ${res.status}`;
+    } catch (e) {
+      remoteError = String(e);
+    }
+  }
+
+  // Wipe locally no matter what the remote call did — a network error talking
+  // to Kite must not block disconnecting on this side.
+  const { error: deleteErr } = await s.from("api_key_vault").delete().eq("key_name", VAULT_ACCESS_TOKEN);
+
+  return {
+    ok: !deleteErr,
+    remoteInvalidated,
+    error: deleteErr ? deleteErr.message : remoteError,
+  };
+}
+
 async function authHeaders(s: any): Promise<{ ok: true; headers: Record<string, string> } | { ok: false; error: string }> {
   const { apiKey } = await getKiteCreds(s);
   const { token, fresh } = await getAccessToken(s);
