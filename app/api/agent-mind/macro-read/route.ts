@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { callLLM } from "@/lib/llm-router";
-import { getConfiguredModel } from "@/lib/agent-model-config";
+import { getConfiguredModel, isAgentEnabled } from "@/lib/agent-model-config";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -31,6 +31,9 @@ export async function POST(req: NextRequest) {
     if (gate) return gate;
   }
   const svc = createServiceClient();
+  if (!(await isAgentEnabled(svc, "macro-read"))) {
+    return NextResponse.json({ ok: false, error: "macro-read is disabled in Settings -> Agents -> LLM Config" }, { status: 200 });
+  }
   const market = new URL(req.url).searchParams.get("market") === "india" ? "india" : "us";
   const today = new Date().toISOString().slice(0, 10);
 

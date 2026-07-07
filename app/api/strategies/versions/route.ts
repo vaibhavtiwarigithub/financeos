@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -43,9 +43,8 @@ export async function GET() {
 // POST: create a new strategy version (challenger from LearnerAgent or manual)
 export async function POST(req: NextRequest) {
   try {
-    const userClient = await createClient();
-    const { data: { user } } = await userClient.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await requireOwner();
+    if (gate) return gate;
 
     const supabase = createServiceClient();
     const body = await req.json();

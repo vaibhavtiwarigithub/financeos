@@ -91,11 +91,17 @@ export async function POST(req: NextRequest) {
     product: "CNC",
   });
 
-  // Update the ledger row with the outcome (submitted or failed).
+  // Kite's success response should always include an order_id — if the call
+  // reports success but the id is missing, the order state is ambiguous (may
+  // or may not have gone through), not a confirmed success.
+  const needsReconcile = res.ok && !res.data?.order_id;
+  const outcomeStatus = !res.ok ? "failed" : needsReconcile ? "unknown_needs_reconcile" : "submitted";
+
+  // Update the ledger row with the outcome (submitted, failed, or ambiguous).
   await svc.from("broker_orders").update({
-    status: res.ok ? "submitted" : "failed",
-    broker_order_id: res.ok ? String(res.data?.order_id ?? "") : null,
-    error: res.ok ? null : res.error,
+    status: outcomeStatus,
+    broker_order_id: res.ok && res.data?.order_id ? String(res.data.order_id) : null,
+    error: res.ok ? (needsReconcile ? "Kite reported success with no order_id — needs manual reconciliation" : null) : res.error,
   }).eq("id", ledgerId);
 
   // Audit trail in decision_journal (best-effort, non-fatal).
@@ -103,13 +109,16 @@ export async function POST(req: NextRequest) {
     await svc.from("decision_journal").insert({
       entry_type: "kite_order",
       symbol, market: "india",
-      summary: `Kite ${transaction_type} ${quantity} ${symbol} (${order_type ?? "MARKET"}${price ? ` @ ₹${price}` : ""}) → ${res.ok ? `order ${res.data?.order_id}` : `FAILED: ${res.error}`}`,
+      summary: `Kite ${transaction_type} ${quantity} ${symbol} (${order_type ?? "MARKET"}${price ? ` @ ₹${price}` : ""}) → ${needsReconcile ? "AMBIGUOUS: no order_id returned, needs reconciliation" : res.ok ? `order ${res.data?.order_id}` : `FAILED: ${res.error}`}`,
       calculations: { transaction_type, quantity, order_type: order_type ?? "MARKET", price: price ?? null, order_id: res.data?.order_id ?? null, broker_order_ledger_id: ledgerId },
       has_verified_facts: true,
-      resolved: res.ok,
+      resolved: res.ok && !needsReconcile,
     });
   } catch { /* audit is best-effort */ }
 
   if (!res.ok) return NextResponse.json({ success: false, error: res.error }, { status: 502 });
+  if (needsReconcile) {
+    return NextResponse.json({ success: false, needsReconcile: true, broker_order_id: ledgerId, error: "Order submitted but no order_id returned — check Kite manually before retrying" }, { status: 202 });
+  }
   return NextResponse.json({ success: true, order_id: res.data?.order_id, broker_order_id: ledgerId });
 }

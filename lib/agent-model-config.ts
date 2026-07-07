@@ -11,3 +11,16 @@ export async function getConfiguredModel(svc: any, agentName: string, fallback =
     return fallback;
   }
 }
+
+// Callers that must actually STOP (not just swap models) when the user
+// disables a feature in Settings -> Agents -> LLM Config. Missing row = not
+// yet configured = enabled (fail-open on absence, fail-closed only on an
+// explicit enabled:false row).
+export async function isAgentEnabled(svc: any, agentName: string): Promise<boolean> {
+  try {
+    const { data } = await svc.from("agent_config").select("enabled").eq("agent_name", agentName).maybeSingle();
+    return !(data && (data as any).enabled === false);
+  } catch {
+    return true;
+  }
+}

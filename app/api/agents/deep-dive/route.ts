@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
 import { avCachedFetch } from "@/lib/av-cache";
-import { getConfiguredModel } from "@/lib/agent-model-config";
+import { getConfiguredModel, isAgentEnabled } from "@/lib/agent-model-config";
 import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
@@ -71,6 +71,9 @@ export async function POST(req: NextRequest) {
   if (!process.env.DEEPSEEK_API_KEY) return NextResponse.json({ error: "DEEPSEEK_API_KEY not set" }, { status: 503 });
 
   const svc = createServiceClient();
+  if (!(await isAgentEnabled(svc, "deep-dive"))) {
+    return NextResponse.json({ error: "deep-dive is disabled in Settings -> Agents -> LLM Config" }, { status: 200 });
+  }
   const model = await getConfiguredModel(svc, "deep-dive");
 
   // ── Data bundle: quote + fundamentals + our signal scores + macro + holding ──

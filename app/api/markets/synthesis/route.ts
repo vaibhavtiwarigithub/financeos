@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { callLLM } from "@/lib/llm-router";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
-import { getConfiguredModel } from "@/lib/agent-model-config";
+import { getConfiguredModel, isAgentEnabled } from "@/lib/agent-model-config";
 
 export const dynamic = "force-dynamic";
 
@@ -178,7 +178,9 @@ export async function GET(req: NextRequest) {
   let synthesis = "Synthesis unavailable — regime indicator data could not be fetched.";
   let model = "none";
 
-  if (hasData) {
+  if (hasData && !(await isAgentEnabled(svc, "markets-synthesis"))) {
+    synthesis = "Synthesis skipped — markets-synthesis is disabled in Settings -> Agents -> LLM Config.";
+  } else if (hasData) {
     const coverageNote = scored < 7
       ? `\n\nDATA COVERAGE WARNING: only ${scored}/7 regime proxy signals were available this run (the rest failed to fetch). Explicitly note this coverage gap in your synthesis and temper your confidence accordingly — do not present a fully confident read when signals are missing.`
       : "";

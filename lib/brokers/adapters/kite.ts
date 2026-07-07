@@ -1,5 +1,5 @@
 import { BrokerAdapter, BrokerOrderResult, BrokerOrderState } from "@/lib/brokers/adapter-types";
-import { placeEquityOrder, kiteGet, kiteDelete, getKiteCreds } from "@/lib/kite";
+import { placeEquityOrder, kiteGet, kiteDelete, getKiteCreds, getAccessToken } from "@/lib/kite";
 
 // Kite has no paper/sandbox environment — live only.
 const STATUS_MAP: Record<string, BrokerOrderState["status"]> = {
@@ -15,7 +15,11 @@ export function kiteAdapter(): BrokerAdapter {
     async isConfigured() {
       try {
         const { apiKey, apiSecret } = await getKiteCreds();
-        return !!apiKey && !!apiSecret;
+        if (!apiKey || !apiSecret) return false;
+        // Kite's access token expires daily — keys present isn't enough to
+        // place a live order, the session must actually be live today.
+        const { fresh } = await getAccessToken();
+        return fresh;
       } catch { return false; }
     },
     async submitOrder(o): Promise<BrokerOrderResult> {

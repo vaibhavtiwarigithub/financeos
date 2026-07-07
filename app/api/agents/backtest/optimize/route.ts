@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { callLLM } from "@/lib/llm-router";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { getConfiguredModel } from "@/lib/agent-model-config";
+import { getConfiguredModel, isAgentEnabled } from "@/lib/agent-model-config";
 
 export const dynamic = "force-dynamic";
 
@@ -138,9 +138,13 @@ Return ONLY valid JSON array with exactly 3 items:
     // (agent_config, agent_name="backtest-optimize") — was hardcoded to real
     // Claude Haiku with no fallback (would fail instantly, no ANTHROPIC_API_KEY);
     // defaults to deepseek-reasoner now.
+    const optimizeSvc = createServiceClient();
+    if (!(await isAgentEnabled(optimizeSvc, "backtest-optimize"))) {
+      throw new Error("backtest-optimize is disabled in Settings -> Agents -> LLM Config");
+    }
     const llmResult = await callLLM({
       task: "optimize",
-      model: await getConfiguredModel(createServiceClient(), "backtest-optimize"),
+      model: await getConfiguredModel(optimizeSvc, "backtest-optimize"),
       prompt: diagnosisPrompt,
       symbol: "BACKTEST",
       agentLabel: "optimizer",

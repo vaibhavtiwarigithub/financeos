@@ -144,6 +144,7 @@ async function buildProposals(supabase: any, isCron: boolean) {
     const { data: existingProposals } = await supabase
       .from("trade_proposals")
       .select("signal_id")
+      .eq("market", "us")
       .gte("created_at", since);
     const alreadyProposed = new Set((existingProposals ?? []).map((p: any) => p.signal_id));
 
@@ -151,6 +152,7 @@ async function buildProposals(supabase: any, isCron: boolean) {
     const { data: signals } = await supabase
       .from("agent_signals")
       .select("*")
+      .eq("market", "us")
       .eq("direction", "long")
       .eq("status", "pending")
       .gte("analyst_score", scoreThreshold)
@@ -282,6 +284,7 @@ async function buildProposals(supabase: any, isCron: boolean) {
 
       const { data: proposal } = await supabase.from("trade_proposals").insert({
         symbol:          signal.symbol,
+        market:          "us",
         side:            "buy",
         qty,
         order_type:      "market",

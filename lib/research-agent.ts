@@ -9,6 +9,7 @@ import { niftyCandidates } from "@/lib/india-universe";
 import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
 import { computeWeightedAnalystScore, isThinEvidence, type DimensionRecord } from "@/lib/scoring/weighted-score";
+import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
@@ -817,11 +818,11 @@ export async function processSymbol(
   // champion, preserving prior US behavior.
   let champion: any = null;
   {
-    const scoped = await supabase.from("strategy_versions").select("weights_snapshot")
+    const scoped = await supabase.from("strategy_versions").select("id, weights_snapshot")
       .eq("is_champion", true).eq("market", market)
       .order("promoted_at", { ascending: false }).limit(1).maybeSingle();
     if (scoped.error) {
-      const legacy = await supabase.from("strategy_versions").select("weights_snapshot")
+      const legacy = await supabase.from("strategy_versions").select("id, weights_snapshot")
         .eq("is_champion", true).order("promoted_at", { ascending: false }).limit(1).maybeSingle();
       champion = legacy.data;
     } else {
@@ -1074,15 +1075,45 @@ export async function processSymbol(
       ? { bucket: entry.screenerBucket, criteria_matched: BUCKET_CRITERIA[entry.screenerBucket] }
       : undefined;
     const entryEligible = signalDirection === "long" && analystScore >= (scoreThreshold ?? 60);
+
+    // Phase 3: log (never score with) any 'active' feature_registry formula's
+    // value for this decision. Building the IC track record that would justify
+    // eventually promoting a feature into the real weighting formula is a
+    // separate, evidence-gated decision — not this one. Fail-soft: an invalid
+    // formula or DB miss must never block the actual research decision.
+    let activeFeatureValues: Record<string, number | null> | undefined;
+    try {
+      const { data: activeFeatures } = await supabase.from("feature_registry")
+        .select("name, spec").eq("status", "active");
+      if (activeFeatures?.length) {
+        const ctxValues: Record<string, number> = {
+          fundamental_score: scores.fundamental_score, technical_score: scores.technical_score,
+          sentiment_score: scores.sentiment_score, macro_score: scores.macro_score, insider_score: scores.insider_score,
+        };
+        for (const [dim, evidence] of Object.entries(scores.evidence ?? {})) {
+          for (const [k, v] of Object.entries((evidence as any) ?? {})) {
+            if (typeof v === "number") ctxValues[`${dim}.${k}`] = v;
+          }
+        }
+        activeFeatureValues = {};
+        for (const feat of activeFeatures as any[]) {
+          try {
+            activeFeatureValues[feat.name] = evaluateFeature(feat.spec?.formula ?? "", { values: ctxValues });
+          } catch { activeFeatureValues[feat.name] = null; }
+        }
+      }
+    } catch { /* feature_registry may not exist pre-064 — never block research */ }
+
     const { data: obsRow, error: obsErr } = await supabase.from("decision_observations").insert({
       market,
       symbol,
-      strategy_version_id: null,            // filled when champion row id is loaded; else null
+      strategy_version_id: (champion as any)?.id ?? null,
       weights_used: effWeights, // the ACTUALLY-APPLIED weights (post-renormalization), not the base profile split
       used_champion: usingChampion,
       features: {
         ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}),
         weighting: { renormalized, included_dims: includedDims, base_weights: weightOf, applied_weights: effWeights },
+        ...(activeFeatureValues ? { active_feature_values: activeFeatureValues } : {}),
       },
       availability_mask,
       analyst_score: analystScore,
@@ -1135,15 +1166,19 @@ export async function processSymbol(
             const v = wsnap[short] ?? wsnap[full];
             return typeof v === "number" ? v : undefined;
           };
-          const sfw = cwShadow("fundamental", "fundamental_weight") ?? fw;
-          const stw = cwShadow("technical", "technical_weight") ?? tw;
-          const ssw = cwShadow("sentiment", "sentiment_weight") ?? sw;
-          const smw = cwShadow("macro", "macro_weight") ?? mw;
-          const siw = cwShadow("insider", "insider_weight") ?? iw;
-          const shadowScore = Math.round(
-            scores.fundamental_score * sfw + scores.technical_score * stw +
-            scores.sentiment_score * ssw + scores.macro_score * smw + scores.insider_score * siw
-          );
+          // Same shared contract that grades the real champion score — a
+          // challenger must be graded on the exact live scoring rule
+          // (availability-mask + renormalization), not a raw fixed dot-product
+          // that would penalize/inflate it relative to production for the
+          // same reason Validation Engine needed this fix (see weighted-score.ts).
+          const challengerWeights: DimensionRecord<number> = {
+            fundamental: cwShadow("fundamental", "fundamental_weight") ?? fw,
+            technical:   cwShadow("technical", "technical_weight") ?? tw,
+            sentiment:   cwShadow("sentiment", "sentiment_weight") ?? sw,
+            macro:       cwShadow("macro", "macro_weight") ?? mw,
+            insider:     cwShadow("insider", "insider_weight") ?? iw,
+          };
+          const { score: shadowScore } = computeWeightedAnalystScore(scoreOf, included, challengerWeights);
           await supabase.from("shadow_decisions").insert({
             market, symbol, observation_id: obsRow.id, policy_version_id: sv.id,
             would_enter: shadowScore >= (scoreThreshold ?? 60), score: shadowScore,

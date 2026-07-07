@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callLLM } from "@/lib/llm-router";
 import { createServiceClient } from "@/lib/supabase/service";
-import { getConfiguredModel } from "@/lib/agent-model-config";
+import { getConfiguredModel, isAgentEnabled } from "@/lib/agent-model-config";
 import type { MarketOverview } from "@/app/api/markets/overview/route";
 
 export const dynamic = "force-dynamic";
@@ -177,7 +177,9 @@ export async function GET(req: NextRequest) {
   let thesis = "";
   let model = await getConfiguredModel(svc, "markets-thesis");
   let llmError: string | null = null;
+  const thesisEnabled = await isAgentEnabled(svc, "markets-thesis");
   try {
+    if (!thesisEnabled) throw new Error("markets-thesis is disabled in Settings -> Agents -> LLM Config");
     const llmResult = await callLLM({
       task: "thesis",
       model,
