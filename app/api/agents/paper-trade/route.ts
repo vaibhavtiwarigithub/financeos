@@ -425,6 +425,9 @@ export async function POST(req: NextRequest) {
           p_notes: signal.rationale?.slice(0, 500) ?? null,
           p_rationale: `${signal.rationale ?? ""} [source: ${source}, at: ${retrievedAt}]`,
           p_price_target: priceTarget, p_stop_loss: stopLoss, p_sector: candSector,
+          // Build 4a: pre-slippage decision price. fill_price already carries the
+          // slipped value; the RPC computes realized_slip_pct = fill/expected - 1.
+          p_expected_price: price,
         } as any);
         const rpcMissing = rpcErr && (String((rpcErr as any).code ?? "") === "PGRST202" ||
           /could not find the function|does not exist/i.test(String(rpcErr.message ?? "")));
@@ -469,8 +472,13 @@ export async function POST(req: NextRequest) {
           spread_applied: spread, signal_id: signal.id, analyst_score: signal.analyst_score,
           strategy_id: signal.source ?? "research", notes: signal.rationale?.slice(0, 500) ?? null,
           market,
+          // Build 4a: expected (pre-slip) price + realized slip. Optional keys below
+          // so a pre-125 dev DB missing these columns still inserts.
+          expected_price: price,
+          realized_slip_pct: price > 0 ? fillPrice / price - 1 : null,
+          fill_status: "filled",
         };
-        const evRes = await insertOptional("paper_order_events", eventRow, ["market"], "id");
+        const evRes = await insertOptional("paper_order_events", eventRow, ["market", "expected_price", "realized_slip_pct", "fill_status"], "id");
         if (evRes.error) {
           await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
           skipped.push({ symbol: signal.symbol, reason: `order_event_failed: ${evRes.error.message}` });
@@ -486,8 +494,11 @@ export async function POST(req: NextRequest) {
           fundamental_score: null, technical_score: null, sentiment_score: null, macro_score: null,
           price_source: source, price_retrieved_at: retrievedAt, spread_applied: spread,
           paper_event_id: orderEventId, market, currency,
+          expected_price: price,
+          realized_slip_pct: price > 0 ? fillPrice / price - 1 : null,
+          fill_status: "filled",
         };
-        const trRes = await insertOptional("paper_trades", tradeRow, ["currency", "market"]);
+        const trRes = await insertOptional("paper_trades", tradeRow, ["currency", "market", "expected_price", "realized_slip_pct", "fill_status"]);
         if (trRes.error) {
           await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
           skipped.push({ symbol: signal.symbol, reason: `trade_insert_failed: ${trRes.error.message}` });

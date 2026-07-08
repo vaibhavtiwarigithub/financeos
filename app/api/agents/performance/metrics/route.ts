@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import {
   navToReturns, sharpe, sortino, maxDrawdown, expectancy, costNet, calibration,
+  slip, MODELED_SLIP_PCT,
 } from "@/lib/analytics/performance-metrics";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +41,7 @@ export async function GET() {
       // Closed trades (per market) — expectancy / profit factor / cost / calibration.
       const { data: tradeRows } = await svc
         .from("paper_trades")
-        .select("pnl_pct, outcome, analyst_score, spread_applied, fill_price, tainted")
+        .select("pnl_pct, outcome, analyst_score, spread_applied, fill_price, tainted, realized_slip_pct")
         .eq("market", market)
         .not("closed_at", "is", null);
       const trades = tradeRows ?? [];
@@ -49,6 +50,7 @@ export async function GET() {
 
       const exp = expectancy(trades as any);
       const cost = costNet(trades as any);
+      const realizedSlip = slip(trades as any);
       const calib = calibration(
         (trades as any[])
           .filter((t) => t.analyst_score != null && t.outcome != null)
@@ -74,6 +76,7 @@ export async function GET() {
         avgLossPct: exp.avgLoss,
         profitFactor: exp.profitFactor,
         cost,
+        slip: { realized: realizedSlip, modeledPct: MODELED_SLIP_PCT },
         calibration: calib,
         alphaPct: last?.alpha_pct != null ? Number(last.alpha_pct) : null,
         benchmarkReturnPct: last?.spy_return_pct != null ? Number(last.spy_return_pct) : null,

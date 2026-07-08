@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  navToReturns, sharpe, sortino, maxDrawdown, expectancy, costNet, calibration,
-  MIN_RETURNS, MIN_TRADES, MIN_CALIB,
+  navToReturns, sharpe, sortino, maxDrawdown, expectancy, costNet, calibration, slip,
+  MIN_RETURNS, MIN_TRADES, MIN_CALIB, MODELED_SLIP_PCT,
 } from "@/lib/analytics/performance-metrics";
 
 // Build 3 — golden tests for the pure metrics lib. These lock the HONESTY
@@ -128,6 +128,27 @@ describe("costNet", () => {
     const c = costNet(rows);
     expect(c.costPct.value!).toBeCloseTo(0, 6);
     expect(c.grossReturnPct.value!).toBeCloseTo(1, 6);
+  });
+});
+
+describe("slip (Build 4a)", () => {
+  it("is insufficient below MIN_TRADES", () => {
+    const rows = Array.from({ length: MIN_TRADES - 1 }, () => ({ realized_slip_pct: 0.0005 }));
+    expect(slip(rows).insufficient).toBe(true);
+  });
+  it("means realized slip as a percentage, ignoring nulls", () => {
+    // 20 fills each slipped +0.0005 (fraction) => mean 0.05% expressed as %.
+    const rows = [
+      ...Array.from({ length: 20 }, () => ({ realized_slip_pct: 0.0005 as number | null })),
+      { realized_slip_pct: null }, // dropped, not counted
+    ];
+    const s = slip(rows);
+    expect(s.insufficient).toBe(false);
+    expect(s.n).toBe(20);
+    expect(s.value!).toBeCloseTo(0.05, 6);
+  });
+  it("exposes the modeled slippage constant the fill model applies", () => {
+    expect(MODELED_SLIP_PCT).toBeCloseTo(0.05, 6);
   });
 });
 

@@ -170,6 +170,22 @@ export function costNet(
   };
 }
 
+// Execution slip (Build 4a): realized slip = fill/expected - 1, recorded per
+// fill. Reported as mean % across trades, to compare against the flat slippage
+// the fill model *assumes*. Today realized ≈ modeled (same-tick fill), so this
+// tile confirms the assumption; once partial/next-bar fills land (4b/4c) the two
+// diverge and this becomes the execution-quality truth signal.
+export const MODELED_SLIP_PCT = 0.05; // flat 5bps slippage the fill model applies
+
+export function slip(rows: { realized_slip_pct: number | null }[]): Metric {
+  const vals = rows
+    .map((r) => r.realized_slip_pct)
+    .filter((x): x is number => x != null && Number.isFinite(x))
+    .map((x) => x * 100); // fraction -> %
+  const n = vals.length;
+  return metric(n ? mean(vals) : null, n, MIN_TRADES);
+}
+
 // Calibration: bucket predictions by score decile and compare the mean predicted
 // probability to the realized win rate in each bucket. `predicted` is expected in
 // [0,1]; pass analyst_score/100. A well-calibrated model tracks the diagonal.

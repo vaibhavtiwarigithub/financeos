@@ -34,6 +34,7 @@ interface MarketMetrics {
   avgLossPct: number | null;
   profitFactor: Metric;
   cost: { netReturnPct: Metric; costPct: Metric; grossReturnPct: Metric };
+  slip: { realized: Metric; modeledPct: number };
   calibration: { bins: CalibBin[]; n: number; insufficient: boolean };
   alphaPct: number | null;
   benchmarkReturnPct: number | null;
@@ -151,6 +152,9 @@ export default function PerformanceTruth() {
         <MetricTile label="Alpha vs Bench" value={m.alphaPct != null ? `${m.alphaPct.toFixed(2)}%` : "—"}
           tone={m.alphaPct != null ? (m.alphaPct >= 0 ? "good" : "bad") : "neutral"}
           sub={m.benchmarkReturnPct != null ? `bench ${m.benchmarkReturnPct.toFixed(2)}%` : "cumulative"} />
+        <MetricTile label="Exec Slip (realized)" value={fmt(m.slip.realized, { pct: true, dp: 3 })}
+          n={m.slip.realized.n} insufficient={m.slip.realized.insufficient} tone="neutral"
+          sub={`vs modeled ${m.slip.modeledPct.toFixed(2)}%`} />
       </div>
 
       {/* Charts row */}
