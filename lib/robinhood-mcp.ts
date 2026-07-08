@@ -575,8 +575,11 @@ function redactStr(s: string): string {
     .replace(/("(?:access|refresh)_token"\s*:\s*")[^"]+(")/gi, "$1[redacted]$2");
 }
 
-// Read-only account snapshot via MCP (get_accounts + get_equity_positions).
-export async function queryRobinhoodAccount(): Promise<{ ok: boolean; error?: string; data?: any }> {
+// Read-only account snapshot via MCP (get_accounts + get_equity_positions + get_portfolio).
+// get_accounts returns only account metadata; the live NAV (data.total_value) lives in
+// get_portfolio, which requires the account's rhs_account_number. account param = the
+// trading account to price; when omitted, the agentic-allowed account is used.
+export async function queryRobinhoodAccount(account?: string): Promise<{ ok: boolean; error?: string; data?: any }> {
   const svc = createServiceClient();
   const tk = await getValidAccessToken(svc);
   if (!tk.ok || !tk.token) return { ok: false, error: tk.error ?? "not connected" };
@@ -584,7 +587,22 @@ export async function queryRobinhoodAccount(): Promise<{ ok: boolean; error?: st
   if (!sess.ok) return { ok: false, error: sess.error };
   const accounts = await mcpRpc(tk.token, "tools/call", { name: "get_accounts", arguments: {} }, sess.sessionId);
   const positions = await mcpRpc(tk.token, "tools/call", { name: "get_equity_positions", arguments: {} }, sess.sessionId);
-  return { ok: true, data: { accounts: accounts.result, positions: positions.result } };
+
+  // Resolve which account to price: the requested trading account if present in the
+  // list, else the agentic-allowed account, else the first.
+  const acctList = (() => {
+    const o = mcpToolJson(accounts.result?.content ?? accounts.result);
+    return o?.data?.accounts ?? o?.accounts ?? [];
+  })();
+  const acctFor =
+    (account && acctList.find((a: any) => String(a.rhs_account_number) === account || String(a.account_number) === account)?.rhs_account_number)
+    ?? acctList.find((a: any) => a.agentic_allowed)?.rhs_account_number
+    ?? acctList[0]?.rhs_account_number;
+  const portfolio = acctFor
+    ? await mcpRpc(tk.token, "tools/call", { name: "get_portfolio", arguments: { account_number: acctFor } }, sess.sessionId).catch(() => ({ result: null }))
+    : { result: null };
+
+  return { ok: true, data: { accounts: accounts.result, positions: positions.result, portfolio: (portfolio as any)?.result ?? null } };
 }
 
 // Held share quantity for a symbol on the live Robinhood account, fetched
