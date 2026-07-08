@@ -108,6 +108,10 @@ export default function SettingsPage() {
   // Zerodha Kite (India) connection state
   const [kite, setKite] = useState<any | null>(null);
   const [kiteMsg, setKiteMsg] = useState<string>("");
+
+  // Data Providers capacity dashboard
+  const [providers, setProviders] = useState<any | null>(null);
+  const [providersLoading, setProvidersLoading] = useState(false);
   const loadKite = () => fetch("/api/kite/status").then(r => r.json()).then(setKite).catch(() => {});
 
   useEffect(() => {
@@ -343,7 +347,17 @@ export default function SettingsPage() {
   const inp: React.CSSProperties = { width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", padding: "10px 13px", outline: "none" };
   const sel: React.CSSProperties = { ...inp, cursor: "pointer" };
   const numInp: React.CSSProperties = { width: "90px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", padding: "8px 10px", outline: "none", textAlign: "right" as const };
-  const tabs = ["profile", "preferences", "agents", "access"];
+  const tabs = ["profile", "preferences", "agents", "data", "access"];
+
+  useEffect(() => {
+    if (tab !== "data" || providers) return;
+    setProvidersLoading(true);
+    fetch("/api/data-providers")
+      .then(r => r.json())
+      .then(d => setProviders(d))
+      .catch(() => setProviders({ providers: [], bottleneck: null }))
+      .finally(() => setProvidersLoading(false));
+  }, [tab, providers]);
 
   if (!profile) return <div style={{ padding: "28px", color: T.muted }}>Loading...</div>;
 
@@ -961,6 +975,61 @@ export default function SettingsPage() {
               <div style={{ color: T.muted, fontSize: "13px" }}>No LLM cost data available.</div>
             )}
           </div>
+        </div>
+      )}
+
+      {tab === "data" && (
+        <div style={{ maxWidth: "820px" }}>
+          <div style={{ fontSize: "13px", color: T.textSub, marginBottom: "16px", lineHeight: 1.5 }}>
+            Every external data source, its daily limit, real usage, and how much headroom is left — so you always know where the ceiling is before an agent starves. Rate-limited providers (Massive, Finnhub, Upstox, FRED) have no daily cap; only capped ones can run out.
+          </div>
+
+          {providers?.bottleneck && (
+            <div style={{ background: T.amberBg, border: `1px solid ${T.amber}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "13px", color: T.amber }}>
+              ⚠ Closest to its ceiling: <strong>{providers.bottleneck.label}</strong> at {providers.bottleneck.pctUsed}% of today&apos;s cap. That&apos;s your current bottleneck.
+            </div>
+          )}
+
+          {providersLoading && <div style={{ color: T.muted, fontSize: "14px" }}>Loading provider usage…</div>}
+
+          {providers?.providers?.length > 0 && (
+            <div style={{ overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: "12px" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", minWidth: "640px" }}>
+                <thead>
+                  <tr style={{ background: T.surface, color: T.muted, textAlign: "left" as const }}>
+                    <th style={{ padding: "10px 14px" }}>Provider</th>
+                    <th style={{ padding: "10px 14px" }}>Key</th>
+                    <th style={{ padding: "10px 14px" }}>Daily limit</th>
+                    <th style={{ padding: "10px 14px" }}>Today</th>
+                    <th style={{ padding: "10px 14px" }}>7-day avg</th>
+                    <th style={{ padding: "10px 14px" }}>Headroom</th>
+                    <th style={{ padding: "10px 14px" }}>Expiry</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {providers.providers.map((p: any) => {
+                    const expColor = p.daysToExpiry == null ? T.muted : p.daysToExpiry < 7 ? T.red : p.daysToExpiry < 30 ? T.amber : T.green;
+                    const useColor = p.pctUsed == null ? T.textSub : p.pctUsed >= 90 ? T.red : p.pctUsed >= 60 ? T.amber : T.green;
+                    return (
+                      <tr key={p.id} style={{ borderTop: `1px solid ${T.border}`, color: T.text }}>
+                        <td style={{ padding: "10px 14px", fontWeight: 600 }}>{p.label}</td>
+                        <td style={{ padding: "10px 14px" }}>{p.keyPresent ? <span style={{ color: T.green }}>✓</span> : <span style={{ color: T.red }}>missing</span>}</td>
+                        <td style={{ padding: "10px 14px", color: T.textSub }}>{p.limit == null ? "no cap (rate-limited)" : p.limit.toLocaleString()}</td>
+                        <td style={{ padding: "10px 14px", color: useColor }}>{p.todayCalls}{p.pctUsed != null ? ` (${p.pctUsed}%)` : ""}</td>
+                        <td style={{ padding: "10px 14px", color: T.textSub }}>{p.avg7d}</td>
+                        <td style={{ padding: "10px 14px", color: p.headroom == null ? T.textSub : p.headroom < (p.limit ?? 0) * 0.1 ? T.red : T.green }}>{p.headroom == null ? "—" : p.headroom.toLocaleString()}</td>
+                        <td style={{ padding: "10px 14px", color: expColor }}>{p.daysToExpiry == null ? "never" : `${p.daysToExpiry}d`}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {providers && !providersLoading && !providers.providers?.length && (
+            <div style={{ color: T.muted, fontSize: "14px" }}>No provider usage recorded yet — data appears after the agents run.</div>
+          )}
         </div>
       )}
 
