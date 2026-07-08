@@ -160,22 +160,36 @@ export async function fetchNseFiiDii(): Promise<FiiDiiFlow[]> {
 }
 
 // Block/bulk deals — large single trades by promoters, MFs, FIIs, banks. The
-// India stand-in for "notable insider/institutional buys". Advisory only.
-export type BigDeal = { symbol: string; client: string; side: "buy" | "sell"; qty: number; price: number; date: string | null; kind: "block" | "bulk" };
+// India stand-in for "notable insider/institutional buys". Advisory only. NSE's
+// endpoints and field names are undocumented and have changed over time, so the
+// parser is defensive: it tries several field-name variants, and — critically —
+// only reports a buy/sell SIDE when the response actually carries a real
+// buy/sell field. It NEVER defaults an unknown side to "sell" (that would
+// fabricate bearish smart-money activity). Missing qty/price → 0.
+export type BigDeal = { symbol: string; client: string; side: "buy" | "sell" | "unknown"; qty: number; price: number; date: string | null; kind: "block" | "bulk" };
 export async function fetchNseBigDeals(): Promise<BigDeal[]> {
+  const num = (...cands: any[]) => { for (const c of cands) { const n = parseFloat(c); if (Number.isFinite(n)) return n; } return 0; };
   const map = (rows: any[], kind: "block" | "bulk"): BigDeal[] =>
-    (Array.isArray(rows) ? rows : []).map((r: any): BigDeal => ({
-      symbol: r.symbol ? `${r.symbol}.NS` : "",
-      client: r.clientName ?? r.name ?? "—",
-      side: /buy|purchase/i.test(String(r.buySell ?? r.dealType ?? "")) ? "buy" : "sell",
-      qty: parseFloat(r.quantityTraded ?? r.qty ?? "0") || 0,
-      price: parseFloat(r.tradePrice ?? r.watp ?? r.price ?? "0") || 0,
-      date: r.date ?? r.BD_DT_DATE ?? null,
-      kind,
-    })).filter((d) => d.symbol);
+    (Array.isArray(rows) ? rows : []).map((r: any): BigDeal => {
+      const rawSide = String(r.buySell ?? r.dealType ?? r.buyOrSell ?? "");
+      const side: BigDeal["side"] = /buy|purchase|bought/i.test(rawSide) ? "buy"
+        : /sell|sold|sale/i.test(rawSide) ? "sell"
+        : "unknown"; // no real side field → don't guess
+      return {
+        symbol: r.symbol ? `${r.symbol}.NS` : "",
+        client: r.clientName ?? r.name ?? r.client ?? "—",
+        side,
+        qty: num(r.quantityTraded, r.qty, r.totalTradedVolume, r.quantity),
+        price: num(r.tradePrice, r.watp, r.lastPrice, r.price),
+        date: r.date ?? r.BD_DT_DATE ?? null,
+        kind,
+      };
+    }).filter((d) => d.symbol);
+  // NSE has changed these endpoints; both are fetched fail-soft (a 404/blocked
+  // response → null → []). Block deals are the more reliable of the two.
   const [block, bulk] = await Promise.all([
     nseApi(`/api/block-deal`).catch(() => null),
-    nseApi(`/api/bulk-deal`).catch(() => null),
+    nseApi(`/api/historical/bulk-deals`).catch(() => null),
   ]);
   const blockRows = (block?.data ?? block) ?? [];
   const bulkRows = (bulk?.data ?? bulk) ?? [];

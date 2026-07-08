@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getQuote, computeFillPrice } from "@/lib/data/quotes";
 import { checkKillSwitches } from "@/lib/kill-switches";
@@ -45,10 +46,13 @@ export async function POST(req: NextRequest) {
 
   const isCron = verifyCronSecret(req);
 
+  // Approving a proposal is the precondition for the owner-gated live Gateway
+  // submit — so non-cron callers must be the OWNER, not just any authenticated
+  // user. (Cron can only trigger proposal GENERATION; the check below blocks
+  // cron from approve/reject.)
   if (!isCron) {
-    const userClient = await createClient();
-    const { data: { user } } = await userClient.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await requireOwner();
+    if (gate) return gate;
   }
 
   // Block DNS rebinding + CSRF on order-placing routes

@@ -3,12 +3,23 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { createClient } from "@/lib/supabase/server"
+import { createHash, timingSafeEqual } from "crypto"
 
 export const dynamic = "force-dynamic"
 
 function maskKey(k: string): string {
   if (!k || k.length < 8) return "****"
   return k.slice(0, 4) + "•".repeat(Math.min(k.length - 8, 20)) + k.slice(-4)
+}
+
+// Constant-time PIN check — SHA-256 both sides first so timingSafeEqual gets
+// equal-length buffers regardless of input length (avoids a length-based
+// early-out timing leak).
+function pinMatches(input: string | null, active: string): boolean {
+  if (input == null) return false
+  const a = createHash("sha256").update(input).digest()
+  const b = createHash("sha256").update(active).digest()
+  return timingSafeEqual(a, b)
 }
 
 async function getActivePin(svc: ReturnType<typeof createServiceClient>): Promise<string | null> {
@@ -30,7 +41,7 @@ export async function GET(req: NextRequest) {
   if (!activePin) {
     return NextResponse.json({ error: "Vault not configured — set VAULT_PIN in .env.local or via Settings" }, { status: 503 })
   }
-  if (pin !== activePin) {
+  if (!pinMatches(pin, activePin)) {
     return NextResponse.json({ error: "Vault locked — PIN required" }, { status: 403 })
   }
 

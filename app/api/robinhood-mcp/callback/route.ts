@@ -17,7 +17,9 @@ export async function GET(req: NextRequest) {
   const origin = req.nextUrl.origin;
   const done = (status: string) => {
     const r = NextResponse.redirect(`${origin}/dashboard/settings?tab=agents&rhmcp=${status}`);
-    r.cookies.delete(COOKIE);
+    // Must match the path the login route set the cookie with, or the delete
+    // is a no-op and the single-use cookie lingers.
+    r.cookies.delete({ name: COOKIE, path: "/api/robinhood-mcp" });
     return r;
   };
 

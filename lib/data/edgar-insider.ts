@@ -39,9 +39,16 @@ function parseForm4Xml(xml: string): Tx[] {
     const block = m[1];
     const shares = parseFloat(block.match(/<transactionShares>[\s\S]*?<value>([^<]*)<\/value>/i)?.[1]?.trim() ?? "0") || 0;
     const price = parseFloat(block.match(/<transactionPricePerShare>[\s\S]*?<value>([^<]*)<\/value>/i)?.[1]?.trim() ?? "0") || 0;
-    const adCode = block.match(/<transactionAcquiredDisposedCode>[\s\S]*?<value>([^<]*)<\/value>/i)?.[1]?.trim() ?? "";
+    // Classify by Form 4 transactionCode, NOT the acquired/disposed code. A/D
+    // marks shares acquired vs disposed for ANY reason — an award (A), option
+    // exercise (M), gift (G), or tax-withholding (F) all "acquire" or "dispose"
+    // shares but are NOT open-market conviction trades. Only P (open-market
+    // purchase) is a real insider buy and S (open-market sale) a real sell;
+    // everything else is `other` and excluded from the buy/sell ratio.
+    const code = block.match(/<transactionCode>\s*([A-Z])\s*<\/transactionCode>/i)?.[1]?.trim().toUpperCase() ?? "";
     if (shares <= 0) continue;
-    out.push({ type: adCode === "A" ? "buy" : adCode === "D" ? "sell" : "other", value: shares * price });
+    const type: Tx["type"] = code === "P" ? "buy" : code === "S" ? "sell" : "other";
+    out.push({ type, value: shares * price });
   }
   return out;
 }

@@ -17,8 +17,13 @@ export async function GET(req: NextRequest) {
   const redirectUri = `${origin}/api/robinhood-mcp/callback`;
   const appBase = process.env.APP_BASE_URL ?? process.env.NEXT_PUBLIC_APP_URL;
   const redirectUris = [...new Set(
-    [redirectUri, appBase ? `${appBase}/api/robinhood-mcp/callback` : null, "http://localhost:3000/api/robinhood-mcp/callback"]
-      .filter(Boolean) as string[]
+    [
+      redirectUri,
+      appBase ? `${appBase}/api/robinhood-mcp/callback` : null,
+      // Only register the plaintext-HTTP localhost redirect in non-production —
+      // a real-money client shouldn't carry a localhost redirect in prod.
+      process.env.NODE_ENV !== "production" ? "http://localhost:3000/api/robinhood-mcp/callback" : null,
+    ].filter(Boolean) as string[]
   )];
 
   const svc = createServiceClient();
@@ -31,7 +36,9 @@ export async function GET(req: NextRequest) {
   const state = makeState();
   const res = NextResponse.redirect(buildAuthUrl({ clientId: reg.clientId, redirectUri, state, challenge }));
   res.cookies.set(COOKIE, signOAuthCookie({ state, verifier, exp: Date.now() + 10 * 60 * 1000 }), {
-    httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 600,
+    // Scope to the OAuth routes only — the state+verifier cookie has no business
+    // being sent on every request to the site.
+    httpOnly: true, secure: true, sameSite: "lax", path: "/api/robinhood-mcp", maxAge: 600,
   });
   return res;
 }

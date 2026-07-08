@@ -887,8 +887,9 @@ export async function processSymbol(
 
   // Event-proximity: days to next earnings. Logged for the learner to test the
   // "buy the rumor, sell the news" pattern (does pre-earnings hype fade after
-  // the print?). Not a gate or sizing input — just an observed feature.
-  const daysToEarnings = await fetchDaysToEarnings(symbol, india).catch(() => null);
+  // the print?). Not a gate or sizing input — just an observed feature. ETFs
+  // have no single-company earnings date, so skip the fetch (saves a Finnhub call).
+  const daysToEarnings = isEtf ? null : await fetchDaysToEarnings(symbol, india).catch(() => null);
 
   // Compute all 5 scores deterministically from fetched data
   const scores = await computeScores({

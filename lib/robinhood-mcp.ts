@@ -115,7 +115,7 @@ export async function getOrRegisterClient(svc: any, redirectUris: string[]): Pro
       signal: AbortSignal.timeout(15000),
     });
     const json: any = await res.json().catch(() => ({}));
-    if (!res.ok || !json?.client_id) return { ok: false, error: `registration failed (${res.status}): ${JSON.stringify(json).slice(0, 300)}` };
+    if (!res.ok || !json?.client_id) return { ok: false, error: `registration failed (${res.status}): ${redactStr(JSON.stringify(json)).slice(0, 300)}` };
     await vaultSet(svc, VK.clientId, json.client_id);
     return { ok: true, clientId: json.client_id };
   } catch (e) { return { ok: false, error: `registration error: ${String(e)}` }; }
@@ -137,8 +137,13 @@ export function buildAuthUrl(o: { clientId: string; redirectUri: string; state: 
 
 // ── token exchange + refresh ─────────────────────────────────────────────────
 async function storeTokens(svc: any, tok: any): Promise<void> {
-  if (tok.access_token) await vaultSet(svc, VK.access, tok.access_token);
+  // Persist the (possibly rotated) refresh token FIRST. Robinhood may rotate
+  // the refresh token on each use and invalidate the old one; if the access
+  // write succeeded but the refresh write then threw, the new refresh token
+  // would be lost and the connection bricked. Refresh-first makes a partial
+  // failure recoverable (old access token still works until expiry).
   if (tok.refresh_token) await vaultSet(svc, VK.refresh, tok.refresh_token);
+  if (tok.access_token) await vaultSet(svc, VK.access, tok.access_token);
   const ttl = Number(tok.expires_in);
   const expiry = new Date(Date.now() + (Number.isFinite(ttl) ? ttl : 3600) * 1000).toISOString();
   await vaultSet(svc, VK.expiry, expiry);
@@ -161,7 +166,7 @@ export async function exchangeCode(svc: any, o: { code: string; verifier: string
       signal: AbortSignal.timeout(15000),
     });
     const json: any = await res.json().catch(() => ({}));
-    if (!res.ok || !json?.access_token) return { ok: false, error: `token exchange failed (${res.status}): ${JSON.stringify(json).slice(0, 300)}` };
+    if (!res.ok || !json?.access_token) return { ok: false, error: `token exchange failed (${res.status}): ${redactStr(JSON.stringify(json)).slice(0, 300)}` };
     await storeTokens(svc, json);
     return { ok: true };
   } catch (e) { return { ok: false, error: `token exchange error: ${String(e)}` }; }
@@ -176,6 +181,16 @@ async function refreshAccessToken(svc: any): Promise<{ ok: boolean; error?: stri
   const { value: refresh, updatedAt } = await vaultGetWithVersion(svc, VK.refresh);
   if (!clientId || !refresh) return { ok: false, error: "no refresh token" };
 
+  // A refresh that started within the last 30s is very likely still in flight
+  // (the token endpoint round-trip is 1-15s). Treat the row as claimed and back
+  // off — otherwise a caller that reads the row AFTER the winner's CAS claim but
+  // BEFORE storeTokens completes would pass its own CAS and call the endpoint
+  // with the OLD refresh token; if Robinhood rotates+invalidates on reuse, the
+  // connection bricks. Retryable, not a hard failure.
+  if (updatedAt && Date.now() - Date.parse(updatedAt) < 30_000) {
+    return { ok: false, error: "refresh in flight — retry" };
+  }
+
   // CAS claim: only proceed if this row's updated_at is still what we read.
   const nowIso = new Date().toISOString();
   const { data: claimed } = await svc
@@ -185,8 +200,11 @@ async function refreshAccessToken(svc: any): Promise<{ ok: boolean; error?: stri
     .eq("updated_at", updatedAt)
     .select("key_name");
   if (!claimed || (Array.isArray(claimed) && claimed.length === 0)) {
-    // Lost the race — another writer is refreshing. Don't call the endpoint.
-    return { ok: true }; // caller re-reads the (freshly stored) access token
+    // Lost the race — another writer is refreshing. Give the winner time to
+    // store the new access token before the caller re-reads it (else the caller
+    // proceeds with the still-old, expired access token and 401s).
+    await new Promise(r => setTimeout(r, 3000));
+    return { ok: true };
   }
 
   try {
@@ -252,7 +270,14 @@ function parseMcpBody(text: string, contentType: string): any {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-async function mcpRpc(token: string, method: string, params: any, sessionId?: string, isNotification = false): Promise<{ ok: boolean; result?: any; error?: string; sessionId?: string }> {
+// `sent` distinguishes a request the server DEFINITELY rejected (order not
+// placed — safe to fail plainly) from one that was transmitted but whose outcome
+// is ambiguous (HTTP 5xx after send, unparseable/empty body, id mismatch,
+// missing result). For a place_equity_order call the ambiguous case MUST become
+// needsReconcile, never a plain failure that can be auto-resubmitted (double
+// order). Definite rejections = a JSON-RPC `error` object or tools/call
+// `result.isError` — the server processed and refused, so nothing was placed.
+async function mcpRpc(token: string, method: string, params: any, sessionId?: string, isNotification = false): Promise<{ ok: boolean; result?: any; error?: string; sessionId?: string; sent?: boolean }> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
@@ -267,19 +292,20 @@ async function mcpRpc(token: string, method: string, params: any, sessionId?: st
   if (isNotification) return { ok: res.ok, sessionId: sid ?? undefined };
   const text = await res.text();
   const parsed = parseMcpBody(text, res.headers.get("content-type") ?? "");
-  if (!res.ok) return { ok: false, error: `MCP ${method} HTTP ${res.status}: ${text.slice(0, 300)}`, sessionId: sid ?? undefined };
-  if (!parsed) return { ok: false, error: `MCP ${method}: empty/unparseable response`, sessionId: sid ?? undefined };
-  if (parsed.error) return { ok: false, error: `MCP ${method} error: ${JSON.stringify(parsed.error).slice(0, 300)}`, sessionId: sid ?? undefined };
-  // JSON-RPC id must echo the request id — guards against a mismatched/stale
-  // message being read out of an SSE stream as this call's result.
-  if (parsed.id !== undefined && parsed.id !== reqId) return { ok: false, error: `MCP ${method}: response id mismatch`, sessionId: sid ?? undefined };
-  if (!("result" in parsed)) return { ok: false, error: `MCP ${method}: response missing result`, sessionId: sid ?? undefined };
-  // An MCP tools/call that failed reports it via result.isError, not a JSON-RPC
-  // error — treat that as a failure, not a success.
+  // Ambiguous (request reached the server, outcome unconfirmable) → sent:true.
+  if (!res.ok) return { ok: false, sent: true, error: `MCP ${method} HTTP ${res.status}: ${text.slice(0, 300)}`, sessionId: sid ?? undefined };
+  if (!parsed) return { ok: false, sent: true, error: `MCP ${method}: empty/unparseable response`, sessionId: sid ?? undefined };
+  // Definite server-side rejection → sent:false (order was NOT placed).
+  if (parsed.error) return { ok: false, sent: false, error: `MCP ${method} error: ${JSON.stringify(parsed.error).slice(0, 300)}`, sessionId: sid ?? undefined };
+  // JSON-RPC id must echo the request id — a mismatch means we may have read a
+  // stale/other message off the SSE stream; the real outcome is unknown → sent:true.
+  if (parsed.id !== undefined && parsed.id !== reqId) return { ok: false, sent: true, error: `MCP ${method}: response id mismatch`, sessionId: sid ?? undefined };
+  if (!("result" in parsed)) return { ok: false, sent: true, error: `MCP ${method}: response missing result`, sessionId: sid ?? undefined };
+  // tools/call failure reported via result.isError = the tool ran and refused → sent:false.
   if (method === "tools/call" && parsed.result?.isError === true) {
-    return { ok: false, error: `MCP tool error: ${JSON.stringify(parsed.result?.content ?? parsed.result).slice(0, 300)}`, sessionId: sid ?? undefined };
+    return { ok: false, sent: false, error: `MCP tool error: ${JSON.stringify(parsed.result?.content ?? parsed.result).slice(0, 300)}`, sessionId: sid ?? undefined };
   }
-  return { ok: true, result: parsed.result, sessionId: sid ?? undefined };
+  return { ok: true, sent: true, result: parsed.result, sessionId: sid ?? undefined };
 }
 
 async function openSession(token: string): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
@@ -339,7 +365,12 @@ function buildArgsFromSchema(schema: any, canonical: Record<string, any>): Recor
       v = coerced;
     } else if (canonKey === "timeInForce") {
       const coerced = coerceEnum(props[hit], ["gfd", "GFD", "day", "DAY", "gtc", "GTC"]);
-      if (coerced !== undefined) v = coerced;
+      // Fail closed like side/type: if the schema declares a tif enum and none
+      // of our spellings match, skip the field rather than send a raw value the
+      // server may reject or misinterpret (unless it's a required field, in
+      // which case the missing-required check below aborts the order).
+      if (coerced === undefined) continue;
+      v = coerced;
     }
     // Coerce to the schema's DECLARED json type. Robinhood's schema wants some
     // numeric-looking fields (e.g. quantity) as STRINGS — sending a raw number
@@ -413,6 +444,13 @@ export async function submitRobinhoodOrder(o: RobinhoodOrderInput): Promise<Robi
 
   const pArgs = buildArgsFromSchema(placeTool.inputSchema, canonical);
   if ("__error" in pArgs) return { ok: false, error: `place: ${pArgs.__error}` };
+  // Account MUST be pinned to the wire args. buildArgsFromSchema silently drops
+  // account if the schema has no account property; a place with no account lets
+  // the server pick a default account. Fail closed if we intended an account
+  // but none landed in the payload.
+  if (canonical.account && !["account_number", "account", "account_id"].some(k => k in (pArgs as Record<string, any>))) {
+    return { ok: false, error: "place: account could not be pinned to order args (schema has no account field) — refusing to place on an unspecified account" };
+  }
 
   let place;
   try {
@@ -421,7 +459,14 @@ export async function submitRobinhoodOrder(o: RobinhoodOrderInput): Promise<Robi
     // Timed out AFTER possibly placing — never auto-resubmit; force reconcile.
     return { ok: false, needsReconcile: true, error: `place ambiguous (possible success): ${String(e)} — reconcile via get_equity_orders before any retry` };
   }
-  if (!place.ok) return { ok: false, error: `place_equity_order failed: ${place.error}` };
+  if (!place.ok) {
+    // A transmitted-but-ambiguous failure (5xx after send, unparseable body, id
+    // mismatch) may have placed the order — force reconcile, never plain-fail
+    // (plain failure → status 'error' → resubmittable → double order). Only a
+    // definite server rejection (sent:false) is safe to fail plainly.
+    if (place.sent) return { ok: false, needsReconcile: true, error: `place ambiguous (possible success): ${place.error} — reconcile via get_equity_orders before any retry` };
+    return { ok: false, error: `place_equity_order rejected: ${place.error}` };
+  }
   const content = place.result?.content ?? place.result;
   const brokerOrderId = extractOrderId(content);
   // A "success" with no parseable order id can't be tracked/reconciled — treat
@@ -432,15 +477,53 @@ export async function submitRobinhoodOrder(o: RobinhoodOrderInput): Promise<Robi
   return { ok: true, brokerOrderId, raw: redact(content) };
 }
 
-// Returns a human-readable mismatch string if the review preview text does not
-// contain our intended symbol/side/qty; null if it looks consistent. Best-
-// effort text scan — if the fields aren't present at all we do NOT hard-fail
-// (some servers return opaque previews), but a PRESENT-and-WRONG value aborts.
+// Returns a human-readable mismatch string if the review preview does not match
+// the intended order; null if consistent. A wrong-side/wrong-account/wrong-qty
+// preview that passed silently = a real WRONG order, so this checks side,
+// account, symbol, qty, and type. Prefers structured JSON; falls back to a text
+// scan. A field ABSENT from an opaque preview is not hard-failed, but a
+// PRESENT-and-WRONG value aborts the place.
 function reviewEchoMismatch(content: any, o: RobinhoodOrderInput): string | null {
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parsed = mcpToolJson(content);
+  // Flatten a possibly-nested preview object to search for known fields.
+  const flat: Record<string, any> = {};
+  const walk = (obj: any) => {
+    if (obj && typeof obj === "object") {
+      for (const [k, v] of Object.entries(obj)) {
+        if (v && typeof v === "object") walk(v);
+        else flat[k.toLowerCase()] = v;
+      }
+    }
+  };
+  if (parsed) walk(parsed);
+
+  // Structured checks (only when the field is actually present).
+  const sideField = flat["side"] ?? flat["transaction_type"] ?? flat["direction"];
+  if (sideField != null && !String(sideField).toLowerCase().includes(o.side)) {
+    return `side ${o.side} != preview ${sideField}`;
+  }
+  const acctField = flat["account_number"] ?? flat["account"] ?? flat["account_id"];
+  if (acctField != null && o.account && !String(acctField).includes(o.account)) {
+    return `account ${o.account} != preview ${acctField}`;
+  }
+  const typeField = flat["order_type"] ?? flat["type"];
+  if (typeField != null && o.type && !String(typeField).toLowerCase().includes(o.type)) {
+    return `type ${o.type} != preview ${typeField}`;
+  }
+
+  // Text fallback (covers opaque/string previews).
   const s = (typeof content === "string" ? content : JSON.stringify(content ?? "")).toUpperCase();
   if (!s) return null;
-  if (s.includes("SYMBOL") && !s.includes(o.symbol.toUpperCase())) return `symbol ${o.symbol} not in preview`;
-  // qty: if a quantity field is present, require our exact integer to appear.
+  // symbol: word-boundary match so "A" doesn't match "AAPL".
+  if (s.includes("SYMBOL") && !new RegExp(`\\b${esc(o.symbol.toUpperCase())}\\b`).test(s)) return `symbol ${o.symbol} not in preview`;
+  // side: if the opposite side word appears and ours does not, abort.
+  if (sideField == null) {
+    const wantSide = o.side.toUpperCase();
+    const otherSide = o.side === "buy" ? "SELL" : "BUY";
+    if (new RegExp(`\\b${otherSide}\\b`).test(s) && !new RegExp(`\\b${wantSide}\\b`).test(s)) return `side ${o.side} not in preview (found ${otherSide})`;
+  }
+  // qty: if a quantity field is present, require our exact integer.
   const qtyM = s.match(/"?(?:QUANTITY|QTY|SHARES)"?\s*[:=]\s*"?(\d+(?:\.\d+)?)"?/);
   if (qtyM && Math.trunc(Number(qtyM[1])) !== Math.trunc(o.qty)) return `qty ${o.qty} != preview ${qtyM[1]}`;
   return null;
@@ -463,21 +546,33 @@ function extractOrderId(content: any): string | undefined {
     const obj = mcpToolJson(content);
     const nested = obj?.data?.order?.id ?? obj?.order?.id ?? obj?.data?.id ?? obj?.id;
     if (typeof nested === "string" && nested.length >= 8) return nested;
-    // Fallback: regex on the (possibly escaped) text.
+    // Fallback regex on the (possibly escaped) text. Prefer an explicit
+    // order_id key first — a bare "id" could be an instrument/account/request
+    // id embedded earlier in the payload. Only fall back to a bare "id" if it
+    // appears exactly once AND is UUID-shaped, to avoid grabbing the wrong id
+    // (which would brick reconciliation or copy another order's fill state).
     const un = mcpToolText(content).replace(/\\"/g, '"');
-    const m = un.match(/"(?:order[_-]?id|id)"\s*:\s*"([0-9A-Za-z-]{8,})"/);
-    return m?.[1];
+    const orderM = un.match(/"order[_-]?id"\s*:\s*"([0-9A-Za-z-]{8,})"/i);
+    if (orderM) return orderM[1];
+    const uuidRe = /"id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/ig;
+    const uuids = [...un.matchAll(uuidRe)];
+    if (uuids.length === 1) return uuids[0][1];
+    return undefined;
   } catch { return undefined; }
 }
 
 export { mcpToolText, mcpToolJson };
-// Strip anything token-shaped before persisting a raw payload.
+// Strip anything token-shaped before persisting or logging a raw payload —
+// both `Bearer <tok>` headers and raw access/refresh_token JSON fields.
 function redact(v: any): any {
   try {
-    let s = JSON.stringify(v);
-    s = s.replace(/(Bearer\s+)[A-Za-z0-9._\-]+/g, "$1[redacted]");
-    return JSON.parse(s);
+    return JSON.parse(redactStr(JSON.stringify(v)));
   } catch { return null; }
+}
+function redactStr(s: string): string {
+  return s
+    .replace(/(Bearer\s+)[A-Za-z0-9._\-]+/g, "$1[redacted]")
+    .replace(/("(?:access|refresh)_token"\s*:\s*")[^"]+(")/gi, "$1[redacted]$2");
 }
 
 // Read-only account snapshot via MCP (get_accounts + get_equity_positions).
@@ -520,12 +615,16 @@ export async function robinhoodHeldQty(symbol: string, account?: string): Promis
         : Array.isArray(parsed?.results) ? parsed.results
         : Array.isArray(parsed) ? parsed
         : [];
+      const hasAcctMeta = positions.some((p: any) => p.account != null || p.account_number != null || p.account_id != null);
       const filtered = account
         ? positions.filter((p: any) =>
             String(p.account ?? p.account_number ?? p.account_id ?? "").includes(account))
         : positions;
-      // Use filtered if it yielded any rows; else fall back to all positions
-      // (the agentic OAuth token should only see its own account's positions).
+      // When an account was specified AND positions carry account metadata but
+      // NONE match, do NOT fall back to all positions — that would let shares on
+      // the read-only account satisfy a SELL gate for the trading account.
+      // Report 0 held (fail-closed for the sell gate).
+      if (account && hasAcctMeta && filtered.length === 0) return { ok: true, qty: 0 };
       const pool = filtered.length > 0 ? filtered : positions;
       const pos = pool.find((p: any) => {
         const s = String(p.symbol ?? p.instrument_id ?? "").toUpperCase();
@@ -540,7 +639,10 @@ export async function robinhoodHeldQty(symbol: string, account?: string): Promis
     // JSON parse fails (e.g. Robinhood returns plain text).
     const text = typeof content === "string" ? content : JSON.stringify(content ?? "");
     if (!text.toUpperCase().includes(sym)) return { ok: true, qty: 0 };
-    const re = new RegExp(`${sym}["'\\s\\S]{0,200}?"?(?:quantity|qty|shares)"?\\s*[:=]\\s*"?(\\d+(?:\\.\\d+)?)`, "i");
+    // Escape regex metachars in the symbol — SYMBOL_RE allows '.' (e.g. BRK.B),
+    // which unescaped would match any char and could read the wrong row.
+    const symRe = sym.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`${symRe}["'\\s\\S]{0,120}?"?(?:quantity|qty|shares)"?\\s*[:=]\\s*"?(\\d+(?:\\.\\d+)?)`, "i");
     const m = text.match(re);
     if (!m) return { ok: false, error: "symbol present but quantity unparseable" };
     return { ok: true, qty: Number(m[1]) };

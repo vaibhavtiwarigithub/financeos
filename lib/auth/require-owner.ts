@@ -10,6 +10,9 @@ export async function requireOwner(): Promise<NextResponse | null> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.email !== OWNER_EMAIL) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Gate on email AND a confirmed email — so an unverified-email registration
+  // of the owner's address (if any provider that skips email verification is
+  // ever enabled) can't pass the gate.
+  if (user.email !== OWNER_EMAIL || !user.email_confirmed_at) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   return null;
 }

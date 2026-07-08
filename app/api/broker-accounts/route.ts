@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { guardOrderRequest } from "@/lib/request-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,10 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
+  // CSRF/DNS-rebinding guard — this route controls which accounts can receive
+  // live orders (role='trading'), so it gets the same guard as order routes.
+  const guardErr = guardOrderRequest(req);
+  if (guardErr) return guardErr;
   const body = await req.json().catch(() => ({}));
   const { broker, market, account_number, label, role } = body as Record<string, string>;
   if (!broker || !["us", "india"].includes(market) || !account_number) {

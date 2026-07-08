@@ -207,6 +207,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `${broker.id} has no API keys configured — add them in Admin → Vault` }, { status: 400 });
     }
 
+    // Rate limit — even a stolen owner cookie can't fire an unbounded burst of
+    // live orders. Cap orders in a rolling 10-minute window across all proposals.
+    const ORDER_RATE_LIMIT = Number(process.env.ORDER_RATE_LIMIT_10MIN ?? 12);
+    const { count: recentOrders } = await supabase
+      .from("broker_orders")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", new Date(Date.now() - 10 * 60 * 1000).toISOString());
+    if ((recentOrders ?? 0) >= ORDER_RATE_LIMIT) {
+      return NextResponse.json({ error: `Order rate limit reached (${recentOrders}/${ORDER_RATE_LIMIT} in the last 10 min). Try again shortly.` }, { status: 429 });
+    }
+
     const { data: orderRow, error: insErr } = await supabase.from("broker_orders").insert({
       proposal_id, market, broker: broker.id, broker_env: orderEnv,
       symbol, side, qty, order_type: "market", status: "pending_submit", approved_by_user: true,

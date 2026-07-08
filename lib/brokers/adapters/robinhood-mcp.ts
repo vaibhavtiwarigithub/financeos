@@ -20,6 +20,10 @@ export function robinhoodMcpAdapter(): BrokerAdapter {
       // anything).
       if (o.env !== "live") return { ok: false, error: "Robinhood MCP is live-only (no paper env)" };
 
+      // Last-mile qty guard (defense in depth — the Gateway validates too, but a
+      // non-gateway caller could reach the adapter via structural typing).
+      if (!Number.isInteger(o.qty) || o.qty <= 0) return { ok: false, error: `Robinhood MCP: invalid qty ${o.qty} (must be a positive integer)` };
+
       // Defense in depth: enforce the integration's own kill switch here too,
       // not only at the Gateway.
       const svc = createServiceClient();

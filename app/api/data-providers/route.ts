@@ -41,6 +41,17 @@ export async function GET() {
   const cfg = providerConfig();
   const today = new Date().toISOString().slice(0, 10);
 
+  // FinancialDatasets key may live in the vault rather than env — check both,
+  // instead of assuming it's present (the scanner silently returns no
+  // candidates if the key is actually missing).
+  let fdKeyPresent = !!process.env.FINANCIAL_DATASETS_API_KEY;
+  if (!fdKeyPresent) {
+    try {
+      const { data } = await svc.from("api_key_vault").select("key_value").eq("key_name", "FINANCIAL_DATASETS_API_KEY").maybeSingle();
+      fdKeyPresent = !!(data as any)?.key_value;
+    } catch { /* leave false */ }
+  }
+
   const [{ data: todayRows }, { data: avgRows }] = await Promise.all([
     svc.from("provider_budget").select("provider, calls").eq("cache_date", today),
     svc.from("provider_budget_7d").select("provider, avg_calls_7d, peak_calls_7d, days_seen"),
@@ -52,7 +63,7 @@ export async function GET() {
     const c = cfg[id];
     const envName = KEY_ENV[id];
     const keyVal = envName ? process.env[envName] : undefined;
-    const keyPresent = id === "financialdatasets" ? true /* may live in vault */ : !!keyVal;
+    const keyPresent = id === "financialdatasets" ? fdKeyPresent : !!keyVal;
     const expiresAt = jwtExpiryIso(keyVal);
     const daysToExpiry = expiresAt ? Math.round((new Date(expiresAt).getTime() - Date.now()) / 86400000) : null;
     const todayCalls = Number(todayByProv.get(id) ?? 0);

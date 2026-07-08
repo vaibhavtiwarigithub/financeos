@@ -61,6 +61,17 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Rate limit — bound live orders per rolling 10-minute window (stolen-cookie
+  // burst protection), shared across US + India via the broker_orders ledger.
+  const ORDER_RATE_LIMIT = Number(process.env.ORDER_RATE_LIMIT_10MIN ?? 12);
+  const { count: recentOrders } = await svc
+    .from("broker_orders")
+    .select("id", { count: "exact", head: true })
+    .gte("created_at", new Date(Date.now() - 10 * 60 * 1000).toISOString());
+  if ((recentOrders ?? 0) >= ORDER_RATE_LIMIT) {
+    return NextResponse.json({ error: `Order rate limit reached (${recentOrders}/${ORDER_RATE_LIMIT} in the last 10 min). Try again shortly.` }, { status: 429 });
+  }
+
   // Pre-insert a broker_orders row before broker submission — creates a durable
   // order id ledger entry so the sync cron can track and reconcile this order.
   const { data: orderRow, error: insertErr } = await svc.from("broker_orders").insert({

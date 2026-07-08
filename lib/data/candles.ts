@@ -19,7 +19,7 @@ export async function fetchMassiveCandles(symbol: string, days = 160): Promise<C
   const from = new Date(to.getTime() - days * 2 * 86400000); // 2× calendar for weekends/holidays
   const url = `https://api.massive.com/v2/aggs/ticker/${encodeURIComponent(symbol)}/range/1/day/${fmtDate(from)}/${fmtDate(to)}?adjusted=true&sort=asc&limit=5000&apiKey=${key}`;
   try {
-    const json = await providerCachedFetch("massive", `MASSIVE_CANDLES:${symbol}`, url, { timeoutMs: 8000 });
+    const json = await providerCachedFetch("massive", `MASSIVE_CANDLES:${symbol}:${days}`, url, { timeoutMs: 8000 });
     const results: any[] = json?.results ?? [];
     return results
       .map((r: any) => ({
@@ -37,7 +37,7 @@ export async function fetchEodhdCandles(symbol: string, days = 160): Promise<Can
   const from = fmtDate(new Date(Date.now() - days * 2 * 86400000));
   const url = `https://eodhd.com/api/eod/${encodeURIComponent(symbol)}.US?api_token=${key}&fmt=json&order=a&from=${from}`;
   try {
-    const json = await providerCachedFetch("eodhd", `EODHD_CANDLES:${symbol}`, url, { timeoutMs: 8000 });
+    const json = await providerCachedFetch("eodhd", `EODHD_CANDLES:${symbol}:${days}`, url, { timeoutMs: 8000 });
     const rows: any[] = Array.isArray(json) ? json : [];
     return rows
       .map((r: any) => ({
@@ -55,7 +55,7 @@ export async function fetchTwelveDataCandles(symbol: string, days = 160): Promis
   if (!key) return [];
   const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=1day&outputsize=${days}&apikey=${key}`;
   try {
-    const json = await providerCachedFetch("twelvedata", `TD_CANDLES:${symbol}`, url, {
+    const json = await providerCachedFetch("twelvedata", `TD_CANDLES:${symbol}:${days}`, url, {
       timeoutMs: 8000,
       isThrottled: (j) => j?.status === "error",
     });

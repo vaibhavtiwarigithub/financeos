@@ -113,8 +113,11 @@ export async function providerCachedFetch(
     } catch { return lastCached(svc, cacheKey); }
   } else {
     // No daily cap: still log the call so the capacity dashboard shows real
-    // usage/averages (best-effort — never blocks the fetch).
-    svc.rpc("provider_budget_increment", { p_provider: provider, p_date: todayStr }).then(() => {}, () => {});
+    // usage/averages. Awaited (non-fatal) so a serverless function that
+    // terminates right after the response doesn't drop the increment — a
+    // fire-and-forget promise can be lost before it flushes, undercounting
+    // Massive/Finnhub/Upstox/FRED usage.
+    try { await svc.rpc("provider_budget_increment", { p_provider: provider, p_date: todayStr }); } catch { /* never block the fetch on logging */ }
   }
 
   // 3. Spend one real call.

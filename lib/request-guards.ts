@@ -38,21 +38,26 @@ export function guardOrderRequest(req: NextRequest): NextResponse | null {
   const host = req.headers.get("host") ?? "";
   const origin = req.headers.get("origin");
 
-  // Cron-triggered requests (internal server→server, e.g. proposal generation)
-  // skip browser-level checks. Timing-safe + fails closed on an unset/empty
-  // CRON_SECRET (an empty header can never satisfy it). NOTE: the live-order
-  // Gateway calls requireOwner() BEFORE this guard, so this cron path can never
-  // by itself place an order.
-  if (verifyCronSecret(req)) return null;
-
-  // Host header validation — blocks DNS rebinding
+  // Host validation applies to EVERYONE, including cron — DNS rebinding is
+  // always blocked (a cron request still arrives at the real deployed host,
+  // which is in ALLOWED_HOSTS via APP_BASE_URL).
   if (!ALLOWED_HOSTS.has(host)) {
     console.warn(`[security] Blocked request: invalid Host "${host}"`);
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Origin validation on non-GET requests — blocks CSRF
-  if (req.method !== "GET" && origin !== null && !ALLOWED_ORIGINS.has(origin)) {
+  // Cron-triggered requests (internal server→server) legitimately carry no
+  // browser Origin — they skip ONLY the Origin/CSRF check below, not the Host
+  // check above. Timing-safe + fails closed on unset/empty CRON_SECRET. The
+  // live-order Gateway also calls requireOwner() BEFORE this guard, so this
+  // cron path can never by itself place an order.
+  if (verifyCronSecret(req)) return null;
+
+  // Origin validation on non-GET requests — blocks CSRF. A MISSING Origin no
+  // longer passes: a non-cron non-GET request must present an allowlisted
+  // Origin (browsers always do on cross-site POST; a cookie-replaying non-
+  // browser client that omits Origin is now rejected here).
+  if (req.method !== "GET" && (origin === null || !ALLOWED_ORIGINS.has(origin))) {
     console.warn(`[security] Blocked request: invalid Origin "${origin}"`);
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

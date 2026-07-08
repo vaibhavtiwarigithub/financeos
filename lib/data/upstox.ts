@@ -27,6 +27,19 @@ async function authHeaders(): Promise<Record<string, string>> {
 // Download + parse the NSE instrument master, filter to cash equities (EQ), and
 // upsert tradingsymbol -> instrument_key. Heavy (2MB gz, 85k rows) — gated to at
 // most once per REFRESH_STALE_DAYS by the caller.
+// Dedupe concurrent refreshes within this process: multiple India symbols
+// missing from an empty/stale table would otherwise each download+gunzip+parse
+// the same 2MB/85k-row master. All concurrent callers await the one in-flight
+// refresh instead. (Combined with the 7-day staleness gate, cross-instance
+// stampede is limited to the very first India run.)
+let refreshInFlight: Promise<void> | null = null;
+
+async function refreshInstrumentsOnce(svc: any): Promise<void> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = refreshInstruments(svc).finally(() => { refreshInFlight = null; });
+  return refreshInFlight;
+}
+
 async function refreshInstruments(svc: any): Promise<void> {
   const res = await fetch(INSTRUMENTS_URL, { signal: AbortSignal.timeout(20000) });
   if (!res.ok) throw new Error(`instrument master fetch ${res.status}`);
@@ -55,7 +68,7 @@ async function getInstrumentKey(svc: any, symbol: string): Promise<string | null
   const { data: newest } = await svc.from("upstox_instruments").select("updated_at").order("updated_at", { ascending: false }).limit(1).maybeSingle();
   const stale = !newest || (Date.now() - new Date(newest.updated_at).getTime()) / 86400000 > REFRESH_STALE_DAYS;
   if (!stale) return null; // fresh table genuinely lacks this symbol
-  try { await refreshInstruments(svc); } catch { return null; }
+  try { await refreshInstrumentsOnce(svc); } catch { return null; }
   const { data: retry } = await svc.from("upstox_instruments").select("instrument_key").eq("trading_symbol", ts).maybeSingle();
   return retry?.instrument_key ?? null;
 }
@@ -71,7 +84,7 @@ export async function fetchUpstoxCandles(symbol: string, days = 160): Promise<Ca
     const to = new Date().toISOString().slice(0, 10);
     const from = new Date(Date.now() - days * 2 * 86400000).toISOString().slice(0, 10);
     const url = `https://api.upstox.com/v3/historical-candle/${encodeURIComponent(key)}/days/1/${to}/${from}`;
-    const json = await providerCachedFetch("upstox", `UPSTOX_CANDLES:${bareSymbol(symbol)}`, url, {
+    const json = await providerCachedFetch("upstox", `UPSTOX_CANDLES:${bareSymbol(symbol)}:${days}`, url, {
       timeoutMs: 8000,
       headers: await authHeaders(),
       isThrottled: (j) => j?.status !== "success",
