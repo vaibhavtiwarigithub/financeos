@@ -14,6 +14,7 @@ import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { fetchUsOverview } from "@/lib/data/fundamentals";
 import { scoreEdgarInsider } from "@/lib/data/edgar-insider";
+import { fetchUpstoxCandles } from "@/lib/data/upstox";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
 // US, ^NSEI for India) — computed once per market per process, not per symbol.
@@ -822,7 +823,12 @@ export async function processSymbol(
         ? Promise.resolve({})
         : fetchUsOverview(symbol, () => fetchAVOverview(symbol, avKey)).then(r => r.overview).catch(() => ({})),
     india
-      ? fetchIndiaCandles(symbol).catch(() => [] as Candle[])
+      // India candles: Upstox (official, analytics token) primary → Yahoo
+      // chart (unofficial) fallback. Upstox is more reliable than the Yahoo
+      // endpoint that can change shape / anti-bot without notice.
+      ? fetchUpstoxCandles(symbol)
+          .then(c => c.length >= 15 ? c : fetchIndiaCandles(symbol))
+          .catch(() => fetchIndiaCandles(symbol).catch(() => [] as Candle[]))
       // US candles: Massive → EODHD → Twelve Data → Alpha Vantage (fallback).
       // RSI/EMA still computed locally from whichever source returns bars, so
       // the scarce AV 25/day budget is no longer spent on candles.
