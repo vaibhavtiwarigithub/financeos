@@ -13,6 +13,7 @@
 // block would be too aggressive given the snapshot's refresh cadence.
 
 import { constructPortfolio, DEFAULT_LIMITS, type BookPosition, type CandidateOrder, type PortfolioLimits } from "@/lib/portfolio/constructor";
+import { getKiteMargins, getKiteHoldings } from "@/lib/kite";
 
 const SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000;
 
@@ -23,8 +24,6 @@ export interface LivePortfolioGateResult {
   adjustments?: string[]; // the constructor's per-rule shrink explanations
 }
 
-// market note: only "us" has a live NAV snapshot today; "india" (Kite) has none, so the
-// gate is skipped there until an India NAV source exists.
 export async function checkLivePortfolioLimits(opts: {
   supabase: any;
   market: "us" | "india";
@@ -34,8 +33,9 @@ export async function checkLivePortfolioLimits(opts: {
 }): Promise<LivePortfolioGateResult> {
   const { supabase, market, accountId, symbol, orderNotional } = opts;
 
-  if (market !== "us") return { ok: true, skipped: true, reason: "no live NAV source for this market" };
   if (!Number.isFinite(orderNotional) || orderNotional <= 0) return { ok: true, skipped: true, reason: "candidate notional unknown" };
+  if (market === "india") return checkIndiaLivePortfolioLimits({ supabase, symbol, orderNotional });
+  if (market !== "us") return { ok: true, skipped: true, reason: "no live NAV source for this market" };
 
   // Freshest snapshot for the trading account.
   const { data: snap } = await supabase.from("live_account_snapshots")
@@ -53,12 +53,24 @@ export async function checkLivePortfolioLimits(opts: {
   // Build the book: valuePct = position value (qty × avg cost) / NAV × 100. No sector in
   // the snapshot → null (constructor buckets these under UNKNOWN).
   const positions: any[] = Array.isArray((snap as any).positions_json) ? (snap as any).positions_json : [];
+  let indeterminate: string | null = null;
   const book: BookPosition[] = positions.map((p) => {
+    const symbol = String(p.symbol ?? p.ticker ?? "").toUpperCase();
     const qty = Number(p.quantity ?? p.qty ?? 0);
-    const cost = Number(p.average_buy_price ?? p.avg_price ?? p.avg_cost ?? 0);
-    const value = qty * cost;
-    return { symbol: String(p.symbol ?? p.ticker ?? "").toUpperCase(), sector: null, valuePct: nav > 0 ? (value / nav) * 100 : 0, beta: null, dailyVol: null };
+    // Value = a direct market value if present, else qty × a current price, else qty ×
+    // average cost. A non-zero holding that can't be valued must NOT count as $0 (that
+    // would understate concentration) — flag it indeterminate.
+    const directValue = Number(p.market_value ?? p.value ?? p.equity);
+    const price = Number(p.current_price ?? p.last_price ?? p.price ?? p.average_buy_price ?? p.avg_price ?? p.avg_cost);
+    const value = Number.isFinite(directValue) && directValue > 0 ? directValue
+      : (Number.isFinite(price) && price > 0 ? qty * price : NaN);
+    if (qty > 0 && !(Number.isFinite(value) && value >= 0)) indeterminate = symbol || "a holding";
+    return { symbol, sector: null, valuePct: nav > 0 && Number.isFinite(value) ? (value / nav) * 100 : 0, beta: null, dailyVol: null };
   }).filter((b) => b.symbol);
+
+  if (indeterminate) {
+    return { ok: false, reason: `cannot value existing holding ${indeterminate} (no market value / price / cost in snapshot) — portfolio exposure indeterminate` };
+  }
 
   const candidate: CandidateOrder = {
     symbol: symbol.toUpperCase(),
@@ -89,6 +101,89 @@ export async function checkLivePortfolioLimits(opts: {
       reason: sized?.finalSizePct === 0
         ? `would breach portfolio limits (position denied): ${(sized?.adjustments ?? []).join("; ")}`
         : `would exceed a portfolio limit (approved ${candidate.proposedSizePct.toFixed(1)}% of NAV, max allowed ${sized.finalSizePct.toFixed(1)}%): ${(sized.adjustments ?? []).join("; ")}`,
+      adjustments: sized?.adjustments,
+    };
+  }
+  return { ok: true };
+}
+
+// India branch: NAV = Kite equity.net (liquid cash) + Σ(last_price × qty) across holdings.
+// Fail-controlled on indeterminate holdings; skipped (advisory) if margins or holdings
+// API calls fail — the per-order INR notional cap is the primary live-money bound.
+async function checkIndiaLivePortfolioLimits(opts: {
+  supabase: any;
+  symbol: string;
+  orderNotional: number;
+}): Promise<LivePortfolioGateResult> {
+  const { supabase, symbol, orderNotional } = opts;
+
+  const [marginsRes, holdingsRes] = await Promise.all([
+    getKiteMargins(supabase),
+    getKiteHoldings(supabase),
+  ]);
+
+  if (!marginsRes.ok) {
+    return { ok: true, skipped: true, reason: `India NAV unavailable (${marginsRes.error}) — portfolio limits not evaluated (notional caps still apply)` };
+  }
+  if (!holdingsRes.ok) {
+    return { ok: true, skipped: true, reason: `India holdings unavailable (${holdingsRes.error}) — portfolio limits not evaluated (notional caps still apply)` };
+  }
+
+  const rawHoldings: any[] = Array.isArray(holdingsRes.data) ? holdingsRes.data : [];
+  let indeterminate: string | null = null;
+  const valued: { sym: string; value: number }[] = [];
+  let holdingsValue = 0;
+
+  for (const h of rawHoldings) {
+    const sym = String(h.tradingsymbol ?? h.symbol ?? "").toUpperCase();
+    if (!sym) continue;
+    const qty = Number(h.quantity ?? h.qty ?? 0);
+    const lp = Number(h.last_price ?? h.average_price ?? 0);
+    const value = qty > 0 && Number.isFinite(lp) && lp > 0 ? qty * lp : NaN;
+    if (qty > 0 && !(Number.isFinite(value) && value >= 0)) { indeterminate = sym; break; }
+    const v = Number.isFinite(value) ? value : 0;
+    holdingsValue += v;
+    valued.push({ sym, value: v });
+  }
+
+  if (indeterminate) {
+    return { ok: false, reason: `cannot value existing India holding ${indeterminate} (no last_price in Kite holdings) — portfolio exposure indeterminate` };
+  }
+
+  const nav = (marginsRes.equityNet ?? 0) + holdingsValue;
+  if (!Number.isFinite(nav) || nav <= 0) {
+    return { ok: true, skipped: true, reason: "India NAV is zero or indeterminate — portfolio limits not evaluated (notional caps still apply)" };
+  }
+
+  const book: BookPosition[] = valued.map(({ sym, value }) => ({
+    symbol: sym, sector: null, valuePct: (value / nav) * 100, beta: null, dailyVol: null,
+  }));
+
+  const candidate: CandidateOrder = {
+    symbol: symbol.toUpperCase(), market: "india",
+    proposedSizePct: (orderNotional / nav) * 100,
+    sector: null, beta: null, dailyVol: null,
+  };
+
+  const { data: cfg } = await supabase.from("strategy_config")
+    .select("max_gross_exposure_pct, max_sector_exposure_pct, max_name_exposure_pct, max_portfolio_vol_pct, max_avg_pairwise_corr")
+    .limit(1).maybeSingle();
+  const limits: PortfolioLimits = {
+    maxGrossExposurePct: Number((cfg as any)?.max_gross_exposure_pct) || DEFAULT_LIMITS.maxGrossExposurePct,
+    maxSectorExposurePct: Number((cfg as any)?.max_sector_exposure_pct) || DEFAULT_LIMITS.maxSectorExposurePct,
+    maxNameExposurePct: Number((cfg as any)?.max_name_exposure_pct) || DEFAULT_LIMITS.maxNameExposurePct,
+    maxPortfolioVolPct: Number((cfg as any)?.max_portfolio_vol_pct) || DEFAULT_LIMITS.maxPortfolioVolPct,
+    maxAvgPairwiseCorr: Number((cfg as any)?.max_avg_pairwise_corr) || DEFAULT_LIMITS.maxAvgPairwiseCorr,
+  };
+
+  const result = constructPortfolio(book, [candidate], limits);
+  const sized = result.orders[0];
+  if (!sized || sized.finalSizePct < candidate.proposedSizePct - 1e-6) {
+    return {
+      ok: false,
+      reason: sized?.finalSizePct === 0
+        ? `would breach India portfolio limits (position denied): ${(sized?.adjustments ?? []).join("; ")}`
+        : `would exceed India portfolio limit (approved ${candidate.proposedSizePct.toFixed(1)}% of NAV ₹${nav.toFixed(0)}, max allowed ${sized.finalSizePct.toFixed(1)}%): ${(sized.adjustments ?? []).join("; ")}`,
       adjustments: sized?.adjustments,
     };
   }

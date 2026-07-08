@@ -5,6 +5,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { guardOrderRequest } from "@/lib/request-guards";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
+import { checkLivePortfolioLimits } from "@/lib/risk/live-portfolio-gate";
 
 export const dynamic = "force-dynamic";
 
@@ -21,13 +22,19 @@ export async function POST(req: NextRequest) {
   if (guardErr) return guardErr;
 
   const body = await req.json().catch(() => ({}));
-  const { symbol, transaction_type, quantity, order_type, price, confirm } = body as {
+  const { symbol, transaction_type, quantity, order_type, price, confirm, signal_id, manualOverride, overrideReason, client_order_key } = body as {
     symbol?: string; transaction_type?: "BUY" | "SELL"; quantity?: number;
     order_type?: "MARKET" | "LIMIT"; price?: number; confirm?: boolean;
+    signal_id?: string; manualOverride?: boolean; overrideReason?: string; client_order_key?: string;
   };
 
   if (confirm !== true) {
     return NextResponse.json({ error: "confirm:true required — this places a real order with real money." }, { status: 400 });
+  }
+  // Idempotency: the UI must send a stable key per confirmation so a double-click / retry
+  // dedupes at the DB (a partial unique index) instead of double-submitting a live order.
+  if (!client_order_key || typeof client_order_key !== "string" || client_order_key.length < 8) {
+    return NextResponse.json({ error: "client_order_key required (a stable per-confirmation id for idempotency)." }, { status: 400 });
   }
 
   // Strict input validation — never clamp or silently coerce on a live-money path.
@@ -68,7 +75,9 @@ export async function POST(req: NextRequest) {
   const { data: capCfg } = await svc.from("strategy_config").select("max_order_notional_inr, max_daily_notional_inr, max_daily_trades").limit(1).maybeSingle();
   const inrCap = (capCfg as any)?.max_order_notional_inr;
   const perOrderCap = inrCap != null ? Number(inrCap) : null;
-  if (perOrderCap == null || !Number.isFinite(perOrderCap) || perOrderCap <= 0) {
+  // Per-order cap applies to BUY only — SELL exits (held-position gated below) must never
+  // be blocked by a notional ceiling.
+  if (transaction_type === "BUY" && (perOrderCap == null || !Number.isFinite(perOrderCap) || perOrderCap <= 0)) {
     return NextResponse.json({ error: "No India (INR) per-order cap set — refusing an uncapped live India order. Set the India cap in Settings → Live Order Limits." }, { status: 403 });
   }
   const q = await fetchIndiaQuote(symbol).catch(() => null);
@@ -79,7 +88,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Could not fetch a fresh India quote to validate the order notional — refusing to submit blind." }, { status: 502 });
   }
   const orderNotional = (quantity as number) * refPrice;
-  if (orderNotional > perOrderCap) {
+  if (transaction_type === "BUY" && perOrderCap != null && orderNotional > perOrderCap) {
     return NextResponse.json({ error: `Order notional ₹${orderNotional.toFixed(0)} exceeds the India cap ₹${perOrderCap.toFixed(0)}` }, { status: 403 });
   }
   const dailyTradesCap = (capCfg as any)?.max_daily_trades ?? null;
@@ -99,6 +108,61 @@ export async function POST(req: NextRequest) {
     const heldQty = Number(pos?.quantity ?? pos?.qty ?? 0);
     if (heldQty < (quantity as number)) {
       return NextResponse.json({ error: `Refusing SELL of ${quantity} ${symbol}: only ${heldQty} held on Kite` }, { status: 403 });
+    }
+  }
+
+  // G1 parity for India: a live BUY must be governed like the US Gateway — either linked
+  // to a signal with acceptable data quality, or an explicit, AUDITED manual override.
+  // SELL exits are exempt.
+  if (transaction_type === "BUY") {
+    let qualityOk = false;
+    if (signal_id) {
+      const { data: dq } = await svc.from("v_decision_quality").select("data_confidence, quality_status").eq("signal_id", signal_id).order("ts", { ascending: false }).limit(1).maybeSingle();
+      const conf = dq ? Number((dq as any).data_confidence) : null;
+      qualityOk = !!dq && (dq as any).quality_status === "ok" && Number.isFinite(conf as number) && (conf as number) >= 0.5;
+    }
+    if (!qualityOk) {
+      if (!manualOverride) {
+        return NextResponse.json({ error: signal_id
+          ? `Refusing India live BUY of ${symbol}: linked signal data confidence below the 0.5 threshold. Send manualOverride:true + overrideReason to proceed.`
+          : `Refusing India live BUY of ${symbol}: no linked signal to verify data quality. Send manualOverride:true + overrideReason for a manual buy.` }, { status: 409 });
+      }
+      if (!overrideReason || !String(overrideReason).trim()) {
+        return NextResponse.json({ error: "manualOverride:true requires a non-empty overrideReason (audited)." }, { status: 400 });
+      }
+      // Persist the override BEFORE any budget reservation / broker submit (audit trail).
+      await svc.from("decision_journal").insert({
+        entry_type: "manual_override", symbol, market: "india",
+        summary: `Manual India BUY override: ${quantity} ${symbol} — ${String(overrideReason).slice(0, 300)}`,
+        calculations: { transaction_type, quantity, signal_id: signal_id ?? null, override: true },
+        has_verified_facts: false, resolved: false,
+      }).then(() => {}, () => {});
+    }
+  }
+
+  // G3: live portfolio-construction gate — India parity with the US Execution Gateway.
+  // BUY only; SELL reduces exposure and is exempt.
+  if (transaction_type === "BUY") {
+    const pg = await checkLivePortfolioLimits({
+      supabase: svc, market: "india", accountId: "kite",
+      symbol: symbol.toUpperCase(), orderNotional,
+    });
+    if (!pg.ok) {
+      if (!manualOverride) {
+        return NextResponse.json({
+          error: `Portfolio limit would be breached: ${pg.reason}${pg.adjustments?.length ? " — " + pg.adjustments.join("; ") : ""}. Send manualOverride:true + overrideReason to proceed.`,
+          adjustments: pg.adjustments,
+        }, { status: 409 });
+      }
+      if (!overrideReason || !String(overrideReason).trim()) {
+        return NextResponse.json({ error: "manualOverride:true requires a non-empty overrideReason (audited)." }, { status: 400 });
+      }
+      await svc.from("decision_journal").insert({
+        entry_type: "portfolio_limit_override", symbol, market: "india",
+        summary: `India G3 portfolio limit override: ${pg.reason} — ${String(overrideReason).slice(0, 300)}`,
+        calculations: { transaction_type, quantity, signal_id: signal_id ?? null, portfolioGate: pg },
+        has_verified_facts: false, resolved: false,
+      }).then(() => {}, () => {});
     }
   }
 
@@ -124,11 +188,13 @@ export async function POST(req: NextRequest) {
     p_limit_price: order_type === "LIMIT" ? price : null,
     p_estimated_notional: orderNotional, p_currency: "INR",
     p_max_daily_trades: dailyTradesCap, p_max_daily_notional: dailyNotionalCap,
+    p_client_order_key: client_order_key,
   });
   if (insertErr) {
     const m = insertErr.message || "";
     if (m.includes("daily_trade_limit")) return NextResponse.json({ error: `Daily live-order limit reached — ${m}` }, { status: 429 });
     if (m.includes("daily_notional_limit")) return NextResponse.json({ error: `Daily notional cap reached — ${m}` }, { status: 403 });
+    if ((insertErr as any).code === "23505" || m.toLowerCase().includes("duplicate")) return NextResponse.json({ error: "Duplicate order (same confirmation key already active) — not resubmitted." }, { status: 409 });
     return NextResponse.json({ error: `Failed to reserve order budget: ${m}` }, { status: 500 });
   }
   const ledgerId: number = reservedId as unknown as number;

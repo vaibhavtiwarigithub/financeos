@@ -245,9 +245,11 @@ flowchart TD
   30-day accuracy) and flags any resting orders for you to review.
 - **Signal-quality gate (G1)** — a live BUY built on low-confidence data is refused unless you
   explicitly override.
-- **Concentration limits (G3, US)** — a live BUY that would over-concentrate the account (too
-  much in one name / too much gross) is refused, checked against your **real live account
-  value** (which the app now reads correctly — see the get_portfolio fix).
+- **Concentration limits (G3, US + India)** — a live BUY that would over-concentrate the
+  account (too much in one name / too much gross) is refused. US: checked against the live
+  account snapshot (equity + positions). India: checked against Kite `/user/margins` (cash)
+  + `/portfolio/holdings` (last_price × qty) so NAV reflects the real portfolio. Both markets
+  use the same `constructPortfolio` logic and fail-controlled on indeterminate holdings.
 - **Paper caps** — the paper books have their own NAV-scaled caps so tests stay realistic
   without freezing.
 - **The ultimate kill switch** is always *you*, at the broker (revoke access at Robinhood /
@@ -281,4 +283,4 @@ flowchart TD
 
 ---
 
-*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-08.*
+*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-08 (India G3 portfolio gate live).*

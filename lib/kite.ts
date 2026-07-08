@@ -193,6 +193,16 @@ export async function getKiteHoldings(svc?: any) {
   return kiteGet("/portfolio/holdings", svc);
 }
 
+/** Liquid cash balance from Kite /user/margins (equity.net). Combine with
+ *  getKiteHoldings() to compute total India account NAV = equityNet + Σ(last_price × qty). */
+export async function getKiteMargins(svc?: any): Promise<{ ok: boolean; equityNet?: number; error?: string }> {
+  const r = await kiteGet("/user/margins", svc);
+  if (!r.ok) return { ok: false, error: r.error };
+  const net = Number(r.data?.equity?.net);
+  if (!Number.isFinite(net)) return { ok: false, error: "Kite /user/margins did not return equity.net" };
+  return { ok: true, equityNet: net };
+}
+
 // Place a real equity order (POST /orders/regular). CNC = delivery (cash &
 // carry), the right product for holding equity. Only called from a
 // user-initiated, explicitly-confirmed request — never auto-fired.
