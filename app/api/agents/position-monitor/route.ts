@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { classifyOutcome } from "@/lib/trade-outcome";
+import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { verifyCronSecret } from "@/lib/auth/cron";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
@@ -131,8 +132,11 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       const tOutcome = classifyOutcome(tPnlPct);
       await svc.from("paper_trades").update({
         exit_price: currentPrice, realized_pnl: tPnl, pnl_pct: tPnlPct,
-        outcome: tOutcome, closed_at: new Date().toISOString(),
+        outcome: tOutcome, exit_reason: exitReason, closed_at: new Date().toISOString(),
       }).eq("id", (t as any).id);
+      // Index this now-closed trade into the RAG memory corpus (Tier-3 #10).
+      // Best-effort: no-op when embeddings are off; a failure never blocks the exit.
+      await indexClosedTrade(String((t as any).id)).catch(() => {});
     }
 
     await svc.from("paper_positions").delete().eq("id", pos.id);

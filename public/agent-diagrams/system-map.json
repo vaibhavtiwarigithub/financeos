@@ -523,6 +523,13 @@
       "nodeId": "TRADER",
       "label": "PaperTrader — learning integrity taint stamp at fill",
       "reason": "Learning Integrity Phase 1B (measure-only): execute_paper_fill RPC now joins v_decision_quality by signal_id inside the same transaction and stamps 5 taint columns (data_confidence, quality_status, tainted, taint_reason, excluded_from_learning) on paper_trades/broker_orders at fill time (migrations 116/117). Taint rule: quality_status=ok AND data_confidence<0.5 → tainted=true. quality_status=unknown → never auto-tainted in Phase 1B. All excluded_from_learning=false until Phase 2 gates learning on clean data. Atomic: trade and quality metadata land together or both fail."
+    },
+    {
+      "date": "2026-07-08",
+      "event": "added",
+      "nodeId": "RESEARCH",
+      "label": "Trade-history RAG memory loop (Strategic Report Tier-3/Tier-4, all 17 items)",
+      "reason": "Closed a retrieval-augmented memory loop across the pipeline. WRITE side: on close, PositionMonitor and LearnerAgent call indexClosedTrade() — builds a deterministic setup document, embeds it with Voyage voyage-3.5 (1024-dim) and upserts into trade_memories (migration 118, pgvector HNSW, cosine). READ side: before scoring a candidate, ResearchAgent calls retrieveSimilarTrades() — embeds the live setup, ANN-matches prior setups via match_trade_memories RPC, reranks with Voyage rerank-2 (#9), and appends a 'prior similar setups (X/Y were wins)' note to the thesis prompt so the LLM sees its own track record on lookalike setups. Cross-cutting layers built same change: #11 binary ticker context filter + #12 Anthropic contextual retrieval headers (lib/rag/contextual.ts); #13 vector store = pgvector 0.8.0 already in Supabase (no external DB); #14 durable rag_traces (migration 119) mirrored to WandB Weave when keyed (lib/observability/weave.ts); #16 native document ingestion pipeline into doc_chunks (migration 120); #15 native StateGraph orchestrator + #17 typed A2A message contracts (lib/agents/). Idempotent backfill route /api/agents/rag-backfill indexes historical closed trades. All embedding/rerank/trace paths are env-gated: absent VOYAGE_API_KEY → graceful no-op, never throws."
     }
   ]
 }

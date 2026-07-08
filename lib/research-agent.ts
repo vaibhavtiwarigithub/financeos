@@ -1,5 +1,6 @@
 import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
 import { callLLM } from "@/lib/llm-router";
+import { retrieveSimilarTrades, summarizeMemories } from "@/lib/rag/trade-memory";
 import { fetchSocialSentiment, SocialSentiment } from "@/lib/social-sentiment";
 import { fetchOptionsSignal, OptionsSignal } from "@/lib/options-signal";
 import { computeScores, type ComputedScores } from "@/lib/data/scores";
@@ -1021,13 +1022,43 @@ export async function processSymbol(
     trendNote = `\n\nSCORE TREND: this symbol's analyst score over its last ${priorScores.length} runs was [${priorScores.join(", ")}] → now ${analystScore} (${dir}, ${delta >= 0 ? "+" : ""}${delta}). Factor this momentum into your conviction.`;
   }
 
+  // Trade-history RAG (Tier-3 #10): retrieve the most similar PAST CLOSED trades
+  // (cross-symbol, same market cohort) by setup similarity and fold their realized
+  // outcomes into the thesis prompt — "the last N times we took a setup like this,
+  // here is what happened." No-op (empty note) when embeddings are disabled or the
+  // memory corpus is empty; never blocks a research run.
+  let memoryNote = "";
+  try {
+    const memories = await retrieveSimilarTrades({
+      setup: {
+        symbol,
+        market,
+        analyst_score: analystScore / 100,
+        fundamental_score: scores.fundamental_score / 100,
+        technical_score: scores.technical_score / 100,
+        sentiment_score: scores.sentiment_score / 100,
+        macro_score: scores.macro_score / 100,
+      },
+      market,
+      k: 5,
+      source: "research-thesis",
+    });
+    const summary = summarizeMemories(memories);
+    if (summary) {
+      memoryNote =
+        `\n\nPRIOR SIMILAR SETUPS (retrieved from trade history — same market, ` +
+        `ranked by setup similarity; these are OUTCOMES, not the current name):\n${summary}\n` +
+        `Weigh this base rate against your conviction. A setup class that has lost repeatedly is a warning.`;
+    }
+  } catch { /* RAG is best-effort — a retrieval failure must not block research */ }
+
   // LLM only writes thesis + direction — no score generation.
   // Model selection: use Claude when structured APIs delivered real data (technical or
   // fundamental dims included), DeepSeek as fallback when APIs returned empty so we
   // don't burn Claude tokens on a thin-signal request that will likely abstain anyway.
   const hasStructuredData = includedDims.includes("technical") || includedDims.includes("fundamental");
   const screenModel = hasStructuredData ? "claude-haiku-4-5-20251001" : "deepseek-v4-flash";
-  const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus) + trendNote;
+  const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus) + trendNote + memoryNote;
   const llmResult = await callLLM({
     task: "screen",
     model: screenModel,

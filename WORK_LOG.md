@@ -20,6 +20,28 @@
 
 ---
 
+## ✅ Session 2026-07-08 (cont'd) — Strategic Report Tier-3 + Tier-4 (all built)
+
+> User re-supplied VOYAGE_API_KEY + WANDB_API_KEY and said "go" to build ALL remaining tiers with my defaults (pgvector not Qdrant; reuse WandB Weave not a separate OTel vendor; native typed layers not heavyweight frameworks — no new signups). Every RAG/observability feature is env-gated: absent key → graceful no-op, never throws.
+
+| Item | What was built | Migrations |
+|---|---|---|
+| #10 Trade-history RAG | `lib/rag/embeddings.ts` (Voyage voyage-3.5, 1024-dim, graceful-null) + `lib/rag/trade-memory.ts` (`buildSetupDocument`/`indexClosedTrade`/`retrieveSimilarTrades`/`summarizeMemories`). `trade_memories` table + `match_trade_memories` RPC (hnsw cosine). Wired into ResearchAgent thesis prompt ("prior similar setups & outcomes", cross-symbol, same market) + indexed at close time in position-monitor & learner. Tainted/excluded trades never enter corpus. `/api/agents/rag-backfill` bootstraps corpus. | 118 |
+| #9 Reranker | `lib/rag/rerank.ts`: Voyage **rerank-2** (reuses VOYAGE_API_KEY — no HuggingFace). Two-stage: ANN over-fetch 20 → rerank → top-k. Identity fallback when disabled. | — |
+| #11 Binary context filter | `lib/rag/contextual.ts` wires `filterChunksByTicker` (entity guard) into the document-RAG path + traces the keep/reject decision. Trade-memory path is cross-symbol by design (no ticker filter). | 119 |
+| #12 Contextual Retrieval | `lib/rag/contextual.ts`: per-chunk LLM context header (Anthropic contextual retrieval) via cheap `summarize` tier; graceful passthrough on failure. | — |
+| #13 Vector DB | **pgvector 0.8.0** in existing Supabase (no Qdrant). `trade_memories` + `doc_chunks` embedding columns, hnsw indexes. | 118, 120 |
+| #14 Tracing | `lib/observability/weave.ts`: `traceRag()` writes durable `rag_traces` (source of truth) + mirrors to WandB Weave when WANDB_API_KEY set. Every retrieve/rerank/filter/index op traced. | 119 |
+| #15 Orchestration | `lib/agents/graph.ts`: native typed `StateGraph` (nodes/edges/conditional routing/shared state/`onStep` checkpoint seam) modeling LangGraph without the dep. | — |
+| #16 Ingestion | `lib/rag/ingest.ts`: LlamaIndex-style pipeline (chunk → #11 filter + #12 contextualize → embed → store) into `doc_chunks` + `retrieveDocChunks` (ANN→rerank). Sentence-aware splitter with overlap. | 120 |
+| #17 A2A contracts | `lib/agents/contracts.ts`: versioned typed envelopes for every handoff (Signal→Decision→Fill→Outcome) + `validateMessage()` runtime guard. | — |
+
+**Framework decisions (recorded):** #13/#14/#15/#16 chose native/existing-infra over new vendors (pgvector over Qdrant, WandB reuse over separate OTel, native StateGraph over @langchain/langgraph, native pipeline over llamaindex.ts) — same architecture value, no bundle bloat / cold-start hit / new signup. All keys already in Vercel Production + Preview.
+
+**Strategic Intelligence Report: ALL 17 items now built (Tiers 1–4 complete).**
+
+---
+
 ## ✅ Session 2026-07-08 — Strategic Report Tier-1 + Tier-2 (all built)
 
 > User mandated building all unbuilt items from the Strategic Intelligence Report. This session completed Tier-1 (prompt caching, ticker filter, prompt versioning, DeepSeek data gate) and Tier-2 (Agent Evolution discovery_source, B3 structured triage, Data Provider Abstraction, Learning Integrity Phase 1B).

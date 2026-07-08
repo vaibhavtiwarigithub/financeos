@@ -221,6 +221,43 @@ sentiment was available) gets a low **data_confidence** score. Those weak decisi
 out of live-money sizing, so a bad-data signal can't drive a real trade. (Measure-only for the
 learner today, pending calibration.)
 
+### 7a. Trade-history memory (the system remembers its own past)
+
+Weight mutation (above) learns *slowly* — it needs many closed trades and a human promotion.
+A second, faster loop lets the system recall **specific past setups** the moment it sees a
+lookalike, without changing any weights or needing approval. This is a **retrieval-augmented
+memory** (RAG) over the fund's own trade history.
+
+```mermaid
+flowchart LR
+  CLOSE[Trade closes<br/>PositionMonitor / Learner] --> INDEX[indexClosedTrade:<br/>write setup as text,<br/>embed with Voyage,<br/>store in trade_memories]
+  INDEX --> STORE[(pgvector store<br/>1024-dim, cosine)]
+  NEW[New candidate<br/>ResearchAgent] --> RETR[retrieveSimilarTrades:<br/>embed live setup,<br/>match nearest,<br/>rerank top-5]
+  STORE --> RETR
+  RETR --> NOTE["'prior similar setups<br/>(3/5 were wins)' note"]
+  NOTE --> THESIS[added to thesis prompt<br/>→ the LLM sees its<br/>own track record]
+```
+
+In plain terms:
+- **Write side:** every time a trade closes, `indexClosedTrade()` turns that setup into a short
+  text document (symbol, direction, the five dimension scores, outcome, exit reason), converts
+  it to a **1024-number fingerprint** (an *embedding*, via Voyage `voyage-3.5`), and files it in
+  the `trade_memories` store. Tainted / excluded trades are skipped so bad-data history can't
+  poison memory.
+- **Read side:** before scoring a fresh candidate, ResearchAgent fingerprints the *live* setup,
+  pulls the nearest past setups out of the store, has a **reranker** (Voyage `rerank-2`) pick the
+  genuinely most-similar few, and hands the LLM a one-line summary — *"prior similar setups: 3/5
+  were wins."* The model now decides with its own history in view, not just today's data.
+- **Where it's stored:** the store is **pgvector**, a vector index that already lives inside our
+  Supabase database — no new service, no new bill. Similarity is nearest-neighbour by cosine.
+- **Guardrails:** a **ticker filter** keeps document-retrieval on-topic (a chunk that never
+  mentions the symbol is dropped), and every retrieval writes a durable **trace** row so we can
+  audit what memory influenced a decision. The whole path is **off unless the Voyage key is set**
+  — no key means it quietly does nothing rather than erroring.
+
+This memory does **not** move money or change weights on its own. It only enriches the context
+the LLM reasons over — a faster complement to the slow, human-gated weight evolution above.
+
 ---
 
 ## 8. Money safety (the layers that protect real money)

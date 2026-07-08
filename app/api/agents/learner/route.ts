@@ -6,6 +6,7 @@ import { runAgentLoop, ToolCall } from "@/lib/llm-router";
 import { loadLabeledDataset } from "@/lib/learning/dataset";
 import { validateFeatureInputs } from "@/lib/validation/feature-compiler";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { indexClosedTrade } from "@/lib/rag/trade-memory";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -170,6 +171,8 @@ export async function POST(req: NextRequest) {
       // that this trade belonged to was already closed by PositionMonitor, which
       // already credited the proceeds. Double-crediting here would inflate NAV.
       await svc.from("paper_trades").update({ exit_price: exitPrice, realized_pnl: pnl, pnl_pct: pnlPct, outcome, closed_at: new Date().toISOString() }).eq("id", trade.id);
+      // Index the now-closed orphan into RAG memory (Tier-3 #10). Best-effort.
+      await indexClosedTrade(String(trade.id)).catch(() => {});
 
       outcomes.push({ symbol: trade.symbol, outcome, pnl, pnlPct, exitPrice, reconciled_orphan: true });
     }
