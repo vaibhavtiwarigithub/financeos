@@ -61,29 +61,29 @@ export async function POST(req: NextRequest) {
     if (!ks.safe) return NextResponse.json({ error: `Kill switch active: ${ks.reason}` }, { status: 403 });
   }
 
-  // Per-order INR notional cap — FAIL CLOSED. Mirrors the Execution Gateway's
-  // per-market cap on this standalone Kite path. No trusted Kite equity fallback
-  // exists, so a null India cap refuses the order. Notional is checked against a
-  // fresh LTP (and the limit price when higher), refusing if neither is available.
-  {
-    const { data: capCfg } = await svc.from("strategy_config").select("max_order_notional_inr").limit(1).maybeSingle();
-    const inrCap = (capCfg as any)?.max_order_notional_inr;
-    const cap = inrCap != null ? Number(inrCap) : null;
-    if (cap == null || !Number.isFinite(cap) || cap <= 0) {
-      return NextResponse.json({ error: "No India (INR) per-order cap set — refusing an uncapped live India order. Set the India cap in Settings → Live Order Limits." }, { status: 403 });
-    }
-    const q = await fetchIndiaQuote(symbol).catch(() => null);
-    const ltp = Number(q?.price) || 0;
-    const limitRef = order_type === "LIMIT" ? Number(price) || 0 : 0;
-    const refPrice = Math.max(ltp, limitRef);
-    if (!Number.isFinite(refPrice) || refPrice <= 0) {
-      return NextResponse.json({ error: "Could not fetch a fresh India quote to validate the order notional — refusing to submit blind." }, { status: 502 });
-    }
-    const notional = (quantity as number) * refPrice;
-    if (notional > cap) {
-      return NextResponse.json({ error: `Order notional ₹${notional.toFixed(0)} exceeds the India cap ₹${cap.toFixed(0)}` }, { status: 403 });
-    }
+  // Per-order INR notional cap + daily caps (read together). FAIL CLOSED on the
+  // per-order cap: no trusted Kite equity fallback exists, so a null India cap
+  // refuses the order. Notional is checked against a fresh LTP (and the limit price
+  // when higher), refusing if neither is available.
+  const { data: capCfg } = await svc.from("strategy_config").select("max_order_notional_inr, max_daily_notional_inr, max_daily_trades").limit(1).maybeSingle();
+  const inrCap = (capCfg as any)?.max_order_notional_inr;
+  const perOrderCap = inrCap != null ? Number(inrCap) : null;
+  if (perOrderCap == null || !Number.isFinite(perOrderCap) || perOrderCap <= 0) {
+    return NextResponse.json({ error: "No India (INR) per-order cap set — refusing an uncapped live India order. Set the India cap in Settings → Live Order Limits." }, { status: 403 });
   }
+  const q = await fetchIndiaQuote(symbol).catch(() => null);
+  const ltp = Number(q?.price) || 0;
+  const limitRef = order_type === "LIMIT" ? Number(price) || 0 : 0;
+  const refPrice = Math.max(ltp, limitRef);
+  if (!Number.isFinite(refPrice) || refPrice <= 0) {
+    return NextResponse.json({ error: "Could not fetch a fresh India quote to validate the order notional — refusing to submit blind." }, { status: 502 });
+  }
+  const orderNotional = (quantity as number) * refPrice;
+  if (orderNotional > perOrderCap) {
+    return NextResponse.json({ error: `Order notional ₹${orderNotional.toFixed(0)} exceeds the India cap ₹${perOrderCap.toFixed(0)}` }, { status: 403 });
+  }
+  const dailyTradesCap = (capCfg as any)?.max_daily_trades ?? null;
+  const dailyNotionalCap = (capCfg as any)?.max_daily_notional_inr ?? null;
 
   // Long-only gate: SELL requires confirmed current holding >= requested qty.
   if (transaction_type === "SELL") {
@@ -113,26 +113,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Order rate limit reached (${recentOrders}/${ORDER_RATE_LIMIT} in the last 10 min). Try again shortly.` }, { status: 429 });
   }
 
-  // Pre-insert a broker_orders row before broker submission — creates a durable
-  // order id ledger entry so the sync cron can track and reconcile this order.
-  const { data: orderRow, error: insertErr } = await svc.from("broker_orders").insert({
-    market: "india",
-    broker: "kite",
-    broker_env: "live",
-    symbol: symbol.toUpperCase(),
-    side: transaction_type === "BUY" ? "buy" : "sell",
-    qty: quantity,
-    order_type: order_type ?? "MARKET",
-    limit_price: order_type === "LIMIT" ? price : null,
-    status: "pending_submit",
-    approved_by_user: true,
-    submitted_at: new Date().toISOString(),
-  }).select("id").single();
-
+  // Atomic daily-budget reservation + durable pending row (G4/G5/G6). Under a
+  // per-(day,market) advisory lock this serializes concurrent live India orders,
+  // enforces the daily trade COUNT + cumulative INR NOTIONAL (BUY only — SELL exits
+  // exempt), and inserts the pending broker_orders row the sync cron reconciles.
+  const { data: reservedId, error: insertErr } = await svc.rpc("reserve_live_order_budget", {
+    p_proposal_id: null, p_market: "india", p_broker: "kite", p_broker_env: "live",
+    p_symbol: symbol.toUpperCase(), p_side: transaction_type === "BUY" ? "buy" : "sell",
+    p_qty: quantity, p_order_type: order_type ?? "MARKET",
+    p_limit_price: order_type === "LIMIT" ? price : null,
+    p_estimated_notional: orderNotional, p_currency: "INR",
+    p_max_daily_trades: dailyTradesCap, p_max_daily_notional: dailyNotionalCap,
+  });
   if (insertErr) {
-    return NextResponse.json({ error: `Failed to create order ledger entry: ${insertErr.message}` }, { status: 500 });
+    const m = insertErr.message || "";
+    if (m.includes("daily_trade_limit")) return NextResponse.json({ error: `Daily live-order limit reached — ${m}` }, { status: 429 });
+    if (m.includes("daily_notional_limit")) return NextResponse.json({ error: `Daily notional cap reached — ${m}` }, { status: 403 });
+    return NextResponse.json({ error: `Failed to reserve order budget: ${m}` }, { status: 500 });
   }
-  const ledgerId: number = (orderRow as any).id;
+  const ledgerId: number = reservedId as unknown as number;
 
   const res = await placeEquityOrder({
     tradingsymbol: symbol,

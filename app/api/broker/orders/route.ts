@@ -109,8 +109,13 @@ export async function POST(req: NextRequest) {
     const broker = brokerRes.broker;
     const brokerKey = allowlistBrokerKey(broker.id);
 
+    // Hoisted to function scope so the post-block budget reservation can read them
+    // (freshPrice + daily caps are only populated on the live path).
+    let freshPrice: number | null = null;
+    let cfg: any = null;
     if (orderEnv === "live") {
-      const { data: cfg } = await supabase.from("strategy_config").select("trading_enabled, trading_enabled_us, trading_enabled_india, max_order_notional, max_order_notional_usd, max_order_notional_inr, robinhood_mcp_enabled").limit(1).maybeSingle();
+      const cfgRes = await supabase.from("strategy_config").select("trading_enabled, trading_enabled_us, trading_enabled_india, max_order_notional, max_order_notional_usd, max_order_notional_inr, max_daily_notional_usd, max_daily_notional_inr, max_daily_trades, robinhood_mcp_enabled").limit(1).maybeSingle();
+      cfg = cfgRes.data;
       const marketFlag = market === "india" ? (cfg as any)?.trading_enabled_india : (cfg as any)?.trading_enabled_us;
       if (!(cfg as any)?.trading_enabled) {
         return NextResponse.json({ error: "Live trading is disabled (strategy_config.trading_enabled = false)" }, { status: 403 });
@@ -137,7 +142,6 @@ export async function POST(req: NextRequest) {
       if (!acct.ok) return NextResponse.json({ error: acct.error }, { status: 403 });
 
       // Fresh quote → notional cap + price-drift re-check.
-      let freshPrice: number | null = null;
       try {
         if (market === "india") { const q = await fetchIndiaQuote(symbol); freshPrice = q?.price ?? null; }
         else { const q = await getQuote(symbol, supabase); freshPrice = q?.price ?? null; }
@@ -236,14 +240,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Order rate limit reached (${recentOrders}/${ORDER_RATE_LIMIT} in the last 10 min). Try again shortly.` }, { status: 429 });
     }
 
-    const { data: orderRow, error: insErr } = await supabase.from("broker_orders").insert({
-      proposal_id, market, broker: broker.id, broker_env: orderEnv,
-      symbol, side, qty, order_type: "market", status: "pending_submit", approved_by_user: true,
-    }).select("id").single();
-    // The partial unique index (migration 094) makes a concurrent double-click
-    // fail here instead of double-submitting.
-    if (insErr) return NextResponse.json({ error: `Could not open order row (possible duplicate submit): ${insErr.message}` }, { status: 409 });
-    const orderId = (orderRow as any)?.id;
+    // Atomic daily-budget reservation + durable pending row (G4/G5/G6). Under a
+    // per-(day,market) advisory lock this serializes concurrent live orders,
+    // enforces the per-market daily trade COUNT + cumulative NOTIONAL (BUY only, so
+    // exits are never blocked), and inserts the pending broker_orders row. The
+    // partial unique dup-submit index (migration 094) still fires inside the RPC on
+    // a duplicate proposal. estimated_notional is in the market currency (freshPrice
+    // is USD for US, INR for India).
+    const isIndiaMkt = market === "india";
+    const estNotional = (orderEnv === "live" && typeof freshPrice === "number") ? qty * freshPrice : null;
+    const { data: reservedId, error: resErr } = await supabase.rpc("reserve_live_order_budget", {
+      p_proposal_id: proposal_id, p_market: market, p_broker: broker.id, p_broker_env: orderEnv,
+      p_symbol: symbol, p_side: side, p_qty: qty, p_order_type: "market", p_limit_price: null,
+      p_estimated_notional: estNotional, p_currency: isIndiaMkt ? "INR" : "USD",
+      p_max_daily_trades: (cfg as any)?.max_daily_trades ?? null,
+      p_max_daily_notional: isIndiaMkt ? ((cfg as any)?.max_daily_notional_inr ?? null) : ((cfg as any)?.max_daily_notional_usd ?? null),
+    });
+    if (resErr) {
+      const m = resErr.message || "";
+      if (m.includes("daily_trade_limit")) return NextResponse.json({ error: `Daily live-order limit reached — ${m}` }, { status: 429 });
+      if (m.includes("daily_notional_limit")) return NextResponse.json({ error: `Daily notional cap reached — ${m}` }, { status: 403 });
+      if ((resErr as any).code === "23505" || m.toLowerCase().includes("duplicate")) return NextResponse.json({ error: `Could not open order row (possible duplicate submit): ${m}` }, { status: 409 });
+      return NextResponse.json({ error: `Could not reserve order budget: ${m}` }, { status: 500 });
+    }
+    const orderId = reservedId as unknown as number;
 
     const result = await broker.submitOrder({ symbol, side, qty, env: orderEnv });
     if (!result.ok) {

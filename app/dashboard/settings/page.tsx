@@ -84,6 +84,9 @@ export default function SettingsPage() {
   // = that market's live orders fail closed until a cap is set.
   const [usdCap, setUsdCap] = useState<string>("");
   const [inrCap, setInrCap] = useState<string>("");
+  const [dailyUsd, setDailyUsd] = useState<string>("");
+  const [dailyInr, setDailyInr] = useState<string>("");
+  const [maxDailyTrades, setMaxDailyTrades] = useState<string>("");
   const [savingCaps, setSavingCaps] = useState(false);
   const loadRhMcp = () => {
     fetch("/api/robinhood-mcp/status").then(r => r.json()).then(setRhMcp).catch(() => {});
@@ -175,6 +178,9 @@ export default function SettingsPage() {
         if (d.active_account_india) setActiveAccountIndia(d.active_account_india);
         if (d.max_order_notional_usd != null) setUsdCap(String(d.max_order_notional_usd));
         if (d.max_order_notional_inr != null) setInrCap(String(d.max_order_notional_inr));
+        if (d.max_daily_notional_usd != null) setDailyUsd(String(d.max_daily_notional_usd));
+        if (d.max_daily_notional_inr != null) setDailyInr(String(d.max_daily_notional_inr));
+        if (d.max_daily_trades != null) setMaxDailyTrades(String(d.max_daily_trades));
       })
       .catch(() => {});
 
@@ -256,19 +262,28 @@ export default function SettingsPage() {
   }
 
   async function saveOrderCaps() {
-    // Empty field → null → that market fails closed (refuses live orders) until set.
-    const usd = usdCap.trim();
-    const inr = inrCap.trim();
-    if ((usd !== "" && !(Number(usd) > 0)) || (inr !== "" && !(Number(inr) > 0))) {
-      setToast("Caps must be positive numbers (or blank to disable that market)");
+    // Empty per-order field → null → that market fails closed (refuses live orders).
+    // Empty daily field / trade count → null → that daily limit is simply not enforced.
+    const fields: [string, string][] = [["usd", usdCap], ["inr", inrCap], ["dailyUsd", dailyUsd], ["dailyInr", dailyInr]];
+    for (const [, v] of fields) {
+      if (v.trim() !== "" && !(Number(v) > 0)) {
+        setToast("Amounts must be positive numbers (or blank)");
+        setTimeout(() => setToast(""), 3000);
+        return;
+      }
+    }
+    if (maxDailyTrades.trim() !== "" && !(Number.isInteger(Number(maxDailyTrades)) && Number(maxDailyTrades) >= 1)) {
+      setToast("Max daily trades must be a positive whole number (or blank)");
       setTimeout(() => setToast(""), 3000);
       return;
     }
+    const num = (s: string) => (s.trim() === "" ? null : Number(s));
     setSavingCaps(true);
     try {
       await patchRisk({
-        max_order_notional_usd: usd === "" ? null : Number(usd),
-        max_order_notional_inr: inr === "" ? null : Number(inr),
+        max_order_notional_usd: num(usdCap), max_order_notional_inr: num(inrCap),
+        max_daily_notional_usd: num(dailyUsd), max_daily_notional_inr: num(dailyInr),
+        max_daily_trades: num(maxDailyTrades),
       }, "Live order limits saved");
       setToast("Live order limits saved");
       setTimeout(() => setToast(""), 2500);
@@ -794,6 +809,23 @@ export default function SettingsPage() {
               <div style={{ flex: "1 1 160px" }}>
                 <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "8px" }}>India cap (INR ₹)</label>
                 <input type="number" min="0" step="1" value={inrCap} onChange={e => setInrCap(e.target.value)} placeholder="blank = India live disabled" style={sel} />
+              </div>
+            </div>
+            <div style={{ fontSize: "12px", color: T.textSub, marginBottom: "10px" }}>
+              <strong>Daily limits</strong> — cumulative caps across all live BUY orders in one day (per market). SELL exits are never blocked. Blank = that limit is not enforced (per-order cap + kill switch still apply).
+            </div>
+            <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" as const, marginBottom: "14px" }}>
+              <div style={{ flex: "1 1 120px" }}>
+                <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "8px" }}>Daily US ($)</label>
+                <input type="number" min="0" step="1" value={dailyUsd} onChange={e => setDailyUsd(e.target.value)} placeholder="e.g. 150" style={sel} />
+              </div>
+              <div style={{ flex: "1 1 120px" }}>
+                <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "8px" }}>Daily India (₹)</label>
+                <input type="number" min="0" step="1" value={dailyInr} onChange={e => setDailyInr(e.target.value)} placeholder="e.g. 12000" style={sel} />
+              </div>
+              <div style={{ flex: "1 1 120px" }}>
+                <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "8px" }}>Max trades / day</label>
+                <input type="number" min="1" step="1" value={maxDailyTrades} onChange={e => setMaxDailyTrades(e.target.value)} placeholder="e.g. 3" style={sel} />
               </div>
             </div>
             <button onClick={saveOrderCaps} disabled={savingCaps}
