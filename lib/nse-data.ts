@@ -140,3 +140,44 @@ export async function fetchNseOptionChain(symbol = "NIFTY"): Promise<OptionFlow 
     topStrikes: strikes.slice(0, 8),
   };
 }
+
+// ── India "smart money" (the closest India analog to US Congress/insider feeds).
+// India has no politician-trade disclosure; institutional flows are the signal.
+
+// FII/DII net cash-market flows for the latest session (₹ crore). Foreign vs
+// domestic institutional net buy/sell — a widely-watched India risk-appetite read.
+export type FiiDiiFlow = { category: string; buy: number; sell: number; net: number; date: string | null };
+export async function fetchNseFiiDii(): Promise<FiiDiiFlow[]> {
+  const j = await nseApi(`/api/fiidiiTradeReact`);
+  const rows = Array.isArray(j) ? j : (j?.data ?? []);
+  return (Array.isArray(rows) ? rows : []).map((r: any) => ({
+    category: r.category ?? r.clientType ?? "—",
+    buy: parseFloat(r.buyValue ?? r.grossPurchase ?? "0") || 0,
+    sell: parseFloat(r.sellValue ?? r.grossSales ?? "0") || 0,
+    net: parseFloat(r.netValue ?? "0") || (parseFloat(r.buyValue ?? "0") - parseFloat(r.sellValue ?? "0")) || 0,
+    date: r.date ?? null,
+  }));
+}
+
+// Block/bulk deals — large single trades by promoters, MFs, FIIs, banks. The
+// India stand-in for "notable insider/institutional buys". Advisory only.
+export type BigDeal = { symbol: string; client: string; side: "buy" | "sell"; qty: number; price: number; date: string | null; kind: "block" | "bulk" };
+export async function fetchNseBigDeals(): Promise<BigDeal[]> {
+  const map = (rows: any[], kind: "block" | "bulk"): BigDeal[] =>
+    (Array.isArray(rows) ? rows : []).map((r: any): BigDeal => ({
+      symbol: r.symbol ? `${r.symbol}.NS` : "",
+      client: r.clientName ?? r.name ?? "—",
+      side: /buy|purchase/i.test(String(r.buySell ?? r.dealType ?? "")) ? "buy" : "sell",
+      qty: parseFloat(r.quantityTraded ?? r.qty ?? "0") || 0,
+      price: parseFloat(r.tradePrice ?? r.watp ?? r.price ?? "0") || 0,
+      date: r.date ?? r.BD_DT_DATE ?? null,
+      kind,
+    })).filter((d) => d.symbol);
+  const [block, bulk] = await Promise.all([
+    nseApi(`/api/block-deal`).catch(() => null),
+    nseApi(`/api/bulk-deal`).catch(() => null),
+  ]);
+  const blockRows = (block?.data ?? block) ?? [];
+  const bulkRows = (bulk?.data ?? bulk) ?? [];
+  return [...map(blockRows, "block"), ...map(bulkRows, "bulk")].slice(0, 100);
+}
