@@ -68,16 +68,17 @@ async function refreshViaMcp(): Promise<{ ok: boolean; error?: string; equity?: 
       portfolioValue = num(/"portfolio_value"\s*:\s*"?([\d.]+)"?/);
     }
 
-    // Positions — structured array preferred.
-    let positionsJson: any = null;
-    if (posObj) {
-      positionsJson = Array.isArray(posObj?.positions) ? posObj.positions
-        : Array.isArray(posObj?.results) ? posObj.results
-        : Array.isArray(posObj) ? posObj
-        : posRaw ?? null;
-    } else {
-      positionsJson = posRaw ?? null;
-    }
+    // Positions — get_equity_positions returns { data: { positions: [...] } }; unwrap it
+    // to the real array (symbol/quantity/average_buy_price per position). Never store the
+    // raw {content:[{text}]} MCP wrapper.
+    const posData = posObj?.data ?? posObj;
+    const positionsJson: any =
+      Array.isArray(posData?.positions) ? posData.positions
+      : Array.isArray(posData?.results) ? posData.results
+      : Array.isArray(posData) ? posData
+      : Array.isArray(posObj?.positions) ? posObj.positions
+      : Array.isArray(posObj) ? posObj
+      : null;
 
     // Guard: a transient empty fetch must not overwrite a previously-good snapshot
     // with nulls (that's how the prior IBIT position + NAV got wiped during debugging).

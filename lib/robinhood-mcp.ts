@@ -586,10 +586,11 @@ export async function queryRobinhoodAccount(account?: string): Promise<{ ok: boo
   const sess = await openSession(tk.token);
   if (!sess.ok) return { ok: false, error: sess.error };
   const accounts = await mcpRpc(tk.token, "tools/call", { name: "get_accounts", arguments: {} }, sess.sessionId);
-  const positions = await mcpRpc(tk.token, "tools/call", { name: "get_equity_positions", arguments: {} }, sess.sessionId);
 
-  // Resolve which account to price: the requested trading account if present in the
-  // list, else the agentic-allowed account, else the first.
+  // Resolve which account to price/hold: the requested trading account if present in the
+  // list, else the agentic-allowed account, else the first. get_portfolio AND
+  // get_equity_positions are account-scoped — a bare call returns the default account,
+  // which is why the agentic account's NAV/positions came back empty.
   const acctList = (() => {
     const o = mcpToolJson(accounts.result?.content ?? accounts.result);
     return o?.data?.accounts ?? o?.accounts ?? [];
@@ -598,6 +599,8 @@ export async function queryRobinhoodAccount(account?: string): Promise<{ ok: boo
     (account && acctList.find((a: any) => String(a.rhs_account_number) === account || String(a.account_number) === account)?.rhs_account_number)
     ?? acctList.find((a: any) => a.agentic_allowed)?.rhs_account_number
     ?? acctList[0]?.rhs_account_number;
+
+  const positions = await mcpRpc(tk.token, "tools/call", { name: "get_equity_positions", arguments: acctFor ? { account_number: acctFor } : {} }, sess.sessionId);
   const portfolio = acctFor
     ? await mcpRpc(tk.token, "tools/call", { name: "get_portfolio", arguments: { account_number: acctFor } }, sess.sessionId).catch(() => ({ result: null }))
     : { result: null };
