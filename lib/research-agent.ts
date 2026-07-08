@@ -12,6 +12,8 @@ import { computeWeightedAnalystScore, isThinEvidence, type DimensionRecord } fro
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
+import { fetchUsOverview } from "@/lib/data/fundamentals";
+import { scoreEdgarInsider } from "@/lib/data/edgar-insider";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
 // US, ^NSEI for India) — computed once per market per process, not per symbol.
@@ -87,6 +89,16 @@ async function scoreInsider(symbol: string, avKey: string): Promise<{ score: num
   } catch {
     return { score: 50, summary: "Insider data fetch failed.", available: false };
   }
+}
+
+// Insider resolver: SEC EDGAR Form 4 (free, official, unlimited) is primary;
+// Alpha Vantage INSIDER_TRANSACTIONS is the fallback only when EDGAR has no
+// usable data (non-US symbol, fetch failure, or too few filings). Moving the
+// primary off AV frees one AV 25/day slot per US equity researched.
+async function resolveInsider(symbol: string, avKey: string): Promise<{ score: number; summary: string; available: boolean }> {
+  const edgar = await scoreEdgarInsider(symbol).catch(() => null);
+  if (edgar?.available) return edgar;
+  return scoreInsider(symbol, avKey);
 }
 
 const KNOWN_ETFS = new Set([
@@ -797,8 +809,18 @@ export async function processSymbol(
   const [socialResult, optionsResult, insiderResult, avOverview, candles] = await Promise.all([
     india ? Promise.resolve(null) : fetchSocialSentiment(symbol).catch(() => null),
     (india || isEtf) ? Promise.resolve(null) : fetchOptionsSignal(symbol).catch(() => null),
-    (india || isEtf) ? Promise.resolve(null) : scoreInsider(symbol, avKey).catch(() => null),
-    india ? fetchIndiaOverview(symbol).catch(() => ({})) : fetchAVOverview(symbol, avKey).catch(() => ({})),
+    // Insider: SEC EDGAR Form 4 primary (free, official, unlimited) → Alpha
+    // Vantage INSIDER_TRANSACTIONS fallback. Frees an AV 25/day slot per symbol.
+    (india || isEtf) ? Promise.resolve(null) : resolveInsider(symbol, avKey).catch(() => null),
+    india
+      ? fetchIndiaOverview(symbol).catch(() => ({}))
+      // ETFs have no company fundamentals — scoreFundamentals uses the ETF
+      // baseline via isEtf, so skip the fetch entirely (don't waste an FMP/AV
+      // call). US equities: FMP (own 250/day budget) → Alpha Vantage OVERVIEW
+      // fallback, mapped to the same OVERVIEW shape scoreFundamentals reads.
+      : isEtf
+        ? Promise.resolve({})
+        : fetchUsOverview(symbol, () => fetchAVOverview(symbol, avKey)).then(r => r.overview).catch(() => ({})),
     india
       ? fetchIndiaCandles(symbol).catch(() => [] as Candle[])
       // US candles: Massive → EODHD → Twelve Data → Alpha Vantage (fallback).
