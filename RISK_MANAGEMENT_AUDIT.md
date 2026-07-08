@@ -24,7 +24,7 @@ verified. Only controls whose fix actually shipped are upgraded. See §7 for the
 | Per-order live controls (US) | B | **B+** | G7: equity-fallback cap requires a fresh (≤30 min) snapshot; G2: per-market USD cap (`max_order_notional_usd`), Settings-editable. |
 | Per-order live controls (India) | D | **B** | G2/G10: INR notional cap + fresh-quote check (fail-closed); G9: kill-switch + trading_enabled gate. |
 | Portfolio construction limits | B paper / F live | **B paper / F live** | Unchanged — G3 (port paper limits to live Gateway) not started. |
-| Data-integrity (garbage-in) | C (in progress) | **C (measure-only)** | `v_decision_quality` view live + golden-tested, but agents don't act on it yet (G1/Phase 1B deferred). |
+| Data-integrity (garbage-in) | C (in progress) | **B− (live BUY gated)** | G1: live BUY now refused when the linked decision's `data_confidence` < 0.5 / `quality_status != ok` (migration 108). Learner-side auto-exclude still deferred on US calibration → not yet A. |
 
 **Overall: paper B+, live C → live B−.** India now has a notional + kill-switch gate, daily
 count/notional is atomic, and the equity fallback is freshness-bounded. Live is held below
@@ -157,12 +157,18 @@ Shipped to `main` (Vercel), migration-first (each migration applied + verified b
   CRITICAL alert (migration 106). No auto-cancel (deterministic broker cancel not wired).
 - **G11 — FIXED.** Live SELL fallback scoped to the resolved account + ≤30 min freshness; fail-closed.
 - **G12 — COVERED** by G2/G7 (Gateway derives money limits from config caps / fresh equity, never paper NAV; Kite fail-closes).
-- **G1 — MEASURE-ONLY.** `v_decision_quality` view live + golden-tested (migration 104). Live-BUY
-  enforcement deferred: needs `trade_proposals.signal_id` bigint→uuid migration first, and moderate
-  auto-flag is not yet calibrated for US (would flag 100% of pre-fix US decisions). See
-  `features/learning-integrity`.
-- **G3 — NOT STARTED.** Port paper portfolio-construction limits (gross/sector/name/vol/corr) onto the
-  live Gateway. Largest remaining item; low current impact (small live book).
+- **G1 — LIVE BUY ENFORCED.** Migration 108 fixed `trade_proposals.signal_id` bigint→uuid (was a
+  latent bug — the trader wrote a uuid into a bigint column, so proposals never linked). The
+  Execution Gateway now refuses a live BUY when the linked decision's `data_confidence` < 0.5,
+  `quality_status != 'ok'`, or there's no linked quality record; owner override `acceptLowQuality:true`.
+  The **learner** side (auto-exclude tainted closed trades) is still deferred pending US calibration —
+  the view stays measure-only for the learner; only the deterministic live-BUY gate is enforced.
+- **G3 — BLOCKED (data prerequisite).** The %-of-NAV limits (gross/sector/name/vol) can't be computed:
+  `live_account_snapshots.equity` is NULL (the Robinhood MCP account response doesn't expose portfolio
+  value under the parsed field names) and positions carry no sector. Prerequisite before G3: capture live
+  equity (confirm what RH's account endpoint returns via an authed snapshot refresh) + resolve per-position
+  sector — OR reformulate live limits in absolute-notional terms (partly covered already by the per-order +
+  daily notional caps). Not completable headless.
 
-Remaining: **G3** (live portfolio limits) and **G1** (signal-quality live gate + the uuid migration).
-Both are large; G1's type migration on a populated live table needs careful, un-rushed handling.
+Remaining: **G3** (blocked on live-NAV capture — see above) and **self-healing Part B** (health-triage
+agent, designed in `features/self-healing-agent`, not built).
