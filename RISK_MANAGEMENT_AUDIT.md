@@ -11,21 +11,26 @@ counts here.
 
 ## 1. Scorecard
 
-| Layer | Grade | Enforced where | Notes |
-|---|---|---|---|
-| Circuit breakers (kill switches) | B | `lib/kill-switches.ts`; called in `app/api/broker/orders/route.ts:131` (live) + `app/api/agents/trader/route.ts:93,389` + paper-trade | Per-market and fail-closed at submit, but current inputs are paper NAV/trade outcomes (`lib/kill-switches.ts:35-41`), not confirmed live broker equity/P&L; disabling `trading_enabled` does not cancel/flag existing resting broker orders. |
-| Operational safety | B | order routes | Strong owner-gate/CSRF/no-cron/needs-reconcile basics, but live count/rate checks are read-then-insert and not atomic (`app/api/broker/orders/route.ts:213-227`, `app/api/kite/order/route.ts:67-89`); daily live trade count/exposure is not enforced; Kite route bypasses kill switch/trading_enabled. |
-| Position sizing | B paper / C live | paper-trade + trader | Paper path uses evidence-bound sizing; live Gateway does not recompute `max_position_pct`/Kelly before submit, and direct Kite live route accepts arbitrary `quantity` with no NAV-aware size cap. |
-| Exit management | B paper / D live | `app/api/agents/position-monitor/route.ts` | Paper stop/target/trailing exists; no live broker stop/target/cancel/replace control is enforced, so live positions rely on manual/sync follow-up. |
-| Per-order live controls (US) | B | `app/api/broker/orders/route.ts:153-167` | `max_order_notional=50` fail-closed and quote/drift/sell checks are good; grade capped because fallback equity snapshot has no freshness bound and the cap is a single USD-shaped field. |
-| Per-order live controls (India) | D | `app/api/kite/order/route.ts` | Owner-gate + rate-limit + long-only + confirm exist, but **NO notional cap**, no fresh quote/notional check, and no kill-switch/trading_enabled check. |
-| Portfolio construction limits | B paper / F live | `app/api/agents/paper-trade/route.ts` + `lib/risk-profiles.ts` only | Gross/sector/name exposure, pairwise-corr, portfolio-vol enforced on PAPER path; **zero enforcement on live trader/Gateway today**. |
-| Data-integrity (garbage-in) | C (in progress) | — | No guard stops a confidently-wrong signal (fake-100) from sizing a real trade; addressed by `features/learning-integrity` draft. |
+Two grade columns: **ChatGPT (pre-fix)** = the assessment ChatGPT recorded on the code as
+it was; **Post-fix (Claude 2026-07-08)** = after this session's G2/G4–G12 fixes shipped +
+verified. Only controls whose fix actually shipped are upgraded. See §7 for the fix list.
 
-**Overall: paper B+, live C.** The most important owner-gate/CSRF/long-only/US notional
-rails exist, but live-money safety is not yet at "B" because India has no notional cap,
-portfolio limits are paper-only, daily count/exposure gates are non-atomic or absent, and
-kill-switch math is driven by paper state rather than confirmed live broker P&L.
+| Layer | ChatGPT (pre-fix) | Post-fix | What changed |
+|---|---|---|---|
+| Circuit breakers (kill switches) | B | **A−** | G8: kill switch now flags resting live orders for review; G9: Kite path now calls `checkKillSwitches`. Held at A− because kill-switch math still uses paper NAV/outcomes, not confirmed live broker P&L. |
+| Operational safety | B | **A−** | G4/G5/G6: daily count + cumulative notional now enforced atomically via `reserve_live_order_budget()` (advisory-locked, closes the read-then-insert race); G9: Kite no longer bypasses kill-switch/trading_enabled. |
+| Position sizing | B paper / C live | **B paper / B− live** | Live sizing now bounded by per-order + daily notional caps (per market, fail-closed). Still B− (not B) because the Gateway doesn't recompute Kelly/`max_position_pct` from live equity. |
+| Exit management | B paper / D live | **B paper / D live** | Unchanged — no live broker stop/target/cancel-replace control added. |
+| Per-order live controls (US) | B | **B+** | G7: equity-fallback cap requires a fresh (≤30 min) snapshot; G2: per-market USD cap (`max_order_notional_usd`), Settings-editable. |
+| Per-order live controls (India) | D | **B** | G2/G10: INR notional cap + fresh-quote check (fail-closed); G9: kill-switch + trading_enabled gate. |
+| Portfolio construction limits | B paper / F live | **B paper / F live** | Unchanged — G3 (port paper limits to live Gateway) not started. |
+| Data-integrity (garbage-in) | C (in progress) | **C (measure-only)** | `v_decision_quality` view live + golden-tested, but agents don't act on it yet (G1/Phase 1B deferred). |
+
+**Overall: paper B+, live C → live B−.** India now has a notional + kill-switch gate, daily
+count/notional is atomic, and the equity fallback is freshness-bounded. Live is held below
+B by three unshipped items: **G3** (portfolio-construction limits are still paper-only),
+no **live stop/target** control (exit management D live), and **G1** signal-quality not yet
+enforced on live BUY.
 
 ## 2. Verified facts (prod, 2026-07-08)
 - `strategy_config`: `max_order_notional=50`, `max_position_pct=5`, `position_size_pct=15`,
