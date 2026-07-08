@@ -13,7 +13,7 @@ export async function GET() {
   const gate = await requireOwner();
   if (gate) return gate;
   const svc = createServiceClient();
-  const { data } = await svc.from("health_triage").select("content, model, open_alerts, critical_alerts, ts").order("ts", { ascending: false }).limit(1).maybeSingle();
+  const { data } = await svc.from("health_triage").select("content, model, open_alerts, critical_alerts, structured_issues, ts").order("ts", { ascending: false }).limit(1).maybeSingle();
   return NextResponse.json({ triage: data ?? null });
 }
 
@@ -65,9 +65,9 @@ export async function POST(req: NextRequest) {
   const errText = (runs ?? []).map((r: any) => `- ${r.agent_type}${r.market ? `(${r.market})` : ""}: ${r.error ?? "error"}`.slice(0, 250)).join("\n") || "none";
   const budgetText = (budgets ?? []).map((b: any) => `${b.provider ?? "?"}: ${b.calls_today ?? b.calls ?? "?"} calls`).join(", ").slice(0, 800) || "n/a";
 
-  const prompt = `You are the site-reliability engineer for an automated trading research app (Kairos). Using ONLY the health signals below, produce a concise triage. For each OPEN ISSUE give: one-line root cause, blast radius (what it affects), and a concrete suggested fix. Rank most-urgent first. If something is expected/benign (e.g. a daily broker token expiry), say so. Keep it under ~200 words.
+  const prompt = `You are the site-reliability engineer for an automated trading research app (Kairos). Using ONLY the health signals below, produce a structured triage in JSON.
 
-HARD RULES: advisory only. Do NOT instruct any trade, do NOT propose changing money limits, weights, model config, credentials, or code autonomously — only describe the human-actionable fix. Do not invent issues not present below.
+HARD RULES: advisory only. Do NOT instruct any trade, do NOT propose changing money limits, weights, model config, credentials, or code autonomously — only describe the human-actionable fix. Do not invent issues not present below. If something is expected/benign (e.g. a daily broker token expiry), include it with severity "info".
 
 OPEN ALERTS (${openAlerts.length}, ${criticalCount} critical):
 ${alertsText}
@@ -79,16 +79,45 @@ DATA QUALITY (v_decision_quality): ${qualityText}
 
 PROVIDER BUDGETS (7d): ${budgetText}
 
-Write the triage now.`;
+Output ONLY valid JSON matching this exact schema (no markdown, no preamble):
+{
+  "summary": "one-sentence overall system status",
+  "issues": [
+    {
+      "issue_key": "stable-kebab-case-key matching the agent_alerts issue_key if one exists",
+      "severity": "critical|warn|info",
+      "root_cause": "one-line root cause",
+      "blast_radius": "what is affected",
+      "suggested_fix": "concrete human-actionable step"
+    }
+  ]
+}
+
+Rank issues most-urgent first. If no issues, return an empty issues array.`;
 
   let content = "";
+  let structuredIssues: unknown[] | null = null;
   let model = "deepseek-v4-flash";
   let tokensIn = 0, tokensOut = 0;
   try {
     model = await getConfiguredModel(svc, "health-triage", "deepseek-v4-flash");
-    const res = await callLLM({ task: "summarize", prompt, model, maxTokens: 500, agentLabel: "health-triage" });
-    content = res.text?.trim() ?? "";
+    const res = await callLLM({ task: "summarize", prompt, model, maxTokens: 700, agentLabel: "health-triage" });
+    const raw = res.text?.trim() ?? "";
     tokensIn = res.tokensIn ?? 0; tokensOut = res.tokensOut ?? 0;
+
+    // Parse structured JSON; fall back to storing raw text as summary if parse fails.
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        content = parsed.summary ?? raw;
+        structuredIssues = Array.isArray(parsed.issues) ? parsed.issues : null;
+      } else {
+        content = raw;
+      }
+    } catch {
+      content = raw;
+    }
   } catch (e) {
     await svc.from("agent_runs").insert({ agent_type: "health_triage", status: "error", error: String(e), started_at: startedAt, completed_at: new Date().toISOString(), trigger_source: isCron ? "cron" : "manual" });
     return NextResponse.json({ ok: false, error: `LLM unavailable: ${String(e)}` }, { status: 200 });
@@ -98,7 +127,7 @@ Write the triage now.`;
     return NextResponse.json({ ok: false, error: "empty triage" }, { status: 200 });
   }
 
-  await svc.from("health_triage").insert({ content, model, open_alerts: openAlerts.length, critical_alerts: criticalCount, tokens_input: tokensIn, tokens_output: tokensOut });
+  await svc.from("health_triage").insert({ content, model, open_alerts: openAlerts.length, critical_alerts: criticalCount, tokens_input: tokensIn, tokens_output: tokensOut, structured_issues: structuredIssues ?? undefined });
   await svc.from("agent_runs").insert({
     agent_type: "health_triage", status: "done",
     result_summary: `Triaged ${openAlerts.length} open alert(s), ${criticalCount} critical`,
@@ -106,5 +135,5 @@ Write the triage now.`;
     started_at: startedAt, completed_at: new Date().toISOString(), trigger_source: isCron ? "cron" : "manual",
   });
 
-  return NextResponse.json({ ok: true, content, model, open_alerts: openAlerts.length, critical_alerts: criticalCount });
+  return NextResponse.json({ ok: true, content, model, open_alerts: openAlerts.length, critical_alerts: criticalCount, structured_issues: structuredIssues ?? [] });
 }

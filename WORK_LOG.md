@@ -20,6 +20,27 @@
 
 ---
 
+## ✅ Session 2026-07-08 — Strategic Report Tier-1 + Tier-2 (all built)
+
+> User mandated building all unbuilt items from the Strategic Intelligence Report. This session completed Tier-1 (prompt caching, ticker filter, prompt versioning, DeepSeek data gate) and Tier-2 (Agent Evolution discovery_source, B3 structured triage, Data Provider Abstraction, Learning Integrity Phase 1B).
+
+| Item | What was built | Migrations |
+|---|---|---|
+| #1 Prompt caching | `lib/llm-router.ts`: `callClaude`/`runClaudeAgentLoop` pass `cache_control: ephemeral` on system blocks; `LLMResult` tracks `cacheWriteTokens`/`cacheReadTokens`; cost formula uses 1.25×/0.10× cache rates | — |
+| #2 Ticker filter | `lib/ticker-filter.ts` (NEW): `filterChunksByTicker()` + `chunkMentionsTicker()` — entity-level RAG chunk validation, strips exchange suffixes (.NS/.BO) | — |
+| #3 Prompt versioning | `agent_config` gains `prompt_version/hash/notes/updated_at`; `agent_runs` gains `prompt_version/hash` | 113 |
+| #4 DeepSeek data gate | `lib/research-agent.ts`: model = `claude-haiku` when `technical`/`fundamental` dims included, `deepseek-v4-flash` fallback when APIs returned nothing | — |
+| #5 Learning Integrity Phase 1B | `paper_trades`/`broker_orders` gain 5 taint columns; `execute_paper_fill` RPC auto-stamps quality at fill time from `v_decision_quality`; `features.quality` structured per-dim state logged on every `decision_observations` row | 116, 117 |
+| #6 Agent Evolution — discovery_source | `SymbolEntry` gains `discovery_source` type; all 9 sources tagged in `gatherSymbols()`; `decision_observations` gains `discovery_source` column + index; research inserts it per signal | 114 |
+| #7 B3 structured triage | `health-triage` route now requests JSON `{summary, issues[{issue_key, severity, root_cause, blast_radius, suggested_fix}]}`; `health_triage` table gains `structured_issues jsonb`; GET returns it | 115 |
+| #8 Data Provider Abstraction | `lib/data/provider-interface.ts` (NEW): `DataProvider` interface, `OverviewResult/CandleResult/NewsResult` types, `AlphaVantageProvider` implementation, `getProvider()`/`tryProviders()` registry | — |
+
+**Remaining unbuilt (Tier-3 require external API keys, Tier-4 needs infra decisions):**
+- Tier-3: gte-reranker (HuggingFace key), voyage-3.5 trade RAG (VOYAGE_API_KEY), WandB Weave binary filter (WANDB_API_KEY), Contextual Retrieval (depends on voyage)
+- Tier-4: Qdrant, OpenTelemetry, LangGraph 1.0, LlamaIndex, A2A typed messaging
+
+---
+
 ## ✅ Session 2026-07-07 (cont'd) — Agent Mind (all 3 phases) + learning_priors seed
 
 > User approved the Agent Mind feature (surface what the agents believe, how it evolves, macro-to-holdings read). Also seeded/cleaned learning_priors.

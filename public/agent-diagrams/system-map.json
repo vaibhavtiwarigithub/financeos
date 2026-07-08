@@ -502,6 +502,27 @@
       "nodeId": "HEALTH",
       "label": "Health-Triage agent (self-healing Part B)",
       "reason": "Read-only LLM SRE over agent_alerts/agent_runs/v_decision_quality/provider budgets; writes advisory triage to health_triage + dashboard System Health card. Model owner-selectable in Settings (agent_config). Hard boundary: no autonomous change to money limits, config, weights, orders, or code — diagnose + suggest only."
+    },
+    {
+      "date": "2026-07-08",
+      "event": "changed",
+      "nodeId": "HEALTH",
+      "label": "Health-Triage (B3 structured issues)",
+      "reason": "Triage LLM now outputs JSON {summary, issues[{issue_key, severity, root_cause, blast_radius, suggested_fix}]} instead of free-text blob. Stored in health_triage.structured_issues jsonb (migration 115). Enables future B4 apply-button UI where each issue can be actioned individually."
+    },
+    {
+      "date": "2026-07-08",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "ResearchAgent — discovery attribution + DeepSeek gate + quality logging",
+      "reason": "Strategic Intelligence Report Tier-1/Tier-2: (1) All 9 symbol entry paths now tagged with DiscoverySource enum and stored in decision_observations.discovery_source (migration 114) — LearnerAgent can attribute outcomes to where symbols came from. (2) DeepSeek data gate: model is claude-haiku-4-5-20251001 when AV/FinancialDatasets returned real data (≥15 candles or real fundamentals); falls back to deepseek-v4-flash only when both structured APIs returned empty — prevents spending premium LLM tokens on thin-data symbols. (3) features.quality structured per-dimension logging in every decision_observations row: {state: ok|missing|degraded|inapplicable} per dimension, eliminates string-heuristic matching in v_decision_quality for new rows."
+    },
+    {
+      "date": "2026-07-08",
+      "event": "changed",
+      "nodeId": "TRADER",
+      "label": "PaperTrader — learning integrity taint stamp at fill",
+      "reason": "Learning Integrity Phase 1B (measure-only): execute_paper_fill RPC now joins v_decision_quality by signal_id inside the same transaction and stamps 5 taint columns (data_confidence, quality_status, tainted, taint_reason, excluded_from_learning) on paper_trades/broker_orders at fill time (migrations 116/117). Taint rule: quality_status=ok AND data_confidence<0.5 → tainted=true. quality_status=unknown → never auto-tainted in Phase 1B. All excluded_from_learning=false until Phase 2 gates learning on clean data. Atomic: trade and quality metadata land together or both fail."
     }
   ]
 }

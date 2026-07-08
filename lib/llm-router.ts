@@ -60,6 +60,11 @@ export interface LLMResult {
   model: string
   tokensIn: number
   tokensOut: number
+  // Anthropic prompt-caching breakdown. Non-zero only for Claude calls with cache_control.
+  // cacheWriteTokens: charged at 1.25× input rate (first write fills the cache).
+  // cacheReadTokens:  charged at 0.10× input rate (subsequent reads — the big saving).
+  cacheWriteTokens: number
+  cacheReadTokens: number
   costUsd: number
   durationMs: number
 }
@@ -144,7 +149,7 @@ function getLangfuse() {
   return _langfuse as any
 }
 
-async function dispatchProvider(model: string, opts: LLMCallOpts): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+async function dispatchProvider(model: string, opts: LLMCallOpts): Promise<{ text: string; tokensIn: number; tokensOut: number; cacheWriteTokens?: number; cacheReadTokens?: number }> {
   if (model.startsWith("claude")) return callClaude(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
   if (model.startsWith("deepseek")) return callDeepSeek(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
   if (GROQ_MODELS.has(model)) return callGroq(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
@@ -155,7 +160,7 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
   // Resolve a tier alias ("fast"/"reasoning") to its concrete model.
   let model = resolveModel(opts.model ?? MODEL_ROUTING[opts.task] ?? "claude-sonnet-4-6")
   const start = Date.now()
-  let tokensIn = 0, tokensOut = 0, text = "", success = true, errorMsg = ""
+  let tokensIn = 0, tokensOut = 0, cacheWriteTokens = 0, cacheReadTokens = 0, text = "", success = true, errorMsg = ""
 
   const lf = getLangfuse()
   const trace = lf?.trace({
@@ -196,6 +201,8 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
     text = result.text
     tokensIn = result.tokensIn
     tokensOut = result.tokensOut
+    cacheWriteTokens = result.cacheWriteTokens ?? 0
+    cacheReadTokens = result.cacheReadTokens ?? 0
   } catch (err) {
     success = false
     errorMsg = String(err)
@@ -204,12 +211,16 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
   } finally {
     const durationMs = Date.now() - start
     const [inRate, outRate] = priceFor(model)
-    const costUsd = (tokensIn / 1_000_000 * inRate) + (tokensOut / 1_000_000 * outRate)
+    // Cache write: 1.25× input rate. Cache read: 0.10× input rate.
+    const costUsd = (tokensIn / 1_000_000 * inRate)
+      + (cacheWriteTokens / 1_000_000 * inRate * 1.25)
+      + (cacheReadTokens  / 1_000_000 * inRate * 0.10)
+      + (tokensOut / 1_000_000 * outRate)
     if (success) {
       generation?.end({
         output: text,
         usage: { inputTokens: tokensIn, outputTokens: tokensOut },
-        metadata: { costUsd, durationMs },
+        metadata: { costUsd, durationMs, cacheWriteTokens, cacheReadTokens },
       })
     }
     lf?.flushAsync?.().catch?.(() => {})
@@ -230,8 +241,11 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
 
   const durationMs = Date.now() - start
   const [inRate, outRate] = priceFor(model)
-  const costUsd = (tokensIn / 1_000_000 * inRate) + (tokensOut / 1_000_000 * outRate)
-  return { text, model, tokensIn, tokensOut, costUsd, durationMs }
+  const costUsd = (tokensIn / 1_000_000 * inRate)
+    + (cacheWriteTokens / 1_000_000 * inRate * 1.25)
+    + (cacheReadTokens  / 1_000_000 * inRate * 0.10)
+    + (tokensOut / 1_000_000 * outRate)
+  return { text, model, tokensIn, tokensOut, cacheWriteTokens, cacheReadTokens, costUsd, durationMs }
 }
 
 async function callClaude(
@@ -239,9 +253,13 @@ async function callClaude(
   prompt: string,
   system?: string,
   maxTokens = 4096
-): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+): Promise<{ text: string; tokensIn: number; tokensOut: number; cacheWriteTokens: number; cacheReadTokens: number }> {
   // Use Anthropic SDK directly (server-side, uses ANTHROPIC_API_KEY env).
   // Falls back to claude-exec subprocess if SDK not available or API key missing.
+  // System prompt is sent with cache_control: { type: "ephemeral" } so repeated calls
+  // with the same system prompt (ResearchAgent daily runs, briefings, etc.) hit the
+  // cache and pay 0.10× input rate instead of 1×. Cache writes pay 1.25× once, then
+  // every subsequent read is 10× cheaper. TTL: 5 minutes per Anthropic docs.
   try {
     const { default: Anthropic } = await import("@anthropic-ai/sdk")
     const client = new Anthropic()
@@ -251,12 +269,19 @@ async function callClaude(
     const resp = await client.messages.create({
       model,
       max_tokens: maxTokens,
-      ...(system ? { system } : {}),
+      ...(system ? { system: [{ type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } }] } : {}),
       messages,
     })
     const textBlock = resp.content.find(b => b.type === "text")
     const text = textBlock && textBlock.type === "text" ? textBlock.text : ""
-    return { text, tokensIn: resp.usage.input_tokens, tokensOut: resp.usage.output_tokens }
+    const u = resp.usage as typeof resp.usage & { cache_creation_input_tokens?: number; cache_read_input_tokens?: number }
+    return {
+      text,
+      tokensIn: u.input_tokens,
+      tokensOut: u.output_tokens,
+      cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+      cacheReadTokens: u.cache_read_input_tokens ?? 0,
+    }
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string }
     if (e?.status === 401 || e?.message?.includes("API key")) {
@@ -266,7 +291,7 @@ async function callClaude(
       const stdout = await execClaude(combinedPrompt)
       const text = parseClaudeOutput(stdout)
       const usage = parseTokenUsage(stdout)
-      return { text, tokensIn: usage.input, tokensOut: usage.output }
+      return { text, tokensIn: usage.input, tokensOut: usage.output, cacheWriteTokens: 0, cacheReadTokens: 0 }
     }
     throw err
   }
@@ -476,9 +501,11 @@ async function runClaudeAgentLoop(
   let totalIn = 0, totalOut = 0, steps = 0
   const callLog: AgentLoopResult["toolCalls"] = []
 
+  const cachedSystemBlock = [{ type: "text" as const, text: opts.systemPrompt, cache_control: { type: "ephemeral" as const } }]
+
   for (let i = 0; i < maxIter; i++) {
     const resp = await client.messages.create(
-      { model, max_tokens: 2048, system: opts.systemPrompt, tools, messages },
+      { model, max_tokens: 2048, system: cachedSystemBlock, tools, messages },
       { timeout: AGENT_LOOP_TIMEOUT_MS }
     )
     totalIn += resp.usage.input_tokens

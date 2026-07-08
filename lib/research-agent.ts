@@ -169,12 +169,24 @@ export function applicableDimensions(entry: SymbolEntry): Set<Dimension> {
   return dims;
 }
 
+export type DiscoverySource =
+  | "holding"         // live broker position (RH / Kite)
+  | "watchlist"       // user-curated watchlist
+  | "screener_momentum" // dual-bucket screener — momentum leg
+  | "screener_value"    // dual-bucket screener — value leg
+  | "metals_basket"   // always-on GLD/SLV/GDX/IAU basket
+  | "region_etf"      // region ETF added for non-US market focus
+  | "india_holding"   // live Kite India position
+  | "india_screener"  // india_screen_cache candidate
+  | "manual";         // manualOverride caller (e.g. ad-hoc research run)
+
 export type SymbolEntry = {
   symbol: string;
   isHeld: boolean;
   isEtf: boolean;
   assetClass?: string; // "us_equity" | "etf" | "metal"
   screenerBucket?: "momentum" | "value"; // which dual-bucket screener flagged this (Research Journal)
+  discovery_source?: DiscoverySource;    // how this symbol entered the research batch
 };
 
 const BUCKET_CRITERIA: Record<"momentum" | "value", string[]> = {
@@ -372,6 +384,7 @@ export async function gatherSymbols(
         isHeld: false,
         isEtf: isEtfSymbol(sym),
         assetClass: isIndia(sym) ? "india" : (isEtfSymbol(sym) ? "etf" : "us_equity"),
+        discovery_source: "manual" as DiscoverySource,
       };
     });
   }
@@ -406,19 +419,19 @@ export async function gatherSymbols(
 
   for (const sym of holdings) {
     const isMetal = METAL_ETF_SYMBOLS.has(sym);
-    result.set(sym, { symbol: sym, isHeld: true, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity" });
+    result.set(sym, { symbol: sym, isHeld: true, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: "holding" });
   }
   for (const sym of watchlistSymbols) {
     if (!result.has(sym)) {
       const isMetal = METAL_ETF_SYMBOLS.has(sym);
-      result.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity" });
+      result.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: "watchlist" });
     }
   }
 
   let screenerAdded = 0;
   for (const { symbol: sym, bucket } of screenerSymbols) {
     if (result.has(sym) || screenerAdded >= 3) continue;
-    result.set(sym, { symbol: sym, isHeld: false, isEtf: false, assetClass: "us_equity", screenerBucket: bucket });
+    result.set(sym, { symbol: sym, isHeld: false, isEtf: false, assetClass: "us_equity", screenerBucket: bucket, discovery_source: bucket === "momentum" ? "screener_momentum" : "screener_value" });
     screenerAdded++;
   }
 
@@ -429,7 +442,7 @@ export async function gatherSymbols(
   const metals: SymbolEntry[] = [];
   for (const sym of METALS_BASKET) {
     if (!result.has(sym)) {
-      metals.push({ symbol: sym, isHeld: false, isEtf: true, assetClass: "metal" });
+      metals.push({ symbol: sym, isHeld: false, isEtf: true, assetClass: "metal", discovery_source: "metals_basket" });
     }
   }
 
@@ -443,7 +456,7 @@ export async function gatherSymbols(
     for (const sym of basket) {
       if (seenAll.has(sym) || added >= 3) continue;
       seenAll.add(sym);
-      regionEtfs.push({ symbol: sym, isHeld: false, isEtf: true, assetClass: "etf" });
+      regionEtfs.push({ symbol: sym, isHeld: false, isEtf: true, assetClass: "etf", discovery_source: "region_etf" });
       added++;
     }
   }
@@ -460,7 +473,7 @@ export async function gatherSymbols(
     for (const sym of indiaHeld) {
       if (seenAll.has(sym)) continue;
       seenAll.add(sym);
-      indiaSymbols.push({ symbol: sym, isHeld: true, isEtf: false, assetClass: "india" });
+      indiaSymbols.push({ symbol: sym, isHeld: true, isEtf: false, assetClass: "india", discovery_source: "india_holding" });
     }
     // Candidates from the nightly full-market india_screen_cache (dual-bucket:
     // momentum + value), not the static first-8 NIFTY names. Falls back to the
@@ -470,7 +483,7 @@ export async function gatherSymbols(
     for (const sym of candidateList) {
       if (seenAll.has(sym)) continue;
       seenAll.add(sym);
-      indiaSymbols.push({ symbol: sym, isHeld: false, isEtf: false, assetClass: "india" });
+      indiaSymbols.push({ symbol: sym, isHeld: false, isEtf: false, assetClass: "india", discovery_source: "india_screener" });
     }
   }
 
@@ -1008,14 +1021,19 @@ export async function processSymbol(
     trendNote = `\n\nSCORE TREND: this symbol's analyst score over its last ${priorScores.length} runs was [${priorScores.join(", ")}] → now ${analystScore} (${dir}, ${delta >= 0 ? "+" : ""}${delta}). Factor this momentum into your conviction.`;
   }
 
-  // LLM only writes thesis + direction — no score generation
+  // LLM only writes thesis + direction — no score generation.
+  // Model selection: use Claude when structured APIs delivered real data (technical or
+  // fundamental dims included), DeepSeek as fallback when APIs returned empty so we
+  // don't burn Claude tokens on a thin-signal request that will likely abstain anyway.
+  const hasStructuredData = includedDims.includes("technical") || includedDims.includes("fundamental");
+  const screenModel = hasStructuredData ? "claude-haiku-4-5-20251001" : "deepseek-v4-flash";
   const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus) + trendNote;
   const llmResult = await callLLM({
     task: "screen",
-    model: "deepseek-v4-flash",
+    model: screenModel,
     prompt: thesisPrompt,
     symbol,
-    agentLabel: "deepseek",
+    agentLabel: hasStructuredData ? "claude-haiku" : "deepseek",
     maxTokens: 512,
   });
 
@@ -1227,6 +1245,21 @@ export async function processSymbol(
         ...(analystResult?.available ? { analyst: { score: analystResult.score, ...analystResult.evidence } } : {}),
         // Event proximity for the "buy the rumor, sell the news" learnable pattern.
         ...(daysToEarnings != null ? { days_to_earnings: daysToEarnings } : {}),
+        // Structured per-dimension quality state for v_decision_quality and
+        // future learner taint detection. Eliminates reliance on string heuristics
+        // for rows written from this version forward.
+        quality: Object.fromEntries(
+          (["fundamental","technical","sentiment","macro","insider"] as const).map(dim => {
+            const isApplicable = applicable.has(dim as "fundamental"|"technical"|"sentiment"|"macro"|"insider"|"options"|"analyst");
+            const isPresent = included[dim] ?? false;
+            const isDegraded = isPresent && !includedDims.includes(dim);
+            const state = !isApplicable ? "inapplicable"
+              : isPresent && !isDegraded ? "ok"
+              : isDegraded ? "degraded"
+              : "missing";
+            return [dim, { state }];
+          })
+        ),
       },
       availability_mask,
       analyst_score: analystScore,
@@ -1242,6 +1275,7 @@ export async function processSymbol(
       price_at_decision: null,              // PaperTrader fetches price at fill time; not known here
       currency: market === "india" ? "INR" : "USD",
       signal_id: insertedSignalId,
+      discovery_source: entry.discovery_source ?? null,
     }).select("id").maybeSingle();
     if (obsErr && !/does not exist|could not find/i.test(obsErr.message ?? "")) {
       console.error("[research-agent] decision_observations insert failed:", obsErr.message);

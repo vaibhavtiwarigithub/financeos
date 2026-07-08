@@ -287,10 +287,13 @@ flowchart TD
 - **Genome** — the set of knobs a Challenger may evolve.
 - **Decision ledger (`decision_observations`)** — an immutable record of every scored decision;
   the learning fuel. Never edited or deleted.
-- **data_confidence** — how much real evidence a decision had (low = thin data).
+- **data_confidence** — how much real evidence a decision had (low = thin data). Below 0.5 triggers a taint flag.
+- **discovery_source** — how a symbol entered the research batch (holding / watchlist / screener_momentum / screener_value / metals_basket / region_etf / india_holding / india_screener / manual). Logged on every `decision_observations` row for pipeline attribution.
+- **tainted / excluded_from_learning** — a `paper_trades` row with bad-data provenance. Tainted trades are excluded from learner training datasets; the trade itself is never deleted.
+- **structured_issues** — machine-readable per-issue JSON from the health-triage agent (`issue_key`, `severity`, `root_cause`, `blast_radius`, `suggested_fix`). Replaces the old free-text `content` blob for programmatic action.
 - **Kill switch** — an automatic trading halt on a bad day.
 - **NAV** — total account value (cash + holdings).
 
 ---
 
-*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-08 (India G3 + Kite GTT server-side brackets + one-click health remediation).*
+*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-08 (Strategic Report Tier-1 + Tier-2: prompt caching, ticker filter, prompt versioning, DeepSeek data gate, discovery_source attribution, B3 structured triage, Data Provider Abstraction, Learning Integrity Phase 1B taint columns + auto-stamp at fill).*
