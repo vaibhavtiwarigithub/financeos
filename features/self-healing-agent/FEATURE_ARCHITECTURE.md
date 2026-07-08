@@ -1,7 +1,7 @@
 # Live-Order Caps + Self-Healing / Health-Monitoring Agent
 
 **Status:** DRAFT — awaiting approval. No implementation code until approved.
-**Author:** Claude (Opus 4.8), 2026-07-08.
+**Author:** Claude (Opus 4.8), reviewed/updated by ChatGPT, 2026-07-08.
 **Companion to:** `features/learning-integrity/FEATURE_ARCHITECTURE.md` (the health
 agent surfaces `v_decision_quality` taint rates; the notional caps are an execution
 guardrail the agent monitors).
@@ -46,11 +46,26 @@ guardrail the agent monitors).
 - **Value shown on the trade-approval screen** so the human sees the ceiling before
   clicking submit.
 
+**Reviewer corrections to A2 (binding):**
+- Keep `max_order_notional` as a deprecated USD read-through for at least one release;
+  do **not** drop it in this feature. Dropping is a separate approved cleanup after all
+  deployed code reads `max_order_notional_usd`.
+- `max_order_notional_usd` / `max_order_notional_inr` readers must ship only after the
+  additive migration is applied. A live-money route must never treat a missing cap
+  column as uncapped.
+- The current US 15%-of-equity fallback may remain only when a fresh live equity
+  snapshot exists. Kite/India must fail closed if `max_order_notional_inr` is null
+  because no trusted Kite equity fallback is defined here.
+- Settings writes are owner-human actions only; the health agent/LLM cannot change
+  `strategy_config` money limits.
+
 ## A3. Acceptance criteria
 - A live US order > USD cap → 403; a live India order > INR cap → 403.
 - Neither path can place an uncapped live order (fail-closed retained on both).
 - Cap editable in-app by owner only; change is audit-logged.
 - No cron path can place or uncap an order.
+- New positions remain long-only; SELL remains allowed only for held positions. This
+  feature must not weaken either order-side guard.
 
 ---
 
@@ -67,6 +82,8 @@ guardrail the agent monitors).
 **Hard boundary (non-negotiable):** the LLM never autonomously mutates weights,
 `strategy_config` money-limits, code, or places/cancels orders. Those remain human-gated
 regardless of LLM confidence. The LLM's output is advice + a whitelisted-action tag.
+The deterministic apply route must also reject any action id that would touch orders,
+code, strategy weights, model selection, broker credentials, secrets, or money limits.
 
 ## B2. Tier 1 — deterministic auto-remediation (rules)
 Whitelisted, bounded, already partly present (kill switches, needs-reconcile, AV→FRED
@@ -74,7 +91,9 @@ fallback). Candidate actions, each individually feature-flagged:
 - Re-run research for the N symbols that failed a cron batch.
 - Post-enablement: auto-exclude a trade whose linked `v_decision_quality` is tainted
   (sets `excluded_from_learning`, never deletes).
-- Auto-flip a data provider to its fallback when the primary is rate-limited.
+- Trigger a one-shot retry using an already-coded fallback path when the primary
+  provider is rate-limited. Do not persistently change provider config, API keys,
+  provider priority, or budgets.
 - Auto-resolve a stale `agent_alerts` row when its condition has cleared.
 Each action: idempotent, logged to `agent_alerts`/`decision_journal`, and reversible.
 None touch orders, weights, money-limits, or code.
@@ -94,13 +113,21 @@ None touch orders, weights, money-limits, or code.
   or null), `severity`, `model_used`, tokens. Written to a new table
   `health_triage` keyed to `agent_alerts.issue_key`.
 - **Never** writes to money/code/order/weight paths.
+- The LLM prompt/tool contract is read-only. It may receive issue context and emit
+  JSON advice, but it must not receive tools or route access that can write
+  `strategy_config`, `strategy_versions`, `agent_config`, broker/order tables, code,
+  or secrets.
 
 ## B4. Tier 3 — apply
 - Dashboard renders each suggestion in the System Health card:
   "🔧 Suggested fix: … [Apply]" — the Apply button is enabled **only** when
   `auto_remediable` maps to a whitelisted Tier-1 action; otherwise it's advice-only text.
-- Owner click triggers the deterministic action (owner-gated route). Every apply is
-  audit-logged with the triggering triage id.
+- Owner click triggers the deterministic action through an owner-gated, CSRF/Origin
+  protected route. It must not accept cron secrets. Every apply is audit-logged with
+  the triggering triage id.
+- Auto-apply without a click is allowed only for explicitly feature-flagged Tier-1
+  actions that are non-money, non-order, non-code, non-weight, and reversible. It must
+  never call live order routes.
 
 ## B5. Dashboard health of the agent itself (user requirement)
 - `health-triage` logs to `agent_runs` (`agent_type='health_triage'`) → last-run,
@@ -116,7 +143,9 @@ None touch orders, weights, money-limits, or code.
   applied boolean default false, applied_at, applied_by, model_used text,
   tokens_input int, tokens_output int)`. Links to `agent_alerts` via `issue_key`.
 - `agent_config`: one new row `health-triage`.
-- No changes to money/order tables from this feature.
+- Notional-cap columns are the only money-limit schema in Part A, and they are edited
+  only by owner Settings. Part B adds no money/order columns and must not mutate order
+  tables except read-only diagnostics.
 
 ## B7. Acceptance criteria
 - Changing the `health-triage` model in Settings changes the model used on the next run.
@@ -127,6 +156,10 @@ None touch orders, weights, money-limits, or code.
   weights, or edit code. (Test: attempt each → blocked.)
 - If the LLM is unreachable, Tier-1 remediation and the health card still function
   (LLM is additive, not load-bearing).
+- `app/api/kite/order/route.ts` refuses live India orders over `max_order_notional_inr`
+  and refuses if the INR cap is null/unavailable.
+- `app/api/broker/orders/route.ts` reads `max_order_notional_usd`, with the deprecated
+  `max_order_notional` only as a one-release compatibility fallback.
 
 ## B8. Rollout
 1. **A first (small, high-value guardrail):** per-market notional caps + Settings UI +
@@ -143,7 +176,25 @@ None touch orders, weights, money-limits, or code.
 - Default INR cap value (proposal ₹4000).
 - Does `health-triage` also summarize into the daily briefing email?
 
+**Reviewer correction to B9:** Default INR cap remains an open decision until Vaibhav
+explicitly approves it; proposal is INR 4000.
+
 ## B10. Diagram / system-map impact
 Adds a `health-triage` node reading `agent_alerts`/`agent_runs`/`v_decision_quality` and
 writing `health_triage`. On build, update `public/agent-diagrams/system-map.json` +
 add the per-agent diagram, and append a history entry per project convention.
+
+## Reviewer changelog (ChatGPT)
+
+- Header: Updated author line to "reviewed/updated by ChatGPT, 2026-07-08" as requested.
+- Section A2: Added binding reviewer corrections that keep `max_order_notional` as a deprecated USD read-through for at least one release, require additive migration application before route code reads new cap columns, and forbid uncapped live-money fallback on missing schema.
+- Section A2: Corrected cap fallback semantics: US may keep the current fresh-equity 15% fallback; Kite/India must fail closed if `max_order_notional_inr` is null because no trusted Kite equity fallback is defined.
+- Section A2/A3: Added explicit owner-human gating for money-limit edits and preserved long-only / sell-only-if-held order-side rules.
+- Section B1: Strengthened the hard LLM boundary so the deterministic apply route also rejects action ids touching orders, code, weights, model selection, broker credentials, secrets, or money limits.
+- Section B2: Replaced persistent provider "auto-flip" behavior with one-shot fallback retry only; no automated provider config/API-key/priority/budget mutation.
+- Section B3: Added a read-only prompt/tool contract for the LLM; it must not receive tools or route access that can write money/config/code/order/secret state.
+- Section B4: Required owner-click routes to be CSRF/Origin protected and not cron-callable; auto-apply is limited to reversible non-money/non-order/non-code/non-weight Tier-1 actions.
+- Section B6: Clarified that Part B adds no money/order schema and must not mutate order tables except read-only diagnostics.
+- Section B7: Added acceptance tests for Kite INR notional-cap enforcement and US Gateway use of `max_order_notional_usd`.
+- Section B9: Default INR cap is still an open question until Vaibhav explicitly approves it; proposal remains INR 4000.
+- Sections reviewed with no additional change: B5, B8, and B10 were consistent after the safety edits above.

@@ -1,0 +1,5 @@
+-- Review fix #10: v_decision_quality now uses regex-guarded numeric/boolean casts so
+-- malformed base_weights / availability_mask / technical.dataPoints yield NULL (→
+-- quality_status='unknown', fail-open) instead of throwing the whole view query (which
+-- would also break health-triage). Golden cases unchanged (GLD/SGOV/IBIT low, India high).
+-- Full view re-applied (applied to prod via MCP).

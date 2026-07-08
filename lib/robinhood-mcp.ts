@@ -595,10 +595,18 @@ export async function queryRobinhoodAccount(account?: string): Promise<{ ok: boo
     const o = mcpToolJson(accounts.result?.content ?? accounts.result);
     return o?.data?.accounts ?? o?.accounts ?? [];
   })();
-  const acctFor =
-    (account && acctList.find((a: any) => String(a.rhs_account_number) === account || String(a.account_number) === account)?.rhs_account_number)
-    ?? acctList.find((a: any) => a.agentic_allowed)?.rhs_account_number
-    ?? acctList[0]?.rhs_account_number;
+  // Resolve the account to price. If an explicit account was requested it MUST match
+  // exactly — never fall back to another account, or we'd store wrong-account NAV/positions
+  // under the requested id and feed the G3 gate a wrong live book. Match on either
+  // account_number or rhs_account_number.
+  let acctFor: string | undefined;
+  if (account) {
+    const match = acctList.find((a: any) => String(a.rhs_account_number) === account || String(a.account_number) === account);
+    if (!match) return { ok: false, error: `requested account ${account} not found in the Robinhood account list — refusing to snapshot a different account` };
+    acctFor = String(match.rhs_account_number);
+  } else {
+    acctFor = acctList.find((a: any) => a.agentic_allowed)?.rhs_account_number ?? acctList[0]?.rhs_account_number;
+  }
 
   const positions = await mcpRpc(tk.token, "tools/call", { name: "get_equity_positions", arguments: acctFor ? { account_number: acctFor } : {} }, sess.sessionId);
   const portfolio = acctFor
@@ -622,7 +630,9 @@ export async function robinhoodHeldQty(symbol: string, account?: string): Promis
   if (!tk.ok || !tk.token) return { ok: false, error: tk.error ?? "not connected" };
   const sess = await openSession(tk.token);
   if (!sess.ok) return { ok: false, error: sess.error };
-  const res = await mcpRpc(tk.token, "tools/call", { name: "get_equity_positions", arguments: {} }, sess.sessionId);
+  // get_equity_positions is ACCOUNT-SCOPED — a bare {} call returns the default account,
+  // not the agentic trading account, so the SELL held-check must pass account_number.
+  const res = await mcpRpc(tk.token, "tools/call", { name: "get_equity_positions", arguments: account ? { account_number: account } : {} }, sess.sessionId);
   if (!res.ok) return { ok: false, error: res.error };
   try {
     const content = res.result?.content ?? res.result;

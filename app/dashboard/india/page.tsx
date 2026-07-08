@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 
 const T = {
@@ -127,6 +127,9 @@ export default function IndiaPage() {
       .finally(() => setSignalsLoading(false));
   }, []);
 
+  // One stable idempotency key per order intent — reused across retries of the same
+  // order so the server dedupes a double-submit; regenerated for each new order.
+  const orderKeyRef = useRef<string>("");
   function openOrder(symbol: string) {
     setOrderFor(symbol);
     setQty(1);
@@ -134,6 +137,7 @@ export default function IndiaPage() {
     setOrderType("MARKET");
     setLimitPrice("");
     setOrderResult(null);
+    orderKeyRef.current = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }
 
   const submitOrder = useCallback(async () => {
@@ -147,6 +151,10 @@ export default function IndiaPage() {
         quantity: qty,
         order_type: orderType,
         confirm: true,
+        client_order_key: orderKeyRef.current,
+        // Dashboard India buys are manual by nature (no research signal linked) — mark as
+        // an audited manual override so the G1-parity gate lets them through and logs them.
+        ...(side === "BUY" ? { manualOverride: true, overrideReason: "Manual India order placed from the India dashboard" } : {}),
       };
       if (orderType === "LIMIT") body.price = Number(limitPrice);
       const res = await fetch("/api/kite/order", {

@@ -80,11 +80,15 @@ async function refreshViaMcp(): Promise<{ ok: boolean; error?: string; equity?: 
       : Array.isArray(posObj) ? posObj
       : null;
 
-    // Guard: a transient empty fetch must not overwrite a previously-good snapshot
-    // with nulls (that's how the prior IBIT position + NAV got wiped during debugging).
-    const posCount = Array.isArray(positionsJson) ? positionsJson.length : (positionsJson ? 1 : 0);
-    if (equity == null && posCount === 0) {
-      return { ok: false, error: "Robinhood returned no account value or positions — snapshot not overwritten (transient/empty fetch)" };
+    // Guard: only overwrite the snapshot on a COMPLETE fetch — NAV present AND a positions
+    // array parsed (an empty [] is a valid "no holdings" answer; null means the positions
+    // call failed/rate-limited). A partial fetch must NOT clobber the prior consistent
+    // snapshot, or G3 would read a fresh captured_at with a stale/empty book and approve
+    // concentration it should block. positionsJson is an array or null by construction here.
+    const positionsOk = Array.isArray(positionsJson);
+    const posCount = positionsOk ? positionsJson.length : 0;
+    if (equity == null || !positionsOk) {
+      return { ok: false, error: "Robinhood fetch incomplete (missing account value or positions) — snapshot preserved, not overwritten" };
     }
 
     await svc.from("live_account_snapshots").upsert({

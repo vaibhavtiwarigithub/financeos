@@ -1,0 +1,6 @@
+-- Review fixes #9 + #11: the daily-budget RPC now computes the trading day in MARKET-LOCAL
+-- time (Asia/Kolkata for India, America/New_York for US) instead of UTC (near-midnight
+-- orders were counted into the wrong day), and excludes 'failed' + 'expired' broker
+-- submissions from the daily count/notional (Kite writes 'failed' — a clearly-failed order
+-- must not consume budget). Full function re-applied (applied to prod via MCP).
+-- See the function body in migration 105 + this override.

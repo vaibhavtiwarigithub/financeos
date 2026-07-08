@@ -193,6 +193,47 @@ export async function getKiteHoldings(svc?: any) {
   return kiteGet("/portfolio/holdings", svc);
 }
 
+// Place a Kite GTT (Good Till Triggered) two-leg bracket: one stop-loss leg (SL-M)
+// and one take-profit leg (LIMIT). Both legs are SELL CNC. Kite cancels the other
+// leg automatically when either fires. Used for server-side stop/target on live BUYs.
+export async function placeKiteGtt(opts: {
+  tradingsymbol: string;
+  exchange?: string;
+  qty: number;
+  lastPrice: number;   // reference price at order time (pre-order quote)
+  stopPrice: number;   // trigger price for the stop-loss leg
+  targetPrice: number; // trigger + limit price for the take-profit leg
+}, svc?: any): Promise<{ ok: boolean; triggerId?: number; error?: string }> {
+  const sym = opts.tradingsymbol.replace(/\.(NS|BO)$/i, "");
+  const exchange = opts.exchange ?? (opts.tradingsymbol.toUpperCase().endsWith(".BO") ? "BSE" : "NSE");
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  // Kite GTT accepts trigger_values and orders as JSON strings in the form body.
+  const body: Record<string, string> = {
+    type: "two-leg",
+    tradingsymbol: sym,
+    exchange,
+    trigger_values: JSON.stringify([round2(opts.stopPrice), round2(opts.targetPrice)]),
+    last_price: String(round2(opts.lastPrice)),
+    orders: JSON.stringify([
+      { transaction_type: "SELL", quantity: opts.qty, order_type: "SL-M", product: "CNC", price: 0 },
+      { transaction_type: "SELL", quantity: opts.qty, order_type: "LIMIT", product: "CNC", price: round2(opts.targetPrice) },
+    ]),
+  };
+  const r = await kitePost("/gtt/triggers", body, svc);
+  if (!r.ok) return { ok: false, error: r.error };
+  const triggerId = Number(r.data?.trigger_id);
+  if (!Number.isFinite(triggerId)) return { ok: false, error: "GTT placed but no trigger_id returned" };
+  return { ok: true, triggerId };
+}
+
+// Cancel a Kite GTT trigger by ID (e.g. when a position is manually sold before
+// stop/target fires). Best-effort: caller should not hard-fail on cancellation errors
+// since Kite would reject the trigger anyway once the position is zero.
+export async function cancelKiteGtt(triggerId: number, svc?: any): Promise<{ ok: boolean; error?: string }> {
+  const r = await kiteDelete(`/gtt/triggers/${triggerId}`, svc);
+  return r.ok ? { ok: true } : { ok: false, error: r.error };
+}
+
 /** Liquid cash balance from Kite /user/margins (equity.net). Combine with
  *  getKiteHoldings() to compute total India account NAV = equityNet + Σ(last_price × qty). */
 export async function getKiteMargins(svc?: any): Promise<{ ok: boolean; equityNet?: number; error?: string }> {

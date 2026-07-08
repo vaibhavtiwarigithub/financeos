@@ -176,12 +176,20 @@ export async function PATCH(req: NextRequest) {
 
   // Resilient write — some columns may not exist on older schemas; retry
   // stripping the optional ones so saving a profile still works.
-  const OPTIONAL_COLS = ["max_positions_per_sector", "ks_daily_loss_pct", "ks_drawdown_pct", "ks_accuracy_pct", "exit_hysteresis", "posture", "posture_expires_at", "base_risk_profile", "active_broker_us", "active_broker_india", "trading_enabled_us", "trading_enabled_india", "active_account_us", "active_account_india", "live_account_source", "robinhood_mcp_enabled", "max_order_notional", "max_order_notional_usd", "max_order_notional_inr", "max_daily_notional_usd", "max_daily_notional_inr", "max_daily_trades", "max_order_notional_usd_paper", "max_order_notional_inr_paper", "max_daily_notional_usd_paper", "max_daily_notional_inr_paper"];
+  const OPTIONAL_COLS = ["max_positions_per_sector", "ks_daily_loss_pct", "ks_drawdown_pct", "ks_accuracy_pct", "exit_hysteresis", "posture", "posture_expires_at", "base_risk_profile", "active_broker_us", "active_broker_india", "trading_enabled_us", "trading_enabled_india", "active_account_us", "active_account_india", "live_account_source", "robinhood_mcp_enabled"];
+  // Money limits are NOT optional (migrations 103/105/107 are applied). A failed money-
+  // limit write must surface as a visible error, never silently succeed with the old cap.
+  const MONEY_COLS = ["max_order_notional", "max_order_notional_usd", "max_order_notional_inr", "max_daily_notional_usd", "max_daily_notional_inr", "max_daily_trades", "max_order_notional_usd_paper", "max_order_notional_inr_paper", "max_daily_notional_usd_paper", "max_daily_notional_inr_paper"];
   const { error: updErr } = await svc.from("strategy_config").update(update).eq("id", existing.id);
   if (updErr) {
+    if (MONEY_COLS.some(c => c in update)) {
+      return NextResponse.json({ error: `Failed to save order limits — no change applied: ${updErr.message}` }, { status: 500 });
+    }
+    // Non-money fields only: retry stripping genuinely-optional columns for old schemas.
     const rest = { ...update };
     for (const k of OPTIONAL_COLS) delete (rest as any)[k];
-    await svc.from("strategy_config").update(rest).eq("id", existing.id);
+    const { error: retryErr } = await svc.from("strategy_config").update(rest).eq("id", existing.id);
+    if (retryErr) return NextResponse.json({ error: retryErr.message }, { status: 500 });
   }
   if (journalEntry) {
     await svc.from("decision_journal").insert(journalEntry).then(() => {}, () => {});

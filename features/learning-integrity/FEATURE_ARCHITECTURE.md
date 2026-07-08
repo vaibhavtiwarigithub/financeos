@@ -1,7 +1,7 @@
 # Learning Integrity - Taint Detection, Exclusion & Learner Recovery
 
 **Status:** DRAFT - awaiting approval. No implementation code until approved.
-**Author:** Claude (Opus 4.8), reviewed/updated by Codex, 2026-07-08.
+**Author:** Claude (Opus 4.8), reviewed/updated by ChatGPT, 2026-07-08.
 **Decision inputs (user, 2026-07-08):**
 - Primary mechanism: **tag + exclude** (non-destructive; deletion optional).
 - Auto-taint threshold: **moderate** (`data_confidence < 0.5`) - conditional on a proven-correct, deterministic confidence calculation.
@@ -57,6 +57,7 @@ We need:
 - `trade_proposals.signal_id` is currently declared as `bigint` in migration 037. It must be migrated to `uuid` before live-order taint joins are trusted.
 - `decision_observations` is append-only by trigger; do not add mutable taint columns there.
 - `observation_labels` and `shadow_decisions` reference `decision_observations(id)` with `on delete cascade`; the reset/teardown feature must never delete `decision_observations`.
+- Any code that reads new quality/tag columns must ship only after the additive migration is applied. No schema-coupled runtime fallback should silently treat missing columns as "clean."
 
 Implication: rollback is a strategy-version pointer operation, not data surgery. The
 taint layer should be a thin additive layer over mutable trade/order projections plus
@@ -94,6 +95,7 @@ has to derive structural applicability from values already logged in
 - `features.fundamental.is_etf = true`: applicable scoring dims are `technical`, `sentiment`, `macro`.
 - US non-ETF: applicable scoring dims are `fundamental`, `technical`, `sentiment`, `macro`, `insider`.
 - US ADR insider exclusion is not reliably reconstructable from current rows unless a structured flag is logged. Until then, if `availability_mask.insider=false` and the symbol is in a small reviewed ADR allowlist, the SQL view may exclude insider; otherwise set `quality_status='unknown'` rather than pretending certainty.
+- If `applicable_weight <= 0`, malformed base weights, or a missing base-weight key would affect the denominator, emit `data_confidence=NULL` and `quality_status='unknown'`; never divide by applied/renormalized weights as a fallback.
 
 The view emits:
 
@@ -174,6 +176,7 @@ Add nullable columns, additive and safe:
 
 - `paper_trades`: `data_confidence numeric`, `quality_status text`, `tainted boolean default false`, `taint_reason text`, `excluded_from_learning boolean default false`
 - `broker_orders`: same five columns
+- `observation_labels` or the ledger-quality join path: must expose equivalent quality/exclusion fields to validation and feature-learning code before any challenger can use post-feature data.
 
 Population:
 
@@ -314,3 +317,11 @@ and explicit market scoping.
 The learner <- trades <- decision_observations flow gains a quality gate. On build,
 update `public/agent-diagrams/system-map.json` and the affected learner/paper-trader
 diagrams, then append a history entry per project convention.
+
+## Reviewer changelog (ChatGPT)
+
+- Section 3: Updated author line to "reviewed/updated by ChatGPT, 2026-07-08" as requested.
+- Section 3: Added an explicit migration-order rule: code that reads new taint/quality columns must ship only after its additive migration is applied, and missing columns must not be treated as clean data.
+- Section 4.1: Tightened the `data_confidence` denominator rule to fail `unknown` when structural/base weights are malformed instead of falling back to post-renormalized `applied_weights`.
+- Section 5: Added the requirement that validation/feature-learning paths get equivalent quality/exclusion fields through `observation_labels` or a `v_decision_quality` join, not only through `paper_trades`.
+- Sections reviewed with no additional change: Sections 1, 2, 7, 8, 9, 10, 11, and 12 were consistent with the known schema/safety constraints after the edits above.

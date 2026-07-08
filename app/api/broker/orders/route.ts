@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { proposal_id, env, acceptLowQuality, acceptPortfolioRisk } = body as { proposal_id?: number; env?: "paper" | "live"; acceptLowQuality?: boolean; acceptPortfolioRisk?: boolean };
+    const { proposal_id, env, acceptLowQuality, acceptPortfolioRisk, overrideReason } = body as { proposal_id?: number; env?: "paper" | "live"; acceptLowQuality?: boolean; acceptPortfolioRisk?: boolean; overrideReason?: string };
     // env must be explicit on an order-placing route — no silent paper default
     // that could route a mis-typed request past the live gates.
     if (env !== "paper" && env !== "live") {
@@ -96,6 +96,21 @@ export async function POST(req: NextRequest) {
     const side = (proposal as any).side === "sell" ? "sell" : "buy";
     const qty = Number((proposal as any).qty);
     const market: "us" | "india" = isIndia(symbol) ? "india" : "us";
+
+    // Audit any risk override BEFORE it can bypass the G1 (quality) or G3 (portfolio)
+    // gate. Owner-gated already, but require a durable reason so overrides are reviewable
+    // and learning-safe (never a silent bypass).
+    if (orderEnv === "live" && side === "buy" && (acceptLowQuality || acceptPortfolioRisk)) {
+      if (!overrideReason || !String(overrideReason).trim()) {
+        return NextResponse.json({ error: "acceptLowQuality / acceptPortfolioRisk require a non-empty overrideReason (audited)." }, { status: 400 });
+      }
+      await supabase.from("decision_journal").insert({
+        entry_type: "risk_override", symbol, market,
+        summary: `Live BUY risk override (${[acceptLowQuality && "low-quality-signal", acceptPortfolioRisk && "portfolio-risk"].filter(Boolean).join(", ")}): proposal ${proposal_id} — ${String(overrideReason).slice(0, 300)}`,
+        calculations: { proposal_id, acceptLowQuality: !!acceptLowQuality, acceptPortfolioRisk: !!acceptPortfolioRisk },
+        has_verified_facts: false, resolved: false,
+      }).then(() => {}, () => {});
+    }
 
     // Basic shape validation regardless of env.
     if (!SYMBOL_RE.test(symbol)) return NextResponse.json({ error: `Invalid symbol '${symbol}'` }, { status: 400 });
@@ -197,14 +212,16 @@ export async function POST(req: NextRequest) {
           if (snapFresh && Number.isFinite(equity) && equity > 0) notionalCap = equity * DEFAULT_NOTIONAL_FRAC;
         }
       }
-      if (notionalCap == null || !Number.isFinite(notionalCap) || notionalCap <= 0) {
+      // Per-order cap applies to BUY only — a SELL reduces exposure and is already
+      // held-position gated, so it must never be blocked by a notional ceiling.
+      if (side === "buy" && (notionalCap == null || !Number.isFinite(notionalCap) || notionalCap <= 0)) {
         return NextResponse.json({ error: market === "india"
           ? "No India (INR) per-order cap set — refusing an uncapped live India order. Set the India cap in Settings → Live Order Limits."
           : "Cannot determine a USD notional cap (no max_order_notional_usd and no live equity snapshot) — refusing an uncapped live order. Set the US cap in Settings → Live Order Limits." }, { status: 403 });
       }
-      if (qty * freshPrice > notionalCap) {
+      if (side === "buy" && Number.isFinite(notionalCap as number) && qty * freshPrice > (notionalCap as number)) {
         const cur = market === "india" ? "₹" : "$";
-        return NextResponse.json({ error: `Order notional ${cur}${(qty * freshPrice).toFixed(0)} exceeds the ${market.toUpperCase()} cap ${cur}${notionalCap.toFixed(0)}` }, { status: 403 });
+        return NextResponse.json({ error: `Order notional ${cur}${(qty * freshPrice).toFixed(0)} exceeds the ${market.toUpperCase()} cap ${cur}${(notionalCap as number).toFixed(0)}` }, { status: 403 });
       }
 
       // G3: live portfolio-construction limits (name / gross / sector / vol) vs the live
@@ -212,8 +229,12 @@ export async function POST(req: NextRequest) {
       // US only today (needs a live NAV snapshot); skipped when NAV is stale/absent.
       if (side === "buy" && !acceptPortfolioRisk) {
         const pg = await checkLivePortfolioLimits({ supabase, market, accountId: acct.account, symbol, orderNotional: qty * freshPrice });
-        if (!pg.ok) {
-          return NextResponse.json({ error: `Refusing live BUY of ${symbol}: ${pg.reason}. Re-approve with acceptPortfolioRisk:true to override.` }, { status: 409 });
+        // Fail-controlled: a breach OR an un-evaluable book (stale/absent NAV, no NAV source
+        // for this market, or an unvaluable holding) both require an explicit owner override
+        // — unknown portfolio risk must not silently pass on a live BUY.
+        if (!pg.ok || pg.skipped) {
+          const why = pg.skipped ? `portfolio risk could not be evaluated (${pg.reason})` : pg.reason;
+          return NextResponse.json({ error: `Refusing live BUY of ${symbol}: ${why}. Re-approve with acceptPortfolioRisk:true to override.` }, { status: 409 });
         }
       }
 
