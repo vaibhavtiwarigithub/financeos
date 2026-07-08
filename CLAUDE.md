@@ -13,6 +13,19 @@ The per-agent diagrams (`public/agent-diagrams/<agent>.json`) follow the same
 rule for changes scoped to a single agent. A flow change that ships without a
 diagram update is incomplete.
 
+## System Overview — keep it current
+
+`SYSTEM_OVERVIEW.md` is the single plain-language, start-to-end explanation of the
+whole app (core idea, feature map, agent pipeline, each agent, the evolution/mutation
+loop, and the money-safety layers), with Mermaid block diagrams and worked examples,
+written so a non-engineer can follow it. It is NOT auto-generated. Whenever a change
+alters what the app does, how an agent works, the pipeline, the learning/evolution
+loop, or a money/risk control, update `SYSTEM_OVERVIEW.md` in the same change: fix the
+relevant section, update or add a Mermaid diagram where it aids understanding, keep the
+language simple with an example, and bump the "Last updated" date. A user-visible or
+architectural change that ships without updating this doc is incomplete. (This is the
+human-readable companion to the `system-map.json` diagram rule above.)
+
 ## Project Intelligence Layer
 
 **Active every session. No exceptions.**
