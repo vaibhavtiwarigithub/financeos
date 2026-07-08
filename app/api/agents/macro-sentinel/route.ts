@@ -2,18 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { fredSeries, FRED_SERIES } from "@/lib/data/fred-macro";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-
-const AV = process.env.ALPHA_VANTAGE_API_KEY ?? "";
-
-// Fetch Alpha Vantage economic function, return latest datapoint
-async function avFetch(fn: string, params = "") {
-  const url = `https://www.alphavantage.co/query?function=${fn}&apikey=${AV}${params}`;
-  const res = await fetch(url, { next: { revalidate: 86400 } });
-  return res.json();
-}
 
 interface Indicator {
   name: string;
@@ -23,23 +15,23 @@ interface Indicator {
   weight: number; // 1=low, 2=medium, 3=high
 }
 
+// Macro indicators now source from FRED (official, free, keyed, no AV budget
+// contention) instead of Alpha Vantage's rate-limited economic endpoints —
+// which repeatedly returned 0/8 indicators ("unknown regime") that then scored
+// every symbol's macro dimension as a fake supportive-100. Signal thresholds
+// are unchanged; only the data source and (where noted) unit correctness moved.
 async function fetchIndicators(): Promise<Indicator[]> {
   const indicators: Indicator[] = [];
 
-  // 1. Treasury Yield Curve: 2Y vs 10Y
+  // 1. Treasury Yield Curve: 2Y vs 10Y (FRED DGS2 / DGS10, latest, %)
   try {
-    const [y2, y10] = await Promise.all([
-      avFetch("TREASURY_YIELD", "&interval=monthly&maturity=2year"),
-      avFetch("TREASURY_YIELD", "&interval=monthly&maturity=10year"),
+    const [y2arr, y10arr] = await Promise.all([
+      fredSeries(FRED_SERIES.y2, 5),
+      fredSeries(FRED_SERIES.y10, 5),
     ]);
-    // Skip if rate-limited (Note/Information key present) or data missing
-    if (y2?.Note || y2?.Information || y10?.Note || y10?.Information) throw new Error("rate_limited");
-    const raw2 = y2?.data?.[0]?.value;
-    const raw10 = y10?.data?.[0]?.value;
-    if (!raw2 || !raw10) throw new Error("no_data");
-    const rate2 = parseFloat(raw2);
-    const rate10 = parseFloat(raw10);
-    if (!rate2 || !rate10 || isNaN(rate2) || isNaN(rate10)) throw new Error("bad_values");
+    const rate2 = y2arr[0];
+    const rate10 = y10arr[0];
+    if (rate2 == null || rate10 == null) throw new Error("no_data");
     const spread = rate10 - rate2;
     let signal: "green" | "yellow" | "orange" | "red" = "green";
     if (spread < -0.5) signal = "red";
@@ -56,10 +48,9 @@ async function fetchIndicators(): Promise<Indicator[]> {
     });
   } catch {}
 
-  // 2. Unemployment (Sahm Rule approximation)
+  // 2. Unemployment (Sahm Rule approximation) — FRED UNRATE (monthly, %)
   try {
-    const data = await avFetch("UNEMPLOYMENT");
-    const readings = (data?.data ?? []).slice(0, 13).map((d: { value: string }) => parseFloat(d.value));
+    const readings = await fredSeries(FRED_SERIES.unemployment, 13);
     if (readings.length >= 4) {
       const recent3avg = (readings[0] + readings[1] + readings[2]) / 3;
       const min12 = Math.min(...readings.slice(0, 12));
@@ -78,11 +69,15 @@ async function fetchIndicators(): Promise<Indicator[]> {
     }
   } catch {}
 
-  // 3. Nonfarm Payrolls (trend)
+  // 3. Nonfarm Payrolls (trend) — FRED PAYEMS (monthly LEVEL, thousands).
+  // Compute month-over-month CHANGE (jobs added) from the level series; the old
+  // AV path compared the raw level against a <100K monthly-adds threshold that
+  // could never trigger. <100K net adds/month = weak labor market.
   try {
-    const data = await avFetch("NONFARM_PAYROLL");
-    const vals = (data?.data ?? []).slice(0, 4).map((d: { value: string }) => parseFloat(d.value));
-    if (vals.length >= 1) {
+    const levels = await fredSeries(FRED_SERIES.payrolls, 5);
+    const changes = levels.slice(0, 4).map((v: number, i: number, a: number[]) => i < a.length - 1 ? v - a[i + 1] : NaN).filter((v: number) => Number.isFinite(v));
+    if (changes.length >= 1) {
+      const vals = changes;
       const trend3 = vals.slice(0, 3).filter((v: number) => v < 100).length; // <100k jobs = weak
       const latest = vals[0];
       let signal: "green" | "yellow" | "orange" | "red" = "green";
@@ -99,10 +94,9 @@ async function fetchIndicators(): Promise<Indicator[]> {
     }
   } catch {}
 
-  // 4. Real GDP growth
+  // 4. Real GDP growth — FRED GDPC1 (quarterly, level)
   try {
-    const data = await avFetch("REAL_GDP", "&interval=quarterly");
-    const vals = (data?.data ?? []).slice(0, 3).map((d: { value: string }) => parseFloat(d.value));
+    const vals = await fredSeries(FRED_SERIES.gdp, 3);
     if (vals.length >= 2) {
       const latest = vals[0];
       const prior = vals[1];
@@ -121,12 +115,12 @@ async function fetchIndicators(): Promise<Indicator[]> {
     }
   } catch {}
 
-  // 5. CPI Inflation trend
+  // 5. CPI Inflation trend — FRED CPIAUCSL (monthly, level). Year-over-year is
+  // the standard read; 13 readings give a true YoY (v0 vs 12 months ago).
   try {
-    const data = await avFetch("CPI", "&interval=monthly");
-    const vals = (data?.data ?? []).slice(0, 3).map((d: { value: string }) => parseFloat(d.value));
-    if (vals.length >= 2) {
-      const yoyPct = ((vals[0] - vals[1]) / vals[1]) * 100;
+    const vals = await fredSeries(FRED_SERIES.cpi, 13);
+    if (vals.length >= 13) {
+      const yoyPct = ((vals[0] - vals[12]) / vals[12]) * 100;
       let signal: "green" | "yellow" | "orange" | "red" = "green";
       // High inflation + slowing growth = stagflation = bad
       if (yoyPct > 5) signal = "orange";
@@ -135,16 +129,15 @@ async function fetchIndicators(): Promise<Indicator[]> {
         name: "CPI Inflation",
         value: parseFloat(yoyPct.toFixed(2)),
         signal,
-        description: `MoM annualized: ${yoyPct.toFixed(2)}%. High inflation + weak growth = stagflation risk.`,
+        description: `YoY: ${yoyPct.toFixed(2)}%. High inflation + weak growth = stagflation risk.`,
         weight: 1,
       });
     }
   } catch {}
 
-  // 6. Retail Sales
+  // 6. Retail Sales — FRED RSAFS (monthly, level)
   try {
-    const data = await avFetch("RETAIL_SALES");
-    const vals = (data?.data ?? []).slice(0, 4).map((d: { value: string }) => parseFloat(d.value));
+    const vals = await fredSeries(FRED_SERIES.retail, 4);
     if (vals.length >= 2) {
       const mom = ((vals[0] - vals[1]) / vals[1]) * 100;
       const declines = vals.slice(0, 3).filter((v: number, i: number, a: number[]) => i > 0 && v < a[i - 1]).length;
@@ -161,10 +154,9 @@ async function fetchIndicators(): Promise<Indicator[]> {
     }
   } catch {}
 
-  // 7. Federal Funds Rate (pace of tightening)
+  // 7. Federal Funds Rate (pace of tightening) — FRED FEDFUNDS (monthly, %)
   try {
-    const data = await avFetch("FEDERAL_FUNDS_RATE", "&interval=monthly");
-    const vals = (data?.data ?? []).slice(0, 6).map((d: { value: string }) => parseFloat(d.value));
+    const vals = await fredSeries(FRED_SERIES.fedFunds, 6);
     if (vals.length >= 1) {
       const latest = vals[0];
       const sixMoAgo = vals[5] ?? vals[vals.length - 1];
@@ -184,10 +176,9 @@ async function fetchIndicators(): Promise<Indicator[]> {
     }
   } catch {}
 
-  // 8. Durable Goods Orders (manufacturing proxy)
+  // 8. Durable Goods Orders (manufacturing proxy) — FRED DGORDER (monthly, level)
   try {
-    const data = await avFetch("DURABLES");
-    const vals = (data?.data ?? []).slice(0, 3).map((d: { value: string }) => parseFloat(d.value));
+    const vals = await fredSeries(FRED_SERIES.durables, 3);
     if (vals.length >= 2) {
       const mom = ((vals[0] - vals[1]) / vals[1]) * 100;
       let signal: "green" | "yellow" | "orange" | "red" = "green";
