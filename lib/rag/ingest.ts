@@ -127,8 +127,17 @@ export async function ingestDocument(
   if (!vectors) return { ...base, skipped: "embedding failed" };
 
   const svc = createServiceClient();
-  // Replace-on-reingest: clear prior chunks for this source id.
-  await svc.from("doc_chunks").delete().eq("source_id", doc.sourceId);
+  // Durable re-ingest (migration 123): write a NEW active version, then drop the
+  // prior version ONLY after the insert succeeds. A failed insert leaves the old
+  // active chunks intact and retrievable — evidence memory is never lost.
+  const { data: prior } = await svc
+    .from("doc_chunks")
+    .select("ingest_version")
+    .eq("source_id", doc.sourceId)
+    .order("ingest_version", { ascending: false })
+    .limit(1);
+  const priorVersion: number = (prior?.[0] as any)?.ingest_version ?? 0;
+  const newVersion = priorVersion + 1;
 
   const rows = contextual.map((c, i) => ({
     source_id: doc.sourceId,
@@ -136,6 +145,8 @@ export async function ingestDocument(
     symbol: doc.symbol,
     market,
     chunk_index: i,
+    ingest_version: newVersion,
+    active: true,
     text: c.text,
     contextual: c.contextual,
     metadata: doc.metadata ?? {},
@@ -145,6 +156,15 @@ export async function ingestDocument(
 
   const { error } = await svc.from("doc_chunks").insert(rows);
   base.stored = error ? 0 : rows.length;
+
+  // Only prune the old version after a confirmed successful insert.
+  if (!error && priorVersion > 0) {
+    await svc
+      .from("doc_chunks")
+      .delete()
+      .eq("source_id", doc.sourceId)
+      .neq("ingest_version", newVersion);
+  }
 
   await traceRag({
     op: "index",

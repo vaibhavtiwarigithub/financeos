@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,8 @@ async function fetchCompanyName(symbol: string): Promise<string | null> {
 }
 
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const svc = createServiceClient();
   const now = new Date().toISOString();
   // ?market=us|india scopes the list to the global market switcher (lib/market-context.tsx).

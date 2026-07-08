@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const gate = await requireOwner();
+  if (gate) return gate;
+
   const svc = createServiceClient();
   const { data, error } = await svc.from("agent_config").select("*").order("agent_name");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -12,9 +15,8 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const gate = await requireOwner();
+  if (gate) return gate;
 
   const body = await req.json();
   const { agent_name, model, enabled, max_tokens, temperature, notes } = body;

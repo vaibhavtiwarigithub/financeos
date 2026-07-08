@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
+    const gate = await requireOwner();
+    if (gate) return gate;
     const svc = createServiceClient();
 
     const now = new Date();

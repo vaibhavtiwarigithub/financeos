@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 import { getQuote } from "@/lib/data/quotes";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { classifyOutcome } from "@/lib/trade-outcome";
@@ -12,9 +12,8 @@ export const dynamic = "force-dynamic";
 // override for "I want out now" (a real gap flagged 2026-07-06 — there was
 // no manual close path in the UI before this).
 export async function POST(req: NextRequest) {
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const gate = await requireOwner();
+  if (gate) return gate;
 
   const body = await req.json().catch(() => ({}));
   const symbol = String(body.symbol ?? "").toUpperCase();

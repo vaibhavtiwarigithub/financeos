@@ -6,6 +6,7 @@ import { guardOrderRequest } from "@/lib/request-guards";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { checkLivePortfolioLimits } from "@/lib/risk/live-portfolio-gate";
+import { liveOrdersAllowed } from "@/lib/autonomy";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +58,13 @@ export async function POST(req: NextRequest) {
   // Execution Gateway. This standalone Kite path previously skipped these, so a
   // tripped kill switch or a disabled India toggle did NOT stop a live India order.
   {
-    const { data: gate } = await svc.from("strategy_config").select("trading_enabled, trading_enabled_india").limit(1).maybeSingle();
+    const { data: gate } = await svc.from("strategy_config").select("trading_enabled, trading_enabled_india, autonomy_level").limit(1).maybeSingle();
+    // Autonomy ladder (migration 124) — master gate above trading_enabled. Live
+    // requires L3_live_manual+; L4/L5 autonomous are not honored (owner click
+    // stays mandatory via requireOwner). See lib/autonomy.ts.
+    if (!liveOrdersAllowed((gate as any)?.autonomy_level)) {
+      return NextResponse.json({ error: `Live orders blocked by autonomy level '${(gate as any)?.autonomy_level ?? "unset"}' — live requires L3_live_manual or higher (raise it in Settings → Agents).` }, { status: 403 });
+    }
     if (!(gate as any)?.trading_enabled) {
       return NextResponse.json({ error: "Live trading is disabled (strategy_config.trading_enabled = false)" }, { status: 403 });
     }
@@ -130,13 +137,18 @@ export async function POST(req: NextRequest) {
       if (!overrideReason || !String(overrideReason).trim()) {
         return NextResponse.json({ error: "manualOverride:true requires a non-empty overrideReason (audited)." }, { status: 400 });
       }
-      // Persist the override BEFORE any budget reservation / broker submit (audit trail).
-      await svc.from("decision_journal").insert({
+      // Persist the override BEFORE any budget reservation / broker submit.
+      // FAIL CLOSED: if the audit insert errors, abort — never let an
+      // un-auditable override reach the broker.
+      const { error: mAuditErr } = await svc.from("decision_journal").insert({
         entry_type: "manual_override", symbol, market: "india",
         summary: `Manual India BUY override: ${quantity} ${symbol} — ${String(overrideReason).slice(0, 300)}`,
         calculations: { transaction_type, quantity, signal_id: signal_id ?? null, override: true },
         has_verified_facts: false, resolved: false,
-      }).then(() => {}, () => {});
+      });
+      if (mAuditErr) {
+        return NextResponse.json({ error: `Manual override could not be audited (${mAuditErr.message}) — aborting live order (fail-closed).` }, { status: 500 });
+      }
     }
   }
 
@@ -157,12 +169,16 @@ export async function POST(req: NextRequest) {
       if (!overrideReason || !String(overrideReason).trim()) {
         return NextResponse.json({ error: "manualOverride:true requires a non-empty overrideReason (audited)." }, { status: 400 });
       }
-      await svc.from("decision_journal").insert({
+      // FAIL CLOSED: audit the portfolio-limit override before it bypasses G3.
+      const { error: pAuditErr } = await svc.from("decision_journal").insert({
         entry_type: "portfolio_limit_override", symbol, market: "india",
         summary: `India G3 portfolio limit override: ${pg.reason} — ${String(overrideReason).slice(0, 300)}`,
         calculations: { transaction_type, quantity, signal_id: signal_id ?? null, portfolioGate: pg },
         has_verified_facts: false, resolved: false,
-      }).then(() => {}, () => {});
+      });
+      if (pAuditErr) {
+        return NextResponse.json({ error: `Portfolio-limit override could not be audited (${pAuditErr.message}) — aborting live order (fail-closed).` }, { status: 500 });
+      }
     }
   }
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,9 @@ async function fetchDailySeries(symbol: string, from: string, to: string, apiKey
 }
 
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
+
   const period = new URL(req.url).searchParams.get("period") ?? "1M";
   const massiveKey = process.env.MASSIVE_API_KEY ?? "";
 

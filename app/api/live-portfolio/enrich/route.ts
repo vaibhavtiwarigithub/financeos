@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +65,9 @@ async function fetchDailySeries(symbol: string, avKey: string): Promise<Record<s
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
+
   const svc = createServiceClient();
   const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
 

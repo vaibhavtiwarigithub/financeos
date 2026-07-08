@@ -9,6 +9,7 @@ import { checkLivePortfolioLimits } from "@/lib/risk/live-portfolio-gate";
 import { getQuote } from "@/lib/data/quotes";
 import { robinhoodHeldQty } from "@/lib/robinhood-mcp";
 import { reportIssue } from "@/lib/system-health";
+import { liveOrdersAllowed } from "@/lib/autonomy";
 
 // Adapter id → the brokerage key used in the broker_accounts allowlist.
 function allowlistBrokerKey(brokerId: string): string {
@@ -104,12 +105,18 @@ export async function POST(req: NextRequest) {
       if (!overrideReason || !String(overrideReason).trim()) {
         return NextResponse.json({ error: "acceptLowQuality / acceptPortfolioRisk require a non-empty overrideReason (audited)." }, { status: 400 });
       }
-      await supabase.from("decision_journal").insert({
+      // FAIL CLOSED: the override must be durably audited BEFORE it can bypass a
+      // gate. If the audit insert errors, abort the live order — never let an
+      // un-auditable override proceed to broker submit.
+      const { error: auditErr } = await supabase.from("decision_journal").insert({
         entry_type: "risk_override", symbol, market,
         summary: `Live BUY risk override (${[acceptLowQuality && "low-quality-signal", acceptPortfolioRisk && "portfolio-risk"].filter(Boolean).join(", ")}): proposal ${proposal_id} — ${String(overrideReason).slice(0, 300)}`,
         calculations: { proposal_id, acceptLowQuality: !!acceptLowQuality, acceptPortfolioRisk: !!acceptPortfolioRisk },
         has_verified_facts: false, resolved: false,
-      }).then(() => {}, () => {});
+      });
+      if (auditErr) {
+        return NextResponse.json({ error: `Risk override could not be audited (${auditErr.message}) — aborting live order (fail-closed).` }, { status: 500 });
+      }
     }
 
     // Basic shape validation regardless of env.
@@ -130,8 +137,17 @@ export async function POST(req: NextRequest) {
     let freshPrice: number | null = null;
     let cfg: any = null;
     if (orderEnv === "live") {
-      const cfgRes = await supabase.from("strategy_config").select("trading_enabled, trading_enabled_us, trading_enabled_india, max_order_notional, max_order_notional_usd, max_order_notional_inr, max_daily_notional_usd, max_daily_notional_inr, max_daily_trades, robinhood_mcp_enabled").limit(1).maybeSingle();
+      const cfgRes = await supabase.from("strategy_config").select("trading_enabled, trading_enabled_us, trading_enabled_india, max_order_notional, max_order_notional_usd, max_order_notional_inr, max_daily_notional_usd, max_daily_notional_inr, max_daily_trades, robinhood_mcp_enabled, autonomy_level").limit(1).maybeSingle();
       cfg = cfgRes.data;
+
+      // Autonomy ladder (migration 124) — master gate stacked ABOVE trading_enabled.
+      // Live orders require level >= L3_live_manual. L0/L1/L2 block ALL live orders
+      // outright. L4/L5 (autonomous) are DEFINED-BUT-NOT-HONORED: owner click stays
+      // mandatory via requireOwner() above — see lib/autonomy.ts.
+      if (!liveOrdersAllowed((cfg as any)?.autonomy_level)) {
+        return NextResponse.json({ error: `Live orders blocked by autonomy level '${(cfg as any)?.autonomy_level ?? "unset"}' — live requires L3_live_manual or higher (raise it in Settings → Agents).` }, { status: 403 });
+      }
+
       const marketFlag = market === "india" ? (cfg as any)?.trading_enabled_india : (cfg as any)?.trading_enabled_us;
       if (!(cfg as any)?.trading_enabled) {
         return NextResponse.json({ error: "Live trading is disabled (strategy_config.trading_enabled = false)" }, { status: 403 });

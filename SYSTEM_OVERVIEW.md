@@ -267,7 +267,8 @@ Real trading is wrapped in layers — each independent, each fail-safe. Most wer
 ```mermaid
 flowchart TD
   ORDER[Approved live order] --> OWNER[Owner-only + you clicked send]
-  OWNER --> ENABLED[Trading enabled?<br/>global + this market]
+  OWNER --> LADDER[Autonomy level >= L3?<br/>L4/L5 auto NOT honored]
+  LADDER --> ENABLED[Trading enabled?<br/>global + this market]
   ENABLED --> KILL[Kill switches OK?<br/>daily loss / drawdown / accuracy]
   KILL --> QUALITY[Signal data-confidence OK? G1]
   QUALITY --> PERORDER[Per-order cap<br/>US $ / India ₹]
@@ -277,6 +278,14 @@ flowchart TD
   DRIFT --> SEND[Send to broker]
 ```
 
+- **Autonomy ladder (master gate)** — a single declared maturity level in
+  `strategy_config.autonomy_level` sits above every other control. Live orders are refused
+  unless the level is `L3_live_manual` or higher (default is `L3_live_manual`, so current
+  behavior is unchanged). Levels `L4_live_small_auto` / `L5_scaled_auto` *describe* a future
+  autonomous envelope but are **not honored** — `AUTONOMOUS_LIVE_ENABLED` is hard-`false` in
+  `lib/autonomy.ts`, so the owner still clicks send on every live order. There is no code path
+  that places a live order without `requireOwner()`. Enforced identically in the US
+  (`broker/orders`) and India (`kite/order`) gateways.
 - **Per-order caps** — a single live order can't exceed your set $ (US) / ₹ (India) limit.
   You set both in **Settings → Live Order Limits** (with a Reset-to-defaults button).
 - **Daily caps** — total live buying per day is bounded (count + cumulative $), enforced
@@ -333,4 +342,4 @@ flowchart TD
 
 ---
 
-*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-08 (Strategic Report Tier-1 + Tier-2: prompt caching, ticker filter, prompt versioning, DeepSeek data gate, discovery_source attribution, B3 structured triage, Data Provider Abstraction, Learning Integrity Phase 1B taint columns + auto-stamp at fill).*
+*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-08 (07/08 review fixes: P1 auth gating [alerts, enrich, watchlist, admin LLM APIs], durable RAG re-ingest [mig 123], and the autonomy ladder [mig 124 + `lib/autonomy.ts`] as a disabled-by-default master money-safety gate — L3 default preserves owner-click live behavior, L4/L5 autonomous not honored). Prior: Strategic Report Tier-1 + Tier-2: prompt caching, ticker filter, prompt versioning, DeepSeek data gate, discovery_source attribution, B3 structured triage, Data Provider Abstraction, Learning Integrity Phase 1B taint columns + auto-stamp at fill.*

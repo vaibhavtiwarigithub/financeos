@@ -2,10 +2,13 @@
 // Returns LLM call history with aggregated cost totals
 import { NextRequest, NextResponse } from "next/server"
 import { createServiceClient } from "@/lib/supabase/service"
+import { requireOwner } from "@/lib/auth/require-owner"
 
 export const dynamic = "force-dynamic"
 
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner()
+  if (gate) return gate
   const days = parseInt(req.nextUrl.searchParams.get("days") ?? "7")
   const model = req.nextUrl.searchParams.get("model")
   const svc = createServiceClient()

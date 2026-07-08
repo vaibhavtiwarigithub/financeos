@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const gate = await requireOwner();
+  if (gate) return gate;
+
   const svc = createServiceClient();
   const [{ data: config }, { data: history }] = await Promise.all([
     svc.from("learner_config").select("*").order("dimension"),
@@ -14,9 +17,8 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const gate = await requireOwner();
+  if (gate) return gate;
 
   const body = await req.json();
   const { dimension, learn_from, allow_mutation, min_confidence } = body;
@@ -34,9 +36,8 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const gate = await requireOwner();
+  if (gate) return gate;
 
   const { action, history_id } = await req.json();
   const svc = createServiceClient();

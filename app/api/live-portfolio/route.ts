@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getBatchQuotes } from "@/lib/data/quotes";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
+
   const accountIds = new URL(req.url).searchParams.get("accounts")?.split(",").filter(Boolean);
   const svc = createServiceClient();
 

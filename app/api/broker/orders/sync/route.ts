@@ -4,6 +4,7 @@ import { getBroker } from "@/lib/brokers/registry";
 import { fetchAlpacaAccount } from "@/lib/brokers/alpaca";
 import { getKiteHoldings } from "@/lib/kite";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { emitAlert } from "@/lib/alerts/emit";
 import { resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
@@ -104,11 +105,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (mismatches.length > 0) {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-    await fetch(`${appUrl}/api/alerts`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ severity: "warn", category: "broker", title: "Broker position mismatch detected", detail: mismatches.join(" · "), auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString() }),
-    }).catch(() => {});
+    await emitAlert({ severity: "warn", category: "broker", title: "Broker position mismatch detected", detail: mismatches.join(" · "), auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString() });
   }
 
   return NextResponse.json({ success: true, updated, filled, mismatches });
