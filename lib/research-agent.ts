@@ -15,6 +15,7 @@ import { fetchUsCandles } from "@/lib/data/candles";
 import { fetchUsOverview } from "@/lib/data/fundamentals";
 import { scoreEdgarInsider } from "@/lib/data/edgar-insider";
 import { fetchUpstoxCandles } from "@/lib/data/upstox";
+import { scoreAnalyst } from "@/lib/data/analyst";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
 // US, ^NSEI for India) — computed once per market per process, not per symbol.
@@ -133,6 +134,39 @@ const LEVERAGED_BEAR_ETFS = new Set([
 ]);
 
 const TRADING_ACCOUNT = process.env.TRADING_ACCOUNT_NUMBER ?? "965848641";
+
+// US-listed foreign companies (ADRs). Foreign private issuers are EXEMPT from
+// SEC Section 16 — they do NOT file Form 4s — so an insider fetch always returns
+// empty and wastes the SEC EDGAR + AV fallback calls. Mark insider N/A for them.
+const US_ADRS = new Set([
+  "INFY","WIT","HDB","IBN","RDY","SIFY","WNS","MMYT","VEDL","AZRE",  // India
+  "BABA","JD","PDD","BIDU","NIO","LI","XPEV","TCOM","BILI","TME",    // China
+  "TSM","ASML","SAP","SHOP","SE","MELI","NVO","TM","SONY","UL",      // other
+]);
+
+// Which scoring/evidence dimensions a symbol CAN structurally have. Fetching a
+// dimension a symbol can never possess just wastes provider calls (and every
+// missing dimension is already excluded from the weighted score via the
+// availability mask). Consulted by every fetch so a NEW dimension automatically
+// skips the types that can't have it.
+export type Dimension = "fundamental" | "technical" | "sentiment" | "macro" | "insider" | "options" | "analyst";
+
+export function applicableDimensions(entry: SymbolEntry): Set<Dimension> {
+  const india = isIndia(entry.symbol);
+  const dims = new Set<Dimension>(["technical", "macro"]); // every tradable symbol has price + macro backdrop
+  if (india) {
+    dims.add("fundamental"); // Yahoo/Upstox fundamentals; no US-style insider, no free social/options/analyst
+    return dims;
+  }
+  if (entry.isEtf) {
+    dims.add("sentiment"); // ETFs carry social/news sentiment but no single-company fundamentals/insider/analyst
+    return dims;
+  }
+  // US individual equity — all dimensions, except insider for ADRs (no Form 4).
+  dims.add("fundamental"); dims.add("sentiment"); dims.add("options"); dims.add("analyst");
+  if (!US_ADRS.has(entry.symbol.toUpperCase())) dims.add("insider");
+  return dims;
+}
 
 export type SymbolEntry = {
   symbol: string;
@@ -805,22 +839,27 @@ export async function processSymbol(
   // options/insider (US-only sources) are skipped for India → those dimensions
   // fall to their neutral baseline, which the score-detail panel flags honestly.
   const india = isIndia(symbol);
+  // Structural capability map — a dimension a symbol can't have is never fetched
+  // (ETF fundamentals, ADR insider, India US-only sources). Missing dimensions
+  // are already excluded from the weighted score via the availability mask.
+  const applicable = applicableDimensions(entry);
 
   // Phase 0: fetch all real data in parallel — no LLM-generated numbers
   const [socialResult, optionsResult, insiderResult, avOverview, candles] = await Promise.all([
-    india ? Promise.resolve(null) : fetchSocialSentiment(symbol).catch(() => null),
-    (india || isEtf) ? Promise.resolve(null) : fetchOptionsSignal(symbol).catch(() => null),
+    applicable.has("sentiment") && !india ? fetchSocialSentiment(symbol).catch(() => null) : Promise.resolve(null),
+    applicable.has("options") ? fetchOptionsSignal(symbol).catch(() => null) : Promise.resolve(null),
     // Insider: SEC EDGAR Form 4 primary (free, official, unlimited) → Alpha
-    // Vantage INSIDER_TRANSACTIONS fallback. Frees an AV 25/day slot per symbol.
-    (india || isEtf) ? Promise.resolve(null) : resolveInsider(symbol, avKey).catch(() => null),
-    india
-      ? fetchIndiaOverview(symbol).catch(() => ({}))
-      // ETFs have no company fundamentals — scoreFundamentals uses the ETF
-      // baseline via isEtf, so skip the fetch entirely (don't waste an FMP/AV
-      // call). US equities: FMP (own 250/day budget) → Alpha Vantage OVERVIEW
-      // fallback, mapped to the same OVERVIEW shape scoreFundamentals reads.
-      : isEtf
-        ? Promise.resolve({})
+    // Vantage INSIDER_TRANSACTIONS fallback. Skipped for ETFs/India/ADRs (no
+    // Form 4), which saves the fetch entirely.
+    applicable.has("insider") ? resolveInsider(symbol, avKey).catch(() => null) : Promise.resolve(null),
+    !applicable.has("fundamental")
+      // No company fundamentals (ETF) — scoreFundamentals uses the ETF baseline
+      // via isEtf; skip the fetch (don't waste an FMP/AV call).
+      ? Promise.resolve({})
+      : india
+        ? fetchIndiaOverview(symbol).catch(() => ({}))
+        // US equities: FMP (own 250/day budget) → Alpha Vantage OVERVIEW
+        // fallback, mapped to the same OVERVIEW shape scoreFundamentals reads.
         : fetchUsOverview(symbol, () => fetchAVOverview(symbol, avKey)).then(r => r.overview).catch(() => ({})),
     india
       // India candles: Upstox (official, analytics token) primary → Yahoo
@@ -834,6 +873,16 @@ export async function processSymbol(
       // the scarce AV 25/day budget is no longer spent on candles.
       : fetchUsCandles(symbol, () => fetchAVCandles(symbol, avKey)).then(r => r.candles).catch(() => [] as Candle[]),
   ]);
+
+  // Analyst-recommendation dimension (Finnhub, free). Wall-Street consensus is a
+  // genuine predictive axis, but per CLAUDE.md's pushback mandate — don't add a
+  // scoring dimension before the learning loop can validate it improves outcomes
+  // — it is captured as LOGGED EVIDENCE (decision_observations.features.analyst)
+  // for the LearnerAgent to grade, NOT fed into the live weighted score yet. It
+  // earns promotion to a full weighted dimension once it has an IC track record.
+  const analystResult = applicable.has("analyst")
+    ? await scoreAnalyst(symbol).catch(() => null)
+    : null;
 
   // Compute all 5 scores deterministically from fetched data
   const scores = await computeScores({
@@ -1166,6 +1215,9 @@ export async function processSymbol(
         ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}),
         weighting: { renormalized, included_dims: includedDims, base_weights: weightOf, applied_weights: effWeights },
         ...(activeFeatureValues ? { active_feature_values: activeFeatureValues } : {}),
+        // Analyst consensus (Finnhub) — LOGGED evidence for the learner to grade,
+        // not fed into the live weighted score yet (see fetch site).
+        ...(analystResult?.available ? { analyst: { score: analystResult.score, ...analystResult.evidence } } : {}),
       },
       availability_mask,
       analyst_score: analystScore,
