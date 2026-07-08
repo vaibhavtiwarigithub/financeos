@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { proposal_id, env } = body as { proposal_id?: number; env?: "paper" | "live" };
+    const { proposal_id, env, acceptLowQuality } = body as { proposal_id?: number; env?: "paper" | "live"; acceptLowQuality?: boolean };
     // env must be explicit on an order-placing route — no silent paper default
     // that could route a mis-typed request past the live gates.
     if (env !== "paper" && env !== "live") {
@@ -135,6 +135,23 @@ export async function POST(req: NextRequest) {
       // and the human clicking Send.
       const ks = await checkKillSwitches(supabase, market);
       if (!ks.safe) return NextResponse.json({ error: `Kill switch active: ${ks.reason}` }, { status: 403 });
+
+      // G1: signal data-quality gate for live BUY. Block a live BUY whose source
+      // decision was low-evidence / tainted (the fake-100 partial-data pattern) so real
+      // money isn't sized on a bad thesis. SELL exits are exempt. Owner can override
+      // with acceptLowQuality:true (an explicit re-approval of a thin signal).
+      if (side === "buy" && !acceptLowQuality) {
+        const sigId = (proposal as any).signal_id;
+        const { data: dq } = sigId ? await supabase.from("v_decision_quality")
+          .select("data_confidence, quality_status, missing_dims, degraded_dims")
+          .eq("signal_id", sigId).order("ts", { ascending: false }).limit(1).maybeSingle() : { data: null };
+        const conf = dq ? Number((dq as any).data_confidence) : null;
+        const okQuality = !!dq && (dq as any).quality_status === "ok" && Number.isFinite(conf as number) && (conf as number) >= 0.5;
+        if (!okQuality) {
+          const gaps = dq ? [...((dq as any).missing_dims ?? []), ...((dq as any).degraded_dims ?? [])].join(", ") : "";
+          return NextResponse.json({ error: `Refusing live BUY of ${symbol}: signal data confidence ${dq ? (conf ?? "unknown") : "unknown (no linked quality record)"} below the 0.5 threshold${gaps ? ` (missing/degraded: ${gaps})` : ""}. Re-approve with acceptLowQuality:true only if you accept the low-evidence signal.` }, { status: 409 });
+        }
+      }
 
       // Account must be an allowlisted role='trading' account for THIS broker
       // (fail closed).
