@@ -87,6 +87,10 @@ export default function SettingsPage() {
   const [dailyUsd, setDailyUsd] = useState<string>("");
   const [dailyInr, setDailyInr] = useState<string>("");
   const [maxDailyTrades, setMaxDailyTrades] = useState<string>("");
+  const [paperUsd, setPaperUsd] = useState<string>("");
+  const [paperInr, setPaperInr] = useState<string>("");
+  const [dailyPaperUsd, setDailyPaperUsd] = useState<string>("");
+  const [dailyPaperInr, setDailyPaperInr] = useState<string>("");
   const [savingCaps, setSavingCaps] = useState(false);
   const loadRhMcp = () => {
     fetch("/api/robinhood-mcp/status").then(r => r.json()).then(setRhMcp).catch(() => {});
@@ -181,6 +185,10 @@ export default function SettingsPage() {
         if (d.max_daily_notional_usd != null) setDailyUsd(String(d.max_daily_notional_usd));
         if (d.max_daily_notional_inr != null) setDailyInr(String(d.max_daily_notional_inr));
         if (d.max_daily_trades != null) setMaxDailyTrades(String(d.max_daily_trades));
+        if (d.max_order_notional_usd_paper != null) setPaperUsd(String(d.max_order_notional_usd_paper));
+        if (d.max_order_notional_inr_paper != null) setPaperInr(String(d.max_order_notional_inr_paper));
+        if (d.max_daily_notional_usd_paper != null) setDailyPaperUsd(String(d.max_daily_notional_usd_paper));
+        if (d.max_daily_notional_inr_paper != null) setDailyPaperInr(String(d.max_daily_notional_inr_paper));
       })
       .catch(() => {});
 
@@ -261,10 +269,16 @@ export default function SettingsPage() {
     loadRhMcp();
   }
 
+  const ORDER_LIMIT_DEFAULTS = {
+    usd: "500", inr: "20000", dailyUsd: "5000", dailyInr: "30000", maxDailyTrades: "",
+    paperUsd: "2500", paperInr: "250000", dailyPaperUsd: "5000", dailyPaperInr: "500000",
+  };
+
   async function saveOrderCaps() {
-    // Empty per-order field → null → that market fails closed (refuses live orders).
-    // Empty daily field / trade count → null → that daily limit is simply not enforced.
-    const fields: [string, string][] = [["usd", usdCap], ["inr", inrCap], ["dailyUsd", dailyUsd], ["dailyInr", dailyInr]];
+    // Empty per-order live field → null → that market fails closed (refuses live orders).
+    // Empty daily / paper field → null → that limit is simply not enforced.
+    const fields: [string, string][] = [["usd", usdCap], ["inr", inrCap], ["dailyUsd", dailyUsd], ["dailyInr", dailyInr],
+      ["paperUsd", paperUsd], ["paperInr", paperInr], ["dailyPaperUsd", dailyPaperUsd], ["dailyPaperInr", dailyPaperInr]];
     for (const [, v] of fields) {
       if (v.trim() !== "" && !(Number(v) > 0)) {
         setToast("Amounts must be positive numbers (or blank)");
@@ -284,10 +298,20 @@ export default function SettingsPage() {
         max_order_notional_usd: num(usdCap), max_order_notional_inr: num(inrCap),
         max_daily_notional_usd: num(dailyUsd), max_daily_notional_inr: num(dailyInr),
         max_daily_trades: num(maxDailyTrades),
-      }, "Live order limits saved");
-      setToast("Live order limits saved");
+        max_order_notional_usd_paper: num(paperUsd), max_order_notional_inr_paper: num(paperInr),
+        max_daily_notional_usd_paper: num(dailyPaperUsd), max_daily_notional_inr_paper: num(dailyPaperInr),
+      }, "Order limits saved");
+      setToast("Order limits saved");
       setTimeout(() => setToast(""), 2500);
     } finally { setSavingCaps(false); }
+  }
+
+  function resetOrderLimitsToDefaults() {
+    const d = ORDER_LIMIT_DEFAULTS;
+    setUsdCap(d.usd); setInrCap(d.inr); setDailyUsd(d.dailyUsd); setDailyInr(d.dailyInr); setMaxDailyTrades(d.maxDailyTrades);
+    setPaperUsd(d.paperUsd); setPaperInr(d.paperInr); setDailyPaperUsd(d.dailyPaperUsd); setDailyPaperInr(d.dailyPaperInr);
+    setToast("Reset to defaults — click Save limits to apply");
+    setTimeout(() => setToast(""), 3500);
   }
 
   async function applyPosture() {
@@ -828,10 +852,37 @@ export default function SettingsPage() {
                 <input type="number" min="1" step="1" value={maxDailyTrades} onChange={e => setMaxDailyTrades(e.target.value)} placeholder="e.g. 3" style={sel} />
               </div>
             </div>
-            <button onClick={saveOrderCaps} disabled={savingCaps}
-              style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "9px 20px", fontSize: "13px", fontWeight: 600, cursor: savingCaps ? "default" : "pointer", opacity: savingCaps ? 0.6 : 1 }}>
-              {savingCaps ? "Saving…" : "Save limits"}
-            </button>
+            <div style={{ fontSize: "12px", color: T.textSub, marginBottom: "10px", borderTop: `1px solid ${T.border}`, paddingTop: "14px" }}>
+              <strong>Paper limits</strong> — caps for the simulated ($10k / ₹1M) paper books, scaled to their NAV so they bound outliers without distorting the strategy. Blank = not enforced.
+            </div>
+            <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" as const, marginBottom: "14px" }}>
+              <div style={{ flex: "1 1 120px" }}>
+                <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "8px" }}>Paper US / trade ($)</label>
+                <input type="number" min="0" step="1" value={paperUsd} onChange={e => setPaperUsd(e.target.value)} placeholder="e.g. 2500" style={sel} />
+              </div>
+              <div style={{ flex: "1 1 120px" }}>
+                <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "8px" }}>Paper India / trade (₹)</label>
+                <input type="number" min="0" step="1" value={paperInr} onChange={e => setPaperInr(e.target.value)} placeholder="e.g. 250000" style={sel} />
+              </div>
+              <div style={{ flex: "1 1 120px" }}>
+                <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "8px" }}>Paper US / day ($)</label>
+                <input type="number" min="0" step="1" value={dailyPaperUsd} onChange={e => setDailyPaperUsd(e.target.value)} placeholder="e.g. 5000" style={sel} />
+              </div>
+              <div style={{ flex: "1 1 120px" }}>
+                <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "8px" }}>Paper India / day (₹)</label>
+                <input type="number" min="0" step="1" value={dailyPaperInr} onChange={e => setDailyPaperInr(e.target.value)} placeholder="e.g. 500000" style={sel} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" as const }}>
+              <button onClick={saveOrderCaps} disabled={savingCaps}
+                style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "9px 20px", fontSize: "13px", fontWeight: 600, cursor: savingCaps ? "default" : "pointer", opacity: savingCaps ? 0.6 : 1 }}>
+                {savingCaps ? "Saving…" : "Save limits"}
+              </button>
+              <button onClick={resetOrderLimitsToDefaults} disabled={savingCaps}
+                style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: "8px", color: T.textSub, padding: "9px 20px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+                Reset to defaults
+              </button>
+            </div>
             <div style={{ fontSize: "11px", color: T.muted, marginTop: "10px" }}>
               {inrCap.trim() === "" && <span style={{ color: T.amber }}>● India live orders are currently disabled (no INR cap set). </span>}
               Caps are per <em>single order</em>, not per day. They never affect paper trading and can only be changed here by you.

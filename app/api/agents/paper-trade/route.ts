@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     const { data: cfg } = await supabase
       .from("strategy_config")
-      .select("app_paused, score_threshold, position_size_pct, stop_loss_pct, target_pct, max_gross_exposure_pct, max_sector_exposure_pct, max_name_exposure_pct, max_portfolio_vol_pct, max_avg_pairwise_corr")
+      .select("app_paused, score_threshold, position_size_pct, stop_loss_pct, target_pct, max_gross_exposure_pct, max_sector_exposure_pct, max_name_exposure_pct, max_portfolio_vol_pct, max_avg_pairwise_corr, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper")
       .limit(1)
       .single();
     if ((cfg as any)?.app_paused) {
@@ -68,6 +68,11 @@ export async function POST(req: NextRequest) {
 
     const scoreThreshold  = (cfg as any)?.score_threshold   ?? 60;
     const positionSizePct = (cfg as any)?.position_size_pct ?? 10;
+    // Paper order caps (per market, scaled to paper NAV). null → not enforced.
+    const perTradeCapUsdPaper = (cfg as any)?.max_order_notional_usd_paper ?? null;
+    const perTradeCapInrPaper = (cfg as any)?.max_order_notional_inr_paper ?? null;
+    const dailyCapUsdPaper = (cfg as any)?.max_daily_notional_usd_paper ?? null;
+    const dailyCapInrPaper = (cfg as any)?.max_daily_notional_inr_paper ?? null;
     const stopLossPctCfg  = (cfg as any)?.stop_loss_pct     ?? 7;
     const targetPctCfg    = (cfg as any)?.target_pct        ?? 20;
 
@@ -342,8 +347,10 @@ export async function POST(req: NextRequest) {
       const sizedPct = rawSizedPct;
       await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: sizedPct < proposedSizePct ? "shrunk" : "passed", reason: `Sized ${sizedPct.toFixed(1)}% (proposed ${proposedSizePct.toFixed(1)}%)`, detail: { proposedSizePct, sizedPct, adjustments: constructed.orders[0]?.adjustments } });
 
-      // Size off THIS pool's cash, in its own currency
-      const maxSpend = portfolio.cash_balance * (sizedPct / 100);
+      // Size off THIS pool's cash, in its own currency — bounded by the per-trade
+      // paper notional cap (scaled to paper NAV) so an outlier can't exceed it.
+      const perTradeCapPaper = market === "india" ? perTradeCapInrPaper : perTradeCapUsdPaper;
+      const maxSpend = Math.min(portfolio.cash_balance * (sizedPct / 100), perTradeCapPaper != null ? Number(perTradeCapPaper) : Infinity);
       const qty = Math.floor(maxSpend / fillPrice);
       if (!Number.isFinite(fillPrice) || fillPrice <= 0 || !Number.isFinite(maxSpend) || !Number.isFinite(qty) || qty < 1) {
         await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
@@ -357,6 +364,23 @@ export async function POST(req: NextRequest) {
         skipped.push({ symbol: signal.symbol, reason: "insufficient_cash" });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "insufficient_cash", detail: { totalCost, cash: portfolio.cash_balance } });
         continue;
+      }
+
+      // Daily paper notional cap (per market): stop once the day's cumulative paper
+      // BUY notional would exceed the cap. BUY only — never blocks a sell/exit.
+      const dailyCapPaper = market === "india" ? dailyCapInrPaper : dailyCapUsdPaper;
+      if (dailyCapPaper != null) {
+        const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
+        const { data: todayFills } = await supabase.from("paper_trades")
+          .select("total_value").eq("market", market).eq("order_side", "buy")
+          .gte("executed_at", dayStart.toISOString());
+        const spentToday = (todayFills ?? []).reduce((s: number, r: any) => s + Number(r.total_value ?? 0), 0);
+        if (spentToday + totalCost > Number(dailyCapPaper)) {
+          await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+          skipped.push({ symbol: signal.symbol, reason: "daily_paper_notional_cap" });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "daily_paper_notional_cap", detail: { spentToday, totalCost, cap: Number(dailyCapPaper) } });
+          continue;
+        }
       }
 
       // Transactional fill: try the execute_paper_fill RPC first (one DB
