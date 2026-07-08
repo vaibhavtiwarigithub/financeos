@@ -44,6 +44,8 @@ export default function SystemHealthCard() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [triage, setTriage] = useState<{ content: string; model?: string } | null>(null);
+  const [running, setRunning] = useState(false);
 
   useEffect(() => {
     fetch("/api/alerts")
@@ -51,7 +53,20 @@ export default function SystemHealthCard() {
       .then(d => setAlerts(Array.isArray(d.alerts) ? d.alerts : []))
       .catch(() => {})
       .finally(() => setLoaded(true));
+    fetch("/api/agents/health-triage")
+      .then(r => r.json())
+      .then(d => setTriage(d.triage ?? null))
+      .catch(() => {});
   }, []);
+
+  async function runTriage() {
+    setRunning(true);
+    try {
+      const r = await fetch("/api/agents/health-triage", { method: "POST" });
+      const d = await r.json();
+      if (d.ok) setTriage({ content: d.content, model: d.model });
+    } catch { /* best-effort */ } finally { setRunning(false); }
+  }
 
   if (!loaded) return null;
 
@@ -114,6 +129,23 @@ export default function SystemHealthCard() {
           })}
         </div>
       )}
+
+      {/* AI triage — read-only SRE summary + suggested fixes (health-triage agent). */}
+      <div style={{ marginTop: clean ? "12px" : "14px", borderTop: `1px solid ${T.border}`, paddingTop: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>🔧 AI Triage</span>
+          <button onClick={runTriage} disabled={running}
+            style={{ marginLeft: "auto", background: "transparent", border: `1px solid ${T.border}`, borderRadius: "6px", color: T.textSub, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: running ? "default" : "pointer" }}>
+            {running ? "Running…" : "Run triage"}
+          </button>
+        </div>
+        {triage?.content && (
+          <div style={{ fontSize: "12px", color: T.textSub, lineHeight: 1.6, whiteSpace: "pre-wrap", marginTop: "8px" }}>
+            {triage.content}
+            {triage.model && <div style={{ fontSize: "10px", color: T.muted, marginTop: "6px" }}>— {triage.model} · advisory only</div>}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

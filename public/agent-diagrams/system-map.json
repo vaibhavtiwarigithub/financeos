@@ -1,175 +1,507 @@
 {
   "agentId": "system-map",
   "agentLabel": "System Map — how the agents connect",
-  "diagram": "flowchart TD\n  MACRO[\"🌐 MacroSentinel\\nweekly · reads econ data\"] -->|macro_signals| RESEARCH\n  HOLD[\"📋 Holdings + Watchlist\\n+ dual-bucket screener\"] --> RESEARCH\n  CHAMPION[\"🏆 Champion weights\\nstrategy_versions\"] -->|weights_snapshot| RESEARCH\n  SCOREHIST[\"📈 signal_score_history\\nprior scores (trend)\"] -->|last N| RESEARCH\n  YAHOO[\"🇮🇳 Yahoo .NS data\\nfree · NIFTY candidates\"] -->|India fundamentals+candles| RESEARCH\n  NSE[\"🇮🇳 NSE direct (free)\\ninsider · options · full universe\"] -->|India insider/options/scan| INDIA\n  RESEARCH[\"🤖 ResearchAgent\\ndaily Mon-Fri · scores 5 dims\"] -->|US agent_signals| TRADER\n  RESEARCH -->|India agent_signals| INDIA\n  RESEARCH -->|India agent_signals| TRADER\n  RESEARCH -->|append| SCOREHIST\n  RESEARCH -->|every scored candidate| LEDGER[\"📒 Decision ledger\\ndecision_observations + labels\"]\n  LEDGER -->|matured horizon labels| LEARNER\n  RESEARCH -.->|records what shadow_paper versions would decide| SHADOW[\"👥 Shadow decisions\\nno fills, no cash\"]\n  LEARNER -.->|propose_feature| REGISTRY[\"🧪 Feature Registry\\nwhitelisted-grammar only\"]\n  CHALLENGER -.->|may carry| GENOME[\"🧬 Strategy genome\\nentry/horizon/exit/sizing/regime\"]\n  TRADER[\"⚙️ PaperTrader\\nscore>=threshold & long → buy\\nper-market pools: US $ · India ₹\"] -->|paper_positions| MONITOR\n  RESEARCH -->|fresh daily score| MONITOR\n  MONITOR[\"⚙️ PositionMonitor\\ndaily post-close · per market\"] -->|score<exit OR stop/target| EXITS[\"💸 Exit + close trade\\ncredit own-currency pool · decision_journal\"]\n  MONITOR -->|still above threshold| HELD[\"✅ Keep holding\"]\n  EXITS -->|closed outcomes| LEARNER\n  LEARNER[\"🤖 LearnerAgent\\nFriday · evaluates outcomes\"] -->|proposes| CHALLENGER[\"🧪 Challenger weights\\nstrategy_versions\"]\n  CHALLENGER -->|auto-fires| VALIDATE[\"🔬 Validation Engine\\nwalk-forward, fail-closed\"]\n  VALIDATE -->|passed=true required| PROMOTE{\"👤 Promote?\"}\n  PROMOTE -->|yes, gate must pass| CHAMPION\n  EXITS -->|outcomes| MENTOR[\"🎓 MentorAgent\\ncoaches you\"]\n  LEARNER -->|runs| MENTOR\n  TRADER -.->|US live: manual| REALORDER[\"📲 Paste command\\ninto Claude MCP → Robinhood\"]\n  TRADER -.->|approved proposal, you click| GATEWAY[\"🔌 Execution Gateway\\ntyped Alpaca orders\"]\n  INDIA[\"🇮🇳 India signals\\nScore Tracker + /dashboard/india\"] -.->|you confirm| KITE[\"📲 Real NSE/BSE order\\nvia Zerodha Kite (daily token)\"]",
+  "diagram": "flowchart TD\n  MACRO[\"🌐 MacroSentinel\\nweekly · reads econ data\"] -->|macro_signals| RESEARCH\n  HOLD[\"📋 Holdings + Watchlist\\n+ dual-bucket screener\"] --> RESEARCH\n  CHAMPION[\"🏆 Champion weights\\nstrategy_versions\"] -->|weights_snapshot| RESEARCH\n  SCOREHIST[\"📈 signal_score_history\\nprior scores (trend)\"] -->|last N| RESEARCH\n  YAHOO[\"🇮🇳 Yahoo .NS data\\nfree · NIFTY candidates\"] -->|India fundamentals+candles| RESEARCH\n  NSE[\"🇮🇳 NSE direct (free)\\ninsider · options · full universe\"] -->|India insider/options/scan| INDIA\n  RESEARCH[\"🤖 ResearchAgent\\ndaily Mon-Fri · scores 5 dims\"] -->|US agent_signals| TRADER\n  RESEARCH -->|India agent_signals| INDIA\n  RESEARCH -->|India agent_signals| TRADER\n  RESEARCH -->|append| SCOREHIST\n  RESEARCH -->|every scored candidate| LEDGER[\"📒 Decision ledger\\ndecision_observations + labels\"]\n  LEDGER -->|matured horizon labels| LEARNER\n  RESEARCH -.->|records what shadow_paper versions would decide| SHADOW[\"👥 Shadow decisions\\nno fills, no cash\"]\n  LEARNER -.->|propose_feature| REGISTRY[\"🧪 Feature Registry\\nwhitelisted-grammar only\"]\n  CHALLENGER -.->|may carry| GENOME[\"🧬 Strategy genome\\nentry/horizon/exit/sizing/regime\"]\n  TRADER[\"⚙️ PaperTrader\\nscore>=threshold & long → buy\\nper-market pools: US $ · India ₹\"] -->|paper_positions| MONITOR\n  RESEARCH -->|fresh daily score| MONITOR\n  MONITOR[\"⚙️ PositionMonitor\\ndaily post-close · per market\"] -->|score<exit OR stop/target| EXITS[\"💸 Exit + close trade\\ncredit own-currency pool · decision_journal\"]\n  MONITOR -->|still above threshold| HELD[\"✅ Keep holding\"]\n  EXITS -->|closed outcomes| LEARNER\n  LEARNER[\"🤖 LearnerAgent\\nFriday · evaluates outcomes\"] -->|proposes| CHALLENGER[\"🧪 Challenger weights\\nstrategy_versions\"]\n  CHALLENGER -->|auto-fires| VALIDATE[\"🔬 Validation Engine\\nwalk-forward, fail-closed\"]\n  VALIDATE -->|passed=true required| PROMOTE{\"👤 Promote?\"}\n  PROMOTE -->|yes, gate must pass| CHAMPION\n  EXITS -->|outcomes| MENTOR[\"🎓 MentorAgent\\ncoaches you\"]\n  LEARNER -->|runs| MENTOR\n  TRADER -.->|US live: manual| REALORDER[\"📲 Paste command\\ninto Claude MCP → Robinhood\"]\n  TRADER -.->|approved proposal, you click| GATEWAY[\"🔌 Execution Gateway\\ntyped Alpaca orders\"]\n  INDIA[\"🇮🇳 India signals\\nScore Tracker + /dashboard/india\"] -.->|you confirm| KITE[\"📲 Real NSE/BSE order\\nvia Zerodha Kite (daily token)\"]\n  MONITOR -.->|+alerts/runs/quality| HEALTH[\"🔧 Health-Triage\nread-only SRE → dashboard\"]",
   "nodes": {
     "MACRO": {
       "label": "MacroSentinel",
       "description": "Weekly. Reads 8 economic indicators (Alpha Vantage) and writes a risk regime to macro_signals. Consumed by ResearchAgent's macro score, DeepDive, and Mentor. Purely advisory — never places or blocks a trade by itself.",
-      "addedAt": "2026-06-28", "addReason": "Give every downstream score a macro context input.",
-      "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-06-28",
+      "addReason": "Give every downstream score a macro context input.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "RESEARCH": {
       "label": "ResearchAgent",
       "description": "Daily (Mon-Fri, 9:00 ET). Scores each tracked symbol across 5 dimensions (fundamental/technical/sentiment/macro/insider) into an analyst_score, using the promoted CHAMPION weights when one exists (the closed learning loop) and each symbol's recent score TREND as context. Writes agent_signals + appends signal_score_history. Research Journal: agent_signals inserts now capture the returned row id (signal_id was previously always null downstream), decision_observations.features.screener records which dual-bucket screener criteria flagged a candidate, and a pipeline_stage_events row is written per candidate (stage='research', passed/rejected + reason) — the first link in a full pipeline trail (research -> portfolio constructor -> execution).",
-      "addedAt": "2026-06-25", "addReason": "Central scoring engine — everything downstream keys off its analyst_score.",
-      "status": "changed", "changedAt": "2026-07-06", "changeReason": "Research Journal — wired signal_id through and added screener/stage instrumentation (Decision 40).", "removedAt": null, "removeReason": null
+      "addedAt": "2026-06-25",
+      "addReason": "Central scoring engine — everything downstream keys off its analyst_score.",
+      "status": "changed",
+      "changedAt": "2026-07-06",
+      "changeReason": "Research Journal — wired signal_id through and added screener/stage instrumentation (Decision 40).",
+      "removedAt": null,
+      "removeReason": null
     },
     "SCOREHIST": {
       "label": "signal_score_history",
       "description": "Append-only per-symbol score log (migration 054/055). Never mutated after insert. Feeds the Score Tracker chart AND is read back by ResearchAgent as trend context so it reasons about rising/falling conviction, not a cold snapshot.",
-      "addedAt": "2026-07-05", "addReason": "The score-history data model — previously the trajectory chart had no durable source.",
-      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-05",
+      "addReason": "The score-history data model — previously the trajectory chart had no durable source.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "CHAMPION": {
       "label": "Champion weights",
       "description": "The promoted strategy_versions row (is_champion=true) whose weights_snapshot ResearchAgent reads. This is where a human-approved LearnerAgent improvement finally takes effect. Before 2026-07-05 nothing read it — the loop was open and approved learning evaporated. Phase 4: ONE champion PER MARKET (strategy_versions.market) — an India stock scores off India-learned weights, a US stock off US weights. India's champion is seeded as a clone of the US champion (a prior) and diverges as India accrues its own trades.",
-      "addedAt": "2026-07-05", "addReason": "Closes the learning loop — Learner learns → you promote → Research scores differently.",
-      "status": "changed", "changedAt": "2026-07-05", "changeReason": "Per-market champions — India rides a US-cloned prior until it earns its own weights.", "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-05",
+      "addReason": "Closes the learning loop — Learner learns → you promote → Research scores differently.",
+      "status": "changed",
+      "changedAt": "2026-07-05",
+      "changeReason": "Per-market champions — India rides a US-cloned prior until it earns its own weights.",
+      "removedAt": null,
+      "removeReason": null
     },
     "TRADER": {
       "label": "PaperTrader",
       "description": "Deterministic flow (no LLM). Reads pending agent_signals with analyst_score >= threshold and direction long, and opens paper_positions + paper_trades via a transactional RPC (execute_paper_fill, migration 071 — one DB transaction, row-locked). Long-only. Phase 4: fills EACH signal into ITS market's own pool in native currency — US in USD, India in ₹; currencies never summed. Phase 2: sizing is conviction-scaled (half-Kelly from a calibrated P(win) model + the ledger's MFE/|MAE| payoff ratio, falling back to the flat position_size_pct until 60+ matured observations exist) and R:R is dynamic (stop/target from the ledger's actual MAE/MFE percentiles, falling back to the fixed profile stop/target) — both a signal's own price_target/stop_loss always win. The Portfolio Constructor (lib/portfolio/constructor.ts) then shrinks that proposed size against the live book (name/sector/gross/vol/correlation limits) before any cash moves. Research Journal: writes a pipeline_stage_events row at both decision points (stage='portfolio_constructor' passed/shrunk/rejected, stage='execution' filled/rejected), keyed by the same signal_id ResearchAgent originated — completing the funnel trail.",
-      "addedAt": "2026-06-26", "addReason": "Turns qualifying signals into paper positions.",
-      "status": "changed", "changedAt": "2026-07-06", "changeReason": "Research Journal instrumentation added on top of Phase 2 sizing (Decision 40).", "removedAt": null, "removeReason": null
+      "addedAt": "2026-06-26",
+      "addReason": "Turns qualifying signals into paper positions.",
+      "status": "changed",
+      "changedAt": "2026-07-06",
+      "changeReason": "Research Journal instrumentation added on top of Phase 2 sizing (Decision 40).",
+      "removedAt": null,
+      "removeReason": null
     },
     "MONITOR": {
       "label": "PositionMonitor",
       "description": "Daily post-close (Mon-Fri, 16:15 ET). Refreshes current_price for every held symbol, then runs the exit logic: DAILY SCORE-EXIT (sell when today's fresh analyst_score falls below the exit threshold, ~entry-15), trailing-stop (93% of high), and price-target. Owns ALL exits now. Writes decision_journal.",
-      "addedAt": "2026-06-27", "addReason": "Manage held positions daily.",
-      "status": "changed", "changedAt": "2026-07-05", "changeReason": "Added daily score-based exit — hold while score stays above threshold, exit when it drops. Replaces LearnerAgent's old weekly timer-sell.", "removedAt": null, "removeReason": null
+      "addedAt": "2026-06-27",
+      "addReason": "Manage held positions daily.",
+      "status": "changed",
+      "changedAt": "2026-07-05",
+      "changeReason": "Added daily score-based exit — hold while score stays above threshold, exit when it drops. Replaces LearnerAgent's old weekly timer-sell.",
+      "removedAt": null,
+      "removeReason": null
     },
     "EXITS": {
       "label": "Exit + close",
       "description": "On any exit trigger, deletes the paper_positions row, marks the matching paper_trades closed with realized P&L / outcome, credits cash once, and logs a decision_journal entry. These closed outcomes are the LearnerAgent's training corpus.",
-      "addedAt": "2026-06-27", "addReason": "Single close path so cash is credited exactly once.",
-      "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-06-27",
+      "addReason": "Single close path so cash is credited exactly once.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "LEARNER": {
       "label": "LearnerAgent",
       "description": "Weekly (Friday). Evaluates a market's closed-trade cohort and proposes weight-change CHALLENGERS into strategy_versions — it does NOT mutate live weights or sell live positions. Gated by a phase gate (10+ closed trades) and an auto-guard. Phase 4: analyzes ONE market per run (US today) and proposes challengers ONLY for that market's champion, so a bad India run can never shift US weights. India gets its own cohort once it clears the 10+ closed-trade gate.",
-      "addedAt": "2026-06-28", "addReason": "Learn from outcomes and evolve the scoring weights.",
-      "status": "changed", "changedAt": "2026-07-05", "changeReason": "Per-market cohorts + per-market challengers — India learning can't contaminate US. (Also: no longer timer-sells; reconciliation only.)", "removedAt": null, "removeReason": null
+      "addedAt": "2026-06-28",
+      "addReason": "Learn from outcomes and evolve the scoring weights.",
+      "status": "changed",
+      "changedAt": "2026-07-05",
+      "changeReason": "Per-market cohorts + per-market challengers — India learning can't contaminate US. (Also: no longer timer-sells; reconciliation only.)",
+      "removedAt": null,
+      "removeReason": null
     },
     "CHALLENGER": {
       "label": "Challenger weights",
       "description": "An immutable strategy_versions row (is_champion=false) holding a proposed weight change. Inert until a human promotes it — the architecture gate that stops the AI silently overwriting the live strategy.",
-      "addedAt": "2026-06-28", "addReason": "Human-in-the-loop guard on weight mutation.",
-      "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-06-28",
+      "addReason": "Human-in-the-loop guard on weight mutation.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "GENOME": {
       "label": "Strategy Genome",
       "description": "Phase 3 learning-core (strategy_versions.genome jsonb, migration 063). Extends what a challenger can evolve beyond the 5 top-level weights: entry threshold, horizon, exit family (ledger-percentile stops/targets — the same math Phase 2's dynamic R:R already uses), sizing mode, universe, regime router. Hard search-domain bounds enforced in code (lib/validation/genome.ts), not just documented — an out-of-bounds proposal is rejected before it can reach validation. A genome-less strategy_versions row scores exactly as before (legacy 5-weight path) — fully additive.",
-      "addedAt": "2026-07-06", "addReason": "Reweighting 5 fixed dials can only remix existing assumptions — the genome gives evolution more to actually change.",
-      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-06",
+      "addReason": "Reweighting 5 fixed dials can only remix existing assumptions — the genome gives evolution more to actually change.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "REGISTRY": {
       "label": "Feature Registry",
       "description": "Phase 3 learning-core (feature_registry table, migration 064). LearnerAgent's new propose_feature tool proposes a machine-readable spec (rationale, formula, inputs, falsification test) — the formula is NEVER executed as code, only interpreted through a whitelisted expression grammar (lib/validation/feature-compiler.ts: + - * / and log/abs/min/max/lag only, tokenized + parsed, no eval()). A weekly feature-check job (app/api/validation/feature-check) computes out-of-sample Spearman rank-IC across walk-forward folds; promotes proposed→quarantined→active on |IC|>=0.03 & p<0.1 across 2+ of 3 folds, auto-retires actives whose rolling IC falls below 0.01 for 3 checks. Only 'active' features ever reach the calibration fit — proposing a feature has ZERO effect on live scoring.",
-      "addedAt": "2026-07-06", "addReason": "Edge compounds through discovering, validating, and retiring features — not just remixing a fixed 5-dimension scorecard.",
-      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-06",
+      "addReason": "Edge compounds through discovering, validating, and retiring features — not just remixing a fixed 5-dimension scorecard.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "SHADOW": {
       "label": "Shadow Decisions",
       "description": "Phase 3 learning-core (shadow_decisions table, migration 065). ResearchAgent records what up to 3 strategy_versions in state='shadow_paper' would have decided on every candidate — pure scoring replay, no fills, no cash, alongside the champion's real decision. Off by default: nothing enters shadow_paper without explicit action (or a bounded weekly auto-promotion gated by strategy_config.exploration_enabled, default false). Lets a challenger's edge be observed against live, contemporaneous opportunities before it ever risks paper capital.",
-      "addedAt": "2026-07-06", "addReason": "Offline backtests alone can't expose live feature availability or changing market structure; live paper capital is unsafe to risk on an unvalidated challenger. Shadow bridges the two.",
-      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-06",
+      "addReason": "Offline backtests alone can't expose live feature availability or changing market structure; live paper capital is unsafe to risk on an unvalidated challenger. Shadow bridges the two.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "VALIDATE": {
       "label": "Validation Engine",
       "description": "Phase 2 learning-core (lib/validation/engine.ts, migration 061). Deterministic, NO LLM — replays champion vs challenger weights as a scoring-REPLAY against purged/embargoed walk-forward folds from the decision ledger (lib/learning/dataset.ts), then requires evidence before a challenger may be promoted: p_improvement >= 0.80 (1000-draw moving-block bootstrap, fixed seed), paired-diff CI floor, n_effective (overlap-adjusted) >= 12, wins >= 3 of 5 folds. Writes a validation_experiments row every run (pass or fail). The promote_champion route is FAIL-CLOSED on this — no passed experiment, no promotion (a journaled force_unvalidated override exists but is not the default path). Fires automatically when LearnerAgent creates a challenger; also runnable on demand (Validate button, Agents page).",
-      "addedAt": "2026-07-06", "addReason": "Human approval alone was governance, not evidence — a persuasive-but-wrong challenger could become the live scoring policy. This makes promotion require walk-forward proof.",
-      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-06",
+      "addReason": "Human approval alone was governance, not evidence — a persuasive-but-wrong challenger could become the live scoring policy. This makes promotion require walk-forward proof.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "PROMOTE": {
       "label": "You promote (Strategy Registry)",
       "description": "Human review step — now the FINAL gate after evidence, not a substitute for it. Promoting a challenger in the Strategy Registry flips it to champion (blocked with HTTP 412 unless VALIDATE passed) — and ResearchAgent actually consumes it on its next run.",
-      "addedAt": "2026-06-28", "addReason": "Keep a human in control of what the AI is allowed to change.",
-      "status": "changed", "changedAt": "2026-07-06", "changeReason": "Now sits AFTER the Validation Engine gate, not instead of it — see VALIDATE.", "removedAt": null, "removeReason": null
+      "addedAt": "2026-06-28",
+      "addReason": "Keep a human in control of what the AI is allowed to change.",
+      "status": "changed",
+      "changedAt": "2026-07-06",
+      "changeReason": "Now sits AFTER the Validation Engine gate, not instead of it — see VALIDATE.",
+      "removedAt": null,
+      "removeReason": null
     },
     "MENTOR": {
       "label": "MentorAgent",
       "description": "Reads your trade outcomes + learner runs and writes coaching insights (mentor_insights). Advisory to YOU — does not touch positions or weights.",
-      "addedAt": "2026-06-30", "addReason": "Coach the human, not just the portfolio.",
-      "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-06-30",
+      "addReason": "Coach the human, not just the portfolio.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "REALORDER": {
       "label": "Manual real-order execution (Robinhood)",
       "description": "Robinhood has no public order API, so live trading through it stays manual by design. Approving a proposal generates an exact natural-language command to paste into a Claude session with Robinhood MCP access (account 605420660 only). The app never claims a fill it didn't make.",
-      "addedAt": "2026-07-05", "addReason": "execClaude cannot actually call broker tools — a generated command keeps the human in the loop instead of faking fills.",
-      "status": "changed", "changedAt": "2026-07-06", "changeReason": "GATEWAY (below) now covers Alpaca-backed paper orders; Robinhood stays manual since it has no API.", "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-05",
+      "addReason": "execClaude cannot actually call broker tools — a generated command keeps the human in the loop instead of faking fills.",
+      "status": "changed",
+      "changedAt": "2026-07-06",
+      "changeReason": "GATEWAY (below) now covers Alpaca-backed paper orders; Robinhood stays manual since it has no API.",
+      "removedAt": null,
+      "removeReason": null
     },
     "GATEWAY": {
       "label": "Execution Gateway (broker registry: Alpaca/Kite)",
       "description": "Typed broker order lifecycle for approved trade_proposals, routed through lib/brokers/registry.ts (getActiveBroker per market, strategy_config.active_broker_us/india) instead of a direct Alpaca import: submit -> pending_submit/submitted/partially_filled/filled/canceled/rejected, polled + reconciled every 30 min (app/api/broker/orders/sync — now iterates DISTINCT brokers present in open orders, so Alpaca and Kite orders can be in-flight simultaneously). A 'Send to Alpaca (paper)' button on Smart Money's Trade Queue (status='approved' only) fires this — human click required, never cron-fired. Adding a future broker (E*TRADE etc.) is one adapter file + one registry line, zero route changes. Fixed a discovered pre-existing bug in the original build: the Trade Queue UI read a separate, never-populated `trade_queue` table while Approve/Reject/the Gateway all operate on `trade_proposals` — repointed. Live-env orders require strategy_config.trading_enabled=true (global master switch, off by default) AND the market-specific trading_enabled_us/trading_enabled_india flag (both default true, independently toggleable in Settings → Agents — turning one off blocks only new live orders for that market, holdings/balances stay fully viewable); only the PAPER path is verified live.",
-      "addedAt": "2026-07-06", "addReason": "First typed (non-manual) execution path — the honest gap flagged when auditing risk-reward/execution architecture earlier this session. Broker-swappable by design (see lib/brokers registry pattern already used for Alpaca/Kite reads).",
-      "status": "changed", "changedAt": "2026-07-06", "changeReason": "Ops spec Part 2: routes now go through a typed broker adapter registry instead of a direct Alpaca import — multi-broker (Alpaca US / Kite India) support with zero-route-change swapping. Later same day: added independent per-market trading_enabled_us/trading_enabled_india view-only-vs-auto-trading toggle, separate from the Kite disconnect kill-switch.", "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-06",
+      "addReason": "First typed (non-manual) execution path — the honest gap flagged when auditing risk-reward/execution architecture earlier this session. Broker-swappable by design (see lib/brokers registry pattern already used for Alpaca/Kite reads).",
+      "status": "changed",
+      "changedAt": "2026-07-06",
+      "changeReason": "Ops spec Part 2: routes now go through a typed broker adapter registry instead of a direct Alpaca import — multi-broker (Alpaca US / Kite India) support with zero-route-change swapping. Later same day: added independent per-market trading_enabled_us/trading_enabled_india view-only-vs-auto-trading toggle, separate from the Kite disconnect kill-switch.",
+      "removedAt": null,
+      "removeReason": null
     },
     "YAHOO": {
       "label": "Yahoo .NS data (India)",
       "description": "Free Yahoo Finance is the India data source (Kite Personal tier has no market data). The chart endpoint gives price + candles (no auth); the cookie+crumb quoteSummary gives fundamentals (P/E, ROE, margins). Mapped into the same shape the US scorer expects, so Indian stocks run the identical 5-dimension pipeline. Candidates come from a static NIFTY-50 list.",
-      "addedAt": "2026-07-05", "addReason": "Score real NSE stocks on free data, keyed off market_focus = India.",
-      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-05",
+      "addReason": "Score real NSE stocks on free data, keyed off market_focus = India.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "INDIA": {
       "label": "India signals",
       "description": "Indian stocks are scored + tracked (Score Tracker, /dashboard/india) AND (Phase 4) paper-traded in their own ₹ pool — no longer excluded. The old single-USD-pool constraint is gone: PaperTrader now keeps a separate India ₹ pool so INR fills never corrupt US NAV. India is ALSO acted on via real Kite orders (the /dashboard/india confirm path). Gated by market_focus including India — a non-destructive toggle.",
-      "addedAt": "2026-07-05", "addReason": "Track India like US without corrupting the USD paper NAV.",
-      "status": "changed", "changedAt": "2026-07-05", "changeReason": "India now paper-trades in its own ₹ pool (Phase 4) — closes India's learning loop.", "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-05",
+      "addReason": "Track India like US without corrupting the USD paper NAV.",
+      "status": "changed",
+      "changedAt": "2026-07-05",
+      "changeReason": "India now paper-trades in its own ₹ pool (Phase 4) — closes India's learning loop.",
+      "removedAt": null,
+      "removeReason": null
     },
     "NSE": {
       "label": "NSE direct feeds (India)",
       "description": "Direct NSE India JSON (free, cookie handshake — lib/nse-data.ts) for the things Yahoo can't give: the full ~2000-name equity universe (EQUITY_L.csv → nightly india_screen_cache for the full-market Scanner), SEBI insider disclosures (corporates-pit), and option-chain OI/PCR ('options flow'). Fails soft — NSE geo-throttles some non-India IPs, so callers fall back to Yahoo/NIFTY-100 with an honest note. Feeds the India Scanner + Smart Money panels, not the agent loop directly.",
-      "addedAt": "2026-07-05", "addReason": "Lift the two free-data ceilings (full-market scan + India insider/options) Yahoo alone couldn't.",
-      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-05",
+      "addReason": "Lift the two free-data ceilings (full-market scan + India insider/options) Yahoo alone couldn't.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "LEDGER": {
       "label": "Decision ledger",
       "description": "Phase 1 learning-core (decision_observations + observation_labels, migrations 059/060). Every candidate ResearchAgent scores — filled OR rejected — writes an immutable point-in-time observation (raw features, availability mask, weights used, score, action). A nightly label-maturation cron computes forward-horizon (2/5/10/20d) benchmark-neutral returns + MAE/MFE once each horizon matures, WITHOUT leaking future data into the features. LearnerAgent's query_score_correlation now reads this ledger first (all candidates, horizon-aligned, benchmark-neutral) instead of the old fills-only, policy-P&L, symbol-keyed join.",
-      "addedAt": "2026-07-06", "addReason": "Fix the learning label — the old dataset was fills-only, policy-P&L (not alpha), and joined by symbol (collision-prone). This is the ground truth the whole learning/evolution roadmap (Phases 2-3) is built on.",
-      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-06",
+      "addReason": "Fix the learning label — the old dataset was fills-only, policy-P&L (not alpha), and joined by symbol (collision-prone). This is the ground truth the whole learning/evolution roadmap (Phases 2-3) is built on.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "KITE": {
       "label": "Zerodha Kite (India execution)",
       "description": "Real NSE/BSE orders via Kite Connect (Personal tier). Human-in-the-loop: user-initiated from /dashboard/india with an explicit confirm — never cron/agent-fired. Kite's token expires daily (SEBI requirement), so a one-click login each trading morning re-arms it; reads/orders degrade to a 'reconnect' state when stale.",
-      "addedAt": "2026-07-05", "addReason": "The one thing free India data can't do — real execution.",
-      "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+      "addedAt": "2026-07-05",
+      "addReason": "The one thing free India data can't do — real execution.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "HEALTH": {
+      "label": "Health-Triage",
+      "description": "Every 6h + on demand. Read-only SRE agent: reads open agent_alerts, recent agent_runs errors, v_decision_quality taint rate, and provider budgets; writes an advisory triage (root cause + suggested fix) to health_triage, surfaced on the dashboard System Health card. Model configurable in Settings. NEVER changes config, orders, weights, or code.",
+      "addedAt": "2026-07-08",
+      "addReason": "Self-healing Part B: surface + explain system issues without any autonomous remediation of money/config/code.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     }
   },
   "history": [
-    { "date": "2026-07-05", "event": "added", "nodeId": "CHAMPION", "label": "Champion weights", "reason": "Closed the learning loop — ResearchAgent now reads promoted champion weights." },
-    { "date": "2026-07-05", "event": "added", "nodeId": "SCOREHIST", "label": "signal_score_history", "reason": "Durable score-history data model + trend feedback into ResearchAgent." },
-    { "date": "2026-07-05", "event": "changed", "nodeId": "MONITOR", "label": "PositionMonitor", "reason": "Daily score-based exit added." },
-    { "date": "2026-07-05", "event": "changed", "nodeId": "LEARNER", "label": "LearnerAgent", "reason": "Stopped timer-selling; reconciliation only." },
-    { "date": "2026-07-05", "event": "added", "nodeId": "REALORDER", "label": "Manual real-order execution", "reason": "Replaced fake execClaude order execution with a generated manual command." },
-    { "date": "2026-07-05", "event": "added", "nodeId": "YAHOO", "label": "Yahoo .NS data", "reason": "India Phase 2 — score NSE stocks on free Yahoo data." },
-    { "date": "2026-07-05", "event": "added", "nodeId": "INDIA", "label": "India signals", "reason": "India scored + tracked, excluded from USD paper pool." },
-    { "date": "2026-07-05", "event": "added", "nodeId": "KITE", "label": "Zerodha Kite execution", "reason": "India Phase 3 — real NSE/BSE orders via Kite, human-confirmed." },
-    { "date": "2026-07-05", "event": "changed", "nodeId": "TRADER", "label": "PaperTrader", "reason": "Phase 4 — per-market pools (US $ + India ₹); India now paper-fills off Yahoo, closing its learning loop." },
-    { "date": "2026-07-05", "event": "changed", "nodeId": "INDIA", "label": "India signals", "reason": "Phase 4 — India paper-traded in its own ₹ pool, no longer excluded from the paper engine." },
-    { "date": "2026-07-05", "event": "changed", "nodeId": "CHAMPION", "label": "Champion weights", "reason": "Phase 4 — one champion per market; India rides a US-cloned prior until it earns its own." },
-    { "date": "2026-07-05", "event": "changed", "nodeId": "LEARNER", "label": "LearnerAgent", "reason": "Phase 4 — per-market cohorts + challengers; India learning can't shift US weights." },
-    { "date": "2026-07-05", "event": "added", "nodeId": "NSE", "label": "NSE direct feeds", "reason": "Phase 5 — full-market scan + India insider/options from NSE, lifting the Yahoo-only ceilings." },
-    { "date": "2026-07-06", "event": "added", "nodeId": "LEDGER", "label": "Decision ledger", "reason": "Learning-core Phase 1 — point-in-time observations + matured horizon labels, the ground truth for Phases 2-3." },
-    { "date": "2026-07-06", "event": "added", "nodeId": "VALIDATE", "label": "Validation Engine", "reason": "Learning-core Phase 2 — fail-closed walk-forward gate; promotion now requires evidence, not just human approval." },
-    { "date": "2026-07-06", "event": "changed", "nodeId": "PROMOTE", "label": "You promote (Strategy Registry)", "reason": "Now sits after the Validation Engine gate (HTTP 412 if unvalidated)." },
-    { "date": "2026-07-06", "event": "changed", "nodeId": "TRADER", "label": "PaperTrader", "reason": "Transactional fill RPC; conviction-scaled Kelly sizing + dynamic MAE/MFE R:R; Portfolio Constructor risk budgeting." },
-    { "date": "2026-07-06", "event": "added", "nodeId": "GATEWAY", "label": "Execution Gateway (Alpaca)", "reason": "First typed execution path — approved proposals -> human click -> Alpaca paper order, polled + reconciled. Also fixed a discovered pre-existing bug: Trade Queue UI read a dead trade_queue table instead of trade_proposals." },
-    { "date": "2026-07-06", "event": "changed", "nodeId": "REALORDER", "label": "Manual real-order execution (Robinhood)", "reason": "Clarified this is Robinhood-specific (no public API) now that GATEWAY covers Alpaca." },
-    { "date": "2026-07-06", "event": "added", "nodeId": "GENOME", "label": "Strategy Genome", "reason": "Phase 3 — evolvable surface beyond 5 weights (entry/horizon/exit/sizing/regime), bounded and hash-stamped." },
-    { "date": "2026-07-06", "event": "added", "nodeId": "REGISTRY", "label": "Feature Registry", "reason": "Phase 3 — governed feature discovery via a whitelisted grammar, IC-gated promotion, never executes LLM code." },
-    { "date": "2026-07-06", "event": "added", "nodeId": "SHADOW", "label": "Shadow Decisions", "reason": "Phase 3 — paired live comparison before a challenger risks paper capital; exploration stays bounded and off by default." },
-    { "date": "2026-07-06", "event": "changed", "nodeId": "GATEWAY", "label": "Execution Gateway (broker registry: Alpaca/Kite)", "reason": "Ops spec Decision 39 — Gateway routes now go through lib/brokers/registry.ts instead of a direct Alpaca import; multi-broker sync loop; per-market broker selection in Settings." },
-    { "date": "2026-07-06", "event": "changed", "nodeId": "RESEARCH", "label": "ResearchAgent", "reason": "Decision 40 — Research Journal: signal_id now flows from agent_signals into decision_observations (was always null); screener bucket/criteria recorded; pipeline_stage_events instrumentation added." },
-    { "date": "2026-07-06", "event": "changed", "nodeId": "TRADER", "label": "PaperTrader", "reason": "Decision 40 — Research Journal: pipeline_stage_events written at portfolio-constructor and execution decision points, completing the per-symbol funnel trail." },
-    { "date": "2026-07-06", "event": "changed", "nodeId": "GATEWAY", "label": "Execution Gateway (broker registry: Alpaca/Kite)", "reason": "Migration 088 — added strategy_config.trading_enabled_us/trading_enabled_india (default true), gated in app/api/broker/orders/route.ts alongside the existing global trading_enabled. Lets the user pause live auto-trading for one market only while still viewing holdings/balances — distinct from the Kite disconnect kill-switch, which revokes the credential entirely." },
-    { "date": "2026-07-07", "event": "changed", "nodeId": "LEARNER", "label": "LearnerAgent", "reason": "India parity: learner market is now a per-run param (was hardcoded us). New Friday kairos-learner-india cron passes {market:india}; idempotency guard + agent_runs record scoped by market. India now evolves its own champion on its own cohort, isolated from US." },
-    { "date": "2026-07-07", "event": "changed", "nodeId": "RESEARCH", "label": "ResearchAgent", "reason": "India parity + API budget. India block now adds real Kite holdings (holdings-first → SELL/exit signals on owned India positions) and pulls dual-bucket candidates from the nightly india_screen_cache instead of a static 8-name NIFTY list. The four heaviest Alpha Vantage callers (insider/overview/candles/news-sentiment) now route through the day-cache + a shared av_budget daily counter (migration 090), collapsing usage from ~60-100/day toward the 25/day free ceiling." },
-    { "date": "2026-07-07", "event": "changed", "nodeId": "TRADER", "label": "PaperTrader", "reason": "Kelly sizing bug fixed: percent-scale caps were passed into the fraction-based shared sizer, pinning every position to the 2% floor once the calibrated model activated. Now caps go in as fractions and the result scales back to percent — conviction scaling restored. (The live-trader proposal route had a separate wrong-formula Kelly bug, also fixed to use the shared impl.)" },
-    { "date": "2026-07-07", "event": "changed", "nodeId": "EXITS", "label": "PositionMonitor", "reason": "Trailing stop trailed at a hardcoded 7% and overwrote stop_loss each run, discarding the MAE-derived stop distance set at fill. Now persists the initial stop immutably (migration 091 trigger) and trails at the position's own volatility-appropriate distance." },
-    { "date": "2026-07-07", "event": "changed", "nodeId": "GATEWAY", "label": "Execution Gateway (broker registry: Alpaca/Kite)", "reason": "Security: api_key_vault had a USING(true) policy for all roles + client write grants (anyone with the anon key could overwrite/delete broker tokens); broker_orders had RLS disabled. Migration 089 locked both to service-role-only. Legacy trade_queue generator (/api/agents/trade) hardened with the kill-switch + owner gates the main trader already had." },
-    { "date": "2026-07-07", "event": "changed", "nodeId": "GATEWAY", "label": "Execution Gateway (broker registry: Alpaca/Kite/Robinhood-MCP)", "reason": "Robinhood MCP feature — unblocked parts. Gateway hardened at submit time (R6): owner+CSRF guard, explicit env, both-direction broker.envs check, kill switches, fresh-quote notional cap + price-drift re-check, sell-only-if-held, and fail-closed account-allowlist resolution (broker_accounts, migrations 093/094). New deterministic robinhood_mcp adapter (US, live-only, NO LLM in the write path per R1) registered but inert: robinhood_mcp_enabled defaults off and isConfigured() is false until the OAuth flow (blocked on Robinhood's real endpoints) stores a token. live_account_source switch lets the snapshot come from local Claude Code or (once built) cloud MCP." },
-    { "date": "2026-07-07", "event": "changed", "nodeId": "TRADER", "label": "TraderAgent → trade_proposals (single source of truth)", "reason": "Live-trading-hardening P1: retired the parallel trade_queue proposal system. Legacy /api/agents/trade generator + /trade/approve + /trade/reject now return 410; all proposal generation goes through /api/agents/trader (canonical trade_proposals, which the daily kairos-trader cron + the Execution Gateway already used). Repointed every reader/writer: AgentsPage 'Run TraderAgent' button, the dead /api/markets/smart-money API, and TradingPage/PortfolioPage approve+reject. Eliminates the real-money hazard where a trade_queue id could be sent to the Gateway (which resolves ids in trade_proposals)." },
-    { "date": "2026-07-07", "event": "changed", "nodeId": "GATEWAY", "label": "Execution Gateway — Robinhood order-status sync", "reason": "Live-trading-hardening P2: implemented the robinhood_mcp adapter getOrder via a deterministic get_equity_orders callTool (mcpToolJson-parsed, escaped-content-safe), mapping Robinhood state → the status union. The existing kairos-broker-sync loop now transitions Robinhood orders submitted→filled, writes filled_qty/avg_fill_price to broker_orders AND fill_price/fill_qty/filled_at (status=executed) back to the originating trade_proposal, resolves the order-needs-reconcile System Health alert, and logs a decision_journal fill entry." }
+    {
+      "date": "2026-07-05",
+      "event": "added",
+      "nodeId": "CHAMPION",
+      "label": "Champion weights",
+      "reason": "Closed the learning loop — ResearchAgent now reads promoted champion weights."
+    },
+    {
+      "date": "2026-07-05",
+      "event": "added",
+      "nodeId": "SCOREHIST",
+      "label": "signal_score_history",
+      "reason": "Durable score-history data model + trend feedback into ResearchAgent."
+    },
+    {
+      "date": "2026-07-05",
+      "event": "changed",
+      "nodeId": "MONITOR",
+      "label": "PositionMonitor",
+      "reason": "Daily score-based exit added."
+    },
+    {
+      "date": "2026-07-05",
+      "event": "changed",
+      "nodeId": "LEARNER",
+      "label": "LearnerAgent",
+      "reason": "Stopped timer-selling; reconciliation only."
+    },
+    {
+      "date": "2026-07-05",
+      "event": "added",
+      "nodeId": "REALORDER",
+      "label": "Manual real-order execution",
+      "reason": "Replaced fake execClaude order execution with a generated manual command."
+    },
+    {
+      "date": "2026-07-05",
+      "event": "added",
+      "nodeId": "YAHOO",
+      "label": "Yahoo .NS data",
+      "reason": "India Phase 2 — score NSE stocks on free Yahoo data."
+    },
+    {
+      "date": "2026-07-05",
+      "event": "added",
+      "nodeId": "INDIA",
+      "label": "India signals",
+      "reason": "India scored + tracked, excluded from USD paper pool."
+    },
+    {
+      "date": "2026-07-05",
+      "event": "added",
+      "nodeId": "KITE",
+      "label": "Zerodha Kite execution",
+      "reason": "India Phase 3 — real NSE/BSE orders via Kite, human-confirmed."
+    },
+    {
+      "date": "2026-07-05",
+      "event": "changed",
+      "nodeId": "TRADER",
+      "label": "PaperTrader",
+      "reason": "Phase 4 — per-market pools (US $ + India ₹); India now paper-fills off Yahoo, closing its learning loop."
+    },
+    {
+      "date": "2026-07-05",
+      "event": "changed",
+      "nodeId": "INDIA",
+      "label": "India signals",
+      "reason": "Phase 4 — India paper-traded in its own ₹ pool, no longer excluded from the paper engine."
+    },
+    {
+      "date": "2026-07-05",
+      "event": "changed",
+      "nodeId": "CHAMPION",
+      "label": "Champion weights",
+      "reason": "Phase 4 — one champion per market; India rides a US-cloned prior until it earns its own."
+    },
+    {
+      "date": "2026-07-05",
+      "event": "changed",
+      "nodeId": "LEARNER",
+      "label": "LearnerAgent",
+      "reason": "Phase 4 — per-market cohorts + challengers; India learning can't shift US weights."
+    },
+    {
+      "date": "2026-07-05",
+      "event": "added",
+      "nodeId": "NSE",
+      "label": "NSE direct feeds",
+      "reason": "Phase 5 — full-market scan + India insider/options from NSE, lifting the Yahoo-only ceilings."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "added",
+      "nodeId": "LEDGER",
+      "label": "Decision ledger",
+      "reason": "Learning-core Phase 1 — point-in-time observations + matured horizon labels, the ground truth for Phases 2-3."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "added",
+      "nodeId": "VALIDATE",
+      "label": "Validation Engine",
+      "reason": "Learning-core Phase 2 — fail-closed walk-forward gate; promotion now requires evidence, not just human approval."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "changed",
+      "nodeId": "PROMOTE",
+      "label": "You promote (Strategy Registry)",
+      "reason": "Now sits after the Validation Engine gate (HTTP 412 if unvalidated)."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "changed",
+      "nodeId": "TRADER",
+      "label": "PaperTrader",
+      "reason": "Transactional fill RPC; conviction-scaled Kelly sizing + dynamic MAE/MFE R:R; Portfolio Constructor risk budgeting."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "added",
+      "nodeId": "GATEWAY",
+      "label": "Execution Gateway (Alpaca)",
+      "reason": "First typed execution path — approved proposals -> human click -> Alpaca paper order, polled + reconciled. Also fixed a discovered pre-existing bug: Trade Queue UI read a dead trade_queue table instead of trade_proposals."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "changed",
+      "nodeId": "REALORDER",
+      "label": "Manual real-order execution (Robinhood)",
+      "reason": "Clarified this is Robinhood-specific (no public API) now that GATEWAY covers Alpaca."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "added",
+      "nodeId": "GENOME",
+      "label": "Strategy Genome",
+      "reason": "Phase 3 — evolvable surface beyond 5 weights (entry/horizon/exit/sizing/regime), bounded and hash-stamped."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "added",
+      "nodeId": "REGISTRY",
+      "label": "Feature Registry",
+      "reason": "Phase 3 — governed feature discovery via a whitelisted grammar, IC-gated promotion, never executes LLM code."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "added",
+      "nodeId": "SHADOW",
+      "label": "Shadow Decisions",
+      "reason": "Phase 3 — paired live comparison before a challenger risks paper capital; exploration stays bounded and off by default."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "changed",
+      "nodeId": "GATEWAY",
+      "label": "Execution Gateway (broker registry: Alpaca/Kite)",
+      "reason": "Ops spec Decision 39 — Gateway routes now go through lib/brokers/registry.ts instead of a direct Alpaca import; multi-broker sync loop; per-market broker selection in Settings."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "ResearchAgent",
+      "reason": "Decision 40 — Research Journal: signal_id now flows from agent_signals into decision_observations (was always null); screener bucket/criteria recorded; pipeline_stage_events instrumentation added."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "changed",
+      "nodeId": "TRADER",
+      "label": "PaperTrader",
+      "reason": "Decision 40 — Research Journal: pipeline_stage_events written at portfolio-constructor and execution decision points, completing the per-symbol funnel trail."
+    },
+    {
+      "date": "2026-07-06",
+      "event": "changed",
+      "nodeId": "GATEWAY",
+      "label": "Execution Gateway (broker registry: Alpaca/Kite)",
+      "reason": "Migration 088 — added strategy_config.trading_enabled_us/trading_enabled_india (default true), gated in app/api/broker/orders/route.ts alongside the existing global trading_enabled. Lets the user pause live auto-trading for one market only while still viewing holdings/balances — distinct from the Kite disconnect kill-switch, which revokes the credential entirely."
+    },
+    {
+      "date": "2026-07-07",
+      "event": "changed",
+      "nodeId": "LEARNER",
+      "label": "LearnerAgent",
+      "reason": "India parity: learner market is now a per-run param (was hardcoded us). New Friday kairos-learner-india cron passes {market:india}; idempotency guard + agent_runs record scoped by market. India now evolves its own champion on its own cohort, isolated from US."
+    },
+    {
+      "date": "2026-07-07",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "ResearchAgent",
+      "reason": "India parity + API budget. India block now adds real Kite holdings (holdings-first → SELL/exit signals on owned India positions) and pulls dual-bucket candidates from the nightly india_screen_cache instead of a static 8-name NIFTY list. The four heaviest Alpha Vantage callers (insider/overview/candles/news-sentiment) now route through the day-cache + a shared av_budget daily counter (migration 090), collapsing usage from ~60-100/day toward the 25/day free ceiling."
+    },
+    {
+      "date": "2026-07-07",
+      "event": "changed",
+      "nodeId": "TRADER",
+      "label": "PaperTrader",
+      "reason": "Kelly sizing bug fixed: percent-scale caps were passed into the fraction-based shared sizer, pinning every position to the 2% floor once the calibrated model activated. Now caps go in as fractions and the result scales back to percent — conviction scaling restored. (The live-trader proposal route had a separate wrong-formula Kelly bug, also fixed to use the shared impl.)"
+    },
+    {
+      "date": "2026-07-07",
+      "event": "changed",
+      "nodeId": "EXITS",
+      "label": "PositionMonitor",
+      "reason": "Trailing stop trailed at a hardcoded 7% and overwrote stop_loss each run, discarding the MAE-derived stop distance set at fill. Now persists the initial stop immutably (migration 091 trigger) and trails at the position's own volatility-appropriate distance."
+    },
+    {
+      "date": "2026-07-07",
+      "event": "changed",
+      "nodeId": "GATEWAY",
+      "label": "Execution Gateway (broker registry: Alpaca/Kite)",
+      "reason": "Security: api_key_vault had a USING(true) policy for all roles + client write grants (anyone with the anon key could overwrite/delete broker tokens); broker_orders had RLS disabled. Migration 089 locked both to service-role-only. Legacy trade_queue generator (/api/agents/trade) hardened with the kill-switch + owner gates the main trader already had."
+    },
+    {
+      "date": "2026-07-07",
+      "event": "changed",
+      "nodeId": "GATEWAY",
+      "label": "Execution Gateway (broker registry: Alpaca/Kite/Robinhood-MCP)",
+      "reason": "Robinhood MCP feature — unblocked parts. Gateway hardened at submit time (R6): owner+CSRF guard, explicit env, both-direction broker.envs check, kill switches, fresh-quote notional cap + price-drift re-check, sell-only-if-held, and fail-closed account-allowlist resolution (broker_accounts, migrations 093/094). New deterministic robinhood_mcp adapter (US, live-only, NO LLM in the write path per R1) registered but inert: robinhood_mcp_enabled defaults off and isConfigured() is false until the OAuth flow (blocked on Robinhood's real endpoints) stores a token. live_account_source switch lets the snapshot come from local Claude Code or (once built) cloud MCP."
+    },
+    {
+      "date": "2026-07-07",
+      "event": "changed",
+      "nodeId": "TRADER",
+      "label": "TraderAgent → trade_proposals (single source of truth)",
+      "reason": "Live-trading-hardening P1: retired the parallel trade_queue proposal system. Legacy /api/agents/trade generator + /trade/approve + /trade/reject now return 410; all proposal generation goes through /api/agents/trader (canonical trade_proposals, which the daily kairos-trader cron + the Execution Gateway already used). Repointed every reader/writer: AgentsPage 'Run TraderAgent' button, the dead /api/markets/smart-money API, and TradingPage/PortfolioPage approve+reject. Eliminates the real-money hazard where a trade_queue id could be sent to the Gateway (which resolves ids in trade_proposals)."
+    },
+    {
+      "date": "2026-07-07",
+      "event": "changed",
+      "nodeId": "GATEWAY",
+      "label": "Execution Gateway — Robinhood order-status sync",
+      "reason": "Live-trading-hardening P2: implemented the robinhood_mcp adapter getOrder via a deterministic get_equity_orders callTool (mcpToolJson-parsed, escaped-content-safe), mapping Robinhood state → the status union. The existing kairos-broker-sync loop now transitions Robinhood orders submitted→filled, writes filled_qty/avg_fill_price to broker_orders AND fill_price/fill_qty/filled_at (status=executed) back to the originating trade_proposal, resolves the order-needs-reconcile System Health alert, and logs a decision_journal fill entry."
+    },
+    {
+      "date": "2026-07-08",
+      "event": "added",
+      "nodeId": "HEALTH",
+      "label": "Health-Triage agent (self-healing Part B)",
+      "reason": "Read-only LLM SRE over agent_alerts/agent_runs/v_decision_quality/provider budgets; writes advisory triage to health_triage + dashboard System Health card. Model owner-selectable in Settings (agent_config). Hard boundary: no autonomous change to money limits, config, weights, orders, or code — diagnose + suggest only."
+    }
   ]
 }
