@@ -16,6 +16,7 @@ import { fetchUsOverview } from "@/lib/data/fundamentals";
 import { scoreEdgarInsider } from "@/lib/data/edgar-insider";
 import { fetchUpstoxCandles } from "@/lib/data/upstox";
 import { scoreAnalyst } from "@/lib/data/analyst";
+import { fetchDaysToEarnings } from "@/lib/data/earnings";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
 // US, ^NSEI for India) — computed once per market per process, not per symbol.
@@ -884,6 +885,11 @@ export async function processSymbol(
     ? await scoreAnalyst(symbol).catch(() => null)
     : null;
 
+  // Event-proximity: days to next earnings. Logged for the learner to test the
+  // "buy the rumor, sell the news" pattern (does pre-earnings hype fade after
+  // the print?). Not a gate or sizing input — just an observed feature.
+  const daysToEarnings = await fetchDaysToEarnings(symbol, india).catch(() => null);
+
   // Compute all 5 scores deterministically from fetched data
   const scores = await computeScores({
     symbol, isEtf,
@@ -1218,6 +1224,8 @@ export async function processSymbol(
         // Analyst consensus (Finnhub) — LOGGED evidence for the learner to grade,
         // not fed into the live weighted score yet (see fetch site).
         ...(analystResult?.available ? { analyst: { score: analystResult.score, ...analystResult.evidence } } : {}),
+        // Event proximity for the "buy the rumor, sell the news" learnable pattern.
+        ...(daysToEarnings != null ? { days_to_earnings: daysToEarnings } : {}),
       },
       availability_mask,
       analyst_score: analystScore,
