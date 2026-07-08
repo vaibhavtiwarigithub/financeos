@@ -209,12 +209,22 @@ export async function POST(req: NextRequest) {
           if (!heldRes.ok) return NextResponse.json({ error: `Refusing SELL of ${symbol}: could not verify live holdings (${heldRes.error})` }, { status: 403 });
           if ((heldRes.qty ?? 0) < qty) return NextResponse.json({ error: `Refusing SELL of ${qty} ${symbol}: only ${heldRes.qty ?? 0} held on the live trading account` }, { status: 403 });
         } else {
-          // Other brokers: best-effort snapshot check (their own holdings source
-          // isn't wired here yet). Fail closed if no snapshot exists.
-          const { data: snap } = await supabase.from("live_account_snapshots").select("positions_json").order("captured_at", { ascending: false }).limit(1).maybeSingle();
+          // Other brokers: snapshot check scoped to THIS account + freshness bound.
+          // FAIL CLOSED — an unfiltered or stale snapshot could authorize a SELL from
+          // a different or out-of-date account. Require a snapshot for acct.account
+          // captured within 30 min.
+          const { data: snap } = await supabase.from("live_account_snapshots")
+            .select("positions_json, captured_at")
+            .eq("account_id", acct.account)
+            .order("captured_at", { ascending: false }).limit(1).maybeSingle();
+          const capturedAt = (snap as any)?.captured_at ? Date.parse((snap as any).captured_at) : NaN;
+          const fresh = Number.isFinite(capturedAt) && (Date.now() - capturedAt) <= 30 * 60 * 1000;
+          if (!snap || !fresh) {
+            return NextResponse.json({ error: `Refusing SELL of ${symbol}: no fresh (<30 min) holdings snapshot for the trading account — refresh the live account snapshot before selling` }, { status: 403 });
+          }
           const positions: any[] = (snap as any)?.positions_json ?? [];
           const held = Array.isArray(positions) && positions.some(p => String(p?.symbol ?? p?.ticker ?? "").toUpperCase() === symbol && Number(p?.qty ?? p?.quantity ?? 0) >= qty);
-          if (!held) return NextResponse.json({ error: `Refusing SELL of ${symbol}: not confirmed held in the latest snapshot (long-only for new positions)` }, { status: 403 });
+          if (!held) return NextResponse.json({ error: `Refusing SELL of ${symbol}: not confirmed held in this account's fresh snapshot (long-only for new positions)` }, { status: 403 });
         }
       }
     }
