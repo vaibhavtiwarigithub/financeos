@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { lazy, Suspense } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
+import PerformanceTruth from "@/components/dashboard/PerformanceTruth";
 const LineChart = lazy(() => import("recharts").then(m => ({ default: m.LineChart })));
 import {
   ResponsiveContainer, LineChart as LC, Line, BarChart, Bar,
@@ -271,8 +272,11 @@ export default function LearningPage({
         ))}
       </div>
 
+      {/* Performance Truth — risk-adjusted / cost-net / calibrated metrics */}
+      <PerformanceTruth />
+
       {/* Tabs */}
-      <div style={{ display: "flex", gap: "4px", marginBottom: "20px" }}>
+      <div style={{ display: "flex", gap: "4px", marginBottom: "20px", marginTop: "24px" }}>
         {(["accuracy", "weights", "equity"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === t ? T.accent : T.card, color: tab === t ? "#fff" : T.muted, textTransform: "capitalize" }}>
             {t === "accuracy" ? "Accuracy Trend" : t === "weights" ? "Signal Weights" : "Equity Curve"}

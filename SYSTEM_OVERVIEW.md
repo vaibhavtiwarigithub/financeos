@@ -139,6 +139,18 @@ can move real money — only you can.
   nothing changes until you promote a genome-bearing Challenger (which still requires passing the
   fail-closed validation gate **and** your click).
 
+- **Performance Truth (Build 3, 2026-07-08).** The Learning page (`/dashboard/learning`) now shows
+  the metrics that actually judge a strategy, not just win-rate: **Sharpe** and **Sortino** (return
+  per unit of risk / downside risk), **max drawdown** (worst peak-to-trough drop), **expectancy** and
+  **profit factor** (average edge per trade, gross wins ÷ gross losses), **alpha vs benchmark**, a
+  **gross-vs-net** bar (how much spread/slippage cost the book), and a **calibration curve** (when the
+  score says "70% win", does it win 70% of the time?). Split by market (US / India). **Honesty rule:**
+  any metric built on too small a sample (fewer than 20 trades/returns, 10 labeled predictions) shows
+  "too small" instead of a flattering-but-meaningless number. **Truth rule:** this view *counts*
+  data-tainted trades (the opposite of the learner, which *excludes* them) — the book still moved, so
+  P&L must not hide them; the tainted count is shown separately so you can judge the mix. Read-only,
+  no new tables.
+
 ### MentorAgent — the coach
 - Reads your outcomes + learner runs, writes plain-English **coaching insights** to
   `mentor_insights`. Advisory to *you*. Never touches money or weights.
@@ -351,4 +363,4 @@ flowchart TD
 
 ---
 
-*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-08 (Build 1 — champion **genome** wired as a live control: entry threshold, exit stop/target percentiles + horizon, and Kelly sizing cap/floor/mode now come from the promoted champion's genome [`lib/validation/genome-live.ts`], genome size cap clamped to owner `position_size_pct`, behavior-preserving default genome; no new migration. Earlier same day — 07/08 review fixes: P1 auth gating [alerts, enrich, watchlist, admin LLM APIs], durable RAG re-ingest [mig 123], and the autonomy ladder [mig 124 + `lib/autonomy.ts`] as a disabled-by-default master money-safety gate — L3 default preserves owner-click live behavior, L4/L5 autonomous not honored). Prior: Strategic Report Tier-1 + Tier-2: prompt caching, ticker filter, prompt versioning, DeepSeek data gate, discovery_source attribution, B3 structured triage, Data Provider Abstraction, Learning Integrity Phase 1B taint columns + auto-stamp at fill.*
+*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-08 (Build 3 — **Performance Truth** on `/dashboard/learning`: risk-adjusted / cost-net / calibrated metrics [Sharpe, Sortino, max-DD, expectancy, profit factor, alpha, gross-vs-net, calibration curve], per market, with a small-sample honesty rule and tainted-trades counted-not-hidden; pure-additive read layer [`lib/analytics/performance-metrics.ts`, owner-gated `…/performance/metrics`], 18 golden unit tests, schema verified in prod, no new migration. Build 5 — learner now **excludes** data-tainted trades from learning [`lib/learning/taint-filter.ts`]. Build 1 — champion **genome** wired as a live control: entry threshold, exit stop/target percentiles + horizon, and Kelly sizing cap/floor/mode now come from the promoted champion's genome [`lib/validation/genome-live.ts`], genome size cap clamped to owner `position_size_pct`, behavior-preserving default genome; no new migration. Earlier same day — 07/08 review fixes: P1 auth gating [alerts, enrich, watchlist, admin LLM APIs], durable RAG re-ingest [mig 123], and the autonomy ladder [mig 124 + `lib/autonomy.ts`] as a disabled-by-default master money-safety gate — L3 default preserves owner-click live behavior, L4/L5 autonomous not honored). Prior: Strategic Report Tier-1 + Tier-2: prompt caching, ticker filter, prompt versioning, DeepSeek data gate, discovery_source attribution, B3 structured triage, Data Provider Abstraction, Learning Integrity Phase 1B taint columns + auto-stamp at fill.*
