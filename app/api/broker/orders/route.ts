@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
     const brokerKey = allowlistBrokerKey(broker.id);
 
     if (orderEnv === "live") {
-      const { data: cfg } = await supabase.from("strategy_config").select("trading_enabled, trading_enabled_us, trading_enabled_india, max_order_notional, robinhood_mcp_enabled").limit(1).maybeSingle();
+      const { data: cfg } = await supabase.from("strategy_config").select("trading_enabled, trading_enabled_us, trading_enabled_india, max_order_notional, max_order_notional_usd, max_order_notional_inr, robinhood_mcp_enabled").limit(1).maybeSingle();
       const marketFlag = market === "india" ? (cfg as any)?.trading_enabled_india : (cfg as any)?.trading_enabled_us;
       if (!(cfg as any)?.trading_enabled) {
         return NextResponse.json({ error: "Live trading is disabled (strategy_config.trading_enabled = false)" }, { status: 403 });
@@ -146,25 +146,38 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Could not fetch a fresh quote to validate the order — refusing to submit blind" }, { status: 502 });
       }
 
-      // Notional cap: explicit config value, else a fraction of live equity.
-      // FAIL CLOSED — if we can't determine a cap for a live order (no config
-      // value AND no equity snapshot), refuse rather than send an uncapped
-      // real-money order.
-      let notionalCap = (cfg as any)?.max_order_notional != null ? Number((cfg as any).max_order_notional) : null;
-      if (notionalCap == null) {
-        // Filter by the resolved trading account — prevents the read-only account's
-        // larger equity from raising the live order cap for the agentic account.
-        const { data: snap } = await supabase.from("live_account_snapshots").select("equity")
-          .eq("account_id", acct.account)
-          .order("captured_at", { ascending: false }).limit(1).maybeSingle();
-        const equity = Number((snap as any)?.equity);
-        if (Number.isFinite(equity) && equity > 0) notionalCap = equity * DEFAULT_NOTIONAL_FRAC;
+      // Per-market notional cap. FAIL CLOSED — if we can't determine a cap for a
+      // live order, refuse rather than send an uncapped real-money order.
+      //   US:    max_order_notional_usd (→ deprecated max_order_notional → % of live
+      //          equity from a fresh snapshot). The equity fallback is USD-only.
+      //   India: max_order_notional_inr ONLY. No trusted Kite equity fallback exists,
+      //          so a null INR cap refuses the order (never falls back to a USD number
+      //          or an equity fraction against an INR notional).
+      let notionalCap: number | null = null;
+      if (market === "india") {
+        const inr = (cfg as any)?.max_order_notional_inr;
+        notionalCap = inr != null ? Number(inr) : null;
+      } else {
+        const usd = (cfg as any)?.max_order_notional_usd ?? (cfg as any)?.max_order_notional;
+        notionalCap = usd != null ? Number(usd) : null;
+        if (notionalCap == null) {
+          // Filter by the resolved trading account — prevents the read-only account's
+          // larger equity from raising the live order cap for the agentic account.
+          const { data: snap } = await supabase.from("live_account_snapshots").select("equity")
+            .eq("account_id", acct.account)
+            .order("captured_at", { ascending: false }).limit(1).maybeSingle();
+          const equity = Number((snap as any)?.equity);
+          if (Number.isFinite(equity) && equity > 0) notionalCap = equity * DEFAULT_NOTIONAL_FRAC;
+        }
       }
       if (notionalCap == null || !Number.isFinite(notionalCap) || notionalCap <= 0) {
-        return NextResponse.json({ error: "Cannot determine a notional cap (no max_order_notional set and no live equity snapshot) — refusing an uncapped live order. Set strategy_config.max_order_notional or refresh the account snapshot." }, { status: 403 });
+        return NextResponse.json({ error: market === "india"
+          ? "No India (INR) per-order cap set — refusing an uncapped live India order. Set the India cap in Settings → Live Order Limits."
+          : "Cannot determine a USD notional cap (no max_order_notional_usd and no live equity snapshot) — refusing an uncapped live order. Set the US cap in Settings → Live Order Limits." }, { status: 403 });
       }
       if (qty * freshPrice > notionalCap) {
-        return NextResponse.json({ error: `Order notional ${(qty * freshPrice).toFixed(0)} exceeds the cap ${notionalCap.toFixed(0)}` }, { status: 403 });
+        const cur = market === "india" ? "₹" : "$";
+        return NextResponse.json({ error: `Order notional ${cur}${(qty * freshPrice).toFixed(0)} exceeds the ${market.toUpperCase()} cap ${cur}${notionalCap.toFixed(0)}` }, { status: 403 });
       }
 
       // Price drift vs the approved price.

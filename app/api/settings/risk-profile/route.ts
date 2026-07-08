@@ -17,7 +17,16 @@ export async function PATCH(req: NextRequest) {
   if (gate) return gate;
 
   const body = await req.json();
-  const { risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_mode, broker, max_positions_per_sector, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_days, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional } = body;
+  const { risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_mode, broker, max_positions_per_sector, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_days, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr } = body;
+
+  // Per-market live per-order notional caps. null clears (fail-closed for that
+  // market); a value must be a positive finite number. These are money limits —
+  // owner-only (requireOwner above), never cron.
+  for (const [field, val, cur] of [["max_order_notional_usd", max_order_notional_usd, "USD"], ["max_order_notional_inr", max_order_notional_inr, "INR"]] as const) {
+    if (val !== undefined && val !== null && (!Number.isFinite(Number(val)) || Number(val) <= 0)) {
+      return NextResponse.json({ error: `${field} must be a positive number (${cur}) or null to clear` }, { status: 400 });
+    }
+  }
 
   if (live_account_source !== undefined && !["claude_exec", "robinhood_mcp"].includes(live_account_source)) {
     return NextResponse.json({ error: "live_account_source must be 'claude_exec' or 'robinhood_mcp'" }, { status: 400 });
@@ -125,6 +134,8 @@ export async function PATCH(req: NextRequest) {
   if (live_account_source !== undefined) update.live_account_source = live_account_source;
   if (robinhood_mcp_enabled !== undefined) update.robinhood_mcp_enabled = !!robinhood_mcp_enabled;
   if (max_order_notional !== undefined) update.max_order_notional = max_order_notional === null ? null : Number(max_order_notional);
+  if (max_order_notional_usd !== undefined) update.max_order_notional_usd = max_order_notional_usd === null ? null : Number(max_order_notional_usd);
+  if (max_order_notional_inr !== undefined) update.max_order_notional_inr = max_order_notional_inr === null ? null : Number(max_order_notional_inr);
 
   // Active trading account must be an allowlisted role='trading' account for the
   // matching market — never free-text. Fail the request rather than point the
@@ -147,7 +158,7 @@ export async function PATCH(req: NextRequest) {
 
   // Resilient write — some columns may not exist on older schemas; retry
   // stripping the optional ones so saving a profile still works.
-  const OPTIONAL_COLS = ["max_positions_per_sector", "ks_daily_loss_pct", "ks_drawdown_pct", "ks_accuracy_pct", "exit_hysteresis", "posture", "posture_expires_at", "base_risk_profile", "active_broker_us", "active_broker_india", "trading_enabled_us", "trading_enabled_india", "active_account_us", "active_account_india", "live_account_source", "robinhood_mcp_enabled", "max_order_notional"];
+  const OPTIONAL_COLS = ["max_positions_per_sector", "ks_daily_loss_pct", "ks_drawdown_pct", "ks_accuracy_pct", "exit_hysteresis", "posture", "posture_expires_at", "base_risk_profile", "active_broker_us", "active_broker_india", "trading_enabled_us", "trading_enabled_india", "active_account_us", "active_account_india", "live_account_source", "robinhood_mcp_enabled", "max_order_notional", "max_order_notional_usd", "max_order_notional_inr"];
   const { error: updErr } = await svc.from("strategy_config").update(update).eq("id", existing.id);
   if (updErr) {
     const rest = { ...update };
@@ -168,7 +179,7 @@ export async function GET() {
   const svc = createServiceClient();
   const { data } = await svc
     .from("strategy_config")
-    .select("risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_expires_at, base_risk_profile, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional")
+    .select("risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_expires_at, base_risk_profile, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr")
     .single();
   return NextResponse.json(data ?? {});
 }

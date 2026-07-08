@@ -79,6 +79,12 @@ export default function SettingsPage() {
   const [activeAccountUs, setActiveAccountUs] = useState<string>("");
   const [activeAccountIndia, setActiveAccountIndia] = useState<string>("");
   const [rhMcpMsg, setRhMcpMsg] = useState<string>("");
+
+  // Per-market live per-order notional caps (money limits — owner-set). Empty = null
+  // = that market's live orders fail closed until a cap is set.
+  const [usdCap, setUsdCap] = useState<string>("");
+  const [inrCap, setInrCap] = useState<string>("");
+  const [savingCaps, setSavingCaps] = useState(false);
   const loadRhMcp = () => {
     fetch("/api/robinhood-mcp/status").then(r => r.json()).then(setRhMcp).catch(() => {});
     fetch("/api/broker-accounts").then(r => r.json()).then(d => setBrokerAccounts(d.accounts ?? [])).catch(() => {});
@@ -167,6 +173,8 @@ export default function SettingsPage() {
         if (d.trading_enabled_india !== undefined && d.trading_enabled_india !== null) setTradingEnabledIndia(d.trading_enabled_india);
         if (d.active_account_us) setActiveAccountUs(d.active_account_us);
         if (d.active_account_india) setActiveAccountIndia(d.active_account_india);
+        if (d.max_order_notional_usd != null) setUsdCap(String(d.max_order_notional_usd));
+        if (d.max_order_notional_inr != null) setInrCap(String(d.max_order_notional_inr));
       })
       .catch(() => {});
 
@@ -245,6 +253,26 @@ export default function SettingsPage() {
     setRhMcpMsg(res.ok ? "Robinhood MCP token wiped." : (d.error ?? "Disconnect failed"));
     setTimeout(() => setRhMcpMsg(""), 3000);
     loadRhMcp();
+  }
+
+  async function saveOrderCaps() {
+    // Empty field → null → that market fails closed (refuses live orders) until set.
+    const usd = usdCap.trim();
+    const inr = inrCap.trim();
+    if ((usd !== "" && !(Number(usd) > 0)) || (inr !== "" && !(Number(inr) > 0))) {
+      setToast("Caps must be positive numbers (or blank to disable that market)");
+      setTimeout(() => setToast(""), 3000);
+      return;
+    }
+    setSavingCaps(true);
+    try {
+      await patchRisk({
+        max_order_notional_usd: usd === "" ? null : Number(usd),
+        max_order_notional_inr: inr === "" ? null : Number(inr),
+      }, "Live order limits saved");
+      setToast("Live order limits saved");
+      setTimeout(() => setToast(""), 2500);
+    } finally { setSavingCaps(false); }
   }
 
   async function applyPosture() {
@@ -749,6 +777,32 @@ export default function SettingsPage() {
               The most reliable kill switch is revoking access directly at{" "}
               <a href="https://kite.zerodha.com" target="_blank" rel="noopener noreferrer" style={{ color: T.accent }}>kite.zerodha.com</a>
               {" "}or your Kite Connect apps page — that works even if this app were ever compromised. Disconnect above is the in-app-triggered complement to that.
+            </div>
+          </div>
+
+          {/* Live order limits — hard per-order notional ceiling, per market. */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginBottom: "20px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Live Order Limits</div>
+            <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "16px" }}>
+              Hard ceiling on the notional value (<code>qty × price</code>) of any single <strong>live</strong> order, checked at submit against a fresh quote. A blank field <strong>disables live trading for that market</strong> (fail-closed): the order is refused until you set a cap. Paper trades are unaffected.
+            </div>
+            <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" as const, marginBottom: "14px" }}>
+              <div style={{ flex: "1 1 160px" }}>
+                <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "8px" }}>US cap (USD $)</label>
+                <input type="number" min="0" step="1" value={usdCap} onChange={e => setUsdCap(e.target.value)} placeholder="e.g. 50" style={sel} />
+              </div>
+              <div style={{ flex: "1 1 160px" }}>
+                <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "8px" }}>India cap (INR ₹)</label>
+                <input type="number" min="0" step="1" value={inrCap} onChange={e => setInrCap(e.target.value)} placeholder="blank = India live disabled" style={sel} />
+              </div>
+            </div>
+            <button onClick={saveOrderCaps} disabled={savingCaps}
+              style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "9px 20px", fontSize: "13px", fontWeight: 600, cursor: savingCaps ? "default" : "pointer", opacity: savingCaps ? 0.6 : 1 }}>
+              {savingCaps ? "Saving…" : "Save limits"}
+            </button>
+            <div style={{ fontSize: "11px", color: T.muted, marginTop: "10px" }}>
+              {inrCap.trim() === "" && <span style={{ color: T.amber }}>● India live orders are currently disabled (no INR cap set). </span>}
+              Caps are per <em>single order</em>, not per day. They never affect paper trading and can only be changed here by you.
             </div>
           </div>
 

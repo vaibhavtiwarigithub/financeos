@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { placeEquityOrder, getKiteHoldings } from "@/lib/kite";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { guardOrderRequest } from "@/lib/request-guards";
+import { fetchIndiaQuote } from "@/lib/india-data";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,30 @@ export async function POST(req: NextRequest) {
   }
 
   const svc = createServiceClient();
+
+  // Per-order INR notional cap — FAIL CLOSED. Mirrors the Execution Gateway's
+  // per-market cap on this standalone Kite path. No trusted Kite equity fallback
+  // exists, so a null India cap refuses the order. Notional is checked against a
+  // fresh LTP (and the limit price when higher), refusing if neither is available.
+  {
+    const { data: capCfg } = await svc.from("strategy_config").select("max_order_notional_inr").limit(1).maybeSingle();
+    const inrCap = (capCfg as any)?.max_order_notional_inr;
+    const cap = inrCap != null ? Number(inrCap) : null;
+    if (cap == null || !Number.isFinite(cap) || cap <= 0) {
+      return NextResponse.json({ error: "No India (INR) per-order cap set — refusing an uncapped live India order. Set the India cap in Settings → Live Order Limits." }, { status: 403 });
+    }
+    const q = await fetchIndiaQuote(symbol).catch(() => null);
+    const ltp = Number(q?.price) || 0;
+    const limitRef = order_type === "LIMIT" ? Number(price) || 0 : 0;
+    const refPrice = Math.max(ltp, limitRef);
+    if (!Number.isFinite(refPrice) || refPrice <= 0) {
+      return NextResponse.json({ error: "Could not fetch a fresh India quote to validate the order notional — refusing to submit blind." }, { status: 502 });
+    }
+    const notional = (quantity as number) * refPrice;
+    if (notional > cap) {
+      return NextResponse.json({ error: `Order notional ₹${notional.toFixed(0)} exceeds the India cap ₹${cap.toFixed(0)}` }, { status: 403 });
+    }
+  }
 
   // Long-only gate: SELL requires confirmed current holding >= requested qty.
   if (transaction_type === "SELL") {
