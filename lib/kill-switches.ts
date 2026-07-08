@@ -110,4 +110,24 @@ async function disableTrading(supabase: any, market: string, reason: string) {
     title: `Kill switch tripped (${market.toUpperCase()}) — trading auto-disabled`,
     detail: `${reason}. Trading is halted for ${market.toUpperCase()} until you review and re-enable it in Settings → Trading.`,
   });
+
+  // G8: quarantine resting/unresolved LIVE orders for this market so the owner can
+  // review them. We do NOT auto-cancel — no deterministic broker cancel is wired and
+  // no cron/LLM may cancel a live order. This only flags them for human action.
+  try {
+    const { data: flagged } = await supabase.from("broker_orders")
+      .update({ risk_status: "kill_switch_review_required", risk_status_at: new Date().toISOString(), risk_status_reason: reason })
+      .eq("market", market).eq("broker_env", "live")
+      .in("status", ["pending_submit", "submitted", "partially_filled", "unknown_needs_reconcile"])
+      .is("risk_status", null)
+      .select("id");
+    if (flagged && flagged.length > 0) {
+      await reportIssue({
+        issueKey: `killswitch-orders:${market}`,
+        severity: "critical", category: "trading",
+        title: `${flagged.length} open live ${market.toUpperCase()} order(s) need review (kill switch)`,
+        detail: `The kill switch tripped while ${flagged.length} live order(s) were still open at the broker. They are flagged kill_switch_review_required — review and cancel them manually at the broker if needed. The app does not auto-cancel live orders.`,
+      });
+    }
+  } catch { /* flagging is best-effort — must never block the kill switch itself */ }
 }
