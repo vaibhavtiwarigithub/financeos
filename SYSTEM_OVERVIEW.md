@@ -134,10 +134,13 @@ can move real money — only you can.
 - Reads your outcomes + learner runs, writes plain-English **coaching insights** to
   `mentor_insights`. Advisory to *you*. Never touches money or weights.
 
-### Health-Triage — the SRE (added today)
+### Health-Triage — the SRE
 - Every 6h, reads open alerts + recent errors + data-quality + provider budgets and writes a
   short **"here's what's wrong and how to fix it"** to the dashboard. **Read-only** — it can
   diagnose and suggest, but can never change config, money limits, weights, orders, or code.
+- For **Tier-1 safe actions** (retry a failed cron agent, resolve an info/warn alert), the
+  dashboard health card shows one-click "Retry" / "Resolve" buttons. Action fires only after
+  *you* click — nothing is auto-applied. Critical/error alerts require manual investigation.
 
 ---
 
@@ -250,6 +253,13 @@ flowchart TD
   account snapshot (equity + positions). India: checked against Kite `/user/margins` (cash)
   + `/portfolio/holdings` (last_price × qty) so NAV reflects the real portfolio. Both markets
   use the same `constructPortfolio` logic and fail-controlled on indeterminate holdings.
+- **Server-side stop/target (India GTT)** — after a confirmed live India BUY, Kairos immediately
+  places a Kite GTT (Good Till Triggered) two-leg bracket: one stop-loss leg (SL-M SELL) and
+  one take-profit leg (LIMIT SELL). Kite auto-cancels the other leg when either fires. This
+  means the stop and target are active even when Kairos is fully offline during market hours,
+  closing the intraday crash gap that daily crons leave open. GTT placement is best-effort and
+  non-blocking — a GTT failure is logged but never reverses the BUY. The GTT is cancelled
+  when the position is sold through the Kite order route.
 - **Paper caps** — the paper books have their own NAV-scaled caps so tests stay realistic
   without freezing.
 - **The ultimate kill switch** is always *you*, at the broker (revoke access at Robinhood /
@@ -283,4 +293,4 @@ flowchart TD
 
 ---
 
-*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-08 (India G3 portfolio gate live).*
+*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-08 (India G3 + Kite GTT server-side brackets + one-click health remediation).*

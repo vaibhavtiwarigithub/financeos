@@ -40,12 +40,39 @@ function fixHint(a: Alert): { href?: string; label: string } {
   return { label: "" };
 }
 
+function ActionButton({ label, state, okLabel, onClick, color }: {
+  label: string; state?: "pending" | "ok" | "err"; okLabel: string;
+  onClick: () => void; color: string;
+}) {
+  const busy = state === "pending";
+  const done = state === "ok";
+  const failed = state === "err";
+  return (
+    <button
+      onClick={onClick}
+      disabled={busy || done}
+      style={{
+        background: "transparent",
+        border: `1px solid ${failed ? T.red : done ? T.green : color}`,
+        borderRadius: "5px",
+        color: failed ? T.red : done ? T.green : color,
+        padding: "3px 10px", fontSize: "10px", fontWeight: 700,
+        cursor: busy || done ? "default" : "pointer",
+        letterSpacing: "0.04em",
+      }}
+    >
+      {busy ? "…" : done ? okLabel : failed ? "Failed" : label}
+    </button>
+  );
+}
+
 export default function SystemHealthCard() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [triage, setTriage] = useState<{ content: string; model?: string } | null>(null);
   const [running, setRunning] = useState(false);
+  const [applying, setApplying] = useState<Record<string, "pending" | "ok" | "err">>({});
 
   useEffect(() => {
     fetch("/api/alerts")
@@ -66,6 +93,32 @@ export default function SystemHealthCard() {
       const d = await r.json();
       if (d.ok) setTriage({ content: d.content, model: d.model });
     } catch { /* best-effort */ } finally { setRunning(false); }
+  }
+
+  async function applyFix(action: string, alert: Alert) {
+    setApplying(prev => ({ ...prev, [alert.id]: "pending" }));
+    try {
+      const r = await fetch("/api/health/apply-fix", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, alert_id: alert.id, issue_key: alert.issue_key }),
+      });
+      const d = await r.json();
+      if (r.ok && d.ok) {
+        setApplying(prev => ({ ...prev, [alert.id]: "ok" }));
+        if (action === "resolve_alert") {
+          setAlerts(prev => prev.filter(a => a.id !== alert.id));
+        } else {
+          setTimeout(() => setApplying(prev => { const n = { ...prev }; delete n[alert.id]; return n; }), 2000);
+        }
+      } else {
+        setApplying(prev => ({ ...prev, [alert.id]: "err" }));
+        setTimeout(() => setApplying(prev => { const n = { ...prev }; delete n[alert.id]; return n; }), 3000);
+      }
+    } catch {
+      setApplying(prev => ({ ...prev, [alert.id]: "err" }));
+      setTimeout(() => setApplying(prev => { const n = { ...prev }; delete n[alert.id]; return n; }), 3000);
+    }
   }
 
   if (!loaded) return null;
@@ -122,6 +175,26 @@ export default function SystemHealthCard() {
                           : <span style={{ fontSize: "11px", color: T.muted }}>{hint.label}</span>}
                       </div>
                     )}
+                    <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
+                      {a.category === "cron" && a.issue_key?.startsWith("cron:") && (
+                        <ActionButton
+                          label="Retry"
+                          state={applying[a.id]}
+                          okLabel="Queued"
+                          onClick={() => applyFix("retry_cron", a)}
+                          color={T.blue}
+                        />
+                      )}
+                      {(a.severity === "info" || a.severity === "warn") && (
+                        <ActionButton
+                          label="Resolve"
+                          state={applying[a.id]}
+                          okLabel="Resolved"
+                          onClick={() => applyFix("resolve_alert", a)}
+                          color={T.green}
+                        />
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

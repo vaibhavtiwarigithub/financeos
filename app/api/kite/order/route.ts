@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { placeEquityOrder, getKiteHoldings } from "@/lib/kite";
+import { placeEquityOrder, getKiteHoldings, placeKiteGtt, cancelKiteGtt } from "@/lib/kite";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { guardOrderRequest } from "@/lib/request-guards";
 import { fetchIndiaQuote } from "@/lib/india-data";
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
   // per-order cap: no trusted Kite equity fallback exists, so a null India cap
   // refuses the order. Notional is checked against a fresh LTP (and the limit price
   // when higher), refusing if neither is available.
-  const { data: capCfg } = await svc.from("strategy_config").select("max_order_notional_inr, max_daily_notional_inr, max_daily_trades").limit(1).maybeSingle();
+  const { data: capCfg } = await svc.from("strategy_config").select("max_order_notional_inr, max_daily_notional_inr, max_daily_trades, stop_loss_pct, target_pct").limit(1).maybeSingle();
   const inrCap = (capCfg as any)?.max_order_notional_inr;
   const perOrderCap = inrCap != null ? Number(inrCap) : null;
   // Per-order cap applies to BUY only — SELL exits (held-position gated below) must never
@@ -237,5 +237,42 @@ export async function POST(req: NextRequest) {
   if (needsReconcile) {
     return NextResponse.json({ success: false, needsReconcile: true, broker_order_id: ledgerId, error: "Order submitted but no order_id returned — check Kite manually before retrying" }, { status: 202 });
   }
+
+  // Server-side stop/target via Kite GTT (BUY only, best-effort — a GTT failure does
+  // NOT reverse the already-confirmed order, it's logged and the BUY still reports success).
+  if (transaction_type === "BUY") {
+    const stopPct = Number((capCfg as any)?.stop_loss_pct);
+    const targetPct = Number((capCfg as any)?.target_pct);
+    if (Number.isFinite(stopPct) && stopPct > 0 && Number.isFinite(targetPct) && targetPct > 0) {
+      const stopPrice = refPrice * (1 - stopPct / 100);
+      const targetPrice = refPrice * (1 + targetPct / 100);
+      const gttResult = await placeKiteGtt({ tradingsymbol: symbol, qty: quantity as number, lastPrice: refPrice, stopPrice, targetPrice }, svc)
+        .catch(() => ({ ok: false, error: "exception" } as const));
+      if (gttResult.ok && gttResult.triggerId) {
+        await svc.from("broker_orders").update({ kite_gtt_id: String(gttResult.triggerId) }).eq("id", ledgerId).catch(() => {});
+      }
+      await svc.from("decision_journal").insert({
+        entry_type: "kite_gtt", symbol, market: "india",
+        summary: gttResult.ok
+          ? `GTT placed (trigger ${gttResult.triggerId}): stop ₹${stopPrice.toFixed(2)}, target ₹${targetPrice.toFixed(2)}`
+          : `GTT placement failed (best-effort, BUY already confirmed): ${gttResult.error}`,
+        calculations: { stop_pct: stopPct, target_pct: targetPct, ref_price: refPrice, broker_order_ledger_id: ledgerId },
+        has_verified_facts: true, resolved: gttResult.ok,
+      }).catch(() => {});
+    }
+  }
+
+  // On SELL success: cancel the most recent resting GTT for this symbol (best-effort).
+  if (transaction_type === "SELL") {
+    const { data: resting } = await svc.from("broker_orders")
+      .select("id, kite_gtt_id").eq("market", "india").eq("symbol", symbol.toUpperCase())
+      .eq("side", "buy").not("kite_gtt_id", "is", null)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (resting?.kite_gtt_id) {
+      await cancelKiteGtt(Number(resting.kite_gtt_id), svc).catch(() => {});
+      await svc.from("broker_orders").update({ kite_gtt_id: null }).eq("id", resting.id).catch(() => {});
+    }
+  }
+
   return NextResponse.json({ success: true, order_id: res.data?.order_id, broker_order_id: ledgerId });
 }
