@@ -163,11 +163,16 @@ export async function POST(req: NextRequest) {
         if (notionalCap == null) {
           // Filter by the resolved trading account — prevents the read-only account's
           // larger equity from raising the live order cap for the agentic account.
-          const { data: snap } = await supabase.from("live_account_snapshots").select("equity")
+          const { data: snap } = await supabase.from("live_account_snapshots").select("equity, captured_at")
             .eq("account_id", acct.account)
             .order("captured_at", { ascending: false }).limit(1).maybeSingle();
           const equity = Number((snap as any)?.equity);
-          if (Number.isFinite(equity) && equity > 0) notionalCap = equity * DEFAULT_NOTIONAL_FRAC;
+          // Freshness bound — a STALE snapshot must not raise the cap (funds may have
+          // left since it was captured). If stale/missing, skip the fallback and let
+          // the null-cap check below fail closed.
+          const capturedAt = (snap as any)?.captured_at ? Date.parse((snap as any).captured_at) : NaN;
+          const snapFresh = Number.isFinite(capturedAt) && (Date.now() - capturedAt) <= 30 * 60 * 1000;
+          if (snapFresh && Number.isFinite(equity) && equity > 0) notionalCap = equity * DEFAULT_NOTIONAL_FRAC;
         }
       }
       if (notionalCap == null || !Number.isFinite(notionalCap) || notionalCap <= 0) {

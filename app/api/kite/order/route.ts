@@ -4,6 +4,7 @@ import { placeEquityOrder, getKiteHoldings } from "@/lib/kite";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { guardOrderRequest } from "@/lib/request-guards";
 import { fetchIndiaQuote } from "@/lib/india-data";
+import { checkKillSwitches } from "@/lib/kill-switches";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,21 @@ export async function POST(req: NextRequest) {
   }
 
   const svc = createServiceClient();
+
+  // Global + per-market trading gate + kill switches — same standard as the US
+  // Execution Gateway. This standalone Kite path previously skipped these, so a
+  // tripped kill switch or a disabled India toggle did NOT stop a live India order.
+  {
+    const { data: gate } = await svc.from("strategy_config").select("trading_enabled, trading_enabled_india").limit(1).maybeSingle();
+    if (!(gate as any)?.trading_enabled) {
+      return NextResponse.json({ error: "Live trading is disabled (strategy_config.trading_enabled = false)" }, { status: 403 });
+    }
+    if ((gate as any)?.trading_enabled_india === false) {
+      return NextResponse.json({ error: "Live trading is disabled for INDIA (view-only mode — re-enable in Settings → Agents)" }, { status: 403 });
+    }
+    const ks = await checkKillSwitches(svc, "india");
+    if (!ks.safe) return NextResponse.json({ error: `Kill switch active: ${ks.reason}` }, { status: 403 });
+  }
 
   // Per-order INR notional cap — FAIL CLOSED. Mirrors the Execution Gateway's
   // per-market cap on this standalone Kite path. No trusted Kite equity fallback
