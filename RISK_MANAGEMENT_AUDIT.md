@@ -23,7 +23,7 @@ verified. Only controls whose fix actually shipped are upgraded. See §7 for the
 | Exit management | B paper / D live | **B paper / D live** | Unchanged — no live broker stop/target/cancel-replace control added. |
 | Per-order live controls (US) | B | **B+** | G7: equity-fallback cap requires a fresh (≤30 min) snapshot; G2: per-market USD cap (`max_order_notional_usd`), Settings-editable. |
 | Per-order live controls (India) | D | **B** | G2/G10: INR notional cap + fresh-quote check (fail-closed); G9: kill-switch + trading_enabled gate. |
-| Portfolio construction limits | B paper / F live | **B paper / F live** | Unchanged — G3 (port paper limits to live Gateway) not started. |
+| Portfolio construction limits | B paper / F live | **B paper / B− live (US)** | G3 shipped: live BUY runs `constructPortfolio` vs the live book (NAV+positions now captured). Name+gross exact; sector/vol best-effort (RH gives no sector). US only; India has no live NAV source → still F. |
 | Data-integrity (garbage-in) | C (in progress) | **B− (live BUY gated)** | G1: live BUY now refused when the linked decision's `data_confidence` < 0.5 / `quality_status != ok` (migration 108). Learner-side auto-exclude still deferred on US calibration → not yet A. |
 
 **Overall: paper B+, live C → live B−.** India now has a notional + kill-switch gate, daily
@@ -163,15 +163,20 @@ Shipped to `main` (Vercel), migration-first (each migration applied + verified b
   `quality_status != 'ok'`, or there's no linked quality record; owner override `acceptLowQuality:true`.
   The **learner** side (auto-exclude tainted closed trades) is still deferred pending US calibration —
   the view stays measure-only for the learner; only the deterministic live-BUY gate is enforced.
-- **G3 — BLOCKED (data prerequisite).** The %-of-NAV limits (gross/sector/name/vol) can't be computed:
-  `live_account_snapshots.equity` is NULL (the Robinhood MCP account response doesn't expose portfolio
-  value under the parsed field names) and positions carry no sector. Prerequisite before G3: capture live
-  equity (confirm what RH's account endpoint returns via an authed snapshot refresh) + resolve per-position
-  sector — OR reformulate live limits in absolute-notional terms (partly covered already by the per-order +
-  daily notional caps). Not completable headless.
+- **G3 — SHIPPED (US live).** The data prerequisite was resolved live: Robinhood keeps portfolio value in
+  `get_portfolio` (account-scoped), not `get_accounts` — the snapshot now captures NAV + positions for the
+  agentic account (also revived G7's equity fallback). `lib/risk/live-portfolio-gate.ts` builds the live
+  book + candidate and runs `constructPortfolio`; a US live BUY that would breach a name/gross/sector/vol
+  limit is refused (409, `acceptPortfolioRisk:true` overrides). Name+gross exact; sector/vol best-effort
+  (RH gives no sector). Fail-OPEN on stale/absent NAV (notional caps remain primary). India still has no
+  live NAV source → not covered.
 
-Remaining: **G3** (blocked on live-NAV capture — see above). **Self-healing Part B is BUILT** (core):
-read-only health-triage agent + `health_triage` table + 6h cron + dashboard "AI Triage" card,
-model owner-selectable in Settings (migrations 109/110). Deferred within Part B: the Tier-1
-deterministic auto-remediation whitelist + the Tier-3 one-click apply button (additional surface;
-the agent is advisory-only today, which is the safe default).
+**All ChatGPT-flagged gaps (G1–G12) are now shipped**, plus self-healing Part B (core) and the
+live-NAV capture fix that unblocked G3. Deferred / follow-on only:
+- **Learner-side taint exclusion** (auto-exclude tainted closed trades) — gated on US flag-rate
+  calibration; the live-BUY quality gate (G1) IS enforced.
+- **India live portfolio limits** (G3) — needs an India NAV source (Kite has none wired).
+- **Part B Tier-1 auto-remediation + Tier-3 one-click apply** — the agent is advisory-only today
+  (the safe default); these are enhancements.
+- **Live stop/target broker control** (exit management D live) — positions rely on the sync loop /
+  manual follow-up; no server-side OCO/bracket at the broker.
