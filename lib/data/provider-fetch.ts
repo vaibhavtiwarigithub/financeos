@@ -1,0 +1,142 @@
+import { createServiceClient } from "@/lib/supabase/service";
+import { reportIssue } from "@/lib/system-health";
+
+// Generic per-provider cached fetch + daily budget guard. Generalizes the
+// original AV-only avCachedFetch (lib/av-cache.ts) so each external data
+// provider has its OWN daily budget counter (migration 100) — a
+// FinancialDatasets call no longer eats an Alpha Vantage slot.
+//
+// Response cache stays in av_cache (keyed by a globally-unique, provider-
+// prefixed cache_key). Only the BUDGET is per-provider. Semantics preserved
+// from the original: reserve-before-spend, fail-closed on counter error, serve
+// last-known cached payload (<=7 days old) on throttle/over-budget/failure so a
+// downstream scoring input degrades to "stale" rather than "empty".
+
+export type ProviderId =
+  | "alpha_vantage" | "financialdatasets" | "massive" | "finnhub"
+  | "fmp" | "eodhd" | "twelvedata" | "upstox" | "fred";
+
+interface ProviderConfig {
+  label: string;
+  // Daily real-call ceiling. null = no daily cap (provider is rate-limited
+  // per-minute instead; we don't day-cap those, the per-call cache already
+  // collapses repeat symbols). Env override lets a paid tier raise it.
+  dailyBudget: number | null;
+}
+
+const PROVIDERS: Record<ProviderId, ProviderConfig> = {
+  alpha_vantage:     { label: "Alpha Vantage",     dailyBudget: Number(process.env.AV_DAILY_BUDGET ?? 25) },
+  financialdatasets: { label: "FinancialDatasets", dailyBudget: Number(process.env.FD_DAILY_BUDGET ?? 200) },
+  fmp:               { label: "FMP",               dailyBudget: Number(process.env.FMP_DAILY_BUDGET ?? 240) }, // 250/day free, keep headroom
+  twelvedata:        { label: "Twelve Data",       dailyBudget: Number(process.env.TWELVEDATA_DAILY_BUDGET ?? 750) }, // 800/day free
+  eodhd:             { label: "EODHD",             dailyBudget: Number(process.env.EODHD_DAILY_BUDGET ?? 90000) }, // 100k/day paid tiers; 20/day if free
+  finnhub:           { label: "Finnhub",           dailyBudget: null }, // 60/min, no daily cap
+  massive:           { label: "Massive",           dailyBudget: null }, // 5/min, no daily cap
+  upstox:            { label: "Upstox",            dailyBudget: null }, // ~500/min, no daily cap
+  fred:              { label: "FRED",              dailyBudget: null }, // rate-limited only
+};
+
+// AV signals a rate-limit/throttle via a "Note" or "Information" field (no data).
+function avThrottled(json: any): boolean {
+  return !!(json && (json.Note || json.Information)) && !json["Global Quote"] && !json["Technical Analysis: RSI"] && !json.Symbol;
+}
+
+const MAX_STALE_CACHE_DAYS = 7;
+
+function nextUtcMidnight(): string {
+  const d = new Date();
+  d.setUTCHours(24, 0, 0, 0);
+  return d.toISOString();
+}
+
+async function lastCached(svc: any, cacheKey: string): Promise<any | null> {
+  const { data: last } = await svc
+    .from("av_cache")
+    .select("payload, cache_date")
+    .eq("cache_key", cacheKey)
+    .order("cache_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!last?.payload) return null;
+  const ageDays = (Date.now() - new Date(last.cache_date).getTime()) / 86400000;
+  if (ageDays > MAX_STALE_CACHE_DAYS) return null;
+  return last.payload;
+}
+
+export interface ProviderFetchOpts {
+  timeoutMs?: number;
+  headers?: Record<string, string>;
+  // Provider-specific "this response is a throttle/error, not real data" check.
+  // Defaults to AV-style for alpha_vantage, and "never" for the rest (their
+  // errors are HTTP-status/JSON-shape specific and handled by the caller).
+  isThrottled?: (json: any) => boolean;
+}
+
+// Cache key MUST be globally unique across providers. Callers pass a
+// provider-prefixed key (e.g. "FMP_PROFILE:AAPL", "FINNHUB_NEWS:AAPL").
+export async function providerCachedFetch(
+  provider: ProviderId,
+  cacheKey: string,
+  url: string,
+  opts: ProviderFetchOpts = {},
+): Promise<any | null> {
+  const svc = createServiceClient();
+  const cfg = PROVIDERS[provider];
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const timeoutMs = opts.timeoutMs ?? 6000;
+  const isThrottled = opts.isThrottled ?? (provider === "alpha_vantage" ? avThrottled : () => false);
+
+  // 1. Fresh cache hit for today → no real call.
+  const { data: today } = await svc
+    .from("av_cache")
+    .select("payload")
+    .eq("cache_key", cacheKey)
+    .eq("cache_date", todayStr)
+    .maybeSingle();
+  if (today?.payload) return today.payload;
+
+  // 2. Budget guard (only for providers with a daily cap). Reserve-before-spend.
+  if (cfg.dailyBudget != null) {
+    try {
+      const { data: count, error } = await svc.rpc("provider_budget_increment", { p_provider: provider, p_date: todayStr });
+      if (error) return lastCached(svc, cacheKey); // fail closed
+      if (typeof count === "number" && count > cfg.dailyBudget) {
+        await reportIssue({
+          issueKey: `provider-budget-exhausted:${provider}`,
+          severity: "warn", category: "data",
+          title: `${cfg.label} daily budget exhausted`,
+          detail: `Used ${count}/${cfg.dailyBudget} ${cfg.label} calls today. Further fetches serve cached payloads until the quota resets (00:00 UTC). Scoring inputs may be staler than usual.`,
+          autoExpireAt: nextUtcMidnight(),
+        }, svc);
+        return lastCached(svc, cacheKey);
+      }
+    } catch { return lastCached(svc, cacheKey); }
+  } else {
+    // No daily cap: still log the call so the capacity dashboard shows real
+    // usage/averages (best-effort — never blocks the fetch).
+    svc.rpc("provider_budget_increment", { p_provider: provider, p_date: todayStr }).then(() => {}, () => {});
+  }
+
+  // 3. Spend one real call.
+  let json: any = null;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: opts.headers });
+    if (res.ok) json = await res.json();
+  } catch { json = null; }
+
+  // 4. Throttled/failed → last-known cached payload (<=7d) so inputs stay complete.
+  if (!json || isThrottled(json)) {
+    return lastCached(svc, cacheKey);
+  }
+
+  // 5. Store today's payload (best-effort) and return it.
+  await svc.from("av_cache").upsert(
+    { cache_key: cacheKey, cache_date: todayStr, payload: json },
+    { onConflict: "cache_key,cache_date" },
+  ).then(() => {}, () => {});
+  return json;
+}
+
+export function providerConfig(): Record<ProviderId, ProviderConfig> {
+  return PROVIDERS;
+}

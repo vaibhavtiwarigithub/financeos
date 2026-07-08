@@ -11,6 +11,7 @@ import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/reg
 import { computeWeightedAnalystScore, isThinEvidence, type DimensionRecord } from "@/lib/scoring/weighted-score";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
+import { fetchUsCandles } from "@/lib/data/candles";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
 // US, ^NSEI for India) — computed once per market per process, not per symbol.
@@ -798,7 +799,12 @@ export async function processSymbol(
     (india || isEtf) ? Promise.resolve(null) : fetchOptionsSignal(symbol).catch(() => null),
     (india || isEtf) ? Promise.resolve(null) : scoreInsider(symbol, avKey).catch(() => null),
     india ? fetchIndiaOverview(symbol).catch(() => ({})) : fetchAVOverview(symbol, avKey).catch(() => ({})),
-    india ? fetchIndiaCandles(symbol).catch(() => [] as Candle[]) : fetchAVCandles(symbol, avKey).catch(() => [] as Candle[]),
+    india
+      ? fetchIndiaCandles(symbol).catch(() => [] as Candle[])
+      // US candles: Massive → EODHD → Twelve Data → Alpha Vantage (fallback).
+      // RSI/EMA still computed locally from whichever source returns bars, so
+      // the scarce AV 25/day budget is no longer spent on candles.
+      : fetchUsCandles(symbol, () => fetchAVCandles(symbol, avKey)).then(r => r.candles).catch(() => [] as Candle[]),
   ]);
 
   // Compute all 5 scores deterministically from fetched data

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { ALGO_STRATEGIES, STRATEGY_MAP } from "@/lib/strategy-definitions";
 import { avCachedFetch } from "@/lib/av-cache";
+import { providerCachedFetch } from "@/lib/data/provider-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -77,7 +78,10 @@ async function fetchFundamentals(symbol: string, fdKey: string): Promise<Record<
   if (!fdKey) return {};
   try {
     const url = `https://api.financialdatasets.ai/financial-metrics/snapshot/?ticker=${symbol}`;
-    const data = await avCachedFetch(`FD_SNAPSHOT:${symbol}`, url, 8000, { "X-API-KEY": fdKey });
+    // FinancialDatasets has its OWN daily budget now — routing this through the
+    // FD provider instead of avCachedFetch stops it from consuming an Alpha
+    // Vantage 25/day slot (the shared-budget bug).
+    const data = await providerCachedFetch("financialdatasets", `FD_SNAPSHOT:${symbol}`, url, { timeoutMs: 8000, headers: { "X-API-KEY": fdKey } });
     return data?.snapshot ?? data?.metrics ?? data ?? {};
   } catch { return {}; }
 }
