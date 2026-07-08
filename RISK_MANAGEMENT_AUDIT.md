@@ -170,5 +170,8 @@ Shipped to `main` (Vercel), migration-first (each migration applied + verified b
   sector — OR reformulate live limits in absolute-notional terms (partly covered already by the per-order +
   daily notional caps). Not completable headless.
 
-Remaining: **G3** (blocked on live-NAV capture — see above) and **self-healing Part B** (health-triage
-agent, designed in `features/self-healing-agent`, not built).
+Remaining: **G3** (blocked on live-NAV capture — see above). **Self-healing Part B is BUILT** (core):
+read-only health-triage agent + `health_triage` table + 6h cron + dashboard "AI Triage" card,
+model owner-selectable in Settings (migrations 109/110). Deferred within Part B: the Tier-1
+deterministic auto-remediation whitelist + the Tier-3 one-click apply button (additional surface;
+the agent is advisory-only today, which is the safe default).
