@@ -5,6 +5,7 @@ import { isIndia, fetchIndiaQuote } from "@/lib/india-data";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { guardOrderRequest } from "@/lib/request-guards";
 import { checkKillSwitches } from "@/lib/kill-switches";
+import { checkLivePortfolioLimits } from "@/lib/risk/live-portfolio-gate";
 import { getQuote } from "@/lib/data/quotes";
 import { robinhoodHeldQty } from "@/lib/robinhood-mcp";
 import { reportIssue } from "@/lib/system-health";
@@ -63,7 +64,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { proposal_id, env, acceptLowQuality } = body as { proposal_id?: number; env?: "paper" | "live"; acceptLowQuality?: boolean };
+    const { proposal_id, env, acceptLowQuality, acceptPortfolioRisk } = body as { proposal_id?: number; env?: "paper" | "live"; acceptLowQuality?: boolean; acceptPortfolioRisk?: boolean };
     // env must be explicit on an order-placing route — no silent paper default
     // that could route a mis-typed request past the live gates.
     if (env !== "paper" && env !== "live") {
@@ -204,6 +205,16 @@ export async function POST(req: NextRequest) {
       if (qty * freshPrice > notionalCap) {
         const cur = market === "india" ? "₹" : "$";
         return NextResponse.json({ error: `Order notional ${cur}${(qty * freshPrice).toFixed(0)} exceeds the ${market.toUpperCase()} cap ${cur}${notionalCap.toFixed(0)}` }, { status: 403 });
+      }
+
+      // G3: live portfolio-construction limits (name / gross / sector / vol) vs the live
+      // book. Refuses a BUY that would push the book past a limit (require re-approval).
+      // US only today (needs a live NAV snapshot); skipped when NAV is stale/absent.
+      if (side === "buy" && !acceptPortfolioRisk) {
+        const pg = await checkLivePortfolioLimits({ supabase, market, accountId: acct.account, symbol, orderNotional: qty * freshPrice });
+        if (!pg.ok) {
+          return NextResponse.json({ error: `Refusing live BUY of ${symbol}: ${pg.reason}. Re-approve with acceptPortfolioRisk:true to override.` }, { status: 409 });
+        }
       }
 
       // Price drift vs the approved price.
