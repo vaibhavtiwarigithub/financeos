@@ -7,6 +7,7 @@ import { loadLabeledDataset } from "@/lib/learning/dataset";
 import { validateFeatureInputs } from "@/lib/validation/feature-compiler";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
+import { applyLearningTaintFilter } from "@/lib/learning/taint-filter";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -280,9 +281,9 @@ export async function POST(req: NextRequest) {
         const { data: signals } = await scopeMkt(svc.from("agent_signals")
           .select(`id, ${dimension}, created_at`)
           .gte("created_at", since).not(dimension, "is", null).limit(100));
-        const { data: trades } = await scopeMkt(svc.from("paper_trades")
+        const { data: trades } = await scopeMkt(applyLearningTaintFilter(svc.from("paper_trades")
           .select("signal_id, pnl_pct, executed_at")
-          .not("closed_at", "is", null).gte("executed_at", since));
+          .not("closed_at", "is", null).gte("executed_at", since)));
 
         const tradeMap = new Map<any, number | null>((trades ?? []).map((t: any) => [t.signal_id, t.pnl_pct as number | null]));
         const pairs: { score: number; pnl: number }[] = [];
@@ -321,10 +322,10 @@ export async function POST(req: NextRequest) {
             if (assetClass) query = (query as any).eq("asset_class", assetClass);
 
             const { data: signals } = await query;
-            const { data: trades } = await scopeMkt(svc.from("paper_trades")
+            const { data: trades } = await scopeMkt(applyLearningTaintFilter(svc.from("paper_trades")
               .select("symbol, signal_id, outcome, pnl_pct, realized_pnl, executed_at, closed_at")
               .not("closed_at", "is", null)
-              .gte("executed_at", since));
+              .gte("executed_at", since)));
 
             // Link each signal to the trade ACTUALLY OPENED FROM IT (signal_id) — not
             // by symbol, which collided every repeat signal for the same ticker onto
