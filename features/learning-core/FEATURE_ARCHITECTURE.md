@@ -97,3 +97,47 @@ This spans all three phases:
 **Volume estimate:** ~10–20 scored candidates/market/day × 2 markets ≈ 30–40 rows/day + 4 label rows each → well under 1M rows/year. Trivial for Postgres.
 
 **Deliverables locked for Phase 1:** migrations 059/060 (manual apply), ResearchAgent observation write, `label-maturation` cron (+ register-tasks entry), `lib/learning/dataset.ts` walk-forward builder, learner repoint + personal-trade quarantine, docs + system-map (LEDGER node) + Decision 33.
+
+---
+
+## Build 1 — Genome as LIVE control (2026-07-08, user-approved)
+
+**Gap found:** Phase 3 shipped a typed, hard-bounded `StrategyGenome` + feature
+registry (`lib/validation/genome.ts`, migrations 063/064) that is written and
+hashed onto every signal for provenance — but **no live code read it**. The
+decision path took `score_threshold` from `strategy_config` and derived
+exit/sizing from hardcoded percentiles (`0.25/0.75`, horizon `10`, cap =
+`position_size_pct`). So a challenger that the Validation Engine proved better by
+tightening a stop or raising the threshold got promoted, yet **traded
+identically to the champion** — the genome was a manifest, not a control. Build 1
+closes that: the promoted champion's genome now governs live behavior.
+
+**Wired (additive, no new migration — genome column already live):**
+- `lib/validation/genome-live.ts` (new): `loadChampionGenome(supabase, market)` —
+  reads the promoted champion `strategy_versions.genome`, hydrates onto
+  `DEFAULT_GENOME`, re-checks bounds, and returns `{genome, source, hash}`.
+  Best-effort: missing champion / null genome / out-of-bounds → `DEFAULT_GENOME`
+  (`source: "default"`), never throws.
+- `lib/research-agent.ts`: entry threshold reads `champion.genome.entry.score_threshold`
+  (genome added to the champion select), falling back to `strategy_config`.
+- `app/api/agents/paper-trade/route.ts`: `getGlobalMaeMfePercentiles` now takes
+  the genome's `horizon_days` + `exit.stop_mae_pctile/target_mfe_pctile`; Kelly
+  sizing takes `sizing.cap_pct/floor_pct` and `sizing.mode` selects half-Kelly
+  vs flat. Genome `source`/`hash` stamped into the portfolio-constructor stage log.
+
+**Money-safety invariants (locked):**
+- **Genome cap clamped to the owner's `strategy_config.position_size_pct`** —
+  `min(genome.cap_pct, position_size_pct)`. The learning loop can size DOWN but
+  NEVER raise per-position exposure above the owner-set limit. Money limits stay
+  human. Portfolio Constructor name/gross/vol caps still run after.
+- **Behavior-preserving by construction.** `DEFAULT_GENOME` = `{score_threshold 60,
+  stop_mae_pctile 25, target_mfe_pctile 75, horizon 10, cap 10, floor 2}`, the exact
+  values the live path used before. A market with no genome-bearing champion is
+  byte-for-byte unchanged. New behavior triggers only after a genome-bearing
+  challenger passes the fail-closed validation gate AND is owner-promoted — the
+  most-gated path in the app. No autonomy change; owner click still required for live.
+
+**Deliberately OUT of Build 1 (deferred, not dropped):** `universe.*` (screener
+routing), `features.included` + `regime.router` (need feature-registry activation —
+Build 5-adjacent). Shadow-version decisions still score off the champion threshold,
+not each shadow version's own genome (separate enhancement).

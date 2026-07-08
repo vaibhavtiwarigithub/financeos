@@ -129,6 +129,15 @@ can move real money — only you can.
   touch positions.
 - **Gated:** needs 10+ closed trades before it's allowed to propose. Only guards against bad
   data (a Challenger trained on flagged/low-quality trades is rejected).
+- **The genome is now a LIVE control (Build 1, 2026-07-08).** When you promote a Challenger to
+  **champion**, its **genome** — entry threshold, exit stop/target percentiles + horizon, and
+  position-sizing cap/floor/mode — actually drives the next day's research + paper trades. Before
+  this, only the 5 scoring weights changed; the rest of the genome was recorded but ignored, so a
+  validated improvement traded identically to the old champion. **Money-safety:** the genome's size
+  cap is clamped to your owner-set `position_size_pct` — the loop can size **down** but never above
+  your limit. A champion with no genome uses safe defaults identical to the old fixed behavior, so
+  nothing changes until you promote a genome-bearing Challenger (which still requires passing the
+  fail-closed validation gate **and** your click).
 
 ### MentorAgent — the coach
 - Reads your outcomes + learner runs, writes plain-English **coaching insights** to
@@ -342,4 +351,4 @@ flowchart TD
 
 ---
 
-*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-08 (07/08 review fixes: P1 auth gating [alerts, enrich, watchlist, admin LLM APIs], durable RAG re-ingest [mig 123], and the autonomy ladder [mig 124 + `lib/autonomy.ts`] as a disabled-by-default master money-safety gate — L3 default preserves owner-click live behavior, L4/L5 autonomous not honored). Prior: Strategic Report Tier-1 + Tier-2: prompt caching, ticker filter, prompt versioning, DeepSeek data gate, discovery_source attribution, B3 structured triage, Data Provider Abstraction, Learning Integrity Phase 1B taint columns + auto-stamp at fill.*
+*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-08 (Build 1 — champion **genome** wired as a live control: entry threshold, exit stop/target percentiles + horizon, and Kelly sizing cap/floor/mode now come from the promoted champion's genome [`lib/validation/genome-live.ts`], genome size cap clamped to owner `position_size_pct`, behavior-preserving default genome; no new migration. Earlier same day — 07/08 review fixes: P1 auth gating [alerts, enrich, watchlist, admin LLM APIs], durable RAG re-ingest [mig 123], and the autonomy ladder [mig 124 + `lib/autonomy.ts`] as a disabled-by-default master money-safety gate — L3 default preserves owner-click live behavior, L4/L5 autonomous not honored). Prior: Strategic Report Tier-1 + Tier-2: prompt caching, ticker filter, prompt versioning, DeepSeek data gate, discovery_source attribution, B3 structured triage, Data Provider Abstraction, Learning Integrity Phase 1B taint columns + auto-stamp at fill.*

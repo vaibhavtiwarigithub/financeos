@@ -537,6 +537,12 @@
       "nodeId": "GATEWAY",
       "label": "Autonomy ladder master money-safety gate (07/08 review S1 / Build 1)",
       "reason": "Added strategy_config.autonomy_level (migration 124, default L3_live_manual) as a single declared maturity level gating the live-order path. Both live gateways (US app/api/broker/orders and India app/api/kite/order) now call liveOrdersAllowed(level) from lib/autonomy.ts ABOVE the trading_enabled check: live orders are refused unless level >= L3_live_manual, so L0/L1/L2 block all live orders outright. Levels L4_live_small_auto and L5_scaled_auto are DEFINED-BUT-NOT-HONORED: AUTONOMOUS_LIVE_ENABLED is hard-false, and requireOwner() still gates every live order, so no autonomous live placement path exists. Default preserves prior owner-click live-manual behavior exactly (nothing newly blocked or allowed). Additive migration; behavior change is a new gateway table-column dependency, not an agent-to-agent flow."
+    },
+    {
+      "date": "2026-07-08",
+      "event": "Genome wired as live control (Build 1)",
+      "nodeId": "LEARNER",
+      "reason": "Promoted champion's genome (entry threshold, exit stop/target percentiles + horizon, Kelly sizing cap/floor/mode) now drives ResearchAgent + PaperTrader via lib/validation/genome-live.ts. Previously only the 5 scoring weights were consumed; the rest of the genome was recorded but inert. Genome size cap clamped to owner position_size_pct (loop sizes down, never above owner limit). Default genome preserves prior fixed behavior; change is live only after a genome-bearing challenger passes the fail-closed validation gate and owner promotion."
     }
   ]
 }

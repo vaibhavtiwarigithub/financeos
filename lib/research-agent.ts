@@ -936,11 +936,11 @@ export async function processSymbol(
   // champion, preserving prior US behavior.
   let champion: any = null;
   {
-    const scoped = await supabase.from("strategy_versions").select("id, weights_snapshot")
+    const scoped = await supabase.from("strategy_versions").select("id, weights_snapshot, genome")
       .eq("is_champion", true).eq("market", market)
       .order("promoted_at", { ascending: false }).limit(1).maybeSingle();
     if (scoped.error) {
-      const legacy = await supabase.from("strategy_versions").select("id, weights_snapshot")
+      const legacy = await supabase.from("strategy_versions").select("id, weights_snapshot, genome")
         .eq("is_champion", true).order("promoted_at", { ascending: false }).limit(1).maybeSingle();
       champion = legacy.data;
     } else {
@@ -1006,7 +1006,14 @@ export async function processSymbol(
   const { score: analystScore, effWeights, renormalized, includedDims } = computeWeightedAnalystScore(scoreOf, included, weightOf);
   const thinEvidence = isThinEvidence(includedDims);
 
-  const scoreThreshold = strategy?.score_threshold ?? strategy?.min_analyst_score ?? 60;
+  // Build 1 (genome as live control): the promoted champion's genome sets the
+  // entry threshold when present, falling back to strategy_config exactly as
+  // before. DEFAULT_GENOME.entry.score_threshold is 60 — identical to the prior
+  // final fallback — so a market with no genome-bearing champion is unchanged.
+  // The genome's threshold is hard-bounded to [50,75] at promotion time.
+  const genomeThreshold = (champion as any)?.genome?.entry?.score_threshold;
+  const scoreThreshold = (typeof genomeThreshold === "number" ? genomeThreshold : undefined)
+    ?? strategy?.score_threshold ?? strategy?.min_analyst_score ?? 60;
   const stopLossPct    = strategy?.stop_loss_pct ?? 7;
   const targetPct      = strategy?.target_pct    ?? 20;
 

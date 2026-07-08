@@ -9,6 +9,7 @@ import { estimateDailyVolPct } from "@/lib/portfolio/inputs";
 import { predictPWin } from "@/lib/validation/calibration";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
 import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
+import { loadChampionGenome, type ResolvedGenome } from "@/lib/validation/genome-live";
 import { verifyCronSecret } from "@/lib/auth/cron";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
@@ -232,12 +233,30 @@ export async function POST(req: NextRequest) {
     // and degrades to the existing flat positionSizePct + profile stop/target.
     const pwinModelByMarket = new Map<string, import("@/lib/validation/calibration").CalibrationCoefficients | null>();
     const maeMfeByMarket = new Map<string, Awaited<ReturnType<typeof import("@/lib/risk/percentiles").getGlobalMaeMfePercentiles>>>();
+    // Build 1 (genome as live control): the promoted champion's genome now
+    // governs the exit horizon + MAE/MFE percentiles used to derive dynamic
+    // stops/targets, and the Kelly cap/floor used to size. loadChampionGenome
+    // returns DEFAULT_GENOME (horizon 10, stop p25, target p75, cap 10, floor 2)
+    // when no genome-bearing champion exists — the exact values used before this
+    // wiring — so a legacy/genome-less market is byte-for-byte unchanged.
+    const genomeByMarket = new Map<string, ResolvedGenome>();
     for (const m of activeMarkets) {
       try {
         const { data: modelRow } = await supabase.from("model_artifacts").select("coefficients").eq("market", m).eq("kind", "pwin_logistic").maybeSingle();
         pwinModelByMarket.set(m, (modelRow as any)?.coefficients ?? null);
       } catch { pwinModelByMarket.set(m, null); }
-      maeMfeByMarket.set(m, await getGlobalMaeMfePercentiles(supabase, m as "us" | "india", 10));
+      const g = await loadChampionGenome(supabase, m as "us" | "india");
+      genomeByMarket.set(m, g);
+      maeMfeByMarket.set(
+        m,
+        await getGlobalMaeMfePercentiles(
+          supabase,
+          m as "us" | "india",
+          g.genome.horizon_days,
+          g.genome.exit.stop_mae_pctile / 100,
+          g.genome.exit.target_mfe_pctile / 100,
+        ),
+      );
     }
 
     for (const signal of signals) {
@@ -291,9 +310,18 @@ export async function POST(req: NextRequest) {
       // exists for this market, size via half-Kelly using this signal's own
       // dimension scores + the ledger's MFE/|MAE| median as the payoff ratio.
       // Falls back to the flat positionSizePct otherwise (unchanged default).
+      // Build 1: the champion genome selects the sizing mode. "half_kelly"
+      // (DEFAULT_GENOME) keeps the conviction path below; "flat" pins to the
+      // configured positionSizePct. The genome's cap is clamped to the owner's
+      // strategy_config position_size_pct — the learning loop can size DOWN but
+      // NEVER above the owner-set per-position limit (money limits stay human).
+      const genomeR = genomeByMarket.get(market);
+      const sizing = genomeR?.genome.sizing ?? { mode: "half_kelly" as const, cap_pct: positionSizePct, floor_pct: Math.min(2, positionSizePct) };
+      const kellyCapPct = Math.min(sizing.cap_pct, positionSizePct);
+      const kellyFloorPct = Math.min(sizing.floor_pct, kellyCapPct);
       const pwinModel = pwinModelByMarket.get(market);
       let proposedSizePct = positionSizePct;
-      if (pwinModel && maeMfe) {
+      if (sizing.mode === "half_kelly" && pwinModel && maeMfe) {
         const pWin = predictPWin(pwinModel, {
           fundamental_score: signal.fundamental_score, technical_score: signal.technical_score,
           sentiment_score: signal.sentiment_score, macro_score: signal.macro_score, insider_score: signal.insider_score,
@@ -315,8 +343,8 @@ export async function POST(req: NextRequest) {
         // which the finite/≤0 guard below correctly turns into a skip rather
         // than opening a floor-sized position.
         const kellyFrac = kellyPositionSizePct(pWin, payoffRatio, {
-          halfKellyCap: positionSizePct / 100,
-          floorPct: Math.min(2, positionSizePct) / 100,
+          halfKellyCap: kellyCapPct / 100,
+          floorPct: kellyFloorPct / 100,
         });
         proposedSizePct = kellyFrac * 100;
       }
@@ -518,7 +546,7 @@ export async function POST(req: NextRequest) {
         entry_type: "paper_fill", symbol: signal.symbol, signal_id: signal.id, market,
         paper_event_id: orderEventId,
         summary: `Paper buy (${market.toUpperCase()}): ${qty} × ${signal.symbol} @ ${sym}${fillPrice.toFixed(2)} (score ${signal.analyst_score}, source: ${source})`,
-        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, sizing: { flat_pct: positionSizePct, kelly_proposed_pct: proposedSizePct, final_pct: sizedPct, used_calibrated_model: !!pwinModel, adjustments: constructed.orders[0]?.adjustments ?? [] } },
+        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, sizing: { flat_pct: positionSizePct, kelly_proposed_pct: proposedSizePct, final_pct: sizedPct, used_calibrated_model: !!pwinModel, mode: sizing.mode, cap_pct: kellyCapPct, floor_pct: kellyFloorPct, adjustments: constructed.orders[0]?.adjustments ?? [] }, genome: { source: genomeR?.source ?? "default", hash: genomeR?.hash ?? null, horizon_days: genomeR?.genome.horizon_days ?? 10, score_threshold: genomeR?.genome.entry.score_threshold ?? 60 } },
         evidence_refs: [{ table: "agent_signals", id: signal.id, description: "qualifying signal" }],
         has_verified_facts: true, has_calculations: true, resolved: false,
       });
