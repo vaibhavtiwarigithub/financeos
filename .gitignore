@@ -21,3 +21,6 @@ public/fallback-*.js
 
 # Claude Code preview config
 .claude/launch.json
+
+.vercel
+.env*
