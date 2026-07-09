@@ -18,6 +18,7 @@
 
 | Task | Agent/Model | Status | Date | Notes |
 | --- | --- | --- | --- | --- |
+| Edge/Factor Discovery P0 (measure-only) | Claude/Opus 4.8 | in_progress | 2026-07-08 | Builds features/edge-factor-discovery P0 ONLY: migration 132 (edge_catalog, edge_universe_members, edge_signals, edge_signal_inputs, edge_ic_history placeholder), lib/edges/* price/volume-only edges, app/api/agents/edge-scout measure-only bounded route, read-only Edge Catalog panel. NO change to analyst_score/agent_signals/paper fills/sizing/live orders. No fundamentals. Additive migration only. |
 | 07/08 review fixes (P0+P1+P2 auth/durability) + strategic autonomy ladder (S1) | Claude/Opus 4.8 | done | 2026-07-08 | P0-1..P0-5 verified fixed (auth gates + fail-closed override audit + reproducible migs 121/122). P1-1 durable RAG re-ingest (mig 123 + lib/rag/ingest.ts). P1-2 enrich owner-gate. P1-3 alerts auth + lib/alerts/emit.ts. P2-2 admin LLM APIs auth. P2-4 watchlist GET auth. S1 autonomy ladder: mig 124 `autonomy_level` (default L3_live_manual) + lib/autonomy.ts + both live gateways enforce `liveOrdersAllowed` above trading_enabled; L4/L5 defined-but-not-honored (AUTONOMOUS_LIVE_ENABLED=false, owner-click still required). P1-5/P2-1/P2-3/P2-5 + Builds 2–6 = DEFER_STRATEGIC (documented, not overbuilt). Full classification in 07_08_CLAUDE_FIX_LOG.md. Build passes. |
 
 ---
