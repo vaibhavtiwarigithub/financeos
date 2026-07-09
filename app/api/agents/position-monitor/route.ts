@@ -6,6 +6,8 @@ import { classifyOutcome } from "@/lib/trade-outcome";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadChampionGenome } from "@/lib/validation/genome-live";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { getQuote } from "@/lib/data/quotes";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -177,6 +179,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
 
   for (const pos of positions) {
     const currentPrice = priceMap[pos.symbol];
+    const market = marketOf(pos, hasMarketCol);
 
     // Handle llm_exit flag set by LearnerAgent — close position if flagged and we have a price
     if (pos.exit_reason === "llm_exit" && currentPrice) {
@@ -191,7 +194,6 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     // Closes slow bleeds that never hit the hard stop but overstay the swing window.
     // Matches the backtest's max_hold_days assumption so live and backtest are consistent.
     if (pos.created_at) {
-      const market = marketOf(pos, hasMarketCol);
       const horizonDays = horizonDaysByMarket.get(market) ?? 10;
       const ageDays = (Date.now() - new Date(pos.created_at).getTime()) / (1000 * 60 * 60 * 24);
       if (ageDays > horizonDays) {
@@ -242,6 +244,53 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       exitReason = "stop_hit";
       outcome = currentPrice > pos.avg_cost ? "win" : "loss";
     } else if (priceTarget && currentPrice >= priceTarget) {
+      // Partial profit-taking: close half at target, move stop to breakeven on remainder.
+      // Only split if qty >= 2 — a single share must fully close.
+      const halfQty = Math.floor(pos.qty / 2);
+      if (halfQty >= 1) {
+        const remainQty = pos.qty - halfQty;
+        const proceeds = halfQty * currentPrice;
+        cashByMarket[market] = (cashByMarket[market] ?? 0) + proceeds;
+        await svc.from("paper_positions").update({
+          qty: remainQty,
+          stop_loss: parseFloat(Number(pos.avg_cost).toFixed(2)),
+          price_target: null,
+          current_price: currentPrice,
+          highest_price: Math.max(pos.highest_price ?? pos.avg_cost, currentPrice),
+          updated_at: new Date().toISOString(),
+        }).eq("id", pos.id);
+        // Close open trade lots FIFO proportionally.
+        let remainToClose = halfQty;
+        let lotQ = svc.from("paper_trades").select("id, qty, fill_price, executed_at").eq("symbol", pos.symbol).is("closed_at", null).order("executed_at", { ascending: true });
+        if (hasMarketCol) lotQ = lotQ.eq("market", market);
+        const { data: openLots } = await lotQ;
+        for (const lot of openLots ?? []) {
+          if (remainToClose <= 0) break;
+          const lotQty = Number((lot as any).qty ?? 0);
+          const closeQty = Math.min(lotQty, remainToClose);
+          const lotFill = Number((lot as any).fill_price ?? pos.avg_cost);
+          const lotPnlPct = lotFill > 0 ? ((currentPrice - lotFill) / lotFill) * 100 : 0;
+          if (closeQty < lotQty) {
+            await svc.from("paper_trades").update({ qty: lotQty - closeQty }).eq("id", (lot as any).id);
+          } else {
+            await svc.from("paper_trades").update({
+              exit_price: currentPrice, realized_pnl: (currentPrice - lotFill) * closeQty,
+              pnl_pct: lotPnlPct, outcome: "win", exit_reason: "partial_target",
+              closed_at: new Date().toISOString(),
+            }).eq("id", (lot as any).id);
+          }
+          remainToClose -= closeQty;
+        }
+        await svc.from("decision_journal").insert({
+          entry_type: "paper_exit", symbol: pos.symbol, market,
+          summary: `Partial exit: closed ${halfQty}/${pos.qty} × ${pos.symbol} @ ${currentPrice.toFixed(2)} (target). Remaining ${remainQty} shares, stop moved to breakeven.`,
+          calculations: { halfQty, remainQty, exit_price: currentPrice, avg_cost: pos.avg_cost, exit_reason: "partial_target" },
+          has_verified_facts: true, has_calculations: true, resolved: true, resolved_at: new Date().toISOString(),
+        }).catch(() => {});
+        updated.push(`${pos.symbol} (partial_target: ${halfQty}/${pos.qty} closed, stop→breakeven)`);
+        continue;
+      }
+      // qty == 1 — can't split
       exitReason = "target_hit";
       outcome = "win";
     }
@@ -266,15 +315,82 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
   // Recompute + persist NAV PER MARKET = that pool's cash + mark-to-market of its
   // still-open positions. Each currency stays in its own pool; never summed.
   const { data: stillOpen } = await svc.from("paper_positions").select("qty, avg_cost, current_price, market");
+  const today = new Date().toISOString().slice(0, 10);
   for (const [market, pool] of poolByMarket) {
     const mktPos = (stillOpen ?? []).filter((p: any) => marketOf(p, hasMarketCol) === market);
     const positionsValue = mktPos.reduce((sum: number, p: any) => sum + Number(p.qty ?? 0) * Number(p.current_price ?? p.avg_cost ?? 0), 0);
+    const newNav = cashByMarket[market] + positionsValue;
     await svc.from("paper_portfolio").update({
       cash_balance: cashByMarket[market],
-      nav: cashByMarket[market] + positionsValue,
+      nav: newNav,
       open_positions: mktPos.length,
       updated_at: new Date().toISOString(),
     }).eq("id", pool.id);
+
+    // C: Benchmark price daily sync — fetch VOO (US) or ^NSEI (India) and upsert
+    // paper_performance so bench_nav stays current even on no-trade days.
+    let benchNav: number | null = null;
+    let benchReturnPct: number | null = null;
+    let alphaPct: number | null = null;
+    try {
+      const benchSym = market === "india" ? "^NSEI" : "VOO";
+      const q = market === "india"
+        ? await fetchIndiaQuote(benchSym)
+        : await getQuote(benchSym, svc);
+      const px = (q as any)?.price;
+      benchNav = typeof px === "number" && px > 0 ? px : null;
+      if (benchNav) {
+        const { data: firstPerf } = await svc.from("paper_performance")
+          .select("bench_nav").eq("market", market).not("bench_nav", "is", null)
+          .order("date", { ascending: true }).limit(1).maybeSingle();
+        const { data: startPerfRow } = await svc.from("paper_performance")
+          .select("nav").eq("market", market).order("date", { ascending: true }).limit(1).maybeSingle();
+        const benchStart = (firstPerf as any)?.bench_nav ?? benchNav;
+        benchReturnPct = benchStart ? ((benchNav - benchStart) / benchStart) * 100 : null;
+        const startNav = Number((startPerfRow as any)?.nav ?? newNav);
+        const portfolioReturnPct = startNav > 0 ? ((newNav - startNav) / startNav) * 100 : 0;
+        alphaPct = benchReturnPct != null ? portfolioReturnPct - benchReturnPct : null;
+      }
+    } catch { /* benchmark unavailable this run — leave null */ }
+
+    const perfRow: Record<string, any> = {
+      date: today, market, nav: newNav,
+      cash_balance: cashByMarket[market], positions_value: positionsValue,
+      bench_nav: benchNav, bench_return_pct: benchReturnPct, alpha_pct: alphaPct,
+      spy_nav: market === "us" ? benchNav : null,
+      spy_return_pct: market === "us" ? benchReturnPct : null,
+      updated_at: new Date().toISOString(),
+    };
+    await svc.from("paper_performance").upsert(perfRow, { onConflict: "date,market" }).catch(() =>
+      svc.from("paper_performance").upsert({ ...perfRow, market: undefined }, { onConflict: "date" })
+    );
+
+    // A: Portfolio NAV drawdown circuit breaker.
+    // If this market's NAV has dropped > 5% vs its value 7 calendar days ago,
+    // auto-pause new entries and surface a System Health alert.
+    try {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const { data: oldPerf } = await svc.from("paper_performance")
+        .select("nav").eq("market", market)
+        .lte("date", sevenDaysAgo).order("date", { ascending: false }).limit(1).maybeSingle();
+      const oldNav = Number((oldPerf as any)?.nav ?? 0);
+      const issueKey = `nav-drawdown:${market}`;
+      if (oldNav > 0) {
+        const weeklyReturn = (newNav - oldNav) / oldNav;
+        if (weeklyReturn < -0.05) {
+          await svc.from("strategy_config").update({ app_paused: true }).not("id", "is", null);
+          await reportIssue({
+            issueKey,
+            severity: "critical",
+            category: "risk",
+            title: `NAV drawdown circuit breaker — ${market.toUpperCase()} (${(weeklyReturn * 100).toFixed(1)}% / 7d)`,
+            detail: `Weekly NAV dropped ${(weeklyReturn * 100).toFixed(1)}% (from ${oldNav.toFixed(0)} to ${newNav.toFixed(0)}). New entries auto-paused. Manually resume in Settings once you've reviewed open positions.`,
+          });
+        } else {
+          await resolveIssue(issueKey);
+        }
+      }
+    } catch { /* best-effort — never block the monitor run */ }
   }
 
   // Bookkeeping row so stale-check (P0 improvement) can tell this ran today and
