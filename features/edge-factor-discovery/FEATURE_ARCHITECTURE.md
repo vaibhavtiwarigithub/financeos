@@ -83,7 +83,7 @@ Financial ML* — combinatorial purged CV, deflated Sharpe).
 |---|---|---|
 | Ideas come from **academic factors / documented edges** (SSRN, arXiv), not vibes | LLM invents "themes" from 15 headlines | No factor basis; news-chasing |
 | **Test the signal first** — rolling IC/IR stability, t-stat, judged at the *median* parameter (not the best) | Whole *strategies* are walk-forward-validated, but individual signals are not IC-tested | No per-signal stability gate |
-| **Regime filter** as explicit master switch, ranked on protection/cost/stability/**reach** (works SPY+QQQ+BTC, not one chart) | Implicit, score-threshold only; kill-switches are *risk* not *regime* | No ranked regime filter |
+| **Regime filter** as explicit scaler first, ranked on protection/cost/stability/**reach** (works SPY+QQQ+India proxy, not one chart) | Implicit, score-threshold only; kill-switches are *risk* not *regime* | No measured regime scaler yet |
 | **Fees-first, worst-case** friction | Build 4a slip tracking + notional caps | Partial — decent |
 | **Stack multiple edge categories** | Single LLM-score edge | One edge, not stacked |
 | **Understand WHY (causal); never trade a black-box signal** | LLM *is* the signal (black box) | Inverts the principle |
@@ -144,7 +144,7 @@ alpha.** Alpha comes from validated, causal edges.
                         │ gated by
                         ▼
         ┌─────────────────────────────────────────────────────────────┐
-        │  REGIME FILTER (ranked, per market) → master on/off + scale  │
+        │  REGIME FILTER (ranked, per market) → advisory/size scale    │
         └───────────────┬─────────────────────────────────────────────┘
                         ▼
         existing pipeline: research signals → paper-trade (freshness/claim) →
@@ -268,11 +268,13 @@ learner, validation) is untouched.
 
 ---
 
-## 8. Regime filter (ranked, portable, master switch)
+## 8. Regime filter (ranked, portable, scaler first)
 
 A dedicated module, evaluated per market, that outputs `{state: risk_on |
-risk_off | neutral, scale ∈ [0,1]}`. `risk_off` blocks new long entries (exits
-always allowed — mirrors the existing sell-if-held rule); `scale` can taper size.
+risk_off | neutral, scale ∈ [0,1]}`. In the first implementation this is
+**advisory/measure-only**, then a **continuous size scaler**. It must not become a
+hard new-entry block until the scaler has measured protection/cost evidence and
+the owner explicitly approves the harder behavior. Exits always remain allowed.
 
 Candidate filters (implement several, rank them, pick per the article's rubric):
 SMA(100–300) above/below, EMA, KAMA (adaptive — caught COVID in the study), WMA,
@@ -284,9 +286,9 @@ time), price-within-x%-of-high. **Rank each on:**
 4. **Reach** — must work on SPY **and** QQQ **and** (crypto/India proxy), scored
    at the **median** parameter across its whole range, not the best.
 
-Chosen filter (+ runner-ups as an ensemble vote) becomes the master gate. Stored
-in `regime_filters` (definition + rolling scorecard) and `regime_state`
-(current per market). This supersedes the implicit score-only regime and the
+Chosen filter (+ runner-ups as an ensemble vote) becomes the regime **scaler**.
+Stored in `regime_filters` (definition + rolling scorecard) and `regime_state`
+(current per market). This augments the implicit score-only regime and the
 `macro_regime` table's advisory-only role (macro stays as a *slow* overlay).
 
 **Push-back note (CLAUDE.md):** the repo's locked decision says *no explicit
@@ -294,8 +296,9 @@ bull/bear switching* — "scoring should adapt." This proposal **re-opens that
 decision deliberately**, because the regime-filter literature is strong and the
 current implicit approach has no measured protection/cost. Flag for owner: this
 is a conscious contradiction of an existing locked rule and needs explicit
-sign-off. (An alternative that honors the old rule: keep regime as a *sizing
-scaler* only, never a hard on/off. Reviewers: weigh in.)
+sign-off. The approved first cut honors the old rule: keep regime as
+measure/advisory first, then a *sizing scaler* only. Never hard on/off without a
+new owner approval.
 
 ---
 
@@ -320,6 +323,9 @@ scaler* only, never a hard on/off. Reviewers: weigh in.)
   expected_sign, horizon_days, data_source, references, status, created_at)`
 - `edge_signals(symbol, date, edge_id, market, raw_value, z_value, universe_id)`
   (partitioned/indexed by date+market; this is the big table)
+- `edge_universe_members(universe_id, market, symbol, as_of_date, source,
+  included_reason, created_at)` — records exactly which symbols were eligible for
+  a universe/date so IC results are auditable and survivorship bias is visible.
 - `edge_signal_inputs(edge_signal_id, input_name, source, as_of_date,
   available_at, revised_at, adjustment_policy, raw_ref)` — mandatory audit trail
   for point-in-time validation. No edge may be promoted if its inputs cannot prove
@@ -354,8 +360,9 @@ All read-heavy analytics; no changes to money tables.
 
 ## 12. Rollout phases (each independently shippable + measurable)
 
-- **P0 — Edge library + signal store (measure-only).** Implement 6–10 factor +
-  technical edges, compute daily, store `edge_signals`. No effect on trading.
+- **P0 — Edge library + signal store (measure-only).** Implement 6–8
+  price/volume technical edges only, compute daily, store `edge_signals`, and
+  record the exact `edge_universe_members` snapshot. No effect on trading.
 - **P1 — IC gate + dashboard.** Compute rolling IC/IR/t-stat; classify edges;
   surface scorecards. Still measure-only. This alone tells us whether ANY current
   idea has real edge.

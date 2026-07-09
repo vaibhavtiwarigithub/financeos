@@ -14,6 +14,22 @@
 
 ---
 
+## ✅ Session 2026-07-09 — Risk gates + Performance Truth Layer (all built)
+
+| Task | Agent/Model | Status | Date | Notes |
+| --- | --- | --- | --- | --- |
+| Re-entry cooldown | Claude Sonnet 4.6 | completed | 2026-07-09 | Blocks same-symbol BUY for 5 calendar days (≈3 trading days) after position closes. Applied in paper-trade route after sector-cap check. `cooldownCutoff = now - 5d`, counts closed paper_trades with order_side=buy, market-aware. |
+| Pyramid gate | Claude Sonnet 4.6 | completed | 2026-07-09 | If open position exists and fillPrice ≤ avg_cost → revert claim + skip with reason "pyramid_gate". Blocks averaging down into a losing position. Only allows adding to winners. |
+| Time stop | Claude Sonnet 4.6 | completed | 2026-07-09 | PositionMonitor closes positions older than champion genome's `horizon_days` (default 10). `loadChampionGenome()` per market, cached in `horizonDaysByMarket`. Runs before score-exit check. Prevents slow bleeds that overstay the swing window. |
+| Partial profit-taking (B) | Claude Sonnet 4.6 | completed | 2026-07-09 | At price target, close floor(qty/2) shares, move stop_loss to avg_cost on remainder (breakeven). Credits half-proceeds to cashByMarket. Only when qty ≥ 2 (single share = full close). FIFO lot close on paper_trades. |
+| NAV drawdown circuit breaker (A) | Claude Sonnet 4.6 | completed | 2026-07-09 | PositionMonitor fetches paper_performance for each market, computes weekly NAV return. If < -5%, sets app_paused=true in strategy_config + fires critical System Health alert `nav-drawdown:<market>`. |
+| Benchmark sync (C) | Claude Sonnet 4.6 | completed | 2026-07-09 | PositionMonitor fetches VOO (US) and ^NSEI (India) price daily via getQuote(), upserts paper_performance.bench_nav. Alpha now compares against live benchmark NAV. |
+| P1 gate cron | Claude Sonnet 4.6 | completed | 2026-07-09 | Weekly Sunday 02:00 UTC cron at /api/agents/evaluation/p1-gate/cron. Counts closed evaluable paper_trades per market. ≥ 20 → reportIssue(`p1_gate_ready:<market>`, info). < 20 → resolveIssue. Added to vercel.json crons array. |
+| P0 Performance Truth Layer | Claude Sonnet 4.6 | completed | 2026-07-09 | Migrations 133/134/135 applied (investment_mandates, strategy_evaluations append-only, mandate_id FK on agent_signals/paper_trades/decision_observations). lib/evaluation/run-evaluation.ts (pure deterministic math, no LLM). /api/agents/evaluation/run + /results + /mandates routes (owner-gated). PerformanceTruth.tsx additions: mandate selector + Run Eval button + eval history table. eligible_for_live_review advisory only — never read by broker gateway. |
+| TypeScript scope fix | Claude Sonnet 4.6 | completed | 2026-07-09 | position-monitor route.ts: `market` variable was declared inside `if (pos.created_at)` block (time stop), not visible to partial profit-taking block below. Hoisted to top of position for-loop. Build was failing `Cannot find name 'market'`. |
+
+---
+
 ## 🔴 In Progress
 
 | Task | Agent/Model | Status | Date | Notes |

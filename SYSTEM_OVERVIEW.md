@@ -84,6 +84,7 @@ ResearchAgent. That feedback arrow is the whole point.
 | LearnerAgent | Weekly (Fri) | Propose a better strategy from closed trades |
 | MentorAgent | After outcomes/learner | Write coaching notes to you |
 | Health-Triage | Every 6h + on demand | Read-only "what's broken + suggested fix" |
+| P1 Gate Cron | Weekly (Sun 02:00 UTC) | Count closed evaluable trades per market; surface System Health alert when ≥ 20 accumulate (unlocks opportunity-level IC metrics) |
 
 Crons run in the cloud; the live-account snapshot refresh runs from your machine (needs your
 Robinhood session).
@@ -137,10 +138,20 @@ can move real money — only you can.
   - **No zombie runs:** if the fill run throws, it now marks its own run record `error` instead of
     leaving it stuck `running`.
 
+**Risk gates added (2026-07-09):**
+- **Re-entry cooldown** — after a position in a symbol closes, that symbol is blocked from a new BUY for 5 calendar days. Prevents immediately re-entering a trade that just stopped out.
+- **Pyramid gate** — if an open position already exists for a symbol, a new BUY is only allowed if the new fill price is above the existing avg_cost (averaging UP only). Averaging DOWN into a losing position is blocked entirely.
+
 ### PositionMonitor — the risk watcher
 - **Job:** after the close, refresh prices for everything held, then run **exits**: sell if
   today's fresh score drops too far, or a trailing stop (93% of the high) or price target hits.
 - **Owns all exits.** Closed trades (with win/loss) become the LearnerAgent's training data.
+
+**New exits added (2026-07-09):**
+- **Time stop** — if a position's age exceeds the champion genome's `horizon_days` (default 10), PositionMonitor closes it. Prevents slow bleeds that never hit the hard stop but overstay the swing window; matches the backtest's `max_hold_days` assumption so live and backtest stay consistent.
+- **Partial profit-taking** — when price hits the target, instead of a full close, PositionMonitor sells half (floor(qty/2)) at target price and moves the stop up to breakeven on the remainder (stop_loss = avg_cost). Only applies when qty ≥ 2. The cash from the partial close is credited to the market's pool immediately.
+- **NAV drawdown circuit breaker** — every run computes the weekly NAV return for each market. If it drops more than 5% in a week, `app_paused` is auto-set true and a critical System Health alert fires. This is an automatic safety pause — you must manually re-enable trading.
+- **Benchmark sync** — each run fetches the benchmark price for each market (VOO for US, ^NSEI for India) and upserts `paper_performance.bench_nav` so alpha is computed against live benchmark NAV, not a stale snapshot.
 
 ### LearnerAgent — the strategy improver
 - **Job:** weekly, look at a market's **closed trades** and propose a **Challenger** — a tweaked
@@ -178,6 +189,17 @@ can move real money — only you can.
   volume feed), **4c** next-bar / next-open fill timing — realized and modeled diverge and this tile
   becomes the execution-quality truth signal. Additive columns only (`expected_price`,
   `realized_slip_pct`, `fill_status`); nothing about sizing, cash, gating, or the live path changed.
+
+### Performance Truth Layer — the mandate-aware evaluation ledger
+
+The Learning page (`/dashboard/learning`) now includes a **Performance Truth** panel that answers a stricter question than win-rate: *"Did this strategy produce repeatable, benchmark-relative edge in the mandate it claims to serve?"*
+
+- **Investment mandates** (`investment_mandates` table) — named strategy contexts with a benchmark (VOO for US, NIFTY50.NS for India), horizon, and evaluation windows. Default mandates seeded: "Swing US 2-20d" and "Swing India 2-20d". `mandate_id` is now stamped on every `agent_signals`, `paper_trades`, and `decision_observations` row for attribution.
+- **Deterministic evaluation** (`lib/evaluation/run-evaluation.ts`) — no LLM, no weight mutation. Computes Sharpe, Sortino, max drawdown, win rate, expectancy, alpha, cost-adjusted return, and execution slip vs modeled, all from closed paper trades for the selected mandate + market. Uses the same math already in `lib/analytics/performance-metrics.ts` — reuse, no new formulas.
+- **Append-only ledger** (`strategy_evaluations`) — every evaluation run inserts a new row (a trigger blocks updates/deletes). A dataset hash detects reruns on the same trade set. P0 health label: `insufficient_sample` / `negative_or_zero_edge` / `promising_but_unvalidated` / `validation_required`.
+- **UI** — mandate selector dropdown + "Run Evaluation" button + evaluation history table (Date | Trades | Sharpe | MaxDD | Alpha | Health) on `/dashboard/learning`. NAV/Sharpe tiles remain whole-book; trade metrics are mandate-filtered.
+- **P1 gate cron** — a weekly Sunday cron counts closed evaluable trades per market. When ≥ 20 accumulate, it surfaces a System Health info alert (`p1_gate_ready:<market>`). This is the signal to build opportunity-level IC metrics (decision_observations × observation_labels). P0 is book-truth only; opportunity-level `opp_*` columns are null until P1.
+- **Security:** `eligible_for_live_review` on a mandate is advisory ONLY — never read by any broker gateway or order placement code.
 
 ### MentorAgent — the coach
 - Reads your outcomes + learner runs, writes plain-English **coaching insights** to
@@ -341,6 +363,7 @@ flowchart TD
   **atomically** so two fast clicks can't slip past.
 - **Kill switches** — trading auto-halts on a bad day (daily loss, drawdown from peak, or low
   30-day accuracy) and flags any resting orders for you to review.
+- **NAV drawdown circuit breaker (paper)** — PositionMonitor auto-pauses the whole app (`app_paused=true`) if any market's paper NAV drops more than 5% in a week. A critical System Health alert fires. Prevents a broken strategy from accumulating losses unchecked overnight. You re-enable manually.
 - **Signal-quality gate (G1)** — a live BUY built on low-confidence data is refused unless you
   explicitly override.
 - **Concentration limits (G3, US + India)** — a live BUY that would over-concentrate the
@@ -388,7 +411,15 @@ flowchart TD
 - **structured_issues** — machine-readable per-issue JSON from the health-triage agent (`issue_key`, `severity`, `root_cause`, `blast_radius`, `suggested_fix`). Replaces the old free-text `content` blob for programmatic action.
 - **Kill switch** — an automatic trading halt on a bad day.
 - **NAV** — total account value (cash + holdings).
+- **investment_mandate** — a named strategy context (benchmark, horizon, evaluation windows) that `agent_signals`, `paper_trades`, and `decision_observations` are attributed to. Default: "Swing US 2-20d" / "Swing India 2-20d".
+- **strategy_evaluation** — an append-only, deterministic evaluation snapshot per mandate. Stores book Sharpe/Sortino/MaxDD/win-rate/alpha/cost metrics and a `health_label`. Never updated — every run adds a new row.
+- **P1 gate** — the threshold (≥ 20 closed evaluable trades per market) that unlocks opportunity-level IC metrics. Below the gate, the evaluation shows `insufficient_sample`.
+- **re-entry cooldown** — 5-calendar-day block on re-buying a symbol after a position in it closes.
+- **pyramid gate** — blocks adding to an existing position unless the new fill price exceeds the current avg_cost (averaging down is never allowed).
+- **time stop** — closes a position when its age exceeds the champion genome's `horizon_days` (default 10). Prevents slow bleeds that never hit the stop/target.
+- **partial profit-taking** — at price target, close half the position and move stop to breakeven on the remainder (only when qty ≥ 2).
+- **NAV drawdown circuit breaker** — auto-pauses the app when weekly paper NAV drops > 5%.
 
 ---
 
-*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-09 (**Watchdog + Edge/Factor lab**. **Watchdog** [migration 131 + app/api/agents/watchdog] — a new every-2h pipeline janitor that reaps zombie agent_runs [running past 15min], reverts orphaned 'claiming' signals to pending + clears claim stamps, and expires stale pending long signals per market-local day; bounded status corrections only, never money/positions/ledgers/config [backfill reaped 4 zombie runs]. **Edge/Factor discovery P0+P1** [features/edge-factor-discovery; migration 132; lib/edges/*; /dashboard/edges] — a MEASURE-ONLY deterministic price/volume edge library + Information-Coefficient gate: edge-scout computes cross-sectional edge_signals [no look-ahead, PIT input audit] and edge-ic computes rank IC vs forward returns by horizon with a Newey-West t-stat + advisory lifecycle status. It writes ONLY edge_* tables — never analyst_score/agent_signals/paper fills/sizing/live orders. Key finding: on a broad 120-name universe the simple edges' IC collapses to ~0 [the strong 30-name signal was concentration + survivorship artifact], so the gate correctly refused to promote them; P2+ [composite/regime/paper/live] are gated on real point-in-time, multi-regime evidence. This is the LLM-demotion direction — the LLM proposes + explains, deterministic statistics decide what earns capital. **Settings-LLM control** — every LLM flow now obeys the Settings → Agents → LLM Config panel: theme-scout/briefing/mentor were hardcoded and ignored the setting, so the panel lied [migration 129 reconciled each `agent_config` row to its real current model, then the callsites were wired to `getConfiguredModel`, behavior-preserving]; `research` keeps its adaptive haiku-vs-deepseek routing on purpose. And **provider API keys are now settable from Settings** — Anthropic/DeepSeek/Groq keys stored in the `api_key_vault` [owner-gated, write-only, masked to last-4, never logged], resolved **vault-first with env fallback** [`lib/llm-keys.ts` `getProviderKey`, 60s cache] in the router + guards + model-check, so adding/rotating a key no longer needs a Vercel redeploy. **Paper-fill reliability fix** — the US ~0-fills bottleneck that was starving the learning loop: paper fills were only chained onto the end of the research run, so a hung US research run produced zero fills for days. Fix [migrations 126–128, verified applied]: standalone per-market paper-trade crons [`kairos-paper-trade-us` 10:05 ET, `kairos-paper-trade-india` 16:35 IST] that fill independently of research; **same-market-local-day freshness** [only today's pending long signals fill; older → `status='expired'`, never filled; enforced in-query so stale high-scores can't crowd out fresh]; **claim ownership** [`agent_signals.claim_run_id`/`claimed_at` + `market_trading_day_start()` helper] and the `execute_paper_fill` RPC clearing the claim on its CAS, so the retained research→paper chain and the new cron can run concurrently double-fill-safe; market-local daily notional-cap window; and `agent_runs` finalized in the catch so a throw can't leave a zombie `running` row. Research→chain kept as a temporary backstop [Phase 3 removes it after 2–3 clean days]. Build 4a — **execution slip tracking**: every paper fill records the pre-slippage decision price + realized slip [`fill/expected − 1`]; Performance-Truth adds an "Exec Slip (realized)" tile vs the modeled 0.05%; additive cols `expected_price`/`realized_slip_pct`/`fill_status` on `paper_trades`+`paper_order_events` [mig 125, verified applied], `execute_paper_fill` gains a defaulted `p_expected_price`; 3 new golden tests [21 total]; sizing/cash/gating/live path untouched; 4b illiquid+partial and 4c next-bar deferred. Build 3 — **Performance Truth** on `/dashboard/learning`: risk-adjusted / cost-net / calibrated metrics [Sharpe, Sortino, max-DD, expectancy, profit factor, alpha, gross-vs-net, calibration curve], per market, with a small-sample honesty rule and tainted-trades counted-not-hidden; pure-additive read layer [`lib/analytics/performance-metrics.ts`, owner-gated `…/performance/metrics`], 18 golden unit tests, schema verified in prod, no new migration. Build 5 — learner now **excludes** data-tainted trades from learning [`lib/learning/taint-filter.ts`]. Build 1 — champion **genome** wired as a live control: entry threshold, exit stop/target percentiles + horizon, and Kelly sizing cap/floor/mode now come from the promoted champion's genome [`lib/validation/genome-live.ts`], genome size cap clamped to owner `position_size_pct`, behavior-preserving default genome; no new migration. Earlier same day — 07/08 review fixes: P1 auth gating [alerts, enrich, watchlist, admin LLM APIs], durable RAG re-ingest [mig 123], and the autonomy ladder [mig 124 + `lib/autonomy.ts`] as a disabled-by-default master money-safety gate — L3 default preserves owner-click live behavior, L4/L5 autonomous not honored). Prior: Strategic Report Tier-1 + Tier-2: prompt caching, ticker filter, prompt versioning, DeepSeek data gate, discovery_source attribution, B3 structured triage, Data Provider Abstraction, Learning Integrity Phase 1B taint columns + auto-stamp at fill.*
+*Maintained per the `CLAUDE.md` rule. Last updated: 2026-07-09 (**Risk gates + Performance Truth Layer**: time stop, partial profit-taking at target [move stop to breakeven on remainder], NAV drawdown circuit breaker [auto-pause at >5% weekly NAV drop], benchmark sync [daily VOO/^NSEI into paper_performance.bench_nav], re-entry cooldown [5 calendar days after close blocks same-symbol BUY], pyramid gate [no averaging down into losing positions]; P0 Performance Truth Layer [investment_mandates + strategy_evaluations migrations 133/134/135, append-only, mandate-aware, deterministic — no LLM]; P1 gate cron [weekly Sunday, surface System Health alert when ≥ 20 closed evaluable trades accumulate per market]. Prior: Watchdog + Edge/Factor lab + paper-fill reliability + Strategic Report Tiers 1–4 — see git log for earlier entries.)*
