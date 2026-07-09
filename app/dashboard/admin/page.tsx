@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 
 const T = {
@@ -19,6 +19,42 @@ export default function AdminPage() {
   const [stats, setStats] = useState<{ totalUsers: number; proUsers: number; eliteUsers: number; totalCost: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
+
+  // DB Cleanup
+  const [cleanupPreview, setCleanupPreview] = useState<Record<string, number> | null>(null);
+  const [cleanupTotal, setCleanupTotal] = useState<number>(0);
+  const [cleanupRunning, setCleanupRunning] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<{ totalDeleted: number; results: Record<string, number>; ranAt: string } | null>(null);
+  const [cleanupError, setCleanupError] = useState<string | null>(null);
+
+  const loadPreview = useCallback(async () => {
+    try {
+      const r = await fetch("/api/agents/db-cleanup");
+      const d = await r.json();
+      if (d.preview) {
+        setCleanupPreview(d.preview);
+        setCleanupTotal(d.totalPreview ?? 0);
+      }
+    } catch { /* silent */ }
+  }, []);
+
+  const runCleanup = async () => {
+    setCleanupRunning(true);
+    setCleanupError(null);
+    setCleanupResult(null);
+    try {
+      const r = await fetch("/api/agents/db-cleanup", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) { setCleanupError(d.error ?? "Cleanup failed"); return; }
+      setCleanupResult(d);
+      setCleanupPreview(null);
+      setCleanupTotal(0);
+    } catch (e: any) {
+      setCleanupError(e?.message ?? "Network error");
+    } finally {
+      setCleanupRunning(false);
+    }
+  };
 
   useEffect(() => {
     Promise.all([
@@ -72,6 +108,81 @@ export default function AdminPage() {
           ))}
         </div>
       )}
+
+      {/* DB Cleanup */}
+      <div style={{ ...card, marginBottom: "24px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <div>
+            <div style={{ fontSize: "14px", fontWeight: 600 }}>Database Cleanup</div>
+            <div style={{ fontSize: "12px", color: T.muted, marginTop: "2px" }}>Auto-runs 1st of every month. Safe tables only — ledgers never touched.</div>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              onClick={loadPreview}
+              disabled={cleanupRunning}
+              style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "7px 14px", fontSize: "13px", color: T.textSub, cursor: "pointer" }}
+            >
+              Preview
+            </button>
+            <button
+              onClick={runCleanup}
+              disabled={cleanupRunning}
+              style={{ background: cleanupRunning ? T.surface : "#1a1d27", border: `1px solid ${T.border}`, borderRadius: "8px", padding: "7px 14px", fontSize: "13px", fontWeight: 600, color: cleanupRunning ? T.muted : T.red, cursor: cleanupRunning ? "not-allowed" : "pointer" }}
+            >
+              {cleanupRunning ? "Running…" : "Run Now"}
+            </button>
+          </div>
+        </div>
+
+        {cleanupError && (
+          <div style={{ background: T.red + "18", border: `1px solid ${T.red}44`, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", color: T.red, marginBottom: "12px" }}>
+            {cleanupError}
+          </div>
+        )}
+
+        {cleanupResult && (
+          <div style={{ background: T.green + "12", border: `1px solid ${T.green}33`, borderRadius: "8px", padding: "12px 14px", marginBottom: "12px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 600, color: T.green, marginBottom: "8px" }}>
+              Done — {cleanupResult.totalDeleted.toLocaleString()} rows deleted · {new Date(cleanupResult.ranAt).toLocaleString()}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 24px" }}>
+              {Object.entries(cleanupResult.results).map(([label, count]) => (
+                <div key={label} style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: count < 0 ? T.red : count === 0 ? T.muted : T.text }}>
+                  <span>{label}</span>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", marginLeft: "12px" }}>
+                    {count < 0 ? "err" : count.toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {cleanupPreview && !cleanupResult && (
+          <div style={{ background: T.yellow + "10", border: `1px solid ${T.yellow}33`, borderRadius: "8px", padding: "12px 14px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 600, color: T.yellow, marginBottom: "8px" }}>
+              Preview — {cleanupTotal.toLocaleString()} rows eligible for deletion
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 24px" }}>
+              {Object.entries(cleanupPreview).map(([label, count]) => (
+                <div key={label} style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: count === 0 ? T.muted : T.text }}>
+                  <span>{label}</span>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", marginLeft: "12px" }}>
+                    {count < 0 ? "err" : count.toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!cleanupPreview && !cleanupResult && !cleanupRunning && (
+          <div style={{ fontSize: "12px", color: T.muted }}>
+            Tables pruned: llm_call_log (&gt;90d) · agent_runs (&gt;60d) · briefings (&gt;90d) · signal_score_history (&gt;180d) · macro_signals (&gt;90d) · rag_traces (&gt;90d) · edge_signals (&gt;180d) · doc_chunks (&gt;180d) · india_screen_cache (&gt;7d) · resolved alerts (&gt;30d) · and more.
+            Never touches: paper_trades · paper_order_events · decision_observations · broker_orders · strategy_evaluations.
+          </div>
+        )}
+      </div>
 
       {/* Users table */}
       <div style={card}>

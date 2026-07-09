@@ -8,6 +8,10 @@
     {
       "path": "/api/agents/evaluation/p1-gate/cron",
       "schedule": "0 2 * * 0"
+    },
+    {
+      "path": "/api/agents/db-cleanup",
+      "schedule": "0 3 1 * *"
     }
   ]
 }
