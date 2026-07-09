@@ -313,6 +313,26 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      // Re-entry cooldown: block same-symbol BUY within 3 trading days of a close.
+      // 5 calendar days covers weekends. SELL/exit signals bypass this check entirely.
+      {
+        const cooldownCutoff = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+        let cooldownQ = supabase.from("paper_trades")
+          .select("id", { count: "exact", head: true })
+          .eq("symbol", signal.symbol)
+          .eq("order_side", "buy")
+          .not("closed_at", "is", null)
+          .gte("closed_at", cooldownCutoff);
+        if (hasMarketCol) cooldownQ = cooldownQ.eq("market", market);
+        const { count: recentClose } = await cooldownQ;
+        if ((recentClose ?? 0) > 0) {
+          await revertClaim(signal.id);
+          skipped.push({ symbol: signal.symbol, reason: "reentry_cooldown (closed within 3 trading days)" });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "reentry_gate", outcome: "rejected", reason: "reentry_cooldown", detail: { cooldownCutoff } });
+          continue;
+        }
+      }
+
       const pf = await priceFor(signal, market);
       if (!pf.ok) {
         await revertClaim(signal.id);
@@ -555,6 +575,14 @@ export async function POST(req: NextRequest) {
         const { data: existing } = await existingQ.maybeSingle();
 
         if (existing) {
+          // Pyramid gate: only add to a position that is already in profit.
+          // Never average down into a loser — that compounds drawdown.
+          if (fillPrice <= Number(existing.avg_cost ?? 0)) {
+            await revertClaim(signal.id);
+            skipped.push({ symbol: signal.symbol, reason: "pyramid_gate (position is at a loss — no averaging down)" });
+            await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "pyramid_gate", outcome: "rejected", reason: "pyramid_gate", detail: { fillPrice, avgCost: existing.avg_cost } });
+            continue;
+          }
           const newQty = existing.qty + qty;
           const newAvg = ((existing.qty * existing.avg_cost) + totalCost) / newQty;
           await supabase.from("paper_positions").update({ qty: newQty, avg_cost: newAvg, current_price: fillPrice }).eq("id", existing.id);

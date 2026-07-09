@@ -3,5 +3,11 @@
   "outputDirectory": ".next",
   "framework": "nextjs",
   "installCommand": "npm install",
-  "regions": ["iad1"]
+  "regions": ["iad1"],
+  "crons": [
+    {
+      "path": "/api/agents/evaluation/p1-gate/cron",
+      "schedule": "0 2 * * 0"
+    }
+  ]
 }
