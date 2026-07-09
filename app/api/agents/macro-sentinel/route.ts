@@ -290,12 +290,18 @@ export async function POST(req: NextRequest) {
     .join("; ");
 
   // A 0-signal read is only meaningful if we actually collected enough real
-  // indicator data. If fewer than 3 of the 8 indicators came back (e.g. Alpha
-  // Vantage rate-limited every call), we have no evidence either way — say so
-  // explicitly instead of defaulting to a favorable "economy in expansion".
+  // indicator data. If fewer than 3 of the 8 indicators came back we have no
+  // evidence either way — say so explicitly instead of defaulting to a favorable
+  // "economy in expansion". Distinguish the TWO distinct empty-data causes:
+  // (a) FRED_API_KEY not configured on this deployment — fredSeries() returns []
+  // for every series, so all 8 come back empty; this is a fixable config gap,
+  // NOT a rate limit. (b) key present but FRED throttled/unavailable this run.
+  const fredKeyMissing = !process.env.FRED_API_KEY;
   const summary =
     indicators_available < 3
-      ? `Insufficient data: only ${indicators_available}/8 indicators available this run (data source likely rate-limited). No verdict — try "Run Now" again shortly.`
+      ? (fredKeyMissing
+          ? `No verdict: FRED_API_KEY is not configured on this deployment, so all 8 macro indicators returned empty (0/8). This is a config gap, not a rate limit — add FRED_API_KEY to the Vercel environment (free key from fredapi.stlouisfed.org), then re-run.`
+          : `Insufficient data: only ${indicators_available}/8 indicators available this run (FRED likely throttled or briefly unavailable). No verdict — try "Run Now" again shortly.`)
       : signals_triggered === 0
       ? `No recession signals across ${indicators_available}/8 indicators. Economy in expansion.`
       : `${signals_triggered} signal(s) triggered (${indicators_available}/8 indicators available). Top: ${topSignals}`;

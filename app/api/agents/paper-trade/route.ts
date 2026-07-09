@@ -14,7 +14,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
-async function logStage(supabase: any, args: { signal_id: string; symbol: string; market: string; stage: string; outcome: string; reason?: string; detail?: any }) {
+async function logStage(supabase: any, args: { signal_id: string | null; symbol: string | null; market: string; stage: string; outcome: string; reason?: string; detail?: any }) {
   try {
     await supabase.from("pipeline_stage_events").insert({
       signal_id: args.signal_id, symbol: args.symbol, market: args.market,
@@ -37,6 +37,10 @@ async function logStage(supabase: any, args: { signal_id: string; symbol: string
 const START_NAV: Record<string, number> = { us: 10000, india: 1000000 };
 
 export async function POST(req: NextRequest) {
+  // Hoisted so the catch can finalize the agent_runs row (else a throw leaves it
+  // stuck 'running' forever — the zombie-run failure mode this route caused).
+  const supabase = createServiceClient();
+  let runId: string | null = null;
   try {
     const isCron = verifyCronSecret(req);
 
@@ -50,8 +54,6 @@ export async function POST(req: NextRequest) {
       const { data: { user } } = await userClient.auth.getUser();
       if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-
-    const supabase = createServiceClient();
 
     const { data: cfg } = await supabase
       .from("strategy_config")
@@ -81,7 +83,7 @@ export async function POST(req: NextRequest) {
       agent_type: "paper_trader", status: "running",
       trigger_source: isCron ? "scheduled" : "manual",
     } as any).select().single();
-    const runId = (runRow as any)?.id ?? null;
+    runId = (runRow as any)?.id ?? null;
 
     // ── Pools per market ──────────────────────────────────────────────────────
     // One paper_portfolio row per market. Pre-057 there's a single row with no
@@ -110,31 +112,50 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ skipped: true, reason: first?.reason ?? "All markets kill-switched", tripped: first?.tripped });
     }
 
-    // ── Qualifying signals across active markets ─────────────────────────────
-    // India signals only get pulled when the India pool exists (hasMarketCol +
-    // seeded), so pre-057 this is byte-for-byte the old US-only behavior.
-    let signals: any[] | null = null;
-    if (hasMarketCol) {
-      const { data } = await supabase
-        .from("agent_signals").select("*")
-        .eq("status", "pending").eq("direction", "long")
-        .in("market", activeMarkets)
-        .gte("analyst_score", scoreThreshold)
-        .order("analyst_score", { ascending: false }).limit(10);
-      signals = data;
-    } else {
-      const { data } = await supabase
-        .from("agent_signals").select("*")
-        .eq("status", "pending").eq("direction", "long")
-        .neq("asset_class", "india")
-        .gte("analyst_score", scoreThreshold)
-        .order("analyst_score", { ascending: false }).limit(5);
-      signals = data;
+    // ── Market-local trading-day freshness ───────────────────────────────────
+    // A signal only fills on the same market-local calendar day it was written.
+    // Older pending long signals are EXPIRED (never filled) — this is what makes
+    // the standalone paper-trade crons safe: a cron that wakes to a backlog of
+    // 10-day-old pending signals must not open those stale trades. Cutoff is the
+    // market-local day start (America/New_York US, Asia/Kolkata India), DST-safe.
+    const cutoffByMarket = new Map<string, string>();
+    for (const m of activeMarkets) {
+      const { data: cut } = await supabase.rpc("market_trading_day_start", { p_market: m });
+      // Fall back to a 24h window if the helper is somehow unavailable — still
+      // freshness-guarded, just not calendar-aligned (fail-safe, not fail-open).
+      cutoffByMarket.set(m, (cut as unknown as string) ?? new Date(Date.now() - 24 * 3600_000).toISOString());
     }
 
-    if (!signals || signals.length === 0) {
-      if (runId) await supabase.from("agent_runs").update({ status: "done", signals_written: 0, result_summary: `No qualifying long signals (score ≥ ${scoreThreshold}, direction = long)`, completed_at: new Date().toISOString() } as any).eq("id", runId);
-      return NextResponse.json({ skipped: true, reason: `No qualifying long signals (score ≥ ${scoreThreshold}, direction = long)` });
+    // ── Qualifying signals across active markets ─────────────────────────────
+    // India signals only get pulled when the India pool exists (hasMarketCol +
+    // seeded). Freshness is enforced IN the query (not post-filtered) so stale
+    // high-score signals can't crowd fresh ones out of the limit window.
+    const signals: any[] = [];
+    let expiredTotal = 0;
+    for (const m of activeMarkets) {
+      const cutoff = cutoffByMarket.get(m)!;
+      // Expire this market's stale pending long signals (older than today's open).
+      let expQ = supabase.from("agent_signals").update({ status: "expired" })
+        .eq("status", "pending").eq("direction", "long").lt("created_at", cutoff);
+      expQ = hasMarketCol ? expQ.eq("market", m) : expQ.neq("asset_class", "india");
+      const { data: expd } = await expQ.select("id");
+      const nExp = expd?.length ?? 0;
+      expiredTotal += nExp;
+      if (nExp > 0) await logStage(supabase, { signal_id: null, symbol: null, market: m, stage: "freshness", outcome: "expired", reason: `${nExp} stale pending long signal(s) expired (older than ${m}-local ${cutoff})`, detail: { cutoff, count: nExp } });
+
+      // Fetch only fresh (same-trading-day) pending long candidates.
+      let selQ = supabase.from("agent_signals").select("*")
+        .eq("status", "pending").eq("direction", "long")
+        .gte("analyst_score", scoreThreshold).gte("created_at", cutoff)
+        .order("analyst_score", { ascending: false }).limit(hasMarketCol ? 10 : 5);
+      selQ = hasMarketCol ? selQ.eq("market", m) : selQ.neq("asset_class", "india");
+      const { data } = await selQ;
+      if (data) signals.push(...data);
+    }
+
+    if (signals.length === 0) {
+      if (runId) await supabase.from("agent_runs").update({ status: "done", signals_written: 0, result_summary: `No fresh qualifying long signals (score ≥ ${scoreThreshold}, same trading day). ${expiredTotal} stale expired.`, completed_at: new Date().toISOString() } as any).eq("id", runId);
+      return NextResponse.json({ skipped: true, reason: `No fresh qualifying long signals (score ≥ ${scoreThreshold}, same trading day)`, expired: expiredTotal });
     }
 
     const filled: any[] = [];
@@ -259,29 +280,42 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Owner-safe revert: return a claimed signal to `pending` and clear the claim
+    // stamps, but ONLY if THIS run still owns it (status=claiming AND claim_run_id
+    // = this run). Prevents one run from stealing back a row another run/chain has
+    // since claimed — the dual scheduler (research chain + standalone cron) safety.
+    const revertClaim = async (signalId: string) => {
+      let q = supabase.from("agent_signals")
+        .update({ status: "pending", claimed_at: null, claim_run_id: null })
+        .eq("id", signalId).eq("status", "claiming");
+      if (runId) q = q.eq("claim_run_id", runId);
+      await q;
+    };
+
     for (const signal of signals) {
       const market = hasMarketCol ? String(signal.market ?? (signal.asset_class === "india" ? "india" : "us")) : "us";
       const currency = market === "india" ? "INR" : "USD";
       const portfolio = poolByMarket.get(market);
       if (!portfolio) { skipped.push({ symbol: signal.symbol, reason: `no_pool_for_${market}` }); continue; }
 
-      // Idempotent claim
+      // Idempotent claim — stamp ownership so only THIS run can revert it later.
       const { data: claimed } = await supabase
-        .from("agent_signals").update({ status: "claiming" })
+        .from("agent_signals")
+        .update({ status: "claiming", claimed_at: new Date().toISOString(), claim_run_id: runId })
         .eq("id", signal.id).eq("status", "pending").select("id");
       if (!claimed || claimed.length === 0) continue;
 
       // Sector cap
       const candSector = await resolveSector(signal.symbol, signal.research_packet_id ?? null);
       if (candSector && (sectorCount[candSector] ?? 0) >= maxPerSector) {
-        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+        await revertClaim(signal.id);
         skipped.push({ symbol: signal.symbol, reason: `sector_cap (${candSector} already at ${maxPerSector})` });
         continue;
       }
 
       const pf = await priceFor(signal, market);
       if (!pf.ok) {
-        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+        await revertClaim(signal.id);
         skipped.push({ symbol: signal.symbol, reason: pf.reason });
         continue;
       }
@@ -364,7 +398,7 @@ export async function POST(req: NextRequest) {
       // percentile, or config value would otherwise sail through every guard
       // and reach the RPC fill call with a NaN qty/totalCost.
       if (!Number.isFinite(rawSizedPct) || rawSizedPct <= 0) {
-        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+        await revertClaim(signal.id);
         const reason = Number.isFinite(rawSizedPct)
           ? `portfolio_constructor_denied: ${constructed.orders[0]?.adjustments.join("; ") ?? "no room"}`
           : "portfolio_constructor_denied: non-finite sizedPct";
@@ -381,14 +415,14 @@ export async function POST(req: NextRequest) {
       const maxSpend = Math.min(portfolio.cash_balance * (sizedPct / 100), perTradeCapPaper != null ? Number(perTradeCapPaper) : Infinity);
       const qty = Math.floor(maxSpend / fillPrice);
       if (!Number.isFinite(fillPrice) || fillPrice <= 0 || !Number.isFinite(maxSpend) || !Number.isFinite(qty) || qty < 1) {
-        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+        await revertClaim(signal.id);
         skipped.push({ symbol: signal.symbol, reason: "insufficient_cash_for_1_share" });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "insufficient_cash_for_1_share", detail: { maxSpend, fillPrice } });
         continue;
       }
       const totalCost = qty * fillPrice;
       if (!Number.isFinite(totalCost) || totalCost > portfolio.cash_balance) {
-        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+        await revertClaim(signal.id);
         skipped.push({ symbol: signal.symbol, reason: "insufficient_cash" });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "insufficient_cash", detail: { totalCost, cash: portfolio.cash_balance } });
         continue;
@@ -398,13 +432,15 @@ export async function POST(req: NextRequest) {
       // BUY notional would exceed the cap. BUY only — never blocks a sell/exit.
       const dailyCapPaper = market === "india" ? dailyCapInrPaper : dailyCapUsdPaper;
       if (dailyCapPaper != null) {
-        const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
+        // Market-local trading-day window (not UTC midnight) — matches the
+        // freshness cutoff so the cap counts the same day's fills.
+        const dayStartIso = cutoffByMarket.get(market) ?? new Date(new Date().setUTCHours(0, 0, 0, 0)).toISOString();
         const { data: todayFills } = await supabase.from("paper_trades")
           .select("total_value").eq("market", market).eq("order_side", "buy")
-          .gte("executed_at", dayStart.toISOString());
+          .gte("executed_at", dayStartIso);
         const spentToday = (todayFills ?? []).reduce((s: number, r: any) => s + Number(r.total_value ?? 0), 0);
         if (spentToday + totalCost > Number(dailyCapPaper)) {
-          await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+          await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: "daily_paper_notional_cap" });
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "daily_paper_notional_cap", detail: { spentToday, totalCost, cap: Number(dailyCapPaper) } });
           continue;
@@ -432,14 +468,14 @@ export async function POST(req: NextRequest) {
         const rpcMissing = rpcErr && (String((rpcErr as any).code ?? "") === "PGRST202" ||
           /could not find the function|does not exist/i.test(String(rpcErr.message ?? "")));
         if (rpcErr && !rpcMissing) {
-          await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+          await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: `rpc_fill_failed: ${rpcErr.message}` });
           continue;
         }
         if (!rpcErr) {
           const result = rpcData as any;
           if (!result?.ok) {
-            await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+            await revertClaim(signal.id);
             skipped.push({ symbol: signal.symbol, reason: `rpc_fill_denied: ${result?.error ?? "unknown"}` });
             continue;
           }
@@ -457,7 +493,7 @@ export async function POST(req: NextRequest) {
         // revoked), a multi-step non-transactional fallback risks leaving
         // partial event/trade/position/cash state on a crash — fail closed
         // instead. The fallback below remains available for local/dev/preview.
-        await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+        await revertClaim(signal.id);
         skipped.push({ symbol: signal.symbol, reason: "execute_paper_fill_rpc_missing_in_production" });
         console.error("[paper-trade] execute_paper_fill RPC missing in production — refusing legacy fallback fill for", signal.symbol);
         continue;
@@ -480,7 +516,7 @@ export async function POST(req: NextRequest) {
         };
         const evRes = await insertOptional("paper_order_events", eventRow, ["market", "expected_price", "realized_slip_pct", "fill_status"], "id");
         if (evRes.error) {
-          await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+          await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: `order_event_failed: ${evRes.error.message}` });
           continue;
         }
@@ -500,7 +536,7 @@ export async function POST(req: NextRequest) {
         };
         const trRes = await insertOptional("paper_trades", tradeRow, ["currency", "market", "expected_price", "realized_slip_pct", "fill_status"]);
         if (trRes.error) {
-          await supabase.from("agent_signals").update({ status: "pending" }).eq("id", signal.id);
+          await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: `trade_insert_failed: ${trRes.error.message}` });
           continue;
         }
@@ -629,14 +665,23 @@ export async function POST(req: NextRequest) {
       const navSummary = Object.entries(navByMarket).map(([m, n]) => `${m}:${m === "india" ? "₹" : "$"}${n.toFixed(2)}`).join(" ");
       await supabase.from("agent_runs").update({
         status: "done", symbols: tradedSymbols, signals_written: filled.length,
-        result_summary: `${filled.length} trades filled, ${skipped.length} skipped. NAV ${navSummary}`,
+        result_summary: `${filled.length} trades filled, ${skipped.length} skipped, ${expiredTotal} stale expired. NAV ${navSummary}`,
         completed_at: new Date().toISOString(), tokens_input: 0, tokens_output: 0, claude_calls: 0,
       } as any).eq("id", runId);
     }
 
-    return NextResponse.json({ success: true, filled: filled.length, skipped: skipped.length, trades: filled, nav: navByMarket });
+    return NextResponse.json({ success: true, filled: filled.length, skipped: skipped.length, expired: expiredTotal, trades: filled, nav: navByMarket });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    // Finalize the run as errored so a throw can't leave it stuck 'running'
+    // (the zombie-run failure mode). Fail-soft: never mask the original error.
+    if (runId) {
+      try {
+        await supabase.from("agent_runs").update({
+          status: "error", result_summary: msg.slice(0, 500), completed_at: new Date().toISOString(),
+        } as any).eq("id", runId);
+      } catch { /* best-effort */ }
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -64,7 +64,7 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     editable: false,
     description:
       "India (NSE) signal generation, 15min after the 9:15 AM IST open — scores off yesterday's finalized close, then chains its own ₹ paper-trade fill using a live intraday quote. Realigned 2026-07-06 (migration 082) from a post-close time that scored and filled on the same closing print with no realistic gap between decision and fill.",
-    handoff: "→ PaperTrader (India)",
+    handoff: "→ PaperTrader India (chained fill primary; kairos-paper-trade-india standalone backstop)",
     agentRunsType: "research",
   },
   {
@@ -111,9 +111,33 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "Pre-market signal generation (US). ResearchAgent scores existing holdings (SELL allowed) and dual-bucket screener candidates (LONG only), writing signals scored ≥60 as buy candidates. Also fires Theme Scout automatically.",
-    handoff: "→ PaperTrader (signals scored ≥60 become buy candidates)",
+      "Pre-market signal generation (US). ResearchAgent scores existing holdings (SELL allowed) and dual-bucket screener candidates (LONG only), writing signals scored ≥60 as buy candidates. Also fires Theme Scout automatically. Still chains a $ paper-trade fill at its end, but that chain is now a BACKSTOP — the standalone kairos-paper-trade-us cron is the primary fill path (added 2026-07-08, migration 128) so a hung research run no longer starves US fills.",
+    handoff: "→ PaperTrader US (standalone cron + chain backstop; signals scored ≥60 become buy candidates)",
     agentRunsType: "research",
+  },
+  {
+    name: "paper-trade-us",
+    agent: "paper-trade-us",
+    time: "10:05 AM ET",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Standalone US ($) paper fill (added 2026-07-08, migration 128). Fills only FRESH same-trading-day pending long signals (America/New_York calendar day) — older pending signals are EXPIRED, never filled. Decoupled from research so a hung research run can't zero out US fills; claim ownership (migration 126) + two CAS gates (migration 127) make it safe to run alongside research's own chained fill without double-filling.",
+    handoff: "→ PositionMonitor (open positions tracked for exits)",
+    agentRunsType: "paper_trader",
+  },
+  {
+    name: "paper-trade-india",
+    agent: "paper-trade-india",
+    time: "4:35 PM IST (~7:05 AM ET)",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Standalone India (₹) paper fill (added 2026-07-08, migration 128) — a backstop; India research already chains its own fill reliably. Same freshness contract: only fresh same-IST-day (Asia/Kolkata) pending long signals fill; stale pending are expired.",
+    handoff: "→ PositionMonitor (India)",
+    agentRunsType: "paper_trader",
   },
   {
     name: "trader",
