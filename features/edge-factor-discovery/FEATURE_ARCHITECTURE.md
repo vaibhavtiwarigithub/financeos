@@ -335,11 +335,13 @@ All read-heavy analytics; no changes to money tables.
 
 ## 11. Integration points (existing files, indicative)
 
-- `lib/agents/research-agent.ts` — replace 5-dim soft score with the composite
+- `lib/research-agent.ts` — replace 5-dim soft score with the composite
   edge score; keep LLM call only for the written thesis/explanation.
-- Feature Registry / whitelisted grammar — host edge formulas.
-- `lib/validation/*` + Validation Engine — add IC gate + deflated-Sharpe; extend
-  WFO to the edge composite.
+  (Path verified: it is `lib/research-agent.ts`, not `lib/agents/research-agent.ts`.)
+- Feature Registry / whitelisted grammar — `lib/validation/feature-compiler.ts`
+  (verified) hosts the safe-formula grammar; extend it for edge formulas.
+- `lib/validation/engine.ts` (Validation Engine, verified) + `app/api/agents/backtest/*`
+  — add IC gate + deflated-Sharpe; extend WFO to the edge composite.
 - `lib/validation/genome-live.ts` + Learner — consume IC-weighted edge blend as
   the weights it tunes (evidence-bound mutation already exists).
 - `app/api/agents/paper-trade/route.ts` — unchanged (freshness/claim/sizing all
