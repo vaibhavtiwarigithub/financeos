@@ -5,6 +5,7 @@ import { fetchIndiaQuote } from "@/lib/india-data";
 import { classifyOutcome } from "@/lib/trade-outcome";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { loadChampionGenome } from "@/lib/validation/genome-live";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -85,6 +86,19 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
   // and exit any whose conviction has fallen below the exit threshold.
   // Exit threshold sits below the entry threshold (hysteresis) so a position
   // isn't churned out the moment it dips one point under the buy bar.
+  // Load champion genome per market — provides horizon_days for time stop.
+  // Falls back to DEFAULT_GENOME (horizon 10d) when no champion exists.
+  const activeMarkets = Array.from(new Set(positions.map((p: any) => marketOf(p, hasMarketCol)))) as ("us" | "india")[];
+  const horizonDaysByMarket = new Map<string, number>();
+  await Promise.allSettled(activeMarkets.map(async (m) => {
+    try {
+      const g = await loadChampionGenome(svc, m);
+      horizonDaysByMarket.set(m, g.genome.horizon_days);
+    } catch {
+      horizonDaysByMarket.set(m, 10); // DEFAULT_GENOME horizon
+    }
+  }));
+
   const { data: strategyCfg } = await svc.from("strategy_config").select("score_threshold, min_analyst_score, exit_hysteresis").maybeSingle();
   const entryThreshold = Number((strategyCfg as any)?.score_threshold ?? (strategyCfg as any)?.min_analyst_score ?? 60);
   const hysteresis = Number((strategyCfg as any)?.exit_hysteresis) || 15; // profile-scaled (Part A2); resilient default
@@ -172,6 +186,20 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     }
 
     if (!currentPrice) continue;
+
+    // Time stop: close if position age exceeds champion genome's horizon_days.
+    // Closes slow bleeds that never hit the hard stop but overstay the swing window.
+    // Matches the backtest's max_hold_days assumption so live and backtest are consistent.
+    if (pos.created_at) {
+      const market = marketOf(pos, hasMarketCol);
+      const horizonDays = horizonDaysByMarket.get(market) ?? 10;
+      const ageDays = (Date.now() - new Date(pos.created_at).getTime()) / (1000 * 60 * 60 * 24);
+      if (ageDays > horizonDays) {
+        const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
+        await closePosition(pos, currentPrice, `time_stop (${ageDays.toFixed(1)}d > ${horizonDays}d)`, outcome);
+        continue;
+      }
+    }
 
     // Daily score-based exit: hold while the AI score stays above the exit
     // threshold, exit when today's fresh score drops below it (or the signal
