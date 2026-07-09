@@ -207,7 +207,7 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
         const deepseekFb = "deepseek-v4-flash"
         await reportIssue({
           issueKey: "anthropic-key-missing",
-          severity: "error", category: "models",
+          severity: "critical", category: "models",
           title: "ANTHROPIC_API_KEY missing — Claude calls falling back to DeepSeek",
           detail: `${model} auth failed: ${String(err).slice(0, 200)}. Add ANTHROPIC_API_KEY to Vercel environment variables and redeploy.`,
         })
