@@ -636,21 +636,34 @@ export async function POST(req: NextRequest) {
       const startNav = START_NAV[market] ?? pool.nav ?? nav;
       const returnPct = startNav ? ((nav - startNav) / startNav) * 100 : 0;
 
-      // US keeps the SPY alpha benchmark; India has no USD benchmark.
-      let spyNav: number | null = null, spyReturnPct: number | null = null, alphaPct: number | null = null;
-      if (market === "us") {
-        const spyQuote = await getQuote("SPY", supabase);
-        spyNav = spyQuote.price > 0 ? spyQuote.price : null;
-        const { data: firstPerf } = await supabase.from("paper_performance").select("spy_nav").not("spy_nav", "is", null).order("date", { ascending: true }).limit(1).single();
-        const spyStartNav = (firstPerf as any)?.spy_nav ?? spyNav;
-        spyReturnPct = (spyNav && spyStartNav) ? ((spyNav - spyStartNav) / spyStartNav) * 100 : null;
-        alphaPct = spyReturnPct != null ? returnPct - spyReturnPct : null;
-      }
+      // Per-market benchmark for alpha + the return-vs-benchmark chart:
+      // US = VOO, India = NIFTY 50 (^NSEI). Stored provider-neutral in bench_*.
+      // Cumulative bench return is measured vs the FIRST recorded bench_nav for
+      // this market. Fail-soft: if the benchmark quote is unavailable this run,
+      // leave bench_*/alpha null rather than corrupting the series.
+      let benchNav: number | null = null, benchReturnPct: number | null = null, alphaPct: number | null = null;
+      try {
+        const benchSym = market === "india" ? "^NSEI" : "VOO";
+        const q = market === "india" ? await fetchIndiaQuote(benchSym) : await getQuote(benchSym, supabase);
+        const px = (q as any)?.price;
+        benchNav = typeof px === "number" && px > 0 ? px : null;
+        if (benchNav) {
+          const { data: firstPerf } = await supabase.from("paper_performance")
+            .select("bench_nav").eq("market", market).not("bench_nav", "is", null)
+            .order("date", { ascending: true }).limit(1).maybeSingle();
+          const benchStartNav = (firstPerf as any)?.bench_nav ?? benchNav;
+          benchReturnPct = benchStartNav ? ((benchNav - benchStartNav) / benchStartNav) * 100 : null;
+          alphaPct = benchReturnPct != null ? returnPct - benchReturnPct : null;
+        }
+      } catch { /* benchmark unavailable this run — leave null */ }
 
       const perfRow: Record<string, any> = {
         date: today, nav, cash_balance: pool.cash_balance, positions_value: positionsValue,
         total_pnl: nav - startNav, total_pnl_pct: returnPct,
-        spy_nav: spyNav, spy_return_pct: spyReturnPct, alpha_pct: alphaPct, market,
+        bench_nav: benchNav, bench_return_pct: benchReturnPct, alpha_pct: alphaPct, market,
+        // Back-compat: US readers still keyed on spy_* (VOO tracks the S&P 500 too).
+        spy_nav: market === "us" ? benchNav : null,
+        spy_return_pct: market === "us" ? benchReturnPct : null,
       };
       const { error: perfErr } = await supabase.from("paper_performance").upsert(perfRow, { onConflict: "date,market" });
       if (perfErr) { // pre-057: no market column / composite key

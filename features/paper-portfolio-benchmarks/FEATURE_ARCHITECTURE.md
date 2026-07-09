@@ -1,6 +1,15 @@
 # Paper Portfolio — market-aware benchmarks + page cleanup
 
-**Status: DRAFT PROPOSAL (awaiting approval — no code written yet).**
+**Status: SHIPPED. 2026-07-08.**
+- migration 130 (applied): `paper_performance.bench_nav`/`bench_return_pct`.
+- paper-trade route computes VOO (US) / NIFTY `^NSEI` (India) into bench_* + alpha
+  for BOTH markets (US also mirrors into legacy spy_* for back-compat).
+- metrics route surfaces bench_return_pct (+ benchmarkLabel) so India gets a benchmark.
+- PortfolioPage gauge is market-aware ("Alpha vs VOO"/"Alpha vs NIFTY") and reads the
+  stored bench; BenchmarkChart plots the per-market bench line from bench_return_pct
+  (dropped the hardcoded US VOO/QQQ fetch — fixed the US-index-on-India leak).
+- LiveHoldingsTab is market-aware: US → Robinhood ($), India → Zerodha Kite (₹) via
+  new owner-gated `/api/kite/holdings` (read-only). Fixes the Robinhood-on-India leak.
 Last updated: 2026-07-08
 
 ## Why

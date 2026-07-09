@@ -29,7 +29,7 @@ export async function GET() {
       // Daily NAV series (per market) — Sharpe/Sortino/drawdown source.
       const { data: perfRows } = await svc
         .from("paper_performance")
-        .select("date, nav, spy_return_pct, alpha_pct")
+        .select("date, nav, spy_return_pct, bench_return_pct, alpha_pct")
         .eq("market", market)
         .order("date", { ascending: true })
         .limit(400);
@@ -79,7 +79,11 @@ export async function GET() {
         slip: { realized: realizedSlip, modeledPct: MODELED_SLIP_PCT },
         calibration: calib,
         alphaPct: last?.alpha_pct != null ? Number(last.alpha_pct) : null,
-        benchmarkReturnPct: last?.spy_return_pct != null ? Number(last.spy_return_pct) : null,
+        // Prefer the provider-neutral bench (US=VOO, India=NIFTY); fall back to
+        // legacy spy_return_pct for older US rows written before bench_* existed.
+        benchmarkReturnPct: last?.bench_return_pct != null ? Number(last.bench_return_pct)
+          : last?.spy_return_pct != null ? Number(last.spy_return_pct) : null,
+        benchmarkLabel: market === "india" ? "NIFTY 50" : "VOO",
       };
     }
 

@@ -1,5 +1,4 @@
 "use client";
-import { useState, useEffect } from "react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ReferenceLine,
@@ -11,18 +10,14 @@ const T = {
   amber: "#FBBF24", surface: "#13151C",
 };
 
-const COLORS = {
-  portfolio: "#6366F1",
-  VOO: "#34D399",
-  QQQ: "#60A5FA",
-};
+const COLORS = { portfolio: "#6366F1", bench: "#34D399" };
 
-interface PerfRow { date: string; nav: number; }
-interface BenchmarkPoint { date: string; portfolio?: number; VOO?: number; QQQ?: number; }
+interface PerfRow { date: string; nav: number; bench_return_pct?: number | null }
 
 function normalize(rows: { date: string; value: number }[]): { date: string; pct: number }[] {
   if (!rows.length) return [];
   const base = rows[0].value;
+  if (!base) return rows.map(r => ({ date: r.date, pct: 0 }));
   return rows.map(r => ({ date: r.date, pct: parseFloat((((r.value - base) / base) * 100).toFixed(3)) }));
 }
 
@@ -40,68 +35,56 @@ function CustomTooltip({ active, payload, label }: any) {
   );
 }
 
-export default function BenchmarkChart({ perfRows }: { perfRows: PerfRow[] }) {
-  const [vooCandles, setVooCandles] = useState<any[]>([]);
-  const [qqqCandles, setQqqCandles] = useState<any[]>([]);
-  const [loadingBench, setLoadingBench] = useState(false);
+// Portfolio cumulative %-return vs its market benchmark (US = VOO, India =
+// NIFTY 50). The benchmark line is the stored bench_return_pct series from
+// paper_performance — computed server-side per market — so this is correct for
+// both markets and needs no client-side index fetch.
+export default function BenchmarkChart({ perfRows, market = "us" }: { perfRows: PerfRow[]; market?: string }) {
+  const benchLabel = market === "india" ? "NIFTY 50" : "VOO";
 
-  useEffect(() => {
-    if (perfRows.length === 0) return;
-    setLoadingBench(true);
-    Promise.all([
-      fetch("/api/charts/price-history?symbol=VOO&days=90").then(r => r.json()),
-      fetch("/api/charts/price-history?symbol=QQQ&days=90").then(r => r.json()),
-    ]).then(([voo, qqq]) => {
-      setVooCandles(voo.candles ?? []);
-      setQqqCandles(qqq.candles ?? []);
-    }).finally(() => setLoadingBench(false));
-  }, [perfRows.length]);
-
-  if (perfRows.length < 2) {
+  if ((perfRows?.length ?? 0) < 2) {
     return (
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
         <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "8px" }}>Portfolio vs Benchmark</div>
         <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "40px 0" }}>
-          Performance history builds after first paper trades close (7 days). Run ResearchAgent + PaperTrader to start.
+          Performance history builds after the first paper trades. Run ResearchAgent + PaperTrader to start.
         </div>
       </div>
     );
   }
 
-  // Align data by date
-  const portfolioNorm = normalize(perfRows.map(r => ({ date: r.date, value: r.nav })));
-  const vooNorm = normalize(vooCandles.map((c: any) => ({ date: c.date, value: c.close })));
-  const qqqNorm = normalize(qqqCandles.map((c: any) => ({ date: c.date, value: c.close })));
-
-  const vooMap = new Map(vooNorm.map(r => [r.date, r.pct]));
-  const qqqMap = new Map(qqqNorm.map(r => [r.date, r.pct]));
-
-  const vooDates = vooNorm.map(r => r.date).sort();
-
-  function closestDate(target: string): string {
-    let best = vooDates[0];
-    for (const d of vooDates) { if (d <= target) best = d; }
-    return best;
-  }
-
-  const chartData: BenchmarkPoint[] = portfolioNorm.map(r => ({
+  const portfolioNorm = normalize(perfRows.map(r => ({ date: r.date, value: Number(r.nav) })));
+  const chartData = portfolioNorm.map((r, i) => ({
     date: r.date,
     portfolio: r.pct,
-    VOO: vooMap.get(closestDate(r.date)),
-    QQQ: qqqMap.get(closestDate(r.date)),
+    bench: perfRows[i]?.bench_return_pct != null ? Number(perfRows[i].bench_return_pct) : null,
   }));
+  const hasBench = chartData.some(d => d.bench != null);
 
   const lastPortfolio = portfolioNorm[portfolioNorm.length - 1]?.pct ?? 0;
+  const lastBench = [...chartData].reverse().find(d => d.bench != null)?.bench ?? null;
+  const alpha = lastBench != null ? lastPortfolio - lastBench : null;
 
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-        <div style={{ fontSize: "13px", fontWeight: 600 }}>Portfolio vs Benchmark (% return)</div>
-        <div style={{ fontSize: "13px", fontWeight: 700, color: lastPortfolio >= 0 ? T.green : T.red }}>
-          {lastPortfolio >= 0 ? "+" : ""}{lastPortfolio.toFixed(2)}%
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "6px", marginBottom: "16px" }}>
+        <div style={{ fontSize: "13px", fontWeight: 600 }}>Portfolio vs {benchLabel} (% return)</div>
+        <div style={{ display: "flex", gap: "14px", alignItems: "baseline" }}>
+          <div style={{ fontSize: "13px", fontWeight: 700, color: lastPortfolio >= 0 ? T.green : T.red }}>
+            {lastPortfolio >= 0 ? "+" : ""}{lastPortfolio.toFixed(2)}%
+          </div>
+          {alpha != null && (
+            <div style={{ fontSize: "12px", fontWeight: 600, color: alpha >= 0 ? T.green : T.red }}>
+              α {alpha >= 0 ? "+" : ""}{alpha.toFixed(2)}%
+            </div>
+          )}
         </div>
       </div>
-      {loadingBench && <div style={{ color: T.muted, fontSize: "12px", marginBottom: "8px" }}>Loading benchmarks…</div>}
+      {!hasBench && (
+        <div style={{ color: T.muted, fontSize: "12px", marginBottom: "8px" }}>
+          {benchLabel} benchmark appears once a paper run records it.
+        </div>
+      )}
       <ResponsiveContainer width="100%" height={240}>
         <LineChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
           <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
@@ -111,8 +94,7 @@ export default function BenchmarkChart({ perfRows }: { perfRows: PerfRow[] }) {
           <ReferenceLine y={0} stroke={T.border} />
           <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }} />
           <Line type="monotone" dataKey="portfolio" name="Portfolio" stroke={COLORS.portfolio} strokeWidth={2.5} dot={false} />
-          {vooNorm.length > 0 && <Line type="monotone" dataKey="VOO" stroke={COLORS.VOO} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />}
-          {qqqNorm.length > 0 && <Line type="monotone" dataKey="QQQ" stroke={COLORS.QQQ} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />}
+          {hasBench && <Line type="monotone" dataKey="bench" name={benchLabel} stroke={COLORS.bench} strokeWidth={1.5} dot={false} strokeDasharray="4 2" connectNulls />}
         </LineChart>
       </ResponsiveContainer>
     </div>

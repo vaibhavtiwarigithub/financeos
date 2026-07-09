@@ -196,7 +196,16 @@ function PortfolioHeader({
   const cashPct = (cash / nav) * 100;
   const wr = winRate ?? 0;
   const wrColor = winRate !== null ? (wr >= 60 ? T.green : wr >= 40 ? T.amber : T.red) : T.muted;
-  const alpha = vooReturn.pct !== null ? totalPnlPct - vooReturn.pct : 0;
+  // Market-aware benchmark: US = VOO, India = NIFTY 50. Prefer the stored
+  // bench_return_pct from the paper_performance series (correct per market);
+  // fall back to the client VOO fetch for US before any bench row exists.
+  const isIndia = cur === "₹";
+  const benchLabel = isIndia ? "NIFTY 50" : "VOO";
+  const benchRows = (perf ?? []).filter((r: any) => r?.bench_return_pct != null);
+  const benchPct: number | null = benchRows.length
+    ? Number(benchRows[benchRows.length - 1].bench_return_pct)
+    : (!isIndia ? vooReturn.pct : null);
+  const alpha = benchPct !== null ? totalPnlPct - benchPct : 0;
 
   return (
     <>
@@ -220,11 +229,11 @@ function PortfolioHeader({
           />
           <div style={{ width: "1px", height: "80px", background: T.border }} />
           <NeedleGauge
-            value={vooReturn.pct !== null ? alpha : 0}
+            value={benchPct !== null ? alpha : 0}
             maxVal={20}
-            label="Alpha vs VOO"
-            sublabel={vooReturn.pct !== null ? `VOO ${vooReturn.pct >= 0 ? "+" : ""}${vooReturn.pct.toFixed(1)}%` : "loading…"}
-            loading={vooReturn.loading}
+            label={`Alpha vs ${benchLabel}`}
+            sublabel={benchPct !== null ? `${benchLabel} ${benchPct >= 0 ? "+" : ""}${benchPct.toFixed(1)}%` : (isIndia ? "no benchmark yet" : "loading…")}
+            loading={!isIndia && benchPct === null && vooReturn.loading}
           />
           <div style={{ width: "1px", height: "80px", background: T.border }} />
           <CashDonut cashPct={Math.max(0, Math.min(100, cashPct))} />
@@ -511,16 +520,24 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
   );
 }
 
-function LiveHoldingsTab() {
-  const [data, setData] = useState<{ positions: any[]; cached?: boolean; stale?: boolean } | null>(null);
+function LiveHoldingsTab({ market = "us" }: { market?: string }) {
+  const isIndia = market === "india";
+  const sym = isIndia ? "₹" : "$";
+  const broker = isIndia ? "Zerodha Kite" : "Robinhood";
+  const endpoint = isIndia ? "/api/kite/holdings" : "/api/portfolio/live-holdings";
+  const acctLine = isIndia
+    ? "Zerodha Kite (NSE/BSE) • read-only"
+    : "Robinhood Trading account ••••8641 • non-agentic • read-only";
+  const [data, setData] = useState<{ positions: any[]; cached?: boolean; stale?: boolean; error?: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/portfolio/live-holdings")
+    setLoading(true);
+    fetch(endpoint)
       .then(r => r.json())
       .then(d => { setData(d); setLoading(false); })
       .catch(() => setLoading(false));
-  }, []);
+  }, [endpoint]);
 
   const positions = data?.positions ?? [];
   const totalValue = positions.reduce((sum, p) => sum + (p.qty * (p.current_price || p.avg_cost)), 0);
@@ -532,7 +549,7 @@ function LiveHoldingsTab() {
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
-        <div style={{ fontSize: "13px", fontWeight: 600, color: T.text }}>Robinhood Live Positions</div>
+        <div style={{ fontSize: "13px", fontWeight: 600, color: T.text }}>{broker} Live Positions</div>
         {data?.stale && (
           <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "4px", background: T.amberBg, color: T.amber, fontWeight: 600 }}>STALE CACHE</span>
         )}
@@ -544,11 +561,15 @@ function LiveHoldingsTab() {
       {loading ? (
         <div style={{ textAlign: "center", padding: "40px 0" }}>
           <div style={{ color: T.muted, fontSize: "13px", marginBottom: "8px" }}>Fetching positions…</div>
-          <div style={{ color: T.muted, fontSize: "11px" }}>Fetching from Robinhood via AI subprocess — may take ~90s on first load</div>
+          <div style={{ color: T.muted, fontSize: "11px" }}>{isIndia ? "Fetching from Zerodha Kite" : "Fetching from Robinhood via AI subprocess — may take ~90s on first load"}</div>
         </div>
       ) : positions.length === 0 ? (
         <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>
-          No live positions found. Make sure the Robinhood MCP is connected.
+          {data?.error
+            ? data.error
+            : isIndia
+              ? "No live holdings found. Connect Zerodha Kite (daily login via /api/kite/login)."
+              : "No live positions found. Make sure the Robinhood MCP is connected."}
         </div>
       ) : (
         <>
@@ -576,11 +597,11 @@ function LiveHoldingsTab() {
                       )}
                     </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{p.qty}</td>
-                    <td style={{ padding: "10px 12px 10px 0" }}>{p.avg_cost ? "$" + Number(p.avg_cost).toFixed(2) : <span style={{ color: T.muted }}>—</span>}</td>
-                    <td style={{ padding: "10px 12px 10px 0" }}>{cur ? "$" + Number(cur).toFixed(2) : <span style={{ color: T.muted }}>—</span>}</td>
-                    <td style={{ padding: "10px 12px 10px 0" }}>${value.toFixed(0)}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{p.avg_cost ? sym + Number(p.avg_cost).toFixed(2) : <span style={{ color: T.muted }}>—</span>}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{cur ? sym + Number(cur).toFixed(2) : <span style={{ color: T.muted }}>—</span>}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{sym}{value.toFixed(0)}</td>
                     <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: pnl >= 0 ? T.green : T.red }}>
-                      {cur && p.avg_cost ? (pnl >= 0 ? "+" : "") + "$" + Math.abs(pnl).toFixed(2) : <span style={{ color: T.muted }}>—</span>}
+                      {cur && p.avg_cost ? (pnl >= 0 ? "+" : "") + sym + Math.abs(pnl).toFixed(2) : <span style={{ color: T.muted }}>—</span>}
                     </td>
                     <td style={{ padding: "10px 0", color: pnlPct >= 0 ? T.green : T.red }}>
                       {cur && p.avg_cost ? (pnlPct >= 0 ? "+" : "") + pnlPct.toFixed(2) + "%" : <span style={{ color: T.muted }}>—</span>}
@@ -594,19 +615,19 @@ function LiveHoldingsTab() {
           <div style={{ borderTop: `1px solid ${T.border}`, marginTop: "12px", paddingTop: "12px", display: "flex", gap: "32px", flexWrap: "wrap" }}>
             <div>
               <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Value</div>
-              <div style={{ fontSize: "18px", fontWeight: 700, color: T.text }}>${totalValue.toFixed(0)}</div>
+              <div style={{ fontSize: "18px", fontWeight: 700, color: T.text }}>{sym}{totalValue.toFixed(0)}</div>
             </div>
             <div>
               <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total P&L</div>
               <div style={{ fontSize: "18px", fontWeight: 700, color: totalPnl >= 0 ? T.green : T.red }}>
-                {(totalPnl >= 0 ? "+" : "") + "$" + Math.abs(totalPnl).toFixed(2)}
+                {(totalPnl >= 0 ? "+" : "") + sym + Math.abs(totalPnl).toFixed(2)}
               </div>
             </div>
           </div>
         </>
       )}
       <div style={{ marginTop: "16px", fontSize: "11px", color: T.muted }}>
-        Robinhood Trading account ••••8641 • non-agentic • read-only
+        {acctLine}
       </div>
     </div>
   );
@@ -805,7 +826,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
       {/* Charts row */}
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "16px", marginBottom: "20px" }}>
         <Suspense fallback={<div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", height: "280px", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: "13px" }}>Loading chart…</div>}>
-          <BenchmarkChart perfRows={perf} />
+          <BenchmarkChart perfRows={perf} market={activeMarket} />
         </Suspense>
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <Suspense fallback={null}>
@@ -920,7 +941,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
       )}
 
       {/* Live Holdings tab */}
-      {tab === "live" && <LiveHoldingsTab />}
+      {tab === "live" && <LiveHoldingsTab market={activeMarket} />}
 
       {/* Signals tab */}
       {tab === "signals" && (
