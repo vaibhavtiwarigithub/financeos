@@ -45,6 +45,12 @@ function isModelUnavailable(err: unknown): boolean {
   return /model.*(not exist|not found|does not exist|deprecat|invalid)|invalid_model|not_found_error|unknown model|\b404\b|\b400\b/.test(s)
 }
 
+// Is this a missing-API-key error (SDK throws before any HTTP call)?
+function isAuthMissing(err: unknown): boolean {
+  const s = String((err as any)?.message ?? err).toLowerCase()
+  return s.includes("resolve authentication") || s.includes("api key") || (err as any)?.status === 401
+}
+
 export interface LLMCallOpts {
   task: LLMTask
   prompt: string
@@ -195,6 +201,18 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
         })
         model = fb
         result = await dispatchProvider(fb, opts)
+      } else if (isAuthMissing(err) && model.startsWith("claude")) {
+        // Anthropic API key missing from env — fall back to DeepSeek so the run
+        // doesn't hard-fail. Raises a persistent alert so the key gets re-added.
+        const deepseekFb = "deepseek-v4-flash"
+        await reportIssue({
+          issueKey: "anthropic-key-missing",
+          severity: "error", category: "models",
+          title: "ANTHROPIC_API_KEY missing — Claude calls falling back to DeepSeek",
+          detail: `${model} auth failed: ${String(err).slice(0, 200)}. Add ANTHROPIC_API_KEY to Vercel environment variables and redeploy.`,
+        })
+        model = deepseekFb
+        result = await dispatchProvider(deepseekFb, opts)
       } else {
         throw err
       }
