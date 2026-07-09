@@ -416,40 +416,50 @@ export async function gatherSymbols(
   const rawFocus: string = (profileResult.data as any)?.market_focus ?? "US";
   const focusRegions = rawFocus.split(",").map((s: string) => s.trim()).filter(Boolean);
 
-  const result = new Map<string, SymbolEntry>();
-
+  // Holdings scored unconditionally — already owned, SELL/monitor signals possible.
+  // They do NOT consume the new-buy candidate cap: a 10-ETF portfolio must not
+  // evict all individual stock candidates from the research universe.
+  const holdingEntries: SymbolEntry[] = [];
+  const holdingSet = new Set<string>();
   for (const sym of holdings) {
     const isMetal = METAL_ETF_SYMBOLS.has(sym);
-    result.set(sym, { symbol: sym, isHeld: true, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: "holding" });
+    holdingEntries.push({ symbol: sym, isHeld: true, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: "holding" });
+    holdingSet.add(sym);
   }
+
+  // Candidates (new-buy budget): watchlist first (highest priority — Theme Scout picks land here),
+  // then screener stocks. Cap applies only to this bucket, not to holdings above.
+  const candidateMap = new Map<string, SymbolEntry>();
   for (const sym of watchlistSymbols) {
-    if (!result.has(sym)) {
+    if (!holdingSet.has(sym) && !candidateMap.has(sym)) {
       const isMetal = METAL_ETF_SYMBOLS.has(sym);
-      result.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: "watchlist" });
+      candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: "watchlist" });
     }
   }
 
+  const screenerMax = parseInt(process.env.RESEARCH_SCREENER_MAX ?? "6");
   let screenerAdded = 0;
   for (const { symbol: sym, bucket } of screenerSymbols) {
-    if (result.has(sym) || screenerAdded >= 3) continue;
-    result.set(sym, { symbol: sym, isHeld: false, isEtf: false, assetClass: "us_equity", screenerBucket: bucket, discovery_source: bucket === "momentum" ? "screener_momentum" : "screener_value" });
+    if (holdingSet.has(sym) || candidateMap.has(sym) || screenerAdded >= screenerMax) continue;
+    candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: false, assetClass: "us_equity", screenerBucket: bucket, discovery_source: bucket === "momentum" ? "screener_momentum" : "screener_value" });
     screenerAdded++;
   }
 
-  const cap = parseInt(process.env.RESEARCH_MAX_SYMBOLS ?? "10");
-  const nonMetals = Array.from(result.values()).slice(0, cap);
+  const candidateCap = parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "10");
+  const nonMetals = [...holdingEntries, ...Array.from(candidateMap.values()).slice(0, candidateCap)];
 
-  // Metals basket — always appended on top of cap (4 extra symbols, cheap ETF analysis)
+  // Metals basket — always appended after candidate cap (4 extra symbols, cheap ETF analysis)
   const metals: SymbolEntry[] = [];
+  const allNonMetalSyms = new Set(nonMetals.map(e => e.symbol));
   for (const sym of METALS_BASKET) {
-    if (!result.has(sym)) {
+    if (!allNonMetalSyms.has(sym)) {
       metals.push({ symbol: sym, isHeld: false, isEtf: true, assetClass: "metal", discovery_source: "metals_basket" });
     }
   }
 
   // Region ETFs — appended for each non-US focus in profile.market_focus (max 3 per region)
   const regionEtfs: SymbolEntry[] = [];
-  const seenAll = new Set([...result.keys(), ...metals.map(m => m.symbol)]);
+  const seenAll = new Set([...allNonMetalSyms, ...metals.map(m => m.symbol)]);
   for (const region of focusRegions) {
     if (region === "US") continue;
     const basket = REGION_ETFS[region] ?? [];
