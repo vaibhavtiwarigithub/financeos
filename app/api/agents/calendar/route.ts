@@ -4,10 +4,15 @@ import { createServiceClient } from "@/lib/supabase/service";
 
 export const dynamic = "force-dynamic";
 
-// Agents expected every weekday (all currently scheduled via pg_cron — see
-// PROJECT_DECISIONS Decision 38 area / kairos_pg_cron_vercel_schedule migration).
-const DAILY_AGENTS = ["research", "paper_trader", "position-monitor", "research-india", "position-monitor-india"];
+// Agents expected every weekday. These MUST be the agent_runs.agent_type values
+// (underscore, no market suffix) — agent_runs does not split market in agent_type
+// (the `market` column does), so US + India runs of the same agent share one row.
+// Using the old dash / -india names caused a permanent false "missing" row next
+// to the real underscore row (the calendar double-row bug).
+const DAILY_AGENTS = ["research", "paper_trader", "position_monitor"];
 const FRIDAY_ONLY_AGENTS = ["learner"];
+// Collapse any legacy dash spelling into the canonical underscore agent_type.
+const canon = (a: string) => a.replace(/-/g, "_");
 
 type CellStatus = "ok" | "error" | "partial" | "skipped" | "missing";
 interface Cell { status: CellStatus; runs: number; summary: string; trigger: string | null }
@@ -38,7 +43,7 @@ export async function GET() {
   const byDateAgent = new Map<string, any[]>();
   for (const r of (runs ?? []) as any[]) {
     const date = String(r.started_at).slice(0, 10);
-    const key = `${date}|${r.agent_type}`;
+    const key = `${date}|${canon(String(r.agent_type ?? ""))}`;
     if (!byDateAgent.has(key)) byDateAgent.set(key, []);
     byDateAgent.get(key)!.push(r);
   }
@@ -71,7 +76,7 @@ export async function GET() {
         status,
         runs: runsForCell.length,
         summary: status === "missing"
-          ? "No run recorded — PC off/asleep at trigger time, or Vercel cron not yet configured for this agent. See scripts/README recovery."
+          ? "No run recorded. These run in the cloud (Supabase pg_cron → Vercel) and don't need your PC on — a gap means the cron didn't fire or the endpoint errored/timed out. Re-run from the app or check Supabase pg_cron logs."
           : String(last?.result_summary ?? "").slice(0, 200),
         trigger: last?.trigger_source ?? null,
       };

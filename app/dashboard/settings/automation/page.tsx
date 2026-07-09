@@ -197,12 +197,12 @@ export default function AutomationSettingsPage() {
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif", minHeight: "100vh", background: T.bg }}>
       <PageHeader
         title="Automation"
-        subtitle={`${jobs.length} scheduled jobs · Windows Task Scheduler`}
-        whatItDoes="Every scheduled job in Kairos — what runs, when, where it runs, and what it feeds next. This is the single source of truth for the automation, generated from lib/schedule.ts which mirrors scripts/register-tasks.ps1."
+        subtitle={`${jobs.length} scheduled jobs · Supabase pg_cron → Vercel`}
+        whatItDoes="Every scheduled job in Kairos — what runs, when, where it runs, and what it feeds next. Jobs run in the CLOUD as Supabase pg_cron jobs (kairos-*) that POST to the Vercel deployment, so they fire even when your PC is off. This page mirrors that live pg_cron state from lib/schedule.ts."
         whatToLookFor={[
           "Next run — when each job fires next (computed from its schedule in your local time)",
           "Last run — the most recent agent_runs record for jobs that log one; briefs/reminders don't log runs",
-          "Runner — all jobs run locally via Windows Task Scheduler; cloud crons were decommissioned",
+          "Runner — jobs run in the cloud (Supabase pg_cron → Vercel) and survive your PC being off; only db-backup is local Windows Task Scheduler",
           "Expand a row to see the handoff — what the job feeds next in the pipeline",
         ]}
       />
@@ -212,8 +212,8 @@ export default function AutomationSettingsPage() {
         <div style={{ background: T.amberBg, border: `1px solid ${T.amber}44`, borderRadius: "10px", padding: "12px 14px", marginBottom: "18px", fontSize: "12.5px", color: T.amber, display: "flex", gap: "10px", alignItems: "flex-start" }}>
           <span style={{ fontSize: "14px", lineHeight: 1.2 }}>🔒</span>
           <span style={{ color: T.textSub }}>
-            <b style={{ color: T.amber }}>Schedules are managed by Windows Task Scheduler and are read-only here.</b>{" "}
-            To change any time, day, or interval, edit <code style={{ color: T.text, background: T.card, padding: "1px 5px", borderRadius: "4px", fontSize: "11.5px" }}>scripts/register-tasks.ps1</code> and re-run it as the app user. Cloud / Supabase edge-function crons were decommissioned — everything now runs locally under the <code style={{ color: T.text, background: T.card, padding: "1px 5px", borderRadius: "4px", fontSize: "11.5px" }}>\Kairos</code> task folder.
+            <b style={{ color: T.amber }}>Schedules are managed by Supabase pg_cron (cloud) and are read-only here.</b>{" "}
+            To change any time, day, or interval, edit the pg_cron schedule in Supabase (see <code style={{ color: T.text, background: T.card, padding: "1px 5px", borderRadius: "4px", fontSize: "11.5px" }}>supabase/migrations/080_kairos_pg_cron_schedule.sql</code>) and keep <code style={{ color: T.text, background: T.card, padding: "1px 5px", borderRadius: "4px", fontSize: "11.5px" }}>lib/schedule.ts</code> in sync. Every <code style={{ color: T.text, background: T.card, padding: "1px 5px", borderRadius: "4px", fontSize: "11.5px" }}>kairos-*</code> job runs in the cloud (pg_cron → Vercel) and fires even when your PC is off; only db-backup remains local Windows Task Scheduler.
           </span>
         </div>
 
@@ -260,7 +260,7 @@ export default function AutomationSettingsPage() {
                           </td>
                           <td style={{ ...td, whiteSpace: "nowrap" }}>
                             <span style={{ fontSize: "10.5px", fontWeight: 700, color: T.cyan, background: T.cyanBg, padding: "2px 8px", borderRadius: "5px", border: `1px solid ${T.cyan}33` }}>
-                              Windows Scheduler
+                              {job.runner === "Windows Task Scheduler" ? "Windows (local)" : "pg_cron → Vercel"}
                             </span>
                           </td>
                           <td style={{ ...td, whiteSpace: "nowrap" }}>

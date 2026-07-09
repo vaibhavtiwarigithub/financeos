@@ -11,9 +11,19 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const AV_KEY = process.env.ALPHA_VANTAGE_API_KEY ?? "";
-const MAX_THEME_STOCKS = 2;  // per theme
-const MAX_THEMES = 3;
+const MAX_THEME_STOCKS = 3;  // per theme
+const MAX_THEMES = 4;
 const EXPIRE_DAYS = 30;
+
+// Curated structural-theme spine — the secular themes we always want represented
+// when the market supports them, so news-of-the-day noise can't crowd out the AI /
+// semiconductor / power complex. The LLM still picks the actual tickers + can add
+// its own news-driven themes for the remaining slots.
+const THEME_SPINE = [
+  "AI compute & infrastructure (GPUs, accelerators, data-center buildout)",
+  "Semiconductors (design, foundry, equipment, memory)",
+  "Nuclear & power / energy infrastructure (utilities, grid, uranium, gas)",
+];
 
 async function fetchMarketNews(): Promise<string> {
   if (!AV_KEY) return "";
@@ -86,7 +96,10 @@ export async function POST(req: NextRequest) {
   }
 
   // Step 1: LLM identifies themes
-  const themePrompt = `You are a quantitative equity analyst. Based on today's market news and price movers, identify ${MAX_THEMES} distinct investable themes. For each theme, provide specific US-listed stock tickers that best represent it (only well-known, liquid tickers with market cap > $2B).
+  const themePrompt = `You are a quantitative equity analyst. Identify ${MAX_THEMES} investable themes for today. For each theme, provide specific US-listed stock tickers that best represent it (only well-known, liquid tickers with market cap > $2B).
+
+ALWAYS represent these structural themes when the market supports them (use the first slots for them), then fill the remaining slots with themes driven by today's news/movers below:
+${THEME_SPINE.map((t, i) => `${i + 1}. ${t}`).join("\n")}
 
 Today's market news headlines:
 ${news}
@@ -106,7 +119,7 @@ Respond with ONLY valid JSON in this exact format (no markdown, no explanation):
 }
 
 Rules:
-- Themes must be distinct from each other (not both 'AI' themed)
+- Keep themes distinct, BUT the AI / semiconductor / power-energy complex is broad — it is fine to surface e.g. "AI infrastructure", "semiconductors", and "nuclear & power" as SEPARATE themes; do not collapse them into one.
 - Max ${MAX_THEME_STOCKS} candidates per theme
 - Only real, tradeable US equity tickers
 - Avoid broad ETFs as candidates — pick individual stocks

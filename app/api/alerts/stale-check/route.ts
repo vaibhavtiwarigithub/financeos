@@ -32,19 +32,19 @@ interface ExpectedJob {
 
 const EXPECTED_JOBS: ExpectedJob[] = [
   { agentType: "research",         label: "Research (US)",           expectedHour: 9,  graceHours: 1,
-    recoveryCmd: 'curl -X POST "http://localhost:3000/api/agents/research/cron?market=us" -H "x-cron-secret: YOUR_SECRET"' },
+    recoveryCmd: 'curl -X POST "https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/research/cron?market=us" -H "x-cron-secret: YOUR_SECRET"' },
   { agentType: "paper_trader",     label: "PaperTrader",              expectedHour: 9,  graceHours: 2,
-    recoveryCmd: 'curl -X POST http://localhost:3000/api/agents/paper-trade -H "x-cron-secret: YOUR_SECRET"' },
+    recoveryCmd: 'curl -X POST https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/paper-trade?market=us -H "x-cron-secret: YOUR_SECRET"' },
   { agentType: "position_monitor", label: "PositionMonitor (US)",     expectedHour: 16, graceHours: 2,
-    recoveryCmd: 'curl -X POST "http://localhost:3000/api/agents/position-monitor?market=us" -H "x-cron-secret: YOUR_SECRET"' },
+    recoveryCmd: 'curl -X POST "https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/position-monitor?market=us" -H "x-cron-secret: YOUR_SECRET"' },
   { agentType: "label_maturation", label: "Label maturation",         expectedHour: 18, graceHours: 2,
-    recoveryCmd: 'curl -X POST http://localhost:3000/api/agents/label-maturation -H "x-cron-secret: YOUR_SECRET"' },
+    recoveryCmd: 'curl -X POST https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/label-maturation -H "x-cron-secret: YOUR_SECRET"' },
   { agentType: "learner",          label: "LearnerAgent (weekly)",    expectedHour: 17, graceHours: 3, fridayOnly: true,
-    recoveryCmd: 'curl -X POST http://localhost:3000/api/agents/learner -H "x-cron-secret: YOUR_SECRET"' },
+    recoveryCmd: 'curl -X POST https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/learner -H "x-cron-secret: YOUR_SECRET"' },
   { agentType: "research",         label: "Research (India)",         expectedHour: 7,  graceHours: 1, requiresIndia: true,
-    recoveryCmd: 'curl -X POST "http://localhost:3000/api/agents/research/cron?market=india" -H "x-cron-secret: YOUR_SECRET"' },
+    recoveryCmd: 'curl -X POST "https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/research/cron?market=india" -H "x-cron-secret: YOUR_SECRET"' },
   { agentType: "position_monitor", label: "PositionMonitor (India)",  expectedHour: 8,  graceHours: 2, requiresIndia: true,
-    recoveryCmd: 'curl -X POST "http://localhost:3000/api/agents/position-monitor?market=india" -H "x-cron-secret: YOUR_SECRET"' },
+    recoveryCmd: 'curl -X POST "https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/position-monitor?market=india" -H "x-cron-secret: YOUR_SECRET"' },
 ];
 
 export async function GET() {
@@ -123,7 +123,7 @@ export async function GET() {
     const detail = [
       `Detected: ${fmtDateTime(now)}`,
       `Expected: ~${job.expectedHour}:00 ET${job.fridayOnly ? " (Fridays)" : " weekdays"}`,
-      `Likely cause: app/PC was not running at trigger time.`,
+      `Likely cause: the Supabase pg_cron job did not fire, or the endpoint errored/timed out. These run in the cloud (pg_cron -> Vercel) and do NOT need your PC on.`,
       `Recovery: ${job.recoveryCmd}`,
     ].join(" · ");
 

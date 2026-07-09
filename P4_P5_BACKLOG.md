@@ -12,7 +12,19 @@ current backlog) are complete. Nothing here is started.
   Correct the copy to reflect cloud pg_cron. (Also the health-triage "curl localhost"
   recovery text — same stale-local assumption.)
 
+## Done since capture (2026-07-08)
+- Automation-page stale copy + calendar dash/underscore double-row + stale-check
+  "PC off" recovery text → all corrected to cloud pg_cron reality.
+- Theme Scout US coverage: curated structural spine (AI/semis/nuclear-energy) always
+  represented + relaxed the anti-AI-dedup rule + caps raised to 4 themes × 3 tickers.
+
 ## P4
+
+### P4.0 — India Theme Scout (follow-up to the US spine)
+Theme Scout is US-only (LLM prompt demands US tickers, tickerExists validates via AV
+OVERVIEW). India gets no thematic candidates. Add an India-scoped run that screens NSE
+names (Yahoo/NSE source) with the same structural spine, writing to the India watchlist.
+Bigger than the US prompt tweak — needs an India ticker-existence check + India watchlist wiring.
 
 ### P4.1 — Per-account, per-symbol risk analytics + advisory suggestions (US + India)
 - Extend Risk Analytics to **per connected account**, not just one book.
