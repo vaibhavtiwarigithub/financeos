@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
 import { avCachedFetch } from "@/lib/av-cache";
 import { getConfiguredModel, isAgentEnabled } from "@/lib/agent-model-config";
+import { getProviderKey } from "@/lib/llm-keys";
 import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest) {
   // "AAPL/?x" can't reach the provider URL path.
   if (!/^[A-Z]{1,5}([.-][A-Z]{1,2})?$/.test(symbol)) return NextResponse.json({ error: "valid US ticker required" }, { status: 400 });
 
-  if (!process.env.DEEPSEEK_API_KEY) return NextResponse.json({ error: "DEEPSEEK_API_KEY not set" }, { status: 503 });
+  if (!(await getProviderKey("deepseek"))) return NextResponse.json({ error: "DEEPSEEK_API_KEY not set" }, { status: 503 });
 
   const svc = createServiceClient();
   if (!(await isAgentEnabled(svc, "deep-dive"))) {

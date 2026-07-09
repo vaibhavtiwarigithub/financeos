@@ -3,6 +3,7 @@
 // No-ops gracefully if keys are absent — zero runtime impact.
 import type Anthropic from "@anthropic-ai/sdk"
 import { reportIssue } from "@/lib/system-health"
+import { getProviderKey } from "@/lib/llm-keys"
 
 export type LLMTask = "research" | "chat" | "summarize" | "trade" | "evaluate" | "thesis" | "screen" | "optimize"
 
@@ -262,7 +263,8 @@ async function callClaude(
   // every subsequent read is 10× cheaper. TTL: 5 minutes per Anthropic docs.
   try {
     const { default: Anthropic } = await import("@anthropic-ai/sdk")
-    const client = new Anthropic()
+    // Vault-first key (Settings) → env fallback. undefined lets the SDK read env itself.
+    const client = new Anthropic({ apiKey: (await getProviderKey("anthropic")) ?? undefined })
     const messages: { role: "user" | "assistant"; content: string }[] = [
       { role: "user", content: prompt },
     ]
@@ -303,7 +305,7 @@ async function callDeepSeek(
   system?: string,
   maxTokens = 4096
 ): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
-  const apiKey = process.env.DEEPSEEK_API_KEY
+  const apiKey = await getProviderKey("deepseek")
   if (!apiKey) throw new Error("DEEPSEEK_API_KEY not set")
 
   const messages: { role: string; content: string }[] = []
@@ -339,7 +341,7 @@ async function callGroq(
   system?: string,
   maxTokens = 4096
 ): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
-  const apiKey = process.env.GROQ_API_KEY
+  const apiKey = await getProviderKey("groq")
   if (!apiKey) throw new Error("GROQ_API_KEY not set")
 
   const messages: { role: string; content: string }[] = []
@@ -485,7 +487,7 @@ async function runClaudeAgentLoop(
   maxIter: number
 ): Promise<AgentLoopResult> {
   const { default: AnthropicSDK } = await import("@anthropic-ai/sdk")
-  const client = new AnthropicSDK()
+  const client = new AnthropicSDK({ apiKey: (await getProviderKey("anthropic")) ?? undefined })
 
   const tools = opts.tools.map(t => ({
     name: t.name,
@@ -554,7 +556,7 @@ async function runDeepSeekAgentLoop(
   model: string,
   maxIter: number
 ): Promise<AgentLoopResult> {
-  const apiKey = process.env.DEEPSEEK_API_KEY
+  const apiKey = await getProviderKey("deepseek")
   if (!apiKey) throw new Error("DEEPSEEK_API_KEY not set — runAgentLoop requires DeepSeek for non-Claude models")
 
   const openAITools = opts.tools.map(t => ({

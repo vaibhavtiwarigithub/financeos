@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getConfiguredModel } from "@/lib/agent-model-config";
+import { getProviderKey } from "@/lib/llm-keys";
 import { runAgentLoop, ToolCall } from "@/lib/llm-router";
 import { verifyCronSecret } from "@/lib/auth/cron";
 
@@ -21,7 +22,7 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await userClient.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!process.env.DEEPSEEK_API_KEY) return NextResponse.json({ error: "DEEPSEEK_API_KEY not set" }, { status: 503 });
+  if (!(await getProviderKey("deepseek"))) return NextResponse.json({ error: "DEEPSEEK_API_KEY not set" }, { status: 503 });
 
   const svc = createServiceClient();
 

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { getProviderKey } from "@/lib/llm-keys";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -14,7 +15,7 @@ export const maxDuration = 60;
 interface ProviderResult { ok: boolean; models?: string[]; error?: string }
 
 async function checkAnthropic(): Promise<ProviderResult> {
-  const key = process.env.ANTHROPIC_API_KEY;
+  const key = await getProviderKey("anthropic");
   if (!key) return { ok: false, error: "No ANTHROPIC_API_KEY configured" };
   try {
     const res = await fetch("https://api.anthropic.com/v1/models", {
@@ -28,7 +29,7 @@ async function checkAnthropic(): Promise<ProviderResult> {
 }
 
 async function checkGroq(): Promise<ProviderResult> {
-  const key = process.env.GROQ_API_KEY;
+  const key = await getProviderKey("groq");
   if (!key) return { ok: false, error: "No GROQ_API_KEY configured" };
   try {
     const res = await fetch("https://api.groq.com/openai/v1/models", {
@@ -42,7 +43,7 @@ async function checkGroq(): Promise<ProviderResult> {
 }
 
 async function checkDeepSeek(): Promise<ProviderResult> {
-  const key = process.env.DEEPSEEK_API_KEY;
+  const key = await getProviderKey("deepseek");
   if (!key) return { ok: false, error: "No DEEPSEEK_API_KEY configured" };
   try {
     const res = await fetch("https://api.deepseek.com/models", {

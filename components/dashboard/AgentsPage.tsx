@@ -84,10 +84,16 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [validatingId, setValidatingId] = useState<number | null>(null);
   const [backtestResult, setBacktestResult] = useState<any | null>(null);
   const [proposalToast, setProposalToast] = useState("");
+  // Settings-LLM Part 2 — provider API keys (masked status; keys never returned).
+  const [providerKeys, setProviderKeys] = useState<{ provider: string; label: string; source: string; last4: string | null }[]>([]);
+  const [pkInputs, setPkInputs] = useState<Record<string, string>>({});
+  const [pkSaving, setPkSaving] = useState<string | null>(null);
+  const [pkToast, setPkToast] = useState("");
 
   useEffect(() => {
     fetch("/api/agents/learner-brain").then(r => r.json()).then(d => { if (d.runs) setLearnerRuns(d.runs); }).catch(() => {});
     fetch("/api/agents/agent-config").then(r => r.json()).then(d => { if (d.configs) setAgentConfigs(d.configs); }).catch(() => {});
+    fetch("/api/agents/provider-keys").then(r => r.json()).then(d => { if (d.providers) setProviderKeys(d.providers); }).catch(() => {});
     fetch("/api/agents/learner-controls").then(r => r.json()).then(d => {
       if (d.config) setLearnerConfig(d.config);
       if (d.history) setWeightHistory(d.history);
@@ -138,6 +144,34 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
       setTimeout(() => setConfigUpdateToast(""), 2000);
     } catch {}
     setConfigUpdating(null);
+  }
+
+  // Provider API keys — write-only. Save stores in the vault; the raw key is
+  // never read back (only masked status is returned).
+  async function saveProviderKey(provider: string) {
+    const key = (pkInputs[provider] ?? "").trim();
+    if (key.length < 8) { setPkToast("Key looks too short"); setTimeout(() => setPkToast(""), 2500); return; }
+    setPkSaving(provider);
+    try {
+      const r = await fetch("/api/agents/provider-keys", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, key }) });
+      const d = await r.json();
+      if (r.ok && d.providers) { setProviderKeys(d.providers); setPkInputs(prev => ({ ...prev, [provider]: "" })); setPkToast("Key saved"); }
+      else setPkToast(d.error ?? "Save failed");
+    } catch { setPkToast("Save failed"); }
+    setPkSaving(null);
+    setTimeout(() => setPkToast(""), 2500);
+  }
+  async function clearProviderKey(provider: string) {
+    if (!confirm(`Remove the ${provider} key from Settings and revert to the deployment's env var?`)) return;
+    setPkSaving(provider);
+    try {
+      const r = await fetch(`/api/agents/provider-keys?provider=${encodeURIComponent(provider)}`, { method: "DELETE" });
+      const d = await r.json();
+      if (r.ok && d.providers) { setProviderKeys(d.providers); setPkToast("Reverted to env"); }
+      else setPkToast(d.error ?? "Clear failed");
+    } catch { setPkToast("Clear failed"); }
+    setPkSaving(null);
+    setTimeout(() => setPkToast(""), 2500);
   }
 
   async function saveStrategyConfig() {
@@ -1183,6 +1217,54 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
               </div>
               </div>
             )}
+          </div>
+
+          {/* Provider API keys — vault-backed, write-only, owner-gated */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "6px" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: "14px" }}>Provider API Keys</div>
+                <div style={{ fontSize: "12px", color: T.muted, marginTop: "3px" }}>Set a key here to override the deployment env var. Keys are stored encrypted and never shown again — only the last 4 digits.</div>
+              </div>
+              {pkToast && <span style={{ fontSize: "12px", color: T.green }}>{pkToast}</span>}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "12px" }}>
+              {providerKeys.map(pk => {
+                const srcColor = pk.source === "vault" ? T.green : pk.source === "env" ? T.muted : "#c0392b";
+                const srcLabel = pk.source === "vault" ? `Settings ••${pk.last4}` : pk.source === "env" ? `env ••${pk.last4}` : "not set";
+                return (
+                  <div key={pk.provider} style={{ background: T.surface, borderRadius: "10px", padding: "14px 16px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px" }}>
+                    <div style={{ minWidth: "150px", flex: "1 1 150px" }}>
+                      <div style={{ fontWeight: 600, fontSize: "13px" }}>{pk.label}</div>
+                      <div style={{ fontSize: "11px", color: srcColor, marginTop: "2px" }}>{srcLabel}</div>
+                    </div>
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder="Paste new key…"
+                      value={pkInputs[pk.provider] ?? ""}
+                      onChange={e => setPkInputs(prev => ({ ...prev, [pk.provider]: e.target.value }))}
+                      style={{ flex: "2 1 200px", minWidth: "160px", background: T.card, border: `1px solid ${T.border}`, borderRadius: "6px", color: T.text, fontSize: "12px", padding: "7px 10px", outline: "none" }}
+                    />
+                    <button
+                      onClick={() => saveProviderKey(pk.provider)}
+                      disabled={pkSaving === pk.provider || !(pkInputs[pk.provider] ?? "").trim()}
+                      style={{ background: T.accent, color: "#fff", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: 600, padding: "7px 14px", cursor: "pointer", opacity: pkSaving === pk.provider || !(pkInputs[pk.provider] ?? "").trim() ? 0.5 : 1 }}
+                    >{pkSaving === pk.provider ? "Saving…" : "Save"}</button>
+                    {pk.source === "vault" && (
+                      <button
+                        onClick={() => clearProviderKey(pk.provider)}
+                        disabled={pkSaving === pk.provider}
+                        style={{ background: "transparent", color: T.muted, border: `1px solid ${T.border}`, borderRadius: "6px", fontSize: "12px", padding: "7px 12px", cursor: "pointer" }}
+                      >Clear</button>
+                    )}
+                  </div>
+                );
+              })}
+              {providerKeys.length === 0 && (
+                <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "16px 0" }}>Loading providers…</div>
+              )}
+            </div>
           </div>
         </div>
       )}

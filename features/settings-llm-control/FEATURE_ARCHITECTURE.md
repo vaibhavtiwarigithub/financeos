@@ -1,6 +1,14 @@
 # Settings-driven LLM + API-key control for every flow
 
-**Status: DRAFT PROPOSAL (awaiting approval — no code written yet).**
+**Status: SHIPPED (both parts). 2026-07-08.**
+Part 1 — every flow honors `agent_config`: migration 129 reconciled theme-scout/
+briefing/mentor rows to their real current model, then wired those callsites to
+`getConfiguredModel` (learner + markets-thesis/synthesis + macro-read + backtest-
+optimize + health-triage + deep-dive already honored it; `research` keeps adaptive
+routing; deepseek A/B stays deepseek). Part 2 — `lib/llm-keys.ts` (`getProviderKey`
+vault-first/env-fallback + status/set/clear), owner-gated `app/api/agents/provider-keys`,
+router + guards + model-check made vault-aware, Providers card in the LLM Config tab
+(write-only, masked, clear-to-revert-to-env).
 Last updated: 2026-07-08
 
 ## Goal (user ask)
