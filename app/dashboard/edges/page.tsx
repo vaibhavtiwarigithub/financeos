@@ -13,14 +13,34 @@ const T = {
 
 export default async function EdgesPage() {
   const svc = createServiceClient();
-  const [catalogRes, recentRes, uniRes] = await Promise.all([
+  const [catalogRes, recentRes, uniRes, icRes] = await Promise.all([
     svc.from("edge_catalog").select("*").order("category").order("edge_id"),
     svc.from("edge_signals").select("symbol, edge_id, market, raw_value, z_value, date").order("date", { ascending: false }).limit(500),
     svc.from("edge_universe_members").select("universe_id, market, symbol"),
+    svc.from("edge_ic_history").select("edge_id, market, window_end, horizon, ic, ic_ir, t_stat, status_after").order("window_end", { ascending: false }).limit(1000),
   ]);
   const catalog = (catalogRes.data ?? []) as any[];
   const recent = (recentRes.data ?? []) as any[];
   const universe = (uniRes.data ?? []) as any[];
+  // Latest IC window only, keyed by edge_id|market|horizon.
+  const icAll = (icRes.data ?? []) as any[];
+  const icLatestWindow = icAll.reduce((mx: string, r: any) => (r.window_end > mx ? r.window_end : mx), "");
+  const icByKey = new Map<string, any>();
+  for (const r of icAll) if (r.window_end === icLatestWindow) icByKey.set(`${r.edge_id}|${r.market}|${r.horizon}`, r);
+  const IC_HORIZONS = [5, 10, 20];
+  const statusColor = (s: string) => s === "shadow_eligible" ? T.green : s === "benched_negative" ? T.amber : T.muted;
+  const fmt3 = (v: any) => (v == null || !Number.isFinite(Number(v)) ? "—" : Number(v).toFixed(3));
+  const fmt2 = (v: any) => (v == null || !Number.isFinite(Number(v)) ? "—" : Number(v).toFixed(2));
+  const icScorecard: { edgeId: string; name: string; market: string; cells: any[]; status: string }[] = [];
+  for (const market of ["us", "india"]) {
+    for (const e of catalog) {
+      const cells = IC_HORIZONS.map(h => icByKey.get(`${e.edge_id}|${market}|${h}`) ?? null);
+      if (cells.every(c => !c)) continue;
+      const status = cells.find(c => c?.status_after === "shadow_eligible") ? "shadow_eligible"
+        : cells.find(c => c?.status_after === "benched_negative") ? "benched_negative" : "measure_only";
+      icScorecard.push({ edgeId: e.edge_id, name: e.name, market, cells, status });
+    }
+  }
 
   const latestDate = recent.reduce((mx, r) => (r.date > mx ? r.date : mx), "");
   const countByEdgeMarket = new Map<string, number>();
@@ -78,8 +98,40 @@ export default async function EdgesPage() {
           </table>
         </div>
 
+        {/* IC scorecard (P1) — does an edge actually predict forward returns? */}
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px", marginBottom: "16px", overflowX: "auto" }}>
+          <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "2px" }}>IC Scorecard {icLatestWindow && <span style={{ fontSize: "11px", color: T.muted, fontWeight: 400 }}>· window {icLatestWindow}</span>}</div>
+          <div style={{ fontSize: "12px", color: T.muted, marginBottom: "12px" }}>
+            Rank IC (Spearman) of each edge value vs its forward return, with a Newey-West t (corrects for overlapping windows). Positive IC = the edge ranks winners above losers. <b>Status is advisory</b> — “shadow_eligible” (IC ≥ 0.02 &amp; |t| ≥ 2) means it MAY enter shadow later; it grants no trade permission.
+          </div>
+          {icScorecard.length === 0 ? (
+            <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "20px 0" }}>No IC computed yet — run EdgeIC (POST /api/agents/edge-ic).</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "720px" }}>
+              <thead><tr>
+                <th style={th}>Edge</th><th style={th}>Mkt</th>
+                <th style={th}>IC 5d (t)</th><th style={th}>IC 10d (t)</th><th style={th}>IC 20d (t)</th><th style={th}>Status</th>
+              </tr></thead>
+              <tbody>
+                {icScorecard.map((r) => (
+                  <tr key={`${r.edgeId}|${r.market}`} style={{ borderTop: `1px solid ${T.border}` }}>
+                    <td style={{ ...td, fontWeight: 600 }}>{r.name}</td>
+                    <td style={td}>{r.market}</td>
+                    {r.cells.map((c: any, i: number) => (
+                      <td key={i} style={{ ...td, fontVariantNumeric: "tabular-nums", color: c && Number(c.ic) > 0 ? T.green : c ? T.muted : T.muted }}>
+                        {c ? `${fmt3(c.ic)} (${fmt2(c.t_stat)})` : "—"}
+                      </td>
+                    ))}
+                    <td style={td}><span style={{ fontSize: "11px", padding: "2px 7px", borderRadius: "4px", background: T.surface, color: statusColor(r.status) }}>{r.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
         <div style={{ fontSize: "11px", color: T.muted }}>
-          Run: <code style={{ background: T.surface, padding: "1px 5px", borderRadius: "4px" }}>POST /api/agents/edge-scout?market=both&amp;maxSymbols=40</code> (owner or cron). Backfill: add <code style={{ background: T.surface, padding: "1px 5px", borderRadius: "4px" }}>&amp;from=YYYY-MM-DD&amp;to=YYYY-MM-DD&amp;maxDays=10</code>.
+          Run: <code style={{ background: T.surface, padding: "1px 5px", borderRadius: "4px" }}>POST /api/agents/edge-scout?market=both&amp;maxSymbols=40</code> then <code style={{ background: T.surface, padding: "1px 5px", borderRadius: "4px" }}>POST /api/agents/edge-ic?market=us&amp;maxSymbols=40</code> (owner or cron).
         </div>
       </div>
     </div>
