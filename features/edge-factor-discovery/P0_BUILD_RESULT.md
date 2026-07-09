@@ -81,6 +81,50 @@ point-in-time universe over multiple years + regimes is required before any edge
 trusted. `net_of_fee_ic`/`turnover` left null (the cost-adjusted long-only bucket
 alpha is the later P5 gate).
 
+---
+
+# Broaden IC evidence — result (measure-only)
+
+Date: 2026-07-09. Commit: `9e56c63`. Purpose: make IC less noisy before P2 by
+computing it on a broad cross-section instead of a 30-name watchlist.
+
+## What was built
+- `lib/edges/universe.ts`: static curated liquid universe (~110 US large/mid-caps
+  across sectors, ~55 NSE). Labeled NON-PIT / survivorship-biased.
+- resolver + edge-scout/edge-ic gain `universe=liquid`, `offset` (paging),
+  `historyDays` (edge-ic defaults ~1000 cal days ≈ 2.5–3yr). Cap raised to 200.
+
+## Run (bounded, cached)
+1. Warm cache: 3× `edge-scout?universe=liquid&historyDays=1000&maxSymbols=40&offset=0/40/80`
+   → 120 universe members, 680 signals, all done.
+2. `edge-ic?universe=liquid&maxSymbols=200&historyDays=1000&maxDates=60` → 24 IC rows
+   over the FULL 120-name cross-section.
+
+## Finding (the payoff)
+Broadening from 30 tech-heavy names to 120 diversified names **collapsed every
+edge's IC to ≈0** and **nothing cleared shadow_eligible**:
+- mom_12_1: 0.13 (t 2.6) → ≈0/slightly negative (t<1)
+- dma_trend_slope: 0.23 (t 3.9) → 0.04–0.08 (t<1.7)
+- rel_strength_6m: 0.21 (t 2.1) → 0.02 (t 0.4)
+- low_realized_vol: negative IC (high-vol outperformed this window)
+- st_reversal_uptrend: benched_negative @20d (consistent)
+
+**Interpretation:** the strong 30-name signal was concentration + survivorship
+artifact. The IC gate correctly REFUSED to promote an illusory edge — which is the
+entire purpose of P1. Measure-only confirmed: agent_signals/paper_trades unchanged.
+
+## Caveats (unchanged, honest)
+One ~2.5yr window (a specific post-2023 regime), still survivorship-biased
+(current-liquid names), no fees, no PIT membership. So this is "these price/volume
+edges don't clear the bar ON THIS SAMPLE", NOT "momentum is dead." Real rigor needs
+multi-year + point-in-time membership + cost-adjusted long-only bucket alpha (P5).
+
+## Implication for the roadmap
+P2 (shadow composite) is **not yet worth building** — with no edge clearing the IC
+bar on the broad sample, there is nothing trustworthy to blend. The higher-value
+next step is data rigor: true PIT membership + a longer, multi-regime window, then
+re-measure. (Owner decision.)
+
 ## Not done (by design)
 P2 shadow composite; P3 exploratory paper; P4 regime scaler; P5 active paper; P6 live;
 any wiring into analyst_score / paper fills / sizing / live orders; scheduled crons
