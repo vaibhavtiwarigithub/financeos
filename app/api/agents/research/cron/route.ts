@@ -149,16 +149,25 @@ export async function POST(req: NextRequest) {
   } as any).select().single();
   const runId = (runRow as any)?.id ?? null;
 
-  const results: any[] = [];
-
-  for (const entry of entries) {
-    try {
-      const result = await processSymbol(entry, supabase);
-      results.push(result);
-    } catch (e) {
-      results.push({ symbol: entry.symbol, error: e instanceof Error ? e.message : String(e) });
+  // Parallel processing — RESEARCH_PARALLEL workers run concurrently so 42 symbols
+  // finish in ceil(42/N) rounds instead of serially. Default 5 keeps well inside
+  // the 150s maxDuration (42/5 rounds × ~8s each ≈ 72s). Raise carefully: AV free
+  // tier is 5 req/min, but av-cache absorbs repeat calls so burst is rare.
+  const concurrency = parseInt(process.env.RESEARCH_PARALLEL ?? "5");
+  const results: any[] = new Array(entries.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < entries.length) {
+      const i = idx++;
+      const entry = entries[i];
+      try {
+        results[i] = await processSymbol(entry, supabase);
+      } catch (e) {
+        results[i] = { symbol: entry.symbol, error: e instanceof Error ? e.message : String(e) };
+      }
     }
   }
+  await Promise.all(Array.from({ length: Math.min(concurrency, entries.length) }, worker));
 
   const ok = results.filter(r => !r.error).length;
   const errs = results.filter(r => r.error).length;
