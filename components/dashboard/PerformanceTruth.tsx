@@ -41,6 +41,15 @@ interface MarketMetrics {
 }
 type ApiResp = { ok: boolean; markets: Record<string, MarketMetrics>; error?: string };
 
+interface Mandate { id: string; name: string; market: string; horizon: string; benchmark_symbol: string }
+interface EvalRow {
+  id: string; mandate_id: string; market: string; evaluated_at: string;
+  n_trades_total: number; n_trades_evaluable: number; tainted_count: number;
+  book_sharpe: number | null; book_max_drawdown: number | null; book_win_rate: number | null;
+  book_alpha_pct: number | null; health_label: string; health_reason: string | null;
+  promotion_eligible: boolean;
+}
+
 function fmt(m: Metric, opts: { pct?: boolean; dp?: number } = {}): string {
   if (m.insufficient || m.value === null) return "—";
   const dp = opts.dp ?? 2;
@@ -77,10 +86,22 @@ function MetricTile({ label, value, sub, tone, n, insufficient }: {
   );
 }
 
+const HEALTH_COLORS: Record<string, string> = {
+  insufficient_sample:        "#6B7280",
+  negative_or_zero_edge:      "#F87171",
+  promising_but_unvalidated:  "#FBBF24",
+  validation_required:        "#34D399",
+};
+
 export default function PerformanceTruth() {
   const [data, setData] = useState<ApiResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [market, setMarket] = useState<"us" | "india">("us");
+  const [mandates, setMandates] = useState<Mandate[]>([]);
+  const [mandateId, setMandateId] = useState<string>("");
+  const [evals, setEvals] = useState<EvalRow[]>([]);
+  const [running, setRunning] = useState(false);
+  const [runMsg, setRunMsg] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -91,6 +112,60 @@ export default function PerformanceTruth() {
     return () => { live = false; };
   }, []);
 
+  // Fetch mandates + evaluations when market changes
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/agents/evaluation/mandates?market=${market}`, { cache: "no-store" })
+      .then(r => r.json())
+      .then((j: { ok: boolean; mandates?: Mandate[] }) => {
+        if (!live || !j.ok) return;
+        setMandates(j.mandates ?? []);
+        const def = (j.mandates ?? []).find(m => m.market === market) ?? j.mandates?.[0];
+        if (def) setMandateId(def.id);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [market]);
+
+  useEffect(() => {
+    if (!mandateId) return;
+    let live = true;
+    fetch(`/api/agents/evaluation/results?mandateId=${mandateId}&market=${market}&limit=10`, { cache: "no-store" })
+      .then(r => r.json())
+      .then((j: { ok: boolean; evaluations?: EvalRow[] }) => {
+        if (live && j.ok) setEvals(j.evaluations ?? []);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [mandateId, market]);
+
+  async function handleRunEval() {
+    if (!mandateId || running) return;
+    setRunning(true);
+    setRunMsg(null);
+    try {
+      const res = await fetch("/api/agents/evaluation/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mandateId, market }),
+      });
+      const j = await res.json();
+      if (j.ok) {
+        setRunMsg(`Done — ${j.health_label?.replace(/_/g, " ")} (${j.n_trades_evaluable ?? 0} evaluable trades)`);
+        // Refresh evaluations
+        const r2 = await fetch(`/api/agents/evaluation/results?mandateId=${mandateId}&market=${market}&limit=10`, { cache: "no-store" });
+        const j2 = await r2.json();
+        if (j2.ok) setEvals(j2.evaluations ?? []);
+      } else {
+        setRunMsg(`Error: ${j.error ?? "unknown"}`);
+      }
+    } catch (e: any) {
+      setRunMsg(`Error: ${e?.message ?? String(e)}`);
+    } finally {
+      setRunning(false);
+    }
+  }
+
   const wrap = (children: React.ReactNode) => (
     <div style={{ marginTop: "24px", background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginBottom: "16px" }}>
@@ -98,14 +173,37 @@ export default function PerformanceTruth() {
           <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em" }}>Performance Truth</div>
           <div style={{ fontSize: "12px", color: T.muted, marginTop: "4px" }}>Risk-adjusted, cost-net, calibrated — the metrics that survive scrutiny, not just win-rate.</div>
         </div>
-        <div style={{ display: "flex", gap: "4px" }}>
-          {(["us", "india"] as const).map(mk => (
-            <button key={mk} onClick={() => setMarket(mk)} style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: market === mk ? T.accent : T.surface, color: market === mk ? "#fff" : T.muted, textTransform: "uppercase" }}>
-              {mk}
-            </button>
-          ))}
+        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+          {mandates.length > 0 && (
+            <select
+              value={mandateId}
+              onChange={e => setMandateId(e.target.value)}
+              style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "12px", padding: "5px 10px", cursor: "pointer" }}
+            >
+              {mandates.map(mn => <option key={mn.id} value={mn.id}>{mn.name}</option>)}
+            </select>
+          )}
+          <button
+            onClick={handleRunEval}
+            disabled={running || !mandateId}
+            style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: running || !mandateId ? "default" : "pointer", border: "none", background: T.accent, color: "#fff", opacity: running || !mandateId ? 0.5 : 1 }}
+          >
+            {running ? "Running…" : "Run Eval"}
+          </button>
+          <div style={{ display: "flex", gap: "4px" }}>
+            {(["us", "india"] as const).map(mk => (
+              <button key={mk} onClick={() => setMarket(mk)} style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: market === mk ? T.accent : T.surface, color: market === mk ? "#fff" : T.muted, textTransform: "uppercase" }}>
+                {mk}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
+      {runMsg && (
+        <div style={{ fontSize: "12px", color: runMsg.startsWith("Error") ? T.red : T.green, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "8px 12px", marginBottom: "12px" }}>
+          {runMsg}
+        </div>
+      )}
       {children}
     </div>
   );
@@ -216,6 +314,41 @@ export default function PerformanceTruth() {
         <span>Avg win: <b style={{ color: T.green }}>{m.avgWinPct != null ? `+${m.avgWinPct.toFixed(2)}%` : "—"}</b></span>
         <span>Avg loss: <b style={{ color: T.red }}>{m.avgLossPct != null ? `${m.avgLossPct.toFixed(2)}%` : "—"}</b></span>
       </div>
+
+      {/* Evaluation history */}
+      {evals.length > 0 && (
+        <div style={{ marginTop: "24px" }}>
+          <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "10px" }}>Evaluation History</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", fontVariantNumeric: "tabular-nums" }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                  {["Date", "Trades eval/total", "Sharpe", "MaxDD", "Win Rate", "Alpha", "Health"].map(h => (
+                    <th key={h} style={{ padding: "6px 10px", textAlign: "left", color: T.muted, fontWeight: 500, whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {evals.map(ev => (
+                  <tr key={ev.id} style={{ borderBottom: `1px solid ${T.border}` }}>
+                    <td style={{ padding: "7px 10px", color: T.textSub }}>{new Date(ev.evaluated_at).toLocaleDateString()}</td>
+                    <td style={{ padding: "7px 10px", color: T.text }}>{ev.n_trades_evaluable}/{ev.n_trades_total}</td>
+                    <td style={{ padding: "7px 10px", color: ev.book_sharpe != null ? (ev.book_sharpe >= 1 ? T.green : T.text) : T.muted }}>{ev.book_sharpe != null ? ev.book_sharpe.toFixed(2) : "—"}</td>
+                    <td style={{ padding: "7px 10px", color: ev.book_max_drawdown != null ? T.red : T.muted }}>{ev.book_max_drawdown != null ? `${(ev.book_max_drawdown * 100).toFixed(1)}%` : "—"}</td>
+                    <td style={{ padding: "7px 10px", color: T.text }}>{ev.book_win_rate != null ? `${(ev.book_win_rate * 100).toFixed(1)}%` : "—"}</td>
+                    <td style={{ padding: "7px 10px", color: ev.book_alpha_pct != null ? (ev.book_alpha_pct >= 0 ? T.green : T.red) : T.muted }}>{ev.book_alpha_pct != null ? `${ev.book_alpha_pct.toFixed(2)}%` : "—"}</td>
+                    <td style={{ padding: "7px 10px" }}>
+                      <span style={{ background: HEALTH_COLORS[ev.health_label] ?? T.muted, color: "#fff", borderRadius: "4px", padding: "2px 7px", fontSize: "11px", whiteSpace: "nowrap" }}>
+                        {ev.health_label.replace(/_/g, " ")}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </>
   );
 }

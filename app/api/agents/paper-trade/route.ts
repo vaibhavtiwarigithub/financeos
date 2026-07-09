@@ -481,6 +481,14 @@ export async function POST(req: NextRequest) {
           }
           orderEventId = result.event_id;
           rpcSucceeded = true;
+          // Backfill mandate_id on the paper_trade the RPC just created (pre-135 RPC
+          // doesn't accept p_mandate_id; update is safe since RPC committed).
+          if ((signal as any).mandate_id) {
+            await supabase.from("paper_trades")
+              .update({ mandate_id: (signal as any).mandate_id })
+              .eq("signal_id", signal.id)
+              .is("mandate_id", null);
+          }
           if (candSector && !bookByMarket.get(market)?.some(b => b.symbol === signal.symbol)) {
             sectorCount[candSector] = (sectorCount[candSector] ?? 0) + 1;
           }
@@ -533,8 +541,9 @@ export async function POST(req: NextRequest) {
           expected_price: price,
           realized_slip_pct: price > 0 ? fillPrice / price - 1 : null,
           fill_status: "filled",
+          mandate_id: (signal as any).mandate_id ?? null,
         };
-        const trRes = await insertOptional("paper_trades", tradeRow, ["currency", "market", "expected_price", "realized_slip_pct", "fill_status"]);
+        const trRes = await insertOptional("paper_trades", tradeRow, ["currency", "market", "expected_price", "realized_slip_pct", "fill_status", "mandate_id"]);
         if (trRes.error) {
           await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: `trade_insert_failed: ${trRes.error.message}` });

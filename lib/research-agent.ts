@@ -13,6 +13,23 @@ import { computeWeightedAnalystScore, isThinEvidence, type DimensionRecord } fro
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
+
+// Module-level cache: market → default investment_mandates.id.
+// Populated once per process; safe because seed mandates never change name.
+const _mandateIdCache = new Map<string, string>();
+async function getDefaultMandateId(market: string, supabase: any): Promise<string | null> {
+  if (_mandateIdCache.has(market)) return _mandateIdCache.get(market)!;
+  const name = market === "india" ? "Swing India 2-20d" : "Swing US 2-20d";
+  const { data } = await supabase
+    .from("investment_mandates")
+    .select("id")
+    .eq("name", name)
+    .eq("active", true)
+    .maybeSingle();
+  const id: string | null = data?.id ?? null;
+  if (id) _mandateIdCache.set(market, id);
+  return id;
+}
 import { fetchUsOverview } from "@/lib/data/fundamentals";
 import { scoreEdgarInsider } from "@/lib/data/edgar-insider";
 import { fetchUpstoxCandles } from "@/lib/data/upstox";
@@ -1163,6 +1180,10 @@ export async function processSymbol(
     asset_class:  assetClass,
     market, // Phase 4: routes the signal to its market's paper pool + champion
   };
+
+  // Attach default mandate (fail-soft: pre-133 schema or missing table → no-op)
+  const mandateId = await getDefaultMandateId(market, supabase).catch(() => null);
+  if (mandateId) signalRow.mandate_id = mandateId;
   // Capture the inserted row's id (Research Journal needs this to join
   // decision_observations -> pipeline_stage_events -> trade_proposals ->
   // paper_trades by a shared signal_id, instead of null throughout).
@@ -1318,6 +1339,7 @@ export async function processSymbol(
       currency: market === "india" ? "INR" : "USD",
       signal_id: insertedSignalId,
       discovery_source: entry.discovery_source ?? null,
+      mandate_id: mandateId ?? null,
     }).select("id").maybeSingle();
     if (obsErr && !/does not exist|could not find/i.test(obsErr.message ?? "")) {
       console.error("[research-agent] decision_observations insert failed:", obsErr.message);
