@@ -380,6 +380,18 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: null,
   },
   {
+    name: "watchdog",
+    agent: "watchdog",
+    time: "Every 2 hours",
+    days: "Daily",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Pipeline janitor (added 2026-07-08, migration 131). Reaps zombie agent_runs (status='running' past 15min — longer than any Vercel function can live), reverts orphaned 'claiming' signals back to pending (clearing claim stamps so a later paper-trade run can pick them up), and expires stale pending long signals per market-local day. Bounded status corrections only — never touches money, positions, ledgers, or config.",
+    handoff: null,
+    agentRunsType: "watchdog",
+  },
+  {
     name: "db-backup",
     agent: "db-backup",
     time: "3:00 AM (local)",
