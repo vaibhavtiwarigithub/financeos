@@ -9,31 +9,40 @@ import type { Candle } from "@/lib/data/technicals";
 import type { Market } from "@/lib/edges/types";
 
 // ~420 calendar days ≈ 290 trading days — enough for 12-1 momentum (252+21) + buffer.
-const US_DAYS = 420;
+// IC backfill passes a larger value to span multiple years of forward returns.
+const US_DAYS_DEFAULT = 420;
 
 export interface CandleResult { candles: Candle[]; source: string }
 
-export async function resolveCandles(symbol: string, market: Market): Promise<CandleResult> {
+// Map a calendar-day depth to a Yahoo range string for India candles.
+function indiaRange(days: number): string {
+  if (days > 1400) return "5y";
+  if (days > 900) return "3y";
+  if (days > 500) return "2y";
+  return "1y";
+}
+
+export async function resolveCandles(symbol: string, market: Market, days: number = US_DAYS_DEFAULT): Promise<CandleResult> {
   if (market === "india") {
-    const c = await fetchIndiaCandles(symbol, "2y").catch(() => [] as Candle[]);
+    const c = await fetchIndiaCandles(symbol, indiaRange(days)).catch(() => [] as Candle[]);
     return { candles: c, source: c.length ? "yahoo_india" : "unavailable" };
   }
-  let c = await fetchMassiveCandles(symbol, US_DAYS).catch(() => [] as Candle[]);
+  let c = await fetchMassiveCandles(symbol, days).catch(() => [] as Candle[]);
   if (c.length) return { candles: c, source: "massive" };
-  c = await fetchEodhdCandles(symbol, US_DAYS).catch(() => [] as Candle[]);
+  c = await fetchEodhdCandles(symbol, days).catch(() => [] as Candle[]);
   if (c.length) return { candles: c, source: "eodhd" };
-  c = await fetchTwelveDataCandles(symbol, US_DAYS).catch(() => [] as Candle[]);
+  c = await fetchTwelveDataCandles(symbol, days).catch(() => [] as Candle[]);
   return { candles: c, source: c.length ? "twelvedata" : "unavailable" };
 }
 
 // Broad-market benchmark per market (for relative-strength). SPY for US, NIFTY 50
 // (^NSEI) for India. Resolved ONCE per run, not per symbol.
-export async function resolveBenchmark(market: Market): Promise<CandleResult> {
+export async function resolveBenchmark(market: Market, days: number = US_DAYS_DEFAULT): Promise<CandleResult> {
   if (market === "india") {
-    const c = await fetchIndiaCandles("^NSEI", "2y").catch(() => [] as Candle[]);
+    const c = await fetchIndiaCandles("^NSEI", indiaRange(days)).catch(() => [] as Candle[]);
     return { candles: c, source: c.length ? "yahoo_india" : "unavailable" };
   }
-  return resolveCandles("SPY", "us");
+  return resolveCandles("SPY", "us", days);
 }
 
 // Slice a candle series to those dated <= asOf (no look-ahead). Assumes ascending.

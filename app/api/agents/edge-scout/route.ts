@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { EDGES } from "@/lib/edges/registry";
 import { computeEdges } from "@/lib/edges/compute";
+import { liquidUniverse } from "@/lib/edges/universe";
 import type { Market } from "@/lib/edges/types";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +19,7 @@ export const maxDuration = 300;
 // universe is a CURRENT-liquid snapshot recorded in edge_universe_members — it is
 // NOT point-in-time index membership, and this limitation is reported honestly.
 
-const MAX_SYMBOLS_CAP = 100;
+const MAX_SYMBOLS_CAP = 200;
 const DEFAULT_MAX_SYMBOLS = 40;
 const MAX_DAYS_CAP = 20;
 
@@ -32,7 +33,13 @@ async function seedCatalog(svc: any) {
   await svc.from("edge_catalog").upsert(rows, { onConflict: "edge_id" });
 }
 
-async function buildUniverse(svc: any, market: Market, maxSymbols: number): Promise<{ symbols: string[]; source: string }> {
+async function buildUniverse(svc: any, market: Market, maxSymbols: number, mode: string, offset: number): Promise<{ symbols: string[]; source: string }> {
+  // Broad curated liquid universe (static, NON-PIT, survivorship-biased — labeled).
+  // Paged by offset so it can be processed in bounded, cached slices across runs.
+  if (mode === "liquid") {
+    const all = liquidUniverse(market);
+    return { symbols: all.slice(offset, offset + maxSymbols), source: `liquid_static[${offset}:${offset + maxSymbols}]` };
+  }
   try {
     if (market === "us") {
       const nowIso = new Date().toISOString();
@@ -86,6 +93,9 @@ export async function POST(req: NextRequest) {
     const from = url.searchParams.get("from");
     const to = url.searchParams.get("to");
     const maxDays = Math.max(1, Math.min(MAX_DAYS_CAP, Number(url.searchParams.get("maxDays") ?? 5) || 5));
+    const universeMode = url.searchParams.get("universe") === "liquid" ? "liquid" : "watchlist";
+    const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
+    const historyDays = url.searchParams.get("historyDays") ? Math.max(120, Math.min(1600, Number(url.searchParams.get("historyDays")))) : undefined;
     const markets: Market[] = marketParam === "us" ? ["us"] : marketParam === "india" ? ["india"] : ["us", "india"];
 
     const { data: runRow } = await svc.from("agent_runs").insert({
@@ -98,9 +108,9 @@ export async function POST(req: NextRequest) {
 
     const results: Record<string, any> = {};
     for (const market of markets) {
-      const { symbols, source } = await buildUniverse(svc, market, maxSymbols);
+      const { symbols, source } = await buildUniverse(svc, market, maxSymbols, universeMode, offset);
       const runDate = new Date().toISOString().slice(0, 10);
-      const universeId = `${market}:p0:${runDate}`;
+      const universeId = `${market}:${universeMode}:${runDate}`;
 
       if (symbols.length) {
         const memberRows = symbols.map(s => ({
@@ -112,7 +122,7 @@ export async function POST(req: NextRequest) {
 
       const asOfDates = (from && to) ? weekdaysBetween(from, to, maxDays) : undefined;
       const { rows, report } = symbols.length
-        ? await computeEdges({ market, symbols, asOfDates, maxDays })
+        ? await computeEdges({ market, symbols, asOfDates, maxDays, candleDays: historyDays })
         : { rows: [], report: { market, symbolsRequested: 0, symbolsResolved: 0, unavailable: [], sources: {}, benchmarkSource: "n/a", dates: [], rows: 0 } };
 
       let signalsWritten = 0, inputsWritten = 0;

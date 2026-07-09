@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { computeEdgeIC } from "@/lib/edges/ic";
+import { liquidUniverse } from "@/lib/edges/universe";
 import type { Market } from "@/lib/edges/types";
 
 export const dynamic = "force-dynamic";
@@ -15,10 +16,11 @@ export const maxDuration = 300;
 // status is advisory ("shadow_eligible" means it MAY enter shadow later — it does
 // NOT grant trade permission). Bounded (maxSymbols/maxDates caps). Idempotent.
 
-const MAX_SYMBOLS_CAP = 100;
+const MAX_SYMBOLS_CAP = 200;
 const DEFAULT_MAX_SYMBOLS = 40;
 
-async function buildUniverse(svc: any, market: Market, maxSymbols: number): Promise<string[]> {
+async function buildUniverse(svc: any, market: Market, maxSymbols: number, mode: string, offset: number): Promise<string[]> {
+  if (mode === "liquid") return liquidUniverse(market).slice(offset, offset + maxSymbols);
   try {
     if (market === "us") {
       const nowIso = new Date().toISOString();
@@ -55,6 +57,10 @@ export async function POST(req: NextRequest) {
     const maxSymbols = Math.max(1, Math.min(MAX_SYMBOLS_CAP, Number(url.searchParams.get("maxSymbols") ?? DEFAULT_MAX_SYMBOLS) || DEFAULT_MAX_SYMBOLS));
     const maxDates = Math.max(5, Math.min(120, Number(url.searchParams.get("maxDates") ?? 60) || 60));
     const stepDays = Math.max(1, Math.min(20, Number(url.searchParams.get("stepDays") ?? 5) || 5));
+    const universeMode = url.searchParams.get("universe") === "liquid" ? "liquid" : "watchlist";
+    const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
+    // Deeper default history for IC so it spans multiple years of forward returns.
+    const historyDays = Math.max(120, Math.min(1600, Number(url.searchParams.get("historyDays") ?? 1000) || 1000));
     const markets: Market[] = marketParam === "us" ? ["us"] : marketParam === "india" ? ["india"] : ["us", "india"];
 
     const { data: runRow } = await svc.from("agent_runs").insert({
@@ -64,10 +70,10 @@ export async function POST(req: NextRequest) {
 
     const results: Record<string, any> = {};
     for (const market of markets) {
-      const symbols = await buildUniverse(svc, market, maxSymbols);
+      const symbols = await buildUniverse(svc, market, maxSymbols, universeMode, offset);
       if (!symbols.length) { results[market] = { symbols: 0, icRows: 0 }; continue; }
 
-      const { rows, catalogStatus, report } = await computeEdgeIC({ market, symbols, maxDates, stepDays });
+      const { rows, catalogStatus, report } = await computeEdgeIC({ market, symbols, maxDates, stepDays, candleDays: historyDays });
 
       let icWritten = 0;
       if (rows.length) {

@@ -100,16 +100,17 @@ export async function computeEdgeIC(opts: {
   horizons?: number[];
   maxDates?: number;
   stepDays?: number;   // sample every Nth trading day to reduce overlap
+  candleDays?: number; // history depth (calendar days) — deeper = multi-year IC
 }): Promise<{ rows: IcRow[]; catalogStatus: Record<string, string>; report: IcRunReport }> {
   const { market, symbols } = opts;
   const horizons = opts.horizons ?? [5, 10, 20];
   const maxDates = Math.min(120, opts.maxDates ?? 60);
   const step = Math.max(1, opts.stepDays ?? 5);
 
-  const bench = await resolveBenchmark(market);
+  const bench = await resolveBenchmark(market, opts.candleDays);
   const resolved: { symbol: string; candles: Candle[] }[] = [];
   for (const sym of symbols) {
-    const { candles } = await resolveCandles(sym, market);
+    const { candles } = await resolveCandles(sym, market, opts.candleDays);
     if (candles.length) resolved.push({ symbol: sym, candles });
   }
 

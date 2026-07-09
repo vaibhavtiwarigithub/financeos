@@ -32,15 +32,16 @@ export async function computeEdges(opts: {
   symbols: string[];
   asOfDates?: string[];
   maxDays?: number;
+  candleDays?: number;
 }): Promise<ComputeOutput> {
   const { market, symbols } = opts;
-  const bench = await resolveBenchmark(market);
+  const bench = await resolveBenchmark(market, opts.candleDays);
 
   const resolved: { symbol: string; candles: Candle[]; source: string }[] = [];
   const unavailable: string[] = [];
   const sources: Record<string, number> = {};
   for (const sym of symbols) {
-    const { candles, source } = await resolveCandles(sym, market);
+    const { candles, source } = await resolveCandles(sym, market, opts.candleDays);
     sources[source] = (sources[source] ?? 0) + 1;
     if (candles.length) resolved.push({ symbol: sym, candles, source });
     else unavailable.push(sym);
