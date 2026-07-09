@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { getConfiguredModel } from "@/lib/agent-model-config";
 import { createClient } from "@/lib/supabase/server";
 import { callLLM } from "@/lib/llm-router";
 import { fetchIndiaIndices } from "@/lib/india-data";
@@ -602,6 +603,8 @@ If a category above has no data (e.g. no agent runs, no mentor grade), say so pl
 
   const result = await callLLM({
     task: "summarize",
+    // User-selectable in Settings → Agents → LLM Config (agent_name="briefing").
+    model: await getConfiguredModel(svc, "briefing", "deepseek-v4-flash"),
     prompt: isWeekend ? weekendPrompt : (session === "morning" ? morningPrompt : eveningPrompt),
     maxTokens: isWeekend ? 320 : 150,
   });
@@ -673,7 +676,7 @@ POSITIONS: <outlook for the held positions, or 'No open positions to assess.'> (
 FUTURE: <what to expect next 1-2 weeks and what would change it> (Confidence: ...)
 
 No invented events. Ground every claim in the data above.`;
-    const ol = await callLLM({ task: "summarize", model: "deepseek-v4-flash", prompt: outlookPrompt, maxTokens: 300 });
+    const ol = await callLLM({ task: "summarize", model: await getConfiguredModel(svc, "briefing", "deepseek-v4-flash"), prompt: outlookPrompt, maxTokens: 300 });
     const t = ol.text;
     const grab = (k: string) => { const m = t.match(new RegExp(k + ":\\s*([\\s\\S]*?)(?=\\n(?:MARKET|POSITIONS|FUTURE):|$)", "i")); return m ? m[1].trim() : null; };
     (briefingData as any).outlook = { market: grab("MARKET"), positions: grab("POSITIONS"), future: grab("FUTURE") };

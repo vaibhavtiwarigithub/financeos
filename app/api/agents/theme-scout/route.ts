@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
+import { getConfiguredModel } from "@/lib/agent-model-config";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { avCachedFetch } from "@/lib/av-cache";
 
@@ -114,9 +115,11 @@ Rules:
   let themes: ThemeResult[] = [];
   try {
     const raw = await callLLM({
-      task: "screen",  // routes to Groq (free)
+      task: "screen",
       prompt: themePrompt,
-      model: "llama-3.3-70b-versatile",
+      // User-selectable in Settings → Agents → LLM Config (agent_name="theme-scout").
+      // Default stays Groq llama (free) — the panel now controls it for real.
+      model: await getConfiguredModel(supabase, "theme-scout", "llama-3.3-70b-versatile"),
     });
 
     // Parse JSON from response

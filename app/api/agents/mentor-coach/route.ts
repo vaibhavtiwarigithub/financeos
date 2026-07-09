@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { getConfiguredModel } from "@/lib/agent-model-config";
 import { runAgentLoop, ToolCall } from "@/lib/llm-router";
 import { verifyCronSecret } from "@/lib/auth/cron";
 
@@ -109,7 +110,8 @@ Be specific, warm but honest, and concrete. Tie the ONE lesson to BOTH the curre
 
   try {
     const loop = await runAgentLoop({
-      model: "deepseek-v4-pro",
+      // User-selectable in Settings → Agents → LLM Config (agent_name="mentor").
+      model: await getConfiguredModel(svc, "mentor", "deepseek-v4-pro"),
       systemPrompt, initialMessage,
       tools: MENTOR_TOOLS, toolExecutor,
       maxIterations: 10, task: "evaluate", agentLabel: "mentor",
