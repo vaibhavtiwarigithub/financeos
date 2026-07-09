@@ -1070,18 +1070,12 @@ export async function processSymbol(
   } catch { /* RAG is best-effort — a retrieval failure must not block research */ }
 
   // LLM only writes thesis + direction — no score generation.
-  // Model selection: use Claude when structured APIs delivered real data (technical or
-  // fundamental dims included), DeepSeek as fallback when APIs returned empty so we
-  // don't burn Claude tokens on a thin-signal request that will likely abstain anyway.
-  const hasStructuredData = includedDims.includes("technical") || includedDims.includes("fundamental");
-  const screenModel = hasStructuredData ? "claude-haiku-4-5-20251001" : "deepseek-v4-flash";
   const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus) + trendNote + memoryNote;
   const llmResult = await callLLM({
     task: "screen",
-    model: screenModel,
     prompt: thesisPrompt,
     symbol,
-    agentLabel: hasStructuredData ? "claude-haiku" : "deepseek",
+    agentLabel: "screen",
     maxTokens: 512,
   });
 
