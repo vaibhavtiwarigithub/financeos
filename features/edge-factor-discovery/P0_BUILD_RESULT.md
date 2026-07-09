@@ -47,7 +47,41 @@ low realized volatility (expected_sign −1).
   IC/IR/t-stat/decay to answer "does any edge actually predict returns?".
 - India fundamentals intentionally absent (P0 = price/volume only).
 
+---
+
+# P1 Build Result — IC gate (measure-only)
+
+Date: 2026-07-08. Commits: `f2cc41a` (code). Still MEASURE-ONLY.
+
+## What was built
+- `lib/edges/ic.ts`: rank IC (Spearman) of edge value vs realized forward return by
+  horizon (5/10/20d) on the broad historical candle universe; mean IC, IR, and a
+  **Newey-West t-stat** correcting for overlapping-window autocorrelation; edges with
+  expected_sign=−1 flipped so +IC always = "ranks winners above losers"; lifecycle
+  classifier (`shadow_eligible` iff IC≥0.02 & |t|≥2, priored-factor hurdle; else
+  `measure_only`; `benched_negative` on significant negative IC). Advisory only.
+- `app/api/agents/edge-ic`: owner-or-cron, measure-only, bounded (maxSymbols/maxDates),
+  idempotent upserts to `edge_ic_history`, advisory `edge_catalog.status` update.
+- `/dashboard/edges`: IC Scorecard (IC + t per horizon + status per edge).
+
+## Verification (live run: `edge-ic?market=us&maxSymbols=30&maxDates=50`)
+
+| Item | Status | Evidence |
+|---|---|---|
+| `edge_ic_history` written | ✅ | 24 rows = 8 edges × 3 horizons |
+| IC + Newey-West t computed | ✅ | e.g. mom_12_1 IC 0.10–0.13 (t 2.1–2.6); dma_trend_slope IC→0.23 (t 3.9) |
+| Lifecycle classifier working | ✅ | 4 edges shadow_eligible, 3 measure_only, st_reversal benched_negative@20d |
+| Measure-only (no trading tables touched) | ✅ | agent_signals 98, paper_trades 6, paper_order_events 11, broker_orders 2 — unchanged |
+| Idempotent | ✅ | upsert on (edge_id,market,window_end,horizon); rerun stays 24 rows |
+
+## Honest caveat (labeled in UI + response)
+The verification universe was 30 tech-heavy watchlist names over ~50 recent sampled
+dates with survivorship bias — so these ICs are **illustrative, not proof**. A broad
+point-in-time universe over multiple years + regimes is required before any edge is
+trusted. `net_of_fee_ic`/`turnover` left null (the cost-adjusted long-only bucket
+alpha is the later P5 gate).
+
 ## Not done (by design)
-P1 IC gate; regime filter; composite score; any wiring into analyst_score / paper
-fills / sizing / live orders; a scheduled `kairos-edge-scout` cron (P0 is
-owner-triggered until it proves out).
+P2 shadow composite; P3 exploratory paper; P4 regime scaler; P5 active paper; P6 live;
+any wiring into analyst_score / paper fills / sizing / live orders; scheduled crons
+(edge-scout + edge-ic stay owner-triggered until they prove out).
