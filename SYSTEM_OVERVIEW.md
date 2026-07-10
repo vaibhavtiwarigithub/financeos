@@ -1,9 +1,13 @@
 # Kairos — System Overview (read this first)
 
-**Audience:** anyone — engineer, non-engineer, future collaborator. Plain language, Mermaid
-diagrams, worked examples. This is the single authoritative start-to-end guide to the whole
-app. Deeper implementation detail lives in `ARCHITECTURE.md`, `AGENTS.md`, per-feature
-`features/*/FEATURE_ARCHITECTURE.md`, and the live diagram at `/dashboard/agents`.
+> **Architecture documentation has moved to `docs/arch/`.**
+> Each subsystem now has its own chapter so only the relevant file is updated when something changes.
+> Start at [`docs/arch/00-index.md`](docs/arch/00-index.md) — it maps every chapter to the code changes that require updating it.
+
+**Audience:** anyone — engineer, non-engineer, future collaborator. This file is kept as
+a high-level intro and worked example. The definitive, up-to-date subsystem detail lives
+in `docs/arch/`, `AGENTS.md`, per-feature `features/*/FEATURE_ARCHITECTURE.md`, and
+the live diagram at `/dashboard/agents`.
 
 > **Keep this current.** Any change to a feature, agent, pipeline, learning/evolution loop,
 > or money/risk control must update this file in the same commit (see `CLAUDE.md`). A change

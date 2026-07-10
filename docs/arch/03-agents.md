@@ -1,0 +1,380 @@
+# Kairos — Agents
+> Last updated: 2026-07-10
+> Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
+
+**Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file + update `public/agent-diagrams/system-map.json`.
+
+---
+
+## Agent coordination model
+
+**There are zero direct agent-to-agent HTTP calls.** All coordination is via shared Supabase
+tables. Agents write and read a common set of tables; they never invoke each other's HTTP
+handlers directly.
+
+```mermaid
+flowchart LR
+  MACRO[MacroSentinel] --> |macro_signals| RESEARCH[ResearchAgent]
+  RESEARCH --> |agent_signals| PAPER[PaperTrader]
+  RESEARCH --> |signal_score_history| RESEARCH
+  PAPER --> |paper_positions paper_trades| MONITOR[PositionMonitor]
+  MONITOR --> |closed paper_trades| LEARNER[LearnerAgent]
+  LEARNER --> |strategy_versions challengers| USER((You))
+  USER --> |promote champion| RESEARCH
+  MONITOR --> |closed paper_trades| MENTOR[MentorAgent]
+  MENTOR --> |mentor_insights| USER
+  HEALTH[Health-Triage] --> |agent_alerts structured_issues| USER
+  LEARNER --> |trade_memories via RAG| RESEARCH
+```
+
+### Table-to-agent matrix
+
+| Table | Written by | Read by |
+|---|---|---|
+| `macro_regime`, `macro_signals` | MacroSentinel | ResearchAgent, Dashboard |
+| `agent_signals` | ResearchAgent, DeepSeekAgent | PaperTrader, TraderAgent, Dashboard |
+| `signal_score_history` | ResearchAgent | ResearchAgent (trend), Dashboard charts |
+| `decision_observations` | ResearchAgent | LearnerAgent, Validation Engine, PerformanceTruth |
+| `paper_positions` | PaperTrader | PositionMonitor, LearnerAgent, Dashboard |
+| `paper_trades` | PaperTrader, PositionMonitor | LearnerAgent, MentorAgent, PerformanceTruth |
+| `strategy_versions` | LearnerAgent, User | ResearchAgent, Dashboard |
+| `trade_memories` | PositionMonitor | ResearchAgent (RAG retrieval) |
+| `agent_alerts` | All reporters | Health-Triage, Dashboard, Briefing |
+| `mentor_insights` | MentorAgent | LearnerAgent (context), Dashboard |
+| `strategy_evaluations` | PerformanceTruth/Evaluation | Dashboard |
+| `llm_call_log` | All LLM callers | Admin cost view |
+| `rag_traces` | ResearchAgent (retrieval) | Debug/audit |
+
+---
+
+## Agent registry
+
+### MacroSentinel — the economist
+
+**File:** `app/api/agents/macro-sentinel/route.ts`
+**Schedule:** Mondays 8:00 AM ET (Windows Task Scheduler)
+**LLM:** None — fully deterministic
+
+**Inputs:**
+- 8 Alpha Vantage macro endpoints: Treasury yield 10Y + 2Y, unemployment, real GDP, nonfarm
+  payrolls, CPI, retail sales, federal funds rate, durable goods orders
+
+**What it computes:**
+```
+danger_score = Σ (indicator_value × weight × direction_sign)
+```
+
+Each indicator has a hardcoded `direction_sign` (+1 bad, -1 good) and weight summing to 1.0.
+
+| danger_score | regime |
+|---|---|
+| 0–24 | GREEN |
+| 25–49 | YELLOW |
+| 50–74 | ORANGE |
+| ≥75 | RED |
+
+**Outputs:**
+- One `macro_regime` row (current regime + score)
+- One `macro_signals` row per indicator (raw_value + contribution + direction)
+
+**Key behavior:** Advisory-only. MacroSentinel never auto-throttles agents or halts trading.
+User sees the regime first and decides whether to act.
+
+---
+
+### ResearchAgent — the analyst (the brain)
+
+**File:** `app/api/agents/research/route.ts`, `lib/research-agent.ts`
+**Schedule:** Weekdays 9:00 AM ET (US), Weekdays 6:15 AM ET post-NSE-close (India)
+**LLM:** Groq `llama-3.3-70b-versatile` for thesis text only
+
+**Inputs:**
+1. Existing holdings from `live_account_snapshots` (ALL accounts) — SELL signals can apply to any held symbol
+2. Watchlist from `watchlist` table
+3. Screener candidates from FinancialDatasets `screen_stocks` (US) or NSE universe cache (India) — dual buckets:
+   - *Momentum*: RSI > 60, price > 50-day MA, revenue acceleration, positive earnings revision
+   - *Value*: P/E < sector median, high FCF yield, insider buying, recent analyst upgrades
+4. Score trend from `signal_score_history` (last 5 rows per symbol)
+5. Champion weights from `strategy_versions WHERE is_champion = true AND market = ?`
+6. Macro regime from most recent `macro_regime` row
+7. RAG memory via `retrieveSimilarTrades()` (if Jina key present)
+
+**Scoring — 5 dimensions (fully deterministic, no LLM):**
+
+| Dimension | Source | What it measures |
+|---|---|---|
+| `fundamental_score` | AV OVERVIEW (US) / Yahoo quoteSummary (India) | P/E vs sector, EPS growth, ROE, margins, revenue trend |
+| `technical_score` | AV RSI + EMA + SMA (US) / Yahoo candles (India) | RSI(14), price vs EMA20/50, momentum |
+| `sentiment_score` | AV NEWS_SENTIMENT + StockTwits (US) / neutral (India) | Weighted news bullishness; India uses neutral baseline |
+| `macro_score` | `macro_regime.danger_score` + `macro_signals` | Macro backdrop from MacroSentinel |
+| `insider_score` | AV INSIDER_TRANSACTIONS (US) / NSE insider (India) | 90-day buy/sell ratio; congressional trades |
+
+**Weighted composite:**
+```
+analyst_score = Σ (dimension_score × champion_weight[dimension])
+```
+Falls back to risk-profile static weights → `learning_priors` → signal_weights if no champion.
+
+**LLM role (Groq, 512 tokens):** Receives all dimension scores + evidence. Writes one-paragraph
+thesis + direction (`long` / `short` / `neutral`). **Never generates scores** — scores are
+deterministic before LLM is called.
+
+**Screener target:** 3 candidates/day (not 5). With $10k NAV and 10% sizing, max 10
+positions. Daily churn of 5+ creates overtrading.
+
+**Outputs:**
+- `agent_signals` row per symbol (score + thesis + recommendation)
+- `signal_score_history` row (append-only score history)
+- `decision_observations` row (even for skipped/expired candidates)
+- `rag_traces` row (if RAG ran)
+
+---
+
+### DeepSeekAgent — the comparison analyst
+
+**File:** `app/api/agents/deepseek/route.ts`
+**Schedule:** Weekdays 9:00 AM ET (parallel with ResearchAgent)
+**LLM:** DeepSeek `deepseek-chat`
+
+**Inputs:** Same watchlist and screener pipeline as ResearchAgent.
+
+**Key behavior:** Runs the same scoring pipeline but uses DeepSeek for the thesis text. Writes
+to `agent_signals` with `agent_label = 'deepseek'`. Enables per-model P&L comparison — you
+can track whether Claude or DeepSeek signals produce better paper-trade outcomes.
+
+**Outputs:** `agent_signals` rows tagged `agent_label = 'deepseek'`
+
+---
+
+### PaperTrader — the pretend-money trader
+
+**File:** `app/api/agents/paper-trade/route.ts`
+**Schedule:** US 10:05 AM ET, India 4:35 PM IST (standalone crons, independent of research)
+**LLM:** None
+
+**Inputs:**
+- `agent_signals` WHERE `status = 'pending'` AND `created_at` is today (market timezone) AND `market = ?`
+- `paper_portfolio` for pool cash
+- `paper_positions` for existing open positions
+
+**Key behavior:**
+
+**Signal freshness gate:** Only fills signals created today in the market's own timezone
+(New York for US, Kolkata for India). Older signals are marked `expired`.
+
+**Claim-and-fill protocol (prevents double-fills):**
+1. Claims a signal by stamping `claim_run_id` on the `agent_signals` row
+2. Opens paper position only if it still owns the claim
+
+**Position sizing:**
+- `position_size_pct` from champion genome (clamped to `strategy_config.position_size_pct`)
+- Slippage model: 0.05% above mid
+- Records `expected_price` and `realized_slip_pct` on every fill
+
+**Risk gates (added 2026-07-09):**
+- **Re-entry cooldown:** 5-calendar-day block after a position in a symbol closes
+- **Pyramid gate:** New BUY only if fill price > existing avg_cost (no averaging down)
+- **Long-only for new positions:** SELL signals only apply to symbols already held
+
+**Outputs:**
+- `paper_positions` row (new open position)
+- `paper_trades` row (buy leg)
+- `paper_order_events` row (submitted + filled events)
+- Updates `paper_portfolio.cash` and `paper_portfolio.nav`
+
+---
+
+### PositionMonitor — the risk watcher
+
+**File:** `app/api/agents/position-monitor/route.ts`
+**Schedule:** US 4:15 PM ET, India 6:35 AM ET
+**LLM:** None (exits are rule-based)
+
+**Inputs:** All open `paper_positions` for the market; current prices.
+
+**What it does on each run:**
+1. Fetch current prices for all open `paper_positions` in the market
+2. Update `highest_price` if today's price is a new high
+3. Run exit checks (in priority order):
+   - **Time stop:** age > `champion_genome.horizon_days` (default 10) → close
+   - **Trailing stop:** `stop_loss = max(original_stop, highest_price × 0.93)` → close if breached
+   - **Price target:** at target price → **partial profit-taking** (sell half, move stop to
+     breakeven on remainder; full close only when qty < 2)
+   - **Score drop exit:** fresh `analyst_score` < exit threshold → `exit_reason = 'llm_exit'`
+4. **NAV drawdown circuit breaker:** if weekly NAV return < -5%, set
+   `strategy_config.app_paused = true` and fire a critical System Health alert
+5. **Benchmark sync:** upsert `paper_performance.bench_nav` with today's VOO (US) / ^NSEI (India) price
+
+**On close:**
+- Delete the `paper_positions` row
+- Mark the `paper_trades` buy row closed (exit_price, realized_pnl, pnl_pct, outcome, exit_reason)
+- Credit cash back to `paper_portfolio`
+- Call `indexClosedTrade()` for RAG (if Jina key present)
+- Append to `paper_order_events`
+
+---
+
+### TraderAgent — the live order proposer
+
+**File:** `app/api/agents/trader/route.ts`
+**Schedule:** Weekdays 9:45 AM ET (after research settles)
+**LLM:** None
+
+**Inputs:** `agent_signals` with score ≥ threshold.
+
+**Key behavior:** Creates `trade_proposals` rows with `status = 'pending'` and
+`expires_at = now() + 30m`. Owner reviews and approves or rejects via the dashboard. If
+approved, the proposal passes through the full 9-gate money-safety ladder before sending to
+the broker.
+
+**`approval_required = true` always.** There is no code path that sends a live order without
+`requireOwner()` passing and the user clicking send.
+
+**Outputs:** `trade_proposals` rows (proposals expire automatically after 30 minutes)
+
+---
+
+### LearnerAgent — the strategy improver
+
+**File:** `app/api/agents/learner/route.ts` (entry); `app/api/agents/learner-brain/route.ts`
+**Schedule:** Fridays 5:00 PM ET
+**LLM:** Claude Opus 4.8 (upgraded 2026-07-03)
+
+**Phase gate:** Mutation blocked until 10+ closed trades per market exist.
+
+**Inputs (via tool-use loop — 9 tools):**
+1. `get_closed_trades` — recent paper_trades with outcomes
+2. `get_signal_weights` — current champion weights
+3. `get_strategy_versions` — all challengers + their backtest results
+4. `get_decision_observations` — scored decisions (including skipped)
+5. `query_trade_decisions` — real historical enriched Robinhood trades by regime/action
+6. `propose_challenger` — write a new `strategy_versions` row with new weights + genome
+7. `run_validation` — trigger Validation Engine on the proposed challenger
+8. `get_mentor_insights` — recent coaching notes
+9. `semantic_search_decisions` — pgvector RAG over trade memories (if Jina key present)
+
+**What it proposes:**
+A Challenger `strategy_versions` row containing:
+- 5 dimension weights (must sum to 1.0)
+- Genome: `{entry_threshold, exit_stop_pct, exit_target_pct, horizon_days, position_size_pct, sizing_mode}`
+- Possibly: a Feature Registry entry (a new formula idea — never runs as code)
+
+**Auto-guard:** Blocks mutation if last 3 runs have win_rate < 35%.
+
+**Closed-loop closure (2026-07-05):** When user promotes a Challenger to Champion, the
+promoted `weights_snapshot` is read by ResearchAgent on its next run.
+
+**Per-trade notes:** 1-sentence outcome summary per closed trade written to `learning_log`.
+
+**Outputs:** `strategy_versions` (Challenger row), `learning_log` entries
+
+---
+
+### ThemeScout — the watchlist manager
+
+**File:** `app/api/agents/theme-scout/route.ts`
+**Schedule:** Sundays 8:00 PM ET
+**LLM:** Claude Sonnet 4.6 (`claude-smart`)
+
+**Inputs:** Alpha Vantage NEWS_SENTIMENT by sector.
+
+**Key behavior:** Identifies emerging themes (e.g. `ai_infrastructure`, `clean_energy`). Adds
+relevant symbols to `watchlist` tagged by theme. Prevents the watchlist from going stale and
+introduces thematic discovery alongside the screener buckets.
+
+**Outputs:** New `watchlist` rows tagged with `theme_tag` and `added_by = 'theme-scout'`
+
+---
+
+### MentorAgent — the coach
+
+**File:** `app/api/agents/mentor/route.ts`
+**Schedule:** After position-monitor + learner runs
+**LLM:** Claude Sonnet 4.6 (`claude-smart`)
+
+**Inputs:** Closed `paper_trades` + `learner_insights` + macro context.
+
+**Key behavior:** Writes plain-English coaching insights to `mentor_insights`. Three types:
+`pattern` (what worked), `lesson` (what to change), `warning` (risk concentrations). Advisory
+only — never touches money, weights, or positions.
+
+**Outputs:** `mentor_insights` rows
+
+---
+
+### Health-Triage — the SRE
+
+**File:** `app/api/agents/triage/route.ts`
+**Schedule:** Every 6h + on-demand from dashboard
+**LLM:** Claude Haiku 4.5 (`claude-fast`)
+
+**Read-only — can never change config, money limits, weights, orders, or code.**
+
+**Inputs:**
+- All open `agent_alerts`
+- Recent `agent_runs` for stale/error status
+- `llm_call_log` for budget burn rate
+- AV daily budget remaining
+- `live_account_snapshots` freshness
+
+**Key behavior:** Reads and enriches existing alerts with `structured_issues` (machine-readable
+`issue_key`, `root_cause`, `blast_radius`, `suggested_fix`). Creates new alerts for newly
+discovered issues. Suggests fixes in plain English.
+
+**Dashboard display:** `SystemHealthCard` on dashboard home. Green when clean. Severity-ranked.
+Deep-link fix hints. Tier-1 safe actions (retry, resolve info/warn) are one-click.
+
+**Outputs:** `structured_issues` on existing `agent_alerts`; new `agent_alerts` rows for
+newly discovered issues
+
+---
+
+### BriefingAgent — the daily email
+
+**File:** `app/api/briefing/generate/route.ts`
+**Schedule:** Weekdays 8:00 AM (morning) + 4:30 PM (evening) ET
+**LLM:** Claude Haiku 4.5 (`claude-fast`) for editor's note
+
+**Inputs:** Latest signals, open positions, NAV, macro regime, open System Health alerts.
+
+**Key behavior:** Generates morning and evening briefing emails. Morning: pre-market outlook.
+Evening: trade recap. Sends via Resend (or configured EMAIL_PROVIDER). Includes "Open Issues"
+band when System Health alerts are present.
+
+**Outputs:** `briefings` row, `newsletters` row (on successful Resend send)
+
+---
+
+### Validation Engine
+
+**File:** `lib/validators/backtest.ts`, `app/api/agents/backtest/route.ts`
+
+**Deterministic, no LLM.** Replays a Challenger vs Champion on walk-forward held-out slices
+of the `decision_observations` ledger.
+
+**Eligibility gates:**
+- **Sharpe ≥ 0.5**
+- **Win rate ≥ 40%**
+
+Computes: Sharpe, Sortino, max drawdown, win rate, expectancy, alpha vs benchmark. If gates
+pass, sets `eligibility_passed = true` on the `experiment_runs` row. Promotion is blocked
+(HTTP 412) unless `eligibility_passed = true`.
+
+---
+
+### Performance Truth Layer
+
+**File:** `lib/evaluation/run-evaluation.ts`, `/api/agents/evaluation/*`
+
+Mandate-aware, deterministic (no LLM), honesty-first evaluation panel on `/dashboard/learning`.
+
+**Evaluation metrics:** Sharpe, Sortino, max drawdown, win rate, expectancy, profit factor,
+alpha vs benchmark, execution slip (mean realized vs 0.05% modeled).
+
+**Honesty rules:**
+- Fewer than 20 trades → shows "too small" instead of a number
+- Tainted trades are counted (P&L must not hide them) but labeled as tainted
+- `health_label` summarizes: `insufficient_sample` → `negative_or_zero_edge` → `promising_but_unvalidated` → `validation_required`
+
+**P1 gate:** Weekly Vercel cron counts closed evaluable trades per market. Fires a System
+Health info alert when ≥ 20 accumulate.

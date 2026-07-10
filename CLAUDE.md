@@ -13,18 +13,31 @@ The per-agent diagrams (`public/agent-diagrams/<agent>.json`) follow the same
 rule for changes scoped to a single agent. A flow change that ships without a
 diagram update is incomplete.
 
-## System Overview — keep it current
+## Architecture chapters — keep them current
 
-`SYSTEM_OVERVIEW.md` is the single plain-language, start-to-end explanation of the
-whole app (core idea, feature map, agent pipeline, each agent, the evolution/mutation
-loop, and the money-safety layers), with Mermaid block diagrams and worked examples,
-written so a non-engineer can follow it. It is NOT auto-generated. Whenever a change
-alters what the app does, how an agent works, the pipeline, the learning/evolution
-loop, or a money/risk control, update `SYSTEM_OVERVIEW.md` in the same change: fix the
-relevant section, update or add a Mermaid diagram where it aids understanding, keep the
-language simple with an example, and bump the "Last updated" date. A user-visible or
-architectural change that ships without updating this doc is incomplete. (This is the
-human-readable companion to the `system-map.json` diagram rule above.)
+`docs/arch/` contains the definitive architecture documentation, split into narrow
+chapters so only the relevant chapter is touched on each change. Each chapter file
+starts with a "Last updated" date and an "Update this file when" line.
+
+`docs/arch/00-index.md` is the master index; it maps each chapter to the code changes
+that require updating it. Whenever a change ships, update ONLY the relevant chapter(s)
+— do NOT touch chapters whose subsystem was unchanged.
+
+| Chapter | Update when |
+|---|---|
+| `01-what-is-kairos.md` | Product direction, feature map, core loop changes |
+| `02-tech-stack.md` | New provider added (embeddings/rerank/email/broker/LLM), stack change |
+| `03-agents.md` | Agent added/removed/rescheduled, input/output shape changed |
+| `04-database-schema.md` | Migration applied: new table/column/index/RLS |
+| `05-crons-and-scheduling.md` | Cron added/removed/rescheduled |
+| `06-env-variables.md` | New env var added, vault key added |
+| `07-coding-conventions.md` | Styling convention, auth pattern, or API contract changes |
+| `08-risk-and-safety.md` | Safety gate added/changed, autonomy level, account allowlist |
+| `09-learning-loop.md` | LearnerAgent, champion/challenger, genome, Performance Truth |
+
+`SYSTEM_OVERVIEW.md` is kept as a high-level intro that redirects to `docs/arch/`.
+A change that ships without updating the relevant `docs/arch/` chapter is incomplete.
+(Human-readable companion to the `system-map.json` diagram rule above.)
 
 ## Project Intelligence Layer
 
@@ -54,10 +67,10 @@ Before responding to any substantial instruction, Claude must:
 Read these files before responding to any substantial project instruction:
 - `AGENTS.md` â† **READ FIRST. Multi-agent coordination layer.**
 - `WORK_LOG.md` â† what's in progress, what's claimed, what's next
-- `PRD.md` â† full product spec, coding conventions, DB schema
+- `docs/arch/00-index.md` — chapter index — which chapter covers what
+- `docs/arch/` relevant chapter(s) for the task area
 - `knowledge/KNOWLEDGE_INDEX.md` â† market knowledge base
 - `PROJECT_DECISIONS.md`
-- `ARCHITECTURE.md`
 - Relevant `features/<feature-name>/FEATURE_ARCHITECTURE.md`
 
 ### Do Not Over-Log
@@ -74,7 +87,7 @@ For every feature, screen, API, data model, workflow, integration, or infrastruc
 
 1. Understand user intention.
 2. Inspect existing code only to understand current architecture.
-3. Read `ARCHITECTURE.md` and relevant `features/<name>/FEATURE_ARCHITECTURE.md`.
+3. Read relevant `docs/arch/` chapter and `features/<name>/FEATURE_ARCHITECTURE.md`.
 4. If feature architecture file doesn't exist, create it as draft first.
 5. Produce architecture proposal.
 6. Wait for explicit approval.
@@ -135,3 +148,5 @@ Claude MUST push back on:
 - Removing SELL signal capability for existing holdings
 - Running real TraderAgent orders without approval_required mode
 - Any feature that adds agent complexity before the weekly learning loop has run at least once
+
+

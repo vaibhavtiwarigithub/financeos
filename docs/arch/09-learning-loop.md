@@ -1,0 +1,269 @@
+# Kairos — Learning Loop
+> Last updated: 2026-07-10
+> Update this file when: the learning flow changes, new guardrails are added to weight mutation, genome parameters change, Phase 1 unlocks, the RAG pipeline changes, or Performance Truth Layer evaluation logic changes.
+
+---
+
+## The big picture
+
+```mermaid
+flowchart LR
+  LEARNER[LearnerAgent\nproposes] --> CHALLENGER[Challenger\na tweaked strategy]
+  CHALLENGER --> SHADOW[Shadow test\nscore-only replay, no money]
+  CHALLENGER --> VALIDATE[Validation Engine\nreplay on held-out folds]
+  VALIDATE -- passes gates --> PROMOTE{You promote?}
+  PROMOTE -- yes --> CHAMPION[Champion\nthe live strategy]
+  PROMOTE -- no --> ARCHIVE[stays a proposal]
+  CHAMPION --> RESEARCH[ResearchAgent uses it]
+  RESEARCH --> OUTCOMES[new closed trades] --> LEARNER
+```
+
+The loop is:
+1. ResearchAgent scores stocks using the current **Champion** strategy's weights + genome.
+2. PaperTrader acts on high-score signals. PositionMonitor watches and exits positions.
+3. Closed trades become training data for **LearnerAgent**.
+4. LearnerAgent proposes a **Challenger** strategy with adjusted weights + genome.
+5. The **Validation Engine** replays the Challenger on held-out data.
+6. If the Challenger passes, you promote it to Champion. ResearchAgent uses the new weights
+   on its very next run.
+
+---
+
+## Champion and Challenger
+
+### `strategy_versions` table (governance)
+
+One row per strategy version. At most one `is_champion = true` per market at any time.
+
+| Field | Meaning |
+|---|---|
+| `market` | `us` or `india` — markets evolve independently |
+| `is_champion` | True for the one active strategy per market |
+| `weights_snapshot` | 5-dim weights that ResearchAgent reads |
+| `genome` | Trading parameters (see below) |
+| `proposed_by` | `learner` or `user` |
+| `backtest_result` | Sharpe, Sortino, win_rate, max_dd from Validation Engine |
+| `promoted_at` | Set when you click "Promote to Champion" |
+
+### The genome
+
+What a Challenger can evolve:
+
+| Parameter | Range / options | Notes |
+|---|---|---|
+| `entry_threshold` | 50–90 | `analyst_score` cutoff to open a position |
+| `exit_stop_pct` | 3–15% | Stop-loss percentage below entry |
+| `exit_target_pct` | 10–40% | Price target percentage above entry |
+| `horizon_days` | 3–30 | Time-stop maximum hold days |
+| `position_size_pct` | Up to `strategy_config.position_size_pct` | Can only size DOWN, never above the owner-set cap |
+| `sizing_mode` | `fixed` \| `kelly` \| `confidence_scaled` | How position size is calculated |
+| 5 dimension weights | Sum must = 1.0 | `{fundamental, technical, sentiment, macro, insider}` |
+
+### Per-market independence
+
+`strategy_versions` has a `market` column. LearnerAgent analyzes one market's cohort per run
+and proposes challengers only for that market. A bad India run cannot shift US scoring weights.
+India starts on a clone of the US champion as a prior and diverges once it clears the same
+10+ closed-trade phase gate.
+
+---
+
+## LearnerAgent details
+
+**File:** `app/api/agents/learner/route.ts`, `app/api/agents/learner-brain/route.ts`
+**Schedule:** Fridays 5:00 PM ET
+**LLM:** Claude Opus 4.8 (`claude-opus`)
+
+### Phase gate
+
+Weight mutation is **blocked entirely** until 10+ closed trades per market exist (`Phase 0`).
+LearnerAgent runs but only writes a "mutation blocked: insufficient trades" note to
+`learning_log`. Phase 1 (mutation unlocked) requires the owner to verify the trade set and
+acknowledge the gate has been cleared.
+
+### Tool-use loop (9 tools)
+
+LearnerAgent runs a multi-step tool-calling loop (via `runAgentLoop()`). The 9 tools it has:
+
+1. `get_closed_trades` — recent paper_trades with outcomes
+2. `get_signal_weights` — current champion weights
+3. `get_strategy_versions` — all challengers + their backtest results
+4. `get_decision_observations` — scored decisions (including skipped)
+5. `query_trade_decisions` — real historical enriched Robinhood trades by regime/action
+6. `propose_challenger` — write a new `strategy_versions` row with new weights + genome
+7. `run_validation` — trigger Validation Engine on the proposed challenger
+8. `get_mentor_insights` — recent coaching notes from MentorAgent
+9. `semantic_search_decisions` — pgvector RAG over trade memories (if Jina key present)
+
+### Auto-guard
+
+In addition to the phase gate, LearnerAgent blocks mutation if the last 3 runs have
+`win_rate < 35%`. This prevents a losing streak from producing an overfit Challenger.
+
+### Per-trade notes
+
+After each trade closes, LearnerAgent writes a 1-sentence outcome summary to `learning_log`.
+This is separate from weight mutation — it runs regardless of the phase gate.
+
+---
+
+## Validation Engine
+
+**File:** `lib/validators/backtest.ts`, `app/api/agents/backtest/route.ts`
+
+**Deterministic, no LLM.** Replays a Challenger vs the current Champion on walk-forward
+held-out slices of the `decision_observations` ledger.
+
+### Eligibility gates (same for US and India)
+
+| Gate | Threshold |
+|---|---|
+| Sharpe | ≥ 0.5 |
+| Win rate | ≥ 40% |
+
+If both gates pass, `eligibility_passed = true` is set on the `experiment_runs` row.
+
+**Promotion is blocked (HTTP 412)** unless `eligibility_passed = true`. The owner cannot
+click "Promote" without the Validation Engine having run and passed.
+
+### Metrics computed
+
+- Sharpe ratio
+- Sortino ratio
+- Maximum drawdown
+- Win rate
+- Expectancy
+- Alpha vs benchmark
+
+### Walk-forward design
+
+The Validation Engine splits historical data by time, scoring the Challenger only on data
+it could not have seen when it was proposed. This prevents in-sample overfitting from
+looking like genuine improvement.
+
+---
+
+## Shadow decisions
+
+A Challenger can be set to "shadow" real runs: it records what it *would have done* on every
+stock with no fills and no cash. This is a free dress rehearsal — the Challenger accrues a
+simulated track record before any promotion decision. Off by default. Activated per Challenger
+in the Strategy Registry.
+
+---
+
+## Feature Registry
+
+LearnerAgent can also propose a **new formula idea** — a new factor to incorporate into
+scoring. This is written as a human-readable spec with a falsification test. The formula is
+**never run as arbitrary code** — it is only interpreted through a locked, whitelisted math
+grammar. AI cannot write executable scoring code directly.
+
+---
+
+## Performance Truth Layer
+
+**File:** `lib/evaluation/run-evaluation.ts`, `/api/agents/evaluation/*`
+**Panel:** `/dashboard/learning`
+
+Mandate-aware, deterministic (no LLM), honesty-first evaluation.
+
+### Investment mandates
+
+Named strategy contexts. Default mandates:
+- "Swing US 2-20d" (benchmark: VOO)
+- "Swing India 2-20d" (benchmark: ^NSEI)
+
+Every `agent_signals`, `paper_trades`, and `decision_observations` row gets a `mandate_id`
+stamped at creation time.
+
+### Evaluation metrics
+
+| Metric | Notes |
+|---|---|
+| Sharpe | Risk-adjusted return |
+| Sortino | Downside deviation only |
+| Max drawdown | Worst peak-to-trough |
+| Win rate | % of trades that closed positive |
+| Expectancy | Average expected profit per trade |
+| Profit factor | Gross profit / gross loss |
+| Alpha | vs benchmark (VOO/^NSEI) |
+| Execution slip | Mean realized vs 0.05% modeled slippage |
+
+### Honesty rules
+
+- **Fewer than 20 trades** → shows `insufficient_sample` instead of a number. No fabricated precision on tiny samples.
+- **Tainted trades** (low `data_confidence`) are **counted** here — the book moved, so P&L must not hide them. They are labeled as tainted but included in the totals.
+- `health_label` summarizes the overall picture:
+  - `insufficient_sample` → not enough data to say anything
+  - `negative_or_zero_edge` → strategy has no positive edge
+  - `promising_but_unvalidated` → positive metrics but not yet through Validation Engine
+  - `validation_required` → ready for formal promotion decision
+
+### P1 gate
+
+A weekly Vercel cron counts closed evaluable trades per market. When ≥ 20 accumulate, it
+fires a System Health `info` alert: `p1-gate-ready:<market>`. This is the signal to build
+opportunity-level IC metrics (`decision_observations × observation_labels`).
+
+P0 is book-truth only. The `opp_*` columns in `strategy_evaluations` are null until P1.
+
+---
+
+## RAG trade memory pipeline
+
+```mermaid
+flowchart LR
+  CLOSE[Trade closes\nPositionMonitor] --> INDEX[indexClosedTrade:\nwrite setup as text\nembed with Jina 1024-dim\nstore in trade_memories]
+  INDEX --> STORE[(pgvector\ncosine similarity)]
+  NEW[New candidate\nResearchAgent] --> RETR[retrieveSimilarTrades:\nembed live setup\nmatch nearest\nrerank top-5 with jina-reranker-v2]
+  STORE --> RETR
+  RETR --> NOTE[prior similar setups\n3/5 were wins]
+  NOTE --> THESIS[injected into thesis prompt\nLLM sees its own track record]
+```
+
+### Write side — `indexClosedTrade()`
+
+- Triggered on every trade close (PositionMonitor + LearnerAgent exits)
+- Builds a short text: symbol, market, 5 dimension scores, outcome, exit reason, mandate
+- Embeds via Jina AI `jina-embeddings-v3` (1024-dim)
+- Stores in `trade_memories` (pgvector table in Supabase)
+- **Tainted / excluded trades are skipped** — bad-data history cannot poison memory
+
+### Read side — `retrieveSimilarTrades()`
+
+- Called by ResearchAgent before scoring each candidate
+- Fingerprints the live setup as text, embeds with Jina
+- Queries pgvector nearest-neighbor (cosine, IVFFlat index) for top-K candidates
+- Reranks with Jina `jina-reranker-v2-base-multilingual` to pick genuinely similar past setups
+- Returns a one-line summary: *"prior similar setups: 3/5 were wins"*
+- Writes a `rag_traces` row for audit
+
+### Guardrails
+
+- Ticker filter: a retrieved chunk that doesn't mention the candidate symbol is dropped
+- Whole path is **off when `JINA_API_KEY` is absent** — no key → silent no-op
+- Does NOT move money or change weights. Advisory context only.
+
+---
+
+## Signal weights
+
+### Current weights (live)
+
+Stored in `learning_priors` table (one row per dimension). Also reflected in the Champion
+`strategy_versions.weights_snapshot`. ResearchAgent reads Champion weights first; falls back to
+`learning_priors` → `signal_weights` if no champion exists.
+
+### Weight change audit
+
+Every weight change is logged to both `learning_priors_history` (all dimension history) and
+`signal_weights_history` (rollback source). These are never purged by the cleanup job.
+
+### Learner config
+
+`learner_config` table controls per-dimension mutation:
+- `learn_from = false` → exclude this dimension from LearnerAgent analysis
+- `allow_mutation = false` → LearnerAgent cannot propose weight changes for this dimension
+
+These are toggled via `/api/agents/learner-controls`.
