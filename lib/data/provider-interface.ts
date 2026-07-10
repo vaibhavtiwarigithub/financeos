@@ -138,6 +138,80 @@ class AlphaVantageProvider implements DataProvider {
   }
 }
 
+// ── FMP (FinancialModelingPrep) implementation ─────────────────────────────
+
+class FMPProvider implements DataProvider {
+  readonly id    = "fmp" as const;
+  readonly label = "FinancialModelingPrep";
+
+  async fetchOverview(symbol: string): Promise<OverviewResult | null> {
+    const key = process.env.FMP_API_KEY;
+    if (!key) return null;
+    const base = "https://financialmodelingprep.com/stable";
+    const bad  = (j: any) => !Array.isArray(j) || j.length === 0 || ("Error Message" in (j[0] ?? {}));
+    try {
+      const [ratios, metrics] = await Promise.all([
+        providerCachedFetch("fmp", `FMP_RATIOS:${symbol}`,
+          `${base}/ratios-ttm?symbol=${encodeURIComponent(symbol)}&apikey=${key}`,
+          { timeoutMs: 8000, isThrottled: bad }),
+        providerCachedFetch("fmp", `FMP_KEYMETRICS:${symbol}`,
+          `${base}/key-metrics-ttm?symbol=${encodeURIComponent(symbol)}&apikey=${key}`,
+          { timeoutMs: 8000, isThrottled: bad }),
+      ]);
+      const r = Array.isArray(ratios)  ? ratios[0]  : null;
+      const m = Array.isArray(metrics) ? metrics[0] : null;
+      if (!r && !m) return null;
+      const fin = (v: any): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+      return {
+        symbol,
+        peRatio:          fin(r?.priceToEarningsRatioTTM),
+        grossMargin:      fin(r?.grossProfitMarginTTM),
+        roe:              fin(m?.returnOnEquityTTM),
+        debtToEquity:     fin(r?.debtToEquityRatioTTM),
+        fcfYield:         fin(m?.freeCashFlowYieldTTM),
+        raw: { ratios: r, metrics: m },
+      };
+    } catch { return null; }
+  }
+
+  async fetchCandles(symbol: string, limit = 60): Promise<CandleResult[] | null> {
+    const key = process.env.FMP_API_KEY;
+    if (!key) return null;
+    try {
+      const json = await providerCachedFetch("fmp", `FMP_DAILY:${symbol}`,
+        `https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(symbol)}?timeseries=${limit}&apikey=${key}`,
+        { timeoutMs: 8000 });
+      const series: any[] = json?.historical ?? [];
+      return series.slice(0, limit).map((d: any) => ({
+        date:   d.date,
+        open:   +d.open,
+        high:   +d.high,
+        low:    +d.low,
+        close:  +d.close,
+        volume: +d.volume,
+      }));
+    } catch { return null; }
+  }
+
+  async fetchNews(symbol: string, limit = 10): Promise<NewsResult[] | null> {
+    const key = process.env.FMP_API_KEY;
+    if (!key) return null;
+    try {
+      const json = await providerCachedFetch("fmp", `FMP_NEWS:${symbol}`,
+        `https://financialmodelingprep.com/api/v3/stock_news?tickers=${encodeURIComponent(symbol)}&limit=${limit}&apikey=${key}`,
+        { timeoutMs: 8000 });
+      if (!Array.isArray(json)) return null;
+      return json.slice(0, limit).map((a: any) => ({
+        title:       a.title ?? "",
+        summary:     a.text?.slice(0, 300) ?? undefined,
+        url:         a.url ?? undefined,
+        publishedAt: a.publishedDate ?? undefined,
+        sentiment:   null,
+      }));
+    } catch { return null; }
+  }
+}
+
 // ── Null (stub) implementation — safe default for unimplemented providers ──
 
 class NullProvider implements DataProvider {
@@ -151,8 +225,10 @@ class NullProvider implements DataProvider {
 
 const PROVIDER_REGISTRY: Partial<Record<ProviderId, DataProvider>> = {
   alpha_vantage: new AlphaVantageProvider(),
-  // TODO: add FinancialDatasetsProvider, FMPProvider, TwelveDataProvider as
-  // each is wrapped. Until then they return null via NullProvider fallback.
+  fmp:           new FMPProvider(),
+  // Add more: financialdatasets, twelvedata, eodhd — implement the DataProvider
+  // interface and register here. NullProvider is the safe fallback for any id
+  // not in this map.
 };
 
 /** Get a provider by id. Returns a NullProvider (all nulls) for unimplemented IDs. */

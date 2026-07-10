@@ -156,7 +156,33 @@ function getLangfuse() {
   return _langfuse as any
 }
 
+// ── Provider registry (plug-and-play) ────────────────────────────────────────
+// Add a new LLM backend without touching this file:
+//   import { registerLLMProvider } from "@/lib/llm-router";
+//   registerLLMProvider(m => m.startsWith("gemini"), callGemini);
+// Custom providers are tried BEFORE built-ins, so they can override any model.
+
+type ProviderCallFn = (
+  model: string,
+  prompt: string,
+  system: string | undefined,
+  maxTokens: number,
+) => Promise<{ text: string; tokensIn: number; tokensOut: number; cacheWriteTokens?: number; cacheReadTokens?: number }>
+
+const _customProviders: Array<{ test: (m: string) => boolean; fn: ProviderCallFn }> = []
+
+export function registerLLMProvider(test: (model: string) => boolean, fn: ProviderCallFn): void {
+  _customProviders.push({ test, fn })
+}
+
 async function dispatchProvider(model: string, opts: LLMCallOpts): Promise<{ text: string; tokensIn: number; tokensOut: number; cacheWriteTokens?: number; cacheReadTokens?: number }> {
+  // Custom providers take priority (last-registered wins among customs).
+  for (let i = _customProviders.length - 1; i >= 0; i--) {
+    if (_customProviders[i].test(model)) {
+      return _customProviders[i].fn(model, opts.prompt, opts.systemPrompt, opts.maxTokens ?? 4096)
+    }
+  }
+  // Built-in dispatch
   if (model.startsWith("claude")) return callClaude(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
   if (model.startsWith("deepseek")) return callDeepSeek(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
   if (GROQ_MODELS.has(model)) return callGroq(model, opts.prompt, opts.systemPrompt, opts.maxTokens)

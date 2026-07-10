@@ -1,21 +1,7 @@
-import { createServiceClient } from "@/lib/supabase/service";
+import { getEmailProvider } from "@/lib/providers/email";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "vterminater@gmail.com";
 const FROM_EMAIL = "kairos@notifications.kairos.trade";
-
-async function getResendKey(): Promise<string | null> {
-  try {
-    const supabase = createServiceClient();
-    const { data } = await supabase
-      .from("api_key_vault")
-      .select("key_value")
-      .eq("key_name", "RESEND_API_KEY")
-      .single();
-    return (data as any)?.key_value ?? process.env.RESEND_API_KEY ?? null;
-  } catch {
-    return process.env.RESEND_API_KEY ?? null;
-  }
-}
 
 export async function notifyTradeAction(opts: {
   action: "submitted" | "approved" | "rejected" | "failed" | "expired" | "blocked";
@@ -28,9 +14,6 @@ export async function notifyTradeAction(opts: {
   reason?: string;
   warning?: string;
 }): Promise<void> {
-  const resendKey = await getResendKey();
-  if (!resendKey) return; // silent — no key configured yet
-
   const { action, symbol, qty, side, price, orderId, proposalId, reason, warning } = opts;
 
   const emoji = {
@@ -58,21 +41,10 @@ export async function notifyTradeAction(opts: {
     `<br><small>Kairos — if you did not initiate this, disable trading immediately in Settings → Strategy.</small>`,
   ].filter(Boolean).join("<br>");
 
-  try {
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${resendKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: FROM_EMAIL,
-        to: [ADMIN_EMAIL],
-        subject,
-        html: `<div style="font-family:monospace;font-size:14px;line-height:1.8">${lines}</div>`,
-      }),
-    });
-  } catch {
-    // Non-critical — never let email failure block a trade operation
-  }
+  await getEmailProvider().send({
+    from: FROM_EMAIL,
+    to: ADMIN_EMAIL,
+    subject,
+    html: `<div style="font-family:monospace;font-size:14px;line-height:1.8">${lines}</div>`,
+  });
 }

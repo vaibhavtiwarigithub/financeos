@@ -1,26 +1,9 @@
 import { createServiceClient } from "@/lib/supabase/service";
+import { getEmailProvider } from "@/lib/providers/email";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "vterminater@gmail.com";
 const FROM = "Kairos <alerts@kairos.trade>";
 const DASHBOARD = "http://localhost:3000/dashboard/smart-money";
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-async function resendKey(): Promise<string | null> {
-  try {
-    const sb = createServiceClient();
-    const { data } = await sb.from("api_key_vault").select("key_value").eq("key_name", "RESEND_API_KEY").single();
-    return (data as any)?.key_value ?? process.env.RESEND_API_KEY ?? null;
-  } catch { return process.env.RESEND_API_KEY ?? null; }
-}
-
-async function send(key: string, subject: string, html: string): Promise<void> {
-  await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: FROM, to: [ADMIN_EMAIL], subject, html }),
-  });
-}
 
 const C = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -95,8 +78,6 @@ export interface TradeAlertOpts {
 }
 
 export async function sendTradeAlertEmail(opts: TradeAlertOpts): Promise<void> {
-  const key = await resendKey();
-  if (!key) return;
 
   const sb = createServiceClient();
 
@@ -233,9 +214,7 @@ ${risks.length > 0 ? `
 </div>
 `);
 
-  try {
-    await send(key, subject, html);
-  } catch { /* non-critical */ }
+  await getEmailProvider().send({ from: FROM, to: ADMIN_EMAIL, subject, html });
 }
 
 // ── reminder email (sent 25 min after proposal, if still pending) ─────────────
@@ -250,8 +229,6 @@ export async function sendProposalReminderEmail(proposal: {
   approval_expires_at: string;
   thesis?: string;
 }): Promise<void> {
-  const key = await resendKey();
-  if (!key) return;
 
   const minutesLeft = Math.max(0, Math.round((new Date(proposal.approval_expires_at).getTime() - Date.now()) / 60000));
   const sideEmoji   = proposal.side === "buy" ? "🟢" : "🔴";
@@ -278,9 +255,7 @@ ${proposal.thesis ? `
 <div style="font-size:10px;color:${C.muted}">Kairos · Proposal #${proposal.id} · If no action, proposal expires and is discarded.</div>
 `);
 
-  try {
-    await send(key, subject, html);
-  } catch { /* non-critical */ }
+  await getEmailProvider().send({ from: FROM, to: ADMIN_EMAIL, subject, html });
 }
 
 // ── outcome email (7 days post-fill) ─────────────────────────────────────────
@@ -297,8 +272,6 @@ export async function sendTradeOutcomeEmail(opts: {
   agentScore: number;
   exitReason?: string;
 }): Promise<void> {
-  const key = await resendKey();
-  if (!key) return;
 
   const pnlPositive = opts.pnlPct >= 0;
   const pnlEmoji    = pnlPositive ? "📈" : "📉";
@@ -333,7 +306,5 @@ ${header(pnlEmoji, `${opts.symbol} Trade Outcome`, `${opts.holdDays} days after 
 <div style="font-size:10px;color:${C.muted}">Kairos · ${opts.proposalId ? `Proposal #${opts.proposalId} · ` : ""}Past performance is not indicative of future results.</div>
 `);
 
-  try {
-    await send(key, subject, html);
-  } catch { /* non-critical */ }
+  await getEmailProvider().send({ from: FROM, to: ADMIN_EMAIL, subject, html });
 }
