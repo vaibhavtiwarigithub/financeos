@@ -195,6 +195,7 @@ Rules: BUY only if RSI<70 and fundamentals support growth. SELL if RSI>80 or det
     agent_label: "deepseek",
     agent_type: "deepseek-research",
     status: "advisory",
+    score_source: "llm_advisory",   // P0: structural gate — excluded from paper/live signal consumption
   });
 
   return {

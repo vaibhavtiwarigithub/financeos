@@ -160,6 +160,7 @@ async function buildProposals(supabase: any, isCron: boolean) {
       .eq("direction", "long")
       .eq("status", "pending")
       .gte("analyst_score", scoreThreshold)
+      .or("score_source.is.null,score_source.neq.llm_advisory")  // P0: exclude DeepSeek advisory signals
       .order("analyst_score", { ascending: false })
       .limit(3); // max 3 proposals per run
 

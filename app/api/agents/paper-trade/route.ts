@@ -147,6 +147,7 @@ export async function POST(req: NextRequest) {
       let selQ = supabase.from("agent_signals").select("*")
         .eq("status", "pending").eq("direction", "long")
         .gte("analyst_score", scoreThreshold).gte("created_at", cutoff)
+        .or("score_source.is.null,score_source.neq.llm_advisory")  // P0: exclude DeepSeek advisory signals
         .order("analyst_score", { ascending: false }).limit(hasMarketCol ? 10 : 5);
       selQ = hasMarketCol ? selQ.eq("market", m) : selQ.neq("asset_class", "india");
       const { data } = await selQ;

@@ -1114,15 +1114,31 @@ export async function processSymbol(
   // Held positions must always retain SELL/exit capability (CLAUDE.md locked
   // rule) — thin-evidence abstention applies only to NEW long entries, never
   // suppresses an exit signal on an existing holding.
+  // P0 mechanical direction gate — direction is deterministic, not LLM-driven.
+  // LLM thesis provides narrative and exit judgment only. For new positions,
+  // direction is `long` iff analystScore clears threshold AND evidence is not thin.
+  // Held-position "short" remains honored as an exit signal (CLAUDE.md locked rule).
   const llmParseFailed = !thesis.direction;
   const isExitSignal = isHeld && thesis.direction === "short";
-  const forcedAbstain = (thinEvidence || llmParseFailed) && !isExitSignal;
-  const rawDirection: string = forcedAbstain ? "neutral" : (thesis.direction ?? "neutral");
-  const signalDirection = !isHeld && rawDirection === "short" ? "neutral" : rawDirection;
-  const abstainNote = forcedAbstain
-    ? ` [abstained: ${thinEvidence ? `thin evidence (${includedDims.length}/5 dims)` : "thesis parse failed"}]`
-    : "";
-  const directionNote   = (rawDirection !== signalDirection ? ` [short→neutral: not a held position]` : "") + abstainNote;
+  let signalDirection: string;
+  let directionNote: string;
+  if (isExitSignal) {
+    signalDirection = "short";
+    directionNote = "";
+  } else if (thinEvidence) {
+    signalDirection = "neutral";
+    directionNote = ` [abstained: thin evidence (${includedDims.length}/5 dims)]`;
+  } else if (llmParseFailed) {
+    signalDirection = "neutral";
+    directionNote = " [abstained: thesis parse failed]";
+  } else {
+    // Mechanical gate: threshold → long, else neutral.
+    // LLM direction opinion intentionally ignored for non-exit signals.
+    signalDirection = analystScore >= (scoreThreshold ?? 60) ? "long" : "neutral";
+    directionNote = thesis.direction && thesis.direction !== signalDirection
+      ? ` [llm=${thesis.direction} overridden by gate → ${signalDirection}]`
+      : "";
+  }
 
   const { data: packet } = await supabase
     .from("research_packets")
@@ -1141,8 +1157,8 @@ export async function processSymbol(
         _scores: scores,
         _analyst_score: analystScore,
         _profile_weights: { fw, tw, sw, mw, iw },
-        _original_direction: rawDirection,
-        _direction_override: rawDirection !== signalDirection,
+        _original_direction: thesis.direction ?? "unparsed",  // P0: LLM opinion (may differ from gate output)
+        _direction_override: thesis.direction !== signalDirection,
         _data_quality: scores.dataQuality,
         _social_sentiment: socialResult ?? null,
         _options_signal:   optionsResult ?? null,
@@ -1179,6 +1195,8 @@ export async function processSymbol(
     // at fill time from the real price anyway.
     asset_class:  assetClass,
     market, // Phase 4: routes the signal to its market's paper pool + champion
+    score_source: "deterministic_v1",   // P0: structural provenance tag — gates paper/live consumption
+    scoring_version: "v1.0",            // P0: linked to strategy_versions lifecycle
   };
 
   // Attach default mandate (fail-soft: pre-133 schema or missing table → no-op)
@@ -1196,6 +1214,8 @@ export async function processSymbol(
       /column .* does not exist|could not find the '.*' column/i.test(String(error.message ?? "")));
     if (undefinedCol) {
       delete signalRow.market;
+      delete signalRow.score_source;   // strip P0 cols on pre-136 schema
+      delete signalRow.scoring_version;
       const retry = await supabase.from("agent_signals").insert(signalRow).select("id").maybeSingle();
       insertedSignalId = retry.data?.id ?? null;
     } else if (error) {
@@ -1340,6 +1360,11 @@ export async function processSymbol(
       signal_id: insertedSignalId,
       discovery_source: entry.discovery_source ?? null,
       mandate_id: mandateId ?? null,
+      score_source: "deterministic_v1",
+      scoring_version: "v1.0",
+      // P0 evidence_confidence: ratio of dims with data to structurally applicable dims.
+      // Denominator uses applicable.size (base count proxy; P1 upgrades to base weights).
+      evidence_confidence: applicable.size > 0 ? includedDims.length / applicable.size : null,
     }).select("id").maybeSingle();
     if (obsErr && !/does not exist|could not find/i.test(obsErr.message ?? "")) {
       console.error("[research-agent] decision_observations insert failed:", obsErr.message);
