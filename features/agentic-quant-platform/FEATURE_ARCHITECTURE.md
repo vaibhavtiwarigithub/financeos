@@ -761,3 +761,94 @@ Implementation allowed: Yes (phased)
 Phase 0 complete: 2026-07-01
 
 Next gate: Vaibhav approves Phase 1 implementation plan (Evidence store, provider adapters, source hierarchy, corporate actions, macro vintages).
+
+---
+
+# Audit-Driven Remediation & Adaptive-Quant Target (2026-07-10)
+
+Consolidates the full-system Codex audit (`CODEX_FULL_SYSTEM_AUDIT_RESULT.md`) and its A–J
+target spec into one governed roadmap. Owner directive: work every item until done.
+
+## Verified current-state truth (spot-checked against live DB + code, not docs)
+
+- **Autonomous-live never places an order.** `lib/trading/autonomous-live.ts` selected
+  `agent_signals.evidence_confidence`, a column that does not exist (real column is
+  `agent_signals.confidence`; `evidence_confidence` lives on `decision_observations`). The
+  query error was swallowed → zero signals every run. DB-confirmed.
+- **Autonomous path bypasses the hardened Execution Gateway** — direct broker-client calls,
+  omitting `checkKillSwitches`, account allowlist, G1/G3, quote-drift, preview, held-SELL.
+- **India autonomous sizing uses the USD Robinhood NAV account for INR orders** — dimensionally invalid.
+- **Migrations 139/140 + `reserve_live_order_budget_v2` are applied in prod but have no files** —
+  clean DB cannot rebuild. (RPC verified atomic in prod; the gap is reproducibility.)
+- **Calibration leakage** — logistic fit on all rows, then "OOS" fold predictions use those same
+  full-data coefficients. Learned P(win) untrustworthy until fold-local.
+- **Paper learning loop IS partly real** — owner-promoted champion weights + genome do drive next-run
+  scoring and paper sizing/exits. Live path and feature-registry/edge-lab loops are inert/broken.
+
+`AUTONOMOUS_LIVE_ENABLED` stays **false** until the money-path unification + acceptance tests pass.
+
+## Target architecture (A–J, condensed — the north star)
+
+- **A. Separate prediction / portfolio-construction / execution** into independently testable layers.
+- **B. Small mixture of validated setup experts** (quality-momentum, price-trend/RS, PEAD, value
+  inflection, ETF rotation, India quality-momentum) — not one ever-growing composite; not a 6th weight.
+- **C. Real learnable genome** (features, weights, routing, entry/exit/sizing/universe/costs) — bounded,
+  hashed, immutably linked to dataset/labels/code/validation. Money ceilings, accounts, kill switches,
+  autonomy mode, secrets, ledger are **not genes**.
+- **D. Research tournament**: hypothesis → measure-only → purged walk-forward → shadow → paper A/B →
+  owner live-review → capped canary → scale/retire. Deflated-Sharpe/FDR, lockbox, no "any-horizon-wins".
+- **E. Point-in-time, market-specific data plane** (event/available/retrieved times, dated universe +
+  delistings, corporate-action-consistent prices, US+NSE calendars, separate USD/INR NAV).
+- **F. Learn from the broad decision population** (every considered candidate incl. rejects), not fills only.
+- **G. Performance-truth + attribution** per market (TWR/MWR, alpha/beta, Sharpe/Sortino/Calmar, DD,
+  turnover, net-of-cost, calibration curves).
+- **H. Autonomy as one governed control system** — shared execution service, market/account/currency
+  pinned, atomic claim+idempotency, fresh kill-switch, reconciliation, protective exits, short lease,
+  tiny capital, instant disable.
+- **I. Honest success metric** — beat an investable benchmark net of costs within DD/tail limits; degrade
+  safely; adapt faster than edge decay; full reproducibility. NOT "beat everyone in every regime".
+- **J. 16 acceptance tests** (PIT reproducibility, no future leakage, no US/India cross-contamination,
+  no research→money jump, no duplicate orders, one shared gateway, kill cancels resting orders, RLS
+  matrix, clean-DB replay). Feature is not "done" until these pass.
+
+## Remediation checklist (work top-to-bottom; update status inline)
+
+Legend: [ ] todo · [~] in progress · [x] done
+
+### Track 1 — correctness / safety / reproducibility (no new architecture; unambiguous fixes)
+- [x] R1  #4 autonomous-live signal query: select real `confidence`, capture error, FAIL run + alert on error
+- [x] R2  #5 add `checkKillSwitches(svc, market)` to the autonomous path (fresh, per market, fail closed)
+- [x] R3  #1 restore migrations 139/140 + `reserve_live_order_budget_v2` + `broker_order_events` DDL from prod → files (`143_restore_live_auto_ddl.sql`)
+- [x] R4  #9 autonomous fail-closed: require valid future lease + per-market `trading_enabled_*===true` (no null-passes)
+- [ ] R5  #14 calibration fold-local fitting (fit scaler+logistic inside each train fold; refit-all only for deploy artifact)
+- [ ] R6  #19 positive-allowlist score_source/version on paper+trader eligibility (remove null/unknown fail-open + column-delete retry)
+- [ ] R7  #22 evidence_confidence = weighted structural coverage (not dimension count)
+- [ ] R8  #33 weighted-score: return explicit abstain/null for <2 dims (no meaningless partial number)
+- [ ] R9  #16/#31 owner-gate Smart-Money + metered/personal routes + mentor getSession→requireOwner + import-csv requireOwner
+- [ ] R10 #17/#32 RLS: scope remaining `USING(true)` tables (paper_order_events, evidence_records, corporate_actions, strategy_versions, experiment_runs, trade_decision_embeddings, universe_snapshots*) to owner/service
+- [ ] R11 #18 vault: hash PIN (store salted hash, not plaintext); plan envelope-encryption for keys; rotate legacy cron secret
+- [ ] R12 #34 redact literal cron secret from historical migration text (repair migration) + confirm rotation
+
+### Track 2 — money-path unification (architecture-gated; build after Track 1)
+- [ ] R13 #2/#5/#10/#11 extract one server-only `executeApprovedOrder()` used by manual + autonomous (all gateway invariants, actor envelope)
+- [ ] R14 #3/#8 market/account/currency-correct NAV + net-open-position count per (market,broker,account)
+- [ ] R15 #7 atomic signal claim (unique partial index on (signal_id,market,execution_mode)) + deterministic client order key
+- [ ] R16 #6 live position monitor + protective-exit/cancel/reconcile control plane (partial fill, ambiguous submit)
+- [ ] R17 #12/#28 per-market exchange-calendar schedules (US + India separate, session-aware); consolidate scheduler
+- [ ] R18 #13/#15 learner: baseline from market champion + simplex-renormalize; transactional per-market promotion; make force_unvalidated paper-only
+
+### Track 3 — statistical + evolution integrity (after Track 2)
+- [ ] R19 #21 label maturation: exchange-calendar sessions + immutable executable decision price (no future candle)
+- [ ] R20 #23/#24 edge lab: dated PIT universe + delistings, predeclared horizon + FDR, Newey-West lag = overlap
+- [ ] R21 #26 rename feature-registry "active"→"research_validated"; wire only via shadow→paper→promote
+- [ ] R22 #27 autonomous sizing: per market/setup/horizon calibrated artifact; unknown edge → size 0
+- [ ] R23 #20 held-exit direction deterministic (LLM advisory-only schema: veto/rationale/risks)
+- [ ] R24 #29/#30 past-trade: RFC-4180 parse, immutable raw rows, transaction taxonomy, position/lot episodes, session/CA-consistent enrichment
+
+### Track 4 — target architecture (A–J; phased, data-gated)
+- [ ] R25 skeleton: three-layer contract (alpha model → portfolio constructor → execution policy) interfaces + provenance columns
+- [ ] R26 setup-expert framework (B) with one real expert in shadow
+- [ ] R27 J acceptance-test fixtures; clean-DB replay in CI
+- [ ] R28 performance-truth attribution extension (G)
+
+Docs (`docs/arch/*`, `system-map.json`, `AGENTS.md`, `PRD.md`) reconciled per §7 drift register as each item lands.

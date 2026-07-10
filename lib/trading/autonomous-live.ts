@@ -10,6 +10,7 @@ import { AUTONOMOUS_LIVE_ENABLED } from "@/lib/autonomy";
 import { getQuote } from "@/lib/data/quotes";
 import { rhPlaceMarketOrder } from "@/lib/brokers/robinhood/rest-client";
 import { placeEquityOrder } from "@/lib/kite";
+import { checkKillSwitches } from "@/lib/kill-switches";
 
 const SIGNAL_LOOKBACK_HOURS = 24;
 const NAV_ACCOUNT_ID = "605420660";
@@ -75,9 +76,10 @@ export async function runAutonomousLive(
   // G3: DB master toggle
   if (!cfg.live_auto_enabled) return { ...earlyExit("db_toggle_off"), run_id: runId };
 
-  // G4: lease expiry
-  if (cfg.live_auto_enabled_until && new Date(cfg.live_auto_enabled_until) < new Date()) {
-    return { ...earlyExit("lease_expired"), run_id: runId };
+  // G4: lease — require a VALID FUTURE lease. A null/absent lease must NOT pass
+  // on a live-money path (fail closed).
+  if (!cfg.live_auto_enabled_until || new Date(cfg.live_auto_enabled_until) <= new Date()) {
+    return { ...earlyExit("lease_missing_or_expired"), run_id: runId };
   }
 
   // Determine which markets are in autonomous mode. A market must be BOTH in
@@ -85,11 +87,30 @@ export async function runAutonomousLive(
   // kill switch (honored by the manual gateways) also blocks the autonomous
   // path — flipping a market to view-only stops auto orders for it, even if its
   // mode column is still "autonomous".
+  // Require the per-market view-only flag to be EXPLICITLY true (fail closed on
+  // null/absent — never assume enabled on a live-money path).
   const autonomousMarkets: string[] = [];
-  if (cfg.live_auto_mode_us === "autonomous" && cfg.trading_enabled_us !== false) autonomousMarkets.push("us");
-  if (cfg.live_auto_mode_india === "autonomous" && cfg.trading_enabled_india !== false) autonomousMarkets.push("india");
+  if (cfg.live_auto_mode_us === "autonomous" && cfg.trading_enabled_us === true) autonomousMarkets.push("us");
+  if (cfg.live_auto_mode_india === "autonomous" && cfg.trading_enabled_india === true) autonomousMarkets.push("india");
   if (autonomousMarkets.length === 0) {
     return { ...earlyExit("no_markets_in_autonomous_mode"), run_id: runId };
+  }
+
+  // Fresh per-market kill-switch check (drawdown / daily-loss / accuracy) — the
+  // REAL risk engine, not just the cached config booleans above. Drop any market
+  // whose switch is tripped; fail closed if the check itself errors.
+  const killedMarkets: Record<string, string> = {};
+  for (const m of [...autonomousMarkets]) {
+    let ks: { safe: boolean; reason?: string };
+    try { ks = await checkKillSwitches(svc, m); }
+    catch (e: any) { ks = { safe: false, reason: `kill-switch check failed: ${e?.message ?? "error"}` }; }
+    if (!ks.safe) {
+      killedMarkets[m] = ks.reason ?? "kill switch tripped";
+      autonomousMarkets.splice(autonomousMarkets.indexOf(m), 1);
+    }
+  }
+  if (autonomousMarkets.length === 0) {
+    return { ...earlyExit(`kill_switch_tripped:${JSON.stringify(killedMarkets)}`), run_id: runId };
   }
 
   const policy: LiveAutoPolicy = {
@@ -159,9 +180,13 @@ export async function runAutonomousLive(
   // Query qualifying signals for autonomous markets only
   const lookbackCutoff = new Date(Date.now() - SIGNAL_LOOKBACK_HOURS * 3_600_000).toISOString();
 
-  const { data: signals } = await svc
+  const { data: signals, error: sigErr } = await svc
     .from("agent_signals")
-    .select("id, symbol, market, direction, analyst_score, evidence_confidence, score_source, rationale")
+    // NOTE: the confidence column on agent_signals is `confidence` (aliased to
+    // evidence_confidence for the kernel). A previous build selected a
+    // nonexistent `evidence_confidence` column and SWALLOWED the resulting
+    // PostgREST error, so this path silently processed zero signals every run.
+    .select("id, symbol, market, direction, analyst_score, confidence, score_source, rationale")
     .eq("score_source", "deterministic_v1")
     .eq("direction", "long")
     .gte("analyst_score", scoreThreshold)
@@ -169,6 +194,16 @@ export async function runAutonomousLive(
     .in("market", autonomousMarkets)
     .order("analyst_score", { ascending: false })
     .limit(policy.live_auto_max_orders_per_day ?? 3);
+
+  // Fail LOUDLY on a query error — never silently no-op the whole autonomous run.
+  if (sigErr) {
+    await svc.from("agent_runs").insert({
+      agent_type: "autonomous_live", status: "error", trigger_source: "scheduled",
+      completed_at: new Date().toISOString(),
+      result_summary: `autonomous-live signal query failed: ${sigErr.message}`,
+    } as any).then(() => {}, () => {});
+    throw new Error(`autonomous-live signal query failed: ${sigErr.message}`);
+  }
 
   const results: LiveRunResult["results"] = [];
   let liveOrdersThisRun = 0;
@@ -241,7 +276,7 @@ export async function runAutonomousLive(
       market,
       direction:             signal.direction ?? "long",
       score:                 signal.analyst_score ?? 0,
-      evidence_confidence:   signal.evidence_confidence ?? 0,
+      evidence_confidence:   (signal as any).confidence ?? 0,
       score_threshold:       scoreThreshold,
       proposed_notional_usd: 0,
       policy,
