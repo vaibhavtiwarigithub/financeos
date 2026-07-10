@@ -1,4 +1,5 @@
 import { AUTONOMOUS_LIVE_ENABLED } from "@/lib/autonomy";
+import { positionSizePct } from "@/lib/risk/sizing";
 
 export interface LiveAutoPolicy {
   live_auto_enabled: boolean;
@@ -152,4 +153,98 @@ function fail(
     policy_version: policy.live_auto_policy_version,
     evaluated_at: now.toISOString(),
   };
+}
+
+// ─── PA2 Sizing ─────────────────────────────────────────────────────────────
+
+export interface SizingInput {
+  nav: number;
+  nav_captured_at: string;
+  /** Autonomous NAV max age is strict (4h default). No fallback NAV. */
+  nav_max_age_ms?: number;
+  current_price: number;
+  price_stale: boolean;
+  /** Null when < 10 closed paper_trades available — falls back to flat. */
+  win_rate: number | null;
+  payoff_ratio: number | null;
+  /** From strategy_config.position_size_pct — used as flat fallback. */
+  flat_size_pct: number;
+  policy: LiveAutoPolicy;
+}
+
+export interface SizingResult {
+  ok: boolean;
+  reject_reason?: string;
+  size_method: "kelly" | "flat";
+  size_pct: number;
+  proposed_qty: number;
+  estimated_notional: number;
+  pct_of_nav: number;
+}
+
+const NAV_MAX_AGE_MS_DEFAULT = 4 * 3_600_000; // 4 hours — strict for autonomous path
+
+export function computeAutonomousSizing(input: SizingInput): SizingResult {
+  const age = Date.now() - new Date(input.nav_captured_at).getTime();
+  const maxAge = input.nav_max_age_ms ?? NAV_MAX_AGE_MS_DEFAULT;
+
+  if (!input.nav || !Number.isFinite(input.nav) || input.nav <= 0) {
+    return noSize("no_live_nav");
+  }
+  if (age > maxAge) {
+    return noSize(`stale_nav_${Math.round(age / 60_000)}min`);
+  }
+  if (input.price_stale || !Number.isFinite(input.current_price) || input.current_price <= 0) {
+    return noSize("no_current_price");
+  }
+
+  let size_pct = (input.flat_size_pct / 100) || 0.10;
+  let size_method: "kelly" | "flat" = "flat";
+
+  if (
+    input.win_rate != null &&
+    input.payoff_ratio != null &&
+    input.win_rate > 0 &&
+    input.payoff_ratio > 0
+  ) {
+    // Kelly cap = min(10%, per-order cap / nav)
+    const perOrderCap = input.policy.live_auto_max_per_order_usd;
+    const cap = perOrderCap != null
+      ? Math.min(0.10, perOrderCap / input.nav)
+      : 0.10;
+    const kelly = positionSizePct(input.win_rate, input.payoff_ratio, {
+      halfKellyCap: cap,
+      floorPct: 0.02,
+    });
+    if (kelly > 0) {
+      size_pct = kelly;
+      size_method = "kelly";
+    }
+  }
+
+  // Clamp to per-order notional cap
+  if (input.policy.live_auto_max_per_order_usd != null) {
+    size_pct = Math.min(size_pct, input.policy.live_auto_max_per_order_usd / input.nav);
+  }
+
+  const notional = input.nav * size_pct;
+  const qty = Math.floor(notional / input.current_price);
+
+  if (qty < 1) {
+    return noSize("qty_rounds_to_zero");
+  }
+
+  const estimated_notional = parseFloat((qty * input.current_price).toFixed(2));
+  return {
+    ok: true,
+    size_method,
+    size_pct: parseFloat(size_pct.toFixed(6)),
+    proposed_qty: qty,
+    estimated_notional,
+    pct_of_nav: parseFloat((estimated_notional / input.nav).toFixed(4)),
+  };
+}
+
+function noSize(reason: string): SizingResult {
+  return { ok: false, reject_reason: reason, size_method: "flat", size_pct: 0, proposed_qty: 0, estimated_notional: 0, pct_of_nav: 0 };
 }
