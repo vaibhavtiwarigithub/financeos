@@ -6,7 +6,7 @@
 > - Senior engineers building agents: all sections
 > - DevOps / infra: §4 Deployment
 
-Last updated: 2026-07-09
+Last updated: 2026-07-10
 
 ---
 
@@ -20,6 +20,12 @@ Last updated: 2026-07-09
    - 3.3 Learning & Evolution Loop
    - 3.4 Money-Safety Gateway
    - 3.5 System Health Funnel
+   - 3.6 MacroSentinel
+   - 3.7 TraderAgent
+   - 3.8 ThemeScout
+   - 3.9 MentorAgent
+   - 3.10 BriefingAgent
+   - 3.11 HealthTriage
 4. [Level 4 — Dynamic / Code-Level Flows](#4-level-4--dynamic--code-level-flows)
    - 4.1 A stock scored end-to-end
    - 4.2 Robinhood OAuth PKCE S256 flow
@@ -124,7 +130,7 @@ C4Container
 
     Container(scheduler_vercel, "Vercel Crons", "vercel.json", "2 cloud crons: P1-gate (Sundays 02:00 UTC) + DB cleanup (1st of month 03:00 UTC).")
 
-    Container(scheduler_local, "Windows Task Scheduler", "PowerShell scripts/run-agents.ps1", "14 local tasks: research, paper-trade, position-monitor, learner, macro-sentinel, theme-scout, briefings, stale-check, India variants. PC must be on.")
+    Container(scheduler_pg, "Supabase pg_cron", "lib/schedule.ts → 30 registered jobs", "Primary scheduler. All market jobs run via Supabase pg_cron → Vercel HTTP POST (cron-secret auth). Covers all US + India research, trading, position-monitor, learner, macro, briefing, and watchdog tasks. DB-backup only job remains on Windows Task Scheduler.")
   }
 
   ContainerDb(supabase_db, "Supabase (PostgreSQL + pgvector)", "Supabase hosted", "35+ tables: signals, paper_trades, paper_positions, strategy_versions, trade_memories (vector), agent_alerts, llm_call_log, api_key_vault, etc.")
@@ -162,7 +168,7 @@ C4Container
   Rel(system_health, supabase_db, "agent_alerts table (partial unique index on issue_key)", "Supabase SDK")
   Rel(vault, supabase_db, "api_key_vault table (runtime-editable keys)", "Supabase SDK")
   Rel(scheduler_vercel, api_routes, "POST /api/agents/* with x-cron-secret header", "HTTPS")
-  Rel(scheduler_local, api_routes, "POST /api/agents/* via PowerShell script", "HTTPS")
+  Rel(scheduler_pg, api_routes, "POST /api/agents/* with x-cron-secret header (30 jobs, all markets)", "HTTPS")
   Rel(api_routes, resend_email, "Briefing emails (morning + evening)", "HTTPS")
 ```
 
@@ -180,6 +186,7 @@ C4Container
 | **RAG Trade Memory** | `lib/rag.ts`, pgvector | Embeds closed trades on close, retrieves similar setups before scoring. Off when `VOYAGE_API_KEY` absent. |
 | **Vault** | `lib/vault.ts` | Runtime-editable keys in Supabase — not in .env. Kite token, Robinhood OAuth, AV key, etc. |
 | **System Health** | `lib/system-health.ts` | `issue_key` dedup prevents duplicate alerts. All reporters use same helpers. Dashboard card + briefing band. |
+| **Supabase pg_cron** | `lib/schedule.ts` | 30 jobs. Primary scheduler for all market tasks. Single remaining local job: `db-backup` (Windows Task Scheduler). |
 
 ---
 
@@ -435,6 +442,216 @@ C4Component
 
 ---
 
+### 3.6 MacroSentinel
+
+The weekly macro regime scanner. Pulls 8 US macro indicators from Alpha Vantage, computes a
+0–100 danger score, and writes a regime label (GREEN / YELLOW / ORANGE / RED). Advisory only —
+never auto-throttles other agents, never mutates config.
+
+```mermaid
+C4Component
+  title Component Diagram — MacroSentinel
+
+  Person(cron_ms, "pg_cron", "Mondays 8:30 AM ET")
+
+  Container_Boundary(sentinel, "MacroSentinel — app/api/agents/macro-sentinel/") {
+    Component(indicator_fetcher, "8-Indicator Fetcher", "TypeScript + AV API", "Fetches: TREASURY_YIELD (10Y-2Y spread), UNEMPLOYMENT (Sahm Rule delta), REAL_GDP (QoQ), NONFARM_PAYROLL (MoM), CPI (YoY), RETAIL_SALES (MoM), FEDERAL_FUNDS_RATE, DURABLES (MoM orders).")
+    Component(danger_scorer, "Danger Scorer", "TypeScript — deterministic", "Applies per-indicator thresholds, weights contributions, sums to 0-100 score. Maps to regime: 0-24=GREEN, 25-49=YELLOW, 50-74=ORANGE, 75-100=RED.")
+    Component(regime_writer, "Regime Writer", "TypeScript + Supabase", "Upserts macro_regime row. Inserts one macro_signals row per indicator with raw_value, contribution, direction.")
+    Component(macro_read, "Macro Read Agent", "deepseek-v4-flash — cheap daily call", "Separate daily cron (9:30 AM ET US / 10:00 AM IST India). Plain-English 'what does current macro mean for my holdings'. Advisory note only.")
+  }
+
+  ContainerDb(db_ms, "Supabase", "PostgreSQL", "macro_regime, macro_signals, agent_runs")
+  System_Ext(av_ms, "Alpha Vantage", "TREASURY_YIELD, UNEMPLOYMENT, REAL_GDP, NONFARM_PAYROLL, CPI, RETAIL_SALES, FEDERAL_FUNDS_RATE, DURABLES")
+
+  Rel(cron_ms, indicator_fetcher, "POST /api/agents/macro-sentinel (Mondays only)", "HTTPS + cron-secret")
+  Rel(indicator_fetcher, av_ms, "8 REST calls (AV-budget-gated, cached 1 week)", "HTTPS")
+  Rel(indicator_fetcher, danger_scorer, "Pass raw indicator values")
+  Rel(danger_scorer, regime_writer, "Pass danger_score, regime, per-indicator breakdown")
+  Rel(regime_writer, db_ms, "UPSERT macro_regime. INSERT 8 macro_signals rows", "Supabase SDK")
+  Rel(macro_read, db_ms, "Read macro_regime. Write advisory note", "Supabase SDK")
+```
+
+**Consumers:** ResearchAgent reads `macro_regime` to compute `macro_score` (GREEN→80, YELLOW→60, ORANGE→40, RED→20). Dashboard home shows regime banner. Evening briefing email includes danger score.
+
+---
+
+### 3.7 TraderAgent
+
+Turns qualifying research signals into sized live-trade **proposals** in `trade_proposals`.
+Proposals expire in 30 minutes. Owner reviews on the Proposals tab, then approves or rejects.
+`approval_required = true` always — never auto-places.
+
+```mermaid
+C4Component
+  title Component Diagram — TraderAgent + Approval Flow
+
+  Person(cron_ta, "pg_cron", "9:45 AM ET weekdays")
+  Person(owner_ta, "Owner", "Approves or rejects within 30 minutes")
+
+  Container_Boundary(trader, "TraderAgent — app/api/agents/trader/") {
+    Component(signal_filter, "Signal Filter", "TypeScript", "Fetches agent_signals WHERE status='pending' AND analyst_score >= score_threshold (from strategy_config). Holdings-first priority.")
+    Component(sizer_ta, "Live Sizer", "TypeScript", "Computes notional from live account equity (not paper_portfolio). Applies position_size_pct from champion genome. Clamps to broker_accounts.notional_cap_usd.")
+    Component(proposal_writer, "Proposal Writer", "TypeScript + Supabase", "Writes trade_proposals {symbol, action, qty, price, analyst_score, expires_at=now()+30min, status='pending'}.")
+  }
+
+  Container_Boundary(approval, "Approval Routes") {
+    Component(approve_route, "Approve Route", "app/api/agents/trade/approve", "Runs all 9 Money-Safety gates. On pass: Robinhood MCP review+place. Writes broker_orders + decision_journal.")
+    Component(reject_route, "Reject Route", "app/api/agents/trade/reject", "Sets trade_proposals.status='rejected'. Writes decision_journal entry with reason.")
+    Component(reminder, "Proposal Reminder", "pg_cron every 15 min 9-5 PM", "Checks proposals expiring within 5 min. Fires agent_alert if owner has not acted.")
+  }
+
+  ContainerDb(db_ta, "Supabase", "agent_signals, trade_proposals, broker_orders, decision_journal, strategy_config, broker_accounts")
+  Container(gateway_ta, "Money-Safety Gateway", "9 sequential gates")
+  System_Ext(rh_ta, "Robinhood MCP", "account 605420660 only")
+
+  Rel(cron_ta, signal_filter, "POST /api/agents/trader", "HTTPS + cron-secret")
+  Rel(signal_filter, db_ta, "SELECT agent_signals WHERE score >= threshold", "Supabase SDK")
+  Rel(signal_filter, sizer_ta, "Pass qualifying signals")
+  Rel(sizer_ta, db_ta, "Read champion genome, live equity, notional_cap", "Supabase SDK")
+  Rel(sizer_ta, proposal_writer, "Write sized proposals")
+  Rel(proposal_writer, db_ta, "INSERT trade_proposals (30-min expiry)", "Supabase SDK")
+  Rel(owner_ta, approve_route, "POST /api/agents/trade/approve {proposal_id}", "HTTPS browser")
+  Rel(approve_route, gateway_ta, "Run all 9 gates")
+  Rel(gateway_ta, rh_ta, "review_equity_order then place_equity_order")
+  Rel(approve_route, db_ta, "INSERT broker_orders + decision_journal", "Supabase SDK")
+  Rel(owner_ta, reject_route, "POST /api/agents/trade/reject {proposal_id, reason}", "HTTPS browser")
+  Rel(reject_route, db_ta, "UPDATE trade_proposals.status='rejected', INSERT decision_journal", "Supabase SDK")
+  Rel(reminder, db_ta, "SELECT trade_proposals WHERE expires_at < now()+5min", "Supabase SDK")
+```
+
+---
+
+### 3.8 ThemeScout
+
+Discovers sector-level themes from news and adds theme-tagged symbols to the watchlist.
+Fires automatically chained at the end of each ResearchAgent run.
+
+```mermaid
+C4Component
+  title Component Diagram — ThemeScout
+
+  Container(research_ts, "ResearchAgent", "Chains ThemeScout at end of US morning run")
+
+  Container_Boundary(scout, "ThemeScout — app/api/agents/theme-scout/") {
+    Component(sector_reader, "Sector News Reader", "TypeScript + AV API", "Calls AV NEWS_SENTIMENT for 11 GICS sectors (no ticker filter). Aggregates article counts and sentiment tone by sector.")
+    Component(theme_extractor, "Theme Extractor", "deepseek-v4-flash (fast tier)", "Reads sector aggregates. Identifies 1-3 emerging themes (e.g. 'AI infrastructure', 'GLP-1 demand'). Returns theme name + rationale + candidate symbols.")
+    Component(watchlist_writer_ts, "Watchlist Writer", "TypeScript + Supabase", "For each candidate: INSERT watchlist row {symbol, theme_tag, why_added, source='theme_scout', research_enabled=true}. Deduplicates on symbol.")
+  }
+
+  ContainerDb(db_ts, "Supabase", "watchlist, agent_runs")
+  System_Ext(av_ts, "Alpha Vantage", "NEWS_SENTIMENT (sector-level, no ticker filter)")
+
+  Rel(research_ts, sector_reader, "POST /api/agents/theme-scout (chained, not cron)")
+  Rel(sector_reader, av_ts, "11 sector news requests (AV-budget-gated)", "HTTPS")
+  Rel(sector_reader, theme_extractor, "Pass sector news aggregates + tone")
+  Rel(theme_extractor, watchlist_writer_ts, "Return theme candidates with rationale")
+  Rel(watchlist_writer_ts, db_ts, "INSERT watchlist rows (dedup by symbol)", "Supabase SDK")
+```
+
+**Surfaces:** Watchlist page shows `why_added` as always-visible reason label. Theme-tagged symbols bubble into next research run's candidate list via ResearchAgent's `watchlist` query.
+
+---
+
+### 3.9 MentorAgent
+
+Read-only behavioral coaching. Runs Fridays 5:15 PM ET, 15 minutes after LearnerAgent.
+Uses DeepSeek reasoning tier for depth. Never mutates config, strategy, or money.
+
+```mermaid
+C4Component
+  title Component Diagram — MentorAgent
+
+  Person(cron_mc, "pg_cron", "Fridays 5:15 PM ET")
+  Person(owner_mc, "Owner", "Reads coaching on /dashboard/mentor")
+
+  Container_Boundary(mentor, "MentorAgent — app/api/agents/mentor-coach/") {
+    Component(context_reader, "Context Reader", "TypeScript + Supabase", "Reads: last 30 closed paper_trades, recent learning_log notes, current macro_regime, champion strategy_versions performance, llm_call_log cost history, recent agent_alerts.")
+    Component(coaching_llm, "Coaching LLM", "deepseek-v4-pro (reasoning tier)", "Produces: grade (A-F), confidence, strengths[], focus_areas[], market_tailored_lesson, next_milestone, behavior_radar (6 axes: discipline, patience, conviction, risk-mgmt, consistency, learning-speed).")
+    Component(insight_writer, "Insight Writer", "TypeScript + Supabase", "Writes mentor_insights row. Read-only — never mutates config, strategy, or money.")
+  }
+
+  ContainerDb(db_mc, "Supabase", "paper_trades, learning_log, macro_regime, strategy_versions, llm_call_log, agent_alerts, mentor_insights")
+  System_Ext(deepseek_mc, "DeepSeek", "deepseek-v4-pro (reasoning tier)")
+
+  Rel(cron_mc, context_reader, "POST /api/agents/mentor-coach (cron-secret)", "HTTPS")
+  Rel(context_reader, db_mc, "Read last 30 trades, learning notes, regime, costs, alerts", "Supabase SDK")
+  Rel(context_reader, coaching_llm, "Pass rich context for analysis")
+  Rel(coaching_llm, deepseek_mc, "Generate behavioral coaching + grade", "HTTPS")
+  Rel(coaching_llm, insight_writer, "Return structured coaching JSON")
+  Rel(insight_writer, db_mc, "INSERT mentor_insights row (never overwrites previous)", "Supabase SDK")
+  Rel(owner_mc, db_mc, "Read most recent mentor_insights on /dashboard/mentor", "Supabase SDK")
+```
+
+---
+
+### 3.10 BriefingAgent
+
+Generates and emails morning + evening market briefings for US and India. 4 briefing types
+per trading day. Uses Claude Sonnet only for the editorial note (~200 tokens); all data is
+assembled deterministically.
+
+```mermaid
+C4Component
+  title Component Diagram — BriefingAgent
+
+  Person(cron_br, "pg_cron", "4 times per trading day: US morning/evening + India morning/evening")
+
+  Container_Boundary(briefing, "BriefingAgent — app/api/briefing/generate/") {
+    Component(data_collector, "Data Collector", "TypeScript + Supabase", "Reads: macro_regime, paper_portfolio + paper_positions, today's agent_signals, open agent_alerts, last mentor_insights grade, llm_call_log daily cost.")
+    Component(editorial_llm, "Editorial LLM", "claude-sonnet-4-6 (~200 tokens)", "Editor's note only. Weekday: actionable items + signals to watch. Weekend: weekly recap synthesis.")
+    Component(html_builder, "HTML Builder", "TypeScript", "Assembles email: regime banner, portfolio snapshot, signals table, open positions, alerts band, editor's note, mentor grade teaser. Responsive inline-styled HTML.")
+    Component(send_dispatcher, "Send Dispatcher", "TypeScript + Resend API", "Sends email. Writes briefings (session cache) + newsletters (delivery audit) rows.")
+  }
+
+  ContainerDb(db_br, "Supabase", "macro_regime, paper_portfolio, paper_positions, agent_signals, agent_alerts, mentor_insights, llm_call_log, briefings, newsletters")
+  System_Ext(resend_br, "Resend API", "Transactional email delivery")
+  System_Ext(claude_br, "Anthropic Claude Sonnet 4.6", "Editor's note only — ~200 tokens")
+
+  Rel(cron_br, data_collector, "POST /api/briefing/generate?market=us|india&period=morning|evening", "HTTPS + cron-secret")
+  Rel(data_collector, db_br, "Read signals, portfolio, alerts, mentor, costs", "Supabase SDK")
+  Rel(data_collector, editorial_llm, "Pass structured data for editorial note")
+  Rel(editorial_llm, claude_br, "Generate editor's note", "HTTPS")
+  Rel(editorial_llm, html_builder, "Return editorial text")
+  Rel(html_builder, send_dispatcher, "Pass assembled HTML + metadata")
+  Rel(send_dispatcher, resend_br, "POST /emails with HTML body", "HTTPS")
+  Rel(send_dispatcher, db_br, "INSERT briefings (cache) + newsletters (delivery audit)", "Supabase SDK")
+```
+
+---
+
+### 3.11 HealthTriage
+
+Manual-trigger diagnostic agent. Reads all open alerts and writes structured diagnoses
+(`root_cause`, `blast_radius`, `suggested_fix`). Invoked by owner via dashboard button.
+Never mutates config or money.
+
+```mermaid
+C4Component
+  title Component Diagram — HealthTriage (manual trigger, read-only)
+
+  Person(owner_ht, "Owner", "Clicks 'Triage' on System Health Card")
+
+  Container_Boundary(triage, "HealthTriage — app/api/agents/health-triage/") {
+    Component(alert_reader, "Alert Reader", "TypeScript + Supabase", "Reads all open agent_alerts (severity order). Also reads last 24h agent_runs failures, llm_call_log daily cost, and AV budget status.")
+    Component(triage_llm, "Triage LLM", "claude-haiku-4-5 (claude-fast tier)", "Batch-diagnoses all open alerts in one prompt. Generates structured_issues JSON: {root_cause, blast_radius, suggested_fix} per alert.")
+    Component(issues_writer, "Issues Writer", "TypeScript + Supabase", "Writes structured_issues JSONB field on each agent_alerts row. Never resolves alerts — only annotates.")
+  }
+
+  ContainerDb(db_ht, "Supabase", "agent_alerts, agent_runs, llm_call_log")
+  System_Ext(haiku_ht, "Anthropic Claude Haiku 4.5", "Cheapest tier — correct for bulk diagnostic text")
+
+  Rel(owner_ht, alert_reader, "POST /api/agents/health-triage (requireOwner)", "HTTPS browser")
+  Rel(alert_reader, db_ht, "Read open agent_alerts + recent agent_runs + llm_call_log", "Supabase SDK")
+  Rel(alert_reader, triage_llm, "Pass all open alerts for batch diagnosis")
+  Rel(triage_llm, haiku_ht, "Diagnose root_cause / blast_radius / suggested_fix per alert", "HTTPS")
+  Rel(triage_llm, issues_writer, "Return structured diagnoses")
+  Rel(issues_writer, db_ht, "UPDATE agent_alerts SET structured_issues=... (annotate, never resolve)", "Supabase SDK")
+  Rel(owner_ht, db_ht, "View diagnoses inline on System Health card after triage completes", "Supabase SDK")
+```
+
+---
+
 ## 4. Level 4 — Dynamic / Code-Level Flows
 
 ### 4.1 A Stock Scored End-to-End
@@ -672,10 +889,14 @@ C4Deployment
     }
   }
 
-  Deployment_Node(owner_pc, "Owner's Windows PC", "Must be on for market hours") {
-    Deployment_Node(task_scheduler, "Windows Task Scheduler", "14 scheduled tasks") {
-      Container(ps_script, "run-agents.ps1", "PowerShell", "Calls each agent endpoint via HTTPS with CRON_SECRET header. Runs on market-hour schedule (see §7 SYSTEM_OVERVIEW).")
+  Deployment_Node(owner_pc, "Owner's Windows PC", "Only needed for db-backup") {
+    Deployment_Node(task_scheduler, "Windows Task Scheduler", "1 remaining local task") {
+      Container(ps_script, "db-backup.ps1", "PowerShell", "Nightly pg_dump at 3 AM local time. Requires SUPABASE_DB_URL. Only local job — all other 30 jobs are Supabase pg_cron → Vercel.")
     }
+  }
+
+  Deployment_Node(supabase_pgcron, "Supabase pg_cron", "30 registered jobs in lib/schedule.ts") {
+    Container(pg_cron_jobs, "pg_cron Job Set", "SQL, Supabase managed", "HTTP POST to Vercel with x-cron-secret header. Covers all US + India research, trading, position-monitor, learner, macro, briefing, broker-sync, watchdog, and cleanup tasks.")
   }
 
   Deployment_Node(supabase_cloud, "Supabase (AWS us-east-1)", "Managed PostgreSQL") {
@@ -710,7 +931,7 @@ C4Deployment
   }
 
   Rel(owner_browser, vercel_cloud, "HTTPS — dashboard pages + API calls", "TLS 1.3")
-  Rel(owner_pc, vercel_cloud, "HTTPS — agent cron triggers via PowerShell", "TLS 1.3 + x-cron-secret header")
+  Rel(supabase_pgcron, vercel_cloud, "HTTPS — 30 pg_cron jobs POST to Vercel agent routes", "TLS 1.3 + x-cron-secret header")
   Rel(vercel_app, supabase_cloud, "Supabase SDK — all DB reads/writes", "HTTPS + service role key (server) or anon key (client)")
   Rel(vercel_app, anthropic_cloud, "Anthropic SDK", "HTTPS + ANTHROPIC_API_KEY")
   Rel(vercel_app, groq_cloud, "Groq SDK", "HTTPS + GROQ_API_KEY (in vault)")
@@ -746,4 +967,4 @@ Key locked decisions (any proposed change must go through `PROJECT_DECISIONS.md`
 
 *C4 documentation written using the C4 model (Simon Brown). Diagrams use Mermaid C4 syntax (mermaid v10+).*
 *Maintained per CLAUDE.md rule — update this file whenever an agent flow, container, or deployment changes.*
-*Last updated: 2026-07-09*
+*Last updated: 2026-07-10*
