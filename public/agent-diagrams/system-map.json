@@ -1,7 +1,9 @@
 {
   "agentId": "system-map",
   "agentLabel": "System Map — how the agents connect",
-  "diagram": "flowchart TD\n  MACRO[\"🌐 MacroSentinel\\nweekly · reads econ data\"] -->|macro_signals| RESEARCH\n  HOLD[\"📋 Holdings + Watchlist\\n+ dual-bucket screener\"] --> RESEARCH\n  CHAMPION[\"🏆 Champion weights\\nstrategy_versions\"] -->|weights_snapshot| RESEARCH\n  SCOREHIST[\"📈 signal_score_history\\nprior scores (trend)\"] -->|last N| RESEARCH\n  YAHOO[\"🇮🇳 Yahoo .NS data\\nfree · NIFTY candidates\"] -->|India fundamentals+candles| RESEARCH\n  NSE[\"🇮🇳 NSE direct (free)\\ninsider · options · full universe\"] -->|India insider/options/scan| INDIA\n  RESEARCH[\"🤖 ResearchAgent\\ndaily Mon-Fri · scores 5 dims\"] -->|US agent_signals| TRADER\n  RESEARCH -->|India agent_signals| INDIA\n  RESEARCH -->|India agent_signals| TRADER\n  RESEARCH -->|append| SCOREHIST\n  RESEARCH -->|every scored candidate| LEDGER[\"📒 Decision ledger\\ndecision_observations + labels\"]\n  LEDGER -->|matured horizon labels| LEARNER\n  RESEARCH -.->|records what shadow_paper versions would decide| SHADOW[\"👥 Shadow decisions\\nno fills, no cash\"]\n  LEARNER -.->|propose_feature| REGISTRY[\"🧪 Feature Registry\\nwhitelisted-grammar only\"]\n  CHALLENGER -.->|may carry| GENOME[\"🧬 Strategy genome\\nentry/horizon/exit/sizing/regime\"]\n  TRADER[\"⚙️ PaperTrader\\nscore>=threshold & long → buy\\nper-market pools: US $ · India ₹\"] -->|paper_positions| MONITOR\n  RESEARCH -->|fresh daily score| MONITOR\n  MONITOR[\"⚙️ PositionMonitor\\ndaily post-close · per market\"] -->|score<exit OR stop/target| EXITS[\"💸 Exit + close trade\\ncredit own-currency pool · decision_journal\"]\n  MONITOR -->|still above threshold| HELD[\"✅ Keep holding\"]\n  EXITS -->|closed outcomes| LEARNER\n  LEARNER[\"🤖 LearnerAgent\\nFriday · evaluates outcomes\"] -->|proposes| CHALLENGER[\"🧪 Challenger weights\\nstrategy_versions\"]\n  CHALLENGER -->|auto-fires| VALIDATE[\"🔬 Validation Engine\\nwalk-forward, fail-closed\"]\n  VALIDATE -->|passed=true required| PROMOTE{\"👤 Promote?\"}\n  PROMOTE -->|yes, gate must pass| CHAMPION\n  EXITS -->|outcomes| MENTOR[\"🎓 MentorAgent\\ncoaches you\"]\n  LEARNER -->|runs| MENTOR\n  TRADER -.->|US live: manual| REALORDER[\"📲 Paste command\\ninto Claude MCP → Robinhood\"]\n  TRADER -.->|approved proposal, you click| GATEWAY[\"🔌 Execution Gateway\\ntyped Alpaca orders\"]\n  INDIA[\"🇮🇳 India signals\\nScore Tracker + /dashboard/india\"] -.->|you confirm| KITE[\"📲 Real NSE/BSE order\\nvia Zerodha Kite (daily token)\"]\n  MONITOR -.->|+alerts/runs/quality| HEALTH[\"🔧 Health-Triage\nread-only SRE → dashboard\"]\n  WATCHDOG[\"🧹 Watchdog\nevery 2h · janitor\"] -.->|reap zombie runs · revert stuck claims · expire stale| MONITOR\n  EDGELAB[\"🧪 EdgeScout / EdgeIC\nmeasure-only factor lab\"] -.->|edge_signals + IC scorecard, NO fills| EDGEDASH[\"📊 /dashboard/edges\"]\n  EXITS -->|closed trades + NAV| PERFTRUTH[\"📋 Performance Truth Layer\\ninvestment_mandates + strategy_evaluations\\nP1 gate cron (Sun 02:00 UTC)\"]",
+  "diagram": "flowchart TD\n  MACRO[\"🌐 MacroSentinel\\nweekly · reads econ data\"] -->|macro_signals| RESEARCH\n  HOLD[\"📋 Holdings + Watchlist\\n+ dual-bucket screener\"] --> RESEARCH\n  CHAMPION[\"🏆 Champion weights\\nstrategy_versions\"] -->|weights_snapshot| RESEARCH\n  SCOREHIST[\"📈 signal_score_history\\nprior scores (trend)\"] -->|last N| RESEARCH\n  YAHOO[\"🇮🇳 Yahoo .NS data\\nfree · NIFTY candidates\"] -->|India fundamentals+candles| RESEARCH\n  NSE[\"🇮🇳 NSE direct (free)\\ninsider · options · full universe\"] -->|India insider/options/scan| INDIA\n  RESEARCH[\"🤖 ResearchAgent\\ndaily Mon-Fri · scores 5 dims\"] -->|US agent_signals| TRADER\n  RESEARCH -->|India agent_signals| INDIA\n  RESEARCH -->|India agent_signals| TRADER\n  RESEARCH -->|append| SCOREHIST\n  RESEARCH -->|every scored candidate| LEDGER[\"📒 Decision ledger\\ndecision_observations + labels\"]\n  LEDGER -->|matured horizon labels| LEARNER\n  RESEARCH -.->|records what shadow_paper versions would decide| SHADOW[\"👥 Shadow decisions\\nno fills, no cash\"]\n  LEARNER -.->|propose_feature| REGISTRY[\"🧪 Feature Registry\\nwhitelisted-grammar only\"]\n  CHALLENGER -.->|may carry| GENOME[\"🧬 Strategy genome\\nentry/horizon/exit/sizing/regime\"]\n  TRADER[\"⚙️ PaperTrader\\nscore>=threshold & long → buy\\nper-market pools: US $ · India ₹\"] -->|paper_positions| MONITOR\n  RESEARCH -->|fresh daily score| MONITOR\n  MONITOR[\"⚙️ PositionMonitor\\ndaily post-close · per market\"] -->|score<exit OR stop/target| EXITS[\"💸 Exit + close trade\\ncredit own-currency pool · decision_journal\"]\n  MONITOR -->|still above threshold| HELD[\"✅ Keep holding\"]\n  EXITS -->|closed outcomes| LEARNER\n  LEARNER[\"🤖 LearnerAgent\\nFriday · evaluates outcomes\"] -->|proposes| CHALLENGER[\"🧪 Challenger weights\\nstrategy_versions\"]\n  CHALLENGER -->|auto-fires| VALIDATE[\"🔬 Validation Engine\\nwalk-forward, fail-closed\"]\n  VALIDATE -->|passed=true required| PROMOTE{\"👤 Promote?\"}\n  PROMOTE -->|yes, gate must pass| CHAMPION\n  EXITS -->|outcomes| MENTOR[\"🎓 MentorAgent\\ncoaches you\"]\n  LEARNER -->|runs| MENTOR\n  TRADER -.->|US live: manual| REALORDER[\"📲 Paste command\\ninto Claude MCP → Robinhood\"]\n  TRADER -.->|approved proposal, you click| GATEWAY[\"🔌 Execution Gateway\\ntyped Alpaca orders\"]\n  INDIA[\"🇮🇳 India signals\\nScore Tracker + /dashboard/india\"] -.->|you confirm| KITE[\"📲 Real NSE/BSE order\\nvia Zerodha Kite (daily token)\"]\n  MONITOR -.->|+alerts/runs/quality| HEALTH[\"🔧 Health-Triage\nread-only SRE → dashboard\"]\n  WATCHDOG[\"🧹 Watchdog\nevery 2h · janitor\"] -.->|reap zombie runs · revert stuck claims · expire stale| MONITOR\n  EDGELAB[\"🧪 EdgeScout / EdgeIC\nmeasure-only factor lab\"] -.->|edge_signals + IC scorecard, NO fills| EDGEDASH[\"📊 /dashboard/edges\"]\n  EXITS -->|closed trades + NAV| PERFTRUTH[\"📋 Performance Truth Layer\\ninvestment_mandates + strategy_evaluations\\nP1 gate cron (Sun 02:00 UTC)\"]
+  RESEARCH -->|qualifying signals score≥threshold last_24h| AUTOSHADOW[\"🔍 AutonomousShadow\\nweekdays 07:30 UTC · 9-gate kernel · no fills\"]
+  AUTOSHADOW -.->|shadow trade_proposals execution_mode=autonomous_shadow| SHADOWPROP[\"📋 Shadow proposals\\nKelly-sized · queued_auto or manual_review_required\"]",
   "nodes": {
     "MACRO": {
       "label": "MacroSentinel",
@@ -269,6 +271,28 @@
       "addedAt": "2026-07-09",
       "addReason": "Move discovery from LLM-invents-themes toward validated deterministic factors; measure IC before anything trades.",
       "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null
+    },
+    "AUTOSHADOW": {
+      "label": "AutonomousShadow",
+      "description": "Weekdays 07:30 UTC (Vercel cron, 30 min after research). Reads qualifying agent_signals (score_source='deterministic_v1', direction=long, score≥threshold, last 24h). Runs the 9-gate execution kernel (lib/trading/execution-kernel.ts evaluateAutonomousExecution) and the Kelly sizing kernel (computeAutonomousSizing) for each. Creates trade_proposals with execution_mode='autonomous_shadow'. Gate 1 (AUTONOMOUS_LIVE_ENABLED=false in current deployment) makes every proposal land manual_review_required — intentional until all L4 launch blockers are cleared. No broker call, no budget reservation, no order submission. NAV from live_account_snapshots (account 605420660, read-only); Kelly from last 100 closed paper_trades; budget dry-run reads broker_orders spend today (informational). Journals each run to decision_journal.",
+      "addedAt": "2026-07-10",
+      "addReason": "PA1/PA2 shadow autonomous path — accumulate evidence that the kernel gates behave correctly before enabling live orders.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "SHADOWPROP": {
+      "label": "Shadow trade_proposals",
+      "description": "trade_proposals rows with execution_mode='autonomous_shadow'. Status is queued_auto (all 9 gates + sizing passed) or manual_review_required (any gate/sizing failure). In the current deployment, AUTONOMOUS_LIVE_ENABLED=false means gate 1 always fires → all land manual_review_required. Owner can review these in the UI; no auto-promotion or broker submit path exists yet.",
+      "addedAt": "2026-07-10",
+      "addReason": "Audit trail for autonomous shadow decisions without any financial exposure.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     },
     "PERFTRUTH": {
       "label": "Performance Truth Layer",
@@ -610,6 +634,20 @@
       "nodeId": "PERFTRUTH",
       "label": "Performance Truth Layer (P0 — mandate-aware evaluation)",
       "reason": "Mandate-aware, deterministic, append-only evaluation: investment_mandates + strategy_evaluations (migrations 133/134/135) + lib/evaluation/run-evaluation.ts + /api/agents/evaluation/* routes + PerformanceTruth.tsx UI additions. P1 gate cron (weekly Sunday) counts closed evaluable trades; fires System Health alert when ≥ 20 accumulate. No LLM in evaluation path. eligible_for_live_review advisory only — never read by broker gateway."
+    },
+    {
+      "date": "2026-07-10",
+      "event": "added",
+      "nodeId": "AUTOSHADOW",
+      "label": "AutonomousShadow — PA1/PA2 execution kernel + shadow proposals",
+      "reason": "PA1: shared evaluateAutonomousExecution() 9-gate kernel (lib/trading/execution-kernel.ts) + shadow path runAutonomousShadow() writing trade_proposals with execution_mode='autonomous_shadow'. PA2: computeAutonomousSizing() — no-fallback NAV (4h stale = fail closed), Kelly from paper_trades history, per-order cap clamp. Vercel cron weekdays 07:30 UTC. AUTONOMOUS_LIVE_ENABLED=false means all proposals land manual_review_required in current deployment."
+    },
+    {
+      "date": "2026-07-10",
+      "event": "added",
+      "nodeId": "SHADOWPROP",
+      "label": "Shadow trade_proposals (autonomous path audit trail)",
+      "reason": "PA0: trade_proposals schema extended with execution_mode, policy_snapshot, auto_run_id, auto_decided_at columns + queued_auto/manual_review_required status values. broker_order_events append-only table + boe_block_mutation() trigger added. reserve_live_order_budget_v2 RPC with p_execution_actor param."
     }
   ]
 }

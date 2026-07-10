@@ -1,5 +1,5 @@
 # Kairos — Database Schema
-> Last updated: 2026-07-10
+> Last updated: 2026-07-10 (migrations 136-140 documented; live_auto_* schema, broker_order_events, trade_proposals autonomous cols)
 > Update this file when: any migration adds, removes, or modifies a table, column, index, trigger, or RLS policy.
 
 Migrations in `supabase/migrations/`. Applied via Supabase MCP `apply_migration` or the Supabase SQL editor. **Always verify with `list_migrations` before shipping schema-coupled code.** A migration file existing in the repo does NOT mean it ran against production.
@@ -67,6 +67,14 @@ Single-row table: the live risk profile + trading parameters.
 | `robinhood_mcp_enabled` | bool | false | Live US order path via Robinhood MCP |
 | `kite_enabled` | bool | false | Live India order path via Kite |
 | `app_paused` | bool | false | NAV circuit breaker auto-sets true; manual reset |
+| `live_auto_enabled` | bool | false | DB toggle for autonomous shadow path (migration 139) |
+| `live_auto_enabled_until` | timestamptz | null | Owner lease expiry; null = no lease active |
+| `live_auto_policy_version` | int | 1 | Snapshot version stamped on every proposal |
+| `live_auto_daily_cap_usd` | numeric | null | Max USD spend per calendar day (null = uncapped) |
+| `live_auto_max_per_order_usd` | numeric | null | Per-order notional cap |
+| `live_auto_min_evidence_confidence` | numeric | 0.6 | Floor below which proposals fail gate 6 |
+| `live_auto_max_open_positions` | int | null | Max open broker positions |
+| `live_auto_max_orders_per_day` | int | null | Max new proposals per calendar day |
 
 ### `agent_config`
 Per-agent configuration rows.
@@ -450,6 +458,20 @@ One row per account (upserted, not history). Live Robinhood positions.
 | `positions_json` | jsonb | Array of `{symbol, qty, avg_cost, current_price}` |
 | `captured_at` | timestamptz | |
 
+### `broker_order_events`
+Append-only event log for every live broker order state transition (migration 139). Protected by `boe_block_mutation()` trigger — UPDATE and DELETE are blocked at the DB level.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `broker_order_id` | uuid | FK → `broker_orders` |
+| `event_type` | text | e.g. `status_change`, `fill`, `cancel`, `reconcile` |
+| `from_status` | text | Prior status |
+| `to_status` | text | New status |
+| `actor` | text | `owner` \| `cron` \| `autonomous_shadow` |
+| `detail` | jsonb | Event-specific payload |
+| `created_at` | timestamptz | |
+
 ### `broker_orders`
 Immutable live order ledger. Never deleted.
 
@@ -468,17 +490,28 @@ Immutable live order ledger. Never deleted.
 | `filled_at` | timestamptz | |
 
 ### `trade_proposals`
-TraderAgent proposals awaiting owner approval. Auto-expire 30 minutes.
+TraderAgent / AutonomousShadow proposals. Auto-expire 30 minutes.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
 | `symbol` | text | |
-| `action` | text | |
+| `market` | text | `us` \| `india` |
+| `side` | text | `buy` \| `sell` |
+| `order_type` | text | `market` \| `limit` |
 | `qty` | numeric | |
 | `limit_price` | numeric | |
-| `rationale` | text | |
-| `status` | text | `pending` \| `approved` \| `rejected` \| `expired` |
+| `analyst_score` | numeric | Score at proposal time |
+| `estimated_value` | numeric | Kelly-sized notional (shadow only) |
+| `pct_of_nav` | numeric | Fraction of live NAV (shadow only) |
+| `price_at_proposal` | numeric | Quote price used for sizing (shadow only) |
+| `thesis` | text | |
+| `signal_id` | bigint | FK → `agent_signals` |
+| `status` | text | `pending_review` \| `approved` \| `rejected` \| `expired` \| `queued_auto` \| `manual_review_required` |
+| `execution_mode` | text | `manual` \| `autonomous_shadow` (migration 139) |
+| `policy_snapshot` | jsonb | Full `LiveAutoPolicy` + kernel + sizing result snapshot |
+| `auto_run_id` | text | `runAutonomousShadow` run ID |
+| `auto_decided_at` | timestamptz | When the execution kernel evaluated this proposal |
 | `expires_at` | timestamptz | `created_at + 30m` |
 | `created_at` | timestamptz | |
 
@@ -729,3 +762,8 @@ NSE/BSE holdings snapshot from Kite API.
 | 099 | agent_alerts.issue_key + partial unique index |
 | 126–128 | PaperTrader standalone cron: signal freshness gate, claim_run_id, expected_price + realized_slip_pct + fill_status on positions + trades |
 | 133–135 | investment_mandates + strategy_evaluations (append-only trigger), mandate_id column on agent_signals + paper_trades + decision_observations |
+| 136 | agent_signals: `score_source` + `scoring_version`; decision_observations: 10 summary cols + NOT VALID range guards; strategy_versions: 3 new lifecycle states (`measure_only`, `live_review_eligible`, `live_approved`) |
+| 137 | universe_snapshots + universe_snapshot_scores tables (cross-sectional rank, measure-only) |
+| 138 | shadow_decisions: `policy_version_id` drops NOT NULL; `setup_type text` col + index (archetype shadow rows) |
+| 139 | strategy_config: +8 `live_auto_*` cols; trade_proposals: +4 autonomous cols + status constraint expanded (`queued_auto`, `manual_review_required`); broker_order_events: new append-only table + `boe_block_mutation()` trigger blocking UPDATE/DELETE |
+| 140 | `reserve_live_order_budget_v2` RPC — adds `p_execution_actor` param; `approved_by_user=(actor='owner')`; counts `unknown_needs_reconcile`+`partially_filled` in daily budget; REVOKE public/anon/authenticated, GRANT service_role only |

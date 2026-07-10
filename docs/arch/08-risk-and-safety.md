@@ -1,6 +1,6 @@
 # Kairos — Risk & Safety
 
-> Last updated: 2026-07-10 (PA1: execution kernel + shadow path documented)
+> Last updated: 2026-07-10 (PA2: Kelly sizing kernel + budget dry-run added to shadow path)
 > Update when any authorization, scoring eligibility, limit, account, order, reconciliation, exit, or kill-switch behavior changes.
 
 ---
@@ -198,7 +198,8 @@ Every material state transition must have an append-only event/journal record. C
 - deterministic live protective SELL path;
 - duplicate-cron, timeout, stale-data, DB-failure, and kill-switch chaos tests;
 - ✅ PA1 shadow evidence — AutonomousShadow running, execution kernel in `lib/trading/execution-kernel.ts`
-- PA2 approval (requires shadow run history showing gate behavior).
+- ✅ PA2 Kelly sizing — `computeAutonomousSizing()` in `lib/trading/execution-kernel.ts`; budget dry-run in shadow path; no-fallback NAV enforced (see PA2 section below)
+- PA3 broker submit — direct Robinhood REST integration (unblocked; route handlers cannot call Robinhood MCP tools — see `app/api/agents/trader/route.ts:429`)
 
 Until all pass, `AUTONOMOUS_LIVE_ENABLED` remains false and L4 is descriptive only.
 
@@ -229,3 +230,27 @@ Gates evaluated in order:
 qualifying signal, creates a `trade_proposals` row with `execution_mode='autonomous_shadow'`,
 and updates `status` to `queued_auto` (kernel approved) or `manual_review_required` (gate fired).
 **No broker call, no budget reservation, no order submission in PA1.**
+
+---
+
+## PA2 shadow sizing (implemented, deployment flag inactive)
+
+`computeAutonomousSizing()` in `lib/trading/execution-kernel.ts` computes position size for every
+`queued_auto` proposal. Rules:
+
+| Condition | Outcome |
+|---|---|
+| `live_account_snapshots` row missing OR NAV ≤ 0 | `noSize('no_live_nav')` → downgrade to `manual_review_required` |
+| NAV age > 4h (default) | `noSize('stale_nav_Nmin')` → downgrade |
+| Quote unavailable or price ≤ 0 | `noSize('no_current_price')` → downgrade |
+| ≥ 10 closed `paper_trades` with P&L | Kelly (half-Kelly from win_rate × payoff_ratio, capped at min(10%, per-order-cap/NAV), floored at 2%) |
+| < 10 closed trades | Flat `position_size_pct` from `strategy_config` |
+| `floor(NAV × size_pct / price) < 1` | `noSize('qty_rounds_to_zero')` → downgrade |
+
+Per-order cap clamp: `size_pct = min(size_pct, live_auto_max_per_order_usd / NAV)`.
+
+`queued_auto` proposals that survive sizing get `qty`, `estimated_value`, `pct_of_nav`, and
+`price_at_proposal` populated. Budget dry-run (informational only; not the atomic reservation):
+reads today's `broker_orders` spend vs `live_auto_daily_cap_usd` and includes the result in
+`ShadowRunResult.budget_dry_run`. The atomic `reserve_live_order_budget_v2` RPC is NOT called in
+the shadow path — it is reserved for the live-submit PA3 path.
