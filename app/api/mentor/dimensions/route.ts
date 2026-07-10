@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
 const DIMS = ["sector_awareness", "emotional_discipline", "risk_management", "thesis_quality", "entry_timing", "big_picture"] as const;
 
 export async function GET() {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const svc = createServiceClient();
 
   // Last 90 days of dimension logs

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,8 @@ let cache: { thesis: string; generatedAt: string; ts: number } | null = null;
 const TTL = 24 * 60 * 60 * 1000;
 
 export async function GET(req: Request) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const bust = new URL(req.url).searchParams.has("bust");
 
   if (!bust && cache && Date.now() - cache.ts < TTL) {

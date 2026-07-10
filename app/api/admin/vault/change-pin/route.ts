@@ -1,8 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
+import { createHash, timingSafeEqual } from "crypto"
 
 export const dynamic = "force-dynamic"
+
+// Constant-time PIN check — SHA-256 both sides so timingSafeEqual gets
+// equal-length buffers regardless of input length.
+function pinMatches(input: string | null, active: string): boolean {
+  if (input == null) return false
+  const a = createHash("sha256").update(input).digest()
+  const b = createHash("sha256").update(active).digest()
+  return timingSafeEqual(a, b)
+}
 
 // Step 1: POST { action: "send_otp" }
 //   → sends magic link / OTP to ADMIN_EMAIL via Supabase Auth
@@ -14,8 +24,10 @@ export const dynamic = "force-dynamic"
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "vterminater@gmail.com"
 
-function getCurrentPin(): string {
-  return process.env.VAULT_PIN ?? "fos-vault-2026"
+// No hardcoded fallback — vault fails closed if neither a DB-stored PIN nor
+// VAULT_PIN env is set (matches app/api/admin/vault/route.ts behavior).
+function getCurrentPin(): string | null {
+  return process.env.VAULT_PIN ?? null
 }
 
 async function getStoredPin(): Promise<string | null> {
@@ -27,7 +39,8 @@ async function getStoredPin(): Promise<string | null> {
 async function verifyPin(pin: string): Promise<boolean> {
   const stored = await getStoredPin()
   const active = stored ?? getCurrentPin()
-  return pin === active
+  if (!active) return false // fail closed — unconfigured vault has no valid PIN
+  return pinMatches(pin, active)
 }
 
 export async function POST(req: NextRequest) {

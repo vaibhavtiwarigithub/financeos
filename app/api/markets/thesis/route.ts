@@ -3,6 +3,7 @@ import { callLLM } from "@/lib/llm-router";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getConfiguredModel, isAgentEnabled } from "@/lib/agent-model-config";
 import type { MarketOverview } from "@/app/api/markets/overview/route";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +67,8 @@ async function fetchQuote(symbol: string, apiKey: string | undefined): Promise<Q
 }
 
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const force = req.nextUrl.searchParams.get("force") === "true";
   const today = new Date().toISOString().slice(0, 10);
   const svc = createServiceClient();

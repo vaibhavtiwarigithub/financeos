@@ -24,3 +24,9 @@ public/fallback-*.js
 
 .vercel
 .env*
+
+# graphify scan artifacts — embed source content, never commit
+graphify-out/
+.graphify_python
+.graphify_detect.json
+.graphify_*

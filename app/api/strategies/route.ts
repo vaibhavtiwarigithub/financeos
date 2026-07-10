@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 // ── India fit-score model ────────────────────────────────────────────────────
 // The US path scores fit from `strategy_classifications`, a US-only table fed by
@@ -173,6 +174,8 @@ async function loadIndiaDimRows(
 }
 
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   try {
     const svc = createServiceClient();
     // Scope fit scores to the selected market. The US path reads

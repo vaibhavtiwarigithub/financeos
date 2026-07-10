@@ -51,8 +51,11 @@ export async function POST(req: NextRequest) {
     .lt("claimed_at", claimCutoff)
     .select("id");
 
-  // 3) Expire stale pending long signals per market (older than today's
-  //    market-local open — they can never pass the fill freshness guard).
+  // 3) Expire stale pending signals per market (older than today's market-local
+  //    open). Only fresh LONG signals are fill-eligible, so any stale pending —
+  //    long, neutral, or short — can never fill and is inert clutter. Expiring
+  //    all directions keeps the signal table clean (neutral/short otherwise
+  //    accumulate as 'pending' forever, since the old long-only filter left them).
   const expiredByMarket: Record<string, number> = {};
   for (const market of ["us", "india"] as const) {
     const { data: cutoff } = await svc.rpc("market_trading_day_start", { p_market: market });
@@ -60,7 +63,7 @@ export async function POST(req: NextRequest) {
     const { data: expired } = await svc
       .from("agent_signals")
       .update({ status: "expired" })
-      .eq("status", "pending").eq("direction", "long").eq("market", market)
+      .eq("status", "pending").eq("market", market)
       .lt("created_at", cutoff as unknown as string)
       .select("id");
     expiredByMarket[market] = expired?.length ?? 0;

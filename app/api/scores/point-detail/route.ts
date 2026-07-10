@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +60,8 @@ async function loadPacket(svc: any, id: string | null): Promise<PacketDetail | n
 }
 
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const packetId = req.nextUrl.searchParams.get("packet_id");
   const priorId = req.nextUrl.searchParams.get("prior_packet_id");
   if (!packetId) return NextResponse.json({ detail: null, prior: null, available: false });

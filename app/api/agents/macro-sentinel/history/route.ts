@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const svc = createServiceClient();
   const { data: regimes } = await svc
     .from("macro_regime")

@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const svc = createServiceClient();
   const { data } = await svc
     .from("briefings")
@@ -15,6 +18,8 @@ export async function GET() {
 }
 
 export async function DELETE(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const id = new URL(req.url).searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
   const svc = createServiceClient();

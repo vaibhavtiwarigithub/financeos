@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
   if (!activePin) {
     return NextResponse.json({ error: "Vault not configured — set VAULT_PIN in .env.local or via Settings" }, { status: 503 })
   }
-  if (pin !== activePin) {
+  if (!pinMatches(pin, activePin)) {
     return NextResponse.json({ error: "Vault locked" }, { status: 403 })
   }
 

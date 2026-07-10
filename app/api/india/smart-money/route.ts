@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchNseFiiDii, fetchNseBigDeals } from "@/lib/nse-data";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,8 @@ export const dynamic = "force-dynamic";
 // endpoints can block non-India IPs, so an empty result is a normal degraded
 // state, not an error.
 export async function GET() {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const [fiiDii, bigDeals] = await Promise.all([
     fetchNseFiiDii().catch(() => []),
     fetchNseBigDeals().catch(() => []),
