@@ -134,6 +134,39 @@ analyst_score = Σ (dimension_score × effective_weight[dimension])
 ```
 Missing/inapplicable dimensions are EXCLUDED and the remaining weights renormalized to sum to 1.0 (`lib/scoring/weighted-score.ts`); `< 2` usable dimensions → abstain (thin evidence), never a low score. Base weights: champion `weights_snapshot` → risk-profile static → `learning_priors`/`signal_weights` → default F.30/T.25/S.20/M.15/I.10.
 
+#### Sub-score formula reference (`deterministic_v1`, exact values)
+
+Each dimension outputs 0–100, clamped. Source of truth: `lib/data/scores.ts`, `lib/data/technicals.ts`.
+
+**Fundamental** (`scoreFundamentals`) — base 50; ETF → flat 55; missing OVERVIEW → 55 (low-confidence). Additive:
+| Field | Bands → points |
+|---|---|
+| P/E (sector-relative) | `ratio = pe / SECTOR_PE_NORM[sector]`. <0.7 → +18 · <1.0 → +8 · <1.4 → −3 · <2.0 → −12 · ≥2.0 → −22 |
+| Profit margin | >0.20 → +20 · >0.10 → +10 · <0 → −20 |
+| ROE (TTM) | >0.20 → +15 · >0.10 → +8 · <0 → −10 |
+| EPS | >0 → +5 · ≤0 → −10 |
+| Rev growth YoY | >0.20 → +15 · >0.10 → +8 · <0 → −10 |
+| Analyst target upside `(target−price)/price` (price = live close, else 200-DMA) | >25% → +12 · >10% → +6 · <−10% → −8 |
+
+`SECTOR_PE_NORM`: technology 30 · communication 20 · health care 25 · consumer disc. 24 · staples 22 · industrials 20 · materials 16 · energy 12 · financials 14 · utilities 18 · real estate 30 · unknown → 20.
+
+**Technical** (`scoreTechnicals`) — base 50; <15 candles → flat 50. Additive:
+| Signal | Contribution |
+|---|---|
+| RSI(14) | continuous interp over anchors `(20,−20)(35,−16)(45,−5)(50,+2)(55,+12)(60,+25)(72,+25)(75,+6)(85,−10)(100,−15)` |
+| Price vs EMA50 | above +15 · below −15 |
+| Price vs EMA20 | above +10 · below −10 |
+| 20-day trend (±3% band) | up +10 · down −10 |
+| Volume vs 20d avg (direction-confirming) | in-direction ≥1.5× → ±8 · ≥1.2× → ±4 (direction from EMA20/trend; neutral context → 0) |
+
+**Sentiment** (`scoreSentiment`) — StockTwits bull/(bull+bear)×100; else AV news `(sent+1)×50`; else label (bull 65 / bear 35); else 50. Excluded from weighting unless `has_data`.
+
+**Macro** (`fetchMacroScore`) — `100 − danger_score` from latest non-`unknown` `macro_regime` row (looks back up to 3 weeks). `unknown` regime → excluded.
+
+**Insider** (`scoreInsider`/EDGAR) — `10 + buyRatio×80` where `buyRatio = buyValue/(buyValue+sellValue)` over 90 days. Requires ≥3 transactions; <3, no data, ADRs, or fetch-fail → `available:false` (excluded).
+
+Known gaps (deliberately not yet added — see the hype-catch discussion / IC-gate path): relative-strength vs index, MACD/ATR, 52w-high proximity, EMA200; debt/leverage, FCF yield, EV/EBITDA, revenue *acceleration*, sector-relative margins; sentiment message-volume weighting; per-symbol macro beta; insider role/cluster weighting.
+
 **Target v2:** asset/setup-specific PIT feature snapshots, comparable-universe rank, structural
 evidence confidence, contradiction/event gates, and deterministic action. The complete contract is
 `features/scoring-methodology/FEATURE_ARCHITECTURE.md`; v2 remains non-actionable until its
