@@ -1,192 +1,202 @@
 # Kairos — Risk & Safety
-> Last updated: 2026-07-10
-> Update this file when: any safety gate changes, the autonomy ladder changes, a new kill switch is added, account allowlist changes, or any order-flow gating logic changes.
+
+> Last updated: 2026-07-10 (reviewed/corrected by ChatGPT/Codex)
+> Update when any authorization, scoring eligibility, limit, account, order, reconciliation, exit, or kill-switch behavior changes.
 
 ---
 
 ## Overview
 
-Every live order passes through 9 independent gates in sequence. Failure at any gate returns an error and the order is not sent. The gates are independent — disabling one does not bypass the others.
+Manual and future autonomous orders must pass one shared Execution Gateway. Manual and auto differ only in **who authorizes the proposal**; they do not have separate money-safety implementations.
 
 ```mermaid
 flowchart TD
-  ORDER[Approved live order] --> OWNER[1. Owner-only + you clicked send]
-  OWNER --> LADDER[2. Autonomy level >= L3?\nL4/L5 auto not honored]
-  LADDER --> ENABLED[3. Trading enabled?\nglobal + this market]
-  ENABLED --> KILL[4. Kill switches OK?\ndaily loss / drawdown / accuracy]
-  KILL --> QUALITY[5. Signal data-confidence OK? G1]
-  QUALITY --> PERORDER[6. Per-order cap\nUS $ / India ₹]
-  PERORDER --> DAILY[7. Daily total cap\n+ max trades/day]
-  DAILY --> CONCENTRATION[8. Portfolio limits G3\nname / gross vs live NAV]
-  CONCENTRATION --> DRIFT[9. Fresh quote + price-drift check]
-  DRIFT --> SEND[Send to broker]
+  INTENT[Trade proposal] --> ACTOR[1. Owner or authorized auto lease]
+  ACTOR --> VERSION[2. Deterministic live-approved scoring version]
+  VERSION --> ENABLED[3. Global market broker account enabled]
+  ENABLED --> KILL[4. Kill switches and critical alerts]
+  KILL --> QUALITY[5. Data evidence and mandate]
+  QUALITY --> ACCOUNT[6. Fresh target-account NAV positions buying power]
+  ACCOUNT --> LIMITS[7. Per-order and portfolio limits]
+  LIMITS --> QUOTE[8. Fresh quote spread drift]
+  QUOTE --> RESERVE[9. Atomic daily budget and idempotency]
+  RESERVE --> PREVIEW[10. Broker preview echo]
+  PREVIEW --> SEND[11. Broker submit]
+  SEND --> RECON[12. Durable lifecycle sync and protective exit]
 ```
+
+Unknown, null, stale, malformed, or errored state on a live BUY fails closed. Verified risk-reducing SELL exits remain exempt only from BUY budgets/caps; they still require account, holdings, quote, idempotency, broker, and audit checks.
 
 ---
 
 ## Gate details
 
-### Gate 1 — Owner-only + you clicked send
+### 1 — Authorization envelope
 
-`requireOwner()` must pass on the API route. No agent can send a live order — they can only
-propose. The owner must click "send" in the dashboard UI. There is no code path that sends a
-live order without a human action.
+**Manual:** `requireOwner()` + request/CSRF guard + owner approval/Send action.
 
-### Gate 2 — Autonomy ladder
+**Future auto L4:** all of deployment `AUTONOMOUS_LIVE_ENABLED=true`, `autonomy_level='L4_live_small_auto'`, `live_auto_enabled=true`, unexpired owner lease, authenticated cron worker, and a single-run lease. The autonomous path cannot use owner-only risk overrides.
 
-`strategy_config.autonomy_level` must be `L3_live_manual` or higher.
+Enabling an auto envelope is a human money/config change and is journaled. It is not permission for an LLM to change caps, accounts, strategy lifecycle, or code.
 
-| Level | Name | What it allows |
+### 2 — Signal and scoring eligibility
+
+Live BUY requires:
+
+- deterministic `score_source`;
+- strategy/scoring lifecycle `live_approved` with linked validation evidence;
+- market/asset/setup allowed by the mandate;
+- unexpired proposal and signal;
+- long-only new-position decision;
+- no unresolved taint or invalid LLM veto state.
+
+A score threshold or `eligible_for_live_review` flag alone never grants live eligibility.
+
+### 3 — Trading/broker/account enablement
+
+All global, per-market, broker, and account toggles must be true. Broker resolution fails closed.
+
+US order account is exactly Robinhood agentic account `605420660`. Account `965848641` is read-only for the approved research-holdings use; its NAV/positions cannot size or authorize agentic-account orders. The real implementation currently hardcodes/resolves account IDs; the documentation must not claim otherwise. Credentials/tokens remain encrypted in the vault and never enter code/logs.
+
+### 4 — Kill switches
+
+`lib/kill-switches.ts` checks per market for daily loss, peak drawdown, and rolling accuracy, disables trading, and creates a critical alert. Submit-time checks must rerun immediately before reserve/send.
+
+For L4, any unresolved critical trading/data/reconciliation alert blocks new entries. A kill switch also attempts to cancel resting entry BUY orders only if a tested cancel capability exists; protective SELL orders are not auto-cancelled. Risk-reducing held-position exits remain allowed where state can be verified.
+
+### 5 — Data quality and overrides
+
+`data_confidence` uses structural applicable base weights:
+
+```text
+fresh valid applicable base weight / all structurally applicable base weight
+```
+
+Inapplicable dimensions are omitted from both terms; missing/stale/failed/degraded dimensions stay in the denominator and contribute zero. Post-renormalization `applied_weights` are never the denominator.
+
+Manual owner may use `acceptLowQuality` only with a durable reason written before the order. Auto has no quality or portfolio-risk override. `quality_status=unknown`, missing decision link, or confidence error blocks auto/live BUY.
+
+### 6 — Fresh account state
+
+NAV, positions, open orders, and buying power must come from the actual target account and meet explicit freshness bounds. There is no `FALLBACK_NAV` for live or auto sizing. If the target account cannot be read, BUY size is zero and SELL authorization fails unless current holdings can be independently verified.
+
+India values remain INR and US values USD. No currency conversion is implicit. If a future cross-currency limit is needed, the FX observation/source/time is explicit and conservative.
+
+### 7 — Limits and portfolio construction
+
+Current per-order limits live in `strategy_config.max_order_notional_usd` / `max_order_notional_inr`; daily limits use `max_daily_notional_*` and `max_daily_trades`. Do not claim these are `broker_accounts.notional_cap_usd` unless the schema is actually migrated.
+
+Final BUY size is the minimum of opportunity size, per-order cap, remaining atomic daily budget, buying power, and name/sector/gross/correlation/volatility limits. Quantity rounds down; zero means abstain. SELL that reduces a verified holding is exempt from BUY notional/daily budgets.
+
+### 8 — Quote and drift
+
+A fresh executable quote is obtained immediately before reservation. Validate positive finite price, retrieval age, spread/liquidity, and drift from proposal/approval. Use a marketable limit collar when the broker schema supports it; never guess tool parameters.
+
+### 9 — Atomic budget and idempotency
+
+All live submit paths must call the atomic budget-reservation RPC. The advisory lock is per market-local trading day. It counts reserved/submitted/partial/unknown live BUYs and inserts `broker_orders.status='pending_submit'` in the same transaction. Unique active order per proposal is the hard duplicate backstop.
+
+The current RPC records `approved_by_user=true`; autonomous execution requires a new versioned RPC that records the true actor. A read/sum/check in TypeScript is forbidden because concurrent requests can exceed the cap.
+
+### 10 — Broker preview
+
+Robinhood requires `review_equity_order` before place. Preview must echo account, symbol, side, quantity, and order type. Any missing/mismatch/error blocks submission. Adapter schema is discovered from the live MCP tool list; no LLM constructs parameters.
+
+### 11 — Submit outcome
+
+- confirmed success with broker ID → `submitted`;
+- clean reject/error → definitive error state;
+- timeout/possible success/no broker ID → `unknown_needs_reconcile`, budget remains reserved, retry blocked;
+- every transition produces a durable event/audit record.
+
+Email is secondary notification, never the source of truth.
+
+### 12 — Fill reconciliation and exits
+
+Order sync handles submitted, partial, filled, cancelled, rejected, and unknown states. Partial fill never triggers blind remainder resubmission and available quantity accounts for open SELL orders.
+
+Autonomous BUY is prohibited until a deterministic live protective-exit path exists. Stops/time exits/targets use the same Gateway and verified held quantity. A protection/monitor heartbeat failure disables new autonomous entries. Tax and dividend preferences cannot delay a risk stop.
+
+---
+
+## Autonomy ladder
+
+Use only schema values from migration 124:
+
+| Level | Meaning | Live placement |
 |---|---|---|
-| L1 | `paper_only` | No live orders possible |
-| L2 | `live_supervised` | Live orders allowed but only with explicit user review |
-| L3 | `live_manual` (default) | Live orders: owner must click send on every one |
-| L4 | `live_small_auto` | Described in spec; `AUTONOMOUS_LIVE_ENABLED = false` in code → behaves like L3 |
-| L5 | `scaled_auto` | Described in spec; also blocked by the same constant |
+| `L0_research` | research only | none |
+| `L1_paper_auto` | automated paper | none |
+| `L2_shadow` | shadow live recommendations | none |
+| `L3_live_manual` | owner-approved live | owner action required |
+| `L4_live_small_auto` | future small autonomous envelope | only after architecture phases and explicit enablement |
+| `L5_scaled_auto` | future scaled envelope | not implemented |
 
-**`AUTONOMOUS_LIVE_ENABLED` is hardcoded `false` in `lib/autonomy.ts`.** L4 and L5 exist
-as concepts for a possible future autonomous envelope but are not honored by any live code
-path today. There is no config flag that enables them. This is a deliberate constant, not a
-toggle.
-
-### Gate 3 — Trading enabled
-
-Both global `robinhood_mcp_enabled` (US) / `kite_enabled` (India) AND the per-account
-`broker_accounts.enabled` must be true. If trading is disabled, the endpoint returns 409.
-
-### Gate 4 — Kill switches
-
-Auto-halt on:
-- Daily loss exceeding threshold
-- Drawdown from peak NAV
-- Low 30-day win rate (below configured floor)
-
-Each trip writes an `agent_alerts` row. Trading resumes only when the user manually clears
-the halt — there is no auto-resume.
-
-### Gate 5 — Signal data quality (G1)
-
-A live BUY built on a signal with `data_confidence < 0.5` (low-evidence / partially missing
-data) is refused unless you explicitly override. Prevents a thin-data score from driving a
-real trade.
-
-### Gate 6 — Per-order cap
-
-Each live order is bounded by `broker_accounts.notional_cap_usd` (US) and the equivalent ₹
-cap for India. Set in Settings → Live Order Limits.
-
-### Gate 7 — Daily total cap + max trades/day
-
-Cumulative daily buying enforced atomically (compare-and-set) so two fast clicks can't slip
-past the cap. Both count limit and dollar limit are checked.
-
-### Gate 8 — Portfolio concentration (G3)
-
-Checks against the live account:
-- US: live account snapshot (equity + positions via Robinhood MCP)
-- India: Kite `/user/margins` (cash) + `/portfolio/holdings` (last_price × qty)
-
-A BUY that over-concentrates (too much in one name or too much gross exposure) is refused.
-**Fails closed if holdings are indeterminate** — if the live account state cannot be read,
-the order is refused rather than assuming safe.
-
-### Gate 9 — Price drift check
-
-Fresh quote fetched immediately before order send. If the live price has drifted more than
-the configured threshold from the signal price, the order is held and flagged for
-reconciliation. Prevents stale signals from executing at materially worse prices.
-
----
-
-## NAV drawdown circuit breaker
-
-Implemented in PositionMonitor. If the weekly paper NAV return drops > 5%, PositionMonitor
-automatically sets `strategy_config.app_paused = true` and fires a critical System Health
-alert. While `app_paused = true`:
-- No new paper trades open
-- No live orders accepted
-- Dashboard shows a critical banner
-
-**Manual reset only** — no auto-resume. The user must investigate and re-enable via Settings.
-
----
-
-## Kill switch: revoke at the broker
-
-The ultimate kill switch is to revoke access at the broker level:
-- **Robinhood:** revoke the OAuth token in Robinhood account settings
-- **Kite:** revoke in Zerodha console
-
-This works even if the Kairos app were compromised. Broker-level revocation is the last-resort
-kill switch that operates independently of all app-level controls.
+Unknown values fail closed. Documentation/UI must not use obsolete names such as `paper_only` or `live_supervised`.
 
 ---
 
 ## Account allowlist
 
-| Role label | Market | Broker | Allowed operations |
+| Account | Market | Role | Allowed use |
 |---|---|---|---|
-| Trading (read-only) | US | Robinhood | Read positions, equity, history. SELL signal evaluation. **Cannot place orders.** |
-| Agentic (orders-only) | US | Robinhood | Place + cancel orders ONLY. No withdrawals. **Hard-wired as the only account for US order placement.** |
-| India live | India | Zerodha Kite | Read real NSE/BSE holdings + place CNC delivery orders. Daily token refresh required. |
+| `605420660` | US | agentic/trading | only Robinhood account permitted for Kairos orders and order-account sizing |
+| `965848641` | US | view-only/manual | approved read-only holdings research; never order placement or agentic sizing |
+| configured Kite account | India | trading | official Kite API, INR limits, CNC delivery, separate manual gate today |
 
-The agentic account allowlist is enforced in `lib/broker-resolver.ts`. Any attempt to route
-an order to the trading (read-only) account returns a 403.
-
-No account IDs, passwords, or credentials are stored in code. See `api_key_vault` for tokens.
+Every broker/account lookup is scoped by broker, market, role, enabled state, and account ID. No silent default.
 
 ---
 
-## Trade proposals flow
+## State tables versus immutable ledgers
 
-TraderAgent creates `trade_proposals` rows with `status = 'pending'`. These auto-expire after
-30 minutes (`expires_at = created_at + 30m`). The owner reviews and clicks "approve" or
-"reject" in the dashboard. Approval triggers the full 9-gate safety ladder before the order
-is sent to the broker.
+Do not describe every financial table as immutable; several require lifecycle updates.
 
-There is no code path that bypasses the proposal flow for live orders.
+**Append-only / no UPDATE or DELETE:**
 
----
+- `decision_observations`;
+- `paper_order_events`;
+- `strategy_evaluations`;
+- `evidence_records` (subject to its existing immutable design);
+- target `broker_order_events`.
 
-## Append-only ledgers
+**Mutable current-state/audited tables — never hard-delete financial history:**
 
-These tables must never be hard-deleted by any agent, cron, cleanup job, or manual query:
+- `paper_trades` is updated when a trade closes;
+- `broker_orders` is updated as broker lifecycle changes;
+- `trade_proposals` changes approval/execution status;
+- `paper_positions` represents current open state and may be removed/closed only through the transactional exit path.
 
-| Table | Why it's protected |
-|---|---|
-| `paper_trades` | Financial ledger — P&L audit trail |
-| `paper_order_events` | Event sourcing — DB trigger blocks UPDATE/DELETE |
-| `decision_observations` | Learning fuel — every scored candidate ever |
-| `broker_orders` | Live trade audit trail — immutable for reconciliation |
-| `strategy_evaluations` | Evaluation history — DB trigger blocks UPDATE/DELETE |
-| `evidence_records` | Immutable evidence — `payload_hash` UNIQUE prevents re-import |
-
-The DB cleanup job (`/api/agents/db-cleanup`) explicitly skips all of these tables.
+Every material state transition must have an append-only event/journal record. Cleanup jobs never delete financial/audit history.
 
 ---
 
-## Long-only rule (new positions)
+## Fail behavior matrix
 
-SELL signals only apply to symbols that are **already held** in the paper or live portfolio.
-New positions (opens) are **long-only**. This prevents short-selling new positions while
-allowing orderly exit of held positions.
-
-- Enforced in PaperTrader and TraderAgent.
-- ResearchAgent generates SELL recommendations for holdings; these are not blocked.
-- Attempting to open a new position with `direction = 'short'` is refused.
+| Failure | Manual BUY | Auto BUY | Verified risk-reducing SELL |
+|---|---|---|---|
+| Auth/actor invalid | block | block | block |
+| Scoring version not live-approved | block | block | allow only if independently triggered by risk exit and holding verified |
+| Quality unknown/low | block unless audited owner override | block, no override | do not block risk exit solely for entry-data quality |
+| NAV/portfolio stale | block or audited manual portfolio override | block, no override | require fresh held quantity; NAV cap exempt |
+| Quote stale/missing | block | block | block |
+| Daily BUY cap full | block | block | exempt |
+| Broker timeout | reconcile/no retry | reconcile/no retry + disable new entries | reconcile/no retry |
+| Exit protection unavailable | owner warned/manual decision | block entry | alert/escalate |
 
 ---
 
-## Risk gate summary for quick reference
+## Launch blockers for L4
 
-| Gate | Blocks when | Bypass |
-|---|---|---|
-| 1. Owner-only | Not authenticated as owner | None |
-| 2. Autonomy ladder | `autonomy_level` below L3 or L4/L5 auto mode | None (L4/L5 hardcoded off) |
-| 3. Trading enabled | Global toggle off or account disabled | Enable in Settings |
-| 4. Kill switches | Daily loss / drawdown / accuracy thresholds tripped | Manual clear in Settings |
-| 5. Data quality | `data_confidence < 0.5` | Explicit override checkbox |
-| 6. Per-order cap | Order notional > account cap | Raise cap in Settings |
-| 7. Daily cap | Daily cumulative or count exceeded | Waits until next day |
-| 8. Concentration | Over-concentrated in name or gross | Reduce existing position first |
-| 9. Price drift | Live price moved too far from signal price | Re-score signal (will expire and refresh) |
+- shared execution kernel used by all live paths;
+- correct account test (`605420660`) and allowlist verification;
+- atomic autonomous budget RPC with true actor audit;
+- scoring version lifecycle enforcement;
+- fresh agentic-account state with no fallback NAV;
+- broker preview echo and idempotency/reconcile path;
+- partial-fill/order sync and append-only broker events;
+- deterministic live protective SELL path;
+- duplicate-cron, timeout, stale-data, DB-failure, and kill-switch chaos tests;
+- PA1 shadow evidence and Vaibhav approval.
+
+Until all pass, `AUTONOMOUS_LIVE_ENABLED` remains false and L4 is descriptive only.

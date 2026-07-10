@@ -1,5 +1,5 @@
 # Kairos — Agents
-> Last updated: 2026-07-10
+> Last updated: 2026-07-10 (scoring and autonomous-execution architecture reviewed/corrected by ChatGPT/Codex)
 > Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
 
 **Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file + update `public/agent-diagrams/system-map.json`.
@@ -15,11 +15,16 @@ handlers directly.
 ```mermaid
 flowchart LR
   MACRO[MacroSentinel] --> |macro_signals| RESEARCH[ResearchAgent]
-  RESEARCH --> |agent_signals| PAPER[PaperTrader]
+  UNIVERSE[PIT Universe + Providers] --> RESEARCH
+  RESEARCH --> |agent_signals + decision_observations| PAPER[PaperTrader]
+  RESEARCH --> |eligible proposal| TRADER[TraderAgent]
+  TRADER --> GATEWAY[Shared Execution Gateway]
+  GATEWAY --> BROKER[Robinhood or Kite Adapter]
   RESEARCH --> |signal_score_history| RESEARCH
   PAPER --> |paper_positions paper_trades| MONITOR[PositionMonitor]
   MONITOR --> |closed paper_trades| LEARNER[LearnerAgent]
-  LEARNER --> |strategy_versions challengers| USER((You))
+  LEARNER --> |challenger proposal| VALIDATE[Validation Engine]
+  VALIDATE --> |evidence| USER((You))
   USER --> |promote champion| RESEARCH
   MONITOR --> |closed paper_trades| MENTOR[MentorAgent]
   MENTOR --> |mentor_insights| USER
@@ -42,6 +47,9 @@ flowchart LR
 | `agent_alerts` | All reporters | Health-Triage, Dashboard, Briefing |
 | `mentor_insights` | MentorAgent | LearnerAgent (context), Dashboard |
 | `strategy_evaluations` | PerformanceTruth/Evaluation | Dashboard |
+| `validation_experiments`, `model_artifacts` | Validation/Calibration | Promotion gate, Dashboard |
+| `broker_orders` | Execution Gateway + order sync | Reconciliation, Dashboard |
+| `broker_order_events` (target) | Execution Gateway + order sync | Audit/reconciliation |
 | `llm_call_log` | All LLM callers | Admin cost view |
 | `rag_traces` | ResearchAgent (retrieval) | Debug/audit |
 
@@ -89,7 +97,7 @@ User sees the regime first and decides whether to act.
 **LLM:** Groq `llama-3.3-70b-versatile` for thesis text only
 
 **Inputs:**
-1. Existing holdings from `live_account_snapshots` (ALL accounts) — SELL signals can apply to any held symbol
+1. Account-scoped holdings snapshots. Research may analyze approved holdings, but only holdings verified on the actual order account can authorize a SELL.
 2. Watchlist from `watchlist` table
 3. Screener candidates from FinancialDatasets `screen_stocks` (US) or NSE universe cache (India) — dual buckets:
    - *Momentum*: RSI > 60, price > 50-day MA, revenue acceleration, positive earnings revision
@@ -97,9 +105,9 @@ User sees the regime first and decides whether to act.
 4. Score trend from `signal_score_history` (last 5 rows per symbol)
 5. Champion weights from `strategy_versions WHERE is_champion = true AND market = ?`
 6. Macro regime from most recent `macro_regime` row
-7. RAG memory via `retrieveSimilarTrades()` (if Jina key present)
+7. RAG memory via `retrieveSimilarTrades()` (if Voyage embeddings are configured)
 
-**Scoring — 5 dimensions (fully deterministic, no LLM):**
+**Current production baseline (`deterministic_v1`) — 5 dimensions:**
 
 | Dimension | Source | What it measures |
 |---|---|---|
@@ -115,9 +123,13 @@ analyst_score = Σ (dimension_score × champion_weight[dimension])
 ```
 Falls back to risk-profile static weights → `learning_priors` → signal_weights if no champion.
 
-**LLM role (Groq, 512 tokens):** Receives all dimension scores + evidence. Writes one-paragraph
-thesis + direction (`long` / `short` / `neutral`). **Never generates scores** — scores are
-deterministic before LLM is called.
+**Target v2:** asset/setup-specific PIT feature snapshots, comparable-universe rank, structural
+evidence confidence, contradiction/event gates, and deterministic action. The complete contract is
+`features/scoring-methodology/FEATURE_ARCHITECTURE.md`; v2 remains non-actionable until its
+lifecycle and validation gates pass.
+
+**LLM role:** explanation, risks, catalysts, and a bounded evidence-citing veto only. It never
+generates score, probability, expected return, direction, weight, size, or lifecycle state.
 
 **Screener target:** 3 candidates/day (not 5). With $10k NAV and 10% sizing, max 10
 positions. Daily churn of 5+ creates overtrading.
@@ -138,9 +150,10 @@ positions. Daily churn of 5+ creates overtrading.
 
 **Inputs:** Same watchlist and screener pipeline as ResearchAgent.
 
-**Key behavior:** Runs the same scoring pipeline but uses DeepSeek for the thesis text. Writes
-to `agent_signals` with `agent_label = 'deepseek'`. Enables per-model P&L comparison — you
-can track whether Claude or DeepSeek signals produce better paper-trade outcomes.
+**Key behavior:** Advisory comparison only. Current code asks DeepSeek for an LLM-generated
+`analyst_score`; it must be tagged `score_source='llm_advisory'`, remain `status='advisory'`,
+and be structurally excluded from PaperTrader and TraderAgent. Future comparison should reuse the
+deterministic score and compare explanation/veto quality.
 
 **Outputs:** `agent_signals` rows tagged `agent_label = 'deepseek'`
 
@@ -154,6 +167,7 @@ can track whether Claude or DeepSeek signals produce better paper-trade outcomes
 
 **Inputs:**
 - `agent_signals` WHERE `status = 'pending'` AND `created_at` is today (market timezone) AND `market = ?`
+- deterministic `score_source` and a strategy version currently in `paper_active` lifecycle
 - `paper_portfolio` for pool cash
 - `paper_positions` for existing open positions
 
@@ -209,7 +223,7 @@ can track whether Claude or DeepSeek signals produce better paper-trade outcomes
 - Delete the `paper_positions` row
 - Mark the `paper_trades` buy row closed (exit_price, realized_pnl, pnl_pct, outcome, exit_reason)
 - Credit cash back to `paper_portfolio`
-- Call `indexClosedTrade()` for RAG (if Jina key present)
+- Call `indexClosedTrade()` for RAG (if Voyage embeddings are configured)
 - Append to `paper_order_events`
 
 ---
@@ -220,17 +234,26 @@ can track whether Claude or DeepSeek signals produce better paper-trade outcomes
 **Schedule:** Weekdays 9:45 AM ET (after research settles)
 **LLM:** None
 
-**Inputs:** `agent_signals` with score ≥ threshold.
+**Inputs:** eligible deterministic `agent_signals`. A numeric score alone is not live eligibility.
 
-**Key behavior:** Creates `trade_proposals` rows with `status = 'pending'` and
-`expires_at = now() + 30m`. Owner reviews and approves or rejects via the dashboard. If
-approved, the proposal passes through the full 9-gate money-safety ladder before sending to
-the broker.
+**Current behavior:** creates proposals. Manual submission is owner-gated through the hardened
+Execution Gateway in `app/api/broker/orders/route.ts`.
 
-**`approval_required = true` always.** There is no code path that sends a live order without
-`requireOwner()` passing and the user clicking send.
+- **`manual` (default):** Creates `trade_proposals` rows with `status = 'pending_review'`.
+  Owner reviews and approves/rejects in the dashboard. Send invokes the deterministic Execution
+  Gateway and broker preview/place sequence; no LLM supplies order parameters.
 
-**Outputs:** `trade_proposals` rows (proposals expire automatically after 30 minutes)
+- **`auto` (future L4):** the old direct-submit branch is rejected. An authenticated worker may
+  call only the shared execution kernel, under deployment flag, expiring owner lease, atomic
+  budget, and a `live_approved` scoring version. Auto BUY is blocked until live protective exits,
+  partial-fill sync, and reconciliation are operational.
+
+**Current auto status:** disabled. India auto is a separate architecture. Eventual L4 must support
+verified risk-reducing SELL before autonomous BUY.
+
+**Architecture doc:** `features/live-auto-trading/FEATURE_ARCHITECTURE.md`
+
+**Outputs:** `trade_proposals` rows (expire after 30 min in manual mode)
 
 ---
 
@@ -251,7 +274,7 @@ the broker.
 6. `propose_challenger` — write a new `strategy_versions` row with new weights + genome
 7. `run_validation` — trigger Validation Engine on the proposed challenger
 8. `get_mentor_insights` — recent coaching notes
-9. `semantic_search_decisions` — pgvector RAG over trade memories (if Jina key present)
+9. `semantic_search_decisions` — pgvector RAG over trade memories (if Voyage embeddings are configured)
 
 **What it proposes:**
 A Challenger `strategy_versions` row containing:
@@ -260,6 +283,11 @@ A Challenger `strategy_versions` row containing:
 - Possibly: a Feature Registry entry (a new formula idea — never runs as code)
 
 **Auto-guard:** Blocks mutation if last 3 runs have win_rate < 35%.
+
+**Governance boundary:** Learner/LLM may propose hypotheses, feature specs, and bounded
+challengers. Deterministic fitting/optimizers produce numeric candidate parameters. Only Vaibhav
+may promote lifecycle state. Learner cannot activate weights, versions, thresholds, money limits,
+accounts, orders, or code.
 
 **Closed-loop closure (2026-07-05):** When user promotes a Challenger to Champion, the
 promoted `weights_snapshot` is read by ResearchAgent on its next run.
@@ -349,8 +377,10 @@ band when System Health alerts are present.
 
 **File:** `lib/validators/backtest.ts`, `app/api/agents/backtest/route.ts`
 
-**Deterministic, no LLM.** Replays a Challenger vs Champion on walk-forward held-out slices
-of the `decision_observations` ledger.
+**Deterministic, no LLM.** Replays Challenger vs Champion on the same PIT opportunity set. For
+v2 it must use purged/embargoed walk-forward folds, train-fold-only preprocessing/calibration,
+out-of-fold predictions, costs/turnover, and multiple-testing accounting. The existing five-weight
+replay remains a baseline, not sufficient proof for a new scoring architecture.
 
 **Eligibility gates:**
 - **Sharpe ≥ 0.5**
