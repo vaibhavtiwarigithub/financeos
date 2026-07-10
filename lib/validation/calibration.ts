@@ -65,6 +65,19 @@ function fitLogistic(X: number[][], y: number[], iterations = 500, lr = 0.1): { 
   return { intercept, coefs };
 }
 
+// Fit standardization + logistic coefficients from ONE row set. Used both for
+// the deployment artifact (all rows) and for each walk-forward fold's train
+// partition (so the OOS calibration curve never sees its own test outcomes).
+function fitCoefficients(rows: LabeledObservation[]): CalibrationCoefficients {
+  const { means, stdevs } = standardize(rows);
+  const X = rows.map(r => DIMS.map(dim => (((r as any)[dim] ?? 50) - means[dim]) / stdevs[dim]));
+  const y = rows.map(r => ((r.benchmark_neutral_return ?? r.fwd_return ?? 0) > 0 ? 1 : 0));
+  const { intercept, coefs } = fitLogistic(X, y);
+  const weights: Record<string, number> = {};
+  DIMS.forEach((dim, i) => { weights[dim] = coefs[i]; });
+  return { intercept, weights, means, stdevs };
+}
+
 export function predictPWin(coeffs: CalibrationCoefficients, row: Partial<LabeledObservation>): number {
   let z = coeffs.intercept;
   for (const dim of DIMS) {
@@ -79,23 +92,23 @@ export async function fitCalibration(supabase: any, market: "us" | "india", hori
   const rows = await loadLabeledDataset(supabase, market, horizonDays);
   if (rows.length < 60) return null;
 
-  const { means, stdevs } = standardize(rows);
-  const X = rows.map(r => DIMS.map(dim => (((r as any)[dim] ?? 50) - means[dim]) / stdevs[dim]));
-  const y = rows.map(r => ((r.benchmark_neutral_return ?? r.fwd_return ?? 0) > 0 ? 1 : 0));
+  // Deployment artifact: fit on ALL eligible history (in-sample refit — this is
+  // the model used live for sizing; refitting on all data for deployment is
+  // correct AFTER the OOS diagnostic below validates the approach).
+  const coefficients = fitCoefficients(rows);
 
-  const { intercept, coefs } = fitLogistic(X, y);
-  const weights: Record<string, number> = {};
-  DIMS.forEach((dim, i) => { weights[dim] = coefs[i]; });
-  const coefficients: CalibrationCoefficients = { intercept, weights, means, stdevs };
-
-  // Walk-forward calibration curve: predicted decile vs realized win rate,
-  // computed OUT OF SAMPLE using the same fold structure as the validation engine.
+  // Honest OOS calibration curve: fit a SEPARATE model on each fold's TRAIN
+  // partition and predict ONLY that fold's TEST partition. Previously the
+  // full-data `coefficients` predicted every fold — leakage, because the test
+  // rows had influenced the coefficients and the standardization.
   const folds = walkForwardFolds(rows, { folds: 5, testDays: 30, horizonDays });
   const predictions: { predicted: number; realized: number }[] = [];
   for (const fold of folds) {
+    if (fold.train.length < 30) continue; // too few to fit a trustworthy fold model
+    const foldCoeffs = fitCoefficients(fold.train);
     for (const row of fold.test) {
       predictions.push({
-        predicted: predictPWin(coefficients, row),
+        predicted: predictPWin(foldCoeffs, row),
         realized: (row.benchmark_neutral_return ?? row.fwd_return ?? 0) > 0 ? 1 : 0,
       });
     }

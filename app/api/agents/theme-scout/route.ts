@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
 import { getConfiguredModel } from "@/lib/agent-model-config";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { requireOwner } from "@/lib/auth/require-owner";
 import { avCachedFetch } from "@/lib/av-cache";
 
 export const dynamic = "force-dynamic";
@@ -230,6 +231,8 @@ Rules:
 
 // GET: return last scout run summary
 export async function GET() {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("watchlist")

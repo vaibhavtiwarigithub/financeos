@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { execClaude, parseClaudeOutput, parseTokenUsage } from "@/lib/claude-exec";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -117,6 +118,8 @@ function parseEval(raw: string): EvalResult | null {
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const supabase = await createClient();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

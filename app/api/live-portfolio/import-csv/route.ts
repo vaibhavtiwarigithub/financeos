@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { createClient } from "@/lib/supabase/server";
+import { requireOwner } from "@/lib/auth/require-owner";
 import { createHash } from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -75,9 +75,8 @@ function parseRobinhoodCSV(text: string): RobinhoodRow[] {
 }
 
 export async function POST(req: NextRequest) {
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const gate = await requireOwner();
+  if (gate) return gate;
 
   const svc = createServiceClient();
   let formData: FormData;

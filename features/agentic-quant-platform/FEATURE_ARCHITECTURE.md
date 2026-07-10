@@ -820,12 +820,12 @@ Legend: [ ] todo · [~] in progress · [x] done
 - [x] R2  #5 add `checkKillSwitches(svc, market)` to the autonomous path (fresh, per market, fail closed)
 - [x] R3  #1 restore migrations 139/140 + `reserve_live_order_budget_v2` + `broker_order_events` DDL from prod → files (`143_restore_live_auto_ddl.sql`)
 - [x] R4  #9 autonomous fail-closed: require valid future lease + per-market `trading_enabled_*===true` (no null-passes)
-- [ ] R5  #14 calibration fold-local fitting (fit scaler+logistic inside each train fold; refit-all only for deploy artifact)
+- [x] R5  #14 calibration fold-local fitting (fit scaler+logistic inside each train fold; refit-all only for deploy artifact)
 - [ ] R6  #19 positive-allowlist score_source/version on paper+trader eligibility (remove null/unknown fail-open + column-delete retry)
 - [ ] R7  #22 evidence_confidence = weighted structural coverage (not dimension count)
-- [ ] R8  #33 weighted-score: return explicit abstain/null for <2 dims (no meaningless partial number)
-- [ ] R9  #16/#31 owner-gate Smart-Money + metered/personal routes + mentor getSession→requireOwner + import-csv requireOwner
-- [ ] R10 #17/#32 RLS: scope remaining `USING(true)` tables (paper_order_events, evidence_records, corporate_actions, strategy_versions, experiment_runs, trade_decision_embeddings, universe_snapshots*) to owner/service
+- [x] R8  #33 weighted-score: explicit `abstain` flag for <2 dims (no meaningless partial number mistaken for a score)
+- [~] R9  #16/#31 owner-gate: DONE smart-money, theme-scout GET, mentor evaluate/journal/scores, import-csv. TODO metered public data (options/chain, social/sentiment, charts/*)
+- [x] R10 #17/#32 RLS: owner-scoped corporate_actions/evidence_records/experiment_runs/paper_order_events/strategy_versions/trade_decision_embeddings + service-only universe_snapshots* (migration 144)
 - [ ] R11 #18 vault: hash PIN (store salted hash, not plaintext); plan envelope-encryption for keys; rotate legacy cron secret
 - [ ] R12 #34 redact literal cron secret from historical migration text (repair migration) + confirm rotation
 

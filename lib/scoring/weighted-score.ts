@@ -17,6 +17,11 @@ export interface WeightedScoreResult {
   effWeights: DimensionRecord<number>;
   renormalized: boolean;
   includedDims: ScoreDimension[];
+  // True when fewer than 2 dimensions are usable — the `score` is then built on
+  // too little to trust and MUST be treated as abstain, not a real low score.
+  // Callers already gate on isThinEvidence(); this flag lets log/UI consumers
+  // avoid mistaking the meaningless partial number for a genuine score.
+  abstain: boolean;
 }
 
 // Renormalizes `baseWeights` across only the dimensions flagged `true` in
@@ -53,7 +58,7 @@ export function computeWeightedAnalystScore(
   }
 
   const score = SCORE_DIMENSIONS.reduce((s, k) => s + scores[k] * effWeights[k], 0);
-  return { score: Math.round(score), effWeights, renormalized, includedDims };
+  return { score: Math.round(score), effWeights, renormalized, includedDims, abstain: includedDims.length < 2 };
 }
 
 // Minimum-evidence gate: fewer than 2 included dimensions means the score is
