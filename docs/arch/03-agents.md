@@ -1,5 +1,5 @@
 # Kairos — Agents
-> Last updated: 2026-07-10 (PA1: AutonomousShadow agent added)
+> Last updated: 2026-07-10 (PA3: AutonomousLive agent added — per-market off/manual/autonomous)
 > Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
 
 **Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file + update `public/agent-diagrams/system-map.json`.
@@ -20,6 +20,10 @@ flowchart LR
   RESEARCH --> |eligible proposal| TRADER[TraderAgent]
   RESEARCH --> |qualifying signal| SHADOW[AutonomousShadow]
   SHADOW --> |shadow proposal queued_auto / manual_review_required| PROPOSALS[(trade_proposals)]
+  RESEARCH --> |qualifying signal autonomous markets| LIVE[AutonomousLive]
+  LIVE --> |reserve_live_order_budget_v2| BUDGET[(broker_orders atomic)]
+  LIVE --> |live order| BROKER2[Robinhood REST or Kite REST]
+  LIVE --> |live proposal + events| LIVEAUDIT[(trade_proposals broker_order_events)]
   TRADER --> GATEWAY[Shared Execution Gateway]
   GATEWAY --> BROKER[Robinhood or Kite Adapter]
   RESEARCH --> |signal_score_history| RESEARCH
@@ -53,6 +57,8 @@ flowchart LR
 | `broker_orders` | Execution Gateway + order sync | Reconciliation, Dashboard |
 | `broker_order_events` (target) | Execution Gateway + order sync | Audit/reconciliation |
 | `trade_proposals` (shadow) | AutonomousShadow | Dashboard, owner audit |
+| `trade_proposals` (live) | AutonomousLive | Dashboard, reconciliation |
+| `broker_order_events` | AutonomousLive, Execution Gateway | Audit/reconciliation |
 | `llm_call_log` | All LLM callers | Admin cost view |
 | `rag_traces` | ResearchAgent (retrieval) | Debug/audit |
 
@@ -395,11 +401,52 @@ broker APIs, never calls reserve_live_order_budget, never submits any order.
 8. Orders today < `live_auto_max_orders_per_day`
 9. Proposed notional ≤ `live_auto_max_per_order_usd` (skipped in PA1 — notional = 0)
 
-**In current deployment:** gate 1 always fires (`AUTONOMOUS_LIVE_ENABLED=false`).
-All proposals land on `manual_review_required`. This is intentional — shadow accumulates
-evidence while the flag is false.
+**In current deployment:** gate 1 fires unless `AUTONOMOUS_LIVE_ENABLED=true` is set in Vercel env.
+When false, all proposals land on `manual_review_required`. Shadow accumulates evidence.
 
 **Outputs:** `trade_proposals` rows (shadow), `decision_journal` run summary
+
+---
+
+### AutonomousLive — the live submitter (PA3)
+
+**Files:** `lib/trading/execution-kernel.ts`, `lib/trading/autonomous-live.ts`,
+`app/api/agents/autonomous-live/cron/route.ts` (CRON_SECRET POST)
+**Schedule:** Weekdays 14:00 UTC (10:00 AM ET, after research at 13:00 UTC)
+**LLM:** None — fully deterministic
+
+**Runs ONLY when:**
+- `AUTONOMOUS_LIVE_ENABLED=true` in Vercel env AND
+- `strategy_config.live_auto_enabled=true` AND
+- `live_auto_enabled_until` not expired AND
+- `live_auto_mode_us='autonomous'` or `live_auto_mode_india='autonomous'`
+
+**Inputs:**
+- `strategy_config` policy + per-market mode columns
+- `agent_signals` (last 24h, `score_source='deterministic_v1'`, direction=long, markets in autonomous mode)
+- `live_account_snapshots` for NAV (account 605420660, max age 4h)
+- `paper_trades` for Kelly calibration (last 100 closed)
+
+**Key behavior:** Same 9-gate kernel as shadow, plus:
+1. Checks kill switches (`app_paused`, `security_locked`, `trading_enabled`)
+2. Checks `live_auto_mode_[market] = 'autonomous'` per signal's market
+3. Calls `computeAutonomousSizing()` for approved signals
+4. Calls `reserve_live_order_budget_v2` RPC (`p_execution_actor='autonomous_worker'`) — atomic
+5. Submits to broker:
+   - US: `rhPlaceMarketOrder()` via Robinhood REST API (direct, no MCP — unavailable in serverless)
+   - India: `placeEquityOrder()` via Kite Connect REST
+6. Updates `broker_orders`: `status=submitted` + `broker_order_ref`
+7. Appends `broker_order_events` row (`actor_kind='autonomous_live'`)
+8. Updates `trade_proposals`: `status=queued_auto` or `manual_review_required`
+
+**Per-market mode (migration 141):**
+- `off` — market skipped entirely
+- `manual` — no live orders from this agent; owner clicks Approve in dashboard
+- `autonomous` — live orders submitted per above
+
+**Safety:** `approved_by_user=false` in broker_orders. Any gate failure = `manual_review_required`, no order. Budget exceeded (RPC throws) = skip, log. Broker error = `unknown_needs_reconcile`, budget stays reserved.
+
+**Outputs:** `trade_proposals` (autonomous_live), `broker_orders`, `broker_order_events`, `decision_journal`
 
 ---
 

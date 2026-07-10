@@ -127,13 +127,14 @@ export default function SettingsPage() {
   const [providersLoading, setProvidersLoading] = useState(false);
   const loadKite = () => fetch("/api/kite/status").then(r => r.json()).then(setKite).catch(() => {});
 
-  // Autonomous trading (PA0 — schema/UI only; deployment flag stays false)
+  // Autonomous trading (PA3 — per-market off/manual/autonomous)
   const [liveAuto, setLiveAuto] = useState<any | null>(null);
   const [liveAutoSaving, setLiveAutoSaving] = useState(false);
   const [liveAutoMsg, setLiveAutoMsg] = useState("");
   const [liveAutoConfirm, setLiveAutoConfirm] = useState("");
   const [liveAutoLeaseHours, setLiveAutoLeaseHours] = useState(4);
   const [liveAutoShowEnable, setLiveAutoShowEnable] = useState(false);
+  const [liveAutoModeSaving, setLiveAutoModeSaving] = useState<string | null>(null);
   const [liveAutoCaps, setLiveAutoCaps] = useState({ daily_cap_usd: "", max_per_order_usd: "", min_confidence: "", max_positions: "", max_orders_per_day: "" });
   const loadLiveAuto = () => fetch("/api/settings/live-auto").then(r => r.json()).then(d => {
     setLiveAuto(d);
@@ -1181,6 +1182,68 @@ export default function SettingsPage() {
                 )}
               </div>
             )}
+
+            {/* Per-market mode */}
+            <div style={{ background: T.surface, borderRadius: "8px", padding: "12px 14px", marginBottom: "16px" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", marginBottom: "10px" }}>Per-Market Mode</div>
+              {(["us", "india"] as const).map((mkt) => {
+                const col = mkt === "us" ? "live_auto_mode_us" : "live_auto_mode_india";
+                const current: string = liveAuto?.[col] ?? "manual";
+                const label = mkt === "us" ? "US (Robinhood)" : "India (Kite)";
+                return (
+                  <div key={mkt} style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px", flexWrap: "wrap" as const }}>
+                    <span style={{ fontSize: "12px", color: T.textSub, minWidth: "120px" }}>{label}</span>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      {(["off", "manual", "autonomous"] as const).map((m) => {
+                        const active = current === m;
+                        const isAuto = m === "autonomous";
+                        const disabled = isAuto && !liveAuto?.deployment_flag_active;
+                        return (
+                          <button
+                            key={m}
+                            disabled={liveAutoModeSaving === mkt || disabled}
+                            title={disabled ? "Deployment flag must be active" : undefined}
+                            onClick={async () => {
+                              if (active) return;
+                              setLiveAutoModeSaving(mkt); setLiveAutoMsg("");
+                              try {
+                                const r = await fetch("/api/settings/live-auto", {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ action: "update_mode", market: mkt, mode: m }),
+                                });
+                                const d = await r.json();
+                                if (!r.ok) setLiveAutoMsg(d.error ?? "Failed");
+                                else { loadLiveAuto(); }
+                              } catch { setLiveAutoMsg("Request failed"); }
+                              setLiveAutoModeSaving(null);
+                            }}
+                            style={{
+                              padding: "5px 12px", fontSize: "12px", borderRadius: "6px", cursor: disabled || active ? "default" : "pointer",
+                              fontWeight: active ? 700 : 400, opacity: disabled ? 0.4 : 1,
+                              background: active
+                                ? (m === "autonomous" ? "#0D2410" : m === "manual" ? "#1a1a2e" : T.surface)
+                                : T.surface,
+                              border: `1px solid ${active
+                                ? (m === "autonomous" ? T.green : m === "manual" ? T.accent : T.border)
+                                : T.border}`,
+                              color: active
+                                ? (m === "autonomous" ? T.green : m === "manual" ? T.accent : T.muted)
+                                : T.muted,
+                            }}
+                          >
+                            {liveAutoModeSaving === mkt && active ? "…" : m}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>
+                off = no proposals · manual = Approve in dashboard · autonomous = cron submits live orders
+              </div>
+            </div>
 
             {/* Caps */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "16px" }}>

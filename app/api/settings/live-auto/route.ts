@@ -18,7 +18,8 @@ export async function GET() {
     .select(
       "live_auto_enabled, live_auto_enabled_until, live_auto_policy_version," +
       "live_auto_daily_cap_usd, live_auto_max_per_order_usd, live_auto_min_evidence_confidence," +
-      "live_auto_max_open_positions, live_auto_max_orders_per_day"
+      "live_auto_max_open_positions, live_auto_max_orders_per_day," +
+      "live_auto_mode_us, live_auto_mode_india"
     )
     .limit(1)
     .single();
@@ -37,7 +38,7 @@ export async function PATCH(req: NextRequest) {
 
   const body = await req.json();
   const {
-    action, // 'enable' | 'disable' | 'update_caps'
+    action, // 'enable' | 'disable' | 'update_caps' | 'update_mode'
     confirmation_text,
     lease_hours,
     live_auto_daily_cap_usd,
@@ -45,14 +46,18 @@ export async function PATCH(req: NextRequest) {
     live_auto_min_evidence_confidence,
     live_auto_max_open_positions,
     live_auto_max_orders_per_day,
+    market,          // for update_mode: 'us' | 'india'
+    mode,            // for update_mode: 'off' | 'manual' | 'autonomous'
   } = body;
 
-  if (!["enable", "disable", "update_caps"].includes(action)) {
-    return NextResponse.json({ error: "action must be enable, disable, or update_caps" }, { status: 400 });
+  if (!["enable", "disable", "update_caps", "update_mode"].includes(action)) {
+    return NextResponse.json({ error: "action must be enable, disable, update_caps, or update_mode" }, { status: 400 });
   }
 
   const svc = createServiceClient();
-  const { data: existing } = await svc.from("strategy_config").select("id, live_auto_enabled, live_auto_enabled_until").limit(1).single();
+  const { data: existing } = await svc.from("strategy_config")
+    .select("id, live_auto_enabled, live_auto_enabled_until, live_auto_mode_us, live_auto_mode_india")
+    .limit(1).single();
   if (!existing) return NextResponse.json({ error: "No strategy config" }, { status: 404 });
 
   const update: Record<string, any> = {};
@@ -82,6 +87,24 @@ export async function PATCH(req: NextRequest) {
     update.live_auto_enabled = false;
     update.live_auto_enabled_until = null;
     journalSummary = "Autonomous trading DISABLED by owner";
+  }
+
+  if (action === "update_mode") {
+    if (!["us", "india"].includes(market)) {
+      return NextResponse.json({ error: "market must be us or india" }, { status: 400 });
+    }
+    if (!["off", "manual", "autonomous"].includes(mode)) {
+      return NextResponse.json({ error: "mode must be off, manual, or autonomous" }, { status: 400 });
+    }
+    // autonomous mode requires deployment flag — block even the DB write so there's no confusion
+    if (mode === "autonomous" && !AUTONOMOUS_LIVE_ENABLED) {
+      return NextResponse.json({
+        error: "Cannot set autonomous mode: AUTONOMOUS_LIVE_ENABLED=false in deployment config.",
+      }, { status: 403 });
+    }
+    const col = market === "us" ? "live_auto_mode_us" : "live_auto_mode_india";
+    update[col] = mode;
+    journalSummary = `${market.toUpperCase()} autonomous trading mode set to "${mode}" by owner`;
   }
 
   // Cap updates allowed independently of enable/disable.

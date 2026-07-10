@@ -26,10 +26,10 @@ export type AutonomyLevel = (typeof AUTONOMY_LEVELS)[number];
 
 export const DEFAULT_AUTONOMY_LEVEL: AutonomyLevel = "L3_live_manual";
 
-// Hard cap: autonomous live placement is NOT operational. Flipping this to true
-// is intentionally not enough on its own — it only removes this one guard; the
-// owner-click gateway remains. Keep false.
-export const AUTONOMOUS_LIVE_ENABLED = false;
+// Deployment-level flag for autonomous live trading. Set AUTONOMOUS_LIVE_ENABLED=true
+// in Vercel env to unlock PA3. Both this AND the DB toggle (live_auto_enabled) must
+// be true — neither alone is sufficient. LLMs and agents cannot change this env var.
+export const AUTONOMOUS_LIVE_ENABLED = process.env.AUTONOMOUS_LIVE_ENABLED === "true";
 
 function rank(level: string): number {
   const i = (AUTONOMY_LEVELS as readonly string[]).indexOf(level);

@@ -16,6 +16,10 @@
     {
       "path": "/api/agents/autonomous-shadow/cron",
       "schedule": "30 7 * * 1-5"
+    },
+    {
+      "path": "/api/agents/autonomous-live/cron",
+      "schedule": "0 14 * * 1-5"
     }
   ]
 }

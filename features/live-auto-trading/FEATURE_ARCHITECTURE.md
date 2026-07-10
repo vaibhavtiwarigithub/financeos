@@ -1,9 +1,9 @@
 # Live Auto Trading — Feature Architecture
 
 **Last updated:** 2026-07-10  
-**Status:** REVIEWED / NOT APPROVED FOR IMPLEMENTATION OR LIVE ENABLEMENT  
-**Authors:** Claude Sonnet 4.6; security and execution architecture rewritten by ChatGPT/Codex, 2026-07-10  
-**Scope:** eventual small-cap autonomous live trading for the Robinhood agentic account only. India remains manual until the same gateway contract exists for Kite.
+**Status:** IMPLEMENTING PA3 — per-market off/manual/autonomous mode (approved by owner)  
+**Authors:** Claude Sonnet 4.6; security and execution architecture reviewed by ChatGPT/Codex, 2026-07-10  
+**Scope:** Per-market autonomous mode (US via Robinhood direct REST; India via Kite REST). Both markets support off/manual/autonomous independently.
 
 ---
 
@@ -289,6 +289,48 @@ India auto trading is a separate architecture. It must use Kite’s official HTT
 - Protective exit failure blocks new entry.
 - Kill switch blocks entries, preserves/permits risk-reducing exits, and handles resting BUY cancellation safely.
 - Secrets/tokens never appear in logs, events, emails, or raw payloads.
+
+---
+
+## 13. PA3 Implementation Details (2026-07-10)
+
+### Per-market mode
+
+New columns on `strategy_config` (migration 141):
+- `live_auto_mode_us TEXT DEFAULT 'manual' CHECK IN ('off','manual','autonomous')`
+- `live_auto_mode_india TEXT DEFAULT 'manual' CHECK IN ('off','manual','autonomous')`
+
+Three modes per market:
+- `off` — autonomous-live cron skips this market entirely
+- `manual` — TraderAgent creates proposals; owner clicks Approve (existing flow, unchanged)
+- `autonomous` — execution kernel + live broker REST submit from cron, no per-order click
+
+### New cron: autonomous-live (14:00 UTC, weekdays)
+
+Runs AFTER research (13:00 UTC / 9 AM ET) so same-day signals exist.
+Route: `POST /api/agents/autonomous-live/cron` — timing-safe CRON_SECRET auth.
+Shadow cron at 07:30 UTC unchanged.
+
+### US execution path (no MCP in serverless)
+
+Direct Robinhood REST via `lib/brokers/robinhood/rest-client.ts`:
+- Token from vault key `ROBINHOOD_MCP_ACCESS_TOKEN`
+- `GET https://api.robinhood.com/instruments/?symbol=X` → instrument URL
+- `POST https://api.robinhood.com/orders/` — market, gfd, account=605420660
+- `submitRobinhoodOrder()` (MCP) is NOT called — requires live MCP session context unavailable in serverless
+
+### India execution path
+
+Calls `placeEquityOrder()` from `lib/kite.ts` directly — same REST path as the owner-click flow.
+Note: requires fresh daily Kite token; if stale, order = unknown_needs_reconcile.
+
+### Budget reservation
+
+Uses `reserve_live_order_budget_v2` with `p_execution_actor='autonomous_worker'` which sets `approved_by_user=false`.
+
+### Missing migration 139 column fix
+
+`trade_proposals.market` was not added by migration 139 but IS written by autonomous-shadow.ts — shadow cron inserts fail. Migration 141 adds it.
 
 ---
 

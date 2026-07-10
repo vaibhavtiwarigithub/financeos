@@ -3,7 +3,9 @@
   "agentLabel": "System Map — how the agents connect",
   "diagram": "flowchart TD\n  MACRO[\"🌐 MacroSentinel\\nweekly · reads econ data\"] -->|macro_signals| RESEARCH\n  HOLD[\"📋 Holdings + Watchlist\\n+ dual-bucket screener\"] --> RESEARCH\n  CHAMPION[\"🏆 Champion weights\\nstrategy_versions\"] -->|weights_snapshot| RESEARCH\n  SCOREHIST[\"📈 signal_score_history\\nprior scores (trend)\"] -->|last N| RESEARCH\n  YAHOO[\"🇮🇳 Yahoo .NS data\\nfree · NIFTY candidates\"] -->|India fundamentals+candles| RESEARCH\n  NSE[\"🇮🇳 NSE direct (free)\\ninsider · options · full universe\"] -->|India insider/options/scan| INDIA\n  RESEARCH[\"🤖 ResearchAgent\\ndaily Mon-Fri · scores 5 dims\"] -->|US agent_signals| TRADER\n  RESEARCH -->|India agent_signals| INDIA\n  RESEARCH -->|India agent_signals| TRADER\n  RESEARCH -->|append| SCOREHIST\n  RESEARCH -->|every scored candidate| LEDGER[\"📒 Decision ledger\\ndecision_observations + labels\"]\n  LEDGER -->|matured horizon labels| LEARNER\n  RESEARCH -.->|records what shadow_paper versions would decide| SHADOW[\"👥 Shadow decisions\\nno fills, no cash\"]\n  LEARNER -.->|propose_feature| REGISTRY[\"🧪 Feature Registry\\nwhitelisted-grammar only\"]\n  CHALLENGER -.->|may carry| GENOME[\"🧬 Strategy genome\\nentry/horizon/exit/sizing/regime\"]\n  TRADER[\"⚙️ PaperTrader\\nscore>=threshold & long → buy\\nper-market pools: US $ · India ₹\"] -->|paper_positions| MONITOR\n  RESEARCH -->|fresh daily score| MONITOR\n  MONITOR[\"⚙️ PositionMonitor\\ndaily post-close · per market\"] -->|score<exit OR stop/target| EXITS[\"💸 Exit + close trade\\ncredit own-currency pool · decision_journal\"]\n  MONITOR -->|still above threshold| HELD[\"✅ Keep holding\"]\n  EXITS -->|closed outcomes| LEARNER\n  LEARNER[\"🤖 LearnerAgent\\nFriday · evaluates outcomes\"] -->|proposes| CHALLENGER[\"🧪 Challenger weights\\nstrategy_versions\"]\n  CHALLENGER -->|auto-fires| VALIDATE[\"🔬 Validation Engine\\nwalk-forward, fail-closed\"]\n  VALIDATE -->|passed=true required| PROMOTE{\"👤 Promote?\"}\n  PROMOTE -->|yes, gate must pass| CHAMPION\n  EXITS -->|outcomes| MENTOR[\"🎓 MentorAgent\\ncoaches you\"]\n  LEARNER -->|runs| MENTOR\n  TRADER -.->|US live: manual| REALORDER[\"📲 Paste command\\ninto Claude MCP → Robinhood\"]\n  TRADER -.->|approved proposal, you click| GATEWAY[\"🔌 Execution Gateway\\ntyped Alpaca orders\"]\n  INDIA[\"🇮🇳 India signals\\nScore Tracker + /dashboard/india\"] -.->|you confirm| KITE[\"📲 Real NSE/BSE order\\nvia Zerodha Kite (daily token)\"]\n  MONITOR -.->|+alerts/runs/quality| HEALTH[\"🔧 Health-Triage\nread-only SRE → dashboard\"]\n  WATCHDOG[\"🧹 Watchdog\nevery 2h · janitor\"] -.->|reap zombie runs · revert stuck claims · expire stale| MONITOR\n  EDGELAB[\"🧪 EdgeScout / EdgeIC\nmeasure-only factor lab\"] -.->|edge_signals + IC scorecard, NO fills| EDGEDASH[\"📊 /dashboard/edges\"]\n  EXITS -->|closed trades + NAV| PERFTRUTH[\"📋 Performance Truth Layer\\ninvestment_mandates + strategy_evaluations\\nP1 gate cron (Sun 02:00 UTC)\"]
   RESEARCH -->|qualifying signals score≥threshold last_24h| AUTOSHADOW[\"🔍 AutonomousShadow\\nweekdays 07:30 UTC · 9-gate kernel · no fills\"]
-  AUTOSHADOW -.->|shadow trade_proposals execution_mode=autonomous_shadow| SHADOWPROP[\"📋 Shadow proposals\\nKelly-sized · queued_auto or manual_review_required\"]",
+  AUTOSHADOW -.->|shadow trade_proposals execution_mode=autonomous_shadow| SHADOWPROP[\"📋 Shadow proposals\\nKelly-sized · queued_auto or manual_review_required\"]
+  RESEARCH -->|qualifying signals autonomous markets| AUTOLIVE[\"🚀 AutonomousLive\\nweekdays 14:00 UTC · 9-gate kernel + Kelly\\nUS Robinhood REST · India Kite REST\"]
+  AUTOLIVE -->|live broker_orders + broker_order_events| LIVEAUDIT[\"🔒 Live order audit\\nbroker_orders append-only · autonomous_worker actor\"]",
   "nodes": {
     "MACRO": {
       "label": "MacroSentinel",
@@ -288,6 +290,28 @@
       "description": "trade_proposals rows with execution_mode='autonomous_shadow'. Status is queued_auto (all 9 gates + sizing passed) or manual_review_required (any gate/sizing failure). In the current deployment, AUTONOMOUS_LIVE_ENABLED=false means gate 1 always fires → all land manual_review_required. Owner can review these in the UI; no auto-promotion or broker submit path exists yet.",
       "addedAt": "2026-07-10",
       "addReason": "Audit trail for autonomous shadow decisions without any financial exposure.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "AUTOLIVE": {
+      "label": "AutonomousLive",
+      "description": "Weekdays 14:00 UTC (Vercel cron, after research at 13:00 UTC). Reads qualifying agent_signals for markets in autonomous mode (live_auto_mode_us/india='autonomous' in strategy_config). Dual gate: BOTH deployment env var AUTONOMOUS_LIVE_ENABLED=true AND DB toggle live_auto_enabled must be true; neither alone allows orders. Runs the same 9-gate execution kernel (evaluateAutonomousExecution) and Kelly sizing kernel (computeAutonomousSizing) as the shadow path. Per market: US orders via direct Robinhood REST (lib/brokers/robinhood/rest-client.ts — OAuth token from api_key_vault; no MCP in serverless); India orders via Kite REST (placeEquityOrder in lib/kite.ts). Budget reserved atomically via reserve_live_order_budget_v2 RPC with p_execution_actor='autonomous_worker'. Writes broker_orders + appends broker_order_events (actor_kind='autonomous_live'). Proposals land queued_auto (submitted) or manual_review_required (any gate/sizing/RPC/broker failure). Per-market: US and India independently toggled — autonomous mode on one doesn't affect the other. Current deployment: AUTONOMOUS_LIVE_ENABLED=false, so cron is a no-op until owner sets env var AND enables DB toggle.",
+      "addedAt": "2026-07-10",
+      "addReason": "PA3 autonomous live execution — agents evaluate signals and submit live orders directly (no per-order owner click) when deployment flag + DB toggle + 9 gates all clear.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "LIVEAUDIT": {
+      "label": "Live order audit (broker_orders + broker_order_events)",
+      "description": "broker_orders: typed order lifecycle (submitted → filled/rejected/canceled), polled by broker-sync cron. broker_order_events: append-only audit trail (boe_block_mutation trigger blocks UPDATE/DELETE) — every status transition written with actor_kind='autonomous_live' and auto_run_id linking back to the AutonomousLive run. Together they form the immutable record of every live order the autonomous path has ever attempted.",
+      "addedAt": "2026-07-10",
+      "addReason": "Immutable audit trail for all autonomous live order activity — required for reconciliation and owner review.",
       "status": "active",
       "changedAt": null,
       "changeReason": null,
@@ -648,6 +672,13 @@
       "nodeId": "SHADOWPROP",
       "label": "Shadow trade_proposals (autonomous path audit trail)",
       "reason": "PA0: trade_proposals schema extended with execution_mode, policy_snapshot, auto_run_id, auto_decided_at columns + queued_auto/manual_review_required status values. broker_order_events append-only table + boe_block_mutation() trigger added. reserve_live_order_budget_v2 RPC with p_execution_actor param."
+    },
+    {
+      "date": "2026-07-10",
+      "event": "added",
+      "nodeId": "AUTOLIVE",
+      "label": "AutonomousLive — PA3 per-market live execution cron",
+      "reason": "PA3: autonomous live trading with per-market mode (off/manual/autonomous) controlled independently for US and India via strategy_config.live_auto_mode_us/india (migration 141). New cron at 14:00 UTC (after research at 13:00 UTC). US orders via direct Robinhood REST (lib/brokers/robinhood/rest-client.ts — MCP unavailable in serverless). India orders via Kite REST. Same 9-gate kernel + Kelly sizing as shadow path. Dual gate: AUTONOMOUS_LIVE_ENABLED env var AND live_auto_enabled DB toggle both required. Budget reserved via reserve_live_order_budget_v2 with autonomous_worker actor. Dashboard Settings shows Off/Manual/Autonomous toggles per market. lib/trading/autonomous-live.ts + app/api/agents/autonomous-live/cron/route.ts."
     }
   ]
 }

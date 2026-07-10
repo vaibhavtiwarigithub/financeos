@@ -1,6 +1,6 @@
 # Kairos — Risk & Safety
 
-> Last updated: 2026-07-10 (PA2: Kelly sizing kernel + budget dry-run added to shadow path)
+> Last updated: 2026-07-10 (PA3: AutonomousLive cron — per-market mode, direct REST, atomic budget RPC)
 > Update when any authorization, scoring eligibility, limit, account, order, reconciliation, exit, or kill-switch behavior changes.
 
 ---
@@ -199,7 +199,7 @@ Every material state transition must have an append-only event/journal record. C
 - duplicate-cron, timeout, stale-data, DB-failure, and kill-switch chaos tests;
 - ✅ PA1 shadow evidence — AutonomousShadow running, execution kernel in `lib/trading/execution-kernel.ts`
 - ✅ PA2 Kelly sizing — `computeAutonomousSizing()` in `lib/trading/execution-kernel.ts`; budget dry-run in shadow path; no-fallback NAV enforced (see PA2 section below)
-- PA3 broker submit — direct Robinhood REST integration (unblocked; route handlers cannot call Robinhood MCP tools — see `app/api/agents/trader/route.ts:429`)
+- ✅ PA3 broker submit — `lib/trading/autonomous-live.ts`; direct Robinhood REST (`lib/brokers/robinhood/rest-client.ts`) + Kite REST; per-market mode (migration 141); requires `AUTONOMOUS_LIVE_ENABLED=true` in Vercel env
 
 Until all pass, `AUTONOMOUS_LIVE_ENABLED` remains false and L4 is descriptive only.
 
@@ -253,4 +253,38 @@ Per-order cap clamp: `size_pct = min(size_pct, live_auto_max_per_order_usd / NAV
 `price_at_proposal` populated. Budget dry-run (informational only; not the atomic reservation):
 reads today's `broker_orders` spend vs `live_auto_daily_cap_usd` and includes the result in
 `ShadowRunResult.budget_dry_run`. The atomic `reserve_live_order_budget_v2` RPC is NOT called in
-the shadow path — it is reserved for the live-submit PA3 path.
+the shadow path — it is called in the live-submit PA3 path.
+
+---
+
+## PA3 live execution (implemented, requires `AUTONOMOUS_LIVE_ENABLED=true`)
+
+`lib/trading/autonomous-live.ts` → `runAutonomousLive()` is the live execution path.
+Triggered by `POST /api/agents/autonomous-live/cron` at 14:00 UTC weekdays (after research at 13:00 UTC).
+
+**Per-market mode (`strategy_config`, migration 141):**
+
+| `live_auto_mode_[market]` | Behavior |
+|---|---|
+| `off` | Cron skips market entirely |
+| `manual` | TraderAgent creates proposals; owner clicks Approve (existing path) |
+| `autonomous` | AutonomousLive cron submits live orders |
+
+**Additional gates (before kernel):**
+- `app_paused=false` + `security_locked=false` + `trading_enabled=true`
+- `live_auto_mode_[market]='autonomous'` for signal's market
+
+**Broker execution:**
+- US: `rhPlaceMarketOrder()` in `lib/brokers/robinhood/rest-client.ts` — direct Robinhood REST API using
+  OAuth token from vault (`ROBINHOOD_MCP_ACCESS_TOKEN`). MCP tools unavailable in serverless.
+- India: `placeEquityOrder()` in `lib/kite.ts` — existing Kite Connect REST path.
+
+**Budget reservation:** `reserve_live_order_budget_v2` with `p_execution_actor='autonomous_worker'`
+→ `broker_orders.approved_by_user=false`.
+
+**Outcomes per signal:**
+- `submitted` → `broker_orders.status=submitted`, `broker_order_events` appended, proposal `queued_auto`
+- `needs_reconcile` → `broker_orders.status=unknown_needs_reconcile`, proposal `manual_review_required`
+- `broker_error` → order not submitted, proposal `manual_review_required`
+- `budget_error` → RPC threw (cap exceeded), no broker_orders row, proposal `manual_review_required`
+- `gate_blocked` / `sizing_failed` → no reservation, no submit

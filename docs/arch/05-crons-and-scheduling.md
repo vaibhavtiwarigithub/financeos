@@ -17,6 +17,7 @@ Defined in `vercel.json`. Fire against the Vercel deployment URL regardless of l
 |---|---|---|
 | `/api/agents/evaluation/p1-gate/cron` | Sundays 02:00 UTC | Count closed evaluable trades per market; fire System Health info alert when ≥ 20 |
 | `/api/agents/autonomous-shadow/cron` | Weekdays 07:30 UTC | Run execution kernel over qualifying signals; create shadow `trade_proposals` with Kelly sizing; no broker submission |
+| `/api/agents/autonomous-live/cron` | Weekdays 14:00 UTC | Run 9-gate kernel + Kelly sizing for markets in autonomous mode; submit live orders via Robinhood REST (US) or Kite REST (India); no-op when `AUTONOMOUS_LIVE_ENABLED=false` or no market in autonomous mode |
 | `/api/agents/db-cleanup` | 1st of month 03:00 UTC | Prune 15 safe tables (llm_call_log >90d, agent_runs >60d, etc.); never touches ledgers |
 
 ---
@@ -71,6 +72,7 @@ Cron routes do NOT require an owner session — they accept the cron secret as a
 Every 4h    — stale-check (cloud, Vercel)
 Sun 8 PM ET — theme-scout
 7:30 AM UTC  — autonomous-shadow (cloud, Vercel, weekdays)
+2:00 PM UTC  — autonomous-live (cloud, Vercel, weekdays; after research+signals at 1 PM UTC)
 Sun 2 AM UTC — p1-gate (cloud, Vercel)
 1st of month 3 AM UTC — db-cleanup (cloud, Vercel)
 ```
