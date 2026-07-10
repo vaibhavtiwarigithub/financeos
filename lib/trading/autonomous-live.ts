@@ -59,7 +59,7 @@ export async function runAutonomousLive(
       "live_auto_max_open_positions,live_auto_max_orders_per_day,score_threshold,position_size_pct," +
       "live_auto_mode_us,live_auto_mode_india," +
       "max_daily_notional_usd,max_daily_notional_inr,max_daily_trades," +
-      "app_paused,security_locked,trading_enabled"
+      "app_paused,security_locked,trading_enabled,trading_enabled_us,trading_enabled_india"
     )
     .limit(1)
     .single();
@@ -80,10 +80,14 @@ export async function runAutonomousLive(
     return { ...earlyExit("lease_expired"), run_id: runId };
   }
 
-  // Determine which markets are in autonomous mode
+  // Determine which markets are in autonomous mode. A market must be BOTH in
+  // autonomous mode AND not view-only: the per-market trading_enabled_us/india
+  // kill switch (honored by the manual gateways) also blocks the autonomous
+  // path — flipping a market to view-only stops auto orders for it, even if its
+  // mode column is still "autonomous".
   const autonomousMarkets: string[] = [];
-  if (cfg.live_auto_mode_us === "autonomous") autonomousMarkets.push("us");
-  if (cfg.live_auto_mode_india === "autonomous") autonomousMarkets.push("india");
+  if (cfg.live_auto_mode_us === "autonomous" && cfg.trading_enabled_us !== false) autonomousMarkets.push("us");
+  if (cfg.live_auto_mode_india === "autonomous" && cfg.trading_enabled_india !== false) autonomousMarkets.push("india");
   if (autonomousMarkets.length === 0) {
     return { ...earlyExit("no_markets_in_autonomous_mode"), run_id: runId };
   }
@@ -173,9 +177,16 @@ export async function runAutonomousLive(
     const market = signal.market ?? "us";
     const broker = market === "india" ? "kite" : "robinhood";
     const currency = market === "india" ? "INR" : "USD";
-    const maxDailyNotional = market === "india"
+    // Effective daily notional ceiling for the auto path. US: the owner's
+    // live_auto_daily_cap_usd (the "don't spend more than $X/day" guardrail on
+    // the Live-Auto settings page) binds first, falling back to the generic
+    // max_daily_notional_usd. India: its own INR ceiling (live_auto_daily_cap_usd
+    // is USD-denominated and there is no FX on this path, so it does not apply to
+    // an INR order — the India INR cap must be set explicitly). NULL = no ceiling,
+    // which we treat as fail-closed below (autonomy must be bounded).
+    const effectiveDailyNotional = market === "india"
       ? cfg.max_daily_notional_inr ?? null
-      : cfg.max_daily_notional_usd ?? null;
+      : (policy.live_auto_daily_cap_usd ?? cfg.max_daily_notional_usd ?? null);
 
     // Insert proposal as autonomous_live
     const { data: proposal, error: propErr } = await svc
@@ -208,6 +219,21 @@ export async function runAutonomousLive(
     }
 
     const proposalId: number = (proposal as any).id;
+
+    // Fail closed: an autonomous market with NO effective daily notional ceiling
+    // has unbounded blast radius. Block rather than place an uncapped order.
+    if (effectiveDailyNotional == null) {
+      await svc.from("trade_proposals")
+        .update({ status: "manual_review_required", policy_snapshot: { policy, run_id: runId, block: "no_daily_cap_configured" } })
+        .eq("id", proposalId);
+      results.push({
+        symbol: signal.symbol, market, signal_id: signal.id,
+        proposal_id: proposalId, broker_order_id: null, broker_order_ref: null,
+        kernel: null, sizing: null, broker_status: "gate_blocked",
+        error: `no daily notional cap configured for ${market} — set live_auto_daily_cap_usd (US) or max_daily_notional_inr (India)`,
+      });
+      continue;
+    }
 
     // Run execution kernel
     const kernel = evaluateAutonomousExecution({
@@ -283,7 +309,7 @@ export async function runAutonomousLive(
         p_estimated_notional: sizing.estimated_notional,
         p_currency:          currency,
         p_max_daily_trades:  policy.live_auto_max_orders_per_day ?? cfg.max_daily_trades ?? null,
-        p_max_daily_notional: maxDailyNotional,
+        p_max_daily_notional: effectiveDailyNotional,
         p_execution_actor:   "autonomous_worker",
       });
       if (rpcErr) throw new Error(rpcErr.message);

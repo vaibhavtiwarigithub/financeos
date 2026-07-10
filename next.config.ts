@@ -9,6 +9,24 @@ const nextConfig: NextConfig = {
     });
     return config;
   },
+  // Baseline security headers on every response. X-Frame-Options DENY stops
+  // clickjacking of the authenticated dashboard (incl. order-approval UI);
+  // nosniff blocks MIME sniffing; HSTS forces HTTPS. A strict CSP is deferred —
+  // Next's inline runtime + PWA make a non-breaking policy non-trivial.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+          { key: "Permissions-Policy", value: "geolocation=(), microphone=(), camera=()" },
+        ],
+      },
+    ];
+  },
 };
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports

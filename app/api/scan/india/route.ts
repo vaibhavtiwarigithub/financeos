@@ -4,6 +4,7 @@ import { fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
 import { computeTechnicals } from "@/lib/data/technicals";
 import { STRATEGY_MAP } from "@/lib/strategy-definitions";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -252,6 +253,8 @@ async function scanFromCache(opts: {
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   try {
     const body = await req.json().catch(() => ({}));
     const {

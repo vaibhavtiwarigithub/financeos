@@ -87,10 +87,17 @@ Kairos/
   ```
 - RLS is enabled on all tables. Policies enforce `auth.uid() = user_id`.
 
-### 2.4 AI / Claude API
-- All Claude calls go through `/api/ai/route.ts` (POST).
-- Request body: `{ prompt: string, systemPrompt?: string, model?: string }`
-- Response: `{ text: string, tokensUsed: number, costUsd: number }`
+### 2.4 AI / LLM routing
+- Reasoning/text generation routes through the LLM router (`lib/llm-router.ts`,
+  `callLLM`/`runAgentLoop`), which defaults to **DeepSeek** (`deepseek-v4-flash`/`pro`).
+  Anthropic Claude is only used when a task's model explicitly resolves to a Claude
+  model AND the anthropic key is present; otherwise it falls back to DeepSeek.
+- `/api/ai/route.ts` is a small owner-gated ad-hoc reasoning endpoint (Intelligence
+  page) — it now uses `callLLM` (DeepSeek), NOT the Claude CLI.
+  Request body: `{ prompt: string, systemPrompt?: string }` → Response: `{ text, tokensUsed, costUsd }`.
+- MCP tool access (Robinhood/market reads — RH has no public read API) goes through
+  `execClaude` (`lib/claude-exec.ts`), which shells the Claude CLI on the local
+  Windows host only (throws on Vercel). This is a tool bridge, not the text LLM.
 - Default model: `claude-sonnet-4-20250514`
 - Rate limiting enforced per tier (5/50/âˆž queries/day).
 - Usage logged to `usage_logs` table automatically.
@@ -468,7 +475,8 @@ User clicks â†’ Modal opens:
 | Integration | Purpose | Status | Notes |
 |---|---|---|---|
 | Robinhood MCP | Trade execution + read portfolio | âœ… Connected, auth in progress | Agentic account only |
-| Anthropic Claude API | All agent intelligence | âœ… Active | Via `/api/ai/route.ts` |
+| DeepSeek API | Agent reasoning/text (default LLM) | ✅ Active | Via `lib/llm-router.ts` (`callLLM`/`runAgentLoop`) |
+| Anthropic Claude CLI | MCP tool bridge (Robinhood/market reads) | ✅ Active (local host only) | Via `execClaude`; throws on Vercel |
 | Supabase | DB + auth + vector store | âœ… Active | pgvector needs enabling |
 | Puppeteer MCP | Web scraping (news, filings) | âœ… Connected | For ResearchAgent |
 | SEC EDGAR API | Form 4 insider trades, 10-K filings | ðŸ”² To add | Free, no key required |

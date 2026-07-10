@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { checkPaused, pausedResponse } from "../_shared/pause-check.ts";
 
-const CRON_SECRET = "fos-cron-k9x2m7p4-2026";
+const CRON_SECRET = Deno.env.get("CRON_SECRET") ?? "";
 const RECIPIENT = "vterminater@gmail.com";
 const HOLDINGS_ACCOUNT = "965848641";
 
@@ -499,7 +499,7 @@ function buildClosedTodaySection(trades: any[]): string {
 
 serve(async (req) => {
   const auth = req.headers.get("authorization") ?? "";
-  if (!auth.includes(CRON_SECRET)) {
+  if (!CRON_SECRET || !auth.includes(CRON_SECRET)) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
   }
 

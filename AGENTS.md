@@ -186,7 +186,8 @@ Robinhood MCP is configured in `.claude.json` (local only, not in repo).
 |---|---|---|
 | Framework | Next.js 15 App Router | â€” |
 | DB + Auth | Supabase | `@/lib/supabase/server` or `@/lib/supabase/client` |
-| AI | Anthropic Claude | `@anthropic-ai/sdk` via `/api/ai/route.ts` |
+| AI (reasoning/text) | DeepSeek default via LLM router | `callLLM`/`runAgentLoop` in `@/lib/llm-router` (routes to `deepseek-v4-flash`/`pro`; Claude only if a model resolves to it + key present) |
+| AI (MCP tool bridge) | Claude CLI (`claude.cmd`, local Windows only) | `execClaude` in `@/lib/claude-exec` — reaches Robinhood/market MCP servers (RH has no public read API); throws on Vercel |
 | Types | Centralized | `@/types` |
 | Styling | Inline styles + T tokens | Define `T` object in each file |
 | Charts | Recharts | `recharts` |

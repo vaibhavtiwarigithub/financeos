@@ -3,6 +3,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { ALGO_STRATEGIES, STRATEGY_MAP } from "@/lib/strategy-definitions";
 import { avCachedFetch } from "@/lib/av-cache";
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
+import { verifyCronSecret } from "@/lib/auth/cron";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -102,6 +104,12 @@ export interface ScanResult {
 }
 
 export async function POST(req: NextRequest) {
+  // Cron-or-owner: this burns Alpha Vantage / FinancialDatasets budget, so it
+  // must never be anonymous. Accept the cron secret OR an owner session.
+  if (!verifyCronSecret(req)) {
+    const gate = await requireOwner();
+    if (gate) return gate;
+  }
   try {
     const body = await req.json().catch(() => ({}));
     const {

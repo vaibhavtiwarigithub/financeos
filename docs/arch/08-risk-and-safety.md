@@ -273,6 +273,17 @@ Triggered by `POST /api/agents/autonomous-live/cron` at 14:00 UTC weekdays (afte
 **Additional gates (before kernel):**
 - `app_paused=false` + `security_locked=false` + `trading_enabled=true`
 - `live_auto_mode_[market]='autonomous'` for signal's market
+- **Per-market view-only kill switch:** a market is dropped from `autonomousMarkets`
+  when `trading_enabled_[market]=false` — the same per-market switch the manual
+  gateways honor also blocks the autonomous path. Flipping a market to view-only
+  stops auto orders for it even if its mode column is still `autonomous`.
+- **Daily-cap fail-closed:** per signal, an effective daily notional ceiling is
+  required. US prefers `live_auto_daily_cap_usd` (the owner's Live-Auto $/day
+  guardrail), falling back to `max_daily_notional_usd`; India uses
+  `max_daily_notional_inr` (the USD cap is not FX-converted on this path). If the
+  effective ceiling is NULL the signal is blocked (`gate_blocked`,
+  `no_daily_cap_configured`) rather than placed uncapped — autonomy must be bounded.
+  The chosen ceiling is passed as `p_max_daily_notional` to the budget RPC.
 
 **Broker execution:**
 - US: `rhPlaceMarketOrder()` in `lib/brokers/robinhood/rest-client.ts` — direct Robinhood REST API using

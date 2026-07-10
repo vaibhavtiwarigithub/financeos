@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 interface StrategyTemplate {
   id: string;
@@ -85,6 +86,8 @@ async function fetchSymbolData(symbol: string, apiKey: string): Promise<SymbolDa
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   try {
     const body = await req.json() as { symbols?: string[] };
     const symbols: string[] = (body.symbols ?? []).map((s: string) => s.trim().toUpperCase()).filter(Boolean);
