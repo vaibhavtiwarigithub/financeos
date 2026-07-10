@@ -149,6 +149,20 @@ export async function POST(req: NextRequest) {
   } as any).select().single();
   const runId = (runRow as any)?.id ?? null;
 
+  // P1: create a universe snapshot before scoring so every decision_observations
+  // row can be linked to the PIT universe. Fail-soft: missing table pre-137 → no-op.
+  let universeSnapshotId: number | null = null;
+  try {
+    const { data: snapRow } = await supabase.from("universe_snapshots").insert({
+      run_id: runId ? String(runId) : null,
+      market: marketScope ?? "us",
+      source: "mixed",   // holdings + screener + watchlist gathered together
+      symbol_count: batch.length,
+      symbols: batch,
+    }).select("id").single();
+    universeSnapshotId = (snapRow as any)?.id ?? null;
+  } catch { /* pre-137 schema — no-op */ }
+
   // Parallel processing — RESEARCH_PARALLEL workers run concurrently so 42 symbols
   // finish in ceil(42/N) rounds instead of serially. Default 5 keeps well inside
   // the 150s maxDuration (42/5 rounds × ~8s each ≈ 72s). Raise carefully: AV free
@@ -161,7 +175,7 @@ export async function POST(req: NextRequest) {
       const i = idx++;
       const entry = entries[i];
       try {
-        results[i] = await processSymbol(entry, supabase);
+        results[i] = await processSymbol(entry, supabase, universeSnapshotId);
       } catch (e) {
         results[i] = { symbol: entry.symbol, error: e instanceof Error ? e.message : String(e) };
       }
@@ -171,6 +185,34 @@ export async function POST(req: NextRequest) {
 
   const ok = results.filter(r => !r.error).length;
   const errs = results.filter(r => r.error).length;
+
+  // P1: compute cross-sectional rank for this run's universe and persist to
+  // universe_snapshot_scores. Percentile rank = fraction of symbols scoring BELOW
+  // this symbol (min-rank = 0 for lowest scorer, max = 1 for highest scorer).
+  // Fail-soft: never blocks the cron response on a rank-write failure.
+  if (universeSnapshotId) {
+    try {
+      const scored = results
+        .filter(r => !r.error && typeof r.analystScore === "number")
+        .map(r => ({ symbol: r.symbol as string, score: r.analystScore as number, obsId: (r.obsId ?? null) as number | null }));
+      if (scored.length > 1) {
+        const sorted = [...scored].sort((a, b) => a.score - b.score);
+        const rankRows = scored.map(s => {
+          const below = sorted.filter(x => x.score < s.score).length;
+          return {
+            universe_snapshot_id: universeSnapshotId,
+            symbol: s.symbol,
+            analyst_score: s.score,
+            rank_pct: below / (scored.length - 1),  // 0 = lowest, 1 = highest
+            decision_observation_id: s.obsId,
+          };
+        });
+        await supabase.from("universe_snapshot_scores").insert(rankRows);
+      }
+    } catch (e) {
+      console.error("[research-cron] universe_snapshot_scores write failed (non-blocking):", e instanceof Error ? e.message : e);
+    }
+  }
 
   if (runId) {
     await supabase.from("agent_runs").update({

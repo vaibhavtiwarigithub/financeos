@@ -868,10 +868,13 @@ Return ONLY valid JSON (no markdown, no prose):
 
 // Process a single symbol: research → write research_packet + agent_signal
 // Phase 0: all 5 scores computed deterministically. LLM writes thesis+direction only.
+// P1: universeSnapshotId links this symbol's decision_observations row to the run's
+// universe snapshot so cross-sectional ranks can be computed post-run.
 export async function processSymbol(
   entry: SymbolEntry,
-  supabase: any
-): Promise<{ symbol: string; analystScore: number; direction: string; conviction: number; source: string; tokensIn: number; tokensOut: number; currentPrice: number | null; priceTarget: number | null; stopLoss: number | null; scoreThreshold: number }> {
+  supabase: any,
+  universeSnapshotId?: number | null
+): Promise<{ symbol: string; analystScore: number; direction: string; conviction: number; source: string; tokensIn: number; tokensOut: number; currentPrice: number | null; priceTarget: number | null; stopLoss: number | null; scoreThreshold: number; obsId: number | null }> {
   const { symbol, isHeld, isEtf, assetClass = "us_equity" } = entry;
   const source: string = isHeld ? "holding" : "screener";
   const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
@@ -1266,6 +1269,7 @@ export async function processSymbol(
   // candidate (filled or rejected) — the point-in-time ground truth the learner
   // will train on. Fail-soft: a missing table (059 not applied) must never fail
   // a research run.
+  let insertedObsId: number | null = null;
   try {
     // Reuse the SAME `included` object that actually drove the weighting above
     // — this used to be recomputed independently from raw dataQuality flags,
@@ -1320,6 +1324,8 @@ export async function processSymbol(
       weights_used: effWeights, // the ACTUALLY-APPLIED weights (post-renormalization), not the base profile split
       used_champion: usingChampion,
       features: {
+        schemaVersion: "v1",             // P1: version tag for PIT replay and feature-schema migration
+        decisionTs: new Date().toISOString(), // P1: precise timestamp this observation was written
         ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}),
         weighting: { renormalized, included_dims: includedDims, base_weights: weightOf, applied_weights: effWeights },
         ...(activeFeatureValues ? { active_feature_values: activeFeatureValues } : {}),
@@ -1365,10 +1371,12 @@ export async function processSymbol(
       // P0 evidence_confidence: ratio of dims with data to structurally applicable dims.
       // Denominator uses applicable.size (base count proxy; P1 upgrades to base weights).
       evidence_confidence: applicable.size > 0 ? includedDims.length / applicable.size : null,
+      universe_snapshot_id: universeSnapshotId ?? null,  // P1: links to universe_snapshots for cross-sectional rank
     }).select("id").maybeSingle();
     if (obsErr && !/does not exist|could not find/i.test(obsErr.message ?? "")) {
       console.error("[research-agent] decision_observations insert failed:", obsErr.message);
     }
+    insertedObsId = obsRow?.id ?? null;
 
     // Research Journal (Phase: pipeline instrumentation) — one stage event per
     // candidate scored. Fail-soft: never blocks the actual research decision.
@@ -1436,5 +1444,6 @@ export async function processSymbol(
     priceTarget:  null,
     stopLoss:     null,
     scoreThreshold,
+    obsId: insertedObsId,  // P1: for cron to write universe_snapshot_scores
   };
 }
