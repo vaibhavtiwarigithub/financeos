@@ -47,13 +47,41 @@ const EXPECTED_JOBS: ExpectedJob[] = [
     recoveryCmd: 'curl -X POST "https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/position-monitor?market=india" -H "x-cron-secret: YOUR_SECRET"' },
 ];
 
+// Convert a UTC Date to ET (America/New_York) wall-clock parts for schedule comparisons.
+// Vercel runs in UTC; all expectedHour values are ET — this is the single conversion point.
+function toET(d: Date): { hour: number; day: number; dateStr: string } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "numeric", hour12: false,
+    weekday: "narrow",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(d);
+  const get = (type: string) => parts.find(p => p.type === type)?.value ?? "";
+  // hour12:false returns 0–23 but formatToParts may give "24" at midnight; normalise.
+  const hour = parseInt(get("hour"), 10) % 24;
+  const weekdayMap: Record<string, number> = { S: 0, M: 1, T: 2, W: 3, F: 5 };
+  // narrow weekday: S=Sun, M=Mon, T=Tue/Thu, W=Wed, F=Fri — Thu colides with Tue.
+  // Use day-of-week from getUTCDay adjusted by ET offset instead.
+  const utcDay = d.getUTCDay();
+  // ET offset: Mar–Nov EDT UTC-4, else EST UTC-5 (approximate by month)
+  const utcMonth = d.getUTCMonth(); // 0-indexed
+  const etOffsetHours = utcMonth >= 2 && utcMonth <= 10 ? -4 : -5;
+  // Build a Date at ET midnight to derive the correct weekday
+  const etMidnightUTC = new Date(d.getTime() + etOffsetHours * 3600_000);
+  etMidnightUTC.setUTCHours(0, 0, 0, 0);
+  const etDay = etMidnightUTC.getUTCDay();
+  const dateStr = `${get("year")}-${get("month")}-${get("day")}`;
+  return { hour, day: etDay, dateStr };
+}
+
 export async function GET() {
   const svc = createServiceClient();
   const now = new Date();
-  const dayOfWeek = now.getDay(); // 0=Sun .. 6=Sat
+  const et = toET(now);
+  const dayOfWeek = et.day;
   const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
   const isFriday = dayOfWeek === 5;
-  const hour = now.getHours();
+  const hour = et.hour;
 
   if (!isWeekday) return NextResponse.json({ checked: false, reason: "weekend" });
 
@@ -64,7 +92,12 @@ export async function GET() {
     indiaEnabled = String((profile as any)?.market_focus ?? "").toLowerCase().includes("india");
   } catch { /* default false */ }
 
-  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+  // Use ET midnight as "today" boundary so US jobs checked against ET trading day.
+  const utcMonth = now.getUTCMonth();
+  const etOffsetHours = utcMonth >= 2 && utcMonth <= 10 ? -4 : -5;
+  const etMidnight = new Date(now.getTime() + etOffsetHours * 3600_000);
+  etMidnight.setUTCHours(0, 0, 0, 0);
+  const todayStart = new Date(etMidnight.getTime() - etOffsetHours * 3600_000); // back to UTC
   const results: any[] = [];
 
   for (const job of EXPECTED_JOBS) {
@@ -101,7 +134,10 @@ export async function GET() {
     if (ran) continue;
 
     // Missing — dedup on an open alert with the same job label for today.
-    const alertTitle = `${job.label} missed — ${now.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}`;
+    // issue_key includes ET date so two consecutive missed days get separate keys
+    // (avoids partial-unique-index conflict while still supporting resolveIssue).
+    const alertTitle = `${job.label} missed — ${now.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", timeZone: "America/New_York" })}`;
+    const issueKey = `cron-stale:${job.agentType}:${et.dateStr}${job.requiresIndia ? ":india" : ""}`;
     const { data: existing } = await svc
       .from("agent_alerts")
       .select("id")
@@ -130,6 +166,7 @@ export async function GET() {
     await svc.from("agent_alerts").insert({
       severity: "warn",
       category: "cron",
+      issue_key: issueKey,
       title: alertTitle,
       detail,
       auto_expire_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),

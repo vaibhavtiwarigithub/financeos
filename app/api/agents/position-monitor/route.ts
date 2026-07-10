@@ -45,7 +45,19 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     ? (allPositionsRaw ?? []).filter((p: any) => String(p.market ?? "us") === marketScope)
     : allPositionsRaw;
 
-  if (!positions?.length) return { checked: 0, closed: 0, closedDetails: [], updated: 0 };
+  if (!positions?.length) {
+    // Still write bookkeeping so stale-check knows PM fired today for this market.
+    await svc.from("agent_runs").insert({
+      agent_type: "position_monitor",
+      market: marketScope ?? "us",
+      status: "done",
+      symbols: [],
+      trigger_source: marketScope ? "scheduled" : "manual",
+      result_summary: "No open positions for this market.",
+      completed_at: new Date().toISOString(),
+    } as any).catch(() => {});
+    return { checked: 0, closed: 0, closedDetails: [], updated: 0 };
+  }
 
   // Market detection + per-market pools. Post-057 there are 2+ portfolio rows,
   // so `.single()` would THROW — load them all and key by market instead.

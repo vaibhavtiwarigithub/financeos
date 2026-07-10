@@ -110,7 +110,7 @@ Rank issues most-urgent first. If no issues, return an empty issues array.`;
       const match = raw.match(/\{[\s\S]*\}/);
       if (match) {
         const parsed = JSON.parse(match[0]);
-        content = parsed.summary ?? raw;
+        content = parsed.summary?.trim() || raw;
         structuredIssues = Array.isArray(parsed.issues) ? parsed.issues : null;
       } else {
         content = raw;
