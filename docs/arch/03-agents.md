@@ -120,17 +120,19 @@ User sees the regime first and decides whether to act.
 
 | Dimension | Source | What it measures |
 |---|---|---|
-| `fundamental_score` | AV OVERVIEW (US) / Yahoo quoteSummary (India) | P/E vs sector, EPS growth, ROE, margins, revenue trend |
-| `technical_score` | AV RSI + EMA + SMA (US) / Yahoo candles (India) | RSI(14), price vs EMA20/50, momentum |
+| `fundamental_score` | AV OVERVIEW (US) / Yahoo quoteSummary (India) | **P/E vs sector norm** (`SECTOR_PE_NORM`, not an absolute band), profit margin, ROE, EPS sign, rev-growth YoY, **analyst target upside** (target vs live close / 200-DMA proxy) |
+| `technical_score` | AV RSI + EMA + SMA (US) / Yahoo candles (India) | RSI(14) **continuous curve** (interpolated anchors, no bucket cliffs), price vs EMA20/50, 20d trend, **volume confirmation** (elevated volume ±8 in the prevailing direction) |
 | `sentiment_score` | AV NEWS_SENTIMENT + StockTwits (US) / neutral (India) | Weighted news bullishness; India uses neutral baseline |
 | `macro_score` | `macro_regime.danger_score` + `macro_signals` | Macro backdrop from MacroSentinel |
 | `insider_score` | AV INSIDER_TRANSACTIONS (US) / NSE insider (India) | 90-day buy/sell ratio; congressional trades |
 
-**Weighted composite:**
+Sub-score formulas are deterministic and **fixed** (hand-tuned priors in `lib/data/scores.ts` + `lib/data/technicals.ts`) — they are NOT agent/genome-mutable. Only the dimension **weights** evolve (champion loop). New candidate features flow through the IC-gated Feature Registry, not by editing these formulas. (2026-07-10: scored the previously-dead volume + analyst-target signals, made RSI continuous, made P/E sector-relative.)
+
+**Weighted composite (availability-masked + renormalized):**
 ```
-analyst_score = Σ (dimension_score × champion_weight[dimension])
+analyst_score = Σ (dimension_score × effective_weight[dimension])
 ```
-Falls back to risk-profile static weights → `learning_priors` → signal_weights if no champion.
+Missing/inapplicable dimensions are EXCLUDED and the remaining weights renormalized to sum to 1.0 (`lib/scoring/weighted-score.ts`); `< 2` usable dimensions → abstain (thin evidence), never a low score. Base weights: champion `weights_snapshot` → risk-profile static → `learning_priors`/`signal_weights` → default F.30/T.25/S.20/M.15/I.10.
 
 **Target v2:** asset/setup-specific PIT feature snapshots, comparable-universe rank, structural
 evidence confidence, contradiction/event gates, and deterministic action. The complete contract is

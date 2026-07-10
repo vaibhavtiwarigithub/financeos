@@ -95,23 +95,44 @@ export function computeTechnicals(candles: Candle[]): TechnicalResult {
   return { rsi14, ema20, ema50, priceVsEma20, priceVsEma50, volumeVsAvg20, trend20d, dataPoints: candles.length };
 }
 
+// Piecewise-linear interpolation over (x, y) anchor points (x ascending).
+// Continuous — avoids the score cliffs a bucketed if/else creates (e.g. RSI
+// 59→+12 vs 60→+25 previously made a fairly-momentum stock jump 13 pts on a
+// 1-point RSI move).
+function lerpAnchors(x: number, anchors: [number, number][]): number {
+  if (x <= anchors[0][0]) return anchors[0][1];
+  const last = anchors[anchors.length - 1];
+  if (x >= last[0]) return last[1];
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const [x0, y0] = anchors[i];
+    const [x1, y1] = anchors[i + 1];
+    if (x >= x0 && x <= x1) {
+      const t = (x - x0) / (x1 - x0);
+      return y0 + t * (y1 - y0);
+    }
+  }
+  return last[1];
+}
+
+// RSI(14) → contribution, continuous. Same intent as the old buckets — momentum
+// sweet spot ~60-72 (+25), oversold breakdown <35 (~-20), overbought warning
+// >75 declining toward -15 — but interpolated so there are no cliffs.
+const RSI_ANCHORS: [number, number][] = [
+  [20, -20], [35, -16], [45, -5], [50, 2], [55, 12],
+  [60, 25], [72, 25], [75, 6], [85, -10], [100, -15],
+];
+
 /**
  * Score technicals 0-100 deterministically.
- * No LLM involved. Based on RSI, EMA position, volume, trend.
+ * No LLM involved. Based on RSI, EMA position, trend, and volume confirmation.
  */
 export function scoreTechnicals(t: TechnicalResult): number {
   if (t.dataPoints < 15) return 50; // insufficient data → neutral
 
   let score = 50; // baseline neutral
 
-  // RSI contribution (±25 pts)
-  if (t.rsi14 != null) {
-    if (t.rsi14 >= 60 && t.rsi14 < 75) score += 25;       // momentum zone
-    else if (t.rsi14 >= 50 && t.rsi14 < 60) score += 12;  // mild bullish
-    else if (t.rsi14 >= 40 && t.rsi14 < 50) score -= 5;   // mild bearish
-    else if (t.rsi14 < 35) score -= 20;                    // oversold/breakdown
-    else if (t.rsi14 >= 75) score -= 10;                   // overbought warning
-  }
+  // RSI contribution (continuous, ~±25 pts)
+  if (t.rsi14 != null) score += lerpAnchors(t.rsi14, RSI_ANCHORS);
 
   // EMA50 position (±15 pts)
   if (t.priceVsEma50 === "above") score += 15;
@@ -124,6 +145,23 @@ export function scoreTechnicals(t: TechnicalResult): number {
   // 20-day trend (±10 pts)
   if (t.trend20d === "up") score += 10;
   else if (t.trend20d === "down") score -= 10;
+
+  // Volume confirmation (±8 pts) — was computed but never scored. Elevated
+  // volume CONFIRMS the prevailing direction: a move up on heavy volume is
+  // stronger conviction, a decline on heavy volume is more bearish. Direction
+  // read from EMA20 position / 20d trend; a neutral/conflicting context applies
+  // no volume effect (volume is directionless on its own).
+  if (t.volumeVsAvg20 != null) {
+    const bullish = t.priceVsEma20 === "above" || t.trend20d === "up";
+    const bearish = t.priceVsEma20 === "below" || t.trend20d === "down";
+    if (bullish && !bearish) {
+      if (t.volumeVsAvg20 >= 1.5) score += 8;
+      else if (t.volumeVsAvg20 >= 1.2) score += 4;
+    } else if (bearish && !bullish) {
+      if (t.volumeVsAvg20 >= 1.5) score -= 8;
+      else if (t.volumeVsAvg20 >= 1.2) score -= 4;
+    }
+  }
 
   return Math.max(0, Math.min(100, Math.round(score)));
 }

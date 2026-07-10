@@ -51,7 +51,26 @@ export function hasMinFundamentalFields(overview: Record<string, string> | null 
   return count >= min;
 }
 
-function scoreFundamentals(overview: Record<string, string>, isEtf: boolean): { score: number; evidence: Record<string, unknown> } {
+// Rough sector median P/E — used to score valuation RELATIVE to sector rather
+// than one absolute band (a P/E of 30 is cheap for software, rich for a
+// utility). Deliberately coarse priors; the IC-gated path can refine per market
+// once there's enough data. Unknown sector falls back to 20 ≈ the prior
+// absolute behavior, so this is near-backward-compatible for unclassified names.
+const SECTOR_PE_NORM: Record<string, number> = {
+  "technology": 30, "communication services": 20,
+  "health care": 25, "healthcare": 25,
+  "consumer discretionary": 24, "consumer cyclical": 24,
+  "consumer staples": 22, "consumer defensive": 22,
+  "industrials": 20, "materials": 16, "basic materials": 16,
+  "energy": 12, "financials": 14, "financial services": 14,
+  "utilities": 18, "real estate": 30,
+};
+function sectorPeNorm(sector: string | undefined): number {
+  if (!sector) return 20;
+  return SECTOR_PE_NORM[sector.trim().toLowerCase()] ?? 20;
+}
+
+function scoreFundamentals(overview: Record<string, string>, isEtf: boolean, currentPrice?: number): { score: number; evidence: Record<string, unknown> } {
   if (isEtf) {
     // ETFs have no P/E/earnings — use a neutral baseline (momentum drives the score elsewhere).
     return { score: 55, evidence: { note: "ETF — no company fundamentals; neutral 55 baseline" } };
@@ -69,13 +88,18 @@ function scoreFundamentals(overview: Record<string, string>, isEtf: boolean): { 
   const pe = parseFloat(overview.PERatio ?? "");
   if (!isNaN(pe) && pe > 0) {
     evidence.pe_ratio = pe;
-    // P/E 25-40 was previously unscored (a cliff: 24.99->+10, 25->0, 40.01->-15),
-    // making a fairly-priced P/E=30 stock indistinguishable from no-data-neutral.
-    if (pe < 15) score += 20;
-    else if (pe < 25) score += 10;
-    else if (pe < 40) score -= 5;
-    else if (pe < 60) score -= 15;
-    else score -= 25;
+    // Sector-relative valuation: P/E vs the sector's normal P/E, not one
+    // absolute band. ratio < 0.7 (cheap vs sector) → +18; > 2.0 (rich) → -22.
+    // Unknown sector → norm 20, which recovers roughly the prior absolute bands.
+    const norm = sectorPeNorm(overview.Sector);
+    const ratio = pe / norm;
+    evidence.pe_sector_norm = norm;
+    evidence.pe_vs_sector_ratio = parseFloat(ratio.toFixed(2));
+    if (ratio < 0.7) score += 18;
+    else if (ratio < 1.0) score += 8;
+    else if (ratio < 1.4) score -= 3;
+    else if (ratio < 2.0) score -= 12;
+    else score -= 22;
   }
 
   const profitMargin = parseFloat(overview.ProfitMargin ?? "");
@@ -110,11 +134,20 @@ function scoreFundamentals(overview: Record<string, string>, isEtf: boolean): { 
     else if (revGrowth < 0) score -= 10;
   }
 
-  // Analyst target vs current price
+  // Analyst target vs current price — a real forward signal (previously logged
+  // as evidence but never scored). Upside = (target - price)/price. Uses the
+  // live close when available, else the 200-day MA as a price proxy.
   const target = parseFloat(overview.AnalystTargetPrice ?? "");
-  const current52wk = parseFloat(overview["52WeekHigh"] ?? "");
-  if (!isNaN(target) && target > 0) {
+  const refPrice = (currentPrice && currentPrice > 0)
+    ? currentPrice
+    : parseFloat(overview["200DayMovingAverage"] ?? "");
+  if (!isNaN(target) && target > 0 && !isNaN(refPrice) && refPrice > 0) {
+    const upside = (target - refPrice) / refPrice;
     evidence.analyst_target = target;
+    evidence.analyst_upside_pct = parseFloat((upside * 100).toFixed(1));
+    if (upside > 0.25) score += 12;
+    else if (upside > 0.10) score += 6;
+    else if (upside < -0.10) score -= 8;
   }
 
   evidence.symbol = overview.Symbol;
@@ -252,7 +285,8 @@ export async function computeScores(opts: {
   const { symbol, isEtf, avOverview, candles, socialResult, insiderResult, supabase } = opts;
 
   // Compute all scores deterministically
-  const { score: fundamental_score, evidence: fundEvidence } = scoreFundamentals(avOverview, isEtf);
+  const latestClose = candles.length > 0 ? candles[candles.length - 1].close : undefined;
+  const { score: fundamental_score, evidence: fundEvidence } = scoreFundamentals(avOverview, isEtf, latestClose);
 
   const technicals = computeTechnicals(candles);
   const technical_score = scoreTechnicals(technicals);
