@@ -372,8 +372,16 @@ async function callDeepSeek(
   }
 
   const data = await resp.json()
+  const text = data.choices?.[0]?.message?.content ?? ""
+  if (!text) {
+    // Empty content usually means the model ID is invalid or the API returned a
+    // non-standard response shape (e.g. reasoning-only field). Throw so callLLM's
+    // same-tier fallback activates instead of propagating an empty string that
+    // silently breaks callers (e.g. health-triage "empty triage" error loop).
+    throw new Error(`DeepSeek model ${model} returned empty content — model may be invalid or not found (raw: ${JSON.stringify(data).slice(0, 200)})`)
+  }
   return {
-    text: data.choices?.[0]?.message?.content ?? "",
+    text,
     tokensIn: data.usage?.prompt_tokens ?? 0,
     tokensOut: data.usage?.completion_tokens ?? 0,
   }

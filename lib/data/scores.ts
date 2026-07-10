@@ -177,24 +177,32 @@ export function scoreSentiment(socialResult: any): { score: number; evidence: Re
 
 async function fetchMacroScore(supabase: any): Promise<{ score: number; evidence: Record<string, unknown> }> {
   try {
-    const { data } = await supabase
+    // Fetch the 3 most recent rows so we can fall back to the last KNOWN regime
+    // if the newest run produced "unknown" (e.g. MacroSentinel fetched too few
+    // indicators to classify). Using only the newest row meant that a single
+    // failed MacroSentinel run would lock macro out of scoring for the entire
+    // following week despite a valid regime being available one row back.
+    const { data: rows } = await supabase
       .from("macro_regime")
       .select("danger_score, regime, week_of")
       .order("week_of", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(3);
 
-    if (!data) return { score: 50, evidence: { note: "no macro data" } };
+    const allRows: any[] = Array.isArray(rows) ? rows : rows ? [rows] : [];
+    if (!allRows.length) return { score: 50, evidence: { note: "no macro data" } };
+
+    // Prefer the most recent row with a known regime; fall back to the newest
+    // unknown row only if no known row exists at all.
+    const validRow = allRows.find(r => r && String(r.regime ?? "").toLowerCase() !== "unknown") ?? allRows[0];
+    const data = validRow;
 
     const dangerScore = data.danger_score ?? 50;
     const regime = data.regime ?? "unknown";
 
     // A regime of "unknown" means MacroSentinel itself couldn't classify this
     // run (e.g. too few indicators fetched) — its danger_score in that case is
-    // a placeholder 0, NOT a real "calm markets" read. Scoring that as 100
-    // (maximally bullish, full confidence) silently made every symbol's macro
-    // dimension pin to 100 whenever MacroSentinel's weekly run failed, with no
-    // availability flag to catch it. Treat "unknown" as no verdict = unavailable.
+    // a placeholder 0, NOT a real "calm markets" read. Treat "unknown" as no
+    // verdict = unavailable (macroDataAvailable: false → excluded from scoring).
     if (String(regime).toLowerCase() === "unknown") {
       return {
         score: 50,

@@ -119,12 +119,42 @@ Rank issues most-urgent first. If no issues, return an empty issues array.`;
       content = raw;
     }
   } catch (e) {
-    await svc.from("agent_runs").insert({ agent_type: "health_triage", status: "error", error: String(e), started_at: startedAt, completed_at: new Date().toISOString(), trigger_source: isCron ? "cron" : "manual" });
-    return NextResponse.json({ ok: false, error: `LLM unavailable: ${String(e)}` }, { status: 200 });
+    // LLM failed (both primary + same-tier fallback exhausted). Rather than
+    // erroring the cron run and leaving the dashboard blank, produce a rule-based
+    // summary from the already-fetched alert/error data — triage still runs, the
+    // LLM error is recorded in agent_runs.error for debugging, and the dashboard
+    // shows something useful instead of "last triage unavailable".
+    content = openAlerts.length === 0
+      ? `System healthy — no open alerts. (LLM triage unavailable: ${String(e).slice(0, 120)})`
+      : `${openAlerts.length} open alert(s), ${criticalCount} critical. LLM triage unavailable — review alerts in System Health. (${String(e).slice(0, 100)})`;
+    structuredIssues = openAlerts.slice(0, 5).map((a: any) => ({
+      issue_key: (a.category ?? "open-alert").replace(/\s+/g, "-").toLowerCase(),
+      severity: a.severity ?? "warn",
+      root_cause: a.title ?? "Open alert",
+      blast_radius: a.category ?? "system",
+      suggested_fix: a.detail ?? "Review in System Health dashboard",
+    }));
+    model = "rule-based";
+    tokensIn = 0; tokensOut = 0;
+    // Record the LLM failure in agent_runs.error without marking status=error
+    // (we did produce output, so the cron isn't broken — just degraded).
+    await svc.from("agent_runs").insert({
+      agent_type: "health_triage", status: "done",
+      result_summary: `Rule-based triage (LLM unavailable): ${openAlerts.length} alert(s), ${criticalCount} critical`,
+      error: `LLM unavailable: ${String(e).slice(0, 200)}`,
+      started_at: startedAt, completed_at: new Date().toISOString(),
+      trigger_source: isCron ? "cron" : "manual",
+    });
+    await svc.from("health_triage").insert({ content, model, open_alerts: openAlerts.length, critical_alerts: criticalCount, tokens_input: 0, tokens_output: 0, structured_issues: structuredIssues });
+    return NextResponse.json({ ok: true, content, model, open_alerts: openAlerts.length, critical_alerts: criticalCount, structured_issues: structuredIssues });
   }
   if (!content) {
-    await svc.from("agent_runs").insert({ agent_type: "health_triage", status: "error", error: "empty triage", started_at: startedAt, completed_at: new Date().toISOString(), trigger_source: isCron ? "cron" : "manual" });
-    return NextResponse.json({ ok: false, error: "empty triage" }, { status: 200 });
+    // Safety net: LLM succeeded but returned empty summary (shouldn't happen
+    // after callDeepSeek throws on empty, but kept as last-resort fallback).
+    content = openAlerts.length === 0
+      ? "System healthy — no open alerts. (LLM returned empty summary)"
+      : `${openAlerts.length} alert(s) open, ${criticalCount} critical. (LLM returned empty summary — check model config)`;
+    model += ":empty-fallback";
   }
 
   await svc.from("health_triage").insert({ content, model, open_alerts: openAlerts.length, critical_alerts: criticalCount, tokens_input: tokensIn, tokens_output: tokensOut, structured_issues: structuredIssues ?? undefined });
