@@ -611,17 +611,23 @@ export async function POST(req: NextRequest) {
             const rawTopK = Number(call.arguments.top_k ?? 8);
             const topK = Number.isFinite(rawTopK) ? Math.min(Math.max(Math.trunc(rawTopK), 1), 20) : 8;
 
-            const voyageKey = process.env.VOYAGE_API_KEY;
-            if (!voyageKey) return JSON.stringify({ error: "VOYAGE_API_KEY not set — semantic search unavailable" });
+            const jinaKey = process.env.JINA_API_KEY;
+            if (!jinaKey) return JSON.stringify({ error: "JINA_API_KEY not set — semantic search unavailable" });
 
-            // Embed the query via Voyage AI
-            const embedRes = await fetch("https://api.voyageai.com/v1/embeddings", {
+            // Embed the query via Jina AI (free, no CC required)
+            const embedRes = await fetch("https://api.jina.ai/v1/embeddings", {
               method: "POST",
-              headers: { "Authorization": `Bearer ${voyageKey}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ model: "voyage-finance-2", input: [queryText], input_type: "query" }),
+              headers: { "Authorization": `Bearer ${jinaKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "jina-embeddings-v3",
+                input: [queryText],
+                task: "retrieval.query",
+                dimensions: 1024,
+                embedding_type: "float",
+              }),
               signal: AbortSignal.timeout(20_000),
             });
-            if (!embedRes.ok) return JSON.stringify({ error: `Voyage embed failed: ${embedRes.status}` });
+            if (!embedRes.ok) return JSON.stringify({ error: `Jina embed failed: ${embedRes.status}` });
             const embedData = await embedRes.json();
             const vec: number[] = embedData.data?.[0]?.embedding ?? [];
             // Require exactly 1024 finite numbers before it reaches PostgreSQL.

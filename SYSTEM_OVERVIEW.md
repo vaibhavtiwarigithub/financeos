@@ -143,7 +143,7 @@ breaking the whole agent.
 | Alpha Vantage (AV) | Technicals (RSI, EMA, MA), OVERVIEW fundamentals, NEWS_SENTIMENT, INSIDER_TRANSACTIONS, 8 macro indicators | `ALPHA_VANTAGE_API_KEY` in vault |
 | Massive Market Data | US candles, stock screener, options, quotes | `MASSIVE_API_KEY` in vault |
 | FinancialDatasets (FMP) | `screen_stocks` screener for US momentum/value buckets | `FMP_API_KEY` in vault |
-| Voyage AI | `voyage-3.5` embeddings (1024-dim) + `rerank-2` reranker | `VOYAGE_API_KEY` in `.env.local` |
+| Jina AI | `jina-embeddings-v3` embeddings (1024-dim, free) + `jina-reranker-v2-base-multilingual` reranker (free, 1M tokens/month, no CC) | `JINA_API_KEY` in `.env.local` |
 | Langfuse | LLM trace/generation observability | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` |
 | Resend | Transactional email (briefings) | `RESEND_API_KEY` |
 | Stripe | Subscription billing (Pro/Elite tiers) | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` |
@@ -191,7 +191,7 @@ LANGFUSE_SECRET_KEY=
 LANGFUSE_HOST=                    # e.g. https://cloud.langfuse.com
 
 # Vector / RAG (off if absent — no-ops silently)
-VOYAGE_API_KEY=
+JINA_API_KEY=          # free at jina.ai (no CC), 1M tokens/month
 
 # Experiment tracking
 WANDB_API_KEY=
@@ -1191,10 +1191,9 @@ See §12.1 for full OAuth flow detail. The MCP exposes JSON-RPC tools:
 | House Stock Watcher (S3) | Congressional stock trade disclosures | None |
 | SEC EDGAR Form 4 | Corporate insider CIK lookup + XML parsing → `evidence_records` | None |
 
-### 10.9 Voyage AI
+### 10.9 Jina AI
 
-`voyage-3.5` model for 1024-dim embeddings of closed trade setups. `rerank-2` for post-retrieval
-reranking. **Off when `VOYAGE_API_KEY` is absent** — the whole RAG path silently no-ops.
+`jina-embeddings-v3` model for 1024-dim embeddings of closed trade setups. `jina-reranker-v2-base-multilingual` for post-retrieval reranking. Free tier (1M tokens/month, no CC). **Off when `JINA_API_KEY` is absent** — the whole RAG path silently no-ops.
 
 ---
 
@@ -1865,7 +1864,7 @@ flowchart LR
 
 **Guardrails:**
 - Ticker filter: a retrieved chunk that doesn't mention the candidate symbol is dropped
-- Whole path is **off when `VOYAGE_API_KEY` is absent** — no key → silent no-op
+- Whole path is **off when `JINA_API_KEY` is absent** — no key → silent no-op
 - Does NOT move money or change weights. Advisory context only.
 
 ---

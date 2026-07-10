@@ -5,7 +5,7 @@
 // This file is that pipeline, native, composed from primitives we already own:
 //   chunk()             — sentence-aware splitter with overlap
 //   contextualizeChunks — #11 ticker filter + #12 Anthropic contextual header
-//   embedTexts          — Voyage voyage-3.5
+//   embedTexts          — Jina jina-embeddings-v3
 //   doc_chunks          — pgvector store (migration 120)
 //
 // Why native (not llamaindex.ts): LlamaIndex drags a large dependency tree and
@@ -14,7 +14,7 @@
 // sharing one embedding provider and one vector store with the rest of RAG. A
 // real LlamaIndex reader (SEC, web) can still feed `ingestDocument` as a source.
 //
-// Fully gated: no VOYAGE_API_KEY → ingest is a no-op returning {stored:0}.
+// Fully gated: no JINA_API_KEY → ingest is a no-op returning {stored:0}.
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { embedTexts, embeddingsEnabled, EMBEDDING_MODEL } from "./embeddings";

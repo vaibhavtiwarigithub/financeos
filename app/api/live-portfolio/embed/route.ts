@@ -8,15 +8,15 @@ export const dynamic = "force-dynamic";
 // Large first-time backfills need Vercel Pro (300s cap) or higher.
 export const maxDuration = 300;
 
-// Batch-embed enriched trade_decisions using Voyage AI (voyage-finance-2, 1024-dim).
+// Batch-embed enriched trade_decisions using Jina AI (jina-embeddings-v3, 1024-dim).
+// Free tier: 1M tokens/month, no CC. Key: JINA_API_KEY (jina.ai free account).
 // Skips rows that already have an embedding (idempotent).
 // POST /api/live-portfolio/embed
 //   body: { limit?: number }  — max rows to embed per call (default 50, max 200)
-// Requires VOYAGE_API_KEY in .env.local.
 
-const VOYAGE_MODEL = "voyage-finance-2";
-const EMBED_DIM    = 1024;
-const BATCH_SIZE   = 16; // Voyage recommended batch size
+const JINA_MODEL = "jina-embeddings-v3";
+const EMBED_DIM  = 1024;
+const BATCH_SIZE = 16;
 
 function buildContentText(d: any): string {
   const tags = Array.isArray(d.pattern_tags) ? d.pattern_tags.join(", ") : "";
@@ -27,23 +27,27 @@ function buildContentText(d: any): string {
   return `${d.action} ${d.symbol} qty=${d.qty} price=${d.exec_price} date=${d.exec_date} ${outcome} regime=${regime}${event} tags=[${tags}]${analysis}`;
 }
 
-async function voyageEmbed(texts: string[], apiKey: string): Promise<number[][]> {
-  const res = await fetch("https://api.voyageai.com/v1/embeddings", {
+async function jinaEmbed(texts: string[], apiKey: string): Promise<number[][]> {
+  const res = await fetch("https://api.jina.ai/v1/embeddings", {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ model: VOYAGE_MODEL, input: texts, input_type: "document" }),
+    body: JSON.stringify({
+      model: JINA_MODEL,
+      input: texts,
+      task: "retrieval.passage",
+      dimensions: EMBED_DIM,
+      embedding_type: "float",
+    }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     const err = await res.text().catch(() => res.statusText);
-    throw new Error(`Voyage API error ${res.status}: ${err}`);
+    throw new Error(`Jina API error ${res.status}: ${err}`);
   }
   const data = await res.json();
-  // Voyage returns items with an explicit `index`; do NOT assume array order.
-  // Sort by index so embeddings align to their input texts.
   const items = (data.data as any[]).slice().sort((a: any, b: any) => (a.index ?? 0) - (b.index ?? 0));
   return items.map((d: any) => d.embedding as number[]);
 }
@@ -57,8 +61,8 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const apiKey = process.env.VOYAGE_API_KEY;
-  if (!apiKey) return NextResponse.json({ error: "VOYAGE_API_KEY not configured" }, { status: 503 });
+  const apiKey = process.env.JINA_API_KEY;
+  if (!apiKey) return NextResponse.json({ error: "JINA_API_KEY not configured" }, { status: 503 });
 
   const body = await req.json().catch(() => ({}));
   const limit = Math.min(parseInt(body.limit ?? "50"), 200);
@@ -84,7 +88,7 @@ export async function POST(req: NextRequest) {
     const hashes = texts.map((t: string) => createHash("sha256").update(t).digest("hex"));
 
     try {
-      const vectors = await voyageEmbed(texts, apiKey);
+      const vectors = await jinaEmbed(texts, apiKey);
       if (vectors.length !== batch.length) throw new Error(`Embedding count mismatch: got ${vectors.length}, expected ${batch.length}`);
 
       for (let j = 0; j < batch.length; j++) {
@@ -102,7 +106,7 @@ export async function POST(req: NextRequest) {
           embedding:         `[${vec.join(",")}]`,
           content_text:      texts[j],
           content_hash:      hashes[j],
-          model:             VOYAGE_MODEL,
+          model:             JINA_MODEL,
         }, { onConflict: "trade_decision_id" });
 
         if (insertErr) errors.push(`${(batch[j] as any).id}: ${insertErr.message}`);
@@ -137,7 +141,7 @@ export async function GET() {
     embedded: embedded ?? 0,
     pending: Math.max(0, (total ?? 0) - (embedded ?? 0)),
     coverage_pct: total ? Math.round(((embedded ?? 0) / total) * 100) : 0,
-    model: VOYAGE_MODEL,
+    model: JINA_MODEL,
     dim: EMBED_DIM,
   });
 }

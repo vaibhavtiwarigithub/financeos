@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   if (!embeddingsEnabled()) {
     return NextResponse.json({
       ok: true,
-      skipped: "VOYAGE_API_KEY not set — embeddings disabled, nothing indexed",
+      skipped: "JINA_API_KEY not set — embeddings disabled, nothing indexed",
       indexed: 0,
     });
   }

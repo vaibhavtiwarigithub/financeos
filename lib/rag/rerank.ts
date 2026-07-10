@@ -1,24 +1,21 @@
-// lib/rag/rerank.ts — Voyage reranker (Strategic Intelligence Tier-3 #9)
+// lib/rag/rerank.ts — Jina reranker (free tier, same key as embeddings)
 //
-// Two-stage retrieval: pgvector ANN over-fetches ~20 nearest neighbours (cheap,
-// approximate), then a cross-encoder reranker re-scores each (query, document)
-// pair jointly and keeps the top-k. The reranker sees query+doc together so it
-// catches relevance the bi-encoder embedding misses.
+// Two-stage retrieval: pgvector ANN over-fetches ~20 nearest neighbours, then
+// a cross-encoder reranker re-scores each (query, document) pair jointly.
 //
-// Model: Voyage rerank-2 (uses the same VOYAGE_API_KEY as embeddings — no extra
-// provider). Chosen over HuggingFace gte-reranker to avoid a second key/vendor.
+// Model: jina-reranker-v2-base-multilingual (uses the same JINA_API_KEY —
+// no extra provider). Free tier via jina.ai, no CC required.
 //
-// Graceful degradation: if VOYAGE_API_KEY is absent OR the call fails, return
-// the input order truncated to topK (identity rerank). Retrieval still works,
-// just without the precision bump. Never throws.
+// Graceful degradation: if JINA_API_KEY is absent OR the call fails, return
+// the input order truncated to topK (identity rerank). Never throws.
 
 import { reportIssue } from "@/lib/system-health";
 
-const VOYAGE_RERANK_URL = "https://api.voyageai.com/v1/rerank";
-const MODEL = "rerank-2";
+const JINA_RERANK_URL = "https://api.jina.ai/v1/rerank";
+const MODEL = "jina-reranker-v2-base-multilingual";
 
 function apiKey(): string | null {
-  const k = process.env.VOYAGE_API_KEY;
+  const k = process.env.JINA_API_KEY;
   return k && k.trim() ? k.trim() : null;
 }
 
@@ -53,7 +50,7 @@ export async function rerank<T>(
   const documents = items.map(toText);
 
   try {
-    const res = await fetch(VOYAGE_RERANK_URL, {
+    const res = await fetch(JINA_RERANK_URL, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -63,25 +60,23 @@ export async function rerank<T>(
         query,
         documents,
         model: MODEL,
-        top_k: Math.min(topK, documents.length),
-        // We already hold the documents; no need for Voyage to echo them back.
+        top_n: Math.min(topK, documents.length),
         return_documents: false,
       }),
     });
 
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
-      throw new Error(`voyage rerank ${res.status}: ${detail.slice(0, 300)}`);
+      throw new Error(`jina rerank ${res.status}: ${detail.slice(0, 300)}`);
     }
 
+    // Jina rerank response shape: { results: [{ index, relevance_score }] }
     const json = (await res.json()) as {
-      data?: { index: number; relevance_score: number }[];
+      results?: { index: number; relevance_score: number }[];
     };
-    const data = json.data ?? [];
+    const data = json.results ?? [];
     if (data.length === 0) return fallback();
 
-    // Voyage returns results already sorted by relevance desc when top_k is set,
-    // but sort defensively so ordering never depends on server behaviour.
     return data
       .filter((d) => items[d.index] !== undefined)
       .sort((a, b) => b.relevance_score - a.relevance_score)
@@ -89,10 +84,10 @@ export async function rerank<T>(
       .map((d) => ({ item: items[d.index], score: d.relevance_score }));
   } catch (e) {
     await reportIssue({
-      issueKey: "voyage-rerank-failed",
+      issueKey: "jina-rerank-failed",
       severity: "warn",
       category: "rag",
-      title: "Voyage rerank unavailable",
+      title: "Jina rerank unavailable",
       detail: e instanceof Error ? e.message : String(e),
     }).catch(() => {});
     return fallback();

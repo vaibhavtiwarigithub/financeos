@@ -13,9 +13,9 @@
 // (poisoned outcomes must never teach the retriever — enforced here at index
 // time AND by the `excluded` guard in match_trade_memories, migration 118).
 //
-// Pipeline: pgvector ANN over-fetch (k≈20) → Voyage rerank-2 → top-k. Every
+// Pipeline: pgvector ANN over-fetch (k≈20) → Jina reranker → top-k. Every
 // step traces to rag_traces + WandB Weave. All steps degrade to no-op when
-// VOYAGE_API_KEY is absent (embeddingsEnabled() === false).
+// JINA_API_KEY is absent (embeddingsEnabled() === false).
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { embedText, embeddingsEnabled, EMBEDDING_MODEL } from "./embeddings";
