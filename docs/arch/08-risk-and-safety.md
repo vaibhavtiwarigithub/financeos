@@ -1,6 +1,6 @@
 # Kairos — Risk & Safety
 
-> Last updated: 2026-07-10 (reviewed/corrected by ChatGPT/Codex)
+> Last updated: 2026-07-10 (PA1: execution kernel + shadow path documented)
 > Update when any authorization, scoring eligibility, limit, account, order, reconciliation, exit, or kill-switch behavior changes.
 
 ---
@@ -197,6 +197,35 @@ Every material state transition must have an append-only event/journal record. C
 - partial-fill/order sync and append-only broker events;
 - deterministic live protective SELL path;
 - duplicate-cron, timeout, stale-data, DB-failure, and kill-switch chaos tests;
-- PA1 shadow evidence and Vaibhav approval.
+- ✅ PA1 shadow evidence — AutonomousShadow running, execution kernel in `lib/trading/execution-kernel.ts`
+- PA2 approval (requires shadow run history showing gate behavior).
 
 Until all pass, `AUTONOMOUS_LIVE_ENABLED` remains false and L4 is descriptive only.
+
+---
+
+## PA1 shadow path (implemented, deployment flag inactive)
+
+`lib/trading/execution-kernel.ts` → `evaluateAutonomousExecution()` is the single pure gate
+evaluator shared by the shadow path (PA1) and the future live path (PA2+). It takes a
+`KernelInput` + `LiveAutoPolicy` snapshot and returns `KernelResult` — no DB calls, no side
+effects, deterministic.
+
+Gates evaluated in order:
+
+| # | Gate | Fail label |
+|---|---|---|
+| 1 | `AUTONOMOUS_LIVE_ENABLED` deployment flag | `deployment_flag_inactive` |
+| 2 | `live_auto_enabled` DB toggle | `db_toggle_off` |
+| 3 | Lease not expired | `lease_expired` |
+| 4 | Direction = long | `non_long_direction` |
+| 5 | Score ≥ threshold | `score_below_threshold` |
+| 6 | `evidence_confidence` ≥ floor (≥ 0.6) | `confidence_below_floor` |
+| 7 | Open positions < cap | `max_positions_reached` |
+| 8 | Orders today < cap | `max_daily_orders_reached` |
+| 9 | Notional ≤ per-order cap (skipped when 0) | `per_order_cap_exceeded` |
+
+`runAutonomousShadow()` in `lib/trading/autonomous-shadow.ts` calls the kernel for each
+qualifying signal, creates a `trade_proposals` row with `execution_mode='autonomous_shadow'`,
+and updates `status` to `queued_auto` (kernel approved) or `manual_review_required` (gate fired).
+**No broker call, no budget reservation, no order submission in PA1.**

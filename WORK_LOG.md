@@ -42,6 +42,10 @@
 
 ---
 
+| Live PA1 — shared execution kernel + shadow autonomous decisions | Claude Sonnet 4.6 | completed | 2026-07-10 | lib/trading/execution-kernel.ts: pure evaluateAutonomousExecution() with 9 ordered gates (deployment_flag/db_toggle/lease/long_only/score/confidence/max_positions/max_orders/notional). lib/trading/autonomous-shadow.ts: runAutonomousShadow() — snapshots policy, queries qualifying signals (deterministic, long, score≥threshold, last 24h), creates trade_proposals (execution_mode='autonomous_shadow'), runs kernel, updates status to queued_auto or manual_review_required, journals run. Routes: POST /api/agents/autonomous-shadow/run (requireOwner), POST /api/agents/autonomous-shadow/cron (CRON_SECRET). Cron: weekdays 07:30 UTC. Gate 1 always fires in current deployment (AUTONOMOUS_LIVE_ENABLED=false) — all proposals land manual_review_required intentionally. No broker calls, no budget reservation, no order submission. Build green. |
+
+---
+
 ## 🔴 In Progress
 
 | Task | Agent/Model | Status | Date | Notes |

@@ -1,5 +1,5 @@
 # Kairos — Agents
-> Last updated: 2026-07-10 (scoring and autonomous-execution architecture reviewed/corrected by ChatGPT/Codex)
+> Last updated: 2026-07-10 (PA1: AutonomousShadow agent added)
 > Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
 
 **Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file + update `public/agent-diagrams/system-map.json`.
@@ -18,6 +18,8 @@ flowchart LR
   UNIVERSE[PIT Universe + Providers] --> RESEARCH
   RESEARCH --> |agent_signals + decision_observations| PAPER[PaperTrader]
   RESEARCH --> |eligible proposal| TRADER[TraderAgent]
+  RESEARCH --> |qualifying signal| SHADOW[AutonomousShadow]
+  SHADOW --> |shadow proposal queued_auto / manual_review_required| PROPOSALS[(trade_proposals)]
   TRADER --> GATEWAY[Shared Execution Gateway]
   GATEWAY --> BROKER[Robinhood or Kite Adapter]
   RESEARCH --> |signal_score_history| RESEARCH
@@ -50,6 +52,7 @@ flowchart LR
 | `validation_experiments`, `model_artifacts` | Validation/Calibration | Promotion gate, Dashboard |
 | `broker_orders` | Execution Gateway + order sync | Reconciliation, Dashboard |
 | `broker_order_events` (target) | Execution Gateway + order sync | Audit/reconciliation |
+| `trade_proposals` (shadow) | AutonomousShadow | Dashboard, owner audit |
 | `llm_call_log` | All LLM callers | Admin cost view |
 | `rag_traces` | ResearchAgent (retrieval) | Debug/audit |
 
@@ -354,6 +357,49 @@ Deep-link fix hints. Tier-1 safe actions (retry, resolve info/warn) are one-clic
 
 **Outputs:** `structured_issues` on existing `agent_alerts`; new `agent_alerts` rows for
 newly discovered issues
+
+---
+
+### AutonomousShadow — the execution dry-run
+
+**Files:** `lib/trading/execution-kernel.ts`, `lib/trading/autonomous-shadow.ts`,
+`app/api/agents/autonomous-shadow/run/route.ts` (owner POST),
+`app/api/agents/autonomous-shadow/cron/route.ts` (CRON_SECRET POST)
+**Schedule:** Weekdays 07:30 UTC (30 min after research cron)
+**LLM:** None — fully deterministic
+
+**No broker calls in PA1. Purpose: prove the execution kernel fires, gates fire correctly,
+and shadow proposals accumulate evidence before live mode is ever enabled.**
+
+**Inputs:**
+- `strategy_config` live_auto_* policy snapshot
+- `agent_signals` (last 24h, `score_source='deterministic_v1'`, direction=long, score ≥ threshold)
+- Current `broker_orders` filled count (open positions)
+- Today's `trade_proposals` with `execution_mode='autonomous_shadow'` count
+
+**Key behavior:** For each qualifying signal, creates a `trade_proposal` row
+(`execution_mode='autonomous_shadow'`, `auto_run_id`, `auto_decided_at`), then runs it through
+`evaluateAutonomousExecution()` — 9 ordered gates (see `lib/trading/execution-kernel.ts`).
+Updates proposal status to `queued_auto` (kernel approved) or `manual_review_required`
+(gate failed with named reason). Writes one `decision_journal` entry per run. Never touches
+broker APIs, never calls reserve_live_order_budget, never submits any order.
+
+**Gates (in order):**
+1. `AUTONOMOUS_LIVE_ENABLED` deployment flag
+2. `live_auto_enabled` DB toggle
+3. Lease not expired (`live_auto_enabled_until`)
+4. Direction = long only
+5. Score ≥ score_threshold
+6. `evidence_confidence` ≥ `live_auto_min_evidence_confidence` (floor 0.6)
+7. Open positions < `live_auto_max_open_positions`
+8. Orders today < `live_auto_max_orders_per_day`
+9. Proposed notional ≤ `live_auto_max_per_order_usd` (skipped in PA1 — notional = 0)
+
+**In current deployment:** gate 1 always fires (`AUTONOMOUS_LIVE_ENABLED=false`).
+All proposals land on `manual_review_required`. This is intentional — shadow accumulates
+evidence while the flag is false.
+
+**Outputs:** `trade_proposals` rows (shadow), `decision_journal` run summary
 
 ---
 
