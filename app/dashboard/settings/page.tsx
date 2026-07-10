@@ -127,6 +127,25 @@ export default function SettingsPage() {
   const [providersLoading, setProvidersLoading] = useState(false);
   const loadKite = () => fetch("/api/kite/status").then(r => r.json()).then(setKite).catch(() => {});
 
+  // Autonomous trading (PA0 — schema/UI only; deployment flag stays false)
+  const [liveAuto, setLiveAuto] = useState<any | null>(null);
+  const [liveAutoSaving, setLiveAutoSaving] = useState(false);
+  const [liveAutoMsg, setLiveAutoMsg] = useState("");
+  const [liveAutoConfirm, setLiveAutoConfirm] = useState("");
+  const [liveAutoLeaseHours, setLiveAutoLeaseHours] = useState(4);
+  const [liveAutoShowEnable, setLiveAutoShowEnable] = useState(false);
+  const [liveAutoCaps, setLiveAutoCaps] = useState({ daily_cap_usd: "", max_per_order_usd: "", min_confidence: "", max_positions: "", max_orders_per_day: "" });
+  const loadLiveAuto = () => fetch("/api/settings/live-auto").then(r => r.json()).then(d => {
+    setLiveAuto(d);
+    setLiveAutoCaps({
+      daily_cap_usd: d.live_auto_daily_cap_usd ?? "",
+      max_per_order_usd: d.live_auto_max_per_order_usd ?? "",
+      min_confidence: d.live_auto_min_evidence_confidence ?? "",
+      max_positions: d.live_auto_max_open_positions ?? "",
+      max_orders_per_day: d.live_auto_max_orders_per_day ?? "",
+    });
+  }).catch(() => {});
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user) supabase.from("profiles").select("*").eq("id", user.id).single().then(({ data }) => setProfile(data));
@@ -350,6 +369,7 @@ export default function SettingsPage() {
     if (tab !== "agents") return;
     loadKite();
     loadRhMcp();
+    loadLiveAuto();
     if (llmCosts) return; // already loaded
     setLlmLoading(true);
     fetch("/api/admin/llm-costs")
@@ -1110,6 +1130,203 @@ export default function SettingsPage() {
 
             {!llmLoading && !llmCosts && (
               <div style={{ color: T.muted, fontSize: "13px" }}>No LLM cost data available.</div>
+            )}
+          </div>
+
+          {/* Autonomous Trading (PA0 — schema/UI; deployment flag currently false) */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginTop: "20px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+              <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase" as const }}>Autonomous Trading</div>
+              {liveAuto && (
+                <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "12px",
+                  background: liveAuto.live_auto_enabled && liveAuto.deployment_flag_active ? "#0D2410" : "#1A1A2E",
+                  color: liveAuto.live_auto_enabled && liveAuto.deployment_flag_active ? T.green : T.muted,
+                  border: `1px solid ${liveAuto.live_auto_enabled && liveAuto.deployment_flag_active ? T.green : T.border}` }}>
+                  {liveAuto.live_auto_enabled && liveAuto.deployment_flag_active ? "ACTIVE" : "INACTIVE"}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: "13px", color: T.textSub, marginBottom: "16px" }}>
+              Controls whether Kairos can submit live orders without your click. Both the deployment flag and this toggle must be enabled.
+            </div>
+
+            {/* Deployment flag status */}
+            <div style={{ background: T.surface, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", display: "flex", gap: "10px", alignItems: "flex-start" }}>
+              <span style={{ color: liveAuto?.deployment_flag_active ? T.green : T.red, fontSize: "16px", lineHeight: 1 }}>
+                {liveAuto?.deployment_flag_active ? "✓" : "✗"}
+              </span>
+              <div>
+                <div style={{ fontWeight: 600, color: liveAuto?.deployment_flag_active ? T.green : T.red }}>
+                  Deployment flag: {liveAuto?.deployment_flag_active ? "ACTIVE" : "INACTIVE"}
+                </div>
+                <div style={{ color: T.muted, marginTop: "2px" }}>
+                  {liveAuto?.deployment_flag_active
+                    ? "AUTONOMOUS_LIVE_ENABLED=true in deployment config."
+                    : "AUTONOMOUS_LIVE_ENABLED=false — no autonomous orders will be placed regardless of DB settings."}
+                </div>
+              </div>
+            </div>
+
+            {/* Current DB lease status */}
+            {liveAuto && (
+              <div style={{ marginBottom: "16px", fontSize: "13px" }}>
+                <span style={{ color: T.muted }}>DB toggle: </span>
+                <span style={{ color: liveAuto.live_auto_enabled ? T.yellow : T.textSub, fontWeight: 600 }}>
+                  {liveAuto.live_auto_enabled ? "enabled" : "disabled"}
+                </span>
+                {liveAuto.live_auto_enabled_until && (
+                  <span style={{ color: T.muted }}>
+                    {" "}· lease expires {new Date(liveAuto.live_auto_enabled_until).toLocaleString()}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Caps */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "16px" }}>
+              {([
+                ["Daily cap (USD)", "daily_cap_usd", "e.g. 500"],
+                ["Max per-order (USD)", "max_per_order_usd", "e.g. 100"],
+                ["Max open positions", "max_positions", "e.g. 5"],
+                ["Max orders/day", "max_orders_per_day", "e.g. 3"],
+              ] as const).map(([label, key, ph]) => (
+                <div key={key}>
+                  <label style={{ fontSize: "11px", color: T.muted, display: "block", marginBottom: "4px", textTransform: "uppercase" as const, letterSpacing: "0.06em" }}>{label}</label>
+                  <input
+                    type="number"
+                    placeholder={ph}
+                    value={liveAutoCaps[key as keyof typeof liveAutoCaps]}
+                    onChange={e => setLiveAutoCaps(c => ({ ...c, [key]: e.target.value }))}
+                    style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "13px", padding: "8px 10px", outline: "none", boxSizing: "border-box" as const }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div style={{ marginBottom: "16px" }}>
+              <label style={{ fontSize: "11px", color: T.muted, display: "block", marginBottom: "4px", textTransform: "uppercase" as const, letterSpacing: "0.06em" }}>Min evidence confidence (0–1, min 0.6)</label>
+              <input
+                type="number" step="0.05" min="0.6" max="1"
+                placeholder="e.g. 0.75"
+                value={liveAutoCaps.min_confidence}
+                onChange={e => setLiveAutoCaps(c => ({ ...c, min_confidence: e.target.value }))}
+                style={{ width: "140px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "13px", padding: "8px 10px", outline: "none" }}
+              />
+            </div>
+
+            {/* Enable panel */}
+            {!liveAuto?.live_auto_enabled && (
+              <>
+                {liveAutoShowEnable ? (
+                  <div style={{ background: "#1A0A0A", border: `1px solid ${T.red}44`, borderRadius: "10px", padding: "16px", marginBottom: "12px" }}>
+                    <div style={{ fontSize: "12px", color: T.red, fontWeight: 600, marginBottom: "10px" }}>
+                      Type &quot;ENABLE AUTO&quot; to confirm
+                    </div>
+                    <input
+                      value={liveAutoConfirm}
+                      onChange={e => setLiveAutoConfirm(e.target.value)}
+                      placeholder="ENABLE AUTO"
+                      style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "13px", padding: "8px 10px", outline: "none", marginBottom: "10px", boxSizing: "border-box" as const }}
+                    />
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+                      <label style={{ fontSize: "12px", color: T.muted }}>Lease duration:</label>
+                      <select
+                        value={liveAutoLeaseHours}
+                        onChange={e => setLiveAutoLeaseHours(Number(e.target.value))}
+                        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", color: T.text, fontSize: "13px", padding: "6px 10px" }}
+                      >
+                        {[1, 2, 4, 8, 12, 24].map(h => <option key={h} value={h}>{h}h</option>)}
+                      </select>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button
+                        disabled={liveAutoSaving || !liveAuto?.deployment_flag_active || liveAutoConfirm !== "ENABLE AUTO"}
+                        onClick={async () => {
+                          setLiveAutoSaving(true); setLiveAutoMsg("");
+                          try {
+                            const r = await fetch("/api/settings/live-auto", { method: "PATCH", headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ action: "enable", confirmation_text: liveAutoConfirm, lease_hours: liveAutoLeaseHours,
+                                live_auto_daily_cap_usd: liveAutoCaps.daily_cap_usd || null,
+                                live_auto_max_per_order_usd: liveAutoCaps.max_per_order_usd || null,
+                                live_auto_min_evidence_confidence: liveAutoCaps.min_confidence || null,
+                                live_auto_max_open_positions: liveAutoCaps.max_positions || null,
+                                live_auto_max_orders_per_day: liveAutoCaps.max_orders_per_day || null,
+                              }) });
+                            const d = await r.json();
+                            if (!r.ok) { setLiveAutoMsg(d.error ?? "Failed"); }
+                            else { setLiveAutoMsg("Enabled."); setLiveAutoShowEnable(false); setLiveAutoConfirm(""); loadLiveAuto(); }
+                          } catch { setLiveAutoMsg("Request failed"); }
+                          setLiveAutoSaving(false);
+                        }}
+                        style={{ background: liveAutoConfirm === "ENABLE AUTO" && liveAuto?.deployment_flag_active ? T.red : T.surface,
+                          border: `1px solid ${T.red}`, borderRadius: "8px", color: liveAutoConfirm === "ENABLE AUTO" && liveAuto?.deployment_flag_active ? "#fff" : T.red,
+                          padding: "9px 20px", fontSize: "13px", fontWeight: 600, cursor: liveAutoConfirm !== "ENABLE AUTO" || !liveAuto?.deployment_flag_active ? "not-allowed" : "pointer",
+                          opacity: liveAutoSaving ? 0.7 : 1 }}
+                      >
+                        {liveAutoSaving ? "Enabling…" : "Enable Autonomous"}
+                      </button>
+                      <button onClick={() => { setLiveAutoShowEnable(false); setLiveAutoConfirm(""); }}
+                        style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: "8px", color: T.muted, padding: "9px 16px", fontSize: "13px", cursor: "pointer" }}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setLiveAutoShowEnable(true)}
+                    disabled={!liveAuto?.deployment_flag_active}
+                    title={!liveAuto?.deployment_flag_active ? "Deployment flag must be true first" : undefined}
+                    style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: liveAuto?.deployment_flag_active ? T.text : T.muted,
+                      padding: "9px 20px", fontSize: "13px", cursor: liveAuto?.deployment_flag_active ? "pointer" : "not-allowed",
+                      opacity: liveAuto?.deployment_flag_active ? 1 : 0.5, marginRight: "8px" }}>
+                    Enable Autonomous…
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* Disable button */}
+            {liveAuto?.live_auto_enabled && (
+              <button
+                disabled={liveAutoSaving}
+                onClick={async () => {
+                  setLiveAutoSaving(true); setLiveAutoMsg("");
+                  const r = await fetch("/api/settings/live-auto", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "disable" }) }).catch(() => null);
+                  const d = r ? await r.json() : null;
+                  setLiveAutoMsg(r?.ok ? "Disabled." : (d?.error ?? "Failed"));
+                  loadLiveAuto();
+                  setLiveAutoSaving(false);
+                }}
+                style={{ background: "#2D0A0A", border: `1px solid ${T.red}`, borderRadius: "8px", color: T.red, padding: "9px 20px", fontSize: "13px", fontWeight: 600, cursor: "pointer", opacity: liveAutoSaving ? 0.7 : 1, marginRight: "8px" }}>
+                {liveAutoSaving ? "Disabling…" : "Disable Autonomous"}
+              </button>
+            )}
+
+            {/* Save caps independently */}
+            <button
+              disabled={liveAutoSaving}
+              onClick={async () => {
+                setLiveAutoSaving(true); setLiveAutoMsg("");
+                const r = await fetch("/api/settings/live-auto", { method: "PATCH", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ action: "update_caps",
+                    live_auto_daily_cap_usd: liveAutoCaps.daily_cap_usd || null,
+                    live_auto_max_per_order_usd: liveAutoCaps.max_per_order_usd || null,
+                    live_auto_min_evidence_confidence: liveAutoCaps.min_confidence || null,
+                    live_auto_max_open_positions: liveAutoCaps.max_positions || null,
+                    live_auto_max_orders_per_day: liveAutoCaps.max_orders_per_day || null,
+                  }) }).catch(() => null);
+                const d = r ? await r.json() : null;
+                setLiveAutoMsg(r?.ok ? "Caps saved." : (d?.error ?? "Failed"));
+                loadLiveAuto();
+                setLiveAutoSaving(false);
+              }}
+              style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "9px 20px", fontSize: "13px", fontWeight: 600, cursor: "pointer", opacity: liveAutoSaving ? 0.7 : 1 }}>
+              {liveAutoSaving ? "Saving…" : "Save Caps"}
+            </button>
+
+            {liveAutoMsg && (
+              <div style={{ marginTop: "10px", fontSize: "13px", color: liveAutoMsg.includes("ailed") || liveAutoMsg.includes("error") ? T.red : T.green }}>
+                {liveAutoMsg}
+              </div>
             )}
           </div>
         </div>
