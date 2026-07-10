@@ -10,6 +10,7 @@ import { niftyCandidates } from "@/lib/india-universe";
 import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
 import { computeWeightedAnalystScore, isThinEvidence, type DimensionRecord } from "@/lib/scoring/weighted-score";
+import { routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
@@ -1429,6 +1430,33 @@ export async function processSymbol(
           });
         }
       } catch (e) { console.error("[research-agent] shadow decision write threw:", e); }
+
+      // P2: archetype setup-expert shadow scoring.
+      // 6 archetypes score in shadow alongside champion v1. Only v1 is actionable.
+      // Fail-soft: missing setup_type column pre-138 → no-op.
+      try {
+        const archetypeTargets = routeToArchetypes({
+          isEtf,
+          isIndia: india,
+          daysToEarnings,
+          fundamentalScore: scoreOf.fundamental,
+        });
+        const archetypeRows = archetypeTargets.map(archetype => {
+          const { score: archScore } = computeArchetypeScore(archetype, scoreOf, included);
+          return {
+            market,
+            symbol,
+            observation_id: obsRow.id,
+            policy_version_id: null,
+            would_enter: archScore >= (scoreThreshold ?? 60),
+            score: archScore,
+            setup_type: archetype.id,
+          };
+        });
+        if (archetypeRows.length > 0) {
+          await supabase.from("shadow_decisions").insert(archetypeRows);
+        }
+      } catch (e) { console.error("[research-agent] archetype shadow write threw:", e); }
     }
   } catch (e) { console.error("[research-agent] observation write threw:", e); }
 
