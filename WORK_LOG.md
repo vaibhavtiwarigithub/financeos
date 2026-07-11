@@ -5,6 +5,14 @@
 
 ---
 
+## 🚧 Session 2026-07-11 — Codex full-review remediation (Phase A P0)
+
+| Task | Agent/Model | Status | Date | Notes |
+| --- | --- | --- | --- | --- |
+| Phase A P0 remediation (kill-switch book/account, Kite unify, durable ACK, PositionMonitor NAV, budget RPC grants) | Claude Opus 4.8 | review | 2026-07-11 | From 07_08_FULL_APP_REVIEW.md. **A1 (kill-switch book/account), A3 (durable broker ACK), A4 (PositionMonitor NAV accounting), A5 (budget-RPC grants + v2 session, applied) DONE. A2 (canonical Kite path) DEFERRED — needs architecture approval.** Gates green: tsc clean · vitest 243/6 skip (+5 Test 9c) · build ok. DB verified: v1/v2 RPC grants = {postgres,service_role} only; paper_portfolio has no open_positions col; live_account_snapshots schema-backed. Evidence: `07_11_CLAUDE_FULL_APP_FIX_LOG.md` + `07_11_P0_ACCEPTANCE_EVIDENCE.md`. No live/autonomous enablement. STOPPED after Phase A per prompt. |
+
+---
+
 ## Status Key
 - `planned` — approved, not started
 - `in_progress` — actively being worked on (DO NOT start if another agent claims this)
@@ -60,6 +68,7 @@
 
 | Task | Agent/Model | Status | Date | Notes |
 | --- | --- | --- | --- | --- |
+| 2026-07-11 current-tree full app adversarial review | Codex / GPT-5 | completed | 2026-07-11 | Reviewed current commit `cbf8617`, live Supabase read-only state, US/India pipelines, scoring/learning, manual/autonomous money paths, providers, UI, security, and reliability. Wrote `07_08_FULL_APP_REVIEW.md` and `CLAUDE_CODE_07_11_FULL_APP_FIX_PROMPT.md`. Found P0 kill/SELL semantics, unscoped Kite account, post-submit durability, broken paper NAV projection, exposed v1 RPC, and evidence-empty learning. 238 tests pass/6 skipped; typecheck fails; localhost returned 500. |
 | Post-remediation deep quant/system re-audit | Codex / GPT-5 | completed | 2026-07-10 | Wrote CODEX_REMEDIATION_REVIEW_RESULT.md, CODEX_POST_UPGRADE_DEEP_REVIEW_RESULT.md, and CLAUDE_CODE_POST_UPGRADE_FIX_PROMPT.md. Found incomplete migration/RPC grants, renewed zero-confidence dead-end, missing L4/live-approved gates, India cap mixing, paper-based live kill switches, unsafe/US-only exits, unofficial RH REST, discovery/formula/evolution gaps, and meme reversal false-positive. 142 tests pass; build timed out unverified. |
 | Full-system adversarial audit | Codex / GPT-5 | completed | 2026-07-10 | Wrote CODEX_FULL_SYSTEM_AUDIT_RESULT.md. Found autonomous gateway bypass, missing on-disk migrations 139/140, broken signal confidence query, India currency/NAV mixing, no live exit lifecycle, learning/calibration defects, API/RLS/vault gaps, and material docs drift. 116/116 tests pass. |
 | Momentum factors + trade-behavior mirror adversarial review | Codex / GPT-5 | completed | 2026-07-10 | Wrote CODEX_MOMENTUM_BEHAVIOR_REVIEW_RESULT.md. Found Feature Registry is log-only, current archetypes are static reweights rather than momentum models, EdgeIC retains survivorship/horizon-selection risk, fade premise is unproven, and trade CSV/enrichment cannot support behavioral claims before parser/episode/outcome repair. Added exact falsification test and revised phased recommendation. |
