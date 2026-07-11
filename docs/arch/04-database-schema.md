@@ -1,5 +1,5 @@
 # Kairos — Database Schema
-> Last updated: 2026-07-11 (migrations 147-151 applied: fundamental_facts PIT ledger, 4 replay-harness tables, universe_snapshot_scores + agent_signals rank cols)
+> Last updated: 2026-07-11 (migrations 147-156 applied: fundamental_facts PIT ledger, 4 replay-harness tables, universe_snapshot_scores + agent_signals rank cols, Daily Per-Holding Risk tables holding_risk_runs/holding_risk_snapshots/account_risk_snapshots + cron)
 > Update this file when: any migration adds, removes, or modifies a table, column, index, trigger, or RLS policy.
 
 Migrations in `supabase/migrations/`. Applied via Supabase MCP `apply_migration` or the Supabase SQL editor. **Always verify with `list_migrations` before shipping schema-coupled code.** A migration file existing in the repo does NOT mean it ran against production.
@@ -16,6 +16,9 @@ These tables must never be hard-deleted by any agent, cron, or cleanup job:
 - `broker_orders` — live trade audit trail
 - `strategy_evaluations` — evaluation history (trigger blocks UPDATE/DELETE)
 - `evidence_records` — immutable evidence ledger
+- `holding_risk_runs` — daily per-holding risk run header (trigger blocks UPDATE/DELETE)
+- `holding_risk_snapshots` — daily per-holding risk snapshot (trigger blocks UPDATE/DELETE)
+- `account_risk_snapshots` — daily per-account risk snapshot (trigger blocks UPDATE/DELETE)
 
 ---
 
@@ -791,6 +794,21 @@ Cross-sectional rank provenance added to the migration-137 table: `rank_quality`
 
 ---
 
+## 8.12 Daily Per-Holding Risk Analytics (advisory, append-only)
+
+Three additive tables (migration 154) backing `features/holding-risk-daily`. Owner-only SELECT (email RLS `(auth.jwt() ->> 'email') = 'vterminater@gmail.com'`), service_role writes, anon REVOKEd. Advisory-only: the risk score, posture, and LLM strategy note reach **no order path** for any account, including read-only `965848641`. **No cross-currency roll-up** — every row carries its own `market` + `currency`; USD and INR are never summed. Populated daily post-close by `/api/agents/holding-risk` (cron migration 156). Publish/claim via the migration-155 RPCs.
+
+### `holding_risk_runs`
+Claim/lifecycle header — one row per (`market` × `account_id` × `captured_on` × `formula_version` × `input_hash`) computation, identified by `run_key` (UNIQUE `holding_risk_runs_run_key_uniq`). Concurrent/retried crons race on that unique insert; the loser reads back the existing run. `status ∈ {running,complete,failed,partial}`; a failed run stays as evidence. Trigger `holding_risk_runs_lifecycle_guard()` blocks DELETE always, freezes identity/evidence columns, and lets `status` move **forward once** out of `running` only (never terminal→terminal). Partial index `holding_risk_runs_latest_idx (market, account_id, currency, formula_version, captured_on DESC) WHERE status='complete'` serves latest-complete lookups. Key cols: `broker`, `account_label`, `source_captured_at`, `completed_at`, `data_confidence` (0–1), `missing_inputs text[]`, `error`.
+
+### `holding_risk_snapshots`
+Append-only risk-data ledger — one row per run × holding (UNIQUE `(run_id, symbol)`; FK → `holding_risk_runs`). Trigger `holding_risk_append_only()` blocks **both** UPDATE and DELETE; a rerun is a new `run_id`, never a rewrite. Deterministic columns: `holding_risk_score int CHECK 0–100`, `risk_posture ∈ {hold,review,trim,exit_review,insufficient_data}`, `risk_drivers jsonb` (per-component detail), `action_reason`, `add_capacity boolean` (risk room exists — **NEVER an order signal**), `weight_pct ∈ [0,1]`, `beta`, `realized_vol_pct`, `unrealized_pnl_pct`, `data_confidence`, `missing_inputs`, `formula_version`. `strategy_note text` is the **LLM prose** — nullable, best-effort, never blocks, and cannot change the deterministic score/posture/action. Indexes: `holding_risk_snapshots_run_idx (run_id)`, `holding_risk_snapshots_symbol_idx (account_id, symbol, captured_on DESC)`.
+
+### `account_risk_snapshots`
+Append-only per-account roll-up — one row per run (UNIQUE `(run_id)`; FK → `holding_risk_runs`). Same `holding_risk_append_only()` UPDATE/DELETE block. `metrics jsonb` persists the RiskMetrics roll-up for Δ-vs-prior trend; `total_value` (own-currency, never cross-summed), `data_confidence`, `missing_inputs`, `formula_version`. Index `account_risk_snapshots_latest_idx (market, account_id, currency, formula_version, captured_on DESC)`.
+
+---
+
 ## Migration history summary
 
 | Migration range | Key tables / changes |
@@ -820,3 +838,5 @@ Cross-sectional rank provenance added to the migration-137 table: `rank_quality`
 | 149 | Historical replay harness: 4 additive tables `replay_packets`, `replay_packet_items`, `replay_eligibility_runs`, `replay_eligibility_events`; RLS enabled, no policy (service-only). Measure-only, OFF |
 | 150 | PIT fundamentals: `fundamental_facts` append-only vintage ledger; UNIQUE `payload_hash`; RLS `ff_service_all` + `ff_owner_read`, anon REVOKEd. Index note: `captured_at::date` cannot go in an index expr (not IMMUTABLE) — indexed as plain `(symbol,market,filing_date DESC,captured_at DESC)`, COALESCE applied in-query. OFF (capture-on-fetch, fail-open) |
 | 151 | Cross-sectional rank: `universe_snapshot_scores` +`rank_quality`/`comparable_group_key`/`group_n`/`rank_eligible`; `agent_signals` +`rank_pct`/`rank_rejected` (+ `rank_pct ∈ [0,1]` NOT VALID→validated check); status `rank_rejected`. Additive, OFF by default (genome `entry.rank_pct_min` default 0.0) |
+| 154 | **Daily Per-Holding Risk**: 3 additive append-only tables `holding_risk_runs` (lifecycle guard: DELETE blocked, identity frozen, status forward-once out of `running`), `holding_risk_snapshots` + `account_risk_snapshots` (UPDATE+DELETE blocked). Owner-email SELECT RLS + service-role writes, anon REVOKEd. Advisory-only, no order path; no cross-currency roll-up |
+| 155 | Daily Per-Holding Risk RPCs: claim-run (unique `run_key` insert, loser reads back) + publish-run (running→terminal transition with snapshots) — SECURITY DEFINER, service_role only |

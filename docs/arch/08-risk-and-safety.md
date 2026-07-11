@@ -1,6 +1,7 @@
 # Kairos — Risk & Safety
 
-> Last updated: 2026-07-11 (Codex Phase-B re-review remediation: (Codex#2/#3) the Kite identity gate no longer trusts allowlist *text* alone — `verifyKiteTradingIdentity()` (`lib/kite.ts`) now fetches Kite `/user/profile` and requires the CONNECTED token's `user_id` to equal `strategy_config.active_account_india` AND an allowlisted `broker_accounts{broker=kite,market=india,role=trading}` row. It is enforced at the single `placeEquityOrder()` choke point, so the canonical/autonomous/exit paths (via `kiteAdapter.submitOrder`) get the same check as the standalone route — not just the route. Fail-closed: config read err ⇒ 500, unset/absent/view_only ⇒ 403, profile unfetchable / user_id mismatch ⇒ 502/403. (Codex#1) the v2 budget advisory lock DROPS broker from its key (now `local_date:market:env`) so it matches the market-wide cap it guards — two brokers in one market can no longer take different locks and jointly exceed the cap. (Codex#4) migration 153 rejects non-finite (Infinity/NaN) qty/notional/cap and validates side/env/broker/symbol/order_type enums+identifiers, fail-closed. Migration 153 additive over 152 (never edited).)
+> Last updated: 2026-07-11 (Daily Per-Holding Risk Analytics — new advisory-only surface: deterministic per-holding score + posture across ALL live accounts (incl. read-only 965848641), LLM writes explanation only, wired to NO order path. See "Advisory-only surfaces" section.)
+> Prior: 2026-07-11 (Codex Phase-B re-review remediation: (Codex#2/#3) the Kite identity gate no longer trusts allowlist *text* alone — `verifyKiteTradingIdentity()` (`lib/kite.ts`) now fetches Kite `/user/profile` and requires the CONNECTED token's `user_id` to equal `strategy_config.active_account_india` AND an allowlisted `broker_accounts{broker=kite,market=india,role=trading}` row. It is enforced at the single `placeEquityOrder()` choke point, so the canonical/autonomous/exit paths (via `kiteAdapter.submitOrder`) get the same check as the standalone route — not just the route. Fail-closed: config read err ⇒ 500, unset/absent/view_only ⇒ 403, profile unfetchable / user_id mismatch ⇒ 502/403. (Codex#1) the v2 budget advisory lock DROPS broker from its key (now `local_date:market:env`) so it matches the market-wide cap it guards — two brokers in one market can no longer take different locks and jointly exceed the cap. (Codex#4) migration 153 rejects non-finite (Infinity/NaN) qty/notional/cap and validates side/env/broker/symbol/order_type enums+identifiers, fail-closed. Migration 153 additive over 152 (never edited).)
 > Prior: 2026-07-11 (Phase B residuals of 07_08_FULL_APP_REVIEW: A2 the standalone India Kite order route (`app/api/kite/order`) now enforces a fail-closed identity/allowlist gate — it requires `strategy_config.active_account_india` to match a `broker_accounts{broker=kite,market=india,role=trading}` row before reserving budget; unset/absent/view_only ⇒ 403 (no silent fallback), so India live is blocked until an allowlisted Kite trading row is inserted. Canonical-path *unification* still deferred. A4 read-only NAV reconciliation report `GET /api/paper/nav-reconcile` (owner-gated, zero writes) re-derives `nav == cash + Σ qty·price` per pool. A5 v2 daily-BUY budget window is market-local (America/New_York / Asia/Kolkata), not UTC; advisory lock keyed by local_date:market:broker:env. Dead edge-fn kill-switch copy deleted.)
 > Prior: 2026-07-11 (Phase A P0 remediation of 07_08_FULL_APP_REVIEW: A1 kill switches take explicit `{book,accountId}` context — mode no longer inferred from live_auto_enabled; live baseline = account's own snapshot peak not START_NAV; new `sellAllowed` separates risk-increase from risk-reduction so a trip blocks BUY but not a verified SELL; `no_baseline`/`stale_snapshot` fail-close BUY only. A3 durable broker ACK (bounded DB retry → 202 needs_reconcile, never {ok:true}). A4 PositionMonitor NAV write errors now fatal. A5 budget-RPC v1/v2 EXECUTE revoked from public/anon/authenticated.)
 > Prior: 2026-07-10 (Phase 1 P0: L4 enforcement, conviction normalization, India currency, duplicate SELL, cancel-on-kill BUY-only; Codex P0/P1: breakdown veto, calibration OOS gate, promotion governance.)
@@ -378,3 +379,39 @@ Triggered by `POST /api/agents/autonomous-live/cron` at 14:00 UTC weekdays (afte
 - `broker_error` → order not submitted, proposal `manual_review_required`
 - `budget_error` → RPC threw (cap exceeded), no broker_orders row, proposal `manual_review_required`
 - `gate_blocked` / `sizing_failed` → no reservation, no submit
+
+---
+
+## Advisory-only surfaces (read the book, never move money)
+
+Some analytics read the live account book but are structurally severed from the order path. They must
+never be treated as an order signal, and they never call the Execution Gateway.
+
+### Daily Per-Holding Risk Analytics
+
+`features/holding-risk-daily` — daily `/api/agents/holding-risk?market=us|india` (pg_cron migration 156,
+US 21:30 UTC / India 11:00 UTC). Scores **every holding in every live account** — Robinhood Trading
+`605420660`, Robinhood **read-only `965848641`**, and Kite India — with a deterministic 0–100
+risk-control pressure index and a risk posture. Safety properties:
+
+- **Hybrid, deterministic-first.** `lib/risk/holding-risk.ts` computes the score **and** the posture
+  (`hold` / `review` / `trim` / `exit_review` / `insufficient_data`) with strict precedence: a verified
+  protective-stop or thesis-break → `exit_review`; **unrealized drawdown ALONE never** triggers
+  `exit_review` (loss-chasing guard); a hard concentration/cluster breach → `trim`; data confidence < 0.5
+  → `review`. An LLM writes **only** the human-readable `strategy_note` — it **cannot change the score,
+  posture, or action**. This mirrors the LLM boundary elsewhere: models may explain, never control a
+  numeric limit, a posture, or an order.
+- **Wired to NO order path — for ALL accounts.** The `strategy_note`, posture, and `add_capacity` flag
+  are advisory. `add_capacity` means "risk limits have room," **not** a buy signal. Nothing here reaches
+  `executeApprovedOrder`, the gateway, or a broker. The read-only `965848641` account is scored
+  identically and, like every other account, the strategy line reaches no order path. The UI labels the
+  note "advisory" and, for read-only accounts, "advisory only · no order path."
+- **Fails closed.** A missing/stale broker snapshot publishes a `failed`/`insufficient-data` run — never
+  yesterday-as-today. Structural-gate failures (missing qty/price/market-value, non-finite inputs, stale
+  quote, non-USD/INR currency) yield `insufficient_data` with a null score, not a fabricated one.
+- **No cross-currency roll-up.** Each run/snapshot carries its own `market` + `currency`; USD and INR
+  are never summed. Δ-vs-yesterday only compares runs of the **same** `formula_version`.
+- **Append-only evidence.** `holding_risk_runs` (lifecycle-guarded: DELETE blocked, identity frozen,
+  status forward-once out of `running`) + `holding_risk_snapshots` / `account_risk_snapshots`
+  (UPDATE+DELETE blocked). Owner-email SELECT RLS; service-role writes; anon REVOKEd. See
+  `docs/arch/04-database-schema.md#812-daily-per-holding-risk-analytics-advisory-append-only`.

@@ -1,5 +1,5 @@
 # Kairos — Crons & Scheduling
-> Last updated: 2026-07-10
+> Last updated: 2026-07-11 (added pg_cron Daily Per-Holding Risk jobs — migration 156)
 > Update this file when: a new cron is added or removed, a schedule changes, or a new endpoint is wired to a cron.
 
 **Adding a cron:**
@@ -49,6 +49,23 @@ All triggered by `scripts/run-agents.ps1 -Agent <name>`. PC must be on for these
 
 ---
 
+## Postgres pg_cron (in-database, fire against deployed URL)
+
+Scheduled inside Supabase via `cron.schedule`, calling the deployed app through the
+`kairos_call_agent(endpoint, body, method, timeout_ms)` helper. Independent of local machine state.
+
+| Job | Schedule (UTC) | Calls | What it does |
+|---|---|---|---|
+| `kairos-holding-risk-us` | Weekdays 21:30 UTC (17:30 ET) | `POST /api/agents/holding-risk?market=us` | Daily Per-Holding Risk: scores every US live-account holding (deterministic score + posture, LLM prose note only). Fires after the 16:00 ET close **and** after `nav-snapshot` refreshes the account book at 21:00 UTC. 290s timeout. **Advisory-only — touches no order path.** |
+| `kairos-holding-risk-india` | Weekdays 11:00 UTC (16:30 IST) | `POST /api/agents/holding-risk?market=india` | Same, India (Kite): fires after the 15:30 IST close. 290s timeout. Advisory-only. |
+
+The route fails closed (publishes a failed/insufficient-data run, never yesterday-as-today) when a broker
+snapshot is missing/stale, so cron timing is a best-effort ordering, not a correctness dependency. **EDT/EST
+caveat:** the US job is set for EDT (summer); shift it +1h at the November EST changeover. Both jobs are
+re-scheduled idempotently (unschedule-first) by migration 156.
+
+---
+
 ## Cron authentication
 
 All cron-triggered routes verify the `x-cron-secret` request header using a timing-safe comparison (`verifyCronSecret()` in `lib/auth/cron.ts`). The secret is `CRON_SECRET` in env and Vercel environment variables.
@@ -77,4 +94,6 @@ Sun 8 PM ET — theme-scout
 2:00 PM UTC  — autonomous-live (cloud, Vercel, weekdays; after research+signals at 1 PM UTC)
 Sun 2 AM UTC — p1-gate (cloud, Vercel)
 1st of month 3 AM UTC — db-cleanup (cloud, Vercel)
+11:00 AM UTC — holding-risk India (pg_cron, weekdays; after 15:30 IST close)
+9:30 PM UTC  — holding-risk US (pg_cron, weekdays; after 16:00 ET close + nav-snapshot)
 ```
