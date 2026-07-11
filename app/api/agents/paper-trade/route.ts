@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
     // Kill-switches are evaluated PER MARKET (each on its own currency's NAV/
     // drawdown/accuracy). A tripped market is skipped; the others still fill.
     const ksByMarket: Record<string, { safe: boolean; reason?: string; tripped?: string }> = {};
-    for (const m of activeMarkets) ksByMarket[m] = await checkKillSwitches(supabase, m);
+    for (const m of activeMarkets) ksByMarket[m] = await checkKillSwitches(supabase, { market: m, book: "paper" });
     activeMarkets = activeMarkets.filter(m => ksByMarket[m].safe);
     if (activeMarkets.length === 0) {
       const first = Object.values(ksByMarket)[0];

@@ -89,8 +89,8 @@ export async function POST(req: NextRequest) {
 
 async function buildProposals(supabase: any, isCron: boolean) {
   try {
-    // Kill-switch check
-    const ks = await checkKillSwitches(supabase);
+    // Kill-switch check (paper trader — builds paper proposals)
+    const ks = await checkKillSwitches(supabase, { market: "us", book: "paper" });
     if (!ks.safe) {
       return NextResponse.json({ skipped: true, reason: ks.reason });
     }
@@ -388,8 +388,8 @@ async function handleApproval(supabase: any, proposalId: number) {
       return NextResponse.json({ error: "Safety violation: account number mismatch. Order blocked." }, { status: 403 });
     }
 
-    // Kill-switch re-check at submission time
-    const ks = await checkKillSwitches(supabase);
+    // Kill-switch re-check at submission time (paper)
+    const ks = await checkKillSwitches(supabase, { market: "us", book: "paper" });
     if (!ks.safe) {
       await supabase.from("trade_proposals").update({
         status: "failed",

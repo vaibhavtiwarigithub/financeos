@@ -114,8 +114,12 @@ export async function POST(req: NextRequest) {
   // new orders). Bounded protective control — only cancels, never places.
   const canceled: string[] = [];
   for (const mkt of ["us", "india"] as const) {
-    const ks = await checkKillSwitches(supabase, mkt);
-    if (ks.safe) continue;
+    const ks = await checkKillSwitches(supabase, { market: mkt, book: "live" });
+    // Only a GENUINE risk trip (daily_loss / accuracy / drawdown) cancels resting
+    // live BUYs. A data-freshness fail-close (stale_snapshot / no_baseline) blocks
+    // NEW orders elsewhere but must NOT cancel already-resting live orders — a
+    // late snapshot sync is not evidence a limit was breached.
+    if (ks.safe || ks.tripped === "stale_snapshot" || ks.tripped === "no_baseline") continue;
     // Cancel BUY orders only. Protective SELLs (exit-monitor stop/target orders)
     // must NOT be canceled when a kill switch trips — killing them increases risk
     // by leaving open long positions unprotected.

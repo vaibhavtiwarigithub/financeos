@@ -1,19 +1,52 @@
 // §4 kill-switch checks from Agent Knowledge Doctrine v1
 // Call checkKillSwitches() before any paper or live trade execution.
-// Returns { safe: true } or { safe: false, reason, tripped }
-// When live_auto_enabled=true, reads live_account_snapshots instead of paper tables.
-// Fail-closed: if live mode active but no snapshots exist, blocks execution.
+//
+// The book/market are EXPLICIT (P0-1): the caller declares whether this is a
+// paper or a live check and, for live, the exact resolved trading account.
+// Mode is NOT inferred from live_auto_enabled any more — an L3 manual-live order
+// (live_auto_enabled=false) must still measure real live NAV, not paper NAV.
+//
+//   checkKillSwitches(svc, { market, book: "paper" | "live", accountId? })
+//
+// Live path: reads live_account_snapshots for the given account. Fail-closed for
+// BUY (risk increase) when the account is missing, has no snapshots, or the newest
+// snapshot is stale. A tripped drawdown/daily-loss/accuracy switch blocks BUY but
+// NOT a risk-reducing SELL — the caller still verifies held quantity separately.
+// Live NAV is measured against that account's own history (its snapshot peak), not
+// a static START_NAV, so a small real account is not measured against $10k.
 
 import { DEFAULT_KILL_SWITCH_DIALS } from "@/lib/risk-profiles";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 
-export interface KillSwitchResult {
-  safe: boolean;
-  reason?: string;
-  tripped?: "daily_loss" | "accuracy" | "drawdown";
+export type TradingBook = "paper" | "live";
+
+export interface KillSwitchContext {
+  market: string;
+  book: TradingBook;
+  /** Resolved live trading account. Optional — falls back to
+   *  strategy_config.active_account_{market} when omitted (live book only). */
+  accountId?: string;
 }
 
+export interface KillSwitchResult {
+  /** Risk-INCREASE (BUY / new exposure) allowed. */
+  safe: boolean;
+  /** Risk-REDUCTION (a verified held SELL) allowed. Only a hard/security lock or
+   *  paper trip clears this; a live drawdown/loss/accuracy trip leaves it true. */
+  sellAllowed: boolean;
+  reason?: string;
+  tripped?: "daily_loss" | "accuracy" | "drawdown" | "stale_snapshot" | "no_baseline";
+}
+
+// Paper starting NAV only. NOT used for the live path (see getLiveNavSeries).
 const START_NAV: Record<string, number> = { us: 10000, india: 1000000 };
+
+// A live NAV snapshot older than this fails closed for BUY. Documented, env-tunable.
+// Default 6h: recent enough that intraday NAV is trustworthy for a backstop check,
+// loose enough not to block on a sync cadence measured in hours. A stale snapshot
+// only blocks BUY — a risk-reducing SELL is never blocked on freshness.
+const LIVE_SNAPSHOT_MAX_AGE_MS =
+  Number(process.env.KS_LIVE_SNAPSHOT_MAX_AGE_MS) || 6 * 60 * 60 * 1000;
 
 // Per-market scope helper for paper tables (pre-057 fallback: no market column → unscoped).
 async function scoped(q: any, market: string): Promise<any> {
@@ -24,12 +57,19 @@ async function scoped(q: any, market: string): Promise<any> {
 
 // ── Live data helpers ────────────────────────────────────────────────────────
 
-type LiveNavSeries = { current: number; yesterday: number | null; peak90: number };
+type LiveNavSeries = {
+  current: number;
+  yesterday: number | null;
+  /** Peak from this account's OWN 90-day snapshot history. No START_NAV floor —
+   *  a real $36 account must not be measured against a static $10k peak. */
+  peak90: number;
+  /** Timestamp of the newest snapshot, for the freshness gate. */
+  newestAt: number;
+};
 
 async function getLiveNavSeries(
   supabase: any,
   accountId: string,
-  market: string,
 ): Promise<LiveNavSeries | null> {
   const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
   const { data: snaps } = await supabase
@@ -46,16 +86,20 @@ async function getLiveNavSeries(
   const current = nav(snaps[0]);
   if (!Number.isFinite(current) || current <= 0) return null;
 
+  const newestAt = new Date((snaps[0] as any).captured_at as string).getTime();
+  if (!Number.isFinite(newestAt)) return null;
+
   const today = new Date().toISOString().slice(0, 10);
   const yesterdaySnap = (snaps as any[]).find(
     (s: any) => (s.captured_at as string) < today + "T00:00:00",
   );
   const yesterday = yesterdaySnap ? nav(yesterdaySnap) : null;
 
-  const startNav = START_NAV[market] ?? current;
-  const peak90 = Math.max(...(snaps as any[]).map(nav), startNav);
+  // Peak from actual account navs only — this account's own high-water mark.
+  const navs = (snaps as any[]).map(nav).filter((n) => Number.isFinite(n) && n > 0);
+  const peak90 = navs.length > 0 ? Math.max(...navs) : current;
 
-  return { current, yesterday, peak90 };
+  return { current, yesterday, peak90, newestAt };
 }
 
 // Estimate live trade accuracy from broker_orders filled pairs.
@@ -114,14 +158,21 @@ async function getLiveAccuracy(
 
 export async function checkKillSwitches(
   supabase: any,
-  market: string = "us",
+  ctx: KillSwitchContext | string = "us",
 ): Promise<KillSwitchResult> {
+  // Back-compat shim: a bare market string is treated as a PAPER check. Every
+  // live caller MUST pass the explicit object form with book:"live".
+  const { market, book, accountId }: KillSwitchContext =
+    typeof ctx === "string"
+      ? { market: ctx, book: "paper" }
+      : ctx;
+  const isLive = book === "live";
   const startNav = START_NAV[market] ?? 10000;
 
   const { data: cfg } = await supabase
     .from("strategy_config")
     .select(
-      "ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, live_auto_enabled, active_account_us, active_account_india",
+      "ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, active_account_us, active_account_india",
     )
     .maybeSingle();
 
@@ -141,11 +192,14 @@ export async function checkKillSwitches(
       ? rawAccuracy
       : DEFAULT_KILL_SWITCH_DIALS.ks_accuracy_pct;
 
-  const isLive = Boolean(cfg?.live_auto_enabled);
-  const activeAccount: string | null =
-    market === "india"
-      ? (cfg?.active_account_india ?? null)
-      : (cfg?.active_account_us ?? null);
+  // Live account: explicit accountId wins; else fall back to the market's
+  // configured active account (keeps sync/autonomous callers simple).
+  const activeAccount: string | null = isLive
+    ? (accountId ??
+       (market === "india"
+         ? (cfg?.active_account_india ?? null)
+         : (cfg?.active_account_us ?? null)))
+    : null;
 
   // ── Collect metrics (live vs paper path) ──────────────────────────────────
   let nav: number;
@@ -153,17 +207,36 @@ export async function checkKillSwitches(
   let peak: number | null = null;
   let accuracyData: { wins: number; total: number } | null = null;
 
-  if (isLive && activeAccount) {
+  if (isLive) {
     // Live path: read from live_account_snapshots + broker_orders fills.
-    // Fail-closed: if no snapshots available, do not allow execution — the
-    // operator must run /api/broker/orders/sync at least once to seed data.
-    const liveSeries = await getLiveNavSeries(supabase, activeAccount, market);
+    // Fail-closed for BUY (risk increase) on any of: no account, no snapshot,
+    // stale snapshot. A SELL (risk reduction) is NEVER blocked by these — the
+    // caller still verifies exact held quantity separately.
+    if (!activeAccount) {
+      return {
+        safe: false,
+        sellAllowed: true,
+        tripped: "no_baseline",
+        reason: `No live account configured for ${market.toUpperCase()} — BUY fail-closed. Set active_account_${market} before live trading. (SELL still permitted with held-qty verification.)`,
+      };
+    }
+    const liveSeries = await getLiveNavSeries(supabase, activeAccount);
     if (!liveSeries) {
       return {
         safe: false,
-        tripped: "drawdown",
+        sellAllowed: true,
+        tripped: "no_baseline",
         reason:
-          "No live account snapshots found — kill switch fail-closed. Run broker sync (/api/broker/orders/sync) to seed live NAV data before enabling autonomous live trading.",
+          "No live account snapshots found — BUY fail-closed. Run broker sync (/api/broker/orders/sync) to seed live NAV. (SELL still permitted with held-qty verification.)",
+      };
+    }
+    const ageMs = Date.now() - liveSeries.newestAt;
+    if (ageMs > LIVE_SNAPSHOT_MAX_AGE_MS) {
+      return {
+        safe: false,
+        sellAllowed: true,
+        tripped: "stale_snapshot",
+        reason: `Live NAV snapshot is ${(ageMs / 3.6e6).toFixed(1)}h old (max ${(LIVE_SNAPSHOT_MAX_AGE_MS / 3.6e6).toFixed(1)}h) — BUY fail-closed until broker sync refreshes it. (SELL still permitted with held-qty verification.)`,
       };
     }
     nav = liveSeries.current;
@@ -219,6 +292,10 @@ export async function checkKillSwitches(
     }
   }
 
+  // A live risk-switch trip halts NEW exposure (BUY) but must not block a
+  // risk-reducing SELL. A paper trip blocks both (paper sim has no such carve-out).
+  const sellAllowedOnTrip = isLive;
+
   // ── Kill switch 1: single-day loss beyond threshold ───────────────────────
   if (yesterday !== null && Number.isFinite(yesterday) && yesterday > 0) {
     const dailyLossPct = ((nav - yesterday) / yesterday) * 100;
@@ -230,6 +307,7 @@ export async function checkKillSwitches(
       );
       return {
         safe: false,
+        sellAllowed: sellAllowedOnTrip,
         tripped: "daily_loss",
         reason: `Daily loss ${dailyLossPct.toFixed(1)}% > ${dailyLossLimit}%`,
       };
@@ -247,6 +325,7 @@ export async function checkKillSwitches(
       );
       return {
         safe: false,
+        sellAllowed: sellAllowedOnTrip,
         tripped: "accuracy",
         reason: `30d accuracy ${accuracy.toFixed(0)}% < ${accuracyLimit}% (${accuracyData.total} trades)`,
       };
@@ -264,6 +343,7 @@ export async function checkKillSwitches(
       );
       return {
         safe: false,
+        sellAllowed: sellAllowedOnTrip,
         tripped: "drawdown",
         reason: `Drawdown ${drawdownPct.toFixed(1)}% > ${drawdownLimit}% from peak`,
       };
@@ -273,7 +353,7 @@ export async function checkKillSwitches(
   // All clear — auto-resolve stale health alert (does NOT re-enable trading;
   // a human re-enables in Settings after reviewing the trip).
   await resolveIssue(`killswitch:${market}`);
-  return { safe: true };
+  return { safe: true, sellAllowed: true };
 }
 
 async function disableTrading(

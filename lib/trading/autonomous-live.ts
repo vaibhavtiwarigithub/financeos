@@ -122,7 +122,7 @@ export async function runAutonomousLive(
   const killedMarkets: Record<string, string> = {};
   for (const m of [...autonomousMarkets]) {
     let ks: { safe: boolean; reason?: string };
-    try { ks = await checkKillSwitches(svc, m); }
+    try { ks = await checkKillSwitches(svc, { market: m, book: "live" }); }
     catch (e: any) { ks = { safe: false, reason: `kill-switch check failed: ${e?.message ?? "error"}` }; }
     if (!ks.safe) {
       killedMarkets[m] = ks.reason ?? "kill switch tripped";

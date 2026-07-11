@@ -225,12 +225,123 @@ describe("Test 9a — real checkKillSwitches auto-disables on a breach (blocks n
     const svc = makeClient(resolver) as any;
     const real = await vi.importActual<typeof import("@/lib/kill-switches")>("@/lib/kill-switches");
 
-    const res = await real.checkKillSwitches(svc, "us");
+    const res = await real.checkKillSwitches(svc, { market: "us", book: "paper" });
 
     expect(res.safe).toBe(false);
     expect(res.tripped).toBe("daily_loss");
     // Auto-disable side effect: strategy_config.trading_enabled flipped to false.
     expect(writes.some((w) => w.table === "strategy_config" && w.payload.trading_enabled === false)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 9c — real checkKillSwitches LIVE path (A1/P0-1): book+account context.
+// Proves: (1) a live check reads live_account_snapshots, NOT paper tables;
+// (2) a small real account is measured against its OWN snapshot peak, not $10k;
+// (3) missing account / stale snapshot fail closed for BUY but leave SELL allowed;
+// (4) a live risk trip blocks BUY but still permits a verified SELL.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Test 9c — real checkKillSwitches live path: book/account semantics (A1)", () => {
+  const HOUR = 60 * 60 * 1000;
+  const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+
+  // snaps: newest-first (the code orders captured_at desc — the resolver ignores
+  // filters, so we supply the already-sorted series the query would return).
+  function liveResolver(opts: {
+    snaps?: any[] | null;
+    activeAccount?: string | null;
+    tablesSeen?: Set<string>;
+    writes?: any[];
+  }): Resolver {
+    return (q) => {
+      opts.tablesSeen?.add(q.table);
+      if (q.op === "update") {
+        opts.writes?.push({ table: q.table, payload: q.payload });
+        return { data: null, error: null };
+      }
+      if (q.table === "strategy_config") {
+        return {
+          data: {
+            ks_daily_loss_pct: -20, ks_drawdown_pct: 25, ks_accuracy_pct: 40,
+            active_account_us: opts.activeAccount ?? null, active_account_india: null,
+          },
+          error: null,
+        };
+      }
+      if (q.table === "live_account_snapshots") return { data: opts.snaps ?? [], error: null };
+      if (q.table === "broker_orders") return { data: [], error: null }; // <5 sells → accuracy null
+      return { data: null, error: null };
+    };
+  }
+
+  it("small real account ($36) is measured against its OWN peak ($40), NOT the $10k paper floor → safe", async () => {
+    const tablesSeen = new Set<string>();
+    const snaps = [
+      { equity: 36, portfolio_value: 36, captured_at: iso(1 * HOUR) }, // newest
+      { equity: 40, portfolio_value: 40, captured_at: iso(3 * HOUR) }, // own peak
+    ];
+    const svc = makeClient(liveResolver({ snaps, activeAccount: "605420660", tablesSeen })) as any;
+    const real = await vi.importActual<typeof import("@/lib/kill-switches")>("@/lib/kill-switches");
+
+    const res = await real.checkKillSwitches(svc, { market: "us", book: "live", accountId: "605420660" });
+
+    // drawdown = (40-36)/40 = 10% < 25% → safe. A $10k floor would give 99.6% → trip.
+    expect(res.safe).toBe(true);
+    expect(res.sellAllowed).toBe(true);
+    // Live path read snapshots and never touched the paper tables.
+    expect(tablesSeen.has("live_account_snapshots")).toBe(true);
+    expect(tablesSeen.has("paper_portfolio")).toBe(false);
+    expect(tablesSeen.has("paper_performance")).toBe(false);
+  });
+
+  it("live drawdown trip blocks BUY (safe=false) but still permits a verified SELL (sellAllowed=true)", async () => {
+    const snaps = [
+      { equity: 50, portfolio_value: 50, captured_at: iso(1 * HOUR) }, // current
+      { equity: 100, portfolio_value: 100, captured_at: iso(3 * HOUR) }, // peak
+    ];
+    const svc = makeClient(liveResolver({ snaps, activeAccount: "605420660" })) as any;
+    const real = await vi.importActual<typeof import("@/lib/kill-switches")>("@/lib/kill-switches");
+
+    const res = await real.checkKillSwitches(svc, { market: "us", book: "live", accountId: "605420660" });
+
+    // drawdown = (100-50)/100 = 50% > 25% → trip.
+    expect(res.safe).toBe(false);
+    expect(res.tripped).toBe("drawdown");
+    expect(res.sellAllowed).toBe(true); // risk-reducing SELL never blocked by a live trip
+  });
+
+  it("no live account configured → BUY fail-closed (no_baseline), SELL still allowed", async () => {
+    const svc = makeClient(liveResolver({ snaps: [], activeAccount: null })) as any;
+    const real = await vi.importActual<typeof import("@/lib/kill-switches")>("@/lib/kill-switches");
+
+    const res = await real.checkKillSwitches(svc, { market: "us", book: "live" }); // no accountId, none configured
+
+    expect(res.safe).toBe(false);
+    expect(res.tripped).toBe("no_baseline");
+    expect(res.sellAllowed).toBe(true);
+  });
+
+  it("stale live snapshot (older than max age) → BUY fail-closed (stale_snapshot), SELL still allowed", async () => {
+    const snaps = [{ equity: 500, portfolio_value: 500, captured_at: iso(10 * HOUR) }]; // > 6h default
+    const svc = makeClient(liveResolver({ snaps, activeAccount: "605420660" })) as any;
+    const real = await vi.importActual<typeof import("@/lib/kill-switches")>("@/lib/kill-switches");
+
+    const res = await real.checkKillSwitches(svc, { market: "us", book: "live", accountId: "605420660" });
+
+    expect(res.safe).toBe(false);
+    expect(res.tripped).toBe("stale_snapshot");
+    expect(res.sellAllowed).toBe(true);
+  });
+
+  it("live account with no snapshots at all → BUY fail-closed (no_baseline), SELL still allowed", async () => {
+    const svc = makeClient(liveResolver({ snaps: [], activeAccount: "605420660" })) as any;
+    const real = await vi.importActual<typeof import("@/lib/kill-switches")>("@/lib/kill-switches");
+
+    const res = await real.checkKillSwitches(svc, { market: "us", book: "live", accountId: "605420660" });
+
+    expect(res.safe).toBe(false);
+    expect(res.tripped).toBe("no_baseline");
+    expect(res.sellAllowed).toBe(true);
   });
 });
 
@@ -259,8 +370,14 @@ async function runKillSweep() {
   };
   h.getBrokerMock.mockReturnValue(broker);
   h.createServiceMock.mockReturnValue(makeClient(storeResolver(store)));
-  // Kill switch tripped for US, clear for India.
-  h.ksMock.mockImplementation((_svc: any, mkt: string) => (mkt === "us" ? { safe: false, reason: "US daily loss breach" } : { safe: true }));
+  // Kill switch tripped for US, clear for India. The sync route now passes the
+  // explicit { market, book } context (P0-1), so read market from the object form.
+  h.ksMock.mockImplementation((_svc: any, ctx: any) => {
+    const mkt = typeof ctx === "string" ? ctx : ctx?.market;
+    return mkt === "us"
+      ? { safe: false, sellAllowed: true, tripped: "daily_loss", reason: "US daily loss breach" }
+      : { safe: true, sellAllowed: true };
+  });
 
   const res = await POST({} as any);
   const body = await res.json();

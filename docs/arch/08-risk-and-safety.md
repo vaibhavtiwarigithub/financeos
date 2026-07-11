@@ -1,6 +1,7 @@
 # Kairos — Risk & Safety
 
-> Last updated: 2026-07-10 (Phase 1 P0: L4 enforcement, conviction normalization, India currency, duplicate SELL, cancel-on-kill BUY-only; F6: kill switches now read live_account_snapshots when live_auto_enabled=true. Codex P0/P1 remediation: technical breakdown veto, calibration OOS gate, promotion governance — force_unvalidated removed + demotion market-scoped.)
+> Last updated: 2026-07-11 (Phase A P0 remediation of 07_08_FULL_APP_REVIEW: A1 kill switches take explicit `{book,accountId}` context — mode no longer inferred from live_auto_enabled; live baseline = account's own snapshot peak not START_NAV; new `sellAllowed` separates risk-increase from risk-reduction so a trip blocks BUY but not a verified SELL; `no_baseline`/`stale_snapshot` fail-close BUY only. A3 durable broker ACK (bounded DB retry → 202 needs_reconcile, never {ok:true}). A4 PositionMonitor NAV write errors now fatal. A5 budget-RPC v1/v2 EXECUTE revoked from public/anon/authenticated.)
+> Prior: 2026-07-10 (Phase 1 P0: L4 enforcement, conviction normalization, India currency, duplicate SELL, cancel-on-kill BUY-only; Codex P0/P1: breakdown veto, calibration OOS gate, promotion governance.)
 > Update when any authorization, scoring eligibility, limit, account, order, reconciliation, exit, or kill-switch behavior changes.
 
 ---
@@ -77,9 +78,15 @@ US order account is exactly Robinhood agentic account `605420660`. Account `9658
 
 `lib/kill-switches.ts` checks per market for daily loss, peak drawdown, and rolling accuracy, disables trading, and creates a critical alert. Submit-time checks must rerun immediately before reserve/send.
 
-`checkKillSwitches` now runs in **dual mode**:
-- `live_auto_enabled=false` (paper mode): reads `paper_portfolio` / `paper_performance` / `paper_trades` — unchanged behavior.
-- `live_auto_enabled=true` (live mode): reads `live_account_snapshots` (daily-loss + drawdown) and `broker_orders` filled pairs (accuracy). **Fail-closed**: if no live snapshots exist for the active account, execution is blocked until `/api/broker/orders/sync` has run at least once.
+`checkKillSwitches(svc, { market, book, accountId? })` takes an **explicit book/account context** (A1/P0-1). Mode is NO LONGER inferred from `live_auto_enabled` — an L3 manual-live order (`live_auto_enabled=false`) must still measure real live NAV, so the caller declares the book:
+- `book:"paper"`: reads `paper_portfolio` / `paper_performance` / `paper_trades`. A bare-string market arg (`checkKillSwitches(svc, "us")`) is the back-compat paper form.
+- `book:"live"`: reads `live_account_snapshots` for the resolved account (`accountId`, else `active_account_{market}`) — daily-loss + drawdown — and `broker_orders` filled pairs (accuracy).
+
+**Live baseline is the account's OWN 90-day snapshot peak, never a static `START_NAV`** — a real $36 account is not measured against a $10k paper floor.
+
+**Fail-closed for BUY** (result `{ safe:false, sellAllowed:true }`) on any of: no configured account or no snapshots (`tripped:"no_baseline"`), or newest snapshot older than `KS_LIVE_SNAPSHOT_MAX_AGE_MS` (default 6h, `tripped:"stale_snapshot"`).
+
+**Risk-increase vs risk-reduction are separated.** The result is `{ safe, sellAllowed, reason?, tripped? }`. A live daily-loss / accuracy / drawdown trip sets `safe:false` (blocks BUY) but leaves `sellAllowed:true` — a risk-reducing SELL that has passed fresh exact-account held-quantity verification is not blocked. Callers gate as `ksBlocks = side==="sell" ? !sellAllowed : !safe`. A freshness fail-close likewise blocks BUY only. (A paper trip blocks both — the sim has no exposure to reduce. `security_locked` still blocks everything.)
 
 Atomic SELL idempotency: `trade_proposals_active_sell_uniq` partial unique index on `(symbol, market)` WHERE side='sell' AND status IN ('pending_review','queued_auto') enforces at most one active autonomous SELL per position at the DB level. Concurrent exit-monitor runs hitting the same position get a 23505 conflict, not a duplicate SELL.
 
@@ -318,8 +325,9 @@ Triggered by `POST /api/agents/autonomous-live/cron` at 14:00 UTC weekdays (afte
 - The signal query previously selected a nonexistent `agent_signals.evidence_confidence` column
   and swallowed the error → the path silently processed **zero** signals every run. Fixed (real
   `confidence` column) and query errors are now **fatal** (throw + `agent_runs` error row).
-- **Fresh `checkKillSwitches(svc, market)`** runs per market before evaluation — the real drawdown/
-  daily-loss/accuracy engine, not just cached config booleans. Fail-closed on error.
+- **Fresh `checkKillSwitches(svc, { market, book:"live", accountId })`** runs per market before
+  evaluation — the real drawdown/daily-loss/accuracy engine against live snapshots, not just cached
+  config booleans. Fail-closed on error; a trip blocks BUY but leaves a verified SELL (`sellAllowed`).
 - **Live market-open guard** (`lib/trading/market-calendar.ts`): layered — cheap local session/
   holiday/hours check, then **authoritative Alpha Vantage `MARKET_STATUS`** for BOTH US and India
   (one call, catches **unscheduled** closures, needs no yearly calendar update). Fail-closed on a
