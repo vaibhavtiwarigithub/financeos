@@ -1,5 +1,14 @@
 ﻿# Kairos â€” Claude Operating Rules
 
+## Parallelize splittable work across agents
+
+If a task decomposes into independent sub-tasks touching non-overlapping files,
+run them in parallel via subagents (Agent tool, one message with multiple calls,
+or a Workflow) instead of serially. Use git-worktree isolation when the parallel
+agents mutate files so branches don't collide, then octopus-merge the disjoint
+results. Serial is the exception — only when sub-tasks share files or one's output
+feeds another's input. Default to parallel whenever the work splits cleanly.
+
 ## Agent System Map — keep it current
 
 `public/agent-diagrams/system-map.json` is the single diagram of how every

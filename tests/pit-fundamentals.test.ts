@@ -36,7 +36,21 @@ function makeFakeDb(seed: FactRow[] = [], failMode?: "select" | "insert" | "thro
         async insert(row: Record<string, unknown>) {
           if (failMode === "throw") throw new Error("boom");
           if (failMode === "insert") return { error: "write failed" };
-          rows.push({ ...(row as FactRow), id: `ins-${idc++}` });
+          rows.push({
+            symbol: String(row.symbol ?? ""),
+            market: String(row.market ?? ""),
+            metric_set: String(row.metric_set ?? ""),
+            report_period: (row.report_period ?? null) as string | null,
+            fiscal_period: (row.fiscal_period ?? null) as string | null,
+            filing_date: (row.filing_date ?? null) as string | null,
+            values: (row.values ?? {}) as Overview,
+            source: (row.source ?? null) as string | null,
+            restatement_seq: Number(row.restatement_seq ?? 0),
+            is_latest: Boolean(row.is_latest ?? true),
+            payload_hash: String(row.payload_hash ?? ""),
+            captured_at: String(row.captured_at ?? ""),
+            id: `ins-${idc++}`,
+          });
           return { error: undefined };
         },
         update(patch: Record<string, unknown>) {
