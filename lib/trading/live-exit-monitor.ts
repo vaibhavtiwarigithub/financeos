@@ -129,8 +129,18 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
         price_at_proposal: price, price_source: "live_exit_monitor",
         thesis: `Protective exit — ${reason}`,
       }).select("id").single();
-      if (propErr || !prop) {
-        results.push({ market, symbol, qty, reason, status: "proposal_failed", error: propErr?.message });
+      if (propErr) {
+        // 23505 = unique_violation from trade_proposals_active_sell_uniq partial index.
+        // A concurrent monitor run already inserted an active SELL — treat as duplicate.
+        if (propErr.code === "23505") {
+          results.push({ market, symbol, qty, reason, status: "skipped_duplicate", error: "concurrent insert conflict resolved by DB constraint" });
+          continue;
+        }
+        results.push({ market, symbol, qty, reason, status: "proposal_failed", error: propErr.message });
+        continue;
+      }
+      if (!prop) {
+        results.push({ market, symbol, qty, reason, status: "proposal_failed", error: "insert returned no row" });
         continue;
       }
       const exec = await executeApprovedOrder(svc, { proposalId: (prop as any).id, env: "live" }, { kind: "autonomous_worker", runId });

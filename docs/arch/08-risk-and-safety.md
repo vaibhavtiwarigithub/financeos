@@ -1,6 +1,6 @@
 # Kairos — Risk & Safety
 
-> Last updated: 2026-07-10 (Phase 1 P0 fixes: L4 enforcement, conviction normalization, India currency isolation, duplicate SELL protection, cancel-on-kill BUY-only)
+> Last updated: 2026-07-10 (Phase 1 P0: L4 enforcement, conviction normalization, India currency, duplicate SELL, cancel-on-kill BUY-only; F6: kill switches now read live_account_snapshots when live_auto_enabled=true)
 > Update when any authorization, scoring eligibility, limit, account, order, reconciliation, exit, or kill-switch behavior changes.
 
 ---
@@ -62,7 +62,11 @@ US order account is exactly Robinhood agentic account `605420660`. Account `9658
 
 `lib/kill-switches.ts` checks per market for daily loss, peak drawdown, and rolling accuracy, disables trading, and creates a critical alert. Submit-time checks must rerun immediately before reserve/send.
 
-**Known limitation:** kill-switch inputs currently read `paper_portfolio` / `paper_performance` / `paper_trades`, not live broker account data. The live and paper P&L can diverge. Before enabling L4 autonomous live trading, the kill-switch must be extended to read live broker equity from `live_account_snapshots` for daily-loss and drawdown, and live trade outcomes from `broker_orders` for accuracy. This is tracked in POST_UPGRADE_FIX_LOG.md as a blocking prerequisite.
+`checkKillSwitches` now runs in **dual mode**:
+- `live_auto_enabled=false` (paper mode): reads `paper_portfolio` / `paper_performance` / `paper_trades` — unchanged behavior.
+- `live_auto_enabled=true` (live mode): reads `live_account_snapshots` (daily-loss + drawdown) and `broker_orders` filled pairs (accuracy). **Fail-closed**: if no live snapshots exist for the active account, execution is blocked until `/api/broker/orders/sync` has run at least once.
+
+Atomic SELL idempotency: `trade_proposals_active_sell_uniq` partial unique index on `(symbol, market)` WHERE side='sell' AND status IN ('pending_review','queued_auto') enforces at most one active autonomous SELL per position at the DB level. Concurrent exit-monitor runs hitting the same position get a 23505 conflict, not a duplicate SELL.
 
 For L4, any unresolved critical trading/data/reconciliation alert blocks new entries. Cancel-on-kill cancels only resting BUY orders — protective SELL orders are explicitly excluded (canceling an exit increases open exposure). Risk-reducing held-position exits remain allowed where state can be verified.
 
