@@ -53,16 +53,30 @@ export async function POST(req: NextRequest) {
     // action: "promote_champion", "retire", "reject", or default = create new
     if (action === "promote_champion") {
       const { version_id, force_unvalidated } = fields as { version_id: number; force_unvalidated?: boolean };
+
+      // GOVERNANCE: validation is MANDATORY. The old `force_unvalidated` bypass
+      // is removed. Reject the flag explicitly (never silently ignore it) so a
+      // caller cannot promote an unvalidated challenger to champion.
+      if (force_unvalidated !== undefined) {
+        return NextResponse.json({
+          error: "force_unvalidated is not permitted. Promotion to champion requires a PASSED validation experiment — run POST /api/validation/run first.",
+        }, { status: 400 });
+      }
+
       // Phase 4: champions are PER MARKET. Demote only the SAME market's champion —
       // an unscoped demote would knock out the US champion when promoting an India
       // challenger (and vice-versa). Read the challenger's market first.
       const { data: challenger } = await supabase
         .from("strategy_versions").select("market, validation_experiment_id").eq("id", version_id).maybeSingle();
+      // Fail-closed: cannot determine the scope of a non-existent version.
+      if (!challenger) {
+        return NextResponse.json({ error: "Promotion blocked: strategy version not found." }, { status: 404 });
+      }
       const mkt = (challenger as any)?.market ?? "us";
 
       // Phase 2: EVIDENCE GATE (fail-closed). A challenger may only be promoted
-      // if it has a PASSED validation_experiments row. Resilient: if the table
-      // or column doesn't exist yet (pre-061), this check is skipped entirely —
+      // if it has a PASSED validation_experiments row. Resilient: if the
+      // column doesn't exist yet (pre-061), this check is skipped entirely —
       // legacy human-approval-only promotion behavior is preserved unchanged.
       const vId = (challenger as any)?.validation_experiment_id;
       let validated = false;
@@ -74,24 +88,24 @@ export async function POST(req: NextRequest) {
           validated = (vx as any)?.passed === true;
         }
       }
-      if (gateApplies && !validated && force_unvalidated !== true) {
+      if (gateApplies && !validated) {
         return NextResponse.json({
-          error: "Promotion blocked: challenger has no PASSED validation experiment. Run POST /api/validation/run first (or pass force_unvalidated:true — this is journaled as a governance override).",
+          error: "Promotion blocked: challenger has no PASSED validation experiment. Run POST /api/validation/run first.",
         }, { status: 412 });
       }
-      if (gateApplies && !validated && force_unvalidated === true) {
-        await supabase.from("decision_journal").insert({
-          entry_type: "governance_override",
-          summary: `Champion promoted WITHOUT a passed validation experiment (force_unvalidated) — strategy_versions.id ${version_id}, market ${mkt}`,
-          resolved: true,
-          market: mkt,
-        });
-      }
 
-      let demote = supabase.from("strategy_versions").update({ is_champion: false }).eq("is_champion", true);
-      // Scope to the challenger's market when the column exists; fall back unscoped pre-057.
-      const demoteRes = await demote.eq("market", mkt);
-      if (demoteRes.error) await supabase.from("strategy_versions").update({ is_champion: false }).eq("is_champion", true);
+      // Demote the OLD champion — ALWAYS SCOPED to the challenger's market.
+      // Fail-closed: if the scoped demotion errors we must NOT fall back to an
+      // unscoped demote-all (that would knock out champions in every other
+      // market). Abort the promotion instead.
+      const demoteRes = await supabase
+        .from("strategy_versions").update({ is_champion: false })
+        .eq("is_champion", true).eq("market", mkt);
+      if (demoteRes.error) {
+        return NextResponse.json({
+          error: `Promotion blocked: could not demote the existing ${mkt} champion (${demoteRes.error.message}). Aborting to avoid an unscoped demotion.`,
+        }, { status: 500 });
+      }
       // Promote new champion
       const { error } = await supabase.from("strategy_versions").update({
         is_champion: true,

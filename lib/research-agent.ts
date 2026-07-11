@@ -318,7 +318,15 @@ async function getFDKey(supabase: any): Promise<string> {
 async function screenBucket(
   filters: Array<{ field: string; operator: string; value: number }>,
   fdKey: string,
-  limit = 10
+  limit = 10,
+  // Rank the raw screen results by a real signal instead of accepting the
+  // provider's default (unspecified) order before we truncate. `field` must be
+  // one already returned by the fundamentals screener (e.g. revenue_growth,
+  // pe_ratio) — no extra API call. LIMITATION: this is a fundamentals-only
+  // screener, so momentum here is a fundamental momentum proxy (revenue
+  // acceleration), not price/RSI momentum; the per-symbol scorer downstream
+  // still applies true price-based momentum via buildStockPrompt.
+  sortBy?: { field: string; desc: boolean }
 ): Promise<string[]> {
   try {
     const res = await fetch("https://api.financialdatasets.ai/stocks/screener/", {
@@ -330,7 +338,19 @@ async function screenBucket(
     if (!res.ok) return [];
     const data = await res.json();
     const results: any[] = data?.results ?? data?.stocks ?? [];
-    return results.map((r: any) => String(r.ticker ?? r.symbol ?? "").toUpperCase()).filter(Boolean);
+    const ranked = sortBy
+      ? [...results].sort((a, b) => {
+          const av = Number(a?.[sortBy.field]);
+          const bv = Number(b?.[sortBy.field]);
+          const aOk = Number.isFinite(av);
+          const bOk = Number.isFinite(bv);
+          if (!aOk && !bOk) return 0;
+          if (!aOk) return 1; // rows missing the signal sink to the bottom
+          if (!bOk) return -1;
+          return sortBy.desc ? bv - av : av - bv;
+        })
+      : results;
+    return ranked.map((r: any) => String(r.ticker ?? r.symbol ?? "").toUpperCase()).filter(Boolean);
   } catch {
     return [];
   }
@@ -348,20 +368,27 @@ export async function runScreener(supabase: any): Promise<{ symbol: string; buck
   if (!fdKey) return [];
 
   const [momentum, value] = await Promise.all([
+    // Momentum bucket ranked by revenue_growth desc — an explicit momentum
+    // signal (revenue acceleration, per doctrine §8) from data already fetched
+    // by this screen, replacing the provider's default order so the strongest
+    // accelerators survive the downstream candidate cap instead of whichever
+    // names the API happened to list first.
     screenBucket([
       { field: "revenue_growth", operator: "gt", value: 0.15 },
       { field: "earnings_growth", operator: "gt", value: 0.10 },
       { field: "gross_margin", operator: "gt", value: 0.25 },
       { field: "return_on_equity", operator: "gt", value: 0.15 },
       { field: "market_cap", operator: "gt", value: 2_000_000_000 },
-    ], fdKey, 10),
+    ], fdKey, 10, { field: "revenue_growth", desc: true }),
+    // Value bucket ranked by pe_ratio asc (cheapest first) — mirrors the India
+    // path (fetchIndiaScreenCandidates sorts value by ascending P/E).
     screenBucket([
       { field: "pe_ratio", operator: "gt", value: 0 },
       { field: "pe_ratio", operator: "lt", value: 18 },
       { field: "free_cash_flow_yield", operator: "gt", value: 0.04 },
       { field: "debt_to_equity", operator: "lt", value: 1.0 },
       { field: "market_cap", operator: "gt", value: 1_000_000_000 },
-    ], fdKey, 10),
+    ], fdKey, 10, { field: "pe_ratio", desc: false }),
   ]);
 
   // Interleave momentum/value round-robin before capping at 6 — a flat
@@ -535,15 +562,27 @@ async function fetchIndiaHoldings(svc: any): Promise<string[]> {
   } catch { return []; }
 }
 
+// Freshness window for the nightly india_screen_cache. The cache is refreshed
+// by a nightly cron; rows scored longer ago than this are stale (e.g. a missed
+// or failed refresh) and must NOT be picked as if freshly discovered. 36h gives
+// one full extra day of slack over the ~24h refresh cadence so a single skipped
+// run doesn't blank India discovery, while still excluding genuinely old rows.
+const INDIA_FRESHNESS_HOURS = 36;
+
 // Dual-bucket candidate pull from the nightly india_screen_cache. Momentum:
 // RSI>60 and above the 50-day MA. Value: low P/E with positive ROE. Interleaved
 // so neither bucket crowds the other — mirrors the US screener's approach.
 async function fetchIndiaScreenCandidates(svc: any, limit: number): Promise<string[]> {
   try {
+    // Only consider rows scored within the freshness window — stale cache rows
+    // (from a missed nightly refresh) would otherwise be surfaced as current
+    // discoveries. scored_at is the cache's discovery/scoring timestamp.
+    const freshCutoff = new Date(Date.now() - INDIA_FRESHNESS_HOURS * 3600_000).toISOString();
     const { data } = await svc
       .from("india_screen_cache")
       .select("symbol, pe, rsi, above_ma50, roe")
       .not("symbol", "is", null)
+      .gte("scored_at", freshCutoff)
       .limit(1500);
     const rows: any[] = data ?? [];
     if (!rows.length) return [];

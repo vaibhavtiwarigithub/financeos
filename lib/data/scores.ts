@@ -160,6 +160,13 @@ function scoreFundamentals(overview: Record<string, string>, isEtf: boolean, cur
 // ── Sentiment scoring (normalize existing fetchSocialSentiment output) ─────────
 
 export function scoreSentiment(socialResult: any): { score: number; evidence: Record<string, unknown> } {
+  // Pseudo-count prior for Bayesian shrinkage toward neutral (0.5): the score is
+  // pulled to 50 when message volume is thin, so 1 bullish message no longer
+  // scores 100 like 500 messages at 90% bullish. K ≈ "10 messages worth" of a
+  // neutral prior. TODO: tune SENTIMENT_PRIOR_STRENGTH once real sentiment/outcome
+  // data exists to calibrate how fast thin sentiment should earn full weight.
+  const SENTIMENT_PRIOR_STRENGTH = 10;
+
   if (!socialResult) return { score: 50, evidence: { note: "no sentiment data" } };
 
   // socialResult may have: bullish_pct, bearish_pct, sentiment_score (0-100), bull_bear_ratio
@@ -176,11 +183,24 @@ export function scoreSentiment(socialResult: any): { score: number; evidence: Re
   const bull = socialResult.stocktwits_bullish_pct ?? socialResult.bullish_pct ?? socialResult.bull_pct ?? null;
   const bear = socialResult.stocktwits_bearish_pct ?? socialResult.bearish_pct ?? socialResult.bear_pct ?? null;
   if (bull != null && bear != null) {
-    // bull/bear already 0-100; weight by message volume isn't available here, so
-    // use bullish share of the two directional percentages as the score.
-    const total = bull + bear;
-    const score = total > 0 ? Math.round((bull / total) * 100) : 50;
-    return { score: Math.max(0, Math.min(100, score)), evidence: { bullish_pct: bull, bearish_pct: bear } };
+    // bull/bear are directional percentages (0-100). Take the raw bullish share of
+    // the two, then apply Bayesian shrinkage toward 0.5 by actual message volume so
+    // thin/noisy sentiment doesn't get full weight. shrunk = (frac*N + 0.5*K)/(N+K):
+    // yields 0.5 at N=0 and approaches the raw fraction as message count grows.
+    // (Equivalent to the count form (bull+0.5K)/(total+K) with bull = frac*N.)
+    const directional = bull + bear;
+    if (directional <= 0) {
+      return { score: 50, evidence: { bullish_pct: bull, bearish_pct: bear, note: "no directional sentiment" } };
+    }
+    const bullFraction = bull / directional;
+    const msgCount = socialResult.stocktwits_message_count ?? 0;
+    const shrunkFraction =
+      (bullFraction * msgCount + 0.5 * SENTIMENT_PRIOR_STRENGTH) / (msgCount + SENTIMENT_PRIOR_STRENGTH);
+    const score = Math.round(shrunkFraction * 100);
+    return {
+      score: Math.max(0, Math.min(100, score)),
+      evidence: { bullish_pct: bull, bearish_pct: bear, message_count: msgCount, prior_strength: SENTIMENT_PRIOR_STRENGTH },
+    };
   }
 
   // Fall back to Alpha Vantage news sentiment (-1..+1) if StockTwits pct is missing.

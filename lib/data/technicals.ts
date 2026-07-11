@@ -21,6 +21,13 @@ export interface TechnicalResult {
   volumeVsAvg20: number | null;  // ratio: 1.5 = 50% above avg
   trend20d: "up" | "down" | "flat" | null; // price today vs 20 days ago
   dataPoints: number;
+  // Recent-bar / volatility diagnostics — optional so existing consumers that
+  // destructure the older shape keep working. Populated by computeTechnicals;
+  // consumed by the deterministic breakdown veto (see detectBreakdownVeto).
+  atr14: number | null;            // Wilder ATR(14), price units. Null if <15 candles.
+  lastReturnPct: number | null;    // single most-recent bar % change vs prev close
+  lastRangeLocation: number | null; // where latest close sits in its bar range: 0=low, 1=high
+  atrMultipleMove: number | null;  // |last bar move| / atr14 — how many ATRs the last bar moved
 }
 
 /** Compute EMA from close prices. period must be <= closes.length */
@@ -59,9 +66,36 @@ function computeRSI14(closes: number[]): number | null {
   return parseFloat((100 - 100 / (1 + rs)).toFixed(2));
 }
 
+/**
+ * Compute Wilder ATR(14) from candles (oldest first). Returns null if <15
+ * candles (need 14 True-Range values, each of which needs a prior close).
+ * TR = max(high-low, |high-prevClose|, |low-prevClose|) — captures gap risk,
+ * which a plain high-low range misses.
+ */
+function computeATR14(candles: Candle[]): number | null {
+  if (candles.length < 15) return null;
+  const trs: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i];
+    const prevClose = candles[i - 1].close;
+    const tr = Math.max(
+      c.high - c.low,
+      Math.abs(c.high - prevClose),
+      Math.abs(c.low - prevClose),
+    );
+    trs.push(tr);
+  }
+  const period = 14;
+  let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < trs.length; i++) {
+    atr = (atr * 13 + trs[i]) / 14;
+  }
+  return parseFloat(atr.toFixed(4));
+}
+
 /** Compute all technical indicators from candle array (oldest first) */
 export function computeTechnicals(candles: Candle[]): TechnicalResult {
-  const empty: TechnicalResult = { rsi14: null, ema20: null, ema50: null, priceVsEma20: null, priceVsEma50: null, volumeVsAvg20: null, trend20d: null, dataPoints: candles.length };
+  const empty: TechnicalResult = { rsi14: null, ema20: null, ema50: null, priceVsEma20: null, priceVsEma50: null, volumeVsAvg20: null, trend20d: null, dataPoints: candles.length, atr14: null, lastReturnPct: null, lastRangeLocation: null, atrMultipleMove: null };
   if (candles.length < 15) return empty;
 
   const closes = candles.map(c => c.close);
@@ -92,7 +126,19 @@ export function computeTechnicals(candles: Candle[]): TechnicalResult {
     trend20d = changePct > 0.03 ? "up" : changePct < -0.03 ? "down" : "flat";
   }
 
-  return { rsi14, ema20, ema50, priceVsEma20, priceVsEma50, volumeVsAvg20, trend20d, dataPoints: candles.length };
+  // Recent-bar / volatility diagnostics — feed the breakdown veto. All from the
+  // most-recent bar and the one before it, plus ATR(14) for volatility scaling.
+  const atr14 = computeATR14(candles);
+  const prevClose = closes[closes.length - 2];
+  const lastReturnPct = prevClose > 0 ? parseFloat((((latest - prevClose) / prevClose) * 100).toFixed(4)) : null;
+
+  const lastBar = candles[candles.length - 1];
+  const lastRange = lastBar.high - lastBar.low;
+  const lastRangeLocation = lastRange > 0 ? parseFloat(((lastBar.close - lastBar.low) / lastRange).toFixed(4)) : null;
+
+  const atrMultipleMove = atr14 != null && atr14 > 0 ? parseFloat((Math.abs(latest - prevClose) / atr14).toFixed(4)) : null;
+
+  return { rsi14, ema20, ema50, priceVsEma20, priceVsEma50, volumeVsAvg20, trend20d, dataPoints: candles.length, atr14, lastReturnPct, lastRangeLocation, atrMultipleMove };
 }
 
 // Piecewise-linear interpolation over (x, y) anchor points (x ascending).
@@ -122,12 +168,71 @@ const RSI_ANCHORS: [number, number][] = [
   [60, 25], [72, 25], [75, 6], [85, -10], [100, -15],
 ];
 
+// Breakdown-veto thresholds. These are deliberately conservative defaults, NOT
+// fitted values. They MUST be validated prospectively per liquidity bucket
+// (large-cap ATR% behaves very differently from micro-cap / meme names) before
+// being trusted as a hard gate — a 2.5-ATR bar is routine noise in some names
+// and a genuine regime break in others. Treat as v0 guardrails, not final.
+const VETO_ATR_MULTIPLE = 2.5;     // last bar moved >= 2.5 ATRs (abnormal move)
+const VETO_HV_RETURN_PCT = -7;     // single-bar drop of >= 7%
+const VETO_HV_VOLUME_RATIO = 1.5;  // on >= 1.5x average volume (volume shock)
+const VETO_CLOSE_LOCATION = 0.25;  // close in the bottom quartile of the bar's range
+
+/**
+ * Deterministic breakdown veto. Detects the crash / meme-breakdown pattern that
+ * momentum scoring rewards by accident: after a sharp high-volume reversal RSI
+ * decays back into the "preferred" band, price still sits just above EMA20, and
+ * heavy selling volume gets read as bullish confirmation — producing a false
+ * high score. This runs as a hard gate BEFORE any momentum math.
+ *
+ * Vetoes when ANY condition fires. Exported so it can be unit-tested and reused
+ * by an exit/quarantine monitor. Returns the fired reasons for auditability.
+ */
+export function detectBreakdownVeto(t: TechnicalResult): { vetoed: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+
+  // 1) Volatility-adjusted crash: an abnormally large down-move relative to the
+  //    stock's own recent volatility (ATR). Down day AND >= 2.5 ATRs of range.
+  if (t.lastReturnPct != null && t.lastReturnPct < 0 && t.atrMultipleMove != null && t.atrMultipleMove >= VETO_ATR_MULTIPLE) {
+    reasons.push(`Volatility-adjusted crash: last bar fell ${t.atrMultipleMove.toFixed(1)} ATRs (>= ${VETO_ATR_MULTIPLE})`);
+  }
+
+  // 2) High-volume breakdown: a big single-bar drop on a volume shock — the
+  //    classic distribution / capitulation bar that momentum wrongly confirms.
+  if (t.lastReturnPct != null && t.lastReturnPct <= VETO_HV_RETURN_PCT && t.volumeVsAvg20 != null && t.volumeVsAvg20 >= VETO_HV_VOLUME_RATIO) {
+    reasons.push(`High-volume breakdown: ${t.lastReturnPct.toFixed(1)}% drop on ${t.volumeVsAvg20.toFixed(1)}x volume`);
+  }
+
+  // 3) Close in bottom quartile after a down day: sellers controlled the close,
+  //    price finished near the low of its range — weak, not a dip to buy.
+  if (t.lastReturnPct != null && t.lastReturnPct < 0 && t.lastRangeLocation != null && t.lastRangeLocation <= VETO_CLOSE_LOCATION) {
+    reasons.push(`Weak close: finished at ${(t.lastRangeLocation * 100).toFixed(0)}% of bar range (bottom quartile) on a down day`);
+  }
+
+  return { vetoed: reasons.length > 0, reasons };
+}
+
+/** Score cap applied when the breakdown veto fires (quarantine, not zero). */
+const BREAKDOWN_VETO_SCORE_CAP = 20;
+
 /**
  * Score technicals 0-100 deterministically.
  * No LLM involved. Based on RSI, EMA position, trend, and volume confirmation.
  */
 export function scoreTechnicals(t: TechnicalResult): number {
   if (t.dataPoints < 15) return 50; // insufficient data → neutral
+
+  // Crash / meme-breakdown veto — runs FIRST, before any momentum math. After a
+  // sharp high-volume reversal the momentum signals turn falsely bullish (RSI
+  // decays into the sweet spot, price clings just above EMA20, trend still
+  // positive, heavy sell volume misread as confirmation), which previously
+  // scored a -12% high-volume reversal a 100. When the deterministic veto fires
+  // we hard-cap the score at 20 to quarantine the name. Not 0: downstream
+  // availability logic treats 0 specially, and 20 is an unambiguous "broken"
+  // read that still flows through normal scoring/ranking.
+  if (detectBreakdownVeto(t).vetoed) {
+    return BREAKDOWN_VETO_SCORE_CAP;
+  }
 
   let score = 50; // baseline neutral
 
