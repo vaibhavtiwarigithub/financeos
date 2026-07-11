@@ -244,14 +244,81 @@ export async function getKiteMargins(svc?: any): Promise<{ ok: boolean; equityNe
   return { ok: true, equityNet: net };
 }
 
+// Verify that the connected Kite session actually belongs to the configured
+// India trading account — the wrong-account guard for every live Kite submit.
+//
+// The two-step text allowlist (config → broker_accounts role='trading') only
+// proves the *configured value* is a permitted target. It does NOT prove the
+// *live token* belongs to that account: Kite routes every order through the one
+// connected Zerodha session regardless of what account string is configured, so
+// a token minted for a DIFFERENT Zerodha identity would still place the order.
+// Bind the two: Kite's /user/profile returns the immutable `user_id`, which must
+// equal the selected account. FAIL CLOSED on any read error, missing config,
+// non-allowlisted / view_only account, unverifiable session, or identity
+// mismatch — never a silent fallback. Status codes mirror the standalone route's
+// contract (403 refuse, 500 config/allowlist read error, 502 identity unverifiable).
+export async function verifyKiteTradingIdentity(
+  svc?: any
+): Promise<{ ok: true; account: string } | { ok: false; status: 403 | 500 | 502; error: string }> {
+  const s = svc ?? createServiceClient();
+
+  const { data: acctCfg, error: acctCfgErr } = await s
+    .from("strategy_config").select("active_account_india").limit(1).maybeSingle();
+  if (acctCfgErr) {
+    return { ok: false, status: 500, error: `Account config read failed — refusing live India order (fail-closed): ${acctCfgErr.message}` };
+  }
+  const indiaAccount = (acctCfg as any)?.active_account_india;
+  if (!indiaAccount) {
+    return { ok: false, status: 403, error: "No active India trading account set — refusing live India order. Set it in Settings → Agents." };
+  }
+
+  const { data: allowed, error: allowErr } = await s
+    .from("broker_accounts").select("role")
+    .eq("broker", "kite").eq("account_number", indiaAccount).eq("market", "india").maybeSingle();
+  if (allowErr) {
+    return { ok: false, status: 500, error: `Allowlist read failed — refusing live India order (fail-closed): ${allowErr.message}` };
+  }
+  if (!allowed) {
+    return { ok: false, status: 403, error: `Account ${indiaAccount} is not an allowlisted Kite account for India — refusing live order.` };
+  }
+  if ((allowed as any).role !== "trading") {
+    return { ok: false, status: 403, error: `Account ${indiaAccount} is view_only — not a permitted order target.` };
+  }
+
+  // The connected session must actually BE that account.
+  const profile = await kiteGet("/user/profile", s);
+  if (!profile.ok) {
+    return { ok: false, status: 502, error: `Could not verify the connected Kite identity (${profile.error ?? "profile fetch failed"}) — refusing live India order (fail-closed).` };
+  }
+  const sessionUserId = String((profile.data as any)?.user_id ?? "").trim();
+  if (!sessionUserId) {
+    return { ok: false, status: 502, error: "Kite /user/profile returned no user_id — cannot bind the session to the trading account (fail-closed)." };
+  }
+  if (sessionUserId !== String(indiaAccount).trim()) {
+    return { ok: false, status: 403, error: `Connected Kite session (user_id ${sessionUserId}) does not match the configured India trading account ${indiaAccount} — refusing live order (wrong-account guard).` };
+  }
+  return { ok: true, account: String(indiaAccount) };
+}
+
 // Place a real equity order (POST /orders/regular). CNC = delivery (cash &
 // carry), the right product for holding equity. Only called from a
 // user-initiated, explicitly-confirmed request — never auto-fired.
+//
+// UNIVERSAL identity backstop: every programmatic Kite submit funnels through
+// here (the standalone route AND kiteAdapter.submitOrder → canonical /
+// autonomous / protective-exit paths). So the verified-identity gate lives here
+// too — even paths that never touch the standalone route's block cannot reach
+// the broker with a mismatched session. Fail-closed before the wire call.
 export async function placeEquityOrder(opts: {
   tradingsymbol: string; exchange?: string; transaction_type: "BUY" | "SELL";
   quantity: number; order_type?: "MARKET" | "LIMIT"; price?: number;
   product?: "CNC" | "MIS" | "NRML"; validity?: "DAY" | "IOC";
 }, svc?: any): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const s = svc ?? createServiceClient();
+
+  const identity = await verifyKiteTradingIdentity(s);
+  if (!identity.ok) return { ok: false, error: identity.error };
+
   const body: Record<string, string> = {
     tradingsymbol: opts.tradingsymbol.replace(/\.(NS|BO)$/i, ""), // Kite wants the bare symbol
     exchange: opts.exchange ?? (opts.tradingsymbol.toUpperCase().endsWith(".BO") ? "BSE" : "NSE"),
@@ -262,5 +329,5 @@ export async function placeEquityOrder(opts: {
     validity: opts.validity ?? "DAY",
   };
   if ((opts.order_type ?? "MARKET") === "LIMIT" && opts.price != null) body.price = String(opts.price);
-  return kitePost("/orders/regular", body, svc);
+  return kitePost("/orders/regular", body, s);
 }

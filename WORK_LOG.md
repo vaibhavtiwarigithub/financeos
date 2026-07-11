@@ -1,5 +1,8 @@
 # WORK_LOG.md — Active Task Tracker
 
+| Phase B P0 re-audit remediation (Codex#1-6) | Claude / Opus 4.8 | completed | 2026-07-11 | Fixed all 6. #1 CRITICAL migration **153** drops `p_broker` from advisory-lock key → market-wide scope match. #2 CRITICAL `verifyKiteTradingIdentity()` binds Kite `/user/profile` `user_id` to `active_account_india`. #3 HIGH gate lives at `placeEquityOrder` choke point (all Kite paths). #4 HIGH 153 rejects non-finite qty/notional/caps + validates side/env/broker/symbol/order_type. #5 MED added ACK live-path test (`attempts()===3`, 202, broker-id-in-alert) + `attempts()===1` on broker-reject. #6 LOW fix-log wording. Migration 153 verified applied. arch-08 + system-map.json updated (also repaired 8 pre-existing raw ctrl-chars in diagram). Gates: tsc 0, vitest 248 pass/6 skip, build OK. No real order placed; autonomous/live OFF. |
+| Phase B P0 remediation adversarial re-audit | Codex / GPT-5 | completed | 2026-07-11 | Wrote `CODEX_PHASE_B_REMEDIATION_REVIEW_RESULT.md`. Found CRITICAL cross-broker budget-lock race and incomplete Kite token/account identity binding across standalone/canonical paths; HIGH incomplete RPC finite/input validation; A3 focused tests and tsc pass; A4 and edge cleanup clean. Live DB checked read-only. |
+
 > **All agents check this before starting work. Claim your task. Update when done.**
 > Format: `| Task | Agent/Model | Status | Date | Notes |`
 

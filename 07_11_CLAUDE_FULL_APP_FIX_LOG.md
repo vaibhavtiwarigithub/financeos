@@ -80,9 +80,12 @@ directly to the standalone Kite path so it cannot return success on a lost ACK
 while it remains un-unified (see A3).
 
 **Phase B — additive identity/allowlist gate (`app/api/kite/order/route.ts`):**
-without changing the request/response contract, a fail-closed identity check was
-added before the budget reservation, mirroring `resolveTradingAccount` in the
-canonical `execute-order.ts`. It reads `strategy_config.active_account_india` and
+the request/response *shape* is unchanged (same params in, same JSON out), but the
+authorization behavior is intentionally tightened — a fail-closed identity check
+was added before the budget reservation, mirroring `resolveTradingAccount` in the
+canonical `execute-order.ts`. Requests that previously reached the reservation may
+now be refused (403/500/502); that stricter outcome is the point of the fix, not a
+contract-preserving no-op. It reads `strategy_config.active_account_india` and
 requires a matching `broker_accounts` row (`broker='kite'`, `market='india'`,
 `role='trading'`). It refuses (403/500) on: config read error, no active India
 account set, account absent from `broker_accounts`, or a `view_only` role — never
