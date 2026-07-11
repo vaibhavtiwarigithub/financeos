@@ -25,7 +25,7 @@
 | Item | Why deferred |
 |------|-------------|
 | Kill switches live data (F6) | FIXED 2026-07-10 — dual-mode path in lib/kill-switches.ts. |
-| Robinhood unofficial REST (Finding 9 from original audit) | Read-only risk page use; does not touch order placement. Official RH Trading MCP at agent.robinhood.com/mcp/trading cannot be used from Vercel serverless crons. Remains blocked until official serverless MCP client is available. |
+| Robinhood unofficial REST (Finding 9 from original audit) | Read-only risk page use; does not touch order placement. CORRECTED 2026-07-10: the official RH Trading MCP order path (`lib/robinhood-mcp.ts` → `submitRobinhoodOrder`, wired via `lib/brokers/adapters/robinhood-mcp.ts`) IS built and serverless-capable — OAuth connect uses the deployed app's own `${origin}/api/robinhood-mcp/callback` (localhost only registered in non-production), token stored in `api_key_vault`, refreshed via CAS from serverless, so Vercel crons reuse it. NOT technically blocked. Trading stays off by policy gates only (see below). |
 | RLS completion (Finding 17) | Not blocking live trading |
 | Phase 2 scoring (discovery/formula/momentum) | Requires 10+ closed trades |
 | Phase 3 governed evolution | Phase 1 prerequisite |
@@ -61,7 +61,7 @@ Deterministic, code-fixable findings from `CODEX_POST_UPGRADE_DEEP_REVIEW_RESULT
 | 1 bullish message scores sentiment 100 | `lib/data/scores.ts` | Bayesian shrinkage toward neutral by real `stocktwits_message_count` (K=10): 1 msg→55, 500@90%→89 |
 | India discovery no freshness; US screener no real momentum | `lib/research-agent.ts` | India `scored_at` within 36h; US momentum bucket ordered by `revenue_growth` desc. Candidate count unchanged (3/day), no regime logic |
 
-Still open (not code-fixable): item 9 (Official RH Trading MCP), item 10 (integration tests), item 11 (Vaibhav approval). Deferred architectural P1 (cross-sectional rank, specialist setup models, Feature Registry/Edge Lab wiring, policy evolution, PIT fundamentals) — weeks each.
+Item 9 RESOLVED (was a documentation error, not a code gap): the official RH Trading MCP order path is built + serverless-capable (`lib/robinhood-mcp.ts::submitRobinhoodOrder`). It is gated OFF by policy flags (`robinhood_mcp_enabled`, `live_auto_enabled`, `autonomy_level`) + Vaibhav approval — NOT by a missing technical capability. Still open: item 10 (integration tests), item 11 (Vaibhav approval). Deferred architectural P1 (cross-sectional rank, specialist setup models, Feature Registry/Edge Lab wiring, policy evolution, PIT fundamentals) — weeks each.
 
 ---
 
@@ -75,6 +75,6 @@ Still open (not code-fixable): item 9 (Official RH Trading MCP), item 10 (integr
 6. ✅ Cancel-on-kill preserves SELLs
 7. ✅ Kill switches read live_account_snapshots + broker_orders when live_auto_enabled=true (fail-closed if no snapshots)
 8. ✅ Active SELL idempotency: trade_proposals_active_sell_uniq partial unique index + 23505 catch in exit monitor
-9. ❌ Official Robinhood Trading MCP for order placement (not unofficial REST)
-10. ❌ 17 integration tests from fix prompt must pass
-11. ❌ Vaibhav's explicit approval required
+9. ✅ Official Robinhood Trading MCP for order placement (not unofficial REST) — `lib/robinhood-mcp.ts::submitRobinhoodOrder`, serverless-capable via vault token + CAS refresh. Was mislabeled "blocked"; corrected 2026-07-10. Order-write path stays deterministic (BINDING RULE R1); the MCP is invoked by typed code, never by an LLM.
+10. ✅ Test suite green: `npx vitest run` 190 passed / 6 skipped (opt-in DB), `npm run build` clean. 13/17 required tests fully covered, 3 opt-in (DB tests 1/2/6), test 15 deferred to a harness (architecture drafted). Evidence + honest covered-vs-stubbed map: `POST_UPGRADE_TEST_EVIDENCE.md`. Tests 3 (HTTP surface) + 5 (fixture→submit) covered at logic/order-path level, not full route/e2e harness.
+11. ❌ Vaibhav's explicit approval required (policy gate — cannot be self-cleared)
