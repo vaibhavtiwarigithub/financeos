@@ -83,6 +83,7 @@ export async function POST(req: NextRequest) {
     const { data: runRow } = await supabase.from("agent_runs").insert({
       agent_type: "paper_trader", status: "running",
       trigger_source: isCron ? "scheduled" : "manual",
+      market: marketScope,
     } as any).select().single();
     runId = (runRow as any)?.id ?? null;
 

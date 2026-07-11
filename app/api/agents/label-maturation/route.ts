@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { fetchIndiaCandles } from "@/lib/india-data";
 import { computeLabel } from "@/lib/learning/label-math";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { fetchUsCandles } from "@/lib/data/candles";
 
 export const dynamic = "force-dynamic";
 // Needs Vercel Pro (300s cap) or higher for large backlogs.
@@ -31,9 +32,26 @@ async function usCandles(supabase: any, symbol: string, sinceDate: string): Prom
     .eq("symbol", symbol)
     .gte("date", sinceDate)
     .order("date", { ascending: true });
-  return (data ?? []).map((c: any) => ({
+  const cached = (data ?? []).map((c: any) => ({
     date: c.date, close: parseFloat(c.close), high: parseFloat(c.high ?? c.close), low: parseFloat(c.low ?? c.close),
   }));
+  if (cached.length > 0) return cached;
+
+  // Research does not guarantee that every observed US symbol is written to
+  // price_cache. Without this provider fallback, labels for those observations
+  // can never mature (the production table had no matching US rows).
+  const resolved = await fetchUsCandles(symbol, async () => [], 3);
+  const candles = resolved.candles
+    .filter(c => c.date >= sinceDate)
+    .map(c => ({ date: c.date, close: c.close, high: c.high, low: c.low }));
+  if (resolved.candles.length > 0) {
+    const rows = resolved.candles.map(c => ({
+      symbol, date: c.date, open: c.open, high: c.high, low: c.low,
+      close: c.close, volume: c.volume, cached_at: new Date().toISOString(),
+    }));
+    await supabase.from("price_cache").upsert(rows, { onConflict: "symbol,date" });
+  }
+  return candles;
 }
 
 async function indiaCandles(symbol: string): Promise<Candle[]> {
@@ -49,6 +67,20 @@ async function candlesFor(supabase: any, market: string, symbol: string, sinceDa
 async function runMaturation(marketScope: "us" | "india" | null) {
   const svc = createServiceClient();
   let matured = 0, skipped = 0;
+  // One provider fetch per symbol per run. The same symbol is otherwise fetched
+  // once for every observation and horizon, causing a request stampede.
+  const candleMemo = new Map<string, Promise<Candle[]>>();
+  const getCandles = (market: string, symbol: string, sinceDate: string) => {
+    // Observations are processed oldest-first, so the first request has the
+    // broadest needed window; later observations can safely reuse it.
+    const key = `${market}:${symbol}`;
+    let pending = candleMemo.get(key);
+    if (!pending) {
+      pending = candlesFor(svc, market, symbol, sinceDate);
+      candleMemo.set(key, pending);
+    }
+    return pending;
+  };
 
   for (const horizonDays of HORIZONS) {
     const cutoff = maturityCutoff(horizonDays);
@@ -81,7 +113,7 @@ async function runMaturation(marketScope: "us" | "india" | null) {
       await Promise.allSettled(batch.map(async (obs: any) => {
         try {
           const sinceDate = new Date(new Date(obs.ts).getTime() - 5 * 86400_000).toISOString().slice(0, 10);
-          const candles = await candlesFor(svc, obs.market, obs.symbol, sinceDate);
+          const candles = await getCandles(obs.market, obs.symbol, sinceDate);
           if (candles.length === 0) { skipped++; return; }
 
           const decisionDate = String(obs.ts).slice(0, 10);
@@ -98,7 +130,7 @@ async function runMaturation(marketScope: "us" | "india" | null) {
           let benchmarkReturn: number | null = null;
           try {
             const benchSymbol = obs.market === "india" ? "^NSEI" : "SPY";
-            const benchCandles = await candlesFor(svc, obs.market, benchSymbol, sinceDate);
+            const benchCandles = await getCandles(obs.market, benchSymbol, sinceDate);
             const benchOnOrAfter = benchCandles.filter(c => c.date >= decisionDate);
             const benchEntry = benchOnOrAfter[0]?.close ?? null;
             const benchAfter = benchOnOrAfter.filter(c => c.date > benchOnOrAfter[0]?.date);

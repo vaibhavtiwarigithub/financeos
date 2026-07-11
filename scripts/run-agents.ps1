@@ -56,7 +56,7 @@ $endpoints = @{
   # research-india (6:15 AM) so candidates draw from a fresh cache.
   "scan-india-refresh"     = @{ method="POST"; url="$BASE/api/scan/india/refresh"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}"; timeoutSec=300 }
   "nav-snapshot"     = @{ method="POST"; url="$BASE/api/agents/performance";           headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"action":"snapshot"}' }
-  "stale-check"      = @{ method="GET";  url="$BASE/api/alerts/stale-check";           headers=@{}; body=$null }
+  "stale-check"      = @{ method="POST"; url="$BASE/api/alerts/stale-check";           headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "embed"            = @{ method="POST"; url="$BASE/api/live-portfolio/embed";         headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"limit":200}'; timeoutSec=300 }
   "proposal-reminder"= @{ method="POST"; url="$BASE/api/alerts/proposal-reminder";     headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "rescore"          = @{ method="POST"; url="$BASE/api/agents/rescore-check";          headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }

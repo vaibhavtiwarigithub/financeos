@@ -77,7 +77,7 @@ function parseForm4Xml(xml: string, symbol: string, filingDate: string, accNo: s
     const date = block.match(/<transactionDate>[\s\S]*?<value>([^<]*)<\/value>/i)?.[1]?.trim() ?? filingDate;
     const sharesRaw = block.match(/<transactionShares>[\s\S]*?<value>([^<]*)<\/value>/i)?.[1]?.trim() ?? "0";
     const priceRaw = block.match(/<transactionPricePerShare>[\s\S]*?<value>([^<]*)<\/value>/i)?.[1]?.trim() ?? "0";
-    const adCode = block.match(/<transactionAcquiredDisposedCode>[\s\S]*?<value>([^<]*)<\/value>/i)?.[1]?.trim() ?? "";
+    const transactionCode = block.match(/<transactionCode>\s*([A-Z])\s*<\/transactionCode>/i)?.[1]?.trim().toUpperCase() ?? "";
 
     const shares = parseFloat(sharesRaw) || 0;
     const price = parseFloat(priceRaw) || 0;
@@ -88,7 +88,9 @@ function parseForm4Xml(xml: string, symbol: string, filingDate: string, accNo: s
       name,
       role,
       securityTitle: secTitle,
-      transactionType: adCode === "A" ? "buy" : adCode === "D" ? "sell" : "other",
+      // Only P/S are open-market conviction trades. Acquired/disposed codes
+      // misclassify awards, gifts, exercises, and tax withholding as buys/sells.
+      transactionType: transactionCode === "P" ? "buy" : transactionCode === "S" ? "sell" : "other",
       shares,
       price,
       value: shares * price,
@@ -221,37 +223,6 @@ export async function GET(req: NextRequest) {
     }
 
     allTx.sort((a, b) => b.date.localeCompare(a.date));
-
-    // Write notable transactions to evidence_records (buy > $50k)
-    const notable = allTx.filter(
-      (t) => t.transactionType === "buy" && t.value >= 50_000
-    );
-    if (notable.length > 0) {
-      try {
-        const svc = createServiceClient();
-        await svc.from("evidence_records").insert(
-          notable.map((t) => ({
-            evidence_type: "insider",
-            source: "sec_edgar",
-            source_tier: 1,
-            symbol: t.symbol,
-            observed_at: t.date ? new Date(t.date).toISOString() : null,
-            payload: {
-              name: t.name,
-              role: t.role,
-              transaction_type: t.transactionType,
-              shares: t.shares,
-              price: t.price,
-              value: t.value,
-              security_title: t.securityTitle,
-              accession_number: t.accessionNumber,
-            },
-          }))
-        );
-      } catch {
-        // non-fatal
-      }
-    }
 
     return NextResponse.json({
       transactions: allTx,

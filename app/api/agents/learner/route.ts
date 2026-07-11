@@ -10,7 +10,9 @@ import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { applyLearningTaintFilter } from "@/lib/learning/taint-filter";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// The weekly tool loop can legitimately take several provider round-trips.
+// Keep the route below Vercel's 300s ceiling and align pg_net timeouts with it.
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   try {
@@ -187,10 +189,10 @@ export async function POST(req: NextRequest) {
       { data: recentRuns },
     ] = await Promise.all([
       svc.from("agent_config").select("model, enabled").eq("agent_name", "learner").single(),
-      svc.from("learner_runs").select("id").eq("run_date", new Date().toISOString().slice(0, 10)).single(),
+      svc.from("learner_runs").select("id").eq("run_date", new Date().toISOString().slice(0, 10)).eq("market", LEARN_MARKET).maybeSingle(),
       scopeMkt(svc.from("paper_trades").select("*", { count: "exact", head: true }).not("closed_at", "is", null)),
       svc.from("learner_config").select("*"),
-      svc.from("learner_runs").select("win_rate_snapshot, mutations_paused, run_date").order("run_date", { ascending: false }).limit(5),
+      svc.from("learner_runs").select("win_rate_snapshot, mutations_paused, run_date").eq("market", LEARN_MARKET).order("run_date", { ascending: false }).limit(5),
     ]);
 
     const agentModel = (agentCfg as any)?.model ?? "claude-opus-4-8";
@@ -831,6 +833,7 @@ REASONING APPROACH:
 
         await svc.from("learner_runs").upsert({
           run_date: today,
+          market: LEARN_MARKET,
           signals_analyzed: signalCount ?? 0,
           trades_analyzed: outcomes.length,
           hypotheses,
@@ -843,18 +846,19 @@ REASONING APPROACH:
           tokens_out: loopResult.tokensOut,
           mutations_paused: autoGuardTripped,
           pause_reason: autoGuardTripped ? `Auto-guard (champion health): ${autoGuardReason}` : null,
-        }, { onConflict: "run_date" });
+        }, { onConflict: "run_date,market" });
 
         learnerResult = { summary: finishArgs.summary, hypotheses, weightMutations, steps: loopResult.steps, tokensIn: loopResult.tokensIn, tokensOut: loopResult.tokensOut, autoGuardTripped };
       } catch (agentErr) {
         console.error("[learner] agent loop failed:", agentErr);
         await svc.from("learner_runs").upsert({
           run_date: today,
+          market: LEARN_MARKET,
           signals_analyzed: signalCount ?? 0,
           trades_analyzed: outcomes.length,
           mermaid_per_run: `flowchart TD\n  ERROR["❌ Agent loop error\\n${String(agentErr).slice(0, 100)}"]`,
           model_used: agentModel, tokens_in: 0, tokens_out: 0,
-        }, { onConflict: "run_date" });
+        }, { onConflict: "run_date,market" });
       }
     }
 

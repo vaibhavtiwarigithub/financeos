@@ -610,9 +610,26 @@ function SmartMoneyTrades() {
   const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
-    fetch("/api/markets/insider-trades")
-      .then((r) => r.json())
-      .then((json) => setTrades(json.trades ?? []))
+    Promise.all([
+      fetch("/api/markets/edgar-insiders").then((r) => r.json()),
+      fetch("/api/markets/insider-trades").then((r) => r.json()),
+    ])
+      .then(([edgar, congress]) => {
+        const insiders: InsiderTrade[] = (edgar.transactions ?? [])
+          .filter((t: any) => t.transactionType === "buy" || t.transactionType === "sell")
+          .map((t: any) => ({
+            symbol: t.symbol,
+            name: t.name,
+            type: t.transactionType,
+            value: Number(t.value) || 0,
+            shares: Number(t.shares) || 0,
+            date: t.date,
+            filer: t.name,
+            role: "insider" as const,
+            title: t.role,
+          }));
+        setTrades([...insiders, ...(congress.trades ?? [])]);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);

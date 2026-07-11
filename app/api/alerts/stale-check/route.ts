@@ -1,5 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { createClient } from "@/lib/supabase/server";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +25,7 @@ function fmtDateTime(d: Date): string {
 interface ExpectedJob {
   agentType: string;         // agent_runs.agent_type value to check
   label: string;             // human label for the alert
-  expectedHour: number;      // ET hour the job is scheduled at (24h)
+  expectedHour: number;      // UTC hour from the actual pg_cron schedule
   graceHours: number;        // how long after expectedHour before "missed"
   fridayOnly?: boolean;
   requiresIndia?: boolean;
@@ -31,20 +33,24 @@ interface ExpectedJob {
 }
 
 const EXPECTED_JOBS: ExpectedJob[] = [
-  { agentType: "research",         label: "Research (US)",           expectedHour: 9,  graceHours: 1,
-    recoveryCmd: 'curl -X POST "https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/research/cron?market=us" -H "x-cron-secret: YOUR_SECRET"' },
-  { agentType: "paper_trader",     label: "PaperTrader",              expectedHour: 9,  graceHours: 2,
-    recoveryCmd: 'curl -X POST https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/paper-trade?market=us -H "x-cron-secret: YOUR_SECRET"' },
-  { agentType: "position_monitor", label: "PositionMonitor (US)",     expectedHour: 16, graceHours: 2,
-    recoveryCmd: 'curl -X POST "https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/position-monitor?market=us" -H "x-cron-secret: YOUR_SECRET"' },
-  { agentType: "label_maturation", label: "Label maturation",         expectedHour: 18, graceHours: 2,
-    recoveryCmd: 'curl -X POST https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/label-maturation -H "x-cron-secret: YOUR_SECRET"' },
-  { agentType: "learner",          label: "LearnerAgent (weekly)",    expectedHour: 17, graceHours: 3, fridayOnly: true,
-    recoveryCmd: 'curl -X POST https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/learner -H "x-cron-secret: YOUR_SECRET"' },
-  { agentType: "research",         label: "Research (India)",         expectedHour: 7,  graceHours: 1, requiresIndia: true,
-    recoveryCmd: 'curl -X POST "https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/research/cron?market=india" -H "x-cron-secret: YOUR_SECRET"' },
-  { agentType: "position_monitor", label: "PositionMonitor (India)",  expectedHour: 8,  graceHours: 2, requiresIndia: true,
-    recoveryCmd: 'curl -X POST "https://financeos-vaibhavtiwarigithubs-projects.vercel.app/api/agents/position-monitor?market=india" -H "x-cron-secret: YOUR_SECRET"' },
+  { agentType: "research", label: "Research (US)", expectedHour: 13, graceHours: 1,
+    recoveryCmd: 'POST /api/agents/research/cron?market=us' },
+  { agentType: "paper_trader", label: "PaperTrader (US)", expectedHour: 14, graceHours: 2,
+    recoveryCmd: 'POST /api/agents/paper-trade?market=us' },
+  { agentType: "position_monitor", label: "PositionMonitor (US)", expectedHour: 20, graceHours: 2,
+    recoveryCmd: 'POST /api/agents/position-monitor?market=us' },
+  { agentType: "label_maturation", label: "Label maturation", expectedHour: 22, graceHours: 2,
+    recoveryCmd: 'POST /api/agents/label-maturation' },
+  { agentType: "learner", label: "LearnerAgent (US weekly)", expectedHour: 21, graceHours: 2, fridayOnly: true,
+    recoveryCmd: 'POST /api/agents/learner with {"market":"us"}' },
+  { agentType: "research", label: "Research (India)", expectedHour: 4, graceHours: 1, requiresIndia: true,
+    recoveryCmd: 'POST /api/agents/research/cron?market=india' },
+  { agentType: "paper_trader", label: "PaperTrader (India)", expectedHour: 11, graceHours: 2, requiresIndia: true,
+    recoveryCmd: 'POST /api/agents/paper-trade?market=india' },
+  { agentType: "position_monitor", label: "PositionMonitor (India)", expectedHour: 11, graceHours: 2, requiresIndia: true,
+    recoveryCmd: 'POST /api/agents/position-monitor?market=india' },
+  { agentType: "learner", label: "LearnerAgent (India weekly)", expectedHour: 20, graceHours: 2, fridayOnly: true, requiresIndia: true,
+    recoveryCmd: 'POST /api/agents/learner with {"market":"india"}' },
 ];
 
 // Convert a UTC Date to ET (America/New_York) wall-clock parts for schedule comparisons.
@@ -74,14 +80,22 @@ function toET(d: Date): { hour: number; day: number; dateStr: string } {
   return { hour, day: etDay, dateStr };
 }
 
-export async function GET() {
+async function isAuthorized(req: NextRequest): Promise<boolean> {
+  if (verifyCronSecret(req)) return true;
+  const userClient = await createClient();
+  const { data: { user } } = await userClient.auth.getUser();
+  return Boolean(user);
+}
+
+async function runCheck() {
   const svc = createServiceClient();
   const now = new Date();
-  const et = toET(now);
-  const dayOfWeek = et.day;
+  // Compare against the actual pg_cron schedule, which is expressed in UTC.
+  // This avoids DST approximations and false alerts around transition weeks.
+  const dayOfWeek = now.getUTCDay();
   const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
   const isFriday = dayOfWeek === 5;
-  const hour = et.hour;
+  const hour = now.getUTCHours();
 
   if (!isWeekday) return NextResponse.json({ checked: false, reason: "weekend" });
 
@@ -92,12 +106,9 @@ export async function GET() {
     indiaEnabled = String((profile as any)?.market_focus ?? "").toLowerCase().includes("india");
   } catch { /* default false */ }
 
-  // Use ET midnight as "today" boundary so US jobs checked against ET trading day.
-  const utcMonth = now.getUTCMonth();
-  const etOffsetHours = utcMonth >= 2 && utcMonth <= 10 ? -4 : -5;
-  const etMidnight = new Date(now.getTime() + etOffsetHours * 3600_000);
-  etMidnight.setUTCHours(0, 0, 0, 0);
-  const todayStart = new Date(etMidnight.getTime() - etOffsetHours * 3600_000); // back to UTC
+  const todayStart = new Date(now);
+  todayStart.setUTCHours(0, 0, 0, 0);
+  const dateStr = todayStart.toISOString().slice(0, 10);
   const results: any[] = [];
 
   for (const job of EXPECTED_JOBS) {
@@ -137,7 +148,7 @@ export async function GET() {
     // issue_key includes ET date so two consecutive missed days get separate keys
     // (avoids partial-unique-index conflict while still supporting resolveIssue).
     const alertTitle = `${job.label} missed — ${now.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", timeZone: "America/New_York" })}`;
-    const issueKey = `cron-stale:${job.agentType}:${et.dateStr}${job.requiresIndia ? ":india" : ""}`;
+    const issueKey = `cron-stale:${job.agentType}:${dateStr}${job.requiresIndia ? ":india" : ":us"}`;
     const { data: existing } = await svc
       .from("agent_alerts")
       .select("id")
@@ -151,14 +162,14 @@ export async function GET() {
     try {
       await svc.from("decision_journal").insert({
         entry_type: "cron_gap",
-        summary: `${job.label} did not run today by ${job.expectedHour + job.graceHours}:00 (expected ~${job.expectedHour}:00 ET).`,
+        summary: `${job.label} did not run today by ${job.expectedHour + job.graceHours}:00 UTC (expected ~${job.expectedHour}:00 UTC).`,
         resolved: false,
       });
     } catch { /* best-effort */ }
 
     const detail = [
       `Detected: ${fmtDateTime(now)}`,
-      `Expected: ~${job.expectedHour}:00 ET${job.fridayOnly ? " (Fridays)" : " weekdays"}`,
+      `Expected: ~${job.expectedHour}:00 UTC${job.fridayOnly ? " (Fridays)" : " weekdays"}`,
       `Likely cause: the Supabase pg_cron job did not fire, or the endpoint errored/timed out. These run in the cloud (pg_cron -> Vercel) and do NOT need your PC on.`,
       `Recovery: ${job.recoveryCmd}`,
     ].join(" · ");
@@ -174,4 +185,21 @@ export async function GET() {
   }
 
   return NextResponse.json({ checked: true, hour, indiaEnabled, results });
+}
+
+// The checker writes alerts and journal rows through a service-role client, so
+// it must never be a public GET endpoint. pg_cron uses POST; authenticated owner
+// GET is retained for the dashboard/manual diagnostic workflow.
+export async function POST(req: NextRequest) {
+  if (!(await isAuthorized(req))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return runCheck();
+}
+
+export async function GET(req: NextRequest) {
+  if (!(await isAuthorized(req))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return runCheck();
 }

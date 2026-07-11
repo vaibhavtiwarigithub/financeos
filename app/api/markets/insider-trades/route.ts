@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-export const revalidate = 3600; // 1h cache
+// Congressional feed only. Corporate-insider data comes from the official SEC
+// endpoint; keeping Alpha Vantage here spent five of the 25 daily free calls on
+// every cache refresh (and even during `next build`).
+export const dynamic = "force-dynamic";
 
 interface Trade {
   symbol: string;
@@ -15,44 +18,9 @@ interface Trade {
 }
 
 export async function GET() {
-  const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
   const results: Trade[] = [];
 
-  // 1. Alpha Vantage top insider buys (use a watchlist of popular symbols)
-  const watchSymbols = ["AAPL", "NVDA", "MSFT", "TSLA", "META", "AMZN", "GOOGL", "AMD", "PLTR", "CRWD"];
-
-  await Promise.allSettled(watchSymbols.slice(0, 5).map(async (sym) => {
-    try {
-      const url = `https://www.alphavantage.co/query?function=INSIDER_TRANSACTIONS&symbol=${sym}&apikey=${avKey}`;
-      const res = await fetch(url, { next: { revalidate: 3600 } });
-      const data = await res.json();
-      const txns = (data?.data ?? []).slice(0, 3);
-      for (const t of txns) {
-        const shares = Math.abs(parseFloat(t.shares ?? "0"));
-        const price = parseFloat(t.price ?? "0");
-        const type = (t.transactionType ?? "").toUpperCase();
-        const isBuy = type.includes("BUY") || type === "P";
-        const isSell = type.includes("SELL") || type === "S";
-        if (isBuy || isSell) {
-          results.push({
-            symbol: sym,
-            name: t.name ?? t.reportingName ?? "",
-            type: isBuy ? "buy" : "sell",
-            value: shares * price,
-            shares,
-            date: t.transactionDate ?? "",
-            filer: t.name ?? t.reportingName ?? "",
-            role: "insider",
-            title: t.relationship ?? t.officerTitle ?? "",
-          });
-        }
-      }
-    } catch {
-      // silently skip failed symbols
-    }
-  }));
-
-  // 2. Congressional trades (House Stock Watcher public data)
+  // Congressional trades (House Stock Watcher public data)
   try {
     const res = await fetch(
       "https://house-stock-watcher-data.s3-us-east-2.amazonaws.com/data/all_transactions.json",

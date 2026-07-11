@@ -4,13 +4,16 @@
 -- and live_auto_enabled DB toggle is on.
 -- Replaces the removed Vercel cron entry (Hobby plan: max 1 fire/day).
 
+-- Historical migration retained for ordering. The credential originally placed
+-- here was revoked; migration 159 replaces this raw command with the Vault-backed
+-- kairos_call_agent helper. Never put credentials in migration SQL.
 select cron.schedule(
   'kairos-live-exit-monitor',
   '0 3-20 * * 1-5',
   $$
   select net.http_post(
     url     := 'https://financeos-phi.vercel.app/api/agents/live-exit-monitor/cron',
-    headers := '{"Authorization": "Bearer kairos-cron-4nrF423J6qqW5xMaHCAqol5D", "Content-Type": "application/json"}'::jsonb,
+    headers := '{"Content-Type": "application/json"}'::jsonb,
     body    := '{}'::jsonb,
     timeout_milliseconds := 25000
   )
