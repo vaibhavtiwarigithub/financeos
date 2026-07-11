@@ -255,7 +255,7 @@ async function runKillSweep() {
     // bo1 reports filled mid-sweep → the race the reconciler must resolve.
     getOrder: vi.fn(async (id: string) =>
       id === "bo1" ? { ok: true, status: "filled", filledQty: 10, avgFillPrice: 100, raw: {} } : { ok: true, status: "submitted", raw: {} }),
-    cancelOrder: vi.fn(async () => ({ ok: true })),
+    cancelOrder: vi.fn(async (_id: string, _mode: string) => ({ ok: true })),
   };
   h.getBrokerMock.mockReturnValue(broker);
   h.createServiceMock.mockReturnValue(makeClient(storeResolver(store)));
