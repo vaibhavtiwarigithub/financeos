@@ -6,6 +6,7 @@ import { getKiteHoldings } from "@/lib/kite";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { emitAlert } from "@/lib/alerts/emit";
 import { resolveIssue } from "@/lib/system-health";
+import { checkKillSwitches } from "@/lib/kill-switches";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -108,5 +109,32 @@ export async function POST(req: NextRequest) {
     await emitAlert({ severity: "warn", category: "broker", title: "Broker position mismatch detected", detail: mismatches.join(" · "), auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString() });
   }
 
-  return NextResponse.json({ success: true, updated, filled, mismatches });
+  // R16 cancel-on-kill: if a market's kill switch is tripped, CANCEL its resting
+  // live orders (a breached limit must stop in-flight exposure, not only block
+  // new orders). Bounded protective control — only cancels, never places.
+  const canceled: string[] = [];
+  for (const mkt of ["us", "india"] as const) {
+    const ks = await checkKillSwitches(supabase, mkt);
+    if (ks.safe) continue;
+    const { data: resting } = await supabase.from("broker_orders").select("*")
+      .eq("market", mkt).eq("broker_env", "live").in("status", ["pending_submit", "submitted", "partially_filled"]);
+    if (!resting || resting.length === 0) continue;
+    for (const o of resting as any[]) {
+      if (!o.broker_order_id) continue;
+      const broker = getBroker(o.broker ?? "");
+      if (!broker) continue;
+      const c = await broker.cancelOrder(o.broker_order_id, "live");
+      if (c.ok) {
+        await supabase.from("broker_orders").update({ status: "canceled", closed_at: new Date().toISOString() }).eq("id", o.id);
+        canceled.push(`${o.symbol} #${o.id}`);
+      }
+    }
+    await emitAlert({
+      severity: "critical", category: "trading",
+      title: `Kill switch tripped (${mkt.toUpperCase()}) — canceling resting live orders`,
+      detail: `${ks.reason}. Canceled: ${canceled.length ? canceled.join(", ") : "none confirmed (check broker)"}.`,
+    });
+  }
+
+  return NextResponse.json({ success: true, updated, filled, mismatches, canceled });
 }

@@ -11,6 +11,7 @@ import { getQuote } from "@/lib/data/quotes";
 import { getKiteMargins, getKiteHoldings } from "@/lib/kite";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { executeApprovedOrder } from "@/lib/trading/execute-order";
+import { isMarketHoliday } from "@/lib/trading/market-calendar";
 
 const SIGNAL_LOOKBACK_HOURS = 24;
 const NAV_ACCOUNT_ID = "605420660";
@@ -46,10 +47,14 @@ function earlyExit(reason: string): LiveRunResult {
 export function isMarketSessionOpen(market: string, now: Date = new Date()): boolean {
   const tz = market === "india" ? "Asia/Kolkata" : "America/New_York";
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz, weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false,
+    timeZone: tz, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
   }).formatToParts(now);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
   if (["Sat", "Sun"].includes(get("weekday"))) return false;
+  // Market holiday falling on a weekday (else weekday+hours would read as "open").
+  const localYmd = `${get("year")}-${get("month")}-${get("day")}`;
+  if (isMarketHoliday(market, localYmd)) return false;
   const mins = (parseInt(get("hour") || "0", 10) % 24) * 60 + parseInt(get("minute") || "0", 10);
   const open = market === "india" ? 9 * 60 + 15 : 9 * 60 + 30;
   const close = market === "india" ? 15 * 60 + 30 : 16 * 60;
