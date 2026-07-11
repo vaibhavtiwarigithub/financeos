@@ -11,7 +11,7 @@ import { getQuote } from "@/lib/data/quotes";
 import { getKiteMargins, getKiteHoldings } from "@/lib/kite";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { executeApprovedOrder } from "@/lib/trading/execute-order";
-import { isMarketHoliday } from "@/lib/trading/market-calendar";
+import { isMarketOpenLive } from "@/lib/trading/market-calendar";
 
 const SIGNAL_LOOKBACK_HOURS = 24;
 const NAV_ACCOUNT_ID = "605420660";
@@ -39,26 +39,6 @@ export interface LiveRunResult {
 
 function earlyExit(reason: string): LiveRunResult {
   return { run_id: "", early_exit: reason, evaluated: 0, submitted: 0, rejected: 0, reconcile_needed: 0, results: [] };
-}
-
-// Is the exchange currently in its regular trading session? Market orders must
-// not be placed outside the session (they would queue unexpectedly). DST-correct
-// via IANA timezones. US regular 09:30–16:00 ET; India 09:15–15:30 IST.
-export function isMarketSessionOpen(market: string, now: Date = new Date()): boolean {
-  const tz = market === "india" ? "Asia/Kolkata" : "America/New_York";
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  }).formatToParts(now);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  if (["Sat", "Sun"].includes(get("weekday"))) return false;
-  // Market holiday falling on a weekday (else weekday+hours would read as "open").
-  const localYmd = `${get("year")}-${get("month")}-${get("day")}`;
-  if (isMarketHoliday(market, localYmd)) return false;
-  const mins = (parseInt(get("hour") || "0", 10) % 24) * 60 + parseInt(get("minute") || "0", 10);
-  const open = market === "india" ? 9 * 60 + 15 : 9 * 60 + 30;
-  const close = market === "india" ? 15 * 60 + 30 : 16 * 60;
-  return mins >= open && mins <= close;
 }
 
 export async function runAutonomousLive(
@@ -120,13 +100,20 @@ export async function runAutonomousLive(
     return { ...earlyExit("no_markets_in_autonomous_mode"), run_id: runId };
   }
 
-  // Session-window guard: only place market orders while the exchange is OPEN
-  // (outside the session a market order queues unexpectedly). Drop closed markets.
+  // Live market-open guard: only place market orders while the exchange is
+  // actually OPEN — session/holiday guard + authoritative status (US via Alpha
+  // Vantage MARKET_STATUS, which also catches UNSCHEDULED closures). Drop any
+  // market reported closed.
+  const closedReasons: Record<string, string> = {};
   for (const m of [...autonomousMarkets]) {
-    if (!isMarketSessionOpen(m)) autonomousMarkets.splice(autonomousMarkets.indexOf(m), 1);
+    const live = await isMarketOpenLive(m);
+    if (!live.open) {
+      closedReasons[m] = live.reason;
+      autonomousMarkets.splice(autonomousMarkets.indexOf(m), 1);
+    }
   }
   if (autonomousMarkets.length === 0) {
-    return { ...earlyExit("market_session_closed"), run_id: runId };
+    return { ...earlyExit(`market_closed:${JSON.stringify(closedReasons)}`), run_id: runId };
   }
 
   // Fresh per-market kill-switch check (drawdown / daily-loss / accuracy) — the

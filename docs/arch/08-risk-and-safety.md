@@ -299,8 +299,12 @@ Triggered by `POST /api/agents/autonomous-live/cron` at 14:00 UTC weekdays (afte
   `confidence` column) and query errors are now **fatal** (throw + `agent_runs` error row).
 - **Fresh `checkKillSwitches(svc, market)`** runs per market before evaluation — the real drawdown/
   daily-loss/accuracy engine, not just cached config booleans. Fail-closed on error.
-- **Session-window guard** (`isMarketSessionOpen`) — market orders only while the exchange is open
-  (US 9:30–16:00 ET, India 9:15–15:30 IST, DST-correct). Split into per-market crons.
+- **Live market-open guard** (`lib/trading/market-calendar.ts`): layered — cheap local session/
+  holiday/hours check, then **authoritative Alpha Vantage `MARKET_STATUS`** for BOTH US and India
+  (one call, catches **unscheduled** closures, needs no yearly calendar update). Fail-closed on a
+  confirmed CLOSED; when the status source is unreachable, falls back to the session guard + the
+  broker-rejection and quote-freshness backstops. Static US/NSE 2026 holiday lists remain the
+  defense/fallback layer. Autonomous cron split per market (US 15:00 UTC, India 06:00 UTC).
 - **Fail-closed gates:** a null lease and a null per-market `trading_enabled_*` no longer pass;
   both must be explicitly valid/true.
 - **Per-market currency-correct NAV:** US from the Robinhood USD snapshot, India from live Kite INR
