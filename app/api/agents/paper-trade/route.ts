@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { isSymbolBlocked } from "@/lib/trading/symbol-policy";
 import { getQuote, getBatchQuotes, computeFillPrice } from "@/lib/data/quotes";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
@@ -155,6 +156,19 @@ export async function POST(req: NextRequest) {
       selQ = hasMarketCol ? selQ.eq("market", m) : selQ.neq("asset_class", "india");
       const { data } = await selQ;
       if (data) signals.push(...data);
+    }
+
+    // Tradable-universe policy: drop leveraged/inverse ETFs + owner-blocklisted
+    // symbols BEFORE filling, so they never become paper positions (paper fills
+    // do not pass through the live execution gateway).
+    if (signals.length > 0) {
+      const kept: any[] = [];
+      for (const s of signals) {
+        const pol = await isSymbolBlocked(supabase, s.symbol, (s.market ?? "us") as "us" | "india");
+        if (!pol.blocked) kept.push(s);
+      }
+      signals.length = 0;
+      signals.push(...kept);
     }
 
     if (signals.length === 0) {

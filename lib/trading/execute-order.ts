@@ -16,6 +16,7 @@ import { robinhoodHeldQty } from "@/lib/robinhood-mcp";
 import { getKiteHoldings } from "@/lib/kite";
 import { reportIssue } from "@/lib/system-health";
 import { liveOrdersAllowed } from "@/lib/autonomy";
+import { isSymbolBlocked } from "@/lib/trading/symbol-policy";
 
 // Fraction of live equity used as the default per-order notional ceiling when
 // strategy_config.max_order_notional is null.
@@ -139,6 +140,14 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
   if (!SYMBOL_RE.test(symbol)) return { ok: false, status: 400, error: `Invalid symbol '${symbol}'` };
   if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) {
     return { ok: false, status: 400, error: `Invalid qty '${(proposal as any).qty}' — must be a positive integer` };
+  }
+
+  // Tradable-universe policy (fail-closed): refuse a BUY of a leveraged/inverse
+  // ETF or an owner-blocklisted symbol. A SELL is always allowed (must be able to
+  // exit a position even if the name was later blocked).
+  if (side === "buy") {
+    const pol = await isSymbolBlocked(supabase, symbol, market, { failClosed: true });
+    if (pol.blocked) return { ok: false, status: 403, error: `Refusing BUY of ${symbol}: ${pol.reason}` };
   }
 
   // STRICT broker resolution — never falls back to a default broker on a config read error.
