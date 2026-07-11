@@ -9,7 +9,7 @@ import {
 import { AUTONOMOUS_LIVE_ENABLED } from "@/lib/autonomy";
 import { getQuote } from "@/lib/data/quotes";
 import { rhPlaceMarketOrder } from "@/lib/brokers/robinhood/rest-client";
-import { placeEquityOrder } from "@/lib/kite";
+import { placeEquityOrder, getKiteMargins, getKiteHoldings } from "@/lib/kite";
 import { checkKillSwitches } from "@/lib/kill-switches";
 
 const SIGNAL_LOOKBACK_HOURS = 24;
@@ -129,16 +129,44 @@ export async function runAutonomousLive(
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
 
-  // Fetch NAV — no fallback, fails closed
-  const { data: navSnap } = await svc
-    .from("live_account_snapshots")
-    .select("equity, captured_at")
-    .eq("account_id", NAV_ACCOUNT_ID)
-    .order("captured_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const liveNav: number = Number((navSnap as any)?.equity) || 0;
-  const navCapturedAt: string = (navSnap as any)?.captured_at ?? new Date(0).toISOString();
+  // Per-market NAV — CURRENCY-CORRECT, no cross-currency fallback. US uses the
+  // Robinhood USD snapshot; India uses live Kite INR equity + holdings value.
+  // A market with no fresh NAV source is left unset → its signals reject in the
+  // sizing kernel (no_live_nav), rather than being sized off the wrong currency.
+  const navByMarket: Record<string, { nav: number; capturedAt: string }> = {};
+
+  if (autonomousMarkets.includes("us")) {
+    const { data: navSnap } = await svc
+      .from("live_account_snapshots")
+      .select("equity, captured_at")
+      .eq("account_id", NAV_ACCOUNT_ID)
+      .order("captured_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    navByMarket.us = {
+      nav: Number((navSnap as any)?.equity) || 0,
+      capturedAt: (navSnap as any)?.captured_at ?? new Date(0).toISOString(),
+    };
+  }
+
+  if (autonomousMarkets.includes("india")) {
+    try {
+      const [margins, holdings] = await Promise.all([getKiteMargins(svc), getKiteHoldings(svc)]);
+      let inrNav = 0;
+      if (margins.ok && typeof margins.equityNet === "number") inrNav += margins.equityNet;
+      const hlist: any[] = (holdings as any)?.data ?? (holdings as any)?.holdings ?? [];
+      for (const h of Array.isArray(hlist) ? hlist : []) {
+        const qty = Number(h.quantity ?? h.qty ?? 0);
+        const px = Number(h.last_price ?? h.ltp ?? 0);
+        if (Number.isFinite(qty) && Number.isFinite(px)) inrNav += qty * px;
+      }
+      // Accept only a successful margins call with a positive NAV; else leave
+      // India unset so it fails closed rather than trading off a guessed NAV.
+      if (margins.ok && inrNav > 0) {
+        navByMarket.india = { nav: inrNav, capturedAt: new Date().toISOString() };
+      }
+    } catch { /* leave india NAV unset → fail closed */ }
+  }
 
   // Kelly calibration from last 100 closed paper_trades
   const { data: closedTrades } = await svc
@@ -163,19 +191,29 @@ export async function runAutonomousLive(
     }
   }
 
-  // Open position count
-  const { count: openPositions } = await svc
-    .from("broker_orders")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "filled");
+  // Per-market NET open positions (filled BUYs − filled SELLs by symbol; count
+  // symbols still net-positive) + per-market live orders placed today. The old
+  // GLOBAL filled-order count grew forever and would eventually trip the
+  // max-open cap permanently, and mixed US+India into one number.
+  const openByMarket: Record<string, number> = {};
+  const ordersTodayByMarket: Record<string, number> = {};
+  for (const m of autonomousMarkets) {
+    const { data: fills } = await svc.from("broker_orders")
+      .select("symbol, side, qty").eq("market", m).eq("status", "filled");
+    const net: Record<string, number> = {};
+    for (const o of (fills ?? []) as any[]) {
+      const q = Number(o.qty) || 0;
+      net[o.symbol] = (net[o.symbol] ?? 0) + (o.side === "sell" ? -q : q);
+    }
+    openByMarket[m] = Object.values(net).filter((v) => v > 1e-9).length;
 
-  // Count live orders placed today
-  const { count: ordersToday } = await svc
-    .from("broker_orders")
-    .select("id", { count: "exact", head: true })
-    .eq("broker_env", "live")
-    .gte("created_at", todayStart.toISOString())
-    .not("status", "in", "(error,rejected,canceled,cancelled)");
+    const { count: todayCount } = await svc.from("broker_orders")
+      .select("id", { count: "exact", head: true })
+      .eq("market", m).eq("broker_env", "live")
+      .gte("created_at", todayStart.toISOString())
+      .not("status", "in", "(error,rejected,canceled,cancelled)");
+    ordersTodayByMarket[m] = todayCount ?? 0;
+  }
 
   // Query qualifying signals for autonomous markets only
   const lookbackCutoff = new Date(Date.now() - SIGNAL_LOOKBACK_HOURS * 3_600_000).toISOString();
@@ -244,6 +282,10 @@ export async function runAutonomousLive(
       .single();
 
     if (propErr || !proposal) {
+      // Unique-violation (migration 145) = this signal was already claimed by a
+      // concurrent/prior autonomous run. Skip idempotently — NOT an error.
+      const alreadyClaimed = (propErr as any)?.code === "23505";
+      if (alreadyClaimed) continue;
       results.push({
         symbol: signal.symbol, market, signal_id: signal.id,
         proposal_id: null, broker_order_id: null, broker_order_ref: null,
@@ -280,8 +322,8 @@ export async function runAutonomousLive(
       score_threshold:       scoreThreshold,
       proposed_notional_usd: 0,
       policy,
-      current_open_positions: openPositions ?? 0,
-      orders_placed_today:    (ordersToday ?? 0) + liveOrdersThisRun,
+      current_open_positions: openByMarket[market] ?? 0,
+      orders_placed_today:    (ordersTodayByMarket[market] ?? 0) + liveOrdersThisRun,
     });
 
     if (!kernel.go) {
@@ -306,8 +348,8 @@ export async function runAutonomousLive(
     } catch { /* sizing will reject via no_current_price */ }
 
     const sizing = computeAutonomousSizing({
-      nav: liveNav,
-      nav_captured_at: navCapturedAt,
+      nav: navByMarket[market]?.nav ?? 0,
+      nav_captured_at: navByMarket[market]?.capturedAt ?? new Date(0).toISOString(),
       current_price: currentPrice,
       price_stale: priceStale,
       win_rate: winRate,
@@ -447,7 +489,7 @@ export async function runAutonomousLive(
       `Live run ${runId}: ${results.length} signal(s) — ` +
       `${submitted} submitted, ${reconcileNeeded} needs_reconcile, ${rejected} blocked/failed. ` +
       `Markets: ${autonomousMarkets.join(",")}. ` +
-      `NAV: $${liveNav.toFixed(0)}.`,
+      `NAV: ${autonomousMarkets.map((m) => `${m}=${(navByMarket[m]?.nav ?? 0).toFixed(0)}${m === "india" ? "₹" : "$"}`).join(" ")}.`,
   } as any);
 
   return {
