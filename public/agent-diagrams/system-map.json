@@ -679,6 +679,13 @@
       "nodeId": "AUTOLIVE",
       "label": "AutonomousLive — PA3 per-market live execution cron",
       "reason": "PA3: autonomous live trading with per-market mode (off/manual/autonomous) controlled independently for US and India via strategy_config.live_auto_mode_us/india (migration 141). New cron at 14:00 UTC (after research at 13:00 UTC). US orders via direct Robinhood REST (lib/brokers/robinhood/rest-client.ts — MCP unavailable in serverless). India orders via Kite REST. Same 9-gate kernel + Kelly sizing as shadow path. Dual gate: AUTONOMOUS_LIVE_ENABLED env var AND live_auto_enabled DB toggle both required. Budget reserved via reserve_live_order_budget_v2 with autonomous_worker actor. Dashboard Settings shows Off/Manual/Autonomous toggles per market. lib/trading/autonomous-live.ts + app/api/agents/autonomous-live/cron/route.ts."
+    },
+    {
+      "date": "2026-07-10",
+      "event": "changed",
+      "nodeId": "AUTOLIVE",
+      "label": "Money-path unification + live-exit monitor + tradable-universe blocklist (Codex audit remediation)",
+      "reason": "Full-system audit remediation. (1) Fixed the autonomous zero-signal dead-end (wrong column + swallowed error) so it can actually place orders. (2) Unified the money path: one shared lib/trading/execute-order.ts::executeApprovedOrder(svc,input,actor) runs the full hardened invariant set for BOTH the owner manual gateway and the autonomous worker (account allowlist, fresh kill-switch, G1/G3, notional cap, drift, held-SELL, atomic v2 reservation). (3) Serverless-capable Robinhood REST adapter (lib/brokers/adapters/robinhood.ts, id 'robinhood') for submit/status/cancel. (4) NEW LiveExitMonitor (lib/trading/live-exit-monitor.ts, cron every 30m in-session both markets): auto-SELLs live positions on stop -8%/target +20%/time 15d through the gateway. (5) cancel-on-kill in broker-orders/sync. (6) Live market-open gate (lib/trading/market-calendar.ts) via authoritative AV MARKET_STATUS (US+India, catches unscheduled closures) + holiday lists. (7) Tradable-universe blocklist (migration 146, lib/trading/symbol-policy.ts): leveraged/inverse ETFs auto-blocked + owner-curated symbol_blocklist, enforced at the gateway (fail-closed BUY) + paper-trade. (8) per-market currency-correct NAV (US USD snapshot, India Kite INR), idempotent signal claim (migration 145). Deployment flag AUTONOMOUS_LIVE_ENABLED stays owner-controlled."
     }
   ]
 }

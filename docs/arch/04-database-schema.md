@@ -767,3 +767,9 @@ NSE/BSE holdings snapshot from Kite API.
 | 138 | shadow_decisions: `policy_version_id` drops NOT NULL; `setup_type text` col + index (archetype shadow rows) |
 | 139 | strategy_config: +8 `live_auto_*` cols; trade_proposals: +4 autonomous cols + status constraint expanded (`queued_auto`, `manual_review_required`); broker_order_events: new append-only table + `boe_block_mutation()` trigger blocking UPDATE/DELETE |
 | 140 | `reserve_live_order_budget_v2` RPC — adds `p_execution_actor` param; `approved_by_user=(actor='owner')`; counts `unknown_needs_reconcile`+`partially_filled` in daily budget; REVOKE public/anon/authenticated, GRANT service_role only |
+| 141 | strategy_config: `live_auto_mode_us`/`live_auto_mode_india` (off/manual/autonomous); trade_proposals: `market` col + index |
+| 142 | RLS: owner-scope the `USING(true)` authenticated SELECT policies on trade_proposals/strategy_config/paper_trades/decision_journal/deep_analyses/mentor_insights/trade_decisions/uploaded_trade_files |
+| 143 | **Restore** (idempotent) the out-of-band 139/140 objects so a clean DB rebuilds: trade_proposals autonomous cols, broker_orders reservation cols, broker_order_events table+trigger+RLS, `reserve_live_order_budget_v2` RPC — exact prod DDL |
+| 144 | RLS: owner-scope corporate_actions/evidence_records/experiment_runs/paper_order_events/strategy_versions/trade_decision_embeddings; enable service-only RLS on universe_snapshots/_scores |
+| 145 | Unique partial index `trade_proposals(signal_id,market) WHERE execution_mode='autonomous_live'` — atomic autonomous signal claim (no double-propose/buy) |
+| 146 | `symbol_blocklist` table (owner-curated tradable-universe blocklist; leveraged/inverse ETFs auto-blocked in code) + RLS (service + owner-read) |
