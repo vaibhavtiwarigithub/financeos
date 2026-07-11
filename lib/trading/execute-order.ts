@@ -13,6 +13,7 @@ import { checkKillSwitches } from "@/lib/kill-switches";
 import { checkLivePortfolioLimits } from "@/lib/risk/live-portfolio-gate";
 import { getQuote } from "@/lib/data/quotes";
 import { robinhoodHeldQty } from "@/lib/robinhood-mcp";
+import { getKiteHoldings } from "@/lib/kite";
 import { reportIssue } from "@/lib/system-health";
 import { liveOrdersAllowed } from "@/lib/autonomy";
 
@@ -250,6 +251,16 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
         const heldRes = await robinhoodHeldQty(symbol, acct.account);
         if (!heldRes.ok) return { ok: false, status: 403, error: `Refusing SELL of ${symbol}: could not verify live holdings (${heldRes.error})` };
         if ((heldRes.qty ?? 0) < qty) return { ok: false, status: 403, error: `Refusing SELL of ${qty} ${symbol}: only ${heldRes.qty ?? 0} held on the live trading account` };
+      } else if (broker.id === "kite") {
+        // Kite holdings are live from the broker (not the snapshot table).
+        const holdings = await getKiteHoldings(supabase);
+        if (!holdings.ok || !Array.isArray((holdings as any).data)) {
+          return { ok: false, status: 403, error: `Refusing SELL of ${symbol}: could not verify Kite holdings (${(holdings as any).error ?? "no data"})` };
+        }
+        const bare = symbol.replace(/\.(NS|BO)$/i, "").toUpperCase();
+        const h = ((holdings as any).data as any[]).find((x) => String(x?.tradingsymbol ?? "").toUpperCase() === bare);
+        const heldQty = Number(h?.quantity ?? 0);
+        if (heldQty < qty) return { ok: false, status: 403, error: `Refusing SELL of ${qty} ${symbol}: only ${heldQty} held in the Kite account` };
       } else {
         const { data: snap } = await supabase.from("live_account_snapshots")
           .select("positions_json, captured_at")
