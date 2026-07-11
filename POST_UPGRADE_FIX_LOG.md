@@ -49,6 +49,22 @@
 
 ---
 
+## Phase 2 — Codex P0/P1 code remediation (2026-07-10)
+
+Deterministic, code-fixable findings from `CODEX_POST_UPGRADE_DEEP_REVIEW_RESULT.md`, fixed in parallel and committed together (52a790a). Build green.
+
+| Finding | File | Fix |
+|---------|------|-----|
+| Technical score 100 after -12% high-volume reversal | `lib/data/technicals.ts` | ATR14 + last-bar diagnostics; `detectBreakdownVeto` caps technical score at 20 before momentum math (crash / high-vol breakdown / bottom-quartile close) |
+| No OOS calibration acceptance gate | `lib/validation/calibration.ts` | `acceptCalibrationOOS` — ECE on time-ordered walk-forward holdout; fail-closed (<30 rows, degenerate, ECE>0.1); gates `pwin_logistic` upsert |
+| `force_unvalidated` bypass + unscoped demote-all | `app/api/strategies/versions/route.ts` | bypass hard-rejected (400); demotion always market-scoped, aborts on error; missing version 404s |
+| 1 bullish message scores sentiment 100 | `lib/data/scores.ts` | Bayesian shrinkage toward neutral by real `stocktwits_message_count` (K=10): 1 msg→55, 500@90%→89 |
+| India discovery no freshness; US screener no real momentum | `lib/research-agent.ts` | India `scored_at` within 36h; US momentum bucket ordered by `revenue_growth` desc. Candidate count unchanged (3/day), no regime logic |
+
+Still open (not code-fixable): item 9 (Official RH Trading MCP), item 10 (integration tests), item 11 (Vaibhav approval). Deferred architectural P1 (cross-sectional rank, specialist setup models, Feature Registry/Edge Lab wiring, policy evolution, PIT fundamentals) — weeks each.
+
+---
+
 ## Required Before Enabling L4 / Autonomous Live
 
 1. ✅ RPC permissions secured

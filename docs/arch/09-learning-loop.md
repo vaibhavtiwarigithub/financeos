@@ -1,5 +1,5 @@
 # Kairos — Learning Loop
-> Last updated: 2026-07-10
+> Last updated: 2026-07-10 (calibration OOS acceptance gate — ECE on walk-forward holdout, fail-closed, gates pwin_logistic upsert)
 > Update this file when: the learning flow changes, new guardrails are added to weight mutation, genome parameters change, Phase 1 unlocks, the RAG pipeline changes, or Performance Truth Layer evaluation logic changes.
 
 ---
@@ -140,6 +140,18 @@ click "Promote" without the Validation Engine having run and passed.
 The Validation Engine splits historical data by time, scoring the Challenger only on data
 it could not have seen when it was proposed. This prevents in-sample overfitting from
 looking like genuine improvement.
+
+### Calibration OOS acceptance gate
+
+`lib/validation/calibration.ts` fits the `pwin_logistic` artifact from walk-forward
+folds (chronological, purged/embargoed). `acceptCalibrationOOS` computes the
+Expected Calibration Error (ECE) over the **out-of-sample holdout only** and is
+**fail-closed**: a model is rejected (`accepted: false`) when the holdout has
+<30 usable rows, is degenerate (all-win/all-loss or non-finite ECE), or ECE > 0.1.
+`fitAndStoreCalibration` gates the artifact upsert on this verdict — a miscalibrated
+model is never written to the live `pwin_logistic` artifact, so the money path never
+reads a bad P(win). `MIN_OOS_SAMPLES=30` and `MAX_OOS_ECE=0.1` are v0 thresholds
+needing prospective tuning.
 
 ---
 

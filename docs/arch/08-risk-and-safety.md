@@ -1,6 +1,6 @@
 # Kairos — Risk & Safety
 
-> Last updated: 2026-07-10 (Phase 1 P0: L4 enforcement, conviction normalization, India currency, duplicate SELL, cancel-on-kill BUY-only; F6: kill switches now read live_account_snapshots when live_auto_enabled=true)
+> Last updated: 2026-07-10 (Phase 1 P0: L4 enforcement, conviction normalization, India currency, duplicate SELL, cancel-on-kill BUY-only; F6: kill switches now read live_account_snapshots when live_auto_enabled=true. Codex P0/P1 remediation: technical breakdown veto, calibration OOS gate, promotion governance — force_unvalidated removed + demotion market-scoped.)
 > Update when any authorization, scoring eligibility, limit, account, order, reconciliation, exit, or kill-switch behavior changes.
 
 ---
@@ -51,6 +51,21 @@ Live BUY requires:
 - no unresolved taint or invalid LLM veto state.
 
 A score threshold or `eligible_for_live_review` flag alone never grants live eligibility.
+
+**Breakdown veto (deterministic, runs before momentum math).** `scoreTechnicals`
+(`lib/data/technicals.ts`) evaluates `detectBreakdownVeto` first: a crash/meme
+reversal — last bar down ≥2.5 ATR, or ≤−7% on ≥1.5× volume, or a bottom-quartile
+close — caps the technical score at 20 regardless of RSI/EMA. Closes the prior bug
+where a −12% high-volume reversal scored ~100 because RSI had fallen into the
+preferred band while price was still above the EMAs. Thresholds are v0 guardrails
+needing prospective validation per liquidity bucket.
+
+**Promotion governance** (`app/api/strategies/versions/route.ts`). A champion can
+only be promoted with a PASSED validation experiment: the `force_unvalidated`
+bypass is hard-rejected (400). Demotion of the prior champion is always
+market-scoped — the former unscoped demote-all fallback is removed and now aborts
+the promotion on error, so promoting an India challenger never touches the US
+champion.
 
 ### 3 — Trading/broker/account enablement
 

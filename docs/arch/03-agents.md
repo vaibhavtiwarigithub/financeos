@@ -159,13 +159,15 @@ Each dimension outputs 0–100, clamped. Source of truth: `lib/data/scores.ts`, 
 | 20-day trend (±3% band) | up +10 · down −10 |
 | Volume vs 20d avg (direction-confirming) | in-direction ≥1.5× → ±8 · ≥1.2× → ±4 (direction from EMA20/trend; neutral context → 0) |
 
-**Sentiment** (`scoreSentiment`) — StockTwits bull/(bull+bear)×100; else AV news `(sent+1)×50`; else label (bull 65 / bear 35); else 50. Excluded from weighting unless `has_data`.
+**Breakdown veto** (`detectBreakdownVeto`, runs FIRST) — before the additive math, a deterministic crash/meme-reversal check caps the technical score at 20: last bar down ≥2.5 ATR, or ≤−7% on ≥1.5× volume, or a bottom-quartile close on a down bar. Fixes the case where a −12% high-volume reversal scored ~100 (RSI fell into the preferred band while price stayed above the EMAs). Uses new `computeATR14` + last-bar diagnostics on `TechnicalResult`.
+
+**Sentiment** (`scoreSentiment`) — bullish fraction Bayesian-shrunk toward neutral by real `stocktwits_message_count` (prior K=10): `(bullFrac·N + 0.5·K)/(N + K)`, so 1 bullish message → 55 not 100, 500 msgs @90% → 89. Falls back to AV news `(sent+1)×50`; else label (bull 65 / bear 35); else 50. Excluded from weighting unless `has_data`.
 
 **Macro** (`fetchMacroScore`) — `100 − danger_score` from latest non-`unknown` `macro_regime` row (looks back up to 3 weeks). `unknown` regime → excluded.
 
 **Insider** (`scoreInsider`/EDGAR) — `10 + buyRatio×80` where `buyRatio = buyValue/(buyValue+sellValue)` over 90 days. Requires ≥3 transactions; <3, no data, ADRs, or fetch-fail → `available:false` (excluded).
 
-Known gaps (deliberately not yet added — see the hype-catch discussion / IC-gate path): relative-strength vs index, MACD/ATR, 52w-high proximity, EMA200; debt/leverage, FCF yield, EV/EBITDA, revenue *acceleration*, sector-relative margins; sentiment message-volume weighting; per-symbol macro beta; insider role/cluster weighting.
+Known gaps (deliberately not yet added — see the hype-catch discussion / IC-gate path): relative-strength vs index, MACD/ATR, 52w-high proximity, EMA200; debt/leverage, FCF yield, EV/EBITDA, revenue *acceleration*, sector-relative margins; per-symbol macro beta; insider role/cluster weighting.
 
 **Target v2:** asset/setup-specific PIT feature snapshots, comparable-universe rank, structural
 evidence confidence, contradiction/event gates, and deterministic action. The complete contract is
