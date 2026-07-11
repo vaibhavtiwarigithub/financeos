@@ -147,7 +147,10 @@ export async function POST(req: NextRequest) {
       let selQ = supabase.from("agent_signals").select("*")
         .eq("status", "pending").eq("direction", "long")
         .gte("analyst_score", scoreThreshold).gte("created_at", cutoff)
-        .or("score_source.is.null,score_source.neq.llm_advisory")  // P0: exclude DeepSeek advisory signals
+        // Positive allowlist: ONLY the versioned deterministic source is fill-eligible.
+        // A negative filter (is.null OR neq llm_advisory) failed OPEN — it admitted
+        // null/unknown score_source, so any untagged signal could be traded.
+        .eq("score_source", "deterministic_v1")
         .order("analyst_score", { ascending: false }).limit(hasMarketCol ? 10 : 5);
       selQ = hasMarketCol ? selQ.eq("market", m) : selQ.neq("asset_class", "india");
       const { data } = await selQ;

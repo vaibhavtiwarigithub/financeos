@@ -9,7 +9,7 @@ import { isIndia, fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data
 import { niftyCandidates } from "@/lib/india-universe";
 import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
-import { computeWeightedAnalystScore, isThinEvidence, type DimensionRecord } from "@/lib/scoring/weighted-score";
+import { computeWeightedAnalystScore, isThinEvidence, SCORE_DIMENSIONS, type DimensionRecord } from "@/lib/scoring/weighted-score";
 import { routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
@@ -1318,6 +1318,16 @@ export async function processSymbol(
       }
     } catch { /* feature_registry may not exist pre-064 — never block research */ }
 
+    // R7 (#22): weighted structural coverage for evidence_confidence — the share
+    // of applicable BASE WEIGHT that has real evidence, over the 5 scored dims
+    // only (`applicable` also holds options/analyst, which are not scored dims).
+    const scoredApplicable = SCORE_DIMENSIONS.filter((d) => applicable.has(d as any));
+    const applicableWeight = scoredApplicable.reduce((s, d) => s + (weightOf[d] ?? 0), 0);
+    const presentWeight = includedDims.reduce((s, d) => s + (weightOf[d] ?? 0), 0);
+    const evidenceConfidence = applicableWeight > 0
+      ? Number((presentWeight / applicableWeight).toFixed(4))
+      : null;
+
     const { data: obsRow, error: obsErr } = await supabase.from("decision_observations").insert({
       market,
       symbol,
@@ -1369,9 +1379,11 @@ export async function processSymbol(
       mandate_id: mandateId ?? null,
       score_source: "deterministic_v1",
       scoring_version: "v1.0",
-      // P0 evidence_confidence: ratio of dims with data to structurally applicable dims.
-      // Denominator uses applicable.size (base count proxy; P1 upgrades to base weights).
-      evidence_confidence: applicable.size > 0 ? includedDims.length / applicable.size : null,
+      // evidence_confidence = WEIGHTED structural coverage: the fraction of the
+      // applicable base weight that actually has evidence. A raw dimension count
+      // treated a missing 40%-weight dim the same as a missing 10% dim. Only the
+      // 5 scored dimensions count (applicable also contains options/analyst).
+      evidence_confidence: evidenceConfidence,
       universe_snapshot_id: universeSnapshotId ?? null,  // P1: links to universe_snapshots for cross-sectional rank
     }).select("id").maybeSingle();
     if (obsErr && !/does not exist|could not find/i.test(obsErr.message ?? "")) {

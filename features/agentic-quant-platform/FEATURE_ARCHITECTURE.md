@@ -821,13 +821,13 @@ Legend: [ ] todo · [~] in progress · [x] done
 - [x] R3  #1 restore migrations 139/140 + `reserve_live_order_budget_v2` + `broker_order_events` DDL from prod → files (`143_restore_live_auto_ddl.sql`)
 - [x] R4  #9 autonomous fail-closed: require valid future lease + per-market `trading_enabled_*===true` (no null-passes)
 - [x] R5  #14 calibration fold-local fitting (fit scaler+logistic inside each train fold; refit-all only for deploy artifact)
-- [ ] R6  #19 positive-allowlist score_source/version on paper+trader eligibility (remove null/unknown fail-open + column-delete retry)
-- [ ] R7  #22 evidence_confidence = weighted structural coverage (not dimension count)
+- [x] R6  #19 positive-allowlist `score_source='deterministic_v1'` on paper+trader eligibility (was fail-open negative filter)
+- [x] R7  #22 evidence_confidence = weighted structural coverage over the 5 scored dims (not dimension count)
 - [x] R8  #33 weighted-score: explicit `abstain` flag for <2 dims (no meaningless partial number mistaken for a score)
 - [~] R9  #16/#31 owner-gate: DONE smart-money, theme-scout GET, mentor evaluate/journal/scores, import-csv. TODO metered public data (options/chain, social/sentiment, charts/*)
 - [x] R10 #17/#32 RLS: owner-scoped corporate_actions/evidence_records/experiment_runs/paper_order_events/strategy_versions/trade_decision_embeddings + service-only universe_snapshots* (migration 144)
 - [ ] R11 #18 vault: hash PIN (store salted hash, not plaintext); plan envelope-encryption for keys; rotate legacy cron secret
-- [ ] R12 #34 redact literal cron secret from historical migration text (repair migration) + confirm rotation
+- [x] R12 #34 redacted literal cron secret from migration 022 text (dead — job unscheduled by 052, CRON_SECRET already rotated). NOTE: git history still contains it (rotation, not rewrite, is the real fix — done).
 
 ### Track 2 — money-path unification (architecture-gated; build after Track 1)
 - [ ] R13 #2/#5/#10/#11 extract one server-only `executeApprovedOrder()` used by manual + autonomous (all gateway invariants, actor envelope)

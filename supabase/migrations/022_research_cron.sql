@@ -7,7 +7,7 @@
 --   pg_cron  v1.6.4  — job scheduler
 --   pg_net   v0.20.3 — outbound HTTP from Postgres
 --
--- Auth header: x-cron-secret: fos-cron-k9x2m7p4-2026
+-- Auth header: x-cron-secret: <REDACTED_ROTATED_SEE_CRON_SECRET_ENV>
 --   (matches CRON_SECRET env var checked in /api/agents/research/cron)
 --
 -- IMPORTANT — localhost limitation:
@@ -22,7 +22,7 @@
 --
 --   In development, trigger the cron manually:
 --     curl -X POST http://localhost:3000/api/agents/research/cron \
---          -H "x-cron-secret: fos-cron-k9x2m7p4-2026"
+--          -H "x-cron-secret: <REDACTED_ROTATED_SEE_CRON_SECRET_ENV>"
 --
 --   Or use Windows Task Scheduler (already in place per route comment).
 -- ============================================================
@@ -55,7 +55,7 @@ SELECT cron.schedule(
     url     := '{{APP_URL}}/api/agents/research/cron',
     headers := jsonb_build_object(
       'Content-Type',   'application/json',
-      'x-cron-secret',  'fos-cron-k9x2m7p4-2026'
+      'x-cron-secret',  '<REDACTED_ROTATED_SEE_CRON_SECRET_ENV>'
     ),
     body    := '{}'::jsonb
   ) AS request_id;

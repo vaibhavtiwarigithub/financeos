@@ -160,7 +160,9 @@ async function buildProposals(supabase: any, isCron: boolean) {
       .eq("direction", "long")
       .eq("status", "pending")
       .gte("analyst_score", scoreThreshold)
-      .or("score_source.is.null,score_source.neq.llm_advisory")  // P0: exclude DeepSeek advisory signals
+      // Positive allowlist: ONLY the versioned deterministic source is trade-eligible.
+      // The prior negative filter admitted null/unknown score_source (fail-open).
+      .eq("score_source", "deterministic_v1")
       .order("analyst_score", { ascending: false })
       .limit(3); // max 3 proposals per run
 
