@@ -1,6 +1,6 @@
 # Kairos — Risk & Safety
 
-> Last updated: 2026-07-10 (PA3: AutonomousLive cron — per-market mode, direct REST, atomic budget RPC)
+> Last updated: 2026-07-10 (Phase 1 P0 fixes: L4 enforcement, conviction normalization, India currency isolation, duplicate SELL protection, cancel-on-kill BUY-only)
 > Update when any authorization, scoring eligibility, limit, account, order, reconciliation, exit, or kill-switch behavior changes.
 
 ---
@@ -35,7 +35,7 @@ Unknown, null, stale, malformed, or errored state on a live BUY fails closed. Ve
 
 **Manual:** `requireOwner()` + request/CSRF guard + owner approval/Send action.
 
-**Future auto L4:** all of deployment `AUTONOMOUS_LIVE_ENABLED=true`, `autonomy_level='L4_live_small_auto'`, `live_auto_enabled=true`, unexpired owner lease, authenticated cron worker, and a single-run lease. The autonomous path cannot use owner-only risk overrides.
+**Future auto L4:** all of deployment `AUTONOMOUS_LIVE_ENABLED=true`, `autonomy_level='L4_live_small_auto'`, `live_auto_enabled=true`, unexpired owner lease, authenticated cron worker, and a single-run lease. The gateway (`executeApprovedOrder`) enforces `autonomousWorkerAllowed(autonomy_level)` for non-owner actors — L3_live_manual is insufficient and returns 403. The autonomous path cannot use owner-only risk overrides.
 
 Enabling an auto envelope is a human money/config change and is journaled. It is not permission for an LLM to change caps, accounts, strategy lifecycle, or code.
 
@@ -62,7 +62,9 @@ US order account is exactly Robinhood agentic account `605420660`. Account `9658
 
 `lib/kill-switches.ts` checks per market for daily loss, peak drawdown, and rolling accuracy, disables trading, and creates a critical alert. Submit-time checks must rerun immediately before reserve/send.
 
-For L4, any unresolved critical trading/data/reconciliation alert blocks new entries. A kill switch also attempts to cancel resting entry BUY orders only if a tested cancel capability exists; protective SELL orders are not auto-cancelled. Risk-reducing held-position exits remain allowed where state can be verified.
+**Known limitation:** kill-switch inputs currently read `paper_portfolio` / `paper_performance` / `paper_trades`, not live broker account data. The live and paper P&L can diverge. Before enabling L4 autonomous live trading, the kill-switch must be extended to read live broker equity from `live_account_snapshots` for daily-loss and drawdown, and live trade outcomes from `broker_orders` for accuracy. This is tracked in POST_UPGRADE_FIX_LOG.md as a blocking prerequisite.
+
+For L4, any unresolved critical trading/data/reconciliation alert blocks new entries. Cancel-on-kill cancels only resting BUY orders — protective SELL orders are explicitly excluded (canceling an exit increases open exposure). Risk-reducing held-position exits remain allowed where state can be verified.
 
 ### 5 — Data quality and overrides
 

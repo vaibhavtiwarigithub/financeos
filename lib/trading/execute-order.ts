@@ -15,7 +15,7 @@ import { getQuote } from "@/lib/data/quotes";
 import { robinhoodHeldQty } from "@/lib/robinhood-mcp";
 import { getKiteHoldings } from "@/lib/kite";
 import { reportIssue } from "@/lib/system-health";
-import { liveOrdersAllowed } from "@/lib/autonomy";
+import { liveOrdersAllowed, autonomousWorkerAllowed } from "@/lib/autonomy";
 import { isSymbolBlocked } from "@/lib/trading/symbol-policy";
 
 // Fraction of live equity used as the default per-order notional ceiling when
@@ -164,6 +164,12 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
 
     if (!liveOrdersAllowed((cfg as any)?.autonomy_level)) {
       return { ok: false, status: 403, error: `Live orders blocked by autonomy level '${(cfg as any)?.autonomy_level ?? "unset"}' — live requires L3_live_manual or higher (raise it in Settings → Agents).` };
+    }
+    // Autonomous worker requires L4_live_small_auto or higher.
+    // L3_live_manual permits owner clicks only — the autonomous path must be
+    // explicitly unlocked at L4. Unknown/null levels fail closed to L3.
+    if (!isOwner && !autonomousWorkerAllowed((cfg as any)?.autonomy_level)) {
+      return { ok: false, status: 403, error: `Autonomous orders require autonomy_level L4_live_small_auto or higher (current: '${(cfg as any)?.autonomy_level ?? "unset"}') — raise it in Settings → Agents.` };
     }
 
     const marketFlag = market === "india" ? (cfg as any)?.trading_enabled_india : (cfg as any)?.trading_enabled_us;

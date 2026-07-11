@@ -99,6 +99,29 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       if (!reason) continue;
 
       const qty = Math.floor(p.qty);
+
+      // Idempotency: skip if a pending or queued autonomous SELL already exists
+      // for this symbol, or if a live SELL order is already resting at the broker.
+      // Without this, two concurrent exit-monitor runs submit duplicate SELLs.
+      const { data: pendingSell } = await svc.from("trade_proposals")
+        .select("id").eq("symbol", symbol).eq("market", market).eq("side", "sell")
+        .eq("execution_mode", "autonomous_live")
+        .in("status", ["pending_review", "queued_auto"])
+        .limit(1).maybeSingle();
+      if (pendingSell) {
+        results.push({ market, symbol, qty, reason, status: "skipped_duplicate", error: `existing sell proposal ${(pendingSell as any).id}` });
+        continue;
+      }
+      const { data: activeSellOrder } = await svc.from("broker_orders")
+        .select("id").eq("market", market).eq("broker_env", "live")
+        .eq("symbol", symbol).eq("side", "sell")
+        .in("status", ["pending_submit", "submitted", "partially_filled"])
+        .limit(1).maybeSingle();
+      if (activeSellOrder) {
+        results.push({ market, symbol, qty, reason, status: "skipped_duplicate", error: `active sell order ${(activeSellOrder as any).id}` });
+        continue;
+      }
+
       const { data: prop, error: propErr } = await svc.from("trade_proposals").insert({
         symbol, market, side: "sell", order_type: "market", qty,
         status: "pending_review", execution_mode: "autonomous_live",

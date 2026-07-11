@@ -244,7 +244,7 @@ export async function runAutonomousLive(
     // evidence_confidence for the kernel). A previous build selected a
     // nonexistent `evidence_confidence` column and SWALLOWED the resulting
     // PostgREST error, so this path silently processed zero signals every run.
-    .select("id, symbol, market, direction, analyst_score, confidence, score_source, rationale")
+    .select("id, symbol, market, direction, analyst_score, conviction, score_source, rationale")
     .eq("score_source", "deterministic_v1")
     .eq("direction", "long")
     .gte("analyst_score", scoreThreshold)
@@ -338,7 +338,11 @@ export async function runAutonomousLive(
       market,
       direction:             signal.direction ?? "long",
       score:                 signal.analyst_score ?? 0,
-      evidence_confidence:   (signal as any).confidence ?? 0,
+      // ResearchAgent writes `conviction` (0–100); normalize to 0.0–1.0 for the
+      // kernel's evidence_confidence gate. `confidence` was never populated.
+      evidence_confidence:   (signal as any).conviction != null
+                               ? Math.min(1, (signal as any).conviction / 100)
+                               : 0,
       score_threshold:       scoreThreshold,
       proposed_notional_usd: 0,
       policy,
@@ -376,6 +380,7 @@ export async function runAutonomousLive(
       payoff_ratio: payoffRatio,
       flat_size_pct: flatSizePct,
       policy,
+      market,
     });
 
     if (!sizing.ok) {

@@ -116,8 +116,12 @@ export async function POST(req: NextRequest) {
   for (const mkt of ["us", "india"] as const) {
     const ks = await checkKillSwitches(supabase, mkt);
     if (ks.safe) continue;
+    // Cancel BUY orders only. Protective SELLs (exit-monitor stop/target orders)
+    // must NOT be canceled when a kill switch trips — killing them increases risk
+    // by leaving open long positions unprotected.
     const { data: resting } = await supabase.from("broker_orders").select("*")
-      .eq("market", mkt).eq("broker_env", "live").in("status", ["pending_submit", "submitted", "partially_filled"]);
+      .eq("market", mkt).eq("broker_env", "live").eq("side", "buy")
+      .in("status", ["pending_submit", "submitted", "partially_filled"]);
     if (!resting || resting.length === 0) continue;
     for (const o of resting as any[]) {
       if (!o.broker_order_id) continue;

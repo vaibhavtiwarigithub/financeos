@@ -1,5 +1,5 @@
 # Kairos — Agents
-> Last updated: 2026-07-10 (PA3: AutonomousLive agent added — per-market off/manual/autonomous)
+> Last updated: 2026-07-10 (Phase 1 fixes: signal confidence uses conviction/100; L4 gate in gateway; India currency isolation; duplicate SELL protection)
 > Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
 
 **Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file + update `public/agent-diagrams/system-map.json`.

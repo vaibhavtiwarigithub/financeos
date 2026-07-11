@@ -62,3 +62,15 @@ export function autonomousLivePlacementAllowed(level: string | null | undefined)
   const effective = isAutonomyLevel(level) ? level : DEFAULT_AUTONOMY_LEVEL;
   return rank(effective) >= rank("L4_live_small_auto");
 }
+
+/**
+ * Is the DB autonomy_level high enough for an autonomous_worker actor to submit
+ * an order? Checks the DB level only — the deployment flag is a separate gate
+ * enforced in runAutonomousLive. L3_live_manual allows owner clicks but NOT
+ * autonomous placement; autonomous_worker must see L4_live_small_auto or higher.
+ * Unknown/null levels fail closed (treated as L3).
+ */
+export function autonomousWorkerAllowed(level: string | null | undefined): boolean {
+  const effective = isAutonomyLevel(level) ? level : DEFAULT_AUTONOMY_LEVEL;
+  return rank(effective) >= rank("L4_live_small_auto");
+}
