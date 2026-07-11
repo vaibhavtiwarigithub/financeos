@@ -1,18 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
-import { createHash, timingSafeEqual } from "crypto"
+import { verifyPin, hashPin } from "@/lib/vault-pin"
 
 export const dynamic = "force-dynamic"
-
-// Constant-time PIN check — SHA-256 both sides so timingSafeEqual gets
-// equal-length buffers regardless of input length.
-function pinMatches(input: string | null, active: string): boolean {
-  if (input == null) return false
-  const a = createHash("sha256").update(input).digest()
-  const b = createHash("sha256").update(active).digest()
-  return timingSafeEqual(a, b)
-}
 
 // Step 1: POST { action: "send_otp" }
 //   → sends magic link / OTP to ADMIN_EMAIL via Supabase Auth
@@ -36,11 +27,11 @@ async function getStoredPin(): Promise<string | null> {
   return data?.value ?? null
 }
 
-async function verifyPin(pin: string): Promise<boolean> {
+async function checkCurrentPin(pin: string): Promise<boolean> {
   const stored = await getStoredPin()
   const active = stored ?? getCurrentPin()
   if (!active) return false // fail closed — unconfigured vault has no valid PIN
-  return pinMatches(pin, active)
+  return verifyPin(pin, active) // handles scrypt-hashed or legacy plaintext
 }
 
 export async function POST(req: NextRequest) {
@@ -57,7 +48,7 @@ export async function POST(req: NextRequest) {
   // Step 1: verify current PIN then send OTP
   if (action === "send_otp") {
     const currentPin = req.headers.get("x-vault-pin")
-    if (!currentPin || !(await verifyPin(currentPin))) {
+    if (!currentPin || !(await checkCurrentPin(currentPin))) {
       return NextResponse.json({ error: "Current PIN incorrect" }, { status: 403 })
     }
 
@@ -92,9 +83,10 @@ export async function POST(req: NextRequest) {
 
     // Store new PIN in DB (plaintext — protected by Supabase RLS + service role only)
     const svc = createServiceClient()
+    // Store a salted scrypt HASH, never the recoverable plaintext PIN.
     const { error: dbErr } = await svc.from("app_settings").upsert({
       key: "vault_pin",
-      value: new_pin,
+      value: hashPin(new_pin),
       updated_at: new Date().toISOString(),
     }, { onConflict: "key" })
 

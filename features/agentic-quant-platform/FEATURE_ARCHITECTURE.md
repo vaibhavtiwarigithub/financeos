@@ -826,7 +826,7 @@ Legend: [ ] todo · [~] in progress · [x] done
 - [x] R8  #33 weighted-score: explicit `abstain` flag for <2 dims (no meaningless partial number mistaken for a score)
 - [~] R9  #16/#31 owner-gate: DONE smart-money, theme-scout GET, mentor evaluate/journal/scores, import-csv. TODO metered public data (options/chain, social/sentiment, charts/*)
 - [x] R10 #17/#32 RLS: owner-scoped corporate_actions/evidence_records/experiment_runs/paper_order_events/strategy_versions/trade_decision_embeddings + service-only universe_snapshots* (migration 144)
-- [ ] R11 #18 vault: hash PIN (store salted hash, not plaintext); plan envelope-encryption for keys; rotate legacy cron secret
+- [x] R11 #18 vault: PIN stored as salted scrypt hash (`lib/vault-pin.ts`), legacy-plaintext compat verify (no lockout). Key-value envelope-encryption still TODO (separate, larger).
 - [x] R12 #34 redacted literal cron secret from migration 022 text (dead — job unscheduled by 052, CRON_SECRET already rotated). NOTE: git history still contains it (rotation, not rewrite, is the real fix — done).
 
 ### Track 2 — money-path unification (architecture-gated; build after Track 1)
