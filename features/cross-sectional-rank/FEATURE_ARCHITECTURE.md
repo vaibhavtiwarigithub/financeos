@@ -1,9 +1,11 @@
 # Cross-Sectional Ranking — Feature Architecture
 
-**STATUS: DRAFT — awaiting owner approval**
+**STATUS: IMPLEMENTED (P0–P2), OFF by default (`entry.rank_pct_min` = 0.0). Migration 151 applied 2026-07-11.**
 
-**Last updated:** 2026-07-10
-**Author:** Claude (architecture proposal only — no code, no migrations applied)
+**Last updated:** 2026-07-11
+**Author:** Claude (P0–P2 shipped: `lib/scoring/rank.ts`, cron Pass 2, genome param, migration 151. P3–P4 validation-replay/learner-proposal still pending.)
+
+> **Open flag RESOLVED (2026-07-11) — "top-3 by analyst_score win" (§9 borderline item):** the rank gate governs **cross-group admission only**; final ordering of admitted candidates stays by `analyst_score` (`PaperTrader.order("analyst_score", desc)` unchanged). Within a comparable group `rank_pct` is monotonic in `analyst_score`, so intra-group top ordering is byte-identical, and under today's single-/small-group degraded case (the common case) rank selection and raw-score selection are identical. The divergence only appears once the universe is large enough for multiple valid sector groups — precisely when cross-sectional rank has value. This is behavior-neutral today because the feature ships OFF (`rank_pct_min` default 0.0) and can only activate via a validated, owner-promoted challenger. No conflict with the locked CLAUDE.md decision.
 **Scope:** US equities, US ETFs, India NSE equities; long-only new positions; 2–20 trading-day swing horizon.
 **Parent doctrine:** `features/scoring-methodology/FEATURE_ARCHITECTURE.md` §5 ("Universe and comparable groups") and §3 ("comparable-universe rank + uncertainty"). This document is the concrete, buildable slice of that named P1 gap.
 

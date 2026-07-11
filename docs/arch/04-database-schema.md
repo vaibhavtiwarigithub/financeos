@@ -1,5 +1,5 @@
 # Kairos — Database Schema
-> Last updated: 2026-07-10 (migrations 136-140 documented; live_auto_* schema, broker_order_events, trade_proposals autonomous cols)
+> Last updated: 2026-07-11 (migrations 147-151 applied: fundamental_facts PIT ledger, 4 replay-harness tables, universe_snapshot_scores + agent_signals rank cols)
 > Update this file when: any migration adds, removes, or modifies a table, column, index, trigger, or RLS policy.
 
 Migrations in `supabase/migrations/`. Applied via Supabase MCP `apply_migration` or the Supabase SQL editor. **Always verify with `list_migrations` before shipping schema-coupled code.** A migration file existing in the repo does NOT mean it ran against production.
@@ -218,8 +218,10 @@ One row per symbol per research run. The "today's score" table.
 | `data_confidence` | numeric | 0–1; below 0.5 → tainted |
 | `discovery_source` | text | How symbol entered the batch |
 | `mandate_id` | uuid | FK → `investment_mandates` |
-| `status` | text | `pending` \| `filled` \| `expired` \| `claimed` |
+| `status` | text | `pending` \| `filled` \| `expired` \| `claimed` \| `rank_rejected` |
 | `claim_run_id` | uuid | FK → `agent_runs`; prevents double-fill |
+| `rank_pct` | numeric | Within-comparable-group percentile (migration 151); null until Pass-2 rank runs. Check `[0,1]`. |
+| `rank_rejected` | bool | True when candidate cleared the absolute floor but failed the cross-sectional rank gate (migration 151); default false. |
 | `created_at` | timestamptz | |
 
 ### `signal_score_history`
@@ -583,6 +585,25 @@ Immutable evidence ledger. `payload_hash` deduplicates re-imports.
 | `payload_hash` | text | UNIQUE; SHA-256 of payload |
 | `created_at` | timestamptz | Append-only. |
 
+### `fundamental_facts`
+Point-in-time (PIT) fundamentals vintage ledger (migration 150). Append-only: one immutable row per (symbol, market, report_period, restatement vintage). A later restatement of the same `report_period` inserts a NEW row with `restatement_seq = prev+1` and flips the prior row's `is_latest=false` — nothing is mutated in place, so "fundamentals as known on date D" is reconstructable and a restatement can never retroactively change a past as-of read. **OFF by default:** written by the capture-on-fetch hook in `lib/research-agent.ts` (fail-open), read via `lib/data/pit-fundamentals.ts::getFundamentalsAsOf`. Not yet wired into live scoring — `scoreFundamentals` is unchanged. RLS: `ff_service_all` (service_role ALL) + `ff_owner_read` (authenticated, owner email); anon REVOKEd.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `symbol` | text | |
+| `market` | text | `us` \| `india` (CHECK) |
+| `metric_set` | text | Default `ttm_overview` |
+| `report_period` | date | Fiscal period end the values describe (null for TTM rollups) |
+| `fiscal_period` | text | Q1/Q2/Q3/Q4/FY (nullable) |
+| `filing_date` | date | When it became public (nullable → falls back to `captured_at`) |
+| `values` | jsonb | OVERVIEW-shaped field map (`PERatio`, `ProfitMargin`, …) |
+| `source` | text | `fmp` \| `alpha_vantage` \| `yahoo` \| `financialdatasets` |
+| `restatement_seq` | int | 0 = as-first-observed; 1,2,… = later restatements |
+| `is_latest` | bool | Default true; flipped false when a newer vintage of the same period lands |
+| `payload_hash` | text | UNIQUE; dedup key for identical re-fetches |
+| `captured_at` | timestamptz | Kairos vintage clock |
+
 ### `corporate_actions`
 Stock splits + dividends from Alpha Vantage.
 
@@ -749,6 +770,27 @@ NSE/BSE holdings snapshot from Kite API.
 
 ---
 
+## 8.11 Historical replay harness (measure-only, OFF)
+
+Four additive tables (migration 149) backing `features/historical-replay-harness`. Internal, server-side/offline analyst tooling — RLS enabled with **no policy** (service_role bypasses RLS; all other roles denied). The P0–P4 harness code (`lib/replay/*`) runs on in-memory fixtures and does **not** depend on these tables; they persist frozen point-in-time eligibility runs when the harness is wired to persist. `replay_packets`/`replay_packet_items` are write-once by convention (assembler deep-freezes in memory).
+
+### `replay_packets`
+One row per (cohort, symbol, as-of date); immutable after write. `manifest_hash` = sha256 over the frozen item set. UNIQUE `(cohort, symbol, as_of)`.
+
+### `replay_packet_items`
+The frozen inputs for a packet. `item_type ∈ {ohlcv, fundamental, news, universe}`. Invariant `knowable_at <= packet.as_of` (sealed accessor enforces at read; a backfill test asserts at write). FK → `replay_packets` ON DELETE CASCADE.
+
+### `replay_eligibility_runs`
+One row per replay execution. `packet_manifest_hash` + `code_git_sha` make a run reproducible from its frozen inputs and the gate code version. `model_kind` e.g. `pwin_logistic`.
+
+### `replay_eligibility_events`
+Per (run, scope, as-of) gate verdict. `gate ∈ {calibration_oos, thin_evidence, ic, validation, breakdown_veto}`; `passed` boolean. The reporter's `first_eligible_asof` is `MIN(as_of) WHERE passed` over this table. FK → `replay_eligibility_runs` ON DELETE CASCADE.
+
+### `universe_snapshot_scores` (columns added — migration 151)
+Cross-sectional rank provenance added to the migration-137 table: `rank_quality` (`ok` \| `degraded` \| `excluded_*`), `comparable_group_key` (`market:asset-type:sector`; ETFs never grouped with single names), `group_n` (eligible names in the final group that day), `rank_eligible` (passed §4.1 data-quality gates). All nullable/additive.
+
+---
+
 ## Migration history summary
 
 | Migration range | Key tables / changes |
@@ -773,3 +815,8 @@ NSE/BSE holdings snapshot from Kite API.
 | 144 | RLS: owner-scope corporate_actions/evidence_records/experiment_runs/paper_order_events/strategy_versions/trade_decision_embeddings; enable service-only RLS on universe_snapshots/_scores |
 | 145 | Unique partial index `trade_proposals(signal_id,market) WHERE execution_mode='autonomous_live'` — atomic autonomous signal claim (no double-propose/buy) |
 | 146 | `symbol_blocklist` table (owner-curated tradable-universe blocklist; leveraged/inverse ETFs auto-blocked in code) + RLS (service + owner-read) |
+| 147 | Phase-1 repair (idempotent): `strategy_config` live_auto_* cols restore + REVOKE PUBLIC from `reserve_live_order_budget_v2` (no-op on prod; clean-rebuild reproducibility) |
+| 148 | Live kill-switches + sell atomicity: partial unique index `trade_proposals_active_sell_uniq (symbol,market) WHERE sell + active` |
+| 149 | Historical replay harness: 4 additive tables `replay_packets`, `replay_packet_items`, `replay_eligibility_runs`, `replay_eligibility_events`; RLS enabled, no policy (service-only). Measure-only, OFF |
+| 150 | PIT fundamentals: `fundamental_facts` append-only vintage ledger; UNIQUE `payload_hash`; RLS `ff_service_all` + `ff_owner_read`, anon REVOKEd. Index note: `captured_at::date` cannot go in an index expr (not IMMUTABLE) — indexed as plain `(symbol,market,filing_date DESC,captured_at DESC)`, COALESCE applied in-query. OFF (capture-on-fetch, fail-open) |
+| 151 | Cross-sectional rank: `universe_snapshot_scores` +`rank_quality`/`comparable_group_key`/`group_n`/`rank_eligible`; `agent_signals` +`rank_pct`/`rank_rejected` (+ `rank_pct ∈ [0,1]` NOT VALID→validated check); status `rank_rejected`. Additive, OFF by default (genome `entry.rank_pct_min` default 0.0) |

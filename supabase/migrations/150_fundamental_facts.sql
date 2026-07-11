@@ -32,9 +32,13 @@ CREATE TABLE IF NOT EXISTS public.fundamental_facts (
 CREATE UNIQUE INDEX IF NOT EXISTS fundamental_facts_payload_uniq
   ON public.fundamental_facts (payload_hash);
 
--- As-of reads scan a single symbol's vintages ordered by the known-clock.
+-- As-of reads scan a single symbol's vintages by the known-clock. Index both
+-- filing_date and captured_at as plain column refs — a timestamptz::date cast is
+-- NOT IMMUTABLE (timezone-dependent) so it cannot appear in an index expression
+-- (Postgres 42P17). The as-of read applies COALESCE(filing_date, captured_at::date)
+-- in the query; this index still serves it via the leading (symbol, market) keys.
 CREATE INDEX IF NOT EXISTS fundamental_facts_symbol_known_idx
-  ON public.fundamental_facts (symbol, market, COALESCE(filing_date, captured_at::date) DESC);
+  ON public.fundamental_facts (symbol, market, filing_date DESC, captured_at DESC);
 
 -- Restatement grouping / latest-vintage lookups.
 CREATE INDEX IF NOT EXISTS fundamental_facts_period_idx
