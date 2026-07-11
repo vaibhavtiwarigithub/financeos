@@ -223,9 +223,19 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     // a missing score means research hasn't covered this symbol, so we hold
     // and let the mechanical stop/target below protect it.
     const sc = latestScore[pos.symbol];
-    if (sc?.score != null && (sc.score < exitThreshold || (sc.direction && sc.direction !== "long"))) {
+    // Two DISTINCT exit conditions share this branch; label them separately with
+    // structured reason codes so the trade record isn't mislabeled. A direction
+    // flip (held long, fresh signal now points away) is NOT a score comparison —
+    // emitting "68 < 37" for a flip is nonsense. Direction flip takes precedence.
+    const scoreBelowExit = sc?.score != null && sc.score < exitThreshold;
+    const directionFlipped = !!(sc?.direction && sc.direction !== "long");
+    if (sc?.score != null && (scoreBelowExit || directionFlipped)) {
       const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
-      await closePosition(pos, currentPrice, `score_exit (${sc.score} < ${exitThreshold})`, outcome);
+      // closePosition takes a string reason; prefix with a machine-readable code.
+      const exitReason = directionFlipped
+        ? `direction_flip (was long, now ${sc.direction})`
+        : `score_below_exit_threshold (${sc.score} < ${exitThreshold})`;
+      await closePosition(pos, currentPrice, exitReason, outcome);
       continue;
     }
 
@@ -328,16 +338,43 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
   // still-open positions. Each currency stays in its own pool; never summed.
   const { data: stillOpen } = await svc.from("paper_positions").select("qty, avg_cost, current_price, market");
   const today = new Date().toISOString().slice(0, 10);
+  // Track NAV/performance write failures (P0-4): a rejected update must fail the
+  // run visibly, not be swallowed. Also track NAV-invariant drift (read-only).
+  const navWriteErrors: string[] = [];
+  let navInvariantOk = true;
+  const navInvariantDrift: Record<string, number> = {};
   for (const [market, pool] of poolByMarket) {
     const mktPos = (stillOpen ?? []).filter((p: any) => marketOf(p, hasMarketCol) === market);
     const positionsValue = mktPos.reduce((sum: number, p: any) => sum + Number(p.qty ?? 0) * Number(p.current_price ?? p.avg_cost ?? 0), 0);
     const newNav = cashByMarket[market] + positionsValue;
-    await svc.from("paper_portfolio").update({
+
+    // Deterministic NAV invariant (read-only): nav must equal cash + mark-to-market
+    // of this market's open lots within a currency-cent tolerance. If a future
+    // refactor breaks that identity, this makes the drift observable WITHOUT
+    // mutating any data. ₹ and $ both carry two decimals, so a 1-cent base
+    // tolerance plus a tiny relative term absorbs float-summation rounding.
+    const invariantExpected = cashByMarket[market] + mktPos.reduce(
+      (sum: number, p: any) => sum + Number(p.qty ?? 0) * Number(p.current_price ?? p.avg_cost ?? 0), 0);
+    const invariantEps = Math.max(0.01, Math.abs(newNav) * 1e-6);
+    const invariantDiff = Math.abs(newNav - invariantExpected);
+    if (invariantDiff > invariantEps) {
+      navInvariantOk = false;
+      navInvariantDrift[market] = invariantDiff;
+      console.warn(
+        `[position-monitor] NAV invariant violation (${market}): nav=${newNav} != cash(${cashByMarket[market]}) + positions(${invariantExpected - cashByMarket[market]}) — drift ${invariantDiff.toFixed(4)} > eps ${invariantEps.toFixed(4)}`,
+      );
+    }
+
+    // `open_positions` was removed: the column does NOT exist on deployed
+    // paper_portfolio, so naming it made PostgREST reject the WHOLE update and the
+    // ignored error silently corrupted NAV. Nothing reads paper_portfolio.open_positions
+    // (the performance route reads it from paper_nav_history). Capture the error now.
+    const { error: portfolioErr } = await svc.from("paper_portfolio").update({
       cash_balance: cashByMarket[market],
       nav: newNav,
-      open_positions: mktPos.length,
       updated_at: new Date().toISOString(),
     }).eq("id", pool.id);
+    if (portfolioErr) navWriteErrors.push(`paper_portfolio(${market}): ${portfolioErr.message}`);
 
     // C: Benchmark price daily sync — fetch VOO (US) or ^NSEI (India) and upsert
     // paper_performance so bench_nav stays current even on no-trade days.
@@ -373,9 +410,15 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       spy_return_pct: market === "us" ? benchReturnPct : null,
       updated_at: new Date().toISOString(),
     };
-    await svc.from("paper_performance").upsert(perfRow, { onConflict: "date,market" }).catch(() =>
-      svc.from("paper_performance").upsert({ ...perfRow, market: undefined }, { onConflict: "date" })
-    );
+    // PostgREST returns { error } rather than throwing, so the old `.catch` never
+    // fired on a real write failure. Capture the error; on the pre-057 "no market
+    // column" case, retry keyed on date only (preserving prior fallback behavior);
+    // any surviving error fails the run visibly.
+    const { error: perfErr } = await svc.from("paper_performance").upsert(perfRow, { onConflict: "date,market" });
+    if (perfErr) {
+      const { error: perfErr2 } = await svc.from("paper_performance").upsert({ ...perfRow, market: undefined }, { onConflict: "date" });
+      if (perfErr2) navWriteErrors.push(`paper_performance(${market}): ${perfErr2.message}`);
+    }
 
     // A: Portfolio NAV drawdown circuit breaker.
     // If this market's NAV has dropped > 5% vs its value 7 calendar days ago,
@@ -407,23 +450,46 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
 
   // Bookkeeping row so stale-check (P0 improvement) can tell this ran today and
   // which market — matches the symbols-suffix heuristic research-cron uses.
+  // A NAV/performance write failure marks the run "error" (not "done") so the
+  // failure is visible instead of silently swallowed (P0-4).
+  const navWriteFailed = navWriteErrors.length > 0;
+  const navAlertKey = `position-monitor-nav-write:${marketScope ?? "us"}`;
   try {
     await svc.from("agent_runs").insert({
       agent_type: "position_monitor",
       market: marketScope ?? "us",
-      status: "done",
+      status: navWriteFailed ? "error" : "done",
       symbols: positions.map((p: any) => String(p.symbol)),
       trigger_source: marketScope ? "scheduled" : "manual",
-      result_summary: `Checked ${positions.length}, closed ${closed.length}, updated ${updated.length}.`,
+      result_summary: navWriteFailed
+        ? `NAV/performance write FAILED: ${navWriteErrors.join("; ")}`.slice(0, 500)
+        : `Checked ${positions.length}, closed ${closed.length}, updated ${updated.length}.`,
       completed_at: new Date().toISOString(),
     } as any);
   } catch { /* best-effort — never fail the monitor run over bookkeeping */ }
+
+  // Surface (or clear) a System Health alert for the NAV write path.
+  if (navWriteFailed) {
+    await reportIssue({
+      issueKey: navAlertKey,
+      severity: "critical",
+      category: "paper-truth",
+      title: `PositionMonitor NAV/performance write failed — ${(marketScope ?? "us").toUpperCase()}`,
+      detail: `Paper NAV/performance ledger write was rejected and NAV may be stale: ${navWriteErrors.join("; ")}`.slice(0, 500),
+    });
+  } else {
+    await resolveIssue(navAlertKey);
+  }
 
   return {
     checked: positions.length,
     closed: closed.length,
     closedDetails: closed,
     updated: updated.length,
+    nav_write_ok: !navWriteFailed,
+    nav_write_errors: navWriteErrors,
+    nav_invariant_ok: navInvariantOk,
+    nav_invariant_drift: navInvariantDrift,
   };
 }
 
