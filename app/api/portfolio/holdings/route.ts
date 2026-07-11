@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { fetchAllAccounts } from "@/lib/brokers";
+import { fetchAllAccounts, fetchRobinhoodBrokerAccounts, fetchKiteBrokerAccount } from "@/lib/brokers";
 import { computeRiskMetrics } from "@/lib/portfolio-risk";
 import { createServiceClient } from "@/lib/supabase/service";
+import type { BrokerAccount } from "@/lib/brokers/types";
 
 export const dynamic = "force-dynamic";
 
@@ -18,9 +19,7 @@ export async function GET(req: NextRequest) {
   const market: "us" | "india" = (q ?? cookieMkt) === "india" ? "india" : "us";
   const currency = market === "india" ? "₹" : "$";
 
-  // Pending proposals feed the "proposal impact" panel. trade_proposals is NOT
-  // market-tagged and the TraderAgent proposes US only, so we load them for US
-  // and skip for India — never inject US $ proposals into a ₹ book.
+  // Pending proposals feed the "proposal impact" panel (US only).
   async function loadProposals() {
     if (market === "india") return [];
     const { data } = await createServiceClient()
@@ -29,24 +28,79 @@ export async function GET(req: NextRequest) {
     return data ?? [];
   }
 
-  const [accounts, pendingProposals] = await Promise.all([
-    fetchAllAccounts(market),
+  // Fetch live per-account data for the per-account risk sections.
+  // US: Robinhood accounts. India: Kite account.
+  async function fetchLiveAccounts(): Promise<BrokerAccount[]> {
+    if (market === "india") {
+      const kite = await fetchKiteBrokerAccount();
+      return [kite];
+    }
+    return fetchRobinhoodBrokerAccounts();
+  }
+
+  const [allAccounts, liveAccounts, pendingProposals] = await Promise.all([
+    fetchAllAccounts(market),  // existing (paper + alpaca) for roll-up / pills
+    fetchLiveAccounts(),
     loadProposals(),
   ]);
 
-  const allHoldings = accounts.flatMap(a => a.holdings);
-  const risk = await computeRiskMetrics(allHoldings, pendingProposals as any, { market, currency });
+  // Roll-up risk: use live accounts (Robinhood/Kite) if they have holdings,
+  // otherwise fall back to allAccounts for backward compatibility.
+  const liveHoldings = liveAccounts.flatMap(a => a.holdings);
+  const rollupHoldings = liveHoldings.length > 0
+    ? liveHoldings
+    : allAccounts.flatMap(a => a.holdings);
 
-  return NextResponse.json({
-    accounts: accounts.map(a => ({
+  const risk = await computeRiskMetrics(rollupHoldings, pendingProposals as any, { market, currency });
+
+  // Per-account risk: compute independently for each live account.
+  // Skips error-only accounts and accounts with zero holdings.
+  const accountRisks = await Promise.all(
+    liveAccounts
+      .filter(a => !a.error && a.holdings.length > 0)
+      .map(async a => {
+        const accountRisk = await computeRiskMetrics(a.holdings, [], { market, currency });
+        return {
+          accountId: a.accountId ?? a.source,
+          accountLabel: a.accountLabel ?? a.source,
+          source: a.source,
+          totalValue: a.totalValue,
+          cashBalance: a.cashBalance,
+          error: a.error,
+          risk: accountRisk,
+        };
+      }),
+  );
+
+  // Account pills: show live accounts + error stubs for any that failed.
+  const errorAccounts = liveAccounts.filter(a => a.error).map(a => ({
+    source: a.source,
+    accountId: a.accountId,
+    accountLabel: a.accountLabel,
+    totalValue: 0,
+    cashBalance: 0,
+    holdingCount: 0,
+    fetchedAt: a.fetchedAt,
+    error: a.error,
+  }));
+
+  const accountPills = [
+    ...liveAccounts.filter(a => !a.error).map(a => ({
       source: a.source,
+      accountId: a.accountId,
+      accountLabel: a.accountLabel,
       totalValue: a.totalValue,
       cashBalance: a.cashBalance,
       holdingCount: a.holdings.length,
       fetchedAt: a.fetchedAt,
-      error: a.error,
     })),
+    ...errorAccounts,
+  ];
+
+  return NextResponse.json({
+    accounts: accountPills,
     risk,
+    accountRisks,
     fetchedAt: new Date().toISOString(),
   });
 }

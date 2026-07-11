@@ -1,5 +1,7 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAlpacaAccount } from "./alpaca";
+import { rhFetchAccounts, rhFetchAllPositions } from "./robinhood/rest-client";
+import { getKiteHoldings, getKiteMargins } from "@/lib/kite";
 import type { BrokerAccount, BrokerHolding } from "./types";
 
 export type { BrokerAccount, BrokerHolding };
@@ -72,6 +74,140 @@ export async function fetchAllAccounts(market: "us" | "india" = "us"): Promise<B
 // Merge holdings across accounts (deduplicated by symbol per source)
 export function mergeHoldings(accounts: BrokerAccount[]): BrokerHolding[] {
   return accounts.flatMap(a => a.holdings);
+}
+
+// Fetch all live Robinhood accounts as BrokerAccount[], one per RH account number.
+// Uses REST API so it works in Vercel serverless (no MCP session needed).
+// Returns an error-flagged single account if the token is absent/expired.
+export async function fetchRobinhoodBrokerAccounts(): Promise<BrokerAccount[]> {
+  const svc = createServiceClient();
+  const fetchedAt = new Date().toISOString();
+
+  const [{ accounts: rhAccounts, error: accErr }, { positions, error: posErr }] = await Promise.all([
+    rhFetchAccounts(svc),
+    rhFetchAllPositions(svc),
+  ]);
+
+  if (accErr || posErr || !rhAccounts.length) {
+    return [{
+      source: "robinhood",
+      accountId: "unknown",
+      accountLabel: "Robinhood",
+      totalValue: 0,
+      cashBalance: 0,
+      holdings: [],
+      fetchedAt,
+      error: accErr ?? posErr ?? "No Robinhood accounts found — is the OAuth token active?",
+    }];
+  }
+
+  // Group positions by account ID
+  const positionsByAccount: Record<string, typeof positions> = {};
+  for (const pos of positions) {
+    (positionsByAccount[pos.accountId] ??= []).push(pos);
+  }
+
+  return rhAccounts.map(acc => {
+    const accPositions = positionsByAccount[acc.id] ?? [];
+    const holdings: BrokerHolding[] = accPositions.map(p => {
+      const mv = p.qty * p.currentPrice;
+      const cb = p.qty * p.avgCost;
+      return {
+        symbol: p.symbol,
+        qty: p.qty,
+        currentPrice: p.currentPrice,
+        marketValue: mv,
+        costBasis: cb,
+        unrealizedPnl: mv - cb,
+        unrealizedPnlPct: cb > 0 ? ((mv - cb) / cb) * 100 : 0,
+        side: "long" as const,
+        source: "robinhood" as const,
+      };
+    });
+
+    const label = acc.id === "605420660" ? `Robinhood Trading (${acc.id})`
+      : acc.id === "965848641" ? `Robinhood (${acc.id})`
+      : `Robinhood ${acc.id}`;
+
+    return {
+      source: "robinhood" as const,
+      accountId: acc.id,
+      accountLabel: label,
+      totalValue: acc.totalEquity,
+      cashBalance: acc.cashBalance,
+      holdings,
+      fetchedAt,
+    };
+  });
+}
+
+// Fetch live Kite India account as a single BrokerAccount.
+// Combines /user/margins (cash) + /portfolio/holdings (equity positions).
+export async function fetchKiteBrokerAccount(): Promise<BrokerAccount> {
+  const fetchedAt = new Date().toISOString();
+  try {
+    const [marginsRes, holdingsRes] = await Promise.all([
+      getKiteMargins(),
+      getKiteHoldings(),
+    ]);
+
+    if (!holdingsRes.ok) {
+      return {
+        source: "kite",
+        accountId: "kite_india",
+        accountLabel: "Kite India",
+        totalValue: 0,
+        cashBalance: 0,
+        holdings: [],
+        fetchedAt,
+        error: holdingsRes.error ?? "Kite holdings unavailable",
+      };
+    }
+
+    const holdings: BrokerHolding[] = ((holdingsRes.data ?? []) as any[]).map(h => {
+      const qty = Number(h.quantity ?? h.t1_quantity ?? 0);
+      const avgCost = Number(h.average_price ?? 0);
+      const currentPrice = Number(h.last_price ?? avgCost);
+      const mv = qty * currentPrice;
+      const cb = qty * avgCost;
+      const symbol = String(h.tradingsymbol ?? "");
+      return {
+        symbol: symbol.endsWith(".NS") || symbol.endsWith(".BO") ? symbol : `${symbol}.NS`,
+        qty,
+        currentPrice,
+        marketValue: mv,
+        costBasis: cb,
+        unrealizedPnl: h.pnl != null ? Number(h.pnl) : mv - cb,
+        unrealizedPnlPct: cb > 0 ? ((mv - cb) / cb) * 100 : 0,
+        side: "long" as const,
+        source: "kite" as const,
+      };
+    }).filter(h => h.qty > 0);
+
+    const equityValue = holdings.reduce((s, h) => s + h.marketValue, 0);
+    const cash = marginsRes.ok ? (marginsRes.equityNet ?? 0) : 0;
+
+    return {
+      source: "kite",
+      accountId: "kite_india",
+      accountLabel: "Kite India",
+      totalValue: equityValue + cash,
+      cashBalance: cash,
+      holdings,
+      fetchedAt,
+    };
+  } catch (e: any) {
+    return {
+      source: "kite",
+      accountId: "kite_india",
+      accountLabel: "Kite India",
+      totalValue: 0,
+      cashBalance: 0,
+      holdings: [],
+      fetchedAt,
+      error: e?.message ?? String(e),
+    };
+  }
 }
 
 export { fetchAlpacaAccount };

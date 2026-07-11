@@ -166,3 +166,150 @@ export async function rhCancelOrder(svc: SupabaseClient, orderId: string): Promi
     return { ok: true };
   } catch (e: any) { return { ok: false, error: `RH cancel network error: ${e?.message ?? String(e)}` }; }
 }
+
+// ── Portfolio data (read-only, for risk analytics) ───────────────────────────
+
+export interface RhAccountInfo {
+  id: string;          // account_number e.g. "605420660"
+  totalEquity: number; // portfolio equity value in USD
+  cashBalance: number; // uninvested cash
+  buyingPower: number;
+}
+
+export interface RhFullPosition {
+  symbol: string;
+  qty: number;
+  avgCost: number;
+  currentPrice: number;
+  accountId: string;   // account_number this position belongs to
+}
+
+// Follow Robinhood pagination — returns all pages merged.
+async function rhPaginateAll(token: string, startUrl: string): Promise<any[]> {
+  const results: any[] = [];
+  let url: string | null = startUrl;
+  while (url) {
+    const res: Response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+    if (!res.ok) throw new Error(`RH fetch ${res.status}: ${url}`);
+    const body = await res.json();
+    results.push(...(body.results ?? []));
+    url = body.next ?? null;
+  }
+  return results;
+}
+
+// Batch resolve instrument URLs → symbol. Extracts the UUID from each URL and
+// calls /instruments/?ids=... in batches of 50.
+async function rhResolveInstruments(token: string, instrumentUrls: string[]): Promise<Map<string, string>> {
+  const urlToId = new Map<string, string>();
+  for (const u of instrumentUrls) {
+    const id = u.replace(/\/$/, "").split("/").pop();
+    if (id) urlToId.set(u, id);
+  }
+  const uniqueIds = [...new Set(urlToId.values())];
+  const idToSymbol = new Map<string, string>();
+  for (let i = 0; i < uniqueIds.length; i += 50) {
+    const batch = uniqueIds.slice(i, i + 50);
+    try {
+      const res = await fetch(`${RH_API}/instruments/?ids=${batch.join(",")}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      });
+      if (!res.ok) continue;
+      const body = await res.json();
+      for (const inst of (body.results ?? [])) {
+        if (inst.id && inst.symbol) idToSymbol.set(inst.id, inst.symbol);
+      }
+    } catch { /* best effort */ }
+  }
+  // Build final map: instrument URL → symbol
+  const out = new Map<string, string>();
+  for (const [url, id] of urlToId) {
+    const sym = idToSymbol.get(id);
+    if (sym) out.set(url, sym);
+  }
+  return out;
+}
+
+// Batch fetch last trade prices for US symbols via /quotes/?symbols=...
+async function rhGetLastPrices(token: string, symbols: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  const unique = [...new Set(symbols)];
+  for (let i = 0; i < unique.length; i += 50) {
+    const batch = unique.slice(i, i + 50);
+    try {
+      const res = await fetch(`${RH_API}/quotes/?symbols=${batch.join(",")}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      });
+      if (!res.ok) continue;
+      const body = await res.json();
+      for (const q of (body.results ?? [])) {
+        if (!q?.symbol) continue;
+        const price = parseFloat(q.last_trade_price ?? q.last_extended_hours_trade_price ?? "0");
+        if (price > 0) map.set(q.symbol, price);
+      }
+    } catch { /* best effort */ }
+  }
+  return map;
+}
+
+export async function rhFetchAccounts(svc: SupabaseClient): Promise<{ accounts: RhAccountInfo[]; error?: string }> {
+  try {
+    const token = await getRhToken(svc);
+    const res = await fetch(`${RH_API}/accounts/`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    });
+    if (!res.ok) throw new Error(`RH accounts ${res.status}: ${await res.text()}`);
+    const body = await res.json();
+    return {
+      accounts: (body.results ?? []).map((a: any) => ({
+        id: String(a.account_number ?? ""),
+        totalEquity: parseFloat(a.equity ?? a.extended_hours_equity ?? "0"),
+        cashBalance: parseFloat(a.portfolio_cash ?? "0"),
+        buyingPower: parseFloat(a.buying_power ?? "0"),
+      })).filter((a: RhAccountInfo) => a.id),
+    };
+  } catch (e: any) {
+    return { accounts: [], error: e?.message ?? String(e) };
+  }
+}
+
+export async function rhFetchAllPositions(svc: SupabaseClient): Promise<{ positions: RhFullPosition[]; error?: string }> {
+  try {
+    const token = await getRhToken(svc);
+    const raw = await rhPaginateAll(token, `${RH_API}/positions/?nonzero=true`);
+    if (!raw.length) return { positions: [] };
+
+    // Resolve instrument URLs → symbols
+    const instrumentUrls = [...new Set(raw.map((p: any) => p.instrument).filter(Boolean))];
+    const symMap = await rhResolveInstruments(token, instrumentUrls);
+
+    // Build positions with symbols + account IDs
+    const withSymbols = raw
+      .map((p: any) => ({
+        symbol: symMap.get(p.instrument) ?? "",
+        accountId: (p.account ?? "").replace(/\/$/, "").split("/").pop() ?? "",
+        qty: parseFloat(p.quantity ?? "0"),
+        avgCost: parseFloat(p.average_buy_price ?? "0"),
+        instrumentUrl: p.instrument,
+      }))
+      .filter((p: any) => p.symbol && p.qty > 0);
+
+    if (!withSymbols.length) return { positions: [] };
+
+    // Fetch live prices in bulk
+    const symbols = [...new Set(withSymbols.map((p: any) => p.symbol))];
+    const priceMap = await rhGetLastPrices(token, symbols);
+
+    return {
+      positions: withSymbols.map((p: any) => ({
+        symbol: p.symbol,
+        qty: p.qty,
+        avgCost: p.avgCost,
+        currentPrice: priceMap.get(p.symbol) ?? p.avgCost,
+        accountId: p.accountId,
+      })),
+    };
+  } catch (e: any) {
+    return { positions: [], error: e?.message ?? String(e) };
+  }
+}
