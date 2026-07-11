@@ -74,7 +74,7 @@ export interface ExecuteOrderInput {
 
 export type ExecuteOrderResult =
   | { ok: true; order_id: number; broker_order_id: any }
-  | { ok: false; status: number; error: string; needs_reconcile?: boolean };
+  | { ok: false; status: number; error: string; needs_reconcile?: boolean; order_id?: number; broker_order_id?: any };
 
 // Runs the full submit-time gate and, on success, submits the broker order and
 // records it. `actor` distinguishes the owner (may supply audited risk
@@ -184,9 +184,6 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
       return { ok: false, status: 403, error: "Robinhood live is disabled (enable it in Settings → Agents before placing live orders)" };
     }
 
-    const ks = await checkKillSwitches(supabase, market);
-    if (!ks.safe) return { ok: false, status: 403, error: `Kill switch active: ${ks.reason}` };
-
     // G1: signal data-quality gate for live BUY.
     if (side === "buy" && !acceptLowQuality) {
       const sigId = (proposal as any).signal_id;
@@ -204,6 +201,13 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
     // Account must be an allowlisted role='trading' account for THIS broker (fail closed).
     const acct = await resolveTradingAccount(supabase, market, brokerKey);
     if (!acct.ok) return { ok: false, status: 403, error: acct.error };
+
+    // Kill switch AFTER account resolution so it measures THIS live account's own
+    // NAV (P0-1). Side-aware: a trip blocks BUY (new exposure) but not a
+    // risk-reducing SELL, which is still gated on fresh held-qty verification.
+    const ks = await checkKillSwitches(supabase, { market, book: "live", accountId: acct.account });
+    const ksBlocks = side === "sell" ? !ks.sellAllowed : !ks.safe;
+    if (ksBlocks) return { ok: false, status: 403, error: `Kill switch active: ${ks.reason}` };
 
     // Fresh quote → notional cap + price-drift re-check.
     try {
@@ -349,16 +353,56 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
     return { ok: false, status: 502, error: result.error ?? "broker submit failed" };
   }
 
-  await supabase.from("broker_orders").update({
-    status: "submitted", broker_order_id: result.brokerOrderId, submitted_at: new Date().toISOString(), raw_last_state: result.raw,
-  }).eq("id", orderId);
+  // ── Durable broker acknowledgment (P0-3) ──────────────────────────────────
+  // The order IS now placed at the broker. broker_orders is the source of truth,
+  // so the ACK (broker_order_id + raw status) MUST persist. Bounded DB-only retry
+  // — NEVER resubmit to the broker. If it still fails we cannot claim success:
+  // the order is live but unrecorded, so emit a CRITICAL alert carrying the known
+  // broker id and return 202 needs_reconcile so it is recovered, never silently
+  // lost or double-submitted on a retry.
+  const ackPayload = {
+    status: "submitted",
+    broker_order_id: result.brokerOrderId,
+    submitted_at: new Date().toISOString(),
+    raw_last_state: result.raw,
+  };
+  let ackErr: any = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const { error } = await supabase.from("broker_orders").update(ackPayload).eq("id", orderId);
+    if (!error) { ackErr = null; break; }
+    ackErr = error;
+  }
+  if (ackErr) {
+    await reportIssue({
+      issueKey: `order-ack-persist-failed:${orderId}`,
+      severity: "critical", category: "trading",
+      title: `Order #${orderId} placed at ${broker.id} but ACK not persisted (${side} ${qty} ${symbol})`,
+      detail: `The broker ACCEPTED a live ${broker.id} order (broker_order_id ${result.brokerOrderId}) but broker_orders #${orderId} could not be updated to 'submitted' after 3 attempts: ${ackErr.message ?? ackErr}. The order is LIVE at the broker. Reconcile broker_orders #${orderId} → broker_order_id ${result.brokerOrderId} before any resubmit — do NOT re-place proposal ${proposal_id}.`,
+    }, supabase);
+    return {
+      ok: false, status: 202,
+      error: `Order placed at ${broker.id} (broker id ${result.brokerOrderId}) but acknowledgment could not be persisted after 3 attempts — needs reconcile, do NOT resubmit`,
+      needs_reconcile: true, order_id: orderId, broker_order_id: result.brokerOrderId,
+    };
+  }
 
-  await supabase.from("decision_journal").insert({
+  // Secondary audit journal — best-effort. Its failure does NOT un-place the order
+  // (the durable ACK above already recorded it), but surface it so the audit gap
+  // is visible rather than silently swallowed.
+  const { error: journalErr } = await supabase.from("decision_journal").insert({
     entry_type: "broker_order", symbol, market,
     summary: `${broker.id} ${orderEnv.toUpperCase()} order: ${side} ${qty} × ${symbol} (proposal ${proposal_id}) → order ${result.brokerOrderId}`,
     calculations: { proposal_id, broker: broker.id, env: orderEnv, side, qty, broker_order_id: result.brokerOrderId, actor: actor.kind, auto_run_id: actor.runId ?? null },
     has_verified_facts: true, resolved: false,
   });
+  if (journalErr) {
+    await reportIssue({
+      issueKey: `order-journal-failed:${orderId}`,
+      severity: "warn", category: "trading",
+      title: `Order #${orderId} recorded but audit journal write failed`,
+      detail: `broker_orders #${orderId} (broker_order_id ${result.brokerOrderId}) is durably recorded, but the decision_journal audit entry failed to insert: ${journalErr.message ?? journalErr}. The order state is correct; only the audit log is missing.`,
+    }, supabase);
+  }
 
   return { ok: true, order_id: orderId, broker_order_id: result.brokerOrderId };
 }

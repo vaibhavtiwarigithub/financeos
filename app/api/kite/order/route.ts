@@ -5,6 +5,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { guardOrderRequest } from "@/lib/request-guards";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
+import { reportIssue } from "@/lib/system-health";
 import { checkLivePortfolioLimits } from "@/lib/risk/live-portfolio-gate";
 import { liveOrdersAllowed } from "@/lib/autonomy";
 
@@ -71,8 +72,11 @@ export async function POST(req: NextRequest) {
     if ((gate as any)?.trading_enabled_india === false) {
       return NextResponse.json({ error: "Live trading is disabled for INDIA (view-only mode — re-enable in Settings → Agents)" }, { status: 403 });
     }
-    const ks = await checkKillSwitches(svc, "india");
-    if (!ks.safe) return NextResponse.json({ error: `Kill switch active: ${ks.reason}` }, { status: 403 });
+    // Side-aware: a trip blocks a BUY (new exposure) but not a risk-reducing
+    // SELL (held-qty is verified separately below on the live path).
+    const ks = await checkKillSwitches(svc, { market: "india", book: "live" });
+    const ksBlocks = transaction_type === "SELL" ? !ks.sellAllowed : !ks.safe;
+    if (ksBlocks) return NextResponse.json({ error: `Kill switch active: ${ks.reason}` }, { status: 403 });
   }
 
   // Per-order INR notional cap + daily caps (read together). FAIL CLOSED on the
@@ -231,11 +235,34 @@ export async function POST(req: NextRequest) {
   const outcomeStatus = !res.ok ? "failed" : needsReconcile ? "unknown_needs_reconcile" : "submitted";
 
   // Update the ledger row with the outcome (submitted, failed, or ambiguous).
-  await svc.from("broker_orders").update({
-    status: outcomeStatus,
-    broker_order_id: res.ok && res.data?.order_id ? String(res.data.order_id) : null,
-    error: res.ok ? (needsReconcile ? "Kite reported success with no order_id — needs manual reconciliation" : null) : res.error,
-  }).eq("id", ledgerId);
+  // Durable broker acknowledgment (P0-3): when Kite CONFIRMED the order, this ACK
+  // is the source of truth and MUST persist. Bounded DB-only retry — never
+  // resubmit to Kite. If a CONFIRMED order's ACK still fails to persist, we cannot
+  // report success: emit a CRITICAL alert carrying the known Kite order_id and
+  // return 202 needs_reconcile so it is recovered, never silently lost.
+  const confirmedOrderId = res.ok && res.data?.order_id ? String(res.data.order_id) : null;
+  let kiteAckErr: any = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const { error } = await svc.from("broker_orders").update({
+      status: outcomeStatus,
+      broker_order_id: confirmedOrderId,
+      error: res.ok ? (needsReconcile ? "Kite reported success with no order_id — needs manual reconciliation" : null) : res.error,
+    }).eq("id", ledgerId);
+    if (!error) { kiteAckErr = null; break; }
+    kiteAckErr = error;
+  }
+  if (kiteAckErr && res.ok && !needsReconcile) {
+    await reportIssue({
+      issueKey: `kite-order-ack-persist-failed:${ledgerId}`,
+      severity: "critical", category: "trading",
+      title: `Kite order #${ledgerId} placed but ACK not persisted`,
+      detail: `Kite CONFIRMED a live order (order_id ${confirmedOrderId}, ${transaction_type} ${quantity} ${symbol}) but broker_orders #${ledgerId} could not be updated after 3 attempts: ${kiteAckErr.message ?? kiteAckErr}. The order is LIVE at Kite. Reconcile broker_orders #${ledgerId} → order_id ${confirmedOrderId} before any resubmit.`,
+    }, svc);
+    return NextResponse.json({
+      success: false, needsReconcile: true, broker_order_id: ledgerId, kite_order_id: confirmedOrderId,
+      error: `Order placed at Kite (order_id ${confirmedOrderId}) but acknowledgment could not be persisted — needs reconcile, do NOT resubmit`,
+    }, { status: 202 });
+  }
 
   // Audit trail in decision_journal (best-effort, non-fatal).
   try {
