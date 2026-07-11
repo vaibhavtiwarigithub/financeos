@@ -27,7 +27,7 @@
     },
     {
       "path": "/api/agents/live-exit-monitor/cron",
-      "schedule": "*/30 3-20 * * 1-5"
+      "schedule": "0 14 * * 1-5"
     }
   ]
 }
