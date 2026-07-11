@@ -317,11 +317,16 @@ Triggered by `POST /api/agents/autonomous-live/cron` at 14:00 UTC weekdays (afte
   supply audited risk overrides) from `autonomous_worker` (may NOT override any gate; supplies its own
   `live_auto_daily_cap_usd` / orders-per-day caps). Autonomy authorization is the upstream deployment
   flag + DB toggle + lease + kernel + session gates, not an owner click.
-  - CAVEAT before enabling live autonomy: the broker SUBMIT still goes through the registry adapter
-    (`broker.submitOrder`), which for Robinhood is MCP-based and does not run in Vercel serverless —
-    the direct-REST adapter (`lib/brokers/robinhood/rest-client.ts`) must be wired as the active
-    registry adapter (or Robinhood MCP made reachable) before live autonomous submit works. The
-    deployment flag stays false until then.
+  - Serverless broker submit RESOLVED (2026-07-10): added a direct-REST Robinhood execution adapter
+    (`lib/brokers/adapters/robinhood.ts`, registry id `robinhood`) with submit/status/cancel over
+    REST — works in Vercel serverless, unlike the MCP adapter. Set
+    `strategy_config.active_broker_us='robinhood'` to route live US orders through it (both the manual
+    gateway and the autonomous worker use it via the shared service). The account is allowlist-validated
+    at the gateway and again in the adapter; the Robinhood live kill switch (`robinhood_mcp_enabled`)
+    gates both the `robinhood` and `robinhood_mcp` ids.
+  - Remaining before first live dollar: R16 live position-monitor + protective-exit/cancel/reconcile
+    control plane, the J acceptance-test fixtures, shadow soak, and a capped canary. Deployment flag
+    stays false until then.
 - Schema reproducibility restored: migrations `143` (live-auto DDL + budget RPC), `144` (RLS), `145`.
 
 **Outcomes per signal:**

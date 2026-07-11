@@ -164,8 +164,8 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
       return { ok: false, status: 403, error: `Live trading is disabled for ${market.toUpperCase()} (view-only mode — turn it back on in Settings → Agents)` };
     }
 
-    if (broker.id === "robinhood_mcp" && (cfg as any)?.robinhood_mcp_enabled !== true) {
-      return { ok: false, status: 403, error: "Robinhood MCP is disabled (enable it in Settings → Agents before placing live orders)" };
+    if ((broker.id === "robinhood_mcp" || broker.id === "robinhood") && (cfg as any)?.robinhood_mcp_enabled !== true) {
+      return { ok: false, status: 403, error: "Robinhood live is disabled (enable it in Settings → Agents before placing live orders)" };
     }
 
     const ks = await checkKillSwitches(supabase, market);

@@ -7,13 +7,17 @@ import { BrokerAdapter } from "@/lib/brokers/adapter-types";
 import { alpacaAdapter } from "@/lib/brokers/adapters/alpaca";
 import { kiteAdapter } from "@/lib/brokers/adapters/kite";
 import { robinhoodMcpAdapter } from "@/lib/brokers/adapters/robinhood-mcp";
+import { robinhoodAdapter } from "@/lib/brokers/adapters/robinhood";
 
 const ADAPTERS: Record<string, () => BrokerAdapter> = {
   alpaca: alpacaAdapter,
   kite: kiteAdapter,
-  // US live via Robinhood MCP. isConfigured() is false until the (blocked)
-  // OAuth flow stores a token, so selecting it today yields "not configured".
+  // US live via Robinhood MCP — needs a live MCP session, so it does NOT work in
+  // Vercel serverless route/cron handlers.
   robinhood_mcp: robinhoodMcpAdapter,
+  // US live via direct Robinhood REST — SERVERLESS-CAPABLE. Set
+  // strategy_config.active_broker_us='robinhood' to route live US orders here.
+  robinhood: robinhoodAdapter,
 };
 
 export function getBroker(id: string): BrokerAdapter | null {
