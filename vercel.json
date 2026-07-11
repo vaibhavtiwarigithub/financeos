@@ -24,10 +24,6 @@
     {
       "path": "/api/agents/autonomous-live/cron?market=india",
       "schedule": "0 6 * * 1-5"
-    },
-    {
-      "path": "/api/agents/live-exit-monitor/cron",
-      "schedule": "0 14 * * 1-5"
     }
   ]
 }
