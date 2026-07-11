@@ -293,6 +293,26 @@ Triggered by `POST /api/agents/autonomous-live/cron` at 14:00 UTC weekdays (afte
 **Budget reservation:** `reserve_live_order_budget_v2` with `p_execution_actor='autonomous_worker'`
 → `broker_orders.approved_by_user=false`.
 
+**2026-07-10 audit hardening (Codex full-system audit — `lib/trading/autonomous-live.ts`):**
+- The signal query previously selected a nonexistent `agent_signals.evidence_confidence` column
+  and swallowed the error → the path silently processed **zero** signals every run. Fixed (real
+  `confidence` column) and query errors are now **fatal** (throw + `agent_runs` error row).
+- **Fresh `checkKillSwitches(svc, market)`** runs per market before evaluation — the real drawdown/
+  daily-loss/accuracy engine, not just cached config booleans. Fail-closed on error.
+- **Session-window guard** (`isMarketSessionOpen`) — market orders only while the exchange is open
+  (US 9:30–16:00 ET, India 9:15–15:30 IST, DST-correct). Split into per-market crons.
+- **Fail-closed gates:** a null lease and a null per-market `trading_enabled_*` no longer pass;
+  both must be explicitly valid/true.
+- **Per-market currency-correct NAV:** US from the Robinhood USD snapshot, India from live Kite INR
+  margins+holdings; a market with no fresh NAV source fails closed (no cross-currency sizing).
+- **Daily-cap fail-closed** (`live_auto_daily_cap_usd` enforced) + **net** per-market open-position count.
+- **Idempotent claim:** unique partial index `trade_proposals(signal_id, market) WHERE autonomous_live`
+  (migration 145) — concurrent/repeated runs can't double-propose+buy the same signal.
+- **Still NOT unified with the manual Execution Gateway** (R13, pending owner review): the autonomous
+  path calls broker clients directly and does not yet run the full gateway invariant set (account
+  allowlist, G1/G3, drift/preview, held-SELL). Autonomy stays disabled until that lands.
+- Schema reproducibility restored: migrations `143` (live-auto DDL + budget RPC), `144` (RLS), `145`.
+
 **Outcomes per signal:**
 - `submitted` → `broker_orders.status=submitted`, `broker_order_events` appended, proposal `queued_auto`
 - `needs_reconcile` → `broker_orders.status=unknown_needs_reconcile`, proposal `manual_review_required`

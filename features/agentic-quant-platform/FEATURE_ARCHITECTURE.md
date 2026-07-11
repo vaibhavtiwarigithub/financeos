@@ -829,6 +829,38 @@ Legend: [ ] todo · [~] in progress · [x] done
 - [x] R11 #18 vault: PIN stored as salted scrypt hash (`lib/vault-pin.ts`), legacy-plaintext compat verify (no lockout). Key-value envelope-encryption still TODO (separate, larger).
 - [x] R12 #34 redacted literal cron secret from migration 022 text (dead — job unscheduled by 052, CRON_SECRET already rotated). NOTE: git history still contains it (rotation, not rewrite, is the real fix — done).
 
+### R13 design note — shared execution service (REVIEW BEFORE CODING)
+
+**Problem:** the manual gateway (`app/api/broker/orders/route.ts`) is the hardened path
+(owner+CSRF, approved/unexpired proposal, dup check, symbol/qty validation, active-broker
+resolve, autonomy-level + trading + broker enablement, fresh `checkKillSwitches`, G1 decision
+quality, account allowlist, fresh-quote + currency notional cap, portfolio gate, held-SELL,
+drift/preview, atomic reservation). `autonomous-live.ts` reimplements a WEAKER subset and calls
+brokers directly. Two implementations = drift + the autonomous path missing controls.
+
+**Target:** one server-only `lib/trading/execute-order.ts::executeApprovedOrder(svc, input, actor)`:
+- `actor: { kind: 'owner' | 'autonomous_worker', runId?, csrfOk?, ownerSessionOk? }`
+- Runs the FULL invariant list once, in order, for both callers. Autonomous may NOT supply any
+  owner-only override (accept-low-quality, force flags); those are rejected when `kind!=='owner'`.
+- The ONLY broker-write call site in the codebase. Returns a typed result
+  (`submitted | rejected | needs_reconcile` + broker ref + the durable reservation id).
+
+**Safe migration order (each step build+verify before the next):**
+1. Extract the invariant block from `broker/orders/route.ts` into `executeApprovedOrder` with an
+   `owner` actor — **the manual route delegates to it and behaves identically** (diff = pure move).
+2. Verify the manual owner-click path is byte-for-byte equivalent (same gates, same responses).
+3. Repoint `autonomous-live.ts` to call `executeApprovedOrder` with `autonomous_worker` — deleting
+   its direct `rhPlaceMarketOrder`/`placeEquityOrder` calls and its weaker inline checks.
+4. Kite manual route (`app/api/kite/order`) folded in the same way.
+
+**Risk control:** step 1–2 must not change manual behavior at all. If any manual gate/response
+differs, stop. Autonomy stays `false` throughout. No new capability — only consolidation.
+
+**Depends on:** R14 (per-market NAV — done), R15 (idempotency — done). Blocks R16 (exit plane).
+
+> STATUS: awaiting owner review of this approach before implementation (it modifies the working
+> manual order path).
+
 ### Track 2 — money-path unification (architecture-gated; build after Track 1)
 - [ ] R13 #2/#5/#10/#11 extract one server-only `executeApprovedOrder()` used by manual + autonomous (all gateway invariants, actor envelope)
 - [x] R14 #3/#8 per-market currency-correct NAV (US=RH USD snapshot, India=Kite INR margins+holdings, fail-closed) + per-market NET open-position count (was global filled count)
