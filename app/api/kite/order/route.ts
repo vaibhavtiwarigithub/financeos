@@ -79,6 +79,38 @@ export async function POST(req: NextRequest) {
     if (ksBlocks) return NextResponse.json({ error: `Kill switch active: ${ks.reason}` }, { status: 403 });
   }
 
+  // Identity / allowlist parity with the canonical execute-order path (A2 interim,
+  // 07_08 review). This standalone Kite route submits through the single connected
+  // Zerodha session, so it never routed by account — meaning it also never verified
+  // that the configured India trading account is an allowlisted role='trading'
+  // account. FAIL CLOSED: an unset account, an account absent from broker_accounts,
+  // or a view_only account refuses the order (never a silent fallback). This closes
+  // the identity gap until the route is unified onto executeApprovedOrder (deferred
+  // A2, needs architecture approval).
+  {
+    const { data: acctCfg, error: acctCfgErr } = await svc
+      .from("strategy_config").select("active_account_india").limit(1).maybeSingle();
+    if (acctCfgErr) {
+      return NextResponse.json({ error: `Account config read failed — refusing live India order (fail-closed): ${acctCfgErr.message}` }, { status: 500 });
+    }
+    const indiaAccount = (acctCfg as any)?.active_account_india;
+    if (!indiaAccount) {
+      return NextResponse.json({ error: "No active India trading account set — refusing live India order. Set it in Settings → Agents." }, { status: 403 });
+    }
+    const { data: allowed, error: allowErr } = await svc
+      .from("broker_accounts").select("role")
+      .eq("broker", "kite").eq("account_number", indiaAccount).eq("market", "india").maybeSingle();
+    if (allowErr) {
+      return NextResponse.json({ error: `Allowlist read failed — refusing live India order (fail-closed): ${allowErr.message}` }, { status: 500 });
+    }
+    if (!allowed) {
+      return NextResponse.json({ error: `Account ${indiaAccount} is not an allowlisted Kite account for India — refusing live order.` }, { status: 403 });
+    }
+    if ((allowed as any).role !== "trading") {
+      return NextResponse.json({ error: `Account ${indiaAccount} is view_only — not a permitted order target.` }, { status: 403 });
+    }
+  }
+
   // Per-order INR notional cap + daily caps (read together). FAIL CLOSED on the
   // per-order cap: no trusted Kite equity fallback exists, so a null India cap
   // refuses the order. Notional is checked against a fresh LTP (and the limit price
