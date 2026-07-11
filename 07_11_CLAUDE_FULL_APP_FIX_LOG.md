@@ -79,9 +79,25 @@ per the project's Architecture-First gate. **Flagged for approval before Phase B
 directly to the standalone Kite path so it cannot return success on a lost ACK
 while it remains un-unified (see A3).
 
-**Remaining risk:** two live order code paths still exist for India; identity
-(profile-vs-configured-account) verification and allowlist enforcement on the
-standalone Kite route remain thinner than the canonical path until A2 lands.
+**Phase B — additive identity/allowlist gate (`app/api/kite/order/route.ts`):**
+without changing the request/response contract, a fail-closed identity check was
+added before the budget reservation, mirroring `resolveTradingAccount` in the
+canonical `execute-order.ts`. It reads `strategy_config.active_account_india` and
+requires a matching `broker_accounts` row (`broker='kite'`, `market='india'`,
+`role='trading'`). It refuses (403/500) on: config read error, no active India
+account set, account absent from `broker_accounts`, or a `view_only` role — never
+a silent fallback. This closes the identity/allowlist gap flagged above. **Note
+the current fail-closed effect:** `broker_accounts` today holds only the two US
+Robinhood rows (§4g), so there is NO allowlisted Kite/India `trading` row — the
+India live path is therefore **blocked until the owner explicitly inserts one**.
+That is the intended posture (live changes are owner-only; India live is not in
+use). The canonical-path *unification* (collapsing the two India code paths into
+one) still requires architecture approval and remains deferred.
+
+**Remaining risk:** two live order code paths still exist for India (structural),
+but the standalone route now enforces the same account allowlist/identity floor
+as the canonical path. Full unification (single service, v2 RPC, shared
+confirmation UX) awaits owner architecture approval.
 
 ---
 
@@ -107,13 +123,24 @@ same 3-attempt retry; on persistent failure with a real broker order id →
 CRITICAL `reportIssue` (`kite-order-ack-persist-failed:{ledgerId}`) + HTTP 202
 `{ success:false, needsReconcile:true, broker_order_id, kite_order_id }`.
 
-**Tests:** typecheck + existing order-path suites green. No live broker
-round-trip (constraint) — see remaining risk.
+**Tests:** typecheck + existing order-path suites green. **Phase B — injected-
+failure integration test added** (`tests/execute-order-ack.test.ts`, 4 tests,
+all green): drives the REAL `executeApprovedOrder` with a fake broker + chainable
+Supabase mock at `env:"paper"` (skips the live-gate block to isolate the
+submit→ACK-persist path). Cases: (1) ACK fails all 3 attempts → `ok:false`,
+`status:202`, `needs_reconcile:true`, surfaces `broker_order_id:"BRK-123"`,
+`submitOrder` called **exactly once** (no resubmit), exactly 3 persist attempts,
+one CRITICAL `reportIssue` keyed `order-ack-persist-failed`; (2) ACK succeeds on
+attempt 2 → `ok:true`, one submit, retry stops at 2, no alert; (3) ACK first try
+→ `ok:true`, 1 attempt; (4) broker submit itself fails → `status:502`, no false
+success. This directly exercises the durable-ACK invariant end-to-end without a
+live broker round-trip.
 
-**Remaining risk:** the 202/needs_reconcile branch is proven by typecheck and
-unit reasoning, not a live injected-DB-failure-after-broker-ACK integration test
-(would require a live order). Robinhood MCP adapter inherits the execute-order
-semantics; a dedicated adapter-level injected-failure test is a Phase B item.
+**Remaining risk:** the test injects the DB failure through the mock rather than
+against live Postgres; the Robinhood MCP adapter inherits the execute-order
+semantics but a dedicated adapter-level injected-failure test remains a later
+item. No live injected-failure-after-real-broker-ACK test exists (would require a
+live order — disallowed by constraint).
 
 ---
 
@@ -146,11 +173,22 @@ score comparison (`68 < 37`).
 consumer reads it (performance route reads NAV history from `paper_nav_history`).
 No migration shipped for A4.
 
-**Remaining risk:** a standalone read-only reconciliation **report** for
-historical inconsistent rows (fix-prompt bullet) is not yet written; the
-in-run invariant makes future drift observable but does not retro-audit past
-rows. Flagged for Phase B (owner-approved corrective events only; no ledger
-mutation).
+**Phase B — read-only reconciliation report added** (`app/api/paper/nav-reconcile/route.ts`,
+owner-gated GET, `force-dynamic`, no cron): re-derives the same invariant per
+market pool read-only — `expected = cash_balance + Σ qty·(current_price ?? avg_cost)`,
+`drift = |stored_nav − expected|`, `tol = max(0.01, |nav|·1e-6)` — and returns
+per-pool `{cash, stored_nav, positions_mtm, expected_nav, drift, tolerance,
+reconciled, overstated_by}` plus `pools_drifted` / `all_reconciled`. It performs
+**zero writes**. Running the equivalent SQL now (§4h) shows **both** pools
+currently off — US `stored_nav 9979.65` vs `expected 10040.93` (drift $61.28) and
+India `stored_nav 847199.53` vs `expected 795693.63` (drift ₹51,505.90) — exactly
+the historical corruption the removed `open_positions` write caused. The report
+makes this visible without touching the ledger.
+
+**Remaining risk:** the report surfaces drift but does not correct it — the two
+drifted pools above still hold stale `nav`. Correction is a separate owner-
+approved action (a corrective event / re-derivation), deliberately NOT done here:
+append-only ledgers are not rewritten and NAV is not silently mutated.
 
 ---
 
@@ -169,23 +207,47 @@ REPLACE).
 
 **DB evidence:** v1 grantees = {postgres, service_role} (§4a); v2 grantees =
 {postgres, service_role} (§4b). No public/anon/auth execution on either.
+Re-verified in Phase B (§4e): both functions still {postgres, service_role} only.
 
-**Remaining risk:** `152_*` is authored with a file-prefix scheme rather than a
-matching row in `supabase_migrations.schema_migrations` under version `152`; the
-applied privilege state is verified directly (§4a/4b) rather than via tracker
-name. Timezone-boundary + concurrency integration tests for v2 (fix-prompt
-acceptance) are a Phase B follow-up.
+**Migration tracker:** `list_migrations` shows `152_rpc_grant_and_session_fixes`
+tracked as version `20260711135037` in `supabase_migrations.schema_migrations`
+— the earlier note claiming a bare file-prefix scheme with no tracker row was
+wrong and is corrected here. Applied state is confirmed both by the tracker row
+and directly by the grantee query (§4a/4b/4e).
+
+**Phase B — tz-boundary proof (read-only, §4f):** the exact v2 session-date math
+(`(now() at time zone v_tz)::date` and `v_day_start`) was replayed at boundary
+instants. A US live BUY at 00:00 UTC (20:00 ET, same trading day) yields
+`naive_utc_date = 2026-07-11` (a UTC rollover that `current_date` would have used
+to reset the daily budget mid-session) but `v_local_date = 2026-07-10` with
+`v_day_start = 2026-07-10 04:00Z` (= midnight ET) — the window correctly holds to
+the market's own session day. India at 20:00 UTC (01:30 IST) is symmetric
+(`v_local_date = 2026-07-11`, `v_day_start = 18:30Z` = midnight IST). A normal
+09:30-ET instant shows no divergence. **Concurrency:** v2 serializes by
+construction — `pg_advisory_xact_lock(hashtext(local_date:market:broker:env))` is
+taken before the count/sum, so two concurrent live BUYs on the same
+market/broker/env/session-day block on the same xact lock and the caps are read
+under it; distinct markets/brokers hash to distinct keys and never serialize on
+each other. This is a lock-by-construction argument, not a live concurrent-load
+test (a live broker order is disallowed by the fix constraints).
+
+**Remaining risk:** the concurrency guarantee is proven by the lock placement in
+the function body, not by an executed parallel-load integration test against a
+live broker (constraint). The v1 (14-arg) path used by the standalone Kite route
+does NOT carry the market-local session date — it is only reached on the India
+live path, now additionally identity/allowlist-gated (A2 interim, below), and is
+scheduled to retire when A2 unifies onto the v2 service.
 
 ---
 
 ## Cross-cutting note — unused edge-function kill-switch copy
 
-`supabase/functions/_shared/kill-switches.ts` is a **separate, paper-only** copy
+`supabase/functions/_shared/kill-switches.ts` was a **separate, paper-only** copy
 with hardcoded thresholds (−5 / 40 / 20) and **no importers** anywhere under
-`supabase/functions/`. It was intentionally **not** refactored for book/account
-context (dead code); documented here so a future reader does not mistake it for
-the live path. If an edge function ever needs kill-switch logic, it must adopt
-the `lib/kill-switches.ts` contract, not this copy.
+`supabase/functions/`. **Phase B — deleted** (`git rm`; zero importers re-verified
+under `supabase/` first) so no future reader mistakes it for the live path. If an
+edge function ever needs kill-switch logic, it must adopt the `lib/kill-switches.ts`
+contract (typed `{ market, book, accountId? }`), not resurrect this copy.
 
 ---
 
@@ -194,11 +256,22 @@ the `lib/kill-switches.ts` contract, not this copy.
 | Finding | Disposition | Live tested | Migration |
 |---|---|---|---|
 | A1 kill-switch context | ACCEPTED / DONE | unit (Test 9c, +5) | — |
-| A2 canonical Kite path | **DEFERRED — needs arch approval** | — | — |
-| A3 durable broker ACK | ACCEPTED / DONE | typecheck + unit | — |
-| A4 PositionMonitor accounting | ACCEPTED / DONE | unit + DB assert | none (field removed) |
-| A5 RPC grant / session | ACCEPTED / DONE (applied) | DB privilege assert | 152 (applied) |
+| A2 Kite identity/allowlist | **HARDENED (additive); unification deferred** | unit path | — |
+| A3 durable broker ACK | ACCEPTED / DONE | unit incl. injected-failure (4 tests) | — |
+| A4 PositionMonitor accounting | ACCEPTED / DONE + read-only report | unit + DB assert | none (field removed) |
+| A5 RPC grant / session | ACCEPTED / DONE (applied) | DB privilege + tz-boundary proof | 152 (applied, tracked) |
 
-**Stopping after Phase A per the fix prompt.** Phases B/C not started. A2 (and
-the residual A4 reconciliation report + A5 tz/concurrency tests) require
-architecture/quant approval before implementation.
+**Phase B (this batch) — completed under the owner's "go fix all" directive:**
+- A3 injected-failure integration test (`tests/execute-order-ack.test.ts`, 4/4).
+- A2 additive identity/allowlist gate on the standalone Kite route (contract
+  unchanged; canonical-path *unification* still deferred to owner arch approval).
+- A4 read-only NAV reconciliation report (`app/api/paper/nav-reconcile`).
+- A5 tz-boundary read-only proof + advisory-lock concurrency argument (§4f);
+  migration-152 tracker note corrected (tracked as `20260711135037`).
+- Deleted the dead edge-fn kill-switch copy.
+
+**Still owner-gated (not done here):** collapsing the two India live paths into a
+single canonical service (A2 unification — changes India order contract/UX);
+correcting the two currently-drifted NAV pools (a corrective event, not a silent
+mutation). No live/autonomous trading was enabled; no real broker order was
+placed, previewed, cancelled, or modified during this work.
