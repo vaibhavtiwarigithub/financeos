@@ -862,7 +862,7 @@ differs, stop. Autonomy stays `false` throughout. No new capability — only con
 > manual order path).
 
 ### Track 2 — money-path unification (architecture-gated; build after Track 1)
-- [ ] R13 #2/#5/#10/#11 extract one server-only `executeApprovedOrder()` used by manual + autonomous (all gateway invariants, actor envelope)
+- [x] R13 #2/#5/#10/#11 shared `lib/trading/execute-order.ts::executeApprovedOrder(svc, input, actor)` — the SINGLE hardened invariant set. Manual gateway delegates (owner actor); autonomous-live delegates (autonomous_worker actor, its own daily caps, no overrides). Autonomy now inherits account allowlist, fresh kill-switch, G1/G3, notional cap, drift, held-SELL, atomic v2 reservation. CAVEAT: submit still goes through the registry broker adapter (MCP for Robinhood = serverless-incompatible) — the direct-REST adapter choice is a separate registry-config item before live autonomy; flag stays false regardless.
 - [x] R14 #3/#8 per-market currency-correct NAV (US=RH USD snapshot, India=Kite INR margins+holdings, fail-closed) + per-market NET open-position count (was global filled count)
 - [x] R15 #7 atomic signal claim — unique partial index on trade_proposals(signal_id,market) WHERE autonomous_live (migration 145) + 23505 idempotent skip. (Broker-level client-order-key deferred — RH REST lacks native idempotency.)
 - [ ] R16 #6 live position monitor + protective-exit/cancel/reconcile control plane (partial fill, ambiguous submit)

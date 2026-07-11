@@ -63,6 +63,11 @@ export interface ExecuteOrderInput {
   acceptLowQuality?: boolean;
   acceptPortfolioRisk?: boolean;
   overrideReason?: string;
+  // Autonomous path supplies its own daily caps (live_auto_daily_cap_usd for US,
+  // max_daily_notional_inr for India; live_auto_max_orders_per_day). When set they
+  // override the manual strategy_config daily caps in the atomic reservation.
+  dailyNotionalCap?: number | null;
+  maxDailyTrades?: number | null;
 }
 
 export type ExecuteOrderResult =
@@ -87,11 +92,20 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
 
   const { data: proposal } = await supabase.from("trade_proposals").select("*").eq("id", proposal_id).maybeSingle();
   if (!proposal) return { ok: false, status: 404, error: "Proposal not found" };
-  if ((proposal as any).status !== "approved") {
-    return { ok: false, status: 400, error: `Proposal status is '${(proposal as any).status}', must be 'approved'` };
-  }
-  if ((proposal as any).approval_expires_at && new Date((proposal as any).approval_expires_at) < new Date()) {
-    return { ok: false, status: 400, error: "Proposal approval has expired" };
+  if (isOwner) {
+    if ((proposal as any).status !== "approved") {
+      return { ok: false, status: 400, error: `Proposal status is '${(proposal as any).status}', must be 'approved'` };
+    }
+    if ((proposal as any).approval_expires_at && new Date((proposal as any).approval_expires_at) < new Date()) {
+      return { ok: false, status: 400, error: "Proposal approval has expired" };
+    }
+  } else {
+    // Autonomous worker: authorization is the deployment flag + DB toggle + lease
+    // + kernel + kill-switch + session gates enforced upstream (runAutonomousLive),
+    // NOT an owner click. Only require this be an autonomous_live proposal.
+    if ((proposal as any).execution_mode !== "autonomous_live") {
+      return { ok: false, status: 400, error: "autonomous actor may only execute autonomous_live proposals" };
+    }
   }
 
   // Idempotency: refuse a duplicate active order for the same proposal.
@@ -280,8 +294,8 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
     p_proposal_id: proposal_id, p_market: market, p_broker: broker.id, p_broker_env: orderEnv,
     p_symbol: symbol, p_side: side, p_qty: qty, p_order_type: "market", p_limit_price: null,
     p_estimated_notional: estNotional, p_currency: isIndiaMkt ? "INR" : "USD",
-    p_max_daily_trades: (cfg as any)?.max_daily_trades ?? null,
-    p_max_daily_notional: isIndiaMkt ? ((cfg as any)?.max_daily_notional_inr ?? null) : ((cfg as any)?.max_daily_notional_usd ?? null),
+    p_max_daily_trades: input.maxDailyTrades !== undefined ? input.maxDailyTrades : ((cfg as any)?.max_daily_trades ?? null),
+    p_max_daily_notional: input.dailyNotionalCap !== undefined ? input.dailyNotionalCap : (isIndiaMkt ? ((cfg as any)?.max_daily_notional_inr ?? null) : ((cfg as any)?.max_daily_notional_usd ?? null)),
     p_execution_actor: actor.kind,
   });
   if (resErr) {

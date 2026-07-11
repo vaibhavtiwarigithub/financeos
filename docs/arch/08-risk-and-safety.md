@@ -308,9 +308,20 @@ Triggered by `POST /api/agents/autonomous-live/cron` at 14:00 UTC weekdays (afte
 - **Daily-cap fail-closed** (`live_auto_daily_cap_usd` enforced) + **net** per-market open-position count.
 - **Idempotent claim:** unique partial index `trade_proposals(signal_id, market) WHERE autonomous_live`
   (migration 145) — concurrent/repeated runs can't double-propose+buy the same signal.
-- **Still NOT unified with the manual Execution Gateway** (R13, pending owner review): the autonomous
-  path calls broker clients directly and does not yet run the full gateway invariant set (account
-  allowlist, G1/G3, drift/preview, held-SELL). Autonomy stays disabled until that lands.
+- **Money path UNIFIED (R13, 2026-07-10):** both the manual owner gateway (`app/api/broker/orders`)
+  and the autonomous worker now call one shared server-only service,
+  `lib/trading/execute-order.ts::executeApprovedOrder(svc, input, actor)`. It runs the full invariant
+  set once — autonomy-level, per-market trading flags, fresh `checkKillSwitches`, G1 decision-quality,
+  account allowlist, fresh-quote notional cap, G3 portfolio limits, price drift, held-SELL, and the
+  atomic `reserve_live_order_budget_v2` reservation. The `actor` envelope distinguishes `owner` (may
+  supply audited risk overrides) from `autonomous_worker` (may NOT override any gate; supplies its own
+  `live_auto_daily_cap_usd` / orders-per-day caps). Autonomy authorization is the upstream deployment
+  flag + DB toggle + lease + kernel + session gates, not an owner click.
+  - CAVEAT before enabling live autonomy: the broker SUBMIT still goes through the registry adapter
+    (`broker.submitOrder`), which for Robinhood is MCP-based and does not run in Vercel serverless —
+    the direct-REST adapter (`lib/brokers/robinhood/rest-client.ts`) must be wired as the active
+    registry adapter (or Robinhood MCP made reachable) before live autonomous submit works. The
+    deployment flag stays false until then.
 - Schema reproducibility restored: migrations `143` (live-auto DDL + budget RPC), `144` (RLS), `145`.
 
 **Outcomes per signal:**

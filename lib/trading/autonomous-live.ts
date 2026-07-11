@@ -8,9 +8,9 @@ import {
 } from "@/lib/trading/execution-kernel";
 import { AUTONOMOUS_LIVE_ENABLED } from "@/lib/autonomy";
 import { getQuote } from "@/lib/data/quotes";
-import { rhPlaceMarketOrder } from "@/lib/brokers/robinhood/rest-client";
-import { placeEquityOrder, getKiteMargins, getKiteHoldings } from "@/lib/kite";
+import { getKiteMargins, getKiteHoldings } from "@/lib/kite";
 import { checkKillSwitches } from "@/lib/kill-switches";
+import { executeApprovedOrder } from "@/lib/trading/execute-order";
 
 const SIGNAL_LOOKBACK_HOURS = 24;
 const NAV_ACCOUNT_ID = "605420660";
@@ -398,106 +398,65 @@ export async function runAutonomousLive(
       continue;
     }
 
-    // Atomic budget reservation — FORBIDDEN to read/sum broker_orders manually here
-    let brokerOrderDbId: number | null = null;
-    try {
-      const { data: rpcResult, error: rpcErr } = await svc.rpc("reserve_live_order_budget_v2", {
-        p_proposal_id:       proposalId,
-        p_market:            market,
-        p_broker:            broker,
-        p_broker_env:        "live",
-        p_symbol:            signal.symbol,
-        p_side:              "buy",
-        p_qty:               sizing.proposed_qty,
-        p_order_type:        "market",
-        p_limit_price:       null,
-        p_estimated_notional: sizing.estimated_notional,
-        p_currency:          currency,
-        p_max_daily_trades:  policy.live_auto_max_orders_per_day ?? cfg.max_daily_trades ?? null,
-        p_max_daily_notional: effectiveDailyNotional,
-        p_execution_actor:   "autonomous_worker",
-      });
-      if (rpcErr) throw new Error(rpcErr.message);
-      brokerOrderDbId = Number(rpcResult);
-    } catch (budgetErr: any) {
-      await svc.from("trade_proposals")
-        .update({ status: "manual_review_required", policy_snapshot: { policy, kernel, sizing, run_id: runId, budget_error: budgetErr?.message } })
-        .eq("id", proposalId);
-      results.push({
-        symbol: signal.symbol, market, signal_id: signal.id,
-        proposal_id: proposalId, broker_order_id: null, broker_order_ref: null,
-        kernel, sizing, broker_status: "budget_error", error: budgetErr?.message,
-      });
-      continue;
-    }
+    // Persist the sized qty + price onto the proposal, then run the SAME hardened
+    // execution gateway the manual owner path uses (account allowlist, fresh
+    // kill-switch, G1 quality, notional cap, drift, held-SELL, atomic budget +
+    // broker submit + durable record) via the shared service with the
+    // autonomous_worker actor. No direct broker calls or manual budget RPC here.
+    await svc.from("trade_proposals").update({
+      qty:               sizing.proposed_qty,
+      estimated_value:   sizing.estimated_notional,
+      pct_of_nav:        sizing.pct_of_nav,
+      price_at_proposal: currentPrice,
+      price_source:      "autonomous_live",
+    }).eq("id", proposalId);
 
-    // Submit broker order
+    const exec = await executeApprovedOrder(
+      svc,
+      {
+        proposalId,
+        env: "live",
+        dailyNotionalCap: effectiveDailyNotional,
+        maxDailyTrades: policy.live_auto_max_orders_per_day ?? cfg.max_daily_trades ?? null,
+      },
+      { kind: "autonomous_worker", runId },
+    );
+
+    let brokerStatus: LiveRunResult["results"][0]["broker_status"];
     let orderRef: string | null = null;
-    let brokerStatus: LiveRunResult["results"][0]["broker_status"] = "needs_reconcile";
+    let brokerOrderDbId: number | null = null;
     let brokerError: string | undefined;
-
-    if (market === "india") {
-      const kiteResult = await placeEquityOrder(
-        { tradingsymbol: signal.symbol, transaction_type: "BUY", quantity: sizing.proposed_qty },
-        svc,
-      );
-      if (kiteResult.ok) {
-        orderRef = String(kiteResult.data?.order_id ?? "");
-        brokerStatus = orderRef ? "submitted" : "needs_reconcile";
-      } else {
-        brokerStatus = "broker_error";
-        brokerError = kiteResult.error;
-      }
+    if (exec.ok) {
+      brokerStatus = "submitted";
+      orderRef = exec.broker_order_id != null ? String(exec.broker_order_id) : null;
+      brokerOrderDbId = exec.order_id;
+      // Immutable autonomous audit event for the submitted order.
+      await svc.from("broker_order_events").insert({
+        broker_order_id: brokerOrderDbId, proposal_id: proposalId,
+        event_type: "submitted", broker, broker_order_ref: orderRef,
+        actor_kind: "autonomous_live", auto_run_id: runId,
+      }).then(() => {}, () => {});
+      liveOrdersThisRun++;
+    } else if (exec.needs_reconcile) {
+      brokerStatus = "needs_reconcile";
+      brokerError = exec.error;
+    } else if (exec.status === 502) {
+      brokerStatus = "broker_error";
+      brokerError = exec.error;
     } else {
-      const rhResult = await rhPlaceMarketOrder(svc, { symbol: signal.symbol, qty: sizing.proposed_qty });
-      if (rhResult.ok) {
-        orderRef = rhResult.order_id ?? null;
-        brokerStatus = rhResult.needs_reconcile ? "needs_reconcile" : "submitted";
-        brokerError = rhResult.error;
-      } else {
-        brokerStatus = "broker_error";
-        brokerError = rhResult.error;
-      }
+      brokerStatus = "gate_blocked";
+      brokerError = exec.error;
     }
 
-    // Update broker_orders with broker result
-    const brokerOrderUpdate: Record<string, any> = {};
-    if (brokerStatus === "submitted" && orderRef) {
-      brokerOrderUpdate.status = "submitted";
-      brokerOrderUpdate.broker_order_ref = orderRef;
-    } else {
-      brokerOrderUpdate.status = "unknown_needs_reconcile";
-    }
-    await svc.from("broker_orders").update(brokerOrderUpdate).eq("id", brokerOrderDbId);
-
-    // Append immutable audit event
-    await svc.from("broker_order_events").insert({
-      broker_order_id:  brokerOrderDbId,
-      proposal_id:      proposalId,
-      event_type:       brokerStatus === "submitted" ? "submitted" : "submit_attempted_reconcile_needed",
-      broker,
-      broker_order_ref: orderRef,
-      actor_kind:       "autonomous_live",
-      auto_run_id:      runId,
-    });
-
-    // Update proposal final status
     const finalProposalStatus = brokerStatus === "submitted" ? "queued_auto" : "manual_review_required";
     await svc.from("trade_proposals").update({
-      status:          finalProposalStatus,
-      qty:             sizing.proposed_qty,
-      estimated_value: sizing.estimated_notional,
-      pct_of_nav:      sizing.pct_of_nav,
-      price_at_proposal: currentPrice,
-      price_source:    "autonomous_live",
+      status: finalProposalStatus,
       policy_snapshot: {
         policy, score_threshold: scoreThreshold, run_id: runId,
         run_start: runStart, kernel, sizing,
-        broker_status: brokerStatus, broker_order_ref: orderRef,
+        broker_status: brokerStatus, broker_order_ref: orderRef, exec_error: brokerError ?? null,
       },
     }).eq("id", proposalId);
-
-    if (brokerStatus === "submitted") liveOrdersThisRun++;
 
     results.push({
       symbol: signal.symbol, market, signal_id: signal.id,
