@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { gatherSymbols, processSymbol } from "@/lib/research-agent";
+import { computeComparableRank, isRankRejected, type RankCandidate } from "@/lib/scoring/rank";
 import { isIndia } from "@/lib/india-data";
 import { prewarmPriceCache } from "@/lib/chart-data";
 import { RISK_PROFILES } from "@/lib/risk-profiles";
@@ -186,31 +187,133 @@ export async function POST(req: NextRequest) {
   const ok = results.filter(r => !r.error).length;
   const errs = results.filter(r => r.error).length;
 
-  // P1: compute cross-sectional rank for this run's universe and persist to
-  // universe_snapshot_scores. Percentile rank = fraction of symbols scoring BELOW
-  // this symbol (min-rank = 0 for lowest scorer, max = 1 for highest scorer).
-  // Fail-soft: never blocks the cron response on a rank-write failure.
+  // Cross-sectional rank — Pass 2 (features/cross-sectional-rank). Deterministic,
+  // no LLM. Replaces the earlier naive mixed-pool percentile with a GROUPED rank
+  // over the ELIGIBLE pool (data-quality gates run first), partitioned into
+  // comparable groups (market × asset-type × sector) via the shared
+  // computeComparableRank(). Persists richer provenance to
+  // universe_snapshot_scores, then applies the hybrid floor-AND-rank entry gate
+  // to agent_signals — but ONLY when the champion genome carries
+  // entry.rank_pct_min > 0. Default 0.0 ⇒ zero agent_signals writes ⇒ selection
+  // is byte-identical to pre-feature behavior. Fail-soft throughout.
   if (universeSnapshotId) {
     try {
-      const scored = results
-        .filter(r => !r.error && typeof r.analystScore === "number")
-        .map(r => ({ symbol: r.symbol as string, score: r.analystScore as number, obsId: (r.obsId ?? null) as number | null }));
-      if (scored.length > 1) {
-        const sorted = [...scored].sort((a, b) => a.score - b.score);
-        const rankRows = scored.map(s => {
-          const below = sorted.filter(x => x.score < s.score).length;
+      // Pair each non-error result with its source entry (same index) so we have
+      // isHeld / asset-type / market alongside the score + observation id.
+      const scored: { entry: (typeof entries)[number]; symbol: string; score: number; direction: string; obsId: number | null }[] = [];
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        if (!r || r.error || typeof r.analystScore !== "number") continue;
+        scored.push({
+          entry: entries[i],
+          symbol: r.symbol as string,
+          score: r.analystScore as number,
+          direction: (r.direction as string) ?? "neutral",
+          obsId: (r.obsId ?? null) as number | null,
+        });
+      }
+
+      if (scored.length > 0) {
+        // Read sector + evidence_confidence for this run's observations (already
+        // written in Pass 1 — a DB read of our own rows, never an external fetch).
+        const obsIds = scored.map(s => s.obsId).filter((x): x is number => typeof x === "number");
+        const obsMeta = new Map<number, { sector: string | null; evidenceConfidence: number | null }>();
+        if (obsIds.length > 0) {
+          const { data: obsRows } = await supabase
+            .from("decision_observations")
+            .select("id, evidence_confidence, features")
+            .in("id", obsIds);
+          for (const row of (obsRows ?? []) as any[]) {
+            const sector = row?.features?.fundamental?.sector ?? null;
+            obsMeta.set(row.id, {
+              sector: typeof sector === "string" && sector.trim() ? sector : null,
+              evidenceConfidence: typeof row?.evidence_confidence === "number" ? row.evidence_confidence : null,
+            });
+          }
+        }
+
+        const candidates: RankCandidate[] = scored.map(s => {
+          const meta = s.obsId != null ? obsMeta.get(s.obsId) : undefined;
           return {
-            universe_snapshot_id: universeSnapshotId,
             symbol: s.symbol,
-            analyst_score: s.score,
-            rank_pct: below / (scored.length - 1),  // 0 = lowest, 1 = highest
-            decision_observation_id: s.obsId,
+            analystScore: s.score,
+            market: isIndia(s.symbol) ? "india" : "us",
+            assetType: s.entry.isEtf ? "etf" : "equity",
+            sector: meta?.sector ?? null,
+            evidenceConfidence: meta?.evidenceConfidence ?? null,
+            direction: s.direction,
+            isHeld: s.entry.isHeld,
           };
         });
-        await supabase.from("universe_snapshot_scores").insert(rankRows);
+
+        const ranked = computeComparableRank(candidates);
+        const rankBySymbol = new Map(ranked.map(r => [r.symbol, r]));
+
+        // Persist grouped rank provenance. New columns (rank_quality,
+        // comparable_group_key, group_n, rank_eligible) are additive; on a
+        // pre-151 schema the insert falls back to the base columns only.
+        const scoreBySymbol = new Map(scored.map(s => [s.symbol, s]));
+        const rankRows = ranked.map(r => ({
+          universe_snapshot_id: universeSnapshotId,
+          symbol: r.symbol,
+          analyst_score: scoreBySymbol.get(r.symbol)?.score ?? null,
+          rank_pct: r.rank_pct,
+          decision_observation_id: scoreBySymbol.get(r.symbol)?.obsId ?? null,
+          rank_quality: r.rank_quality,
+          comparable_group_key: r.comparable_group_key,
+          group_n: r.group_n,
+          rank_eligible: r.rank_eligible,
+        }));
+        const { error: usErr } = await supabase.from("universe_snapshot_scores").insert(rankRows);
+        if (usErr && ["42703", "PGRST204"].includes(String(usErr.code ?? ""))) {
+          // pre-151 schema: retry with only the original columns so measure-only
+          // logging still lands.
+          const baseRows = rankRows.map(({ rank_quality, comparable_group_key, group_n, rank_eligible, ...base }) => base);
+          await supabase.from("universe_snapshot_scores").insert(baseRows);
+        }
+
+        // Hybrid entry gate (features/cross-sectional-rank §5). Read the champion
+        // genome's rank_pct_min per market — default 0.0 ⇒ gate inactive ⇒ we do
+        // NOT touch agent_signals at all, so daily selection is unchanged.
+        const gateMarket = marketScope ?? "us";
+        let rankPctMin = 0;
+        try {
+          const scoped = await supabase.from("strategy_versions").select("genome")
+            .eq("is_champion", true).eq("market", gateMarket).limit(1).maybeSingle();
+          let champGenome = (scoped.data as any)?.genome;
+          if (!champGenome) {
+            const legacy = await supabase.from("strategy_versions").select("genome")
+              .eq("is_champion", true).order("promoted_at", { ascending: false }).limit(1).maybeSingle();
+            champGenome = (legacy.data as any)?.genome;
+          }
+          const v = champGenome?.entry?.rank_pct_min;
+          if (typeof v === "number" && v > 0) rankPctMin = v;
+        } catch { /* no champion / pre-genome schema → gate stays off */ }
+
+        if (rankPctMin > 0) {
+          // A NEW long is rejected when it fails §4.1 (not rank-eligible) OR its
+          // within-group percentile is below the floor. This can only REMOVE
+          // candidates (actionable set ⊆ absolute-floor survivors); the ≤3/day
+          // cap, long-only rule, and held-position SELL path are untouched.
+          for (const s of scored) {
+            if (s.entry.isHeld) continue;          // holdings' exits never gated
+            if (s.direction !== "long") continue;  // only long entries considered
+            const r = rankBySymbol.get(s.symbol);
+            if (!isRankRejected(r, rankPctMin)) continue;
+            const mkt = isIndia(s.symbol) ? "india" : "us";
+            try {
+              await supabase.from("agent_signals")
+                .update({ rank_pct: r?.rank_pct ?? null, rank_rejected: true, status: "rank_rejected" })
+                .eq("symbol", s.symbol).eq("market", mkt)
+                .eq("status", "pending").eq("direction", "long");
+            } catch (e) {
+              console.error("[research-cron] rank-gate agent_signals update failed (non-blocking):", e instanceof Error ? e.message : e);
+            }
+          }
+        }
       }
     } catch (e) {
-      console.error("[research-cron] universe_snapshot_scores write failed (non-blocking):", e instanceof Error ? e.message : e);
+      console.error("[research-cron] cross-sectional rank (Pass 2) failed (non-blocking):", e instanceof Error ? e.message : e);
     }
   }
 

@@ -8,7 +8,12 @@ import crypto from "crypto";
 
 export interface StrategyGenome {
   features: { included: string[]; transforms: Record<string, unknown> };
-  entry: { score_threshold: number; direction: "long" };
+  // entry.rank_pct_min: minimum within-group cross-sectional percentile for a
+  // NEW long entry (features/cross-sectional-rank). Optional & DEFAULT 0.0 =
+  // rank never rejects → selection is byte-identical to pre-feature behavior.
+  // A challenger carrying rank_pct_min > 0 is the ONLY way the rank gate turns
+  // on, and only after owner promotion. Bounded [0, 0.95] at promotion.
+  entry: { score_threshold: number; direction: "long"; rank_pct_min?: number };
   universe: { us: string; india: string; liquidity_min_dollar_vol: number | null };
   horizon_days: 2 | 5 | 10 | 20;
   exit: { family: "ledger_percentile" | "fixed_pct"; stop_mae_pctile: number; target_mfe_pctile: number; trail: number };
@@ -18,7 +23,7 @@ export interface StrategyGenome {
 
 export const DEFAULT_GENOME: StrategyGenome = {
   features: { included: ["fundamental", "technical", "sentiment", "macro", "insider"], transforms: {} },
-  entry: { score_threshold: 60, direction: "long" },
+  entry: { score_threshold: 60, direction: "long", rank_pct_min: 0.0 },
   universe: { us: "screener_default", india: "nifty100", liquidity_min_dollar_vol: null },
   horizon_days: 10,
   exit: { family: "ledger_percentile", stop_mae_pctile: 25, target_mfe_pctile: 75, trail: 0.93 },
@@ -28,6 +33,10 @@ export const DEFAULT_GENOME: StrategyGenome = {
 
 const BOUNDS = {
   "entry.score_threshold": [50, 75] as const,
+  // 0.0 = off (allowed so a challenger can explicitly disable the rank gate);
+  // active challengers realistically sit in [0.5, 0.9]. Upper cap 0.95 avoids a
+  // gate so tight only the single top name in a group could ever clear it.
+  "entry.rank_pct_min": [0, 0.95] as const,
   "exit.stop_mae_pctile": [10, 40] as const,
   "exit.target_mfe_pctile": [60, 90] as const,
   "sizing.cap_pct": [5, 15] as const,
@@ -44,6 +53,12 @@ export function validateGenomeBounds(genome: Partial<StrategyGenome>): GenomeVal
     const [lo, hi] = BOUNDS["entry.score_threshold"];
     if (genome.entry.score_threshold < lo || genome.entry.score_threshold > hi) {
       return { ok: false, reason: `entry.score_threshold ${genome.entry.score_threshold} outside [${lo},${hi}]` };
+    }
+  }
+  if (genome.entry?.rank_pct_min != null) {
+    const [lo, hi] = BOUNDS["entry.rank_pct_min"];
+    if (genome.entry.rank_pct_min < lo || genome.entry.rank_pct_min > hi) {
+      return { ok: false, reason: `entry.rank_pct_min ${genome.entry.rank_pct_min} outside [${lo},${hi}]` };
     }
   }
   if (genome.horizon_days != null && !VALID_HORIZONS.includes(genome.horizon_days)) {

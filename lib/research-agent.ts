@@ -32,6 +32,7 @@ async function getDefaultMandateId(market: string, supabase: any): Promise<strin
   return id;
 }
 import { fetchUsOverview } from "@/lib/data/fundamentals";
+import { captureFundamentalsFact } from "@/lib/data/pit-fundamentals";
 import { scoreEdgarInsider } from "@/lib/data/edgar-insider";
 import { fetchUpstoxCandles } from "@/lib/data/upstox";
 import { scoreAnalyst } from "@/lib/data/analyst";
@@ -942,10 +943,16 @@ export async function processSymbol(
       // via isEtf; skip the fetch (don't waste an FMP/AV call).
       ? Promise.resolve({})
       : india
-        ? fetchIndiaOverview(symbol).catch(() => ({}))
+        ? fetchIndiaOverview(symbol)
+            // PIT capture-on-fetch (additive, non-blocking, fail-open): archive a
+            // fundamental_facts vintage. Never awaited, never throws into scoring.
+            .then(ov => { void captureFundamentalsFact(supabase, { symbol, market: "india", values: ov, source: "yahoo" }); return ov; })
+            .catch(() => ({}))
         // US equities: FMP (own 250/day budget) → Alpha Vantage OVERVIEW
         // fallback, mapped to the same OVERVIEW shape scoreFundamentals reads.
-        : fetchUsOverview(symbol, () => fetchAVOverview(symbol, avKey)).then(r => r.overview).catch(() => ({})),
+        : fetchUsOverview(symbol, () => fetchAVOverview(symbol, avKey))
+            .then(r => { void captureFundamentalsFact(supabase, { symbol, market: "us", values: r.overview, source: r.source }); return r.overview; })
+            .catch(() => ({})),
     india
       // India candles: Upstox (official, analytics token) primary → Yahoo
       // chart (unofficial) fallback. Upstox is more reliable than the Yahoo
