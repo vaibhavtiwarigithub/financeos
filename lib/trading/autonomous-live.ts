@@ -40,9 +40,26 @@ function earlyExit(reason: string): LiveRunResult {
   return { run_id: "", early_exit: reason, evaluated: 0, submitted: 0, rejected: 0, reconcile_needed: 0, results: [] };
 }
 
+// Is the exchange currently in its regular trading session? Market orders must
+// not be placed outside the session (they would queue unexpectedly). DST-correct
+// via IANA timezones. US regular 09:30–16:00 ET; India 09:15–15:30 IST.
+export function isMarketSessionOpen(market: string, now: Date = new Date()): boolean {
+  const tz = market === "india" ? "Asia/Kolkata" : "America/New_York";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  if (["Sat", "Sun"].includes(get("weekday"))) return false;
+  const mins = (parseInt(get("hour") || "0", 10) % 24) * 60 + parseInt(get("minute") || "0", 10);
+  const open = market === "india" ? 9 * 60 + 15 : 9 * 60 + 30;
+  const close = market === "india" ? 15 * 60 + 30 : 16 * 60;
+  return mins >= open && mins <= close;
+}
+
 export async function runAutonomousLive(
   svc: SupabaseClient,
   runId: string,
+  marketFilter?: "us" | "india",
 ): Promise<LiveRunResult> {
   const runStart = new Date().toISOString();
 
@@ -89,11 +106,22 @@ export async function runAutonomousLive(
   // mode column is still "autonomous".
   // Require the per-market view-only flag to be EXPLICITLY true (fail closed on
   // null/absent — never assume enabled on a live-money path).
-  const autonomousMarkets: string[] = [];
+  let autonomousMarkets: string[] = [];
   if (cfg.live_auto_mode_us === "autonomous" && cfg.trading_enabled_us === true) autonomousMarkets.push("us");
   if (cfg.live_auto_mode_india === "autonomous" && cfg.trading_enabled_india === true) autonomousMarkets.push("india");
+  // Per-market scheduling: a market-scoped cron only processes its own market.
+  if (marketFilter) autonomousMarkets = autonomousMarkets.filter((m) => m === marketFilter);
   if (autonomousMarkets.length === 0) {
     return { ...earlyExit("no_markets_in_autonomous_mode"), run_id: runId };
+  }
+
+  // Session-window guard: only place market orders while the exchange is OPEN
+  // (outside the session a market order queues unexpectedly). Drop closed markets.
+  for (const m of [...autonomousMarkets]) {
+    if (!isMarketSessionOpen(m)) autonomousMarkets.splice(autonomousMarkets.indexOf(m), 1);
+  }
+  if (autonomousMarkets.length === 0) {
+    return { ...earlyExit("market_session_closed"), run_id: runId };
   }
 
   // Fresh per-market kill-switch check (drawdown / daily-loss / accuracy) — the

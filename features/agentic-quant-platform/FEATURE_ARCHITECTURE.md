@@ -834,8 +834,8 @@ Legend: [ ] todo · [~] in progress · [x] done
 - [x] R14 #3/#8 per-market currency-correct NAV (US=RH USD snapshot, India=Kite INR margins+holdings, fail-closed) + per-market NET open-position count (was global filled count)
 - [x] R15 #7 atomic signal claim — unique partial index on trade_proposals(signal_id,market) WHERE autonomous_live (migration 145) + 23505 idempotent skip. (Broker-level client-order-key deferred — RH REST lacks native idempotency.)
 - [ ] R16 #6 live position monitor + protective-exit/cancel/reconcile control plane (partial fill, ambiguous submit)
-- [ ] R17 #12/#28 per-market exchange-calendar schedules (US + India separate, session-aware); consolidate scheduler
-- [ ] R18 #13/#15 learner: baseline from market champion + simplex-renormalize; transactional per-market promotion; make force_unvalidated paper-only
+- [x] R17 #12/#28 per-market cron (`?market=us` 15:00 UTC / `?market=india` 06:00 UTC) + `isMarketSessionOpen` session-window guard (no market orders when exchange closed, DST-correct). Full managed-scheduler consolidation still TODO.
+- [~] R18 #13 learner baseline now from market champion snapshot + full-vector renormalize to 1.0. TODO #15: transactional per-market promote + force_unvalidated→paper-only (strategies/versions route).
 
 ### Track 3 — statistical + evolution integrity (after Track 2)
 - [ ] R19 #21 label maturation: exchange-calendar sessions + immutable executable decision price (no future candle)

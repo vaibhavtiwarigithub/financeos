@@ -465,11 +465,31 @@ export async function POST(req: NextRequest) {
             const nTrades = evidence.n; // server-verified, not the LLM's claim
             const confidence = effectSize;
 
-            // Select ONLY the weight columns — never spread metadata (ids/timestamps)
-            // into weights_snapshot, or promotion code that iterates keys breaks.
+            // BASELINE = THIS market's champion weights_snapshot (the live scoring
+            // policy), falling back to the global signal_weights row only when no
+            // champion exists. A challenger built off global weights would propose
+            // against the wrong baseline. Parent this challenger to that champion
+            // (post-057 there is one champion per market).
+            const { data: champion } = await scopeMkt(svc.from("strategy_versions")
+              .select("id, version, weights_snapshot")
+              .eq("is_champion", true)
+              .order("created_at", { ascending: false })
+              .limit(1)).maybeSingle();
+
+            // Select ONLY the weight columns — never spread metadata into weights_snapshot.
             const { data: current, error: curErr } = await svc.from("signal_weights").select(WEIGHT_DIMS.join(", ")).single();
-            if (curErr) return JSON.stringify({ error: `Failed to read current weights: ${curErr.message}` });
-            const currentVal = Number((current as any)?.[dimension] ?? 0.25);
+            if (curErr && !champion) return JSON.stringify({ error: `Failed to read baseline weights (no champion, no signal_weights): ${curErr.message}` });
+
+            // Champion snapshot keys may be either "fundamental" or "fundamental_weight".
+            const snap = (champion as any)?.weights_snapshot ?? null;
+            const baseVal = (d: string): number => {
+              const bare = d.replace(/_weight$/, "");
+              const fromChamp = snap ? (snap[d] ?? snap[bare]) : undefined;
+              if (typeof fromChamp === "number") return fromChamp;
+              const fromGlobal = (current as any)?.[d];
+              return typeof fromGlobal === "number" ? fromGlobal : 0.25;
+            };
+            const currentVal = baseVal(dimension);
 
             // Direction sanity: raising a weight requires the ledger to show a
             // POSITIVE score->return correlation for that dimension; lowering
@@ -481,21 +501,16 @@ export async function POST(req: NextRequest) {
 
             const clamped = Math.max(0.05, Math.min(0.60, Math.max(currentVal - 0.05, Math.min(currentVal + 0.05, newWeight))));
             const proposedWeights: Record<string, number> = {};
-            for (const d of WEIGHT_DIMS) proposedWeights[d] = Number((current as any)?.[d] ?? 0.25);
+            for (const d of WEIGHT_DIMS) proposedWeights[d] = baseVal(d);
             proposedWeights[dimension] = clamped;
+            // Renormalize the full vector to sum to 1.0 — a single-coordinate edit
+            // otherwise leaves the 5 weights summing to more/less than 1.
+            const wSum = WEIGHT_DIMS.reduce((s, d) => s + (proposedWeights[d] ?? 0), 0);
+            if (wSum > 0) for (const d of WEIGHT_DIMS) proposedWeights[d] = Number((proposedWeights[d] / wSum).toFixed(4));
 
-            // CHALLENGER LIFECYCLE: Do NOT mutate signal_weights directly.
-            // Create an immutable strategy_versions challenger row. It must be
-            // promoted through the Strategy Registry before it takes effect.
-            // This is the architecture gate that prevents learning from immediately
-            // overwriting the champion strategy without human review.
-            // Parent this challenger to THIS market's champion (post-057 there is
-            // one champion per market — an unscoped lookup would grab the wrong one).
-            const { data: champion } = await scopeMkt(svc.from("strategy_versions")
-              .select("id, version, weights_snapshot")
-              .eq("is_champion", true)
-              .order("created_at", { ascending: false })
-              .limit(1)).maybeSingle();
+            // CHALLENGER LIFECYCLE: Do NOT mutate signal_weights directly. The
+            // immutable strategy_versions challenger row must be promoted through
+            // the Strategy Registry (after validation) before it takes effect.
 
             // Collision-safe version: base + date + HHMMSS so two proposals on the
             // same day for the same champion don't hit a unique-constraint clash.

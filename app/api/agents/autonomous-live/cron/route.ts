@@ -14,9 +14,12 @@ export async function POST(req: NextRequest) {
 
   const svc = createServiceClient();
   const runId = randomUUID();
+  // Per-market scheduling: US and India crons run at their own exchange sessions.
+  const marketParam = req.nextUrl.searchParams.get("market");
+  const marketFilter = marketParam === "us" || marketParam === "india" ? marketParam : undefined;
 
   try {
-    const result = await runAutonomousLive(svc, runId);
+    const result = await runAutonomousLive(svc, runId, marketFilter);
     return NextResponse.json({ ok: true, ...result });
   } catch (err: any) {
     return NextResponse.json(
