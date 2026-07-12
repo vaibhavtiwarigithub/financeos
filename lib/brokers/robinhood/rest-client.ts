@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getValidAccessToken } from "@/lib/robinhood-mcp";
 
 // Direct Robinhood REST client. Used by the `robinhood` execution adapter so the
 // order path works in Vercel serverless (the MCP adapter needs a live MCP
@@ -10,13 +11,14 @@ const RH_API = "https://api.robinhood.com";
 export const RH_ORDER_ACCOUNT_ID = "605420660";
 
 async function getRhToken(svc: SupabaseClient): Promise<string> {
-  const { data } = await svc
-    .from("api_key_vault")
-    .select("key_value")
-    .eq("key_name", "ROBINHOOD_MCP_ACCESS_TOKEN")
-    .maybeSingle();
-  const raw = (data as any)?.key_value;
-  if (!raw) throw new Error("Robinhood OAuth token not found in vault (key: ROBINHOOD_MCP_ACCESS_TOKEN)");
+  // Refresh-aware: getValidAccessToken checks expiry and refreshes via CAS
+  // before returning. Reading the vault row directly here caused 401
+  // "JWT verification failed" once the access token expired.
+  const r = await getValidAccessToken(svc);
+  if (!r.ok || !r.token) {
+    throw new Error(`Robinhood token unavailable: ${r.error ?? "unknown"}`);
+  }
+  const raw = r.token;
   try {
     const parsed = JSON.parse(raw);
     if (parsed?.access_token) return String(parsed.access_token);

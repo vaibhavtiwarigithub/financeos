@@ -227,7 +227,7 @@ async function refreshAccessToken(svc: any): Promise<{ ok: boolean; error?: stri
   } catch (e) { return { ok: false, error: `refresh error: ${String(e)}` }; }
 }
 
-async function getValidAccessToken(svc: any): Promise<{ ok: boolean; token?: string; error?: string }> {
+export async function getValidAccessToken(svc: any): Promise<{ ok: boolean; token?: string; error?: string }> {
   const token = await vaultGet(svc, VK.access);
   // No token at all = simply not connected (not a fault) — don't alert.
   if (!token) return { ok: false, error: "not connected" };
