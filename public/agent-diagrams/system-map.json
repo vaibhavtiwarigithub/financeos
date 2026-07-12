@@ -16,7 +16,7 @@
     },
     "RESEARCH": {
       "label": "ResearchAgent",
-      "description": "Daily (Mon-Fri, 9:00 ET). Scores each tracked symbol across 5 dimensions (fundamental/technical/sentiment/macro/insider) into an analyst_score, using the promoted CHAMPION weights when one exists (the closed learning loop) and each symbol's recent score TREND as context. Writes agent_signals + appends signal_score_history. Research Journal: agent_signals inserts now capture the returned row id (signal_id was previously always null downstream), decision_observations.features.screener records which dual-bucket screener criteria flagged a candidate, and a pipeline_stage_events row is written per candidate (stage='research', passed/rejected + reason) — the first link in a full pipeline trail (research -> portfolio constructor -> execution).",
+      "description": "Daily (Mon-Fri, 9:00 ET). Scores each tracked symbol across 5 dimensions (fundamental/technical/sentiment/macro/insider) into an analyst_score, using the promoted CHAMPION weights when one exists (the closed learning loop) and each symbol's recent score TREND as context. Writes agent_signals + appends signal_score_history. Research Journal: agent_signals inserts now capture the returned row id (signal_id was previously always null downstream), decision_observations.features.screener records which dual-bucket screener criteria flagged a candidate, and a pipeline_stage_events row is written per candidate (stage='research', passed/rejected + reason) — the first link in a full pipeline trail (research -> portfolio constructor -> execution). [2026-07-12] LLM now per-flow from Settings->AI Models (agent_config, default deepseek-reasoner), not hardcoded. India inputs added: GDELT news tone -> sentiment_score (lib/india-news.ts), and live NSE FII/DII net flows injected into the India thesis prompt (lib/india-macro.ts). Emits a low-confidence-research:<market> System Health alert when >=50% of a run's symbols score on <2 of 5 dimensions (quality gap, not just quota).",
       "addedAt": "2026-06-25",
       "addReason": "Central scoring engine — everything downstream keys off its analyst_score.",
       "status": "changed",
@@ -758,6 +758,13 @@
       "nodeId": "ACCTBOOK",
       "label": "Live account book repointed to Robinhood MCP multi-account capture (all 6 accounts)",
       "reason": "Risk Analytics showed no Robinhood accounts because fetchRobinhoodBrokerAccounts() (lib/brokers/index.ts) pulled holdings via the classic REST client (lib/brokers/robinhood/rest-client.ts, api.robinhood.com), which returns 401 'rejected client id' for the MCP-scoped vault token — so rhAccounts was always empty and RH fell to an 'unknown' skip, never landing in holding_risk_runs. Replaced with captureAllRobinhoodAccounts() in lib/robinhood-mcp.ts: one MCP session, get_accounts (all 6), per-account get_equity_positions + get_portfolio, batched get_equity_quotes to price holdings; returns BrokerAccount[] with real account ids. Live-verified all 6 accounts return positions+portfolio over MCP; agentic_allowed=false gates order placement only, not reads, so only 605420660 stays tradeable while all 6 are readable. Both consumers repointed: the holding-risk cron (fetchRobinhoodBrokerAccounts) and the live snapshot refresh (refreshViaMcp in app/api/live-account/refresh-snapshot/route.ts, now upserting all 6 accounts into live_account_snapshots instead of only the single active one). Codex-reviewed + fixed (negative P&L signs, ETF classification, stale-snapshot persistence, false Δ1d, VaR terminology). Shipped in 4f0bec7; ADVISORY-ONLY read path, no money-flow/order edge changed. Order placement remains restricted to 605420660."
+    },
+    {
+      "date": "2026-07-12",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "India sentiment (GDELT) + FII/DII macro inputs; per-flow LLM; low-confidence-research quality alert",
+      "reason": "India equities were scored with no news source and only US/global macro. Added free GDELT news tone -> India sentiment_score (honest-unavailable when <3 articles) and live NSE FII/DII net flows into the India thesis prompt. LLM per flow moved to Settings (agent_config). New low-confidence-research alert surfaces thin-data runs alongside quota alerts. FII/DII may be null on Vercel if NSE geo-throttles it — verified via /api/india/fii-dii."
     }
   ]
 }

@@ -1,5 +1,5 @@
 # Kairos — Agents
-> Last updated: 2026-07-10 (Phase 1 fixes: signal confidence uses conviction/100; L4 gate in gateway; India currency isolation; duplicate SELL protection)
+> Last updated: 2026-07-12 (per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
 > Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
 
 **Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file + update `public/agent-diagrams/system-map.json`.
@@ -103,7 +103,7 @@ User sees the regime first and decides whether to act.
 
 **File:** `app/api/agents/research/route.ts`, `lib/research-agent.ts`
 **Schedule:** Weekdays 9:00 AM ET (US), Weekdays 6:15 AM ET post-NSE-close (India)
-**LLM:** Groq `llama-3.3-70b-versatile` for thesis text only
+**LLM:** per-flow from Settings → AI Models (`agent_config` row `research`, read via `getConfiguredModel`), default `deepseek-reasoner`. Writes thesis text only — scores are deterministic. (Was hardcoded Groq Llama pre-2026-07-12.)
 
 **Inputs:**
 1. Account-scoped holdings snapshots. Research may analyze approved holdings, but only holdings verified on the actual order account can authorize a SELL.
@@ -114,7 +114,9 @@ User sees the regime first and decides whether to act.
 4. Score trend from `signal_score_history` (last 5 rows per symbol)
 5. Champion weights from `strategy_versions WHERE is_champion = true AND market = ?`
 6. Macro regime from most recent `macro_regime` row
-7. RAG memory via `retrieveSimilarTrades()` (if Voyage embeddings are configured)
+7. RAG memory via `retrieveSimilarTrades()` (if Jina embeddings are configured — Voyage was replaced by Jina free tier 2026-07)
+8. India news sentiment — GDELT DOC 2.0 article tone (`lib/india-news.ts`), free/no-key (2026-07-12)
+9. India FII/DII net cash flows — live NSE (`lib/india-macro.ts`), injected into the India thesis prompt (2026-07-12)
 
 **Current production baseline (`deterministic_v1`) — 5 dimensions:**
 
@@ -122,8 +124,8 @@ User sees the regime first and decides whether to act.
 |---|---|---|
 | `fundamental_score` | AV OVERVIEW (US) / Yahoo quoteSummary (India) | **P/E vs sector norm** (`SECTOR_PE_NORM`, not an absolute band), profit margin, ROE, EPS sign, rev-growth YoY, **analyst target upside** (target vs live close / 200-DMA proxy) |
 | `technical_score` | AV RSI + EMA + SMA (US) / Yahoo candles (India) | RSI(14) **continuous curve** (interpolated anchors, no bucket cliffs), price vs EMA20/50, 20d trend, **volume confirmation** (elevated volume ±8 in the prevailing direction) |
-| `sentiment_score` | AV NEWS_SENTIMENT + StockTwits (US) / neutral (India) | Weighted news bullishness; India uses neutral baseline |
-| `macro_score` | `macro_regime.danger_score` + `macro_signals` | Macro backdrop from MacroSentinel |
+| `sentiment_score` | AV NEWS_SENTIMENT + StockTwits (US) / **GDELT India news tone** (India, `lib/india-news.ts`) | Weighted news bullishness. India: aggregate tone of recent GDELT articles → 0-100; dimension stays *unavailable* (not faked) when GDELT returns < 3 articles (2026-07-12). |
+| `macro_score` | `macro_regime.danger_score` + `macro_signals` (US/global) | Macro backdrop from MacroSentinel. India research additionally injects a factual **FII/DII net-flow line** (`lib/india-macro.ts`, live NSE) into the thesis prompt — narrative grounding only; the deterministic `macro_score` still uses the US/global regime. FII/DII is null (line omitted) when NSE geo-throttles Vercel. (2026-07-12) |
 | `insider_score` | AV INSIDER_TRANSACTIONS (US) / NSE insider (India) | 90-day buy/sell ratio; congressional trades |
 
 Sub-score formulas are deterministic and **fixed** (hand-tuned priors in `lib/data/scores.ts` + `lib/data/technicals.ts`) — they are NOT agent/genome-mutable. Only the dimension **weights** evolve (champion loop). New candidate features flow through the IC-gated Feature Registry, not by editing these formulas. (2026-07-10: scored the previously-dead volume + analyst-target signals, made RSI continuous, made P/E sector-relative.)
@@ -133,6 +135,8 @@ Sub-score formulas are deterministic and **fixed** (hand-tuned priors in `lib/da
 analyst_score = Σ (dimension_score × effective_weight[dimension])
 ```
 Missing/inapplicable dimensions are EXCLUDED and the remaining weights renormalized to sum to 1.0 (`lib/scoring/weighted-score.ts`); `< 2` usable dimensions → abstain (thin evidence), never a low score. Base weights: champion `weights_snapshot` → risk-profile static → `learning_priors`/`signal_weights` → default F.30/T.25/S.20/M.15/I.10.
+
+**Low-confidence output (2026-07-12):** ResearchAgent aggregates per-market evidence availability across a run; when ≥ 50% of scored symbols (min 2) were scored on `< 2` of 5 dimensions, it raises a `low-confidence-research:<market>` System Health alert (warn/data) naming the commonly-missing dimensions, and resolves it when a run recovers. Surfaces *quality* gaps (thin data) alongside the existing *quota* alerts (provider budget).
 
 #### Sub-score formula reference (`deterministic_v1`, exact values)
 
