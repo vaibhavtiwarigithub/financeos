@@ -132,6 +132,17 @@ Schema rules:
      `fetchKiteBrokerAccount()` reports placeholder `accountId="kite_india"`;
      it must instead return the verified Kite `user_id` that matches
      `active_account_india`, or the run fails closed for that account;
+   - **Robinhood source (shipped 4f0bec7, 2026-07-12):** `fetchRobinhoodBrokerAccounts`
+     no longer uses the classic REST client (`api.robinhood.com` 401s
+     `rejected client id` for the MCP-scoped vault token — it never returned
+     holdings). It now calls `captureAllRobinhoodAccounts()` in
+     `lib/robinhood-mcp.ts`: one agentic-MCP session, `get_accounts` enumerates
+     all 6 RH accounts, per-account `get_equity_positions` + `get_portfolio`, and
+     a batched `get_equity_quotes` over deduped held symbols to price holdings.
+     `agentic_allowed=false` gates order placement only, not reads, so all 6
+     accounts feed risk while order placement stays restricted to `605420660`.
+     The same capture backs `refreshViaMcp()` (all 6 accounts upserted into
+     `live_account_snapshots`, not only the active one);
    - capture one coherent, bounded input snapshot per account. Never combine a
      Robinhood account timestamp with another account's holdings or a later quote;
      record source timestamps and reject/mark stale inputs;
