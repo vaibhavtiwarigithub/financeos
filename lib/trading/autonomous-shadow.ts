@@ -8,6 +8,7 @@ import {
 } from "@/lib/trading/execution-kernel";
 import { getQuote } from "@/lib/data/quotes";
 import { getKiteMargins, getKiteHoldings } from "@/lib/kite";
+import { fetchIndiaQuote } from "@/lib/india-data";
 
 const SIGNAL_LOOKBACK_HOURS = 24;
 // Robinhood agentic account — read-only NAV for US shadow.
@@ -73,9 +74,11 @@ export async function runAutonomousShadow(
   const scoreThreshold: number = cfg.score_threshold ?? 60;
   const flatSizePct: number    = cfg.position_size_pct ?? 10;
 
-  // 2. Market-local day start for budget window.
-  const todayStart = new Date();
-  todayStart.setUTCHours(0, 0, 0, 0);
+  // 2. Market-local day start for budget/order-count windows. The DB helper is
+  // DST-safe for US and uses Asia/Kolkata for India; do not substitute UTC.
+  const { data: marketDayStart, error: dayErr } = await svc.rpc("market_trading_day_start", { p_market: market });
+  if (dayErr || !marketDayStart) throw new Error(`Could not resolve ${market} trading-day start`);
+  const todayStartIso = String(marketDayStart);
 
   // 3. NAV — currency-correct, no cross-currency fallback.
   //    US: Robinhood USD snapshot. India: live Kite INR margins + holdings.
@@ -149,7 +152,7 @@ export async function runAutonomousShadow(
     .select("estimated_value")
     .eq("market", market)
     .in("status", ["pending_submit", "submitted", "partially_filled", "unknown_needs_reconcile"])
-    .gte("created_at", todayStart.toISOString());
+    .gte("created_at", todayStartIso);
   const spentToday = (liveOrders ?? []).reduce(
     (s: number, r: any) => s + Number(r.estimated_value ?? 0), 0,
   );
@@ -166,7 +169,7 @@ export async function runAutonomousShadow(
     .select("id", { count: "exact", head: true })
     .eq("execution_mode", "autonomous_shadow")
     .eq("market", market)
-    .gte("created_at", todayStart.toISOString());
+    .gte("created_at", todayStartIso);
 
   const { data: fills } = await svc
     .from("broker_orders")
@@ -185,9 +188,9 @@ export async function runAutonomousShadow(
     Date.now() - SIGNAL_LOOKBACK_HOURS * 3_600_000,
   ).toISOString();
 
-  const { data: signals } = await svc
+  const { data: signals, error: signalErr } = await svc
     .from("agent_signals")
-    .select("id, symbol, market, direction, analyst_score, evidence_confidence, score_source, rationale")
+    .select("id, symbol, market, direction, analyst_score, conviction, score_source, rationale")
     .eq("score_source", "deterministic_v1")
     .eq("direction", "long")
     .eq("market", market)
@@ -195,11 +198,17 @@ export async function runAutonomousShadow(
     .gte("created_at", lookbackCutoff)
     .order("analyst_score", { ascending: false })
     .limit(policy.live_auto_max_orders_per_day ?? 10);
+  if (signalErr) throw new Error(`shadow signal query failed: ${signalErr.message}`);
 
   const results: ShadowRunResult["results"] = [];
   let shadowOrdersThisRun = 0;
 
   for (const signal of signals ?? []) {
+    const { data: observation, error: observationErr } = await svc.from("decision_observations")
+      .select("id,setup_type,evidence_confidence").eq("signal_id", signal.id)
+      .order("ts", { ascending: false }).limit(1).maybeSingle();
+    if (observationErr) throw new Error(`shadow observation lookup failed for ${signal.symbol}: ${observationErr.message}`);
+    const evidenceConfidence = Number((observation as any)?.evidence_confidence);
     const { data: proposal, error: propErr } = await svc
       .from("trade_proposals")
       .insert({
@@ -243,7 +252,7 @@ export async function runAutonomousShadow(
       market,
       direction:             signal.direction ?? "long",
       score:                 signal.analyst_score ?? 0,
-      evidence_confidence:   signal.evidence_confidence ?? 0,
+      evidence_confidence:   Number.isFinite(evidenceConfidence) ? evidenceConfidence : 0,
       score_threshold:       scoreThreshold,
       proposed_notional_usd: 0,
       policy,
@@ -261,9 +270,15 @@ export async function runAutonomousShadow(
       let currentPrice = 0;
       let priceStale   = true;
       try {
-        const quote  = await getQuote(signal.symbol, svc);
-        currentPrice = quote.price ?? 0;
-        priceStale   = quote.stale || quote.source === "unavailable" || currentPrice <= 0;
+        if (market === "india") {
+          const quote = await fetchIndiaQuote(signal.symbol);
+          currentPrice = quote?.price ?? 0;
+          priceStale = !quote || currentPrice <= 0;
+        } else {
+          const quote = await getQuote(signal.symbol, svc);
+          currentPrice = quote.price ?? 0;
+          priceStale = quote.stale || quote.source === "unavailable" || currentPrice <= 0;
+        }
       } catch { /* sizing will reflect no_current_price */ }
 
       sizing = computeAutonomousSizing({
@@ -299,9 +314,6 @@ export async function runAutonomousShadow(
     await svc.from("trade_proposals").update(proposalUpdate).eq("id", proposal.id);
 
     // Persist shadow evidence for this market's champion.
-    const { data: observation } = await svc.from("decision_observations")
-      .select("id,setup_type").eq("signal_id", signal.id)
-      .order("ts", { ascending: false }).limit(1).maybeSingle();
     const { data: champion } = await svc.from("strategy_versions")
       .select("id").eq("market", market).eq("is_champion", true)
       .order("promoted_at", { ascending: false }).limit(1).maybeSingle();
