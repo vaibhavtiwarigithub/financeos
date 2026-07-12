@@ -254,6 +254,47 @@ export async function getValidAccessToken(svc: any): Promise<{ ok: boolean; toke
   return { ok: true, token };
 }
 
+// Vault-only token-age health check — NO Robinhood API call. Reads the stored
+// access token + expiry (+ refresh presence) and reports/resolves the
+// `broker-token:robinhood` issue so the Settings badge and System Health tell
+// the truth without paying an MCP round-trip. Safe to run on any cadence
+// (wired into health-triage every 6h). Returns the shape the status route needs.
+export type RobinhoodTokenHealth = {
+  connected: boolean;   // access token present in vault
+  stale: boolean;       // present but past (or within 60s of) expiry
+  expiresAt: string | null;
+  expiresInMs: number | null;
+  hasRefresh: boolean;  // a refresh token exists to attempt reconnect-free renewal
+};
+export async function checkRobinhoodTokenHealth(svc?: any): Promise<RobinhoodTokenHealth> {
+  const s = svc ?? createServiceClient();
+  const token = await vaultGet(s, VK.access);
+  if (!token) {
+    // No token = simply not connected (not a fault). Clear any stale alert.
+    await resolveIssue("broker-token:robinhood", s);
+    return { connected: false, stale: false, expiresAt: null, expiresInMs: null, hasRefresh: false };
+  }
+  const expiry = await vaultGet(s, VK.expiry);
+  const hasRefresh = !!(await vaultGet(s, VK.refresh));
+  const expMs = expiry ? Date.parse(expiry) : 0;
+  const expiresInMs = expMs ? expMs - Date.now() : null;
+  // Stale = expired or inside the 60s pre-expiry window getValidAccessToken uses.
+  const stale = !!expMs && Date.now() > expMs - 60_000;
+  if (stale) {
+    // A previously-working connection now past expiry: proactively surface it so
+    // the owner reconnects before the next live order / snapshot silently fails.
+    await reportIssue({
+      issueKey: "broker-token:robinhood",
+      severity: "critical", category: "broker",
+      title: "Robinhood connection expired — reconnect required",
+      detail: `Stored Robinhood token expired ${expiry ?? "(unknown)"}${hasRefresh ? "" : " and no refresh token is present"}. Live Robinhood orders, the account snapshot, and holding-risk for all Robinhood accounts will fail until you reconnect in Settings → Robinhood.`,
+    }, s);
+  } else {
+    await resolveIssue("broker-token:robinhood", s);
+  }
+  return { connected: true, stale, expiresAt: expiry, expiresInMs, hasRefresh };
+}
+
 // ── deterministic MCP JSON-RPC (StreamableHTTP) ───────────────────────────────
 // Minimal client: initialize → capture session id → tools/list / tools/call.
 // Parses both plain-JSON and text/event-stream responses.

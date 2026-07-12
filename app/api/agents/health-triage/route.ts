@@ -4,6 +4,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { callLLM } from "@/lib/llm-router";
 import { getConfiguredModel, isAgentEnabled } from "@/lib/agent-model-config";
+import { checkRobinhoodTokenHealth } from "@/lib/robinhood-mcp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -33,6 +34,14 @@ export async function POST(req: NextRequest) {
   }
 
   const startedAt = new Date().toISOString();
+
+  // ── Proactive broker-token age check (vault-only, no Robinhood API call) ──
+  // Runs BEFORE the alert read below so a freshly reported/resolved
+  // `broker-token:robinhood` issue is reflected in this same triage. Catches an
+  // expired Robinhood token every 6h even when no order/snapshot path ran to
+  // surface it lazily — the failure mode that left all RH accounts out of
+  // holding-risk. Never throws (system-health helpers swallow errors).
+  try { await checkRobinhoodTokenHealth(svc); } catch { /* non-fatal */ }
 
   // ── Read-only health inputs ──
   const [{ data: alerts }, { data: runs }, { data: quality }, { data: budgets }] = await Promise.all([

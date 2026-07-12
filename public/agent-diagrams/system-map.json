@@ -247,12 +247,12 @@
     },
     "HEALTH": {
       "label": "Health-Triage",
-      "description": "Every 6h + on demand. Read-only SRE agent: reads open agent_alerts, recent agent_runs errors, v_decision_quality taint rate, and provider budgets; writes an advisory triage (root cause + suggested fix) to health_triage, surfaced on the dashboard System Health card. Model configurable in Settings. NEVER changes config, orders, weights, or code.",
+      "description": "Every 6h + on demand. Read-only SRE agent: reads open agent_alerts, recent agent_runs errors, v_decision_quality taint rate, and provider budgets; writes an advisory triage (root cause + suggested fix) to health_triage, surfaced on the dashboard System Health card. Model configurable in Settings. NEVER changes config, orders, weights, or code. Before reading agent_alerts it runs a vault-only checkRobinhoodTokenHealth (no Robinhood API call) that reports/resolves the broker-token:robinhood issue, so an expired RH token is caught every 6h even when no order/snapshot path ran; the same check backs GET /api/robinhood-mcp/status so the Settings badge shows Reconnect required instead of a false Connected.",
       "addedAt": "2026-07-08",
       "addReason": "Self-healing Part B: surface + explain system issues without any autonomous remediation of money/config/code.",
       "status": "active",
-      "changedAt": null,
-      "changeReason": null,
+      "changedAt": "2026-07-11",
+      "changeReason": "Wired proactive vault-only broker-token age check into the 6h triage + Robinhood status route to close the gap where a dead RH refresh token silently dropped all RH accounts out of holding-risk and froze live_account_snapshots. Advisory only; owner reconnects OAuth manually.",
       "removedAt": null,
       "removeReason": null
     },
@@ -744,6 +744,13 @@
       "nodeId": "HOLDINGRISK",
       "label": "Daily Per-Holding Risk Analytics: deterministic per-holding risk score + posture across all live accounts, daily, advisory-only (no order path)",
       "reason": "New advisory analytics flow (ACCTBOOK -> HOLDINGRISK -> RISKDASH), fully off the money path. HoldingRisk (/api/agents/holding-risk, engine lib/risk/holding-risk.ts, tables holding_risk_runs/holding_risk_snapshots/account_risk_snapshots via migrations 154/155, cron migration 156 US 21:30 UTC + India 11:00 UTC) reads a read-only post-close snapshot of ALL live accounts (RH 605420660 + read-only 965848641 + Kite India), computes a deterministic risk-control pressure index 0-100 and a risk posture with strict precedence, and has an LLM write ONLY the human-readable strategy_note (cannot change score/posture/action). Fails closed on missing/stale snapshots; never sums across currencies. Surfaced on /dashboard/risk (RISKDASH) as the 'Daily Per-Holding Risk' panel with per-account tabs and honest Delta-vs-yesterday. ADVISORY-ONLY: the strategy line is wired to NO order path for any account, including read-only 965848641. No existing agent-to-agent handoff or money-flow edge changed."
+    },
+    {
+      "date": "2026-07-11",
+      "event": "changed",
+      "nodeId": "HEALTH",
+      "label": "Proactive broker-token health check wired into health-triage (6h) + Robinhood status route",
+      "reason": "checkRobinhoodTokenHealth (lib/robinhood-mcp.ts) is a vault-only token-age check (no Robinhood API call) that reports/resolves the broker-token:robinhood System Health issue. Wired into POST /api/agents/health-triage BEFORE the agent_alerts read so an expired RH token is surfaced every 6h even when no order/snapshot path ran to trigger the lazy getValidAccessToken reporter, and into GET /api/robinhood-mcp/status so the Settings badge shows Reconnect required (red) on an expired token instead of a false Connected (green). Closes the gap where a dead RH refresh token silently dropped all RH accounts out of holding-risk (fetchRobinhoodBrokerAccounts returns unknown id) and froze live_account_snapshots. Advisory only: wired to no credential-write or order path; owner reconnects OAuth via localhost loopback. No money-flow edge changed."
     }
   ]
 }

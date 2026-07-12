@@ -74,7 +74,7 @@ export default function SettingsPage() {
 
   // Robinhood MCP scaffolding (OAuth connect is not yet wired — blocked on
   // Robinhood's real endpoints). Account allowlist + snapshot-source switch.
-  const [rhMcp, setRhMcp] = useState<{ connected: boolean; enabled: boolean; live_account_source: string; oauth_ready: boolean } | null>(null);
+  const [rhMcp, setRhMcp] = useState<{ connected: boolean; stale?: boolean; expires_at?: string | null; has_refresh?: boolean; enabled: boolean; live_account_source: string; oauth_ready: boolean } | null>(null);
   const [brokerAccounts, setBrokerAccounts] = useState<{ broker: string; market: string; account_number: string; label?: string; role: string }[]>([]);
   const [activeAccountUs, setActiveAccountUs] = useState<string>("");
   const [activeAccountIndia, setActiveAccountIndia] = useState<string>("");
@@ -721,7 +721,16 @@ export default function SettingsPage() {
             <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" as const, marginBottom: "18px" }}>
               <div style={{ fontSize: "13px" }}>
                 {!rhMcp ? <span style={{ color: T.muted }}>Checking…</span>
-                  : rhMcp.connected ? <span style={{ color: T.green }}>● Connected</span>
+                  : rhMcp.connected && rhMcp.stale ? (
+                    <span style={{ color: T.red }} title={rhMcp.expires_at ? `Token expired ${new Date(rhMcp.expires_at).toLocaleString()}${rhMcp.has_refresh ? "" : " · no refresh token stored"}` : ""}>
+                      ● Reconnect required — token expired
+                    </span>
+                  )
+                  : rhMcp.connected ? (
+                    <span style={{ color: T.green }} title={rhMcp.expires_at ? `Token valid until ${new Date(rhMcp.expires_at).toLocaleString()}` : ""}>
+                      ● Connected{rhMcp.expires_at ? ` — valid until ${new Date(rhMcp.expires_at).toLocaleString()}` : ""}
+                    </span>
+                  )
                   : <span style={{ color: T.muted }}>○ Not connected</span>}
               </div>
               <button
