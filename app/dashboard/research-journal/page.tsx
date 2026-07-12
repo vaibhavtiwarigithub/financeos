@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 import ResearchFunnel from "@/components/dashboard/ResearchFunnel";
+import ScoreTrackerPanel from "@/components/dashboard/ScoreTrackerPanel";
 import { useMarket } from "@/lib/market-context";
 
 const T = {
@@ -183,7 +184,7 @@ function EvolutionTab() {
 }
 
 export default function ResearchJournalPage() {
-  const [tab, setTab] = useState<"funnel" | "evolution">("funnel");
+  const [tab, setTab] = useState<"funnel" | "evolution" | "scores">("funnel");
 
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
@@ -198,17 +199,17 @@ export default function ResearchJournalPage() {
       />
       <div style={{ padding: "0 28px 32px" }}>
         <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
-          {(["funnel", "evolution"] as const).map(t => (
+          {(["funnel", "evolution", "scores"] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: "8px 18px", borderRadius: "8px", cursor: "pointer", fontSize: "13px", fontWeight: 600,
               background: tab === t ? T.accentBg : T.surface, border: `1px solid ${tab === t ? T.accent : T.border}`,
               color: tab === t ? T.accent : T.textSub,
             }}>
-              {t === "funnel" ? "Daily Funnel" : "Evolution"}
+              {t === "funnel" ? "Daily Funnel" : t === "evolution" ? "Evolution" : "Score Tracker"}
             </button>
           ))}
         </div>
-        {tab === "funnel" ? <ResearchFunnel /> : <EvolutionTab />}
+        {tab === "funnel" ? <ResearchFunnel /> : tab === "evolution" ? <EvolutionTab /> : <ScoreTrackerPanel />}
       </div>
     </div>
   );

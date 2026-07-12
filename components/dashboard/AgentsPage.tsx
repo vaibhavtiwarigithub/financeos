@@ -1,10 +1,11 @@
 "use client";
 import { useState, lazy, Suspense, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import AgentComparisonCard from "@/components/dashboard/AgentComparisonCard";
 import PageHeader from "@/components/dashboard/PageHeader";
 import AgentDiagram from "@/components/dashboard/AgentDiagram";
+import AgentHistoryPanel from "@/components/dashboard/AgentHistoryPanel";
 import InfoTooltip from "@/components/dashboard/InfoTooltip";
 const SignalCharts = lazy(() => import("@/components/charts/SignalChartsWrapper"));
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
@@ -60,7 +61,13 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [running, setRunning] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<string | null>(null);
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
-  const [tab, setTab] = useState<"signals" | "paper" | "weights" | "log" | "architecture" | "backtest" | "brain" | "learner-ctrl" | "weight-history" | "experiments" | "proposals">("paper");
+  const searchParams = useSearchParams();
+  const initialTab = (() => {
+    const t = searchParams.get("tab");
+    const valid = ["signals", "paper", "weights", "log", "architecture", "backtest", "brain", "learner-ctrl", "weight-history", "experiments", "proposals", "history"];
+    return t && valid.includes(t) ? t : "paper";
+  })();
+  const [tab, setTab] = useState<"signals" | "paper" | "weights" | "log" | "architecture" | "backtest" | "brain" | "learner-ctrl" | "weight-history" | "experiments" | "proposals" | "history">(initialTab as any);
   const [minScore, setMinScore] = useState<number>(strategy?.min_analyst_score ?? 70);
   const [maxPos, setMaxPos] = useState<number>(strategy?.max_position_pct ?? 5);
   const [maxTrades, setMaxTrades] = useState<number>(strategy?.max_daily_trades ?? 3);
@@ -352,6 +359,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           { key: "signals", label: `Signals (${signals.length})` },
           { key: "weights", label: "Weights" },
           { key: "log", label: "Learning Log" },
+          { key: "history", label: "History" },
           { key: "backtest", label: "Backtest" },
           { key: "architecture", label: "Architecture" },
           { key: "brain", label: "🧠 Learner Brain" },
@@ -1489,6 +1497,11 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
             )}
           </div>
         </div>
+      )}
+
+      {/* History tab */}
+      {tab === "history" && (
+        <AgentHistoryPanel />
       )}
 
       {/* Agent & Flow Architecture Section */}

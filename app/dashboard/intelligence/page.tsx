@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket } from "@/lib/market-context";
+import SmartMoneyPage from "@/components/dashboard/SmartMoneyPage";
 
 function NewsletterTab() {
   const supabase = createClient();
@@ -288,6 +289,31 @@ function BrainTab() {
   );
 }
 
+// ── Smart Money tab — merged in from the retired /dashboard/smart-money route.
+// The SmartMoneyPage component needs its data as props (agent_signals /
+// trade_proposals aren't client-readable), so we fetch the market-scoped set
+// from the owner-gated API and pass it through. Market comes from useMarket().
+function SmartMoneyTab() {
+  const { market } = useMarket();
+  const [data, setData] = useState<{ signals: any[]; tradeQueue: any[]; highInsider: any[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/markets/smart-money?market=${market}`)
+      .then(r => r.json())
+      .then(d => { setData({ signals: d.signals ?? [], tradeQueue: d.tradeQueue ?? [], highInsider: d.highInsider ?? [] }); setLoading(false); })
+      .catch(() => { setData({ signals: [], tradeQueue: [], highInsider: [] }); setLoading(false); });
+  }, [market]);
+
+  if (loading || !data) return <div style={{ color: TM.muted, padding: "40px", textAlign: "center" }}>Loading smart money…</div>;
+  return <SmartMoneyPage signals={data.signals} tradeQueue={data.tradeQueue} highInsider={data.highInsider} market={market} />;
+}
+
+const TAB_LABELS: Record<string, string> = {
+  analysis: "Analysis", "smart-money": "Smart Money", beliefs: "Beliefs", brain: "Brain", newsletter: "Newsletter",
+};
+
 export default function IntelligencePage() {
   const supabase = createClient();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -368,8 +394,8 @@ Rules:
       </div>
 
       <div style={{ display: "flex", gap: "6px", borderBottom: `1px solid ${T.border}`, marginBottom: "24px" }}>
-        {["analysis", "beliefs", "brain", "newsletter"].map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ background: "none", border: "none", borderBottom: tab === t ? `2px solid ${T.accent}` : "2px solid transparent", color: tab === t ? T.accent : T.muted, padding: "8px 16px", fontSize: "14px", cursor: "pointer", textTransform: "capitalize", marginBottom: "-1px" }}>{t}</button>
+        {["analysis", "smart-money", "beliefs", "brain", "newsletter"].map(t => (
+          <button key={t} onClick={() => setTab(t)} style={{ background: "none", border: "none", borderBottom: tab === t ? `2px solid ${T.accent}` : "2px solid transparent", color: tab === t ? T.accent : T.muted, padding: "8px 16px", fontSize: "14px", cursor: "pointer", whiteSpace: "nowrap", marginBottom: "-1px" }}>{TAB_LABELS[t] ?? t}</button>
         ))}
       </div>
 
@@ -412,6 +438,7 @@ Rules:
         </div>
       )}
 
+      {tab === "smart-money" && <SmartMoneyTab />}
       {tab === "beliefs" && <BeliefsTab />}
       {tab === "brain" && <BrainTab />}
 

@@ -30,10 +30,11 @@ const SEV: Record<string, { color: string; dot: string; bg: string }> = {
 };
 
 // â"€â"€ Nav sections â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-// Sidebar follows the user funnel top→bottom: Overview → Markets → Signals →
-// Portfolio → Research → Discovery → Learn → Settings. Grouping/labels only —
-// every route below is unchanged. Deeper page-merges (tabbed Portfolio/Research)
-// are a deferred follow-up (see features/nav-restructure/FEATURE_ARCHITECTURE.md).
+// Sidebar follows the user funnel top→bottom: Overview → Signals → Portfolio →
+// Research → Discovery → Learn → Settings. Page-merges done: Live Portfolio =
+// US+India (market switch); Signals = Intelligence + Smart Money (tab); Research =
+// Research Journal + Score Tracker (tab); Agents absorbs Agent History (tab);
+// Settings absorbs Automation + Admin + LLM Config (tabs). Old routes redirect in.
 const NAV_SECTIONS = [
   {
     label: "Overview",
@@ -47,8 +48,7 @@ const NAV_SECTIONS = [
     label: "Signals",
     hint: "What the agents want to act on",
     items: [
-      { href: "/dashboard/intelligence", label: "Intelligence",     icon: "◆", hint: "Agent signals + research runs",       alertCat: "cron" },
-      { href: "/dashboard/smart-money",  label: "Smart Money",      icon: "🦊", hint: "Trade queue, insider flow, multi-asset signals", alertCat: "" },
+      { href: "/dashboard/intelligence", label: "Signals",          icon: "◆", hint: "Agent signals + research runs, plus the Smart Money tab (trade queue, insider flow, multi-asset)", alertCat: "cron" },
     ],
   },
   {
@@ -64,10 +64,8 @@ const NAV_SECTIONS = [
     label: "Research",
     hint: "How the agents are scoring and evolving",
     items: [
-      { href: "/dashboard/agents",       label: "Agents",           icon: "⬡", hint: "Run agents manually, view status",    alertCat: "" },
-      { href: "/dashboard/agents/history", label: "Agent History",  icon: "◷", hint: "Every agent run: what it did, result, handoff, cost, tokens — filter & delete", alertCat: "" },
-      { href: "/dashboard/research-journal", label: "Research Journal", icon: "🔬", hint: "Daily funnel: why each symbol passed/failed at each stage, plus learning evolution over time", alertCat: "" },
-      { href: "/dashboard/scores",       label: "Score Tracker",    icon: "📈", hint: "Per-stock AI score over time with drill-down", alertCat: "" },
+      { href: "/dashboard/agents",       label: "Agents",           icon: "⬡", hint: "Run agents manually, view status, run history (History tab), config", alertCat: "" },
+      { href: "/dashboard/research-journal", label: "Research", icon: "🔬", hint: "Daily funnel (why each symbol passed/failed), learning evolution, and the Score Tracker tab", alertCat: "" },
     ],
   },
   {
@@ -95,12 +93,12 @@ const NAV_SECTIONS = [
     items: [
       { href: "/dashboard/settings",              label: "Settings",   icon: "⚙", hint: "App configuration", alertCat: "" },
       { href: "/dashboard/settings?tab=models", label: "LLM & Models", icon: "🧠", hint: "Pick the LLM for each agent/flow (DeepSeek, Claude, OpenAI, Gemini, Grok, GLM, Groq) + provider API keys", alertCat: "" },
-      { href: "/dashboard/settings/automation",   label: "Automation", icon: "⏱", hint: "All scheduled jobs — times, runner (Supabase pg_cron → Vercel), next run", alertCat: "" },
+      { href: "/dashboard/settings?tab=automation", label: "Automation", icon: "⏱", hint: "All scheduled jobs — times, runner (Supabase pg_cron → Vercel), next run — now a tab in Settings", alertCat: "" },
     ],
   },
 ];
 
-const ADMIN_ITEM = { href: "/dashboard/admin", label: "Admin", icon: "☆", hint: "API keys, vault, agent config", alertCat: "admin" };
+const ADMIN_ITEM = { href: "/dashboard/settings?tab=admin", label: "Admin", icon: "☆", hint: "API keys, vault, agent config — now a tab in Settings", alertCat: "admin" };
 
 // â"€â"€ Market status â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 function getMarketStatus(): { label: string; color: string; bg: string; detail: string } {

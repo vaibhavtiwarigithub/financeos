@@ -4,95 +4,66 @@ import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
-async function fetchInsiderTransactions(symbol: string, apiKey: string) {
-  try {
-    const res = await fetch(
-      `https://www.alphavantage.co/query?function=INSIDER_TRANSACTIONS&symbol=${symbol}&apikey=${apiKey}`,
-      { next: { revalidate: 3600 } }
-    );
-    const data = await res.json();
-    if (data["Note"] || data["Information"] || data["Error Message"]) return [];
-    const txns = data.data ?? [];
-    return txns.slice(0, 10).map((t: any) => ({
-      symbol,
-      insiderName: t.insider_name ?? t.name ?? "Unknown",
-      relationship: t.relationship ?? "",
-      transactionType: t.transaction_type ?? t.action ?? "UNKNOWN",
-      shares: parseInt(t.shares ?? "0") || 0,
-      sharePrice: parseFloat(t.share_price ?? "0") || 0,
-      value: parseInt(t.value ?? "0") || 0,
-      date: t.transaction_date ?? t.date ?? "",
-    }));
-  } catch { return []; }
+// Client data source for the Smart Money tab (merged into the Intelligence
+// page). Mirrors the queries the old /dashboard/smart-money server page ran,
+// scoped to the selected market (?market=us|india). Owner-gated + service
+// client because agent_signals / trade_proposals are not client-readable.
+//
+// Every market-scoped query is resilient: if the `market` column doesn't
+// exist yet (pre-057) the filtered query errors, so we retry unscoped and
+// fall back to the US path unchanged.
+async function selectScoped<T>(
+  run: (applyMarket: boolean) => PromiseLike<{ data: T | null; error: unknown }>
+): Promise<T | null> {
+  const withFilter = await run(true);
+  if (!withFilter.error) return withFilter.data;
+  const unscoped = await run(false);
+  return unscoped.data;
 }
 
 export async function GET(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
+
+  const market = new URL(req.url).searchParams.get("market") === "india" ? "india" : "us";
   const svc = createServiceClient();
-  const avKey = process.env.ALPHA_VANTAGE_API_KEY;
+  const since30 = new Date(Date.now() - 30 * 86400_000).toISOString();
+  const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
 
-  // Get top-scored signals from last 30 days
-  const since = new Date(Date.now() - 30 * 86400_000).toISOString();
-  const { data: signals } = await svc
-    .from("agent_signals")
-    .select("symbol, direction, analyst_score, insider_score, technical_score, fundamental_score, sentiment_score, macro_score, created_at, asset_class")
-    .gte("created_at", since)
-    .order("insider_score", { ascending: false })
-    .limit(50);
-
-  // Pending proposals — read the CANONICAL trade_proposals table (the one
-  // /api/agents/trader + the Execution Gateway operate on), aliased to the
-  // field names the UI expects. The legacy trade_queue table is retired.
-  const { data: tradeQueue } = await svc
-    .from("trade_proposals")
-    .select("id, symbol, order_side:side, qty, order_type, limit_price, analyst_score, rationale:thesis, status, created_at, account_number")
-    .in("status", ["pending_review", "approved"])
-    .order("created_at", { ascending: false })
-    .limit(20);
-
-  // Get options signals (unusual activity) from last 7 days
-  const optionsSince = new Date(Date.now() - 7 * 86400_000).toISOString();
-  const { data: optionsSignals } = await svc
-    .from("agent_signals")
-    .select("symbol, analyst_score, insider_score, technical_score, direction, created_at, asset_class")
-    .gte("created_at", optionsSince)
-    .gte("insider_score", 60)
-    .order("insider_score", { ascending: false })
-    .limit(15);
-
-  // Fetch insider transactions for top 3 high-insider-score symbols (conserve AV quota)
-  let insiderData: any[] = [];
-  if (avKey) {
-    const topSymbols = [...new Set(
-      (signals ?? [])
-        .filter((s: any) => (s.insider_score ?? 0) >= 50 && s.asset_class !== "etf" && s.asset_class !== "metal")
-        .slice(0, 3)
-        .map((s: any) => s.symbol)
-    )];
-
-    const insiderResults = await Promise.all(
-      topSymbols.map((sym: any) => fetchInsiderTransactions(sym as string, avKey))
-    );
-    insiderData = insiderResults
-      .flat()
-      .filter((t: any) => t.transactionType?.includes("P") || t.transactionType === "Buy" || t.value > 50000)
-      .sort((a: any, b: any) => b.value - a.value);
-  }
-
-  // Build signal buckets by asset class
-  const byClass: Record<string, any[]> = {};
-  for (const s of signals ?? []) {
-    const cls = (s as any).asset_class ?? "us_equity";
-    if (!byClass[cls]) byClass[cls] = [];
-    byClass[cls].push(s);
-  }
+  const [signals, tradeQueue, highInsider] = await Promise.all([
+    selectScoped<any[]>((applyMarket) => {
+      let q = svc
+        .from("agent_signals")
+        .select("symbol,direction,analyst_score,insider_score,technical_score,fundamental_score,sentiment_score,macro_score,created_at,asset_class,source")
+        .gte("created_at", since30);
+      if (applyMarket) q = q.eq("market", market);
+      return q.order("analyst_score", { ascending: false }).limit(60);
+    }),
+    selectScoped<any[]>((applyMarket) => {
+      // trade_proposals — the canonical table /api/agents/trader and the
+      // Execution Gateway operate on. Aliased to the field names the UI expects.
+      let q = svc
+        .from("trade_proposals")
+        .select("id, symbol, order_side:side, qty, limit_price, analyst_score, rationale:thesis, status, created_at, account_number")
+        .in("status", ["pending_review", "approved", "executed", "rejected", "pending_approval"]);
+      if (applyMarket) q = q.eq("market", market); // no market column on trade_proposals yet — resiliently falls back unscoped
+      return q.order("created_at", { ascending: false }).limit(30);
+    }),
+    selectScoped<any[]>((applyMarket) => {
+      let q = svc
+        .from("agent_signals")
+        .select("symbol,analyst_score,insider_score,direction,created_at,asset_class")
+        .gte("created_at", since7)
+        .gte("insider_score", 55);
+      if (applyMarket) q = q.eq("market", market);
+      return q.order("insider_score", { ascending: false }).limit(20);
+    }),
+  ]);
 
   return NextResponse.json({
     signals: signals ?? [],
-    byClass,
-    optionsUnusual: optionsSignals ?? [],
-    insiderTransactions: insiderData,
     tradeQueue: tradeQueue ?? [],
+    highInsider: highInsider ?? [],
+    market,
   });
 }

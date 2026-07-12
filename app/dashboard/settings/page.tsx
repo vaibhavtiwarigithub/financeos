@@ -5,6 +5,8 @@ import type { Profile } from "@/types";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { usePrivacySetting } from "@/components/dashboard/PrivacyMask";
 import LLMConfigPanel from "@/components/dashboard/LLMConfigPanel";
+import AdminPanel from "@/components/dashboard/AdminPanel";
+import AutomationPanel from "@/components/dashboard/AutomationPanel";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -436,7 +438,7 @@ export default function SettingsPage() {
   const inp: React.CSSProperties = { width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", padding: "10px 13px", outline: "none" };
   const sel: React.CSSProperties = { ...inp, cursor: "pointer" };
   const numInp: React.CSSProperties = { width: "90px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", padding: "8px 10px", outline: "none", textAlign: "right" as const };
-  const tabs = ["profile", "preferences", "agents", "models", "data", "access"];
+  const tabs = ["profile", "preferences", "agents", "models", "automation", "admin", "data", "access"];
 
   useEffect(() => {
     if (tab !== "data" || providers) return;
@@ -1413,6 +1415,10 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {tab === "automation" && (<AutomationPanel />)}
+
+      {tab === "admin" && (<AdminPanel />)}
 
       {tab === "data" && (
         <div style={{ maxWidth: "820px" }}>

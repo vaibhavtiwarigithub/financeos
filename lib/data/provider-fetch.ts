@@ -146,8 +146,21 @@ export async function providerCachedFetch(
   } catch { json = null; }
 
   // 4. Throttled/failed → last-known cached payload (<=7d) so inputs stay complete.
+  // CARRY-FORWARD: persist that payload into TODAY's slot so the next same-day call
+  // for this key is a step-1 cache hit and does NOT re-spend a (throttled) call.
+  // This is what stops the retry storm — previously a throttled key was re-fetched
+  // (and re-counted against budget) on every research pass all day, inflating a
+  // handful of real keys into ~200 "calls". Only writes when we actually have a
+  // prior payload; a brand-new symbol with no history still just returns null.
   if (!json || isThrottled(json)) {
-    return lastCached(svc, cacheKey);
+    const carried = await lastCached(svc, cacheKey);
+    if (carried != null) {
+      await svc.from("av_cache").upsert(
+        { cache_key: cacheKey, cache_date: todayStr, payload: carried },
+        { onConflict: "cache_key,cache_date" },
+      ).then(() => {}, () => {});
+    }
+    return carried;
   }
 
   // 5. Store today's payload (best-effort) and return it.
