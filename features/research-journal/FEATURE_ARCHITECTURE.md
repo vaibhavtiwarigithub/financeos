@@ -1,6 +1,6 @@
 # Feature: Research Journal (daily funnel report + learning evolution)
 
-Status: BUILT (v1 shipped 2026-07-06, Decision 40) · Owner: Vaibhav · Started 2026-07-06
+Status: BUILT (v1 shipped 2026-07-06; v2 novice-first upgrade approved 2026-07-12) · Owner: Vaibhav · Started 2026-07-06
 
 ## Motivation
 
@@ -137,9 +137,8 @@ Two tabs, matching the existing dark-theme card/pill conventions:
 - Auto-alerting on funnel anomalies (e.g. "0 signals passed today") — that's
   already partially covered by the existing stale-run / 0-signal alert in
   `research/cron`; this feature is for understanding *why*, not re-alerting.
-- Multi-market side-by-side view in v1 — one market at a time (matches the
-  existing market-scoping convention across the app), India rides in a
-  later pass once the US version is validated.
+- Multi-market side-by-side view in v1 — one market at a time. India is now
+  supported through the same market-scoped picker and local-calendar rules.
 
 ## Acceptance
 
@@ -150,3 +149,101 @@ Two tabs, matching the existing dark-theme card/pill conventions:
 - Evolution tab is honest about thin history ("not enough learner runs yet
   to show a trend") rather than drawing a misleading chart from 1-2 points.
 - tsc + build pass; migrations handed over as clickable links + full paths.
+
+## V2 — novice-first evidence and context (approved 2026-07-12)
+
+### Product question
+
+The journal must answer, in order: **what is this security; why did it appear;
+what changed; what does Kairos currently think; how reliable is that view; what
+could invalidate it; and what happens next?** Exact scores and raw indicators
+remain available, but are the audit layer rather than the headline.
+
+### Three-layer information architecture
+
+1. **Decision summary (default/collapsed):** asset identity/type, discovery state
+   (`new`, `recurring`, `holding`, `re-entry` when recorded), action (`research`,
+   `watch`, `wait`, `paper candidate`, `hold`, `exit review`, `avoid`), score,
+   evidence coverage, decision confidence, why-now, strongest positive, largest
+   risk, and next step.
+2. **Evidence and context (expanded):** grounded thesis, technical translation,
+   material catalysts/news context when stored, theme/peer context when supported,
+   counter-evidence, invalidation conditions, history/score change, and source-safe
+   links for independent verification.
+3. **Quant audit (expanded):** dimension values, structural/applied weights,
+   point contributions, availability/freshness, raw evidence, and pipeline events.
+
+### Truth and safety invariants
+
+- Keep **available-evidence score**, **structural evidence coverage**, and
+  **decision confidence** separate. A 98 computed from two dimensions is not
+  displayed as five-dimension/high-confidence evidence.
+- Missing/inapplicable dimensions display `Not used`, never a neutral-looking
+  numeric score. They contribute zero points and lower coverage only when the
+  dimension is structurally applicable.
+- The LLM may summarize already-recorded evidence. It cannot invent prices,
+  financials, news, peers, confidence, action, targets, or invalidation levels.
+- News/theme/social context does not authorize a trade. It may explain, confirm,
+  reduce confidence, or veto through a separately validated deterministic rule.
+- No per-card provider fan-out on initial page load. The immutable stored decision
+  renders first. Optional current enrichment is on-demand, cached, bounded, and
+  explicitly newer than the historical decision.
+- Point-in-time history is never rewritten. V2-derived presentation fields are
+  computed at read time or written additively for future observations.
+
+### Asset-aware context
+
+- **Company:** business/sector, growth, profitability, cash flow, leverage,
+  valuation, estimates/earnings when available.
+- **ETF/fund:** exposure, holdings/concentration, liquidity, expense/flows,
+  geography/currency hedge and structural risks. Company fundamentals and insider
+  activity are inapplicable.
+- **India company:** NSE symbol normalization and NSE/BSE/company-announcement
+  links; India-specific provider freshness.
+- Asset type comes from recorded `agent_signals.asset_class` plus the canonical
+  symbol classifier. Never infer ETF/company status from missing fundamentals.
+
+### History and novelty
+
+For all symbols in the selected daily run, one bounded history query computes
+first-seen date, observation count, previous score/direction and change. Existing
+holdings are always labeled `holding`; otherwise first observation is `new` and
+later observations are `recurring`. `re-entry` requires a recorded re-entry event
+and is never guessed from elapsed time.
+
+### Technical translation
+
+Translate deterministic evidence into novice language: trend, momentum, moving-
+average posture, volume confirmation and extension/breakdown risk. RSI/MACD are
+diagnostics, not independent votes; correlated indicators must not be double-
+counted. Never call RSI near 50 "strong" or low volume "confirmation."
+
+### External validation links
+
+Build links deterministically from validated symbols: TradingView, Yahoo Finance,
+SEC/company research for US, NSE/BSE for India, and issuer pages only when a
+verified issuer URL exists. Links are labeled external and are never scraped as
+application data or treated as scoring evidence.
+
+### V2 phased delivery
+
+- **V2.0 (this build):** decision/coverage/confidence separation, asset type,
+  novelty/history, novice action/technical translation, missing-dimension honesty,
+  score change, and deterministic TradingView/Yahoo/SEC/NSE/BSE links. Uses only
+  stored data; no scoring or order-path change.
+- **V2.1:** on-demand cached material-news panel with source, published/available
+  timestamps, deduplication and official-vs-commentary classification.
+- **V2.2:** point-in-time peer/theme comparison after comparable-group and provider
+  coverage validation. Measure-only until incremental value is proven.
+
+### V2 acceptance
+
+- A novice can identify the security state, current action, confidence, strongest
+  evidence, largest gap and next step without expanding raw score construction.
+- ETF examples (including EUAD) never display company-fundamental/insider evidence
+  as applicable; India links and symbols resolve correctly.
+- A high score with 2/5 applicable dimensions visibly reports limited coverage and
+  cannot be labeled high confidence.
+- Historical and on-demand current context are visually/time separated.
+- API reads are bounded; partial context failure does not hide the stored decision.
+- TypeScript, unit tests, production build, and US/India browser checks pass.

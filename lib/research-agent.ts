@@ -14,6 +14,7 @@ import { routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetyp
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
+import { isEtfSymbol as canonicalIsEtfSymbol } from "@/lib/asset-classification";
 
 // Module-level cache: market → default investment_mandates.id.
 // Populated once per process; safe because seed mandates never change name.
@@ -124,32 +125,6 @@ async function resolveInsider(symbol: string, avKey: string): Promise<{ score: n
   return scoreInsider(symbol, avKey);
 }
 
-const KNOWN_ETFS = new Set([
-  // Broad market
-  "SPY","VOO","QQQ","IWM","VTI","DIA","RSP",
-  // Sector
-  "XLK","XLF","XLE","XLI","XLV","XLU","XLRE","XLB","XLC","XLP","XLY",
-  "SMH","SOXX","IBB","KRE","KBE","ITB","XME",
-  // Thematic
-  "BOTZ","AIQ","ICLN","NLR","ARKK","ARKG","ARKW","ARKF","ARKX","CIBR","ROBO","SKYY","WCLD","BUG",
-  // Leveraged bull
-  "TQQQ","SOXL","SPXL","UPRO","TECL","FAS","DUSL","DRN","UGL","FNGU","LABU","HIBL","MSTU","NVDL",
-  // Leveraged bear
-  "SQQQ","SOXS","SPXS","SPDN","FAZ","SIJ","DRV","GLL","SDOW","FNGD","LABD","HIBS","MSTZ","NVDD",
-  // Commodities
-  "USO","GLD","SLV","UNG","PDBC","IAU",
-  // Bonds
-  "TLT","SHY","IEF","HYG","LQD","BND","AGG","GOVT",
-  // Crypto trusts/ETFs
-  "IBIT","BITO","GBTC",
-  // Region ETFs (mirrors REGION_ETFS below — INFY/WIT/HDB are real ADR
-  // equities, not funds, so they're deliberately excluded here)
-  "INDA","EPI","INDY",
-  "VGK","EWG","EWL","EWU","EWQ",
-  "EWJ","EWT","EWY","EWH","FXI",
-  "VT","ACWI","EFA",
-]);
-
 const LEVERAGED_BEAR_ETFS = new Set([
   "SQQQ","SOXS","SPXS","SPDN","FAZ","SIJ","DRV","GLL","SDOW","FNGD","LABD","HIBS","MSTZ","NVDD",
 ]);
@@ -218,7 +193,7 @@ const METAL_ETF_SYMBOLS = new Set(["GLD","SLV","GDX","GDXJ","IAU","UGL","GLL"]);
 const METALS_BASKET = ["GLD","SLV","GDX","IAU"];
 
 export function isEtfSymbol(s: string): boolean {
-  return KNOWN_ETFS.has(s.toUpperCase());
+  return canonicalIsEtfSymbol(s);
 }
 
 export function extractParsed(claudeRaw: string): any {
