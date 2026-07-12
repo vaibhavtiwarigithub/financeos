@@ -124,13 +124,30 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
   // Load champion genome per market — provides horizon_days for time stop.
   // Falls back to DEFAULT_GENOME (horizon 10d) when no champion exists.
   const activeMarkets = Array.from(new Set(positions.map((p: any) => marketOf(p, hasMarketCol)))) as ("us" | "india")[];
+
+  // User's Trading Style horizon preference (strategy_config.target_hold_days).
+  // This is a DEFAULT that only applies while no promoted champion governs the
+  // horizon — once the LearnerAgent promotes a champion, its learned
+  // genome.horizon_days wins and this is ignored (we never fight the learner).
+  // Best-effort read: pre-167 the column doesn't exist, so a query error simply
+  // leaves the genome in charge.
+  let userHoldDays: number | null = null;
+  try {
+    const { data: hd } = await svc.from("strategy_config").select("target_hold_days").maybeSingle();
+    const v = Number((hd as any)?.target_hold_days);
+    if (Number.isFinite(v) && v >= 1) userHoldDays = v;
+  } catch { /* column absent pre-167 → genome governs horizon */ }
+
   const horizonDaysByMarket = new Map<string, number>();
   await Promise.allSettled(activeMarkets.map(async (m) => {
     try {
       const g = await loadChampionGenome(svc, m);
-      horizonDaysByMarket.set(m, g.genome.horizon_days);
+      // Champion promoted → learned horizon wins (don't fight the learner).
+      // No champion (source "default") → prefer the user's Trading Style
+      // target_hold_days, falling back to DEFAULT_GENOME horizon (10) when unset.
+      horizonDaysByMarket.set(m, g.source === "champion" ? g.genome.horizon_days : (userHoldDays ?? g.genome.horizon_days));
     } catch {
-      horizonDaysByMarket.set(m, 10); // DEFAULT_GENOME horizon
+      horizonDaysByMarket.set(m, userHoldDays ?? 10); // DEFAULT_GENOME horizon
     }
   }));
 

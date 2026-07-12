@@ -8,6 +8,7 @@ import { computeScores, type ComputedScores } from "@/lib/data/scores";
 import type { Candle } from "@/lib/data/technicals";
 import { isIndia, fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
 import { fetchIndiaNewsSentiment, type IndiaNewsSentiment } from "@/lib/india-news";
+import { fetchFiiDiiFlows, fiiDiiMacroLine } from "@/lib/india-macro";
 import { niftyCandidates } from "@/lib/india-universe";
 import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
@@ -835,6 +836,7 @@ function buildThesisOnlyPrompt(
   scoreThreshold: number,
   marketFocus?: string,
   indiaNews?: IndiaNewsSentiment | null,
+  indiaMacroLine?: string | null,
 ): string {
   const { fundamental_score, technical_score, sentiment_score, macro_score, insider_score, evidence } = scores;
   const tech = evidence.technical as Record<string, unknown>;
@@ -884,7 +886,7 @@ You are a professional equity analyst. All quantitative scores for ${symbol} wer
 Fundamental: ${fundamental_score}/100 | ${fundLines || "data unavailable"}
 Technical:   ${technical_score}/100 | ${techLines}
 Sentiment:   ${sentiment_score}/100
-Macro:       ${macro_score}/100 | regime: ${(evidence.macro as Record<string, unknown>).regime ?? "unknown"}
+Macro:       ${macro_score}/100 | regime: ${(evidence.macro as Record<string, unknown>).regime ?? "unknown"}${indiaMacroLine ? `\n             India flows: ${indiaMacroLine} (ground macro/flow reasoning in this; do NOT override the pre-computed Macro score)` : ""}
 Insider:     ${insider_score}/100
 Weighted analyst score: ${analystScore}/100 (threshold for trade: ${scoreThreshold})${indiaNewsBlock}
 
@@ -1065,7 +1067,7 @@ export async function processSymbol(
   const applicable = applicableDimensions(entry);
 
   // Phase 0: fetch all real data in parallel — no LLM-generated numbers
-  const [socialResult, optionsResult, insiderResult, avOverview, candles, indiaNews] = await Promise.all([
+  const [socialResult, optionsResult, insiderResult, avOverview, candles, indiaNews, fiiDii] = await Promise.all([
     applicable.has("sentiment") && !india ? fetchSocialSentiment(symbol).catch(() => null) : Promise.resolve(null),
     applicable.has("options") ? fetchOptionsSignal(symbol).catch(() => null) : Promise.resolve(null),
     // Insider: SEC EDGAR Form 4 primary (free, official, unlimited) → Alpha
@@ -1105,7 +1107,14 @@ export async function processSymbol(
     india && applicable.has("sentiment")
       ? fetchIndiaNewsSentiment(symbol).catch(() => null)
       : Promise.resolve(null),
+    // India macro backdrop: live FII/DII institutional cash-market flows (NSE,
+    // free). Market-wide, not per-symbol — run-level in-memory cached so it's one
+    // real NSE hit per pass. Fails soft to null (NSE blocks datacenter IPs), in
+    // which case no India-macro flow line is added and the macro dimension keeps
+    // the US/global backdrop. NEVER fabricates a flow number.
+    india ? fetchFiiDiiFlows().catch(() => null) : Promise.resolve(null),
   ]);
+  const indiaMacroLine = india ? fiiDiiMacroLine(fiiDii) : null;
 
   // For India, synthesize a SocialSentiment-shaped object from the GDELT news
   // tone so it flows through the EXACT same scoreSentiment / dataQuality path US
@@ -1292,7 +1301,7 @@ export async function processSymbol(
   } catch { /* RAG is best-effort — a retrieval failure must not block research */ }
 
   // LLM only writes thesis + direction — no score generation.
-  const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus, india ? indiaNews : null) + trendNote + memoryNote;
+  const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus, india ? indiaNews : null, indiaMacroLine) + trendNote + memoryNote;
   const llmResult = await callLLM({
     task: "screen",
     model: await getConfiguredModel(supabase, "research", "deepseek-reasoner"),

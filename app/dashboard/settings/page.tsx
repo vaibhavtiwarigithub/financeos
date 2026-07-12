@@ -38,6 +38,33 @@ const RISK_PROFILES = {
 
 type RiskProfileKey = keyof typeof RISK_PROFILES;
 
+// Trading Style presets (Swing / Position / Long-term). Presets the holding
+// horizon + threshold/target/stop knobs — this is a once-daily swing/position
+// system, so styles set the horizon, they do NOT enable day-trading. Numbers
+// here MUST match lib/risk-profiles.ts TRADING_STYLES (the API's source of truth).
+const TRADING_STYLES = {
+  swing: {
+    label: "Swing", icon: "🌊",
+    desc: "~5-day holds · momentum-leaning · tighter +12% target / -5% stop · higher conviction (score ≥65)",
+    score_threshold: 65, stop_loss_pct: 5, target_pct: 12, target_hold_days: 5,
+    activeBg: "#0D2410", activeBorder: "#34D399", activeText: "#34D399",
+  },
+  position: {
+    label: "Position", icon: "📊",
+    desc: "Default — ~10-day holds · balanced +20% target / -7% stop · score ≥60",
+    score_threshold: 60, stop_loss_pct: 7, target_pct: 20, target_hold_days: 10,
+    activeBg: "#1E1F3A", activeBorder: "#6366F1", activeText: "#6366F1",
+  },
+  long_term: {
+    label: "Long-term", icon: "🏔️",
+    desc: "~20-day holds · value/quality-leaning · wider +35% target / -10% stop · score ≥55",
+    score_threshold: 55, stop_loss_pct: 10, target_pct: 35, target_hold_days: 20,
+    activeBg: "#2D1800", activeBorder: "#F59E0B", activeText: "#F59E0B",
+  },
+} as const;
+
+type TradingStyleKey = keyof typeof TRADING_STYLES;
+
 type LLMCosts = {
   todayCost: number;
   weekCost: number;
@@ -107,6 +134,11 @@ export default function SettingsPage() {
   const [stopLossPct, setStopLossPct] = useState(7);
   const [targetPct, setTargetPct] = useState(20);
   const [savingRisk, setSavingRisk] = useState(false);
+
+  // Trading Style state (holding-horizon preset — Swing / Position / Long-term)
+  const [tradingStyle, setTradingStyle] = useState<TradingStyleKey>("position");
+  const [targetHoldDays, setTargetHoldDays] = useState(10);
+  const [savingStyle, setSavingStyle] = useState(false);
 
   // Posture (Part B) + champion-override note (A3) state
   const [posture, setPosture] = useState<RiskProfileKey | null>(null);
@@ -194,6 +226,8 @@ export default function SettingsPage() {
         if (d.position_size_pct != null) setPositionSizePct(parseFloat(d.position_size_pct));
         if (d.stop_loss_pct != null) setStopLossPct(parseFloat(d.stop_loss_pct));
         if (d.target_pct != null) setTargetPct(parseFloat(d.target_pct));
+        if (d.trading_style) setTradingStyle(d.trading_style as TradingStyleKey);
+        if (d.target_hold_days != null) setTargetHoldDays(parseInt(d.target_hold_days));
         if (d.posture) setPosture(d.posture as RiskProfileKey);
         if (d.posture_expires_at) setPostureExpiresAt(d.posture_expires_at);
         if (d.base_risk_profile) setBaseRiskProfile(d.base_risk_profile as RiskProfileKey);
@@ -418,6 +452,37 @@ export default function SettingsPage() {
     } finally {
       setSavingRisk(false);
     }
+  }
+
+  function selectTradingStyle(key: TradingStyleKey) {
+    const s = TRADING_STYLES[key];
+    setTradingStyle(key);
+    // Presets the shared strategy_config knobs (same fields the risk profile
+    // writes) plus the holding-horizon default.
+    setScoreThreshold(s.score_threshold);
+    setStopLossPct(s.stop_loss_pct);
+    setTargetPct(s.target_pct);
+    setTargetHoldDays(s.target_hold_days);
+  }
+
+  async function saveTradingStyle() {
+    setSavingStyle(true);
+    try {
+      const s = TRADING_STYLES[tradingStyle];
+      await fetch("/api/settings/risk-profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trading_style: tradingStyle,
+          score_threshold: s.score_threshold,
+          stop_loss_pct: s.stop_loss_pct,
+          target_pct: s.target_pct,
+          target_hold_days: s.target_hold_days,
+        }),
+      });
+      setToast("Trading style saved!");
+      setTimeout(() => setToast(""), 2500);
+    } finally { setSavingStyle(false); }
   }
 
   async function saveProfile() {
@@ -1058,6 +1123,53 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Trading Style Card — holding-horizon preset (Swing / Position / Long-term) */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Trading Style</div>
+            <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "20px" }}>
+              How long should winners be held, and how tight are the target/stop? Presets the holding horizon + threshold/target/stop. This is a once-daily swing/position system — styles set the horizon, they do <b>not</b> enable day-trading.
+            </div>
+
+            {/* Style chips */}
+            <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap" as const }}>
+              {(Object.keys(TRADING_STYLES) as TradingStyleKey[]).map(key => {
+                const s = TRADING_STYLES[key];
+                const isActive = tradingStyle === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => selectTradingStyle(key)}
+                    style={{
+                      flex: 1, minWidth: "150px", padding: "12px 14px",
+                      background: isActive ? s.activeBg : T.surface,
+                      border: `2px solid ${isActive ? s.activeBorder : T.border}`,
+                      borderRadius: "10px", cursor: "pointer",
+                      color: isActive ? s.activeText : T.textSub,
+                      textAlign: "left" as const,
+                    }}
+                  >
+                    <div style={{ fontSize: "18px", marginBottom: "4px" }}>{s.icon}</div>
+                    <div style={{ fontSize: "14px", fontWeight: 600 }}>{s.label}</div>
+                    <div style={{ fontSize: "11px", marginTop: "3px", opacity: 0.8 }}>{s.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Genome-governed horizon note — honest about who actually owns the time-stop */}
+            <div style={{ fontSize: "11px", color: T.muted, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "20px", lineHeight: 1.6 }}>
+              Target hold: <b style={{ color: T.textSub }}>~{targetHoldDays} days</b>. This sets the position-monitor time-stop <i>until the learning loop promotes a champion</i> — after that, the champion's learned horizon governs the time-stop and this preference is kept as your default but no longer overrides it. The style's target/stop/threshold always apply.
+            </div>
+
+            <button
+              onClick={saveTradingStyle}
+              disabled={savingStyle}
+              style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "11px 28px", fontSize: "14px", fontWeight: 600, cursor: "pointer", opacity: savingStyle ? 0.7 : 1 }}
+            >
+              {savingStyle ? "Saving..." : "Save Trading Style"}
+            </button>
           </div>
 
           {/* LLM Cost Monitor Card */}

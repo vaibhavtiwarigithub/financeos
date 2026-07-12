@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { listBrokers } from "@/lib/brokers/registry";
-import { RISK_PROFILES as PROFILES } from "@/lib/risk-profiles";
+import { RISK_PROFILES as PROFILES, TRADING_STYLES } from "@/lib/risk-profiles";
 
 export const dynamic = "force-dynamic";
 
 const VALID_TRADING_MODES = ["disabled", "manual", "auto"] as const;
 const VALID_PROFILES = ["conservative", "balanced", "aggressive"] as const;
+const VALID_TRADING_STYLES = ["swing", "position", "long_term"] as const;
 
 // PATCH: set risk profile (and optionally override individual params)
 export async function PATCH(req: NextRequest) {
@@ -17,7 +18,7 @@ export async function PATCH(req: NextRequest) {
   if (gate) return gate;
 
   const body = await req.json();
-  const { risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_mode, broker, max_positions_per_sector, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_days, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr,
+  const { risk_profile, trading_style, target_hold_days, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_mode, broker, max_positions_per_sector, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_days, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr,
     max_daily_notional_usd, max_daily_notional_inr, max_daily_trades,
     max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper } = body;
 
@@ -61,6 +62,15 @@ export async function PATCH(req: NextRequest) {
   if (risk_profile !== undefined && !VALID_PROFILES.includes(risk_profile)) {
     return NextResponse.json({ error: `Invalid risk_profile. Must be one of: ${VALID_PROFILES.join(", ")}` }, { status: 400 });
   }
+  if (trading_style !== undefined && !VALID_TRADING_STYLES.includes(trading_style)) {
+    return NextResponse.json({ error: `Invalid trading_style. Must be one of: ${VALID_TRADING_STYLES.join(", ")}` }, { status: 400 });
+  }
+  // target_hold_days is a preference/default, not a genome override. Bound it to a
+  // sane swing/position window (1–60d); null clears it (genome governs horizon).
+  if (target_hold_days !== undefined && target_hold_days !== null &&
+      (!Number.isInteger(Number(target_hold_days)) || Number(target_hold_days) < 1 || Number(target_hold_days) > 60)) {
+    return NextResponse.json({ error: "target_hold_days must be an integer 1–60, or null to clear" }, { status: 400 });
+  }
   if (trading_mode !== undefined && !VALID_TRADING_MODES.includes(trading_mode)) {
     return NextResponse.json({ error: `Invalid trading_mode. Must be one of: ${VALID_TRADING_MODES.join(", ")}` }, { status: 400 });
   }
@@ -102,6 +112,16 @@ export async function PATCH(req: NextRequest) {
   const update: Record<string, any> = { ...defaults };
   if (risk_profile) update.risk_profile = risk_profile;
 
+  // Trading Style preset — presets holding horizon + threshold/target/stop, like
+  // a risk profile presets its dials. Applied here (before the per-field
+  // overrides below) so an explicit knob sent in the SAME request still wins.
+  // target_hold_days is only a default: the position-monitor time-stop yields to
+  // a promoted champion's learned genome.horizon_days when one exists.
+  if (trading_style) {
+    Object.assign(update, TRADING_STYLES[trading_style as keyof typeof TRADING_STYLES]);
+    update.trading_style = trading_style;
+  }
+
   // Part B — time-bound posture. Setting one applies its dials with an expiry;
   // the research cron auto-reverts to base_risk_profile once expired. This
   // Object.assign runs BEFORE the individual per-field overrides below (not
@@ -133,6 +153,7 @@ export async function PATCH(req: NextRequest) {
   }
 
   if (score_threshold !== undefined) update.score_threshold = score_threshold;
+  if (target_hold_days !== undefined) update.target_hold_days = target_hold_days === null ? null : Number(target_hold_days);
   if (position_size_pct !== undefined) update.position_size_pct = position_size_pct;
   if (stop_loss_pct !== undefined) update.stop_loss_pct = stop_loss_pct;
   if (target_pct !== undefined) update.target_pct = target_pct;
@@ -176,7 +197,7 @@ export async function PATCH(req: NextRequest) {
 
   // Resilient write — some columns may not exist on older schemas; retry
   // stripping the optional ones so saving a profile still works.
-  const OPTIONAL_COLS = ["max_positions_per_sector", "ks_daily_loss_pct", "ks_drawdown_pct", "ks_accuracy_pct", "exit_hysteresis", "posture", "posture_expires_at", "base_risk_profile", "active_broker_us", "active_broker_india", "trading_enabled_us", "trading_enabled_india", "active_account_us", "active_account_india", "live_account_source", "robinhood_mcp_enabled"];
+  const OPTIONAL_COLS = ["max_positions_per_sector", "ks_daily_loss_pct", "ks_drawdown_pct", "ks_accuracy_pct", "exit_hysteresis", "posture", "posture_expires_at", "base_risk_profile", "active_broker_us", "active_broker_india", "trading_enabled_us", "trading_enabled_india", "active_account_us", "active_account_india", "live_account_source", "robinhood_mcp_enabled", "trading_style", "target_hold_days"];
   // Money limits are NOT optional (migrations 103/105/107 are applied). A failed money-
   // limit write must surface as a visible error, never silently succeed with the old cap.
   const MONEY_COLS = ["max_order_notional", "max_order_notional_usd", "max_order_notional_inr", "max_daily_notional_usd", "max_daily_notional_inr", "max_daily_trades", "max_order_notional_usd_paper", "max_order_notional_inr_paper", "max_daily_notional_usd_paper", "max_daily_notional_inr_paper"];
@@ -205,7 +226,7 @@ export async function GET() {
   const svc = createServiceClient();
   const { data } = await svc
     .from("strategy_config")
-    .select("risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_expires_at, base_risk_profile, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr, max_daily_notional_usd, max_daily_notional_inr, max_daily_trades, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper")
+    .select("risk_profile, trading_style, target_hold_days, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_expires_at, base_risk_profile, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr, max_daily_notional_usd, max_daily_notional_inr, max_daily_trades, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper")
     .single();
   return NextResponse.json(data ?? {});
 }

@@ -36,6 +36,33 @@ const ECON_EVENTS: EconEvent[] = [
   { date: "2026-07-30", name: "GDP (Advance)", impact: "high", country: "US" },
 ];
 
+// India macro schedule — CURATED calendar (dates only, no data values). RBI MPC
+// dates follow the bi-monthly meeting calendar (announcement = day 3 of the
+// meeting); CPI & IIP print ~12th of each month; GDP is released ~end of the
+// second month after each quarter. These are SCHEDULE placeholders (provisional)
+// so India users see their own macro cadence instead of only US FOMC/CPI/NFP —
+// actual prints/decisions are not wired here, only the release dates. Verify RBI
+// dates against the RBI's published MPC calendar before relying on them.
+const INDIA_ECON_EVENTS: EconEvent[] = [
+  { date: "2026-07-13", name: "India CPI (YoY) — Jun (~mid-month, provisional)", impact: "high", country: "IN" },
+  { date: "2026-07-13", name: "India IIP — May (~mid-month, provisional)", impact: "medium", country: "IN" },
+  { date: "2026-08-06", name: "RBI MPC Policy Decision (scheduled)", impact: "high", country: "IN" },
+  { date: "2026-08-12", name: "India CPI (YoY) — Jul (~mid-month, provisional)", impact: "high", country: "IN" },
+  { date: "2026-08-12", name: "India IIP — Jun (~mid-month, provisional)", impact: "medium", country: "IN" },
+  { date: "2026-08-31", name: "India GDP — Q1 FY27 (Apr–Jun, quarter-end release)", impact: "high", country: "IN" },
+  { date: "2026-09-14", name: "India CPI (YoY) — Aug (~mid-month, provisional)", impact: "high", country: "IN" },
+  { date: "2026-09-14", name: "India IIP — Jul (~mid-month, provisional)", impact: "medium", country: "IN" },
+  { date: "2026-10-01", name: "RBI MPC Policy Decision (scheduled)", impact: "high", country: "IN" },
+  { date: "2026-10-12", name: "India CPI (YoY) — Sep (~mid-month, provisional)", impact: "high", country: "IN" },
+  { date: "2026-10-12", name: "India IIP — Aug (~mid-month, provisional)", impact: "medium", country: "IN" },
+  { date: "2026-11-12", name: "India CPI (YoY) — Oct (~mid-month, provisional)", impact: "high", country: "IN" },
+  { date: "2026-11-12", name: "India IIP — Sep (~mid-month, provisional)", impact: "medium", country: "IN" },
+  { date: "2026-11-30", name: "India GDP — Q2 FY27 (Jul–Sep, quarter-end release)", impact: "high", country: "IN" },
+  { date: "2026-12-04", name: "RBI MPC Policy Decision (scheduled)", impact: "high", country: "IN" },
+  { date: "2026-12-14", name: "India CPI (YoY) — Nov (~mid-month, provisional)", impact: "high", country: "IN" },
+  { date: "2026-12-14", name: "India IIP — Oct (~mid-month, provisional)", impact: "medium", country: "IN" },
+];
+
 function impactColor(impact: string) {
   return impact === "high" ? "#F87171" : impact === "medium" ? "#F59E0B" : "#6B7280";
 }
@@ -105,7 +132,7 @@ export default function CalendarPage() {
     setRefreshing(false);
   }
 
-  const upcomingEcon = ECON_EVENTS
+  const upcomingEcon = (isIndia ? INDIA_ECON_EVENTS : ECON_EVENTS)
     .map(e => ({ ...e, days: daysFromNow(e.date) }))
     .filter(e => e.days >= -3)
     .sort((a, b) => a.days - b.days);
@@ -153,7 +180,7 @@ export default function CalendarPage() {
             color: tab === t ? "#fff" : T.muted,
             transition: "all 0.15s",
           }}>
-            {t === "earnings" ? "Earnings" : isIndia ? "US Macro" : "Economic Events"}
+            {t === "earnings" ? "Earnings" : isIndia ? "India Macro (RBI / CPI / IIP)" : "Economic Events"}
           </button>
         ))}
       </div>
@@ -208,7 +235,7 @@ export default function CalendarPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           {isIndia && (
             <div style={{ marginBottom: "4px", fontSize: "11px", color: "#9CA3AF", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "8px 12px" }}>
-              These are <b>US macro</b> events (FOMC / CPI / NFP). India macro (RBI policy, India CPI/IIP) isn&apos;t tracked yet — shown here because US rates still move Indian equities.
+              <b>India macro</b> — RBI MPC policy dates plus the typical monthly CPI/IIP (~12th) and quarterly GDP release windows. These are <b>scheduled/typical release dates</b> (provisional — verify RBI dates against the official MPC calendar); the actual prints and rate decisions are not wired in yet, only when they land. FOMC / US CPI still matter too — US rates move Indian equities.
             </div>
           )}
           {upcomingEcon.map((e, i) => (
