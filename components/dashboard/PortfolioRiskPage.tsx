@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import PageHeader from "./PageHeader";
+import RhReconnectBanner from "@/components/dashboard/RhReconnectBanner";
 import { useMarket } from "@/lib/market-context";
 import type { RiskMetrics, HoldingWithRisk, SectorBreakdown } from "@/lib/portfolio-risk";
 
@@ -562,6 +563,8 @@ export default function PortfolioRiskPage() {
       />
 
       <div style={{ padding: "0 clamp(12px, 4vw, 28px) clamp(20px, 5vw, 40px)" }}>
+
+        <RhReconnectBanner />
 
         {/* Refresh */}
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "16px" }}>

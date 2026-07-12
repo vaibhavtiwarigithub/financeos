@@ -4,6 +4,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
+import RhReconnectBanner from "@/components/dashboard/RhReconnectBanner";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -244,6 +245,8 @@ export default function LivePortfolioPage({
 
   return (
     <div style={{ padding: "clamp(12px, 4vw, 28px)", color: T.text, fontFamily: "'Inter', sans-serif", maxWidth: "1400px" }}>
+
+      <RhReconnectBanner />
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "24px", flexWrap: "wrap", gap: "12px" }}>
