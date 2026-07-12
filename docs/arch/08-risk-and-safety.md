@@ -1,6 +1,6 @@
 # Kairos — Risk & Safety
 
-> Last updated: 2026-07-11 (Proactive broker-token health check — vault-only `checkRobinhoodTokenHealth` reports/resolves `broker-token:robinhood` from status route + health-triage cron (6h); Settings badge now shows "Reconnect required" on an expired token instead of a false "Connected". See "Proactive broker-token health check" section. Prior: Daily Per-Holding Risk Analytics advisory surface.)
+> Last updated: 2026-07-11 (Proactive broker-token health check — `checkRobinhoodTokenHealth` attempts a CAS refresh on the short-lived RH access token from the status route + health-triage cron (6h), reporting `broker-token:robinhood` only on a genuinely failed/absent refresh; Settings badge shows "Reconnect required" only on a real dead-refresh, else "Connected — valid until <access-token TTL>". See "Proactive broker-token health check" section. Prior: Daily Per-Holding Risk Analytics advisory surface.)
 > Prior: 2026-07-11 (Codex Phase-B re-review remediation: (Codex#2/#3) the Kite identity gate no longer trusts allowlist *text* alone — `verifyKiteTradingIdentity()` (`lib/kite.ts`) now fetches Kite `/user/profile` and requires the CONNECTED token's `user_id` to equal `strategy_config.active_account_india` AND an allowlisted `broker_accounts{broker=kite,market=india,role=trading}` row. It is enforced at the single `placeEquityOrder()` choke point, so the canonical/autonomous/exit paths (via `kiteAdapter.submitOrder`) get the same check as the standalone route — not just the route. Fail-closed: config read err ⇒ 500, unset/absent/view_only ⇒ 403, profile unfetchable / user_id mismatch ⇒ 502/403. (Codex#1) the v2 budget advisory lock DROPS broker from its key (now `local_date:market:env`) so it matches the market-wide cap it guards — two brokers in one market can no longer take different locks and jointly exceed the cap. (Codex#4) migration 153 rejects non-finite (Infinity/NaN) qty/notional/cap and validates side/env/broker/symbol/order_type enums+identifiers, fail-closed. Migration 153 additive over 152 (never edited).)
 > Prior: 2026-07-11 (Phase B residuals of 07_08_FULL_APP_REVIEW: A2 the standalone India Kite order route (`app/api/kite/order`) now enforces a fail-closed identity/allowlist gate — it requires `strategy_config.active_account_india` to match a `broker_accounts{broker=kite,market=india,role=trading}` row before reserving budget; unset/absent/view_only ⇒ 403 (no silent fallback), so India live is blocked until an allowlisted Kite trading row is inserted. Canonical-path *unification* still deferred. A4 read-only NAV reconciliation report `GET /api/paper/nav-reconcile` (owner-gated, zero writes) re-derives `nav == cash + Σ qty·price` per pool. A5 v2 daily-BUY budget window is market-local (America/New_York / Asia/Kolkata), not UTC; advisory lock keyed by local_date:market:broker:env. Dead edge-fn kill-switch copy deleted.)
 > Prior: 2026-07-11 (Phase A P0 remediation of 07_08_FULL_APP_REVIEW: A1 kill switches take explicit `{book,accountId}` context — mode no longer inferred from live_auto_enabled; live baseline = account's own snapshot peak not START_NAV; new `sellAllowed` separates risk-increase from risk-reduction so a trip blocks BUY but not a verified SELL; `no_baseline`/`stale_snapshot` fail-close BUY only. A3 durable broker ACK (bounded DB retry → 202 needs_reconcile, never {ok:true}). A4 PositionMonitor NAV write errors now fatal. A5 budget-RPC v1/v2 EXECUTE revoked from public/anon/authenticated.)
@@ -418,20 +418,26 @@ risk-control pressure index and a risk posture. Safety properties:
 
 ## Proactive broker-token health check
 
-`checkRobinhoodTokenHealth(svc)` in `lib/robinhood-mcp.ts` is a **vault-only** token-age check — it
-reads the stored access token, its expiry, and refresh-token presence and reports/resolves the
-`broker-token:robinhood` System Health issue **without** making any Robinhood API call. It runs in two
-places:
+`checkRobinhoodTokenHealth(svc)` in `lib/robinhood-mcp.ts` is a proactive token-age check. Robinhood
+access tokens are **short-lived (~days)**, so a naive expiry read would false-alarm on every routine
+rollover. Instead it mirrors `getValidAccessToken`: when the access token is past (or within 60s of)
+expiry **and** a refresh token exists, it **attempts the CAS refresh** (keeping the token warm on the 6h
+cadence) and reports the critical `broker-token:robinhood` issue **only** when there is no refresh token
+or the refresh actually fails — a genuine reconnect-required state, not a short-TTL rollover. On a valid
+or successfully-refreshed token it resolves the issue. It runs in two places:
 
 - **`GET /api/robinhood-mcp/status`** (Settings → Robinhood card) — so the connection badge cannot lie.
-  A present-but-expired token now renders **"● Reconnect required — token expired"** (red) instead of the
-  old presence-only "● Connected" (green). The route returns `stale` / `expires_at` / `has_refresh`.
+  A genuinely-dead token renders **"● Reconnect required — token expired"** (red); a healthy token shows
+  **"● Connected — valid until <expiry>"** (green), where `<expiry>` is the **access-token** TTL (renewed
+  automatically, not a connection deadline). The route returns `stale` / `expires_at` / `has_refresh`.
 - **`POST /api/agents/health-triage`** (`kairos-health-triage`, `0 */6 * * *`) — runs the check *before*
-  reading `agent_alerts` so a freshly-expired token is surfaced every 6h even when no order/snapshot path
-  ran to trigger the lazy check in `getValidAccessToken`.
+  reading `agent_alerts`, so every 6h it both keeps the token refreshed and surfaces a genuine dead-refresh
+  state even when no order/snapshot path ran to trigger the lazy check in `getValidAccessToken`.
 
-Why it exists: an expired RH token (dead refresh grant) makes `fetchRobinhoodBrokerAccounts()` return an
-`"unknown"` account id, which silently drops **all** Robinhood accounts out of holding-risk and freezes
+Why it exists: a dead RH refresh grant makes `fetchRobinhoodBrokerAccounts()` return an `"unknown"`
+account id, which silently drops **all** Robinhood accounts out of holding-risk and freezes
 `live_account_snapshots`. The lazy `getValidAccessToken` reporter only fired when something tried to use
-the token; this proactive 6h check + honest badge close that gap. The fix (owner reconnects OAuth via the
-localhost loopback) is human-only — the check is advisory, wired to no credential-write or order path.
+the token; this proactive 6h check + honest badge close that gap. The only human-required action (owner
+reconnects OAuth via the localhost loopback) is triggered solely on a **failed refresh** — the check is
+advisory + performs the same CAS refresh the order path uses, but reaches no credential-write beyond token
+renewal and no order path.
