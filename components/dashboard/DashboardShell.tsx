@@ -56,8 +56,7 @@ const NAV_SECTIONS = [
     hint: "Positions across every market",
     items: [
       { href: "/dashboard/portfolio",      label: "Paper Portfolio", icon: "◈", hint: "Paper positions, P&L, open trades — US ($) and India (₹) via the market switcher above", alertCat: "portfolio" },
-      { href: "/dashboard/live-portfolio", label: "Live Portfolio (US)", icon: "◉", hint: "Live Robinhood holdings, P&L, performance charts, transaction history", alertCat: "" },
-      { href: "/dashboard/india",          label: "India Live + Signals", icon: "🇮🇳", hint: "Live Zerodha Kite holdings (real money) + NSE research signals — the India counterpart to Live Portfolio, not Paper Portfolio", alertCat: "" },
+      { href: "/dashboard/live-portfolio", label: "Live Portfolio", icon: "◉", hint: "Live holdings — Robinhood (US) or Zerodha Kite (India), controlled by the market switcher above", alertCat: "" },
       { href: "/dashboard/risk",           label: "Risk Analytics", icon: "⚠", hint: "Beta, VaR, sector concentration across all accounts", alertCat: "" },
     ],
   },

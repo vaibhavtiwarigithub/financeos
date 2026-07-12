@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/service";
-import LivePortfolioPage from "@/components/dashboard/LivePortfolioPage";
+import LivePortfolioSwitch from "@/components/dashboard/LivePortfolioSwitch";
 
 export const revalidate = 60;
 
@@ -25,10 +25,12 @@ export default async function Page() {
   const pending = total - enriched;
 
   return (
-    <LivePortfolioPage
-      liveSnaps={snaps ?? []}
-      initialFiles={files ?? []}
-      decisionStats={{ total, enriched, pending }}
+    <LivePortfolioSwitch
+      usProps={{
+        liveSnaps: snaps ?? [],
+        initialFiles: files ?? [],
+        decisionStats: { total, enriched, pending },
+      }}
     />
   );
 }
