@@ -38,6 +38,10 @@ export default function AgentCalendar() {
   }
 
   const agentNames = days ? Array.from(new Set(days.flatMap(d => Object.keys(d.agents)))).sort() : [];
+  // Latest day on the LEFT, oldest on the RIGHT. API returns oldest→newest;
+  // reverse a copy (never mutate state) and drive both header + body from it
+  // so the day-number row and the dot rows stay column-aligned.
+  const orderedDays = days ? [...days].reverse() : [];
 
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "14px 18px", marginBottom: "16px" }}>
@@ -59,7 +63,7 @@ export default function AgentCalendar() {
               <thead>
                 <tr>
                   <td style={{ padding: "2px 8px 2px 0", color: T.muted, minWidth: "110px" }}></td>
-                  {days.map(d => {
+                  {orderedDays.map(d => {
                     const dow = new Date(d.date + "T00:00:00").getDay();
                     const isWeekend = dow === 0 || dow === 6;
                     return (
@@ -74,7 +78,7 @@ export default function AgentCalendar() {
                 {agentNames.map(agent => (
                   <tr key={agent}>
                     <td style={{ padding: "2px 8px 2px 0", color: T.textSub, whiteSpace: "nowrap" as const }}>{agent}</td>
-                    {days.map(d => {
+                    {orderedDays.map(d => {
                       const cell = d.agents[agent];
                       if (!cell) return <td key={d.date} style={{ padding: "0 2px" }}></td>;
                       const color = STATUS_COLOR[cell.status] ?? T.muted;

@@ -336,6 +336,10 @@ export default function DashboardShell({ profile, children }: { profile: Profile
               position: "fixed", top: 0, left: 0, height: "100vh", zIndex: 200,
               transform: mobileNavOpen ? "translateX(0)" : "translateX(-100%)",
               transition: "transform 0.2s ease",
+              // Clear the notch/status bar at the drawer top and the home
+              // indicator at the bottom when the drawer is open full-height.
+              paddingTop: "env(safe-area-inset-top)",
+              paddingBottom: "env(safe-area-inset-bottom)",
             }
           : { position: "sticky", top: 0, height: "100vh" }),
       }}>
@@ -608,12 +612,19 @@ export default function DashboardShell({ profile, children }: { profile: Profile
       </aside>
 
       {/* â"€â"€ Main content â"€â"€ */}
-      <main style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
+      <main style={{ flex: 1, overflowY: "auto", minWidth: 0, paddingBottom: "env(safe-area-inset-bottom)" }}>
         {/* Sticky market status bar */}
         <div style={{
           position: "sticky", top: 0, zIndex: 100,
           background: T.surface, borderBottom: `1px solid ${T.border}`,
-          padding: isMobile ? "7px 12px" : "7px 28px", display: "flex", alignItems: "center", gap: "12px",
+          // Add the device safe-area inset so the bar clears the phone's
+          // status bar (battery/time/notch) — the app draws under it because
+          // layout.tsx sets black-translucent + viewportFit:cover. Insets are
+          // 0 on non-notched screens, so this is inert on desktop.
+          padding: isMobile
+            ? "calc(7px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 7px calc(12px + env(safe-area-inset-left))"
+            : "7px 28px",
+          display: "flex", alignItems: "center", gap: "12px",
           flexWrap: "wrap",
         }}>
           {/* Hamburger — mobile only, opens the sidebar drawer */}
