@@ -73,8 +73,9 @@ async function getRegimeFeatures(market: string, supabase: any): Promise<RegimeF
 async function scoreInsider(symbol: string, avKey: string): Promise<{ score: number; summary: string; available: boolean }> {
   try {
     const url = `https://www.alphavantage.co/query?function=INSIDER_TRANSACTIONS&symbol=${symbol}&apikey=${avKey}`;
-    // Day-cached + budget-guarded: insider filings don't change intraday.
-    const data = await avCachedFetch(`INSIDER:${symbol}`, url);
+    // Insider filings trickle in over days — cache 7d (this is only the fallback
+    // when free EDGAR has no data, so it should rarely spend an AV call at all).
+    const data = await avCachedFetch(`INSIDER:${symbol}`, url, 6000, undefined, 7);
     const transactions: any[] = data?.data ?? [];
 
     if (!transactions.length) return { score: 50, summary: "No insider transaction data available.", available: false };
@@ -698,10 +699,12 @@ ${heldNote}`;
 async function fetchAVOverview(symbol: string, avKey: string): Promise<Record<string, string>> {
   if (!avKey) return {};
   try {
-    // Day-cached + budget-guarded: company fundamentals are day-stable.
+    // Fundamentals change quarterly, not daily — cache 14d so the same symbol's
+    // OVERVIEW isn't re-fetched every research run (the biggest AV-budget drain).
     const json = await avCachedFetch(
       `OVERVIEW:${symbol}`,
-      `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${avKey}`
+      `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${avKey}`,
+      6000, undefined, 14
     );
     return json?.Symbol ? (json as Record<string, string>) : {};
   } catch { return {}; }

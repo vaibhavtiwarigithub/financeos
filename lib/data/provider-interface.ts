@@ -78,7 +78,8 @@ class AlphaVantageProvider implements DataProvider {
     const key = process.env.ALPHA_VANTAGE_API_KEY;
     if (!key) return null;
     const url = `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(symbol)}&apikey=${key}`;
-    const json = await providerCachedFetch("alpha_vantage", `AV_OVERVIEW:${symbol}`, url);
+    // Fundamentals change quarterly — cache 14d to keep the same symbol off AV daily.
+    const json = await providerCachedFetch("alpha_vantage", `AV_OVERVIEW:${symbol}`, url, { maxAgeDays: 14 });
     if (!json || !json.Symbol) return null;
     return {
       symbol: json.Symbol,

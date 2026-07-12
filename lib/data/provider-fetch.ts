@@ -49,7 +49,11 @@ function nextUtcMidnight(): string {
   return d.toISOString();
 }
 
-async function lastCached(svc: any, cacheKey: string): Promise<any | null> {
+// Most-recent cached payload for a key, if it is at most `maxDays` old. Used both
+// for the throttle/over-budget fallback (7d) and — when a caller passes
+// opts.maxAgeDays — as a FRESH hit that skips the real call entirely, so
+// slow-moving data (fundamentals) isn't re-fetched every single day.
+async function lastCached(svc: any, cacheKey: string, maxDays = MAX_STALE_CACHE_DAYS): Promise<any | null> {
   const { data: last } = await svc
     .from("av_cache")
     .select("payload, cache_date")
@@ -59,7 +63,7 @@ async function lastCached(svc: any, cacheKey: string): Promise<any | null> {
     .maybeSingle();
   if (!last?.payload) return null;
   const ageDays = (Date.now() - new Date(last.cache_date).getTime()) / 86400000;
-  if (ageDays > MAX_STALE_CACHE_DAYS) return null;
+  if (ageDays > maxDays) return null;
   return last.payload;
 }
 
@@ -70,6 +74,11 @@ export interface ProviderFetchOpts {
   // Defaults to AV-style for alpha_vantage, and "never" for the rest (their
   // errors are HTTP-status/JSON-shape specific and handled by the caller).
   isThrottled?: (json: any) => boolean;
+  // Freshness window in days. When >0, a cached payload up to this many days old
+  // is served as a hit WITHOUT spending a real provider call — for slow-moving
+  // data (fundamentals ~14d, news ~2d) that need not be re-fetched daily. Default
+  // 0 = today-only (re-fetch each day), preserving prior behavior for prices/quotes.
+  maxAgeDays?: number;
 }
 
 // Cache key MUST be globally unique across providers. Callers pass a
@@ -86,14 +95,23 @@ export async function providerCachedFetch(
   const timeoutMs = opts.timeoutMs ?? 6000;
   const isThrottled = opts.isThrottled ?? (provider === "alpha_vantage" ? avThrottled : () => false);
 
-  // 1. Fresh cache hit for today → no real call.
-  const { data: today } = await svc
-    .from("av_cache")
-    .select("payload")
-    .eq("cache_key", cacheKey)
-    .eq("cache_date", todayStr)
-    .maybeSingle();
-  if (today?.payload) return today.payload;
+  // 1. Fresh cache hit → no real call. Slow-moving data (fundamentals/news) passes
+  // maxAgeDays>0 so a payload up to N days old counts as fresh and skips the call —
+  // the single biggest AV-budget saver, since the same symbols are scored daily but
+  // their fundamentals change quarterly. Default 0 = today-only (prices/quotes).
+  const maxAgeDays = opts.maxAgeDays ?? 0;
+  if (maxAgeDays > 0) {
+    const fresh = await lastCached(svc, cacheKey, maxAgeDays);
+    if (fresh) return fresh;
+  } else {
+    const { data: today } = await svc
+      .from("av_cache")
+      .select("payload")
+      .eq("cache_key", cacheKey)
+      .eq("cache_date", todayStr)
+      .maybeSingle();
+    if (today?.payload) return today.payload;
+  }
 
   // 2. Budget guard (only for providers with a daily cap). Reserve-before-spend.
   if (cfg.dailyBudget != null) {

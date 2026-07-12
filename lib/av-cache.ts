@@ -13,6 +13,9 @@ export async function avCachedFetch(
   url: string,
   timeoutMs = 6000,
   headers?: Record<string, string>,
+  // Days a cached payload stays "fresh" and skips a real AV call. Pass a value
+  // for slow-moving data (fundamentals ~14d, news ~2d); omit for daily data.
+  maxAgeDays?: number,
 ): Promise<any | null> {
-  return providerCachedFetch("alpha_vantage", cacheKey, url, { timeoutMs, headers });
+  return providerCachedFetch("alpha_vantage", cacheKey, url, { timeoutMs, headers, maxAgeDays });
 }

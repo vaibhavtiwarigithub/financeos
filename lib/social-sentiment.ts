@@ -119,12 +119,13 @@ async function fetchStockTwits(symbol: string): Promise<StockTwitsResult | null>
 async function fetchAVNewsSentiment(symbol: string): Promise<AVNewsResult | null> {
   const key = process.env.ALPHA_VANTAGE_API_KEY;
   if (!key) return null;
-  // Day-cached + budget-guarded via avCachedFetch (imported below) — news
-  // sentiment is refreshed once/day here rather than on every research pass,
-  // which was one of the four heaviest uncached AV callers.
+  // News sentiment is slow-moving for scoring purposes — cache 3d so it isn't
+  // re-fetched every research pass (one of the heaviest AV callers). A 3-day-old
+  // aggregate sentiment score is fine for the weighting; not a live news feed.
   const data: AVNewsResponse | null = await avCachedFetch(
     `NEWS:${symbol}`,
-    `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=${symbol}&limit=20&apikey=${key}`
+    `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=${symbol}&limit=20&apikey=${key}`,
+    6000, undefined, 3
   );
   if (!data) return null;
   const feed: AVArticle[] = data.feed ?? [];
