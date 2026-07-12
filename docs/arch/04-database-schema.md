@@ -1,5 +1,5 @@
 # Kairos — Database Schema
-> Last updated: 2026-07-11 (migrations 147-156 applied: fundamental_facts PIT ledger, 4 replay-harness tables, universe_snapshot_scores + agent_signals rank cols, Daily Per-Holding Risk tables holding_risk_runs/holding_risk_snapshots/account_risk_snapshots + cron)
+> Last updated: 2026-07-12 (migration 165 applied: watchlist.market column — was referenced by route code for months but never created, breaking watchlist GET+add on prod)
 > Update this file when: any migration adds, removes, or modifies a table, column, index, trigger, or RLS policy.
 
 Migrations in `supabase/migrations/`. Applied via Supabase MCP `apply_migration` or the Supabase SQL editor. **Always verify with `list_migrations` before shipping schema-coupled code.** A migration file existing in the repo does NOT mean it ran against production.
@@ -277,11 +277,12 @@ Tracked symbols.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
-| `symbol` | text | UNIQUE |
-| `market` | text | |
-| `asset_class` | text | |
-| `added_by` | text | `user` \| `theme-scout` \| `system` |
-| `theme_tag` | text | e.g. `ai_infrastructure` |
+| `symbol` | text | UNIQUE with `user_id` |
+| `market` | text | `US` \| `India` \| `Global` \| `Crypto`, NOT NULL default `US`. **Added migration 165 (2026-07-12)** — the route code (GET filter, POST) had read/written this column for months but no migration ever created it, so GET 500'd (panel showed "0 tracked") and every manual add silently failed. |
+| `source` | text | `manual` \| `llm_theme` \| `tradingview_import` \| `robinhood*` \| `briefing` |
+| `theme` | text | AI-Scout theme label |
+| `reason` | text | why added |
+| `research_enabled` / `alert_on_signal` / `alert_on_earnings` | bool | per-symbol toggles |
 | `created_at` | timestamptz | |
 
 ### `edge_signals`

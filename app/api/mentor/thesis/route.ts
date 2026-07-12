@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
+import { callLLM } from "@/lib/llm-router";
 import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
@@ -70,8 +70,8 @@ ${context}
 Keep it under 300 words. Plain English, no bullet points.`;
 
   try {
-    const stdout = await execClaude(prompt, 90000);
-    const thesis = parseClaudeOutput(stdout);
+    // Production LLM path (was execClaude → PowerShell, which ENOENTs on Vercel).
+    const { text: thesis } = await callLLM({ task: "thesis", prompt, agentLabel: "mentor-thesis" });
     const now = new Date().toISOString();
 
     cache = { thesis, generatedAt: now, ts: Date.now() };

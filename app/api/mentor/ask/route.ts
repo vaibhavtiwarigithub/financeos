@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
+import { callLLM } from "@/lib/llm-router";
 
 export const dynamic = "force-dynamic";
 
@@ -109,8 +109,16 @@ If you don't have enough context to answer confidently, say so — don't fabrica
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        const stdout = await execClaude(prompt, 120000);
-        const answer = parseClaudeOutput(stdout);
+        // Route through the production LLM path (Anthropic SDK / DeepSeek HTTP).
+        // The old execClaude path spawned the local `claude` CLI via PowerShell —
+        // fine on a Windows dev box, but `spawn powershell.exe ENOENT` on Vercel.
+        const { text: answer } = await callLLM({
+          task: "chat",
+          prompt,
+          agentLabel: "mentor-ask",
+          symbol: symbol ? String(symbol).toUpperCase() : undefined,
+          maxTokens: 1500,
+        });
 
         // Stream word by word for a natural feel
         const words = answer.split(" ");

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { execClaude, parseClaudeOutput, parseTokenUsage } from "@/lib/claude-exec";
+import { callLLM } from "@/lib/llm-router";
 import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
@@ -17,17 +17,13 @@ USER REASONING:
 "${reasoning}"
 
 YOUR TASKS:
-1. Use your available tools (FinancialDatasets, Alpha Vantage) to pull REAL current data on ${symbol}:
-   - Current price, 52-week range, YTD return
-   - P/E, revenue growth, EPS trend (last 4 quarters)
-   - RSI, moving averages (50d/200d)
-   - Recent news sentiment (last 30 days)
+1. You are evaluating from reasoning ALONE — you do NOT have live market-data tools in this pass. Do NOT invent specific figures (price, P/E, RSI, YTD return, moving averages). Where the user's claim depends on current data you cannot verify, treat it as UNVERIFIED and say so explicitly rather than fabricating a number.
 
-2. Verify each factual claim in the user's reasoning against real data.
+2. Judge the internal logic, specificity, and falsifiability of each claim. Use your general knowledge of the company/sector only where it is reliable and not time-sensitive; flag anything time-sensitive as unverified.
 
 3. Score overall reasoning quality 0-100 using this rubric:
    - Clarity & specificity (20pts): Specific, falsifiable claim with concrete triggers?
-   - Factual accuracy (30pts): Facts match real data? Deduct 5pts per wrong claim.
+   - Plausibility & internal consistency (30pts): Are the claims coherent and consistent with well-known facts about the company/sector? Flag unverifiable time-sensitive claims but do NOT heavily penalize claims you simply cannot check.
    - Risk awareness (20pts): Bear case acknowledged?
    - Contrarian thinking (15pts): Crowded consensus or independent analysis?
    - Exit strategy (15pts): Know when they're wrong and what the exit is?
@@ -102,8 +98,7 @@ function clampDimension(v: unknown): number {
   return Math.max(0, Math.min(100, isNaN(n) ? 50 : Math.round(n)));
 }
 
-function parseEval(raw: string): EvalResult | null {
-  const text = parseClaudeOutput(raw);
+function parseEval(text: string): EvalResult | null {
   // Strip markdown fences if present
   const cleaned = text.replace(/```json\n?/gi, "").replace(/```\n?/gi, "").trim();
   // Find first { ... } block
@@ -136,17 +131,20 @@ export async function POST(req: NextRequest) {
   const prompt = EVAL_PROMPT(symbol, action, entry_type, user_reasoning);
 
   let raw: string;
+  let tokenUsage = { input: 0, output: 0 };
   try {
-    raw = await execClaude(prompt, 120_000);
+    // Production LLM path (was execClaude → PowerShell, which ENOENTs on Vercel).
+    const res = await callLLM({ task: "evaluate", prompt, agentLabel: "mentor-evaluate", symbol, maxTokens: 2000 });
+    raw = res.text;
+    tokenUsage = { input: res.tokensIn, output: res.tokensOut };
   } catch (e) {
     return NextResponse.json({ error: "AI evaluation failed", detail: String(e) }, { status: 500 });
   }
 
   const evaluation = parseEval(raw);
-  const tokenUsage = parseTokenUsage(raw);
 
   if (!evaluation) {
-    return NextResponse.json({ error: "Could not parse AI response", raw: parseClaudeOutput(raw).slice(0, 500) }, { status: 500 });
+    return NextResponse.json({ error: "Could not parse AI response", raw: raw.slice(0, 500) }, { status: 500 });
   }
 
   // Clamp score

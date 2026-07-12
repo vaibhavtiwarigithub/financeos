@@ -300,46 +300,36 @@ async function callClaude(
   maxTokens = 4096
 ): Promise<{ text: string; tokensIn: number; tokensOut: number; cacheWriteTokens: number; cacheReadTokens: number }> {
   // Use Anthropic SDK directly (server-side, uses ANTHROPIC_API_KEY env).
-  // Falls back to claude-exec subprocess if SDK not available or API key missing.
   // System prompt is sent with cache_control: { type: "ephemeral" } so repeated calls
   // with the same system prompt (ResearchAgent daily runs, briefings, etc.) hit the
   // cache and pay 0.10× input rate instead of 1×. Cache writes pay 1.25× once, then
   // every subsequent read is 10× cheaper. TTL: 5 minutes per Anthropic docs.
-  try {
-    const { default: Anthropic } = await import("@anthropic-ai/sdk")
-    // Vault-first key (Settings) → env fallback. undefined lets the SDK read env itself.
-    const client = new Anthropic({ apiKey: (await getProviderKey("anthropic")) ?? undefined })
-    const messages: { role: "user" | "assistant"; content: string }[] = [
-      { role: "user", content: prompt },
-    ]
-    const resp = await client.messages.create({
-      model,
-      max_tokens: maxTokens,
-      ...(system ? { system: [{ type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } }] } : {}),
-      messages,
-    })
-    const textBlock = resp.content.find(b => b.type === "text")
-    const text = textBlock && textBlock.type === "text" ? textBlock.text : ""
-    const u = resp.usage as typeof resp.usage & { cache_creation_input_tokens?: number; cache_read_input_tokens?: number }
-    return {
-      text,
-      tokensIn: u.input_tokens,
-      tokensOut: u.output_tokens,
-      cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
-      cacheReadTokens: u.cache_read_input_tokens ?? 0,
-    }
-  } catch (err: unknown) {
-    const e = err as { status?: number; message?: string }
-    if (e?.status === 401 || e?.message?.includes("API key")) {
-      // execClaude only accepts a single prompt string — prepend system prompt inline
-      const { execClaude, parseClaudeOutput, parseTokenUsage } = await import("@/lib/claude-exec")
-      const combinedPrompt = system ? `${system}\n\n${prompt}` : prompt
-      const stdout = await execClaude(combinedPrompt)
-      const text = parseClaudeOutput(stdout)
-      const usage = parseTokenUsage(stdout)
-      return { text, tokensIn: usage.input, tokensOut: usage.output, cacheWriteTokens: 0, cacheReadTokens: 0 }
-    }
-    throw err
+  //
+  // NOTE: no local-CLI (execClaude/PowerShell) fallback on error. That path only
+  // works on a Windows dev box and hard-crashes on Vercel Linux with
+  // `spawn powershell.exe ENOENT`. On a 401/missing-key we let the error
+  // propagate so callLLM's isAuthMissing handler swaps to DeepSeek instead.
+  const { default: Anthropic } = await import("@anthropic-ai/sdk")
+  // Vault-first key (Settings) → env fallback. undefined lets the SDK read env itself.
+  const client = new Anthropic({ apiKey: (await getProviderKey("anthropic")) ?? undefined })
+  const messages: { role: "user" | "assistant"; content: string }[] = [
+    { role: "user", content: prompt },
+  ]
+  const resp = await client.messages.create({
+    model,
+    max_tokens: maxTokens,
+    ...(system ? { system: [{ type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } }] } : {}),
+    messages,
+  })
+  const textBlock = resp.content.find(b => b.type === "text")
+  const text = textBlock && textBlock.type === "text" ? textBlock.text : ""
+  const u = resp.usage as typeof resp.usage & { cache_creation_input_tokens?: number; cache_read_input_tokens?: number }
+  return {
+    text,
+    tokensIn: u.input_tokens,
+    tokensOut: u.output_tokens,
+    cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+    cacheReadTokens: u.cache_read_input_tokens ?? 0,
   }
 }
 

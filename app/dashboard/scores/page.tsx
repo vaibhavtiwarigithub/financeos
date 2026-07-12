@@ -4,6 +4,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from "recharts";
 import PageHeader from "@/components/dashboard/PageHeader";
+import SymbolAutocomplete from "@/components/dashboard/SymbolAutocomplete";
 import { useMarket } from "@/lib/market-context";
 
 const T = {
@@ -543,17 +544,15 @@ export default function ScoreTrackerPage() {
           </div>
 
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            <input
-              value={customTicker}
-              onChange={e => setCustomTicker(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") addCustom(); }}
-              placeholder="Add ticker…"
-              style={{
-                background: T.dim, border: `1px solid ${T.border}`, borderRadius: "7px",
-                color: T.text, fontSize: "12px", padding: "6px 10px", width: "140px", outline: "none",
-                fontFamily: "inherit", textTransform: "uppercase",
-              }}
-            />
+            <div style={{ width: "180px" }}>
+              <SymbolAutocomplete
+                value={customTicker}
+                onChange={setCustomTicker}
+                onEnter={addCustom}
+                placeholder="Add ticker…"
+                inputStyle={{ fontSize: "12px", padding: "6px 10px" }}
+              />
+            </div>
             <button
               onClick={addCustom}
               style={{ background: T.accentBg, border: `1px solid ${T.accent}44`, color: T.accent, borderRadius: "7px", padding: "6px 14px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}

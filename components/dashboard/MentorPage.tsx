@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 import MentorCoachPanel from "@/components/dashboard/MentorCoachPanel";
+import SymbolAutocomplete from "@/components/dashboard/SymbolAutocomplete";
 import {
   ResponsiveContainer, LineChart as LC, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine, Label,
@@ -1028,13 +1029,13 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
 
             {/* Symbol + action + type row */}
             <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
-              <div style={{ flex: "0 0 120px" }}>
+              <div style={{ flex: "1 1 160px", minWidth: "140px" }}>
                 <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px" }}>Symbol</div>
-                <input
+                <SymbolAutocomplete
                   value={jSymbol}
-                  onChange={e => setJSymbol(e.target.value.toUpperCase())}
+                  onChange={setJSymbol}
                   placeholder="AAPL"
-                  style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "8px 12px", color: T.text, fontSize: "14px", fontWeight: 700, fontFamily: "monospace", outline: "none", boxSizing: "border-box" }}
+                  inputStyle={{ fontWeight: 700, fontFamily: "monospace" }}
                 />
               </div>
               <div style={{ flex: "0 0 130px" }}>
@@ -1092,7 +1093,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
             </button>
             {jSubmitting && (
               <div style={{ marginTop: "10px", fontSize: "12px", color: T.muted }}>
-                AI is pulling real data on {jSymbol} and verifying your claims…
+                AI is evaluating your reasoning on {jSymbol} — clarity, risk-awareness, and biases…
               </div>
             )}
           </div>
