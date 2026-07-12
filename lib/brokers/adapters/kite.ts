@@ -45,10 +45,12 @@ export function kiteAdapter(): BrokerAdapter {
       const history = Array.isArray(res.data) ? res.data : [];
       const latest = history[history.length - 1];
       if (!latest) return { ok: false, error: "No order history found" };
+      const filledQty = latest.filled_quantity != null ? Number(latest.filled_quantity) : undefined;
+      const mapped = STATUS_MAP[latest.status] ?? "submitted";
       return {
         ok: true,
-        status: STATUS_MAP[latest.status] ?? "submitted",
-        filledQty: latest.filled_quantity != null ? Number(latest.filled_quantity) : undefined,
+        status: mapped === "submitted" && Number(filledQty) > 0 ? "partially_filled" : mapped,
+        filledQty,
         avgFillPrice: latest.average_price != null ? Number(latest.average_price) : undefined,
         raw: latest,
       };

@@ -70,6 +70,7 @@ type LiveNavSeries = {
 async function getLiveNavSeries(
   supabase: any,
   accountId: string,
+  market: string,
 ): Promise<LiveNavSeries | null> {
   const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
   const { data: snaps } = await supabase
@@ -89,9 +90,17 @@ async function getLiveNavSeries(
   const newestAt = new Date((snaps[0] as any).captured_at as string).getTime();
   if (!Number.isFinite(newestAt)) return null;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const zone = market === "india" ? "Asia/Kolkata" : "America/New_York";
+  const localDate = (value: string | number) => {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date(value));
+    const get = (type: string) => parts.find(p => p.type === type)?.value ?? "";
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  };
+  const currentTradingDate = localDate((snaps[0] as any).captured_at);
   const yesterdaySnap = (snaps as any[]).find(
-    (s: any) => (s.captured_at as string) < today + "T00:00:00",
+    (s: any) => localDate(s.captured_at) < currentTradingDate,
   );
   const yesterday = yesterdaySnap ? nav(yesterdaySnap) : null;
 
@@ -220,7 +229,7 @@ export async function checkKillSwitches(
         reason: `No live account configured for ${market.toUpperCase()} — BUY fail-closed. Set active_account_${market} before live trading. (SELL still permitted with held-qty verification.)`,
       };
     }
-    const liveSeries = await getLiveNavSeries(supabase, activeAccount);
+    const liveSeries = await getLiveNavSeries(supabase, activeAccount, market);
     if (!liveSeries) {
       return {
         safe: false,

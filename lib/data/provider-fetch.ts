@@ -29,7 +29,7 @@ const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   financialdatasets: { label: "FinancialDatasets", dailyBudget: Number(process.env.FD_DAILY_BUDGET ?? 200) },
   fmp:               { label: "FMP",               dailyBudget: Number(process.env.FMP_DAILY_BUDGET ?? 240) }, // 250/day free, keep headroom
   twelvedata:        { label: "Twelve Data",       dailyBudget: Number(process.env.TWELVEDATA_DAILY_BUDGET ?? 750) }, // 800/day free
-  eodhd:             { label: "EODHD",             dailyBudget: Number(process.env.EODHD_DAILY_BUDGET ?? 90000) }, // 100k/day paid tiers; 20/day if free
+  eodhd:             { label: "EODHD",             dailyBudget: Number(process.env.EODHD_DAILY_BUDGET ?? 20) }, // free tier; paid users must opt in via env
   finnhub:           { label: "Finnhub",           dailyBudget: null }, // 60/min, no daily cap
   massive:           { label: "Massive",           dailyBudget: null }, // 5/min, no daily cap
   upstox:            { label: "Upstox",            dailyBudget: null }, // ~500/min, no daily cap

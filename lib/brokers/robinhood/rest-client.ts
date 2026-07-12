@@ -63,6 +63,9 @@ export async function rhPlaceMarketOrder(
     return { ok: false, error: `Invalid qty: ${opts.qty}` };
   }
   const accountId = opts.account || RH_ORDER_ACCOUNT_ID;
+  if (accountId !== RH_ORDER_ACCOUNT_ID) {
+    return { ok: false, error: "Robinhood order account is not the permitted agentic account" };
+  }
 
   let token: string;
   let instrumentUrl: string;
