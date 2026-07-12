@@ -27,12 +27,26 @@ and:
 No page component is merged in this pass. All existing routes keep working; only the
 sidebar order/labels and one new deep-link change.
 
-## Deferred (separate, larger, HIGHER RISK — needs its own approval)
-- Merge Paper + Live-US + India into one **Portfolio** page with a Paper↔Live toggle
-  (market driven by the global switch). Requires a new tabbed container + redirects.
-- Merge Intelligence + Smart Money into one **Signals** page.
-- Merge Agents + History + Research Journal + Scores into a tabbed **Research** page.
-These change deep links, so they ship behind redirects in a follow-up.
+## Done (2026-07-12, second pass — shipped behind redirects, no deep-link 404s)
+- **Live Portfolio** = US + India: LivePortfolioSwitch renders US (LivePortfolioPage) or
+  India (IndiaLivePanel) by the global market switch. /dashboard/india redirects.
+- **Signals** = Intelligence + Smart Money: Smart Money is a tab on the Intelligence page
+  (data via owner-gated /api/markets/smart-money). /dashboard/smart-money redirects.
+- **Research** = Research Journal + Score Tracker: ScoreTrackerPanel is a tab on Research
+  Journal. /dashboard/scores redirects.
+- **Agents** absorbs Agent History: AgentHistoryPanel is a "History" tab; AgentsPage reads
+  ?tab=. /dashboard/agents/history redirects.
+- **Settings** absorbs Automation + Admin + LLM Config: AutomationPanel + AdminPanel +
+  LLMConfigPanel are tabs. /dashboard/admin and /dashboard/settings/automation redirect.
+
+Deliberately NOT merged: Paper Portfolio stays separate from Live Portfolio (sim vs real
+money — kept visibly distinct for safety).
+
+## Known cosmetic follow-up
+Merged panels (Smart Money, Score Tracker, Admin, Automation, India Live) still render
+their own PageHeader inside the container that also has one → a double header on those
+tabs. Functional; trim by adding an optional `embedded` prop that suppresses the inner
+PageHeader when rendered as a tab.
 
 ## Files
 - `components/dashboard/DashboardShell.tsx` — `NAV_SECTIONS` array.
