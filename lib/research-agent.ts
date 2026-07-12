@@ -1,5 +1,6 @@
-import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
 import { callLLM } from "@/lib/llm-router";
+import { getConfiguredModel } from "@/lib/agent-model-config";
+import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 import { retrieveSimilarTrades, summarizeMemories } from "@/lib/rag/trade-memory";
 import { fetchSocialSentiment, SocialSentiment } from "@/lib/social-sentiment";
 import { fetchOptionsSignal, OptionsSignal } from "@/lib/options-signal";
@@ -234,31 +235,21 @@ export async function fetchHoldings(supabase: any): Promise<string[]> {
 
 // Phase 1B — fetch account snapshot (equity, buying power, positions) and cache it
 export async function fetchAndStoreAccountSnapshot(): Promise<{ ok: boolean; error?: string }> {
-  const prompt = `Call the Robinhood MCP tool get_equity_positions with account_number: "${TRADING_ACCOUNT}"
-Then call get_accounts to get buying_power and portfolio_value for that account.
-
-Return ONLY a JSON object (no markdown):
-{
-  "equity": 12345.67,
-  "buying_power": 5000.00,
-  "portfolio_value": 12345.67,
-  "position_count": 5,
-  "positions": [
-    {"symbol": "AAPL", "qty": 10, "avg_price": 175.00, "current_price": 182.00},
-    {"symbol": "NVDA", "qty": 5, "avg_price": 490.00, "current_price": 510.00}
-  ]
-}
-
-If any field is unavailable, use null.`;
-
   try {
-    const stdout = await execClaude(prompt, 90000);
-    const text = parseClaudeOutput(stdout);
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return { ok: false, error: "no JSON in Claude output" };
-    const snap = JSON.parse(match[0]);
+    // Deterministic Robinhood read (HTTP JSON-RPC via vault token) — no local
+    // Claude CLI / PowerShell. Pick the read-only trading account snapshot.
+    const accounts = await captureAllRobinhoodAccounts();
+    const acct = accounts.find(a => a.accountId === TRADING_ACCOUNT) ?? accounts[0];
+    if (!acct) return { ok: false, error: "Robinhood MCP returned no accounts" };
+    if (acct.error) return { ok: false, error: acct.error };
 
-    // POST to our own API to store the snapshot
+    const positions = acct.holdings.map(h => ({
+      symbol: h.symbol,
+      qty: h.qty,
+      avg_price: h.costBasis != null && h.qty > 0 ? h.costBasis / h.qty : null,
+      current_price: h.currentPrice ?? null,
+    }));
+
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     let postError: string | undefined;
     await fetch(`${baseUrl}/api/live-account/snapshot`, {
@@ -266,18 +257,15 @@ If any field is unavailable, use null.`;
       headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET ?? "" },
       body: JSON.stringify({
         account_id: TRADING_ACCOUNT,
-        equity: snap.equity,
-        buying_power: snap.buying_power,
-        portfolio_value: snap.portfolio_value,
-        position_count: snap.position_count,
-        positions_json: snap.positions ?? null,
+        equity: acct.totalValue,
+        buying_power: acct.buyingPower ?? acct.cashBalance,
+        portfolio_value: acct.totalValue,
+        position_count: positions.length,
+        positions_json: positions.length ? positions : null,
       }),
     }).catch((e) => { postError = String(e); });
     return postError ? { ok: false, error: postError } : { ok: true };
   } catch (e) {
-    // Non-critical when called from inside a research run — but the
-    // standalone /api/live-account/refresh-snapshot endpoint needs the real
-    // reason (e.g. execClaude/Claude Code CLI not present in this environment).
     return { ok: false, error: String(e) };
   }
 }
@@ -1156,9 +1144,10 @@ export async function processSymbol(
   const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus) + trendNote + memoryNote;
   const llmResult = await callLLM({
     task: "screen",
+    model: await getConfiguredModel(supabase, "research", "deepseek-reasoner"),
     prompt: thesisPrompt,
     symbol,
-    agentLabel: "screen",
+    agentLabel: "research",
     maxTokens: 512,
   });
 

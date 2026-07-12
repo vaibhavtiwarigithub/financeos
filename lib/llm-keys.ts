@@ -12,7 +12,7 @@
 
 import { createServiceClient } from "@/lib/supabase/service";
 
-export type LLMProvider = "anthropic" | "deepseek" | "groq";
+export type LLMProvider = "anthropic" | "deepseek" | "groq" | "gemini" | "grok";
 
 interface ProviderMeta { vaultKey: string; envVar: string; label: string }
 
@@ -20,16 +20,20 @@ export const LLM_PROVIDERS: Record<LLMProvider, ProviderMeta> = {
   anthropic: { vaultKey: "llm_key_anthropic", envVar: "ANTHROPIC_API_KEY", label: "Anthropic (Claude)" },
   deepseek:  { vaultKey: "llm_key_deepseek",  envVar: "DEEPSEEK_API_KEY",  label: "DeepSeek" },
   groq:      { vaultKey: "llm_key_groq",      envVar: "GROQ_API_KEY",      label: "Groq (Llama)" },
+  gemini:    { vaultKey: "llm_key_gemini",    envVar: "GEMINI_API_KEY",    label: "Google (Gemini)" },
+  grok:      { vaultKey: "llm_key_grok",      envVar: "XAI_API_KEY",       label: "xAI (Grok)" },
 };
 
 export function isLLMProvider(x: string): x is LLMProvider {
-  return x === "anthropic" || x === "deepseek" || x === "groq";
+  return x in LLM_PROVIDERS;
 }
 
 // Map a concrete model id to its provider (mirrors the router's dispatch rules).
 export function providerForModel(model: string): LLMProvider | null {
   if (model.startsWith("claude")) return "anthropic";
   if (model.startsWith("deepseek")) return "deepseek";
+  if (model.startsWith("gemini")) return "gemini";
+  if (model.startsWith("grok")) return "grok";
   if (/^(llama|mixtral|gemma|deepseek-r1-distill)/.test(model)) return "groq";
   return null;
 }

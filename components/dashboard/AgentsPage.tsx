@@ -1180,7 +1180,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                     >
                       <optgroup label="DeepSeek">
                         <option value="deepseek-chat">deepseek-chat (V3 — cheap)</option>
-                        <option value="deepseek-reasoner">deepseek-reasoner (R1 — slower)</option>
+                        <option value="deepseek-reasoner">deepseek-reasoner (R1 — thinking, slower)</option>
                       </optgroup>
                       <optgroup label="Groq (Free)">
                         <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
@@ -1190,6 +1190,14 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                       <optgroup label="Claude (Paid)">
                         <option value="claude-haiku-4-5">claude-haiku-4-5 (fast/cheap)</option>
                         <option value="claude-sonnet-4-6">claude-sonnet-4-6 (best)</option>
+                      </optgroup>
+                      <optgroup label="Google Gemini (Paid)">
+                        <option value="gemini-2.5-flash">gemini-2.5-flash (fast/cheap)</option>
+                        <option value="gemini-2.5-pro">gemini-2.5-pro (best)</option>
+                      </optgroup>
+                      <optgroup label="xAI Grok (Paid)">
+                        <option value="grok-4-fast">grok-4-fast (fast/cheap)</option>
+                        <option value="grok-4">grok-4 (best)</option>
                       </optgroup>
                     </select>
                     <div style={{ fontSize: "11px", color: T.muted, textAlign: "right" }}>

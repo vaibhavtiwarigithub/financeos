@@ -1,5 +1,5 @@
 # Kairos — Tech Stack
-> Last updated: 2026-07-10
+> Last updated: 2026-07-12 (per-flow LLM selection from Settings; default off Claude → DeepSeek reasoner; Gemini + Grok providers added; claude-exec.ts / PowerShell path deleted)
 > Update this file when: a new library is added, a provider changes, a new adapter is added, the framework is upgraded, or any layer in the table below changes.
 
 ---
@@ -35,30 +35,31 @@
 
 ## 3. AI / LLM
 
-| Model alias | Concrete model | Primary use |
+**Per-flow model selection (2026-07-12).** Every agent/flow's model is chosen from
+**Settings → Agents → LLM Config** (`agent_config` table), NOT hardcoded. Routes read
+`getConfiguredModel(svc, agentName, fallback)` (`lib/agent-model-config.ts`) and pass the
+result to `callLLM({ model })`. `MODEL_ROUTING` in `lib/llm-router.ts` is now only the
+DEFAULT when no model is passed. **Policy: default OFF Claude** — hard-reasoning flows
+(research/trade/evaluate/thesis) default to `deepseek-reasoner` (the thinking tier), cheap
+flows to `deepseek-chat`. Claude is opt-in per flow from Settings, never a silent default.
+
+Providers (each key set in Settings → Provider API Keys, vault-first / env-fallback):
+
+| Provider | Concrete models | Dispatch in llm-router |
 |---|---|---|
-| `fast` | Groq `llama-3.3-70b-versatile` | Research thesis + direction (512 tokens, sub-second) |
-| `reasoning` | DeepSeek `deepseek-reasoner` | LearnerAgent challenger proposals (legacy; superseded by Opus) |
-| `claude-fast` | Claude Haiku 4.5 | Triage agent, briefing editor's note |
-| `claude-smart` | Claude Sonnet 4.6 | Mentor coaching notes, complex analysis |
-| `claude-opus` | Claude Opus 4.8 | LearnerAgent brain (upgraded 2026-07-03) |
-| DeepSeek agent | `deepseek-chat` | Parallel screener run for P&L comparison |
+| DeepSeek | `deepseek-chat` (fast), `deepseek-reasoner` (thinking) | `callDeepSeek` |
+| Anthropic | `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-8` | `callClaude` (extended thinking auto-on for research/trade/evaluate/thesis) |
+| Groq | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, … | `callGroq` |
+| Google | `gemini-2.5-flash`, `gemini-2.5-pro` | `callGemini` (added 2026-07-12) |
+| xAI | `grok-4-fast`, `grok-4` | `callGrok` (added 2026-07-12) |
 
-LLM routing lives in `lib/llm-router.ts`. Tier aliases avoid hardcoded model names per
-agent — a deprecated model triggers a System Health alert and auto-resolves when reassigned.
-`SAME_TIER_FALLBACK` ensures a single unavailable model degrades gracefully rather than
-breaking the whole agent.
-
-### LLM tier → agent assignment
-
-| Agent | Tier used | Why |
-|---|---|---|
-| ResearchAgent thesis | `fast` (Groq) | 512 tokens, sub-second; scores are deterministic |
-| LearnerAgent brain | `claude-opus` | Best reasoning for weight proposals |
-| MentorAgent | `claude-smart` | Quality coaching notes |
-| Health-Triage | `claude-fast` | Cheap, frequent |
-| Briefing editor note | `claude-fast` | Cheap |
-| DeepSeekAgent | `deepseek-chat` | Explicit P&L comparison |
+Tier aliases (`TIER_MODELS`): `fast`→`deepseek-chat`, `reasoning`→`deepseek-reasoner`,
+`claude-fast`→Haiku, `claude-smart`→Sonnet. `LEGACY_ALIASES` transparently rewrites the
+never-valid `deepseek-v4-flash`/`v4-pro` ids to `deepseek-chat`/`deepseek-reasoner`.
+`SAME_TIER_FALLBACK` degrades a single unavailable model to a same-tier sibling (Gemini/Grok
+fall back to `deepseek-reasoner`) and raises a System Health alert. A missing Anthropic key
+falls back to `deepseek-chat`, not a crash. **No local Claude-CLI/PowerShell path exists
+anymore** — `lib/claude-exec.ts` was deleted 2026-07-12; all LLM + data fetches are HTTP.
 
 ### Adding / changing models
 

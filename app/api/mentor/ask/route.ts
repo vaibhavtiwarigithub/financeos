@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
+import { getConfiguredModel } from "@/lib/agent-model-config";
 
 export const dynamic = "force-dynamic";
 
@@ -116,6 +117,7 @@ If you don't have enough context to answer confidently, say so — don't fabrica
           task: "chat",
           prompt,
           agentLabel: "mentor-ask",
+          model: await getConfiguredModel(supabase, "mentor-ask", "deepseek-chat"),
           symbol: symbol ? String(symbol).toUpperCase() : undefined,
           maxTokens: 1500,
         });

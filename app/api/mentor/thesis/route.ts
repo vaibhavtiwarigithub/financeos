@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
+import { getConfiguredModel } from "@/lib/agent-model-config";
 import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
@@ -71,7 +72,7 @@ Keep it under 300 words. Plain English, no bullet points.`;
 
   try {
     // Production LLM path (was execClaude → PowerShell, which ENOENTs on Vercel).
-    const { text: thesis } = await callLLM({ task: "thesis", prompt, agentLabel: "mentor-thesis" });
+    const { text: thesis } = await callLLM({ task: "thesis", prompt, agentLabel: "mentor-thesis", model: await getConfiguredModel(supabase, "mentor-thesis", "deepseek-reasoner") });
     const now = new Date().toISOString();
 
     cache = { thesis, generatedAt: now, ts: Date.now() };

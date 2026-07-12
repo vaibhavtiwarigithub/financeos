@@ -14,14 +14,24 @@ export type LLMTask = "research" | "chat" | "summarize" | "trade" | "evaluate" |
 // callLLM/runAgentLoop resolve a tier alias to its concrete model, so a caller
 // (or an agent_config row) may store either a concrete id OR a tier name.
 export const TIER_MODELS: Record<string, string> = {
-  "fast":         "deepseek-v4-flash",
-  "reasoning":    "deepseek-v4-pro",
+  "fast":         "deepseek-chat",
+  "reasoning":    "deepseek-reasoner",
   "claude-fast":  "claude-haiku-4-5-20251001",
   "claude-smart": "claude-sonnet-4-6",
 }
 
+// Legacy model ids that must resolve to a still-valid concrete model. The
+// "deepseek-v4-flash/pro" ids were never valid DeepSeek API names — they return
+// empty content — so any stored agent_config row or hardcoded ref that still
+// carries them is transparently rewritten to the real API ids here. One place,
+// no data migration required for correctness.
+const LEGACY_ALIASES: Record<string, string> = {
+  "deepseek-v4-flash": "deepseek-chat",
+  "deepseek-v4-pro":   "deepseek-reasoner",
+}
+
 function resolveModel(model: string): string {
-  return TIER_MODELS[model] ?? model
+  return TIER_MODELS[model] ?? LEGACY_ALIASES[model] ?? model
 }
 
 // Same-tier sibling to fall back to when a model is deprecated/unavailable. The
@@ -29,13 +39,17 @@ function resolveModel(model: string): string {
 // "latest" — and is loudly, persistently flagged via the System Health funnel so
 // a human reviews the swap. Keeps the flow from hard-breaking on a rename.
 const SAME_TIER_FALLBACK: Record<string, string> = {
-  "deepseek-chat":             "deepseek-v4-flash",
-  "deepseek-reasoner":         "deepseek-v4-pro",
-  "deepseek-v4-flash":         "deepseek-v4-pro",
-  "deepseek-v4-pro":           "deepseek-v4-flash",
+  "deepseek-chat":             "deepseek-reasoner",
+  "deepseek-reasoner":         "deepseek-chat",
   "claude-sonnet-4-6":         "claude-haiku-4-5-20251001",
   "claude-haiku-4-5-20251001": "claude-sonnet-4-6",
   "claude-opus-4-8":           "claude-sonnet-4-6",
+  // Gemini / Grok fall back to the DeepSeek reasoner (always-configured tier)
+  // rather than hard-failing if their key is missing or the model is renamed.
+  "gemini-2.5-flash":          "deepseek-reasoner",
+  "gemini-2.5-pro":            "deepseek-reasoner",
+  "grok-4":                    "deepseek-reasoner",
+  "grok-4-fast":               "deepseek-chat",
 }
 
 // Does this error mean "the model doesn't exist / is deprecated" (vs a transient
@@ -76,16 +90,21 @@ export interface LLMResult {
   durationMs: number
 }
 
-// Routing table — Groq Llama free for quick screening, Claude for accuracy-critical
+// Routing table — DEFAULTS ONLY. Per-flow model comes from the agent_config
+// table (Settings → Agents → LLM Config) via getConfiguredModel and is passed as
+// opts.model, which overrides this. These defaults are the fallback when a caller
+// does NOT pass a model. Policy: default OFF Claude — hard-reasoning tasks use the
+// DeepSeek reasoner (the "thinking" tier), cheap tasks use deepseek-chat. Claude
+// is opt-in per flow from Settings, never a silent default.
 const MODEL_ROUTING: Record<LLMTask, string> = {
-  research:  "claude-sonnet-4-6",
-  trade:     "claude-sonnet-4-6",
-  evaluate:  "claude-sonnet-4-6",
-  thesis:    "claude-sonnet-4-6",
-  optimize:  "claude-haiku-4-5-20251001",
-  screen:    "deepseek-v4-flash",
-  chat:      "deepseek-v4-flash",
-  summarize: "deepseek-v4-flash",
+  research:  "deepseek-reasoner",
+  trade:     "deepseek-reasoner",
+  evaluate:  "deepseek-reasoner",
+  thesis:    "deepseek-reasoner",
+  optimize:  "deepseek-chat",
+  screen:    "deepseek-chat",
+  chat:      "deepseek-chat",
+  summarize: "deepseek-chat",
 }
 
 // Cost per 1M tokens [input, output] in USD (Groq free tier = $0)
@@ -102,6 +121,10 @@ const PRICING: Record<string, [number, number]> = {
   "deepseek-v4-flash":         [0.07,   0.28],
   "deepseek-v4-pro":           [0.55,   2.19],
   "gemini-2.5-flash":          [0.075,  0.30],
+  "gemini-2.5-pro":            [1.25,  10.00],
+  // xAI Grok — verify against x.ai pricing page; estimates below.
+  "grok-4":                    [3.00,  15.00],
+  "grok-4-fast":               [0.20,   0.50],
   "llama-3.3-70b-versatile":   [0,      0],
   "llama-3.1-8b-instant":      [0,      0],
   "mixtral-8x7b-32768":        [0,      0],
@@ -183,8 +206,10 @@ async function dispatchProvider(model: string, opts: LLMCallOpts): Promise<{ tex
     }
   }
   // Built-in dispatch
-  if (model.startsWith("claude")) return callClaude(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
+  if (model.startsWith("claude")) return callClaude(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.task)
   if (model.startsWith("deepseek")) return callDeepSeek(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
+  if (model.startsWith("gemini")) return callGemini(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
+  if (model.startsWith("grok")) return callGrok(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
   if (GROQ_MODELS.has(model)) return callGroq(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
   throw new Error(`Unknown model: ${model}`)
 }
@@ -230,7 +255,7 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
       } else if (isAuthMissing(err) && model.startsWith("claude")) {
         // Anthropic API key missing from env — fall back to DeepSeek so the run
         // doesn't hard-fail. Raises a persistent alert so the key gets re-added.
-        const deepseekFb = "deepseek-v4-flash"
+        const deepseekFb = "deepseek-chat"
         await reportIssue({
           issueKey: "anthropic-key-missing",
           severity: "critical", category: "models",
@@ -293,11 +318,17 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
   return { text, model, tokensIn, tokensOut, cacheWriteTokens, cacheReadTokens, costUsd, durationMs }
 }
 
+// Tasks that benefit from Anthropic extended thinking when a Claude model is
+// chosen. Reasoning-heavy work (research/trade/evaluate/thesis) gets a thinking
+// budget; cheap/conversational tasks stay non-thinking to save latency + cost.
+const THINKING_TASKS = new Set<LLMTask>(["research", "trade", "evaluate", "thesis"])
+
 async function callClaude(
   model: string,
   prompt: string,
   system?: string,
-  maxTokens = 4096
+  maxTokens = 4096,
+  task?: LLMTask
 ): Promise<{ text: string; tokensIn: number; tokensOut: number; cacheWriteTokens: number; cacheReadTokens: number }> {
   // Use Anthropic SDK directly (server-side, uses ANTHROPIC_API_KEY env).
   // System prompt is sent with cache_control: { type: "ephemeral" } so repeated calls
@@ -315,9 +346,15 @@ async function callClaude(
   const messages: { role: "user" | "assistant"; content: string }[] = [
     { role: "user", content: prompt },
   ]
+  // Extended thinking for reasoning tasks. budget must be < max_tokens, so bump
+  // max_tokens to leave room for the visible answer on top of the thinking budget.
+  const wantThinking = task != null && THINKING_TASKS.has(task)
+  const thinkingBudget = 2048
+  const effectiveMax = wantThinking ? Math.max(maxTokens, thinkingBudget + 1536) : maxTokens
   const resp = await client.messages.create({
     model,
-    max_tokens: maxTokens,
+    max_tokens: effectiveMax,
+    ...(wantThinking ? { thinking: { type: "enabled" as const, budget_tokens: thinkingBudget } } : {}),
     ...(system ? { system: [{ type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } }] } : {}),
     messages,
   })
@@ -410,6 +447,72 @@ async function callGroq(
     text: data.choices?.[0]?.message?.content ?? "",
     tokensIn: data.usage?.prompt_tokens ?? 0,
     tokensOut: data.usage?.completion_tokens ?? 0,
+  }
+}
+
+// xAI Grok — OpenAI-compatible Chat Completions at api.x.ai.
+async function callGrok(
+  model: string,
+  prompt: string,
+  system?: string,
+  maxTokens = 4096
+): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+  const apiKey = await getProviderKey("grok")
+  if (!apiKey) throw new Error("XAI_API_KEY not set")
+
+  const messages: { role: string; content: string }[] = []
+  if (system) messages.push({ role: "system", content: system })
+  messages.push({ role: "user", content: prompt })
+
+  const resp = await fetch("https://api.x.ai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
+    signal: AbortSignal.timeout(120_000),
+  })
+  if (!resp.ok) {
+    const errText = await resp.text()
+    throw new Error(`Grok ${resp.status}: ${errText.slice(0, 200)}`)
+  }
+  const data = await resp.json()
+  const text = data.choices?.[0]?.message?.content ?? ""
+  if (!text) throw new Error(`Grok model ${model} returned empty content (raw: ${JSON.stringify(data).slice(0, 200)})`)
+  return { text, tokensIn: data.usage?.prompt_tokens ?? 0, tokensOut: data.usage?.completion_tokens ?? 0 }
+}
+
+// Google Gemini — Generative Language API (different request/response shape).
+async function callGemini(
+  model: string,
+  prompt: string,
+  system?: string,
+  maxTokens = 4096
+): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+  const apiKey = await getProviderKey("gemini")
+  if (!apiKey) throw new Error("GEMINI_API_KEY not set")
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+  const body: Record<string, unknown> = {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { maxOutputTokens: maxTokens },
+    ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+  }
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
+  })
+  if (!resp.ok) {
+    const errText = await resp.text()
+    throw new Error(`Gemini ${resp.status}: ${errText.slice(0, 200)}`)
+  }
+  const data = await resp.json()
+  const text = (data.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? "").join("")
+  if (!text) throw new Error(`Gemini model ${model} returned empty content (raw: ${JSON.stringify(data).slice(0, 200)})`)
+  return {
+    text,
+    tokensIn: data.usageMetadata?.promptTokenCount ?? 0,
+    tokensOut: data.usageMetadata?.candidatesTokenCount ?? 0,
   }
 }
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
+import { getConfiguredModel } from "@/lib/agent-model-config";
 import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
@@ -128,13 +129,28 @@ export async function POST(req: NextRequest) {
   if (!symbol) return NextResponse.json({ error: "symbol required" }, { status: 400 });
   if (user_reasoning.length < 50) return NextResponse.json({ error: "reasoning too short (min 50 chars)" }, { status: 400 });
 
-  const prompt = EVAL_PROMPT(symbol, action, entry_type, user_reasoning);
+  const cfgSvc = createServiceClient();
+
+  // Ground the evaluation in our own system's latest view on the symbol.
+  const [{ data: pkt }, { data: sig }] = await Promise.all([
+    cfgSvc.from("research_packets").select("summary, key_risks, catalysts, fundamental_score, technical_score, sentiment_score, macro_score, created_at").eq("symbol", symbol).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    cfgSvc.from("agent_signals").select("direction, analyst_score, rationale, status, created_at").eq("symbol", symbol).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  let agentContext = "";
+  if (pkt || sig) {
+    agentContext = "\n\n=== OUR SYSTEM'S OWN VIEW ON " + symbol + " (for you to compare the user's thesis against) ===\n";
+    if (pkt) agentContext += `ResearchAgent: ${(pkt as any).summary ?? "n/a"} | risks: ${(pkt as any).key_risks ?? "n/a"} | scores fundamental:${(pkt as any).fundamental_score} technical:${(pkt as any).technical_score} sentiment:${(pkt as any).sentiment_score} macro:${(pkt as any).macro_score}\n`;
+    if (sig) agentContext += `Latest signal: ${(sig as any).direction?.toUpperCase()} score ${(sig as any).analyst_score} (${(sig as any).status}) — ${(sig as any).rationale ?? ""}\n`;
+    agentContext += "If the user's thesis contradicts or ignores this, say so explicitly in your evaluation.";
+  }
+
+  const prompt = EVAL_PROMPT(symbol, action, entry_type, user_reasoning) + agentContext;
 
   let raw: string;
   let tokenUsage = { input: 0, output: 0 };
   try {
     // Production LLM path (was execClaude → PowerShell, which ENOENTs on Vercel).
-    const res = await callLLM({ task: "evaluate", prompt, agentLabel: "mentor-evaluate", symbol, maxTokens: 2000 });
+    const res = await callLLM({ task: "evaluate", prompt, agentLabel: "mentor-evaluate", model: await getConfiguredModel(cfgSvc, "mentor-evaluate", "deepseek-reasoner"), symbol, maxTokens: 2000 });
     raw = res.text;
     tokenUsage = { input: res.tokensIn, output: res.tokensOut };
   } catch (e) {

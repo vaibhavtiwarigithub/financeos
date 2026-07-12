@@ -1,5 +1,6 @@
-import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchUsCandles } from "@/lib/data/candles";
+import { avCachedFetch } from "@/lib/av-cache";
 
 export interface Candle {
   date: string;
@@ -59,31 +60,23 @@ export async function fetchPriceHistory(symbol: string, days = 90): Promise<Cand
     // DB unavailable — fall through to subprocess
   }
 
-  // 3. Subprocess fallback (slow, ~90s cold start)
-  const prompt = `Use the TIME_SERIES_DAILY tool from Alpha Vantage to fetch daily price data for ${symbol}.
-
-After calling the tool, output ONLY a JSON object with this structure:
-{
-  "candles": [
-    { "date": "2026-01-15", "open": 123.4, "high": 125.0, "low": 122.0, "close": 124.5, "volume": 12345678 },
-    ...
-  ]
-}
-
-Rules:
-- Include the most recent ${days} trading days
-- Dates in YYYY-MM-DD format, sorted OLDEST first
-- All price/volume values must be numbers (not strings)
-- Output ONLY the JSON object, no markdown, no prose
-- If data is unavailable, output: {"candles": []}`;
-
+  // 3. Deterministic REST fallback (no subprocess). Massive → EODHD → Twelve
+  // Data → Alpha Vantage TIME_SERIES_DAILY, via the shared candle resolver.
   try {
-    const stdout = await execClaude(prompt, 90000);
-    const raw = parseClaudeOutput(stdout);
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("No JSON in response");
-    const parsed = JSON.parse(jsonMatch[0]);
-    const candles: Candle[] = Array.isArray(parsed.candles) ? parsed.candles : [];
+    const { candles: resolved } = await fetchUsCandles(
+      symbol,
+      () => fetchAvDailyCandles(symbol),
+      1, // accept any usable bars; charts render whatever the sources return
+    );
+    // Keep only the most recent `days` bars (resolver returns oldest-first).
+    const candles: Candle[] = resolved.slice(-days).map(c => ({
+      date: c.date,
+      open: Number(c.open),
+      high: Number(c.high),
+      low: Number(c.low),
+      close: Number(c.close),
+      volume: Number(c.volume),
+    }));
 
     // Write to DB so next request is fast
     if (candles.length > 0) {
@@ -95,6 +88,28 @@ Rules:
   } catch {
     return [];
   }
+}
+
+// Alpha Vantage TIME_SERIES_DAILY → Candle[] (oldest first). Day-cached via
+// av-cache; the final fallback tier behind Massive/EODHD/Twelve Data.
+async function fetchAvDailyCandles(symbol: string): Promise<Candle[]> {
+  const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
+  if (!avKey) return [];
+  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${encodeURIComponent(symbol)}&outputsize=full&apikey=${avKey}`;
+  const json = await avCachedFetch(`TIME_SERIES_DAILY:${symbol}`, url, 8000);
+  const series = json?.["Time Series (Daily)"];
+  if (!series || typeof series !== "object") return [];
+  return Object.entries(series)
+    .map(([date, v]: [string, any]) => ({
+      date,
+      open: parseFloat(v["1. open"]),
+      high: parseFloat(v["2. high"]),
+      low: parseFloat(v["3. low"]),
+      close: parseFloat(v["4. close"]),
+      volume: parseFloat(v["5. volume"] ?? "0"),
+    }))
+    .filter(c => Number.isFinite(c.close) && c.close > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 // Write candles to Supabase price_cache (upsert)
@@ -115,35 +130,24 @@ async function writePriceCacheRows(symbol: string, candles: Candle[]): Promise<v
   }
 }
 
-// Pre-warm price_cache for a list of symbols using a single Robinhood historicals call.
-// Called at end of daily cron — populates DB so all chart requests are instant for the day.
-export async function prewarmPriceCache(symbols: string[], supabase: any): Promise<{ ok: number; failed: number }> {
-  const prompt = `Call get_equity_historicals with symbols [${symbols.map(s => `"${s}"`).join(", ")}], interval "day", span "year".
-
-Return ONLY a JSON object (no markdown, no prose):
-{
-  "symbols": {
-    "AAPL": [{"date":"2026-01-01","open":1,"high":1,"low":1,"close":1,"volume":1}, ...],
-    "NVDA": [...]
-  }
-}
-
-Include up to 90 trading days per symbol, sorted OLDEST first. All values numbers.`;
-
-  try {
-    const stdout = await execClaude(prompt, 180000);
-    const raw = parseClaudeOutput(stdout);
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { ok: 0, failed: symbols.length };
-
-    const parsed = JSON.parse(jsonMatch[0]);
-    const symbolsData: Record<string, any[]> = parsed.symbols ?? {};
-
-    let ok = 0;
-    for (const [sym, candles] of Object.entries(symbolsData)) {
-      if (!Array.isArray(candles) || candles.length === 0) continue;
+// Pre-warm price_cache for a list of symbols via deterministic REST candles.
+// Called at end of daily cron — populates DB so all chart requests are instant
+// for the day. Fetches per-symbol through the shared candle resolver
+// (Massive → EODHD → Twelve Data → Alpha Vantage), no subprocess/LLM.
+export async function prewarmPriceCache(symbols: string[], _supabase: any): Promise<{ ok: number; failed: number }> {
+  let ok = 0;
+  // Modest concurrency so a large watchlist doesn't burst provider budgets.
+  for (let i = 0; i < symbols.length; i += 4) {
+    const batch = symbols.slice(i, i + 4);
+    await Promise.all(batch.map(async (sym) => {
       try {
-        await writePriceCacheRows(sym, candles.map(c => ({
+        const { candles: resolved } = await fetchUsCandles(
+          sym,
+          () => fetchAvDailyCandles(sym),
+          1,
+        );
+        if (resolved.length === 0) return;
+        await writePriceCacheRows(sym, resolved.map(c => ({
           date: c.date,
           open: Number(c.open) || 0,
           high: Number(c.high) || 0,
@@ -157,12 +161,10 @@ Include up to 90 trading days per symbol, sorted OLDEST first. All values number
         }
         ok++;
       } catch { /* non-critical */ }
-    }
-
-    return { ok, failed: symbols.length - ok };
-  } catch {
-    return { ok: 0, failed: symbols.length };
+    }));
   }
+
+  return { ok, failed: symbols.length - ok };
 }
 
 // Normalize candles to % return from first close

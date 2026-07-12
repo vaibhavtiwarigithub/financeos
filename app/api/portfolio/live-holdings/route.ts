@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
+import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 
 export const dynamic = "force-dynamic";
 
@@ -19,30 +19,25 @@ export async function GET() {
 
   const TRADING_ACCOUNT = process.env.TRADING_ACCOUNT_NUMBER ?? "965848641";
 
-  const prompt = `Call the Robinhood MCP tool get_equity_positions with account_number: "${TRADING_ACCOUNT}"
-
-From the response, for each position extract:
-- symbol (string ticker)
-- qty (number of shares, use quantity field)
-- avg_cost (average cost per share, use average_buy_price field, convert to number)
-- current_price (use last_trade_price or last_extended_hours_trade_price, convert to number)
-- name (instrument name or symbol if name unavailable)
-
-Return ONLY a JSON array (no markdown, no explanation):
-[
-  {"symbol":"AAPL","qty":10,"avg_cost":175.50,"current_price":183.20,"name":"Apple Inc."},
-  ...
-]
-
-If the tool fails or returns no positions, return: []`;
-
   try {
-    const stdout = await execClaude(prompt, 90000);
-    const text = parseClaudeOutput(stdout);
-    const match = text.match(/\[[\s\S]*\]/);
-    if (!match) return NextResponse.json({ positions: [], stale: true });
-    const positions = JSON.parse(match[0]);
-    if (!Array.isArray(positions)) return NextResponse.json({ positions: [], stale: true });
+    // Deterministic read-only snapshot via Robinhood MCP JSON-RPC (no subprocess).
+    const accounts = await captureAllRobinhoodAccounts();
+    const acct = accounts.find(a => a.accountId === TRADING_ACCOUNT);
+
+    // Account missing or the capture failed for it → keep prior cache if any.
+    if (!acct || acct.error) {
+      if (cache) return NextResponse.json({ positions: cache.data, cached: true, stale: true });
+      return NextResponse.json({ positions: [], stale: true });
+    }
+
+    const positions = acct.holdings.map(h => ({
+      symbol: h.symbol,
+      qty: h.qty,
+      avg_cost: h.costBasis != null && h.qty > 0 ? h.costBasis / h.qty : 0,
+      current_price: h.currentPrice,
+      name: h.symbol, // BrokerHolding carries no instrument name; ticker is the label
+    }));
+
     cache = { data: positions, ts: Date.now() };
     return NextResponse.json({ positions, cached: false });
   } catch {

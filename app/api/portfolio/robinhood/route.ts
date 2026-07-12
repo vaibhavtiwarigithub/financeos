@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { execClaude, parseClaudeOutput } from "@/lib/claude-exec";
+import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 
 export const dynamic = "force-dynamic";
+
+// The agentic trading account (the ONLY account permitted for order placement).
+const AGENTIC_ACCOUNT = "605420660";
 
 let cache: { data: any; ts: number } | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   try {
     const userClient = await createClient();
     const { data: { user } } = await userClient.auth.getUser();
@@ -17,32 +20,41 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(cache.data);
     }
 
-    const prompt = `Use the Robinhood MCP tools to read the agentic trading account portfolio.
-Call get_portfolio and get_equity_positions.
-Output ONLY a JSON object:
-{
-  "equity": 0.00,
-  "buying_power": 0.00,
-  "total_return_pct": 0.00,
-  "positions": [
-    { "symbol": "AAPL", "qty": 5, "avg_cost": 180.00, "current_price": 195.00, "pnl": 75.00, "pnl_pct": 8.33 }
-  ]
-}
-If Robinhood is not authenticated, output: {"error": "auth_required", "positions": []}`;
+    // Deterministic read-only snapshot via Robinhood MCP JSON-RPC (no subprocess).
+    const accounts = await captureAllRobinhoodAccounts();
+    const acct = accounts.find(a => a.accountId === AGENTIC_ACCOUNT);
 
-    const stdout = await execClaude(prompt, 45000);
-    const raw = parseClaudeOutput(stdout);
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-
-    if (!jsonMatch) {
+    // Not connected / capture failed for this account → auth_required (unchanged shape).
+    if (!acct || acct.error) {
       return NextResponse.json({ error: "auth_required", positions: [], equity: 0, buying_power: 0 });
     }
 
-    const data = JSON.parse(jsonMatch[0]);
-    if (!data.error) {
-      cache = { data, ts: Date.now() };
-    }
+    const positions = acct.holdings.map(h => {
+      const costBasis = h.costBasis ?? 0;
+      const pnl = h.unrealizedPnl ?? (h.marketValue - costBasis);
+      return {
+        symbol: h.symbol,
+        qty: h.qty,
+        avg_cost: costBasis > 0 && h.qty > 0 ? costBasis / h.qty : 0,
+        current_price: h.currentPrice,
+        pnl,
+        pnl_pct: h.unrealizedPnlPct ?? (costBasis > 0 ? (pnl / costBasis) * 100 : 0),
+      };
+    });
 
+    // Account-level return from aggregate cost basis vs. market value.
+    const totalCost = acct.holdings.reduce((s, h) => s + (h.costBasis ?? 0), 0);
+    const totalMktVal = acct.holdings.reduce((s, h) => s + h.marketValue, 0);
+    const total_return_pct = totalCost > 0 ? ((totalMktVal - totalCost) / totalCost) * 100 : 0;
+
+    const data = {
+      equity: acct.totalValue,
+      buying_power: acct.buyingPower ?? acct.cashBalance ?? 0,
+      total_return_pct,
+      positions,
+    };
+
+    cache = { data, ts: Date.now() };
     return NextResponse.json(data);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
