@@ -307,7 +307,7 @@ function SmartMoneyTab() {
   }, [market]);
 
   if (loading || !data) return <div style={{ color: TM.muted, padding: "40px", textAlign: "center" }}>Loading smart money…</div>;
-  return <SmartMoneyPage signals={data.signals} tradeQueue={data.tradeQueue} highInsider={data.highInsider} market={market} />;
+  return <SmartMoneyPage signals={data.signals} tradeQueue={data.tradeQueue} highInsider={data.highInsider} market={market} embedded />;
 }
 
 const TAB_LABELS: Record<string, string> = {

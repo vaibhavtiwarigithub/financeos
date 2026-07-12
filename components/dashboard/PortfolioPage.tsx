@@ -3,7 +3,7 @@ import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket } from "@/lib/market-context";
-const BenchmarkChart = lazy(() => import("@/components/charts/BenchmarkChart"));
+const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
@@ -55,53 +55,6 @@ function SemiGauge({
         <text x={SEMI_CX} y={SEMI_CY - 6} textAnchor="middle" fill={value !== null ? color : T.muted}
           fontSize="22" fontWeight="700" fontFamily="Inter, sans-serif">
           {value !== null ? Math.round(value) + "%" : "—"}
-        </text>
-      </svg>
-      <div style={{ fontSize: "10px", fontWeight: 600, color: T.textSub, textTransform: "uppercase", letterSpacing: "0.09em" }}>{label}</div>
-      {sublabel && <div style={{ fontSize: "10px", color: T.muted }}>{sublabel}</div>}
-    </div>
-  );
-}
-
-/** Needle gauge — alpha centred at 0, range ±maxVal */
-function NeedleGauge({
-  value, maxVal, label, sublabel, loading,
-}: { value: number; maxVal: number; label: string; sublabel?: string; loading?: boolean }) {
-  const cx = SEMI_CX, cy = SEMI_CY;
-  const r = SEMI_R;
-  const needleR = r - 10;
-  const track = semiArcPath(cx, cy, r);
-  // angle: 0=up(270°svg), +max=right(0°svg), -max=left(180°svg)
-  const clamped = Math.max(-maxVal, Math.min(maxVal, value));
-  const angleDeg = (clamped / maxVal) * 90; // -90..+90
-  const svgAngleRad = ((270 - angleDeg) * Math.PI) / 180;
-  const nx = cx + needleR * Math.cos(svgAngleRad);
-  const ny = cy + needleR * Math.sin(svgAngleRad);
-  const color = value >= 0 ? T.green : T.red;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px" }}>
-      <svg viewBox="0 0 144 84" style={{ width: "144px", height: "84px", overflow: "visible" }}>
-        {/* Track base */}
-        <path d={track} fill="none" stroke={T.border} strokeWidth="10" strokeLinecap="round" />
-        {/* Left half negative zone */}
-        <path d={track} fill="none" stroke="#3B0000" strokeWidth="10"
-          strokeDasharray={`${SEMI_CIRC / 2} ${SEMI_CIRC}`} strokeLinecap="butt" />
-        {/* Right half positive zone */}
-        <path d={track} fill="none" stroke="#052E16" strokeWidth="10"
-          strokeDasharray={`0 ${SEMI_CIRC / 2} ${SEMI_CIRC / 2} 0`} strokeLinecap="butt" />
-        {/* Centre tick */}
-        <line x1={cx} y1={cy - r + 12} x2={cx} y2={cy - r + 4} stroke={T.muted} strokeWidth="2" />
-        {/* Needle */}
-        {!loading && (
-          <>
-            <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={color} strokeWidth="2.5" strokeLinecap="round" />
-            <circle cx={cx} cy={cy} r="4" fill={color} />
-          </>
-        )}
-        {/* Value */}
-        <text x={cx} y={cy - 8} textAnchor="middle" fill={loading ? T.muted : color}
-          fontSize="17" fontWeight="700" fontFamily="Inter, sans-serif">
-          {loading ? "…" : (value >= 0 ? "+" : "") + value.toFixed(1) + "%"}
         </text>
       </svg>
       <div style={{ fontSize: "10px", fontWeight: 600, color: T.textSub, textTransform: "uppercase", letterSpacing: "0.09em" }}>{label}</div>
@@ -187,25 +140,17 @@ function NavSparkline({ perf, cur = "$" }: { perf: any[]; cur?: string }) {
 
 /** Rich gauge+stats header row */
 function PortfolioHeader({
-  nav, cash, totalPnl, totalPnlPct, posValue, positions, winRate, wins, closedTrades, vooReturn, perf, cur = "$", startingNAV = 10000,
+  nav, cash, totalPnl, totalPnlPct, posValue, positions, winRate, wins, closedTrades, perf, cur = "$", startingNAV = 10000,
 }: {
   nav: number; cash: number; totalPnl: number; totalPnlPct: number; posValue: number;
   positions: any[]; winRate: number | null; wins: number; closedTrades: any[];
-  vooReturn: { pct: number | null; loading: boolean }; perf: any[]; cur?: string; startingNAV?: number;
+  perf: any[]; cur?: string; startingNAV?: number;
 }) {
   const cashPct = (cash / nav) * 100;
   const wr = winRate ?? 0;
   const wrColor = winRate !== null ? (wr >= 60 ? T.green : wr >= 40 ? T.amber : T.red) : T.muted;
-  // Market-aware benchmark: US = VOO, India = NIFTY 50. Prefer the stored
-  // bench_return_pct from the paper_performance series (correct per market);
-  // fall back to the client VOO fetch for US before any bench row exists.
-  const isIndia = cur === "₹";
-  const benchLabel = isIndia ? "NIFTY 50" : "VOO";
-  const benchRows = (perf ?? []).filter((r: any) => r?.bench_return_pct != null);
-  const benchPct: number | null = benchRows.length
-    ? Number(benchRows[benchRows.length - 1].bench_return_pct)
-    : (!isIndia ? vooReturn.pct : null);
-  const alpha = benchPct !== null ? totalPnlPct - benchPct : 0;
+  // Benchmark comparison now lives in the multi-timeframe BenchmarkPerformanceChart
+  // below (Portfolio % return vs VOO / NIFTY 50, rebased per timeframe).
 
   return (
     <>
@@ -226,14 +171,6 @@ function PortfolioHeader({
             label="Win Rate"
             sublabel={winRate !== null ? `${wins}W / ${closedTrades.length - wins}L` : "no closed trades"}
             color={wrColor}
-          />
-          <div style={{ width: "1px", height: "80px", background: T.border }} />
-          <NeedleGauge
-            value={benchPct !== null ? alpha : 0}
-            maxVal={20}
-            label={`Alpha vs ${benchLabel}`}
-            sublabel={benchPct !== null ? `${benchLabel} ${benchPct >= 0 ? "+" : ""}${benchPct.toFixed(1)}%` : (isIndia ? "no benchmark yet" : "loading…")}
-            loading={!isIndia && benchPct === null && vooReturn.loading}
           />
           <div style={{ width: "1px", height: "80px", background: T.border }} />
           <CashDonut cashPct={Math.max(0, Math.min(100, cashPct))} />
@@ -732,7 +669,6 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
   const router = useRouter();
   const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue">("positions");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
-  const [vooReturn, setVooReturn] = useState<{ pct: number | null; loading: boolean }>({ pct: null, loading: true });
 
   // Phase 4: market-scoped pools. Each pool holds funds in its own currency
   // (US=USD, India=INR) — NEVER blend a $ value with a ₹ value. Pre-057 rows
@@ -760,22 +696,6 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
   // Trade queue is Robinhood-US only (no market column). Under the India view we
   // show a "US only" note instead of leaking US rows; under US it renders as before.
   const tradeQueue = activeMarket === "india" ? [] : (allTradeQueue ?? []);
-
-  useEffect(() => {
-    fetch("/api/charts/price-history?symbol=VOO&days=90")
-      .then(r => r.json())
-      .then(d => {
-        const candles = d.candles ?? [];
-        if (candles.length >= 2) {
-          const start = candles[0].close;
-          const end = candles[candles.length - 1].close;
-          setVooReturn({ pct: ((end - start) / start) * 100, loading: false });
-        } else {
-          setVooReturn({ pct: null, loading: false });
-        }
-      })
-      .catch(() => setVooReturn({ pct: null, loading: false }));
-  }, []);
 
   // Starting NAV differs per market: US pool = $10k, India ₹ pool = ₹1,000,000.
   const startingNAV = activeMarket === "india" ? 1000000 : 10000;
@@ -825,7 +745,6 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
         winRate={winRate}
         wins={wins}
         closedTrades={closedTrades}
-        vooReturn={vooReturn}
         perf={perf}
         cur={cur}
         startingNAV={startingNAV}
@@ -834,7 +753,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
       {/* Charts row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px,1fr))", gap: "16px", marginBottom: "20px" }}>
         <Suspense fallback={<div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", height: "280px", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: "13px" }}>Loading chart…</div>}>
-          <BenchmarkChart perfRows={perf} market={activeMarket} />
+          <BenchmarkPerformanceChart market={activeMarket} />
         </Suspense>
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <Suspense fallback={null}>

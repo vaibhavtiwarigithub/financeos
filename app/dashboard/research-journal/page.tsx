@@ -209,7 +209,7 @@ export default function ResearchJournalPage() {
             </button>
           ))}
         </div>
-        {tab === "funnel" ? <ResearchFunnel /> : tab === "evolution" ? <EvolutionTab /> : <ScoreTrackerPanel />}
+        {tab === "funnel" ? <ResearchFunnel /> : tab === "evolution" ? <EvolutionTab /> : <ScoreTrackerPanel embedded />}
       </div>
     </div>
   );

@@ -156,7 +156,7 @@ function fmtNext(d: Date | null): string {
   return `${d.toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit" })} · ${rel}`;
 }
 
-export default function AutomationPanel() {
+export default function AutomationPanel({ embedded }: { embedded?: boolean } = {}) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -195,17 +195,19 @@ export default function AutomationPanel() {
 
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif", minHeight: "100vh", background: T.bg }}>
-      <PageHeader
-        title="Automation"
-        subtitle={`${jobs.length} scheduled jobs · Supabase pg_cron → Vercel`}
-        whatItDoes="Every scheduled job in Kairos — what runs, when, where it runs, and what it feeds next. Jobs run in the CLOUD as Supabase pg_cron jobs (kairos-*) that POST to the Vercel deployment, so they fire even when your PC is off. This page mirrors that live pg_cron state from lib/schedule.ts."
-        whatToLookFor={[
-          "Next run — when each job fires next (computed from its schedule in your local time)",
-          "Last run — the most recent agent_runs record for jobs that log one; briefs/reminders don't log runs",
-          "Runner — jobs run in the cloud (Supabase pg_cron → Vercel) and survive your PC being off; only db-backup is local Windows Task Scheduler",
-          "Expand a row to see the handoff — what the job feeds next in the pipeline",
-        ]}
-      />
+      {!embedded && (
+        <PageHeader
+          title="Automation"
+          subtitle={`${jobs.length} scheduled jobs · Supabase pg_cron → Vercel`}
+          whatItDoes="Every scheduled job in Kairos — what runs, when, where it runs, and what it feeds next. Jobs run in the CLOUD as Supabase pg_cron jobs (kairos-*) that POST to the Vercel deployment, so they fire even when your PC is off. This page mirrors that live pg_cron state from lib/schedule.ts."
+          whatToLookFor={[
+            "Next run — when each job fires next (computed from its schedule in your local time)",
+            "Last run — the most recent agent_runs record for jobs that log one; briefs/reminders don't log runs",
+            "Runner — jobs run in the cloud (Supabase pg_cron → Vercel) and survive your PC being off; only db-backup is local Windows Task Scheduler",
+            "Expand a row to see the handoff — what the job feeds next in the pipeline",
+          ]}
+        />
+      )}
 
       <div style={{ padding: "16px", maxWidth: "1080px" }}>
         {/* Read-only banner */}

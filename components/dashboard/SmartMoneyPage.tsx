@@ -50,8 +50,8 @@ function IndiaUnavailable({ what }: { what: string }) {
   );
 }
 
-export default function SmartMoneyPage({ signals, tradeQueue, highInsider, market = "us" }: {
-  signals: any[]; tradeQueue: any[]; highInsider: any[]; market?: "us" | "india";
+export default function SmartMoneyPage({ signals, tradeQueue, highInsider, market = "us", embedded }: {
+  signals: any[]; tradeQueue: any[]; highInsider: any[]; market?: "us" | "india"; embedded?: boolean;
 }) {
   const isIndia = market === "india";
   const router = useRouter();
@@ -215,18 +215,20 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
 
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
-      <PageHeader
-        title="Smart Money"
-        subtitle="Trade queue · insider flow · multi-asset signals"
-        cadence="as-needed"
-        whatItDoes="Consolidates agent trade proposals for approval, insider transaction signals, and signal breakdown by asset class (US equity, ETFs, metals)."
-        whatToLookFor={[
-          "Pending trade queue shows AI proposals awaiting your approval — review rationale before approving.",
-          "Insider flow highlights symbols where agent scored insider_score ≥ 55 recently.",
-          "Asset class breakdown shows how signals distribute across equities, ETFs, and metals.",
-        ]}
-        actions={[]}
-      />
+      {!embedded && (
+        <PageHeader
+          title="Smart Money"
+          subtitle="Trade queue · insider flow · multi-asset signals"
+          cadence="as-needed"
+          whatItDoes="Consolidates agent trade proposals for approval, insider transaction signals, and signal breakdown by asset class (US equity, ETFs, metals)."
+          whatToLookFor={[
+            "Pending trade queue shows AI proposals awaiting your approval — review rationale before approving.",
+            "Insider flow highlights symbols where agent scored insider_score ≥ 55 recently.",
+            "Asset class breakdown shows how signals distribute across equities, ETFs, and metals.",
+          ]}
+          actions={[]}
+        />
+      )}
 
       <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 32px" }}>
 

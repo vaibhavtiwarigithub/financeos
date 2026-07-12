@@ -262,7 +262,7 @@ function DeltaText({ delta, size = 12 }: { delta: number; size?: number }) {
   return <span style={{ color, fontSize: size, fontWeight: 600 }}>{(delta > 0 ? "+" : "") + delta}</span>;
 }
 
-export default function ScoreTrackerPanel() {
+export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) {
   const { market } = useMarket();
   const [allSymbols, setAllSymbols] = useState<string[]>([]);
   const [selectedSymbols, setSelectedSymbols] = useState<string[]>([]);
@@ -496,18 +496,20 @@ export default function ScoreTrackerPanel() {
 
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif", minHeight: "100vh", background: T.bg }}>
-      <PageHeader
-        title="Score Tracker"
-        subtitle="AI conviction score over time — per stock, with drill-down"
-        cadence="daily"
-        whatItDoes="Plots the ResearchAgent's analyst_score (0-100) for each tracked symbol over time. Each research run writes one point per symbol; click a point to see what moved the score."
-        whatToLookFor={[
-          "A score crossing 60 = signal-worthy conviction",
-          "Click a point to see the per-dimension breakdown and biggest driver",
-          "A ⚡ tag means the champion strategy changed just before that point",
-          "Read the rationale to understand the thesis behind each score",
-        ]}
-      />
+      {!embedded && (
+        <PageHeader
+          title="Score Tracker"
+          subtitle="AI conviction score over time — per stock, with drill-down"
+          cadence="daily"
+          whatItDoes="Plots the ResearchAgent's analyst_score (0-100) for each tracked symbol over time. Each research run writes one point per symbol; click a point to see what moved the score."
+          whatToLookFor={[
+            "A score crossing 60 = signal-worthy conviction",
+            "Click a point to see the per-dimension breakdown and biggest driver",
+            "A ⚡ tag means the champion strategy changed just before that point",
+            "Read the rationale to understand the thesis behind each score",
+          ]}
+        />
+      )}
 
       <div style={{ padding: "16px clamp(12px,4vw,28px) 40px", maxWidth: "1400px" }}>
 

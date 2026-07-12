@@ -10,7 +10,8 @@ import { isIndia, fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data
 import { niftyCandidates } from "@/lib/india-universe";
 import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
-import { computeWeightedAnalystScore, isThinEvidence, SCORE_DIMENSIONS, type DimensionRecord } from "@/lib/scoring/weighted-score";
+import { computeWeightedAnalystScore, isThinEvidence, SCORE_DIMENSIONS, type ScoreDimension, type DimensionRecord } from "@/lib/scoring/weighted-score";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
@@ -914,6 +915,87 @@ function parseThesisJson(raw: string): { direction?: string; summary?: string; k
   return {};
 }
 
+// ── Run-level evidence-quality health (System Health "data" category) ─────────
+// Budget/cron/model faults are reported elsewhere; this covers the QUALITY case:
+// the pipeline RAN fine but scored symbols on thin/insufficient evidence (most
+// evidence dimensions missing), so the run's signals are low-confidence. There
+// is no single "run finished" hook inside this module — the batch loop lives in
+// the API routes — so we accumulate per-symbol availability into a module-level
+// tally keyed by market and (idempotently) report the running verdict as the run
+// progresses. reportIssue refreshes the single open alert in place, so the tally
+// after the LAST symbol is what rests. A >10-min idle gap since the previous
+// symbol is treated as a NEW run and resets the tally (research symbols are
+// processed back-to-back within one run; runs are hours apart), so counts never
+// bleed across runs/days.
+type EvidenceTally = {
+  scored: number;                          // symbols scored this run
+  thin: number;                            // scored on < MIN_USABLE_DIMS dimensions
+  missingInThin: DimensionRecord<number>;  // among thin symbols, how often each dim was unavailable
+  lastTouched: number;                     // epoch ms of the last symbol recorded
+  lastReportedThin: boolean | null;        // last verdict pushed to System Health (dedupes writes)
+};
+const RUN_EVIDENCE = new Map<string, EvidenceTally>();
+const EVIDENCE_RUN_GAP_MS = 10 * 60_000;   // idle gap that starts a fresh tally
+const MIN_USABLE_DIMS = 2;                 // fewer usable dims than this ⇒ insufficient evidence
+const THIN_RUN_FRACTION = 0.5;             // ≥50% of scored symbols thin ⇒ flag
+const THIN_RUN_MIN_SYMBOLS = 2;            // …and at least this many thin symbols
+
+// Record one symbol's evidence availability and (idempotently) surface a
+// low-confidence alert when a meaningful fraction of the run was scored on thin
+// data. Never throws — a health-reporting failure must not break a research run.
+async function recordRunEvidence(market: string, includedDims: ScoreDimension[], client: any): Promise<void> {
+  try {
+    const now = Date.now();
+    let acc = RUN_EVIDENCE.get(market);
+    if (!acc || now - acc.lastTouched > EVIDENCE_RUN_GAP_MS) {
+      acc = {
+        scored: 0, thin: 0,
+        missingInThin: { fundamental: 0, technical: 0, sentiment: 0, macro: 0, insider: 0 },
+        lastTouched: now, lastReportedThin: null,
+      };
+      RUN_EVIDENCE.set(market, acc);
+    }
+    acc.lastTouched = now;
+    acc.scored += 1;
+    if (includedDims.length < MIN_USABLE_DIMS) {
+      acc.thin += 1;
+      for (const d of SCORE_DIMENSIONS) if (!includedDims.includes(d)) acc.missingInThin[d] += 1;
+    }
+
+    const issueKey = `low-confidence-research:${market}`;
+    const unhealthy = acc.thin >= THIN_RUN_MIN_SYMBOLS && acc.thin / acc.scored >= THIN_RUN_FRACTION;
+
+    if (unhealthy) {
+      const MKT = market.toUpperCase();
+      const missing = SCORE_DIMENSIONS
+        .filter(d => acc!.missingInThin[d] > 0)
+        .sort((a, b) => acc!.missingInThin[b] - acc!.missingInThin[a]);
+      const missingStr = missing.length
+        ? missing.map(d => `${d} (missing in ${acc!.missingInThin[d]}/${acc!.thin})`).join(", ")
+        : "multiple dimensions";
+      const hint = market === "india"
+        ? "Check the India data source (Yahoo/Kite fundamentals + candles) and Alpha Vantage budget."
+        : "Check the data providers (Alpha Vantage budget/rate limit, FinancialDatasets, sentiment source).";
+      await reportIssue({
+        issueKey,
+        severity: "warn",
+        category: "data",
+        title: `Low-confidence research (${MKT}) — ${acc.thin}/${acc.scored} symbols scored on thin data`,
+        detail:
+          `${acc.thin} of ${acc.scored} ${MKT} symbols this run were scored on fewer than ${MIN_USABLE_DIMS} of 5 ` +
+          `evidence dimensions (fundamental/technical/sentiment/macro/insider), so this run's signals are lower ` +
+          `confidence. Most-often-missing among thin symbols: ${missingStr}. ${hint}`,
+        autoExpireAt: new Date(new Date().setUTCHours(24, 0, 0, 0)).toISOString(),
+      }, client).catch(() => {});
+      acc.lastReportedThin = true;
+    } else if (acc.lastReportedThin !== false) {
+      // Healthy run (or recovered mid-run) — clear any open alert once.
+      await resolveIssue(issueKey, client).catch(() => {});
+      acc.lastReportedThin = false;
+    }
+  } catch { /* health reporting must never break a research run */ }
+}
+
 // Process a single symbol: research → write research_packet + agent_signal
 // Phase 0: all 5 scores computed deterministically. LLM writes thesis+direction only.
 // P1: universeSnapshotId links this symbol's decision_observations row to the run's
@@ -1089,6 +1171,11 @@ export async function processSymbol(
   };
   const { score: analystScore, effWeights, renormalized, includedDims } = computeWeightedAnalystScore(scoreOf, included, weightOf);
   const thinEvidence = isThinEvidence(includedDims);
+
+  // System Health (data category): accumulate this symbol's evidence
+  // availability into the run tally and surface a low-confidence alert if a
+  // meaningful fraction of the run was scored on thin data. Fail-soft.
+  await recordRunEvidence(market, includedDims, supabase);
 
   // Build 1 (genome as live control): the promoted champion's genome sets the
   // entry threshold when present, falling back to strategy_config exactly as

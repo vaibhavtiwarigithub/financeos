@@ -1501,7 +1501,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
 
       {/* History tab */}
       {tab === "history" && (
-        <AgentHistoryPanel />
+        <AgentHistoryPanel embedded />
       )}
 
       {/* Agent & Flow Architecture Section */}

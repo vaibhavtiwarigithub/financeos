@@ -14,7 +14,11 @@ interface UserRow {
   xp: number; analysis_count: number; created_at: string;
 }
 
-export default function AdminPanel() {
+// AdminPanel renders no <PageHeader> (it uses a small inline "Admin Dashboard"
+// title), so there is no double-PageHeader stacking to suppress. The `embedded`
+// prop is accepted for API parity with the other tab panels and so the Settings
+// container can pass it uniformly.
+export default function AdminPanel({ embedded: _embedded }: { embedded?: boolean } = {}) {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [stats, setStats] = useState<{ totalUsers: number; proUsers: number; eliteUsers: number; totalCost: number } | null>(null);
   const [loading, setLoading] = useState(true);

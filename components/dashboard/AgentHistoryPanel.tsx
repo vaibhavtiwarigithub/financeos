@@ -28,7 +28,7 @@ interface Run {
   handoff: string | null; cost_usd: number | null; llm_calls: number; duration_ms: number | null;
 }
 
-export default function AgentHistoryPanel() {
+export default function AgentHistoryPanel({ embedded }: { embedded?: boolean } = {}) {
   const { market } = useMarket();
   const [runs, setRuns] = useState<Run[]>([]);
   const [byAgent, setByAgent] = useState<Record<string, Run[]>>({});
@@ -69,17 +69,19 @@ export default function AgentHistoryPanel() {
 
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif", minHeight: "100vh", background: T.bg }}>
-      <PageHeader
-        title="Agent History"
-        subtitle={`${runs.length} runs · ${range}`}
-        whatItDoes="Every agent run — what it did, its result, what it handed off to the next agent, how many LLM calls it made, tokens, cost, and duration. Manual vs scheduled runs are tagged."
-        whatToLookFor={[
-          "Failed runs (red status) — check the error and the handoff that didn't happen",
-          "Cost per run — the learner/deep-dive are the priciest; research/screener are cheap or free",
-          "Manual vs scheduled — a burst of manual runs is you testing; scheduled are the crons",
-          "The handoff line shows the pipeline: research → trader → monitor → learner",
-        ]}
-      />
+      {!embedded && (
+        <PageHeader
+          title="Agent History"
+          subtitle={`${runs.length} runs · ${range}`}
+          whatItDoes="Every agent run — what it did, its result, what it handed off to the next agent, how many LLM calls it made, tokens, cost, and duration. Manual vs scheduled runs are tagged."
+          whatToLookFor={[
+            "Failed runs (red status) — check the error and the handoff that didn't happen",
+            "Cost per run — the learner/deep-dive are the priciest; research/screener are cheap or free",
+            "Manual vs scheduled — a burst of manual runs is you testing; scheduled are the crons",
+            "The handoff line shows the pipeline: research → trader → monitor → learner",
+          ]}
+        />
+      )}
 
       <div style={{ padding: "16px", maxWidth: "960px" }}>
         {/* Controls */}

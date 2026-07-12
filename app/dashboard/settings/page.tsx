@@ -1416,9 +1416,9 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {tab === "automation" && (<AutomationPanel />)}
+      {tab === "automation" && (<AutomationPanel embedded />)}
 
-      {tab === "admin" && (<AdminPanel />)}
+      {tab === "admin" && (<AdminPanel embedded />)}
 
       {tab === "data" && (
         <div style={{ maxWidth: "820px" }}>
