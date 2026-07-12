@@ -260,7 +260,7 @@ deterministic score and compare explanation/veto quality.
 1. Fetch current prices for all open `paper_positions` in the market
 2. Update `highest_price` if today's price is a new high
 3. Run exit checks (in priority order):
-   - **Time stop:** age > `champion_genome.horizon_days` (default 10) → close
+   - **Time stop:** age > holding horizon → close. Horizon resolution (2026-07-12): a promoted **champion genome's `horizon_days` always wins** (learner untouched); ONLY before any champion exists does the user's **Trading Style** preset (`strategy_config.target_hold_days`, set by Swing/Position/Long-term in Settings → Agents) govern, falling back to `DEFAULT_GENOME.horizon_days` (10) when unset.
    - **Trailing stop:** `stop_loss = max(original_stop, highest_price × 0.93)` → close if breached
    - **Price target:** at target price → **partial profit-taking** (sell half, move stop to
      breakeven on remainder; full close only when qty < 2)

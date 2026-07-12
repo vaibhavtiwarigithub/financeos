@@ -106,7 +106,8 @@ registry.
 | Resend | Transactional email (briefings) | `RESEND_API_KEY` |
 | Stripe | Subscription billing (Pro/Elite tiers) | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` |
 | Yahoo Finance | India `.NS` price+candles (free, no auth) + fundamentals (cookie+crumb) | None |
-| NSE public JSON | Full equity list (`EQUITY_L.csv`), insider trades (`corporates-pit`), option chain | Cookie handshake via `lib/nse-data.ts` |
+| NSE public JSON | Full equity list (`EQUITY_L.csv`), insider trades (`corporates-pit`), option chain, **daily FII/DII net cash flows** (`fiidiiTradeReact`, `lib/india-macro.ts` — India macro input, verified reachable from Vercel 2026-07-12) | Cookie handshake via `lib/nse-data.ts` / `lib/india-macro.ts` |
+| GDELT DOC 2.0 | **India news tone → sentiment** (`lib/india-news.ts`, article-tone aggregate); free, no key | None (public API) |
 | House Stock Watcher | Congressional stock trade disclosures | None (public S3) |
 | SEC EDGAR | Form 4 CIK lookup + XML → `evidence_records` | None (public) |
 | StockTwits | Social sentiment for US tickers | (check vault) |
