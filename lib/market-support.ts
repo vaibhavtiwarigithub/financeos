@@ -28,7 +28,7 @@ const REGISTRY: Record<string, MarketSupport> = {
   "/dashboard/backtest":       { level: "full",       note: "US replays on price_cache; India on Yahoo .NS candles, alpha vs NIFTY." },
   "/dashboard/strategies":     { level: "full",       note: "Both markets: fit scores (India scored from its signals' dimensions). Algo Library is US." },
   "/dashboard/calendar":       { level: "full",       note: "US full earnings feed; India = market-wide NSE results calendar (per-symbol Yahoo fallback if NSE blocked)." },
-  "/dashboard/risk":           { level: "full",       note: "Both markets: per-currency book risk, VaR, real portfolio beta (US vs SPY, India vs NIFTY)." },
+  "/dashboard/risk":           { level: "full",       note: "Both markets: per-currency book risk, benchmark-factor loss proxy, and portfolio beta (US vs SPY, India vs NIFTY when candles are available)." },
   "/dashboard/smart-money":    { level: "full",       note: "Both markets: signals + trade queue; India insider + option-chain PCR/OI live from NSE (US uses EDGAR)." },
   "/dashboard/scores":         { level: "full",       note: "US + India both scored and tracked — the symbol list now follows the header switcher (fixed 2026-07-06)." },
   "/dashboard/intelligence":   { level: "full",       note: "US + India agent signals + research runs." },

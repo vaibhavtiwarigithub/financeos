@@ -18,6 +18,7 @@ export interface BrokerAccount {
   accountLabel?: string;   // human label e.g. "Robinhood Trading (605420660)"
   totalValue: number;
   cashBalance: number;
+  buyingPower?: number;
   holdings: BrokerHolding[];
   fetchedAt: string;
   error?: string;

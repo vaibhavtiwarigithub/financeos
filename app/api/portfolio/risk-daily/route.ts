@@ -58,6 +58,7 @@ export async function GET(req: NextRequest) {
       .eq("market", market)
       .eq("status", "complete")
       .order("captured_on", { ascending: false })
+      .order("completed_at", { ascending: false })
       .limit(200);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -90,6 +91,7 @@ export async function GET(req: NextRequest) {
     .eq("account_id", accountId)
     .eq("status", "complete")
     .order("captured_on", { ascending: false })
+    .order("completed_at", { ascending: false })
     .limit(30);
   if (runsErr) return NextResponse.json({ error: runsErr.message }, { status: 500 });
 
@@ -99,7 +101,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ market, accountId, latest: null, previous: null });
   }
   // Previous = first older run sharing the SAME formula_version (never diff across versions).
-  const previous = rows.find(r => r.id !== latest.id && r.formula_version === latest.formula_version) ?? null;
+  const previous = rows.find(r =>
+    r.id !== latest.id
+    && r.formula_version === latest.formula_version
+    && r.captured_on < latest.captured_on,
+  ) ?? null;
 
   const runIds = [latest.id, ...(previous ? [previous.id] : [])];
 

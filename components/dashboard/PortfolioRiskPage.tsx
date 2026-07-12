@@ -93,7 +93,7 @@ function HoldingsTable({ holdings, risk, cur }: { holdings: HoldingWithRisk[]; r
                 </td>
                 <td style={{ padding: "8px 10px", color: pnlColor }}>
                   {h.unrealizedPnl != null
-                    ? `${(h.unrealizedPnl ?? 0) >= 0 ? "+" : ""}${cur}${Math.abs(h.unrealizedPnl ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} (${(h.unrealizedPnlPct ?? 0) >= 0 ? "+" : ""}${((h.unrealizedPnlPct ?? 0)).toFixed(1)}%)`
+                    ? `${(h.unrealizedPnl ?? 0) >= 0 ? "+" : "−"}${cur}${Math.abs(h.unrealizedPnl ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} (${(h.unrealizedPnlPct ?? 0) >= 0 ? "+" : ""}${((h.unrealizedPnlPct ?? 0)).toFixed(1)}%)`
                     : "—"}
                 </td>
               </tr>
@@ -172,7 +172,7 @@ function AccountRiskSection({ ar, isIndia }: { ar: AccountRisk; isIndia: boolean
                 </div>
               )}
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: "9px", color: T.muted, textTransform: "uppercase" }}>VaR</div>
+                <div style={{ fontSize: "9px", color: T.muted, textTransform: "uppercase" }}>Factor loss</div>
                 <div style={{ fontSize: "14px", fontWeight: 700, color: T.amber }}>−{cur}{risk.var95_dollar.toFixed(0)}</div>
               </div>
             </>
@@ -288,7 +288,10 @@ function postureOf(p: string | null) {
 // informational, no order path exists. Everything in this feature is advisory,
 // but read-only accounts get the explicit badge.
 function isReadOnlyAccount(broker: string, accountId: string): boolean {
-  return broker === "robinhood" && accountId === "965848641";
+  return broker === "robinhood" && accountId !== "605420660";
+}
+function dailyAccountLabel(account: DailyAccount): string {
+  return account.broker === "internal" ? "Paper Portfolio" : (account.label ?? account.accountId);
 }
 
 function ScoreChip({ score }: { score: number | null }) {
@@ -449,7 +452,8 @@ function DailyHoldingRiskPanel({ market }: { market: string }) {
             <button key={a.accountId} onClick={() => setSelected(a.accountId)}
               style={{ background: active ? T.accent + "22" : T.card, border: `1px solid ${active ? T.accent : T.border}`, borderRadius: "8px", padding: "8px 14px", cursor: "pointer", textAlign: "left" }}>
               <div style={{ fontSize: "12px", fontWeight: 700, color: active ? T.text : T.sub }}>
-                {a.label ?? a.accountId}
+                {dailyAccountLabel(a)}
+                {a.broker === "internal" && <span style={{ marginLeft: "6px", fontSize: "9px", color: T.accent, fontWeight: 600 }}>paper</span>}
                 {ro && <span style={{ marginLeft: "6px", fontSize: "9px", color: T.amber, fontWeight: 600 }}>read-only</span>}
               </div>
               <div style={{ fontSize: "10px", color: T.muted }}>{CUR_SYMBOL[a.currency] ?? a.currency} · {a.capturedOn}</div>
@@ -553,10 +557,12 @@ export default function PortfolioRiskPage() {
         title="Portfolio Risk"
         subtitle={isIndia ? "Live ₹ risk analytics across your Kite India account" : "Live risk analytics across all Robinhood accounts"}
         cadence="as-needed"
-        whatItDoes="Fetches live positions from Robinhood (US) or Kite (India) via REST API. Computes per-account and combined concentration risk, market sensitivity (beta), potential daily loss (VaR), and sector exposure."
+        whatItDoes="Fetches live US positions through Robinhood MCP and India positions through Kite. Computes per-account and combined concentration risk, market sensitivity, a benchmark-factor loss proxy, and sector exposure."
         whatToLookFor={[
           "Risk score above 75 means you're carrying more risk than most retail portfolios.",
-          "Sector overweight above 2× vs S&P 500 means a sector crash hits you much harder.",
+          isIndia
+            ? "Large single-sector exposure can make the India book vulnerable to sector-specific shocks."
+            : "Sector overweight above 2× vs S&P 500 means a sector crash hits you much harder.",
           "Correlated pairs mean less diversification — holding NVDA + AMD is less safe than it looks.",
           "Per-account sections below show independent risk for each brokerage account.",
         ]}
@@ -564,7 +570,7 @@ export default function PortfolioRiskPage() {
 
       <div style={{ padding: "0 clamp(12px, 4vw, 28px) clamp(20px, 5vw, 40px)" }}>
 
-        <RhReconnectBanner />
+        {!isIndia && <RhReconnectBanner />}
 
         {/* Refresh */}
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "16px" }}>
@@ -578,7 +584,7 @@ export default function PortfolioRiskPage() {
           Daily Per-Holding Risk
         </div>
         <div style={{ fontSize: "11px", color: T.muted, marginBottom: "14px" }}>
-          Deterministic risk score + posture per holding, one row per account, recomputed after each market close. Never merges currencies or accounts.
+          Deterministic risk score + posture per holding for each live or paper account, recomputed after each market close. Never merges currencies or accounts.
         </div>
         <DailyHoldingRiskPanel market={market} />
 
@@ -587,8 +593,11 @@ export default function PortfolioRiskPage() {
           {accounts.map((a, i) => (
             <div key={`${a.source}-${a.accountId ?? i}`} style={{ background: a.error ? T.redBg : T.card, border: `1px solid ${a.error ? T.red + "44" : T.border}`, borderRadius: "8px", padding: "8px 14px", fontSize: "12px" }}>
               <span style={{ color: T.sub }}>{a.accountLabel ?? a.source}</span>
+              {a.accountId && isReadOnlyAccount(a.source, a.accountId) && (
+                <span style={{ color: T.amber, marginLeft: "6px", fontSize: "9px", fontWeight: 600 }}>read-only</span>
+              )}
               {a.error
-                ? <span style={{ color: T.red, marginLeft: "8px" }}>— {a.error.slice(0, 60)}</span>
+                ? <span style={{ color: T.red, marginLeft: "8px" }}>— {a.error.slice(0, 120)}</span>
                 : (
                   <>
                     <span style={{ color: T.text, fontWeight: 700, marginLeft: "8px" }}>{cur}{a.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
@@ -612,7 +621,7 @@ export default function PortfolioRiskPage() {
               Combined Across All Accounts
             </div>
             <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "20px" }}>
-              <StatCard label="Total Value" value={`${cur}${risk.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} sub={`${risk.holdingCount} positions`} />
+              <StatCard label="Invested Value" value={`${cur}${risk.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} sub={`${risk.holdingCount} positions · cash excluded`} />
               <StatCard label="Risk Score" value={`${risk.riskScore}/100`} sub={risk.riskLabel} color={risk.riskColor} />
               <StatCard
                 label="Market Sensitivity"
@@ -623,9 +632,9 @@ export default function PortfolioRiskPage() {
                 color={risk.betaComingSoon ? T.muted : betaColor(risk.portfolioBeta)}
               />
               <StatCard
-                label="1-Day VaR (95%)"
+                label="1-Day Market-Factor Loss (95%)"
                 value={`−${cur}${risk.var95_dollar.toFixed(0)}`}
-                sub={`${(risk.var95_pct * 100).toFixed(1)}% · bad-day loss estimate`}
+                sub={`${(risk.var95_pct * 100).toFixed(1)}% · benchmark-factor proxy, not full VaR`}
                 color={T.amber}
               />
             </div>
@@ -702,7 +711,7 @@ export default function PortfolioRiskPage() {
             <div style={{ fontSize: "11px", color: T.muted, borderTop: `1px solid ${T.border}`, paddingTop: "14px" }}>
               {isIndia
                 ? "India VaR uses NIFTY 50 daily volatility (1.0%) × 1.645 z-score. Beta vs NIFTY from 1y candles when available. Not financial advice."
-                : "Beta approximations are sector-based averages. VaR uses portfolio beta × historical SPY daily volatility (0.85%) × 1.645 z-score. Not financial advice."}
+                : "Beta approximations are sector-based averages. The loss proxy uses portfolio beta × historical SPY daily volatility (0.85%) × 1.645; it is not full covariance VaR. Not financial advice."}
               {" "}Last updated: {new Date(data.fetchedAt).toLocaleTimeString()}
             </div>
           </>

@@ -1,6 +1,7 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import type { BrokerAccount, BrokerHolding } from "@/lib/brokers/types";
 
 // Robinhood MCP client — OAuth 2.1 (PKCE, public client) + a deterministic
 // JSON-RPC MCP client. Endpoints below are VERIFIED against Robinhood's live
@@ -653,6 +654,7 @@ export async function queryRobinhoodAccount(account?: string): Promise<{ ok: boo
   const sess = await openSession(tk.token);
   if (!sess.ok) return { ok: false, error: sess.error };
   const accounts = await mcpRpc(tk.token, "tools/call", { name: "get_accounts", arguments: {} }, sess.sessionId);
+  if (!accounts.ok) return { ok: false, error: `get_accounts failed: ${accounts.error}` };
 
   // Resolve which account to price/hold: the requested trading account if present in the
   // list, else the agentic-allowed account, else the first. get_portfolio AND
@@ -676,11 +678,166 @@ export async function queryRobinhoodAccount(account?: string): Promise<{ ok: boo
   }
 
   const positions = await mcpRpc(tk.token, "tools/call", { name: "get_equity_positions", arguments: acctFor ? { account_number: acctFor } : {} }, sess.sessionId);
+  if (!positions.ok) return { ok: false, error: `get_equity_positions failed: ${positions.error}` };
   const portfolio = acctFor
     ? await mcpRpc(tk.token, "tools/call", { name: "get_portfolio", arguments: { account_number: acctFor } }, sess.sessionId).catch(() => ({ result: null }))
     : { result: null };
 
+  if (acctFor && !(portfolio as any)?.ok) {
+    return { ok: false, error: `get_portfolio failed: ${(portfolio as any)?.error ?? "unknown MCP error"}` };
+  }
+
   return { ok: true, data: { accounts: accounts.result, positions: positions.result, portfolio: (portfolio as any)?.result ?? null } };
+}
+
+// Read every investing account visible to the owner's Robinhood MCP connection.
+// This primitive is read-only and never invokes review/place/cancel tools. Missing
+// prices fail the affected account closed so risk analytics cannot quietly treat
+// cost basis as a current quote.
+export async function captureAllRobinhoodAccounts(): Promise<BrokerAccount[]> {
+  const fetchedAt = new Date().toISOString();
+  const errorStub = (error: string, accountId = "unknown", accountLabel = "Robinhood"): BrokerAccount => ({
+    source: "robinhood", accountId, accountLabel, totalValue: 0, cashBalance: 0,
+    holdings: [], fetchedAt, error,
+  });
+  const labelFor = (id: string) => id === "605420660" ? `Robinhood Trading (${id})`
+    : id === "965848641" ? `Robinhood (${id})` : `Robinhood ${id}`;
+
+  const svc = createServiceClient();
+  const tk = await getValidAccessToken(svc);
+  if (!tk.ok || !tk.token) return [errorStub(tk.error ?? "Robinhood MCP is not connected")];
+  const sess = await openSession(tk.token);
+  if (!sess.ok) return [errorStub(sess.error ?? "Robinhood MCP session failed")];
+  const sid = sess.sessionId;
+
+  const accountResult: Awaited<ReturnType<typeof mcpRpc>> = await mcpRpc(tk.token, "tools/call", { name: "get_accounts", arguments: {} }, sid)
+    .catch((e) => ({ ok: false, error: String(e) }));
+  if (!accountResult.ok) return [errorStub(`get_accounts failed: ${accountResult.error}`)];
+  const accountObject = mcpToolJson(accountResult.result?.content ?? accountResult.result);
+  const rawAccounts: any[] = Array.isArray(accountObject?.data?.accounts) ? accountObject.data.accounts
+    : Array.isArray(accountObject?.accounts) ? accountObject.accounts : [];
+  if (!rawAccounts.length) return [errorStub("Robinhood MCP returned no accounts")];
+
+  type Captured = { id: string; wireId: string; positions?: any[]; portfolio?: any; error?: string };
+  const captured: Captured[] = [];
+  // Limit concurrency to two accounts to avoid a 12-call burst while keeping the
+  // capture inside the serverless route's normal execution window.
+  for (let i = 0; i < rawAccounts.length; i += 2) {
+    const rows = await Promise.all(rawAccounts.slice(i, i + 2).map(async (raw): Promise<Captured> => {
+      // account_number is the stable/user-facing identity (and may be
+      // alphanumeric); rhs_account_number is what account-scoped MCP tools need.
+      const id = String(raw?.account_number ?? raw?.rhs_account_number ?? raw?.id ?? "").trim();
+      const wireId = String(raw?.rhs_account_number ?? raw?.account_number ?? raw?.id ?? "").trim();
+      if (!id || !wireId) return { id: "unknown", wireId: "unknown", error: "account response omitted an account number" };
+      try {
+        const [posResult, portResult] = await Promise.all([
+          mcpRpc(tk.token!, "tools/call", { name: "get_equity_positions", arguments: { account_number: wireId } }, sid),
+          mcpRpc(tk.token!, "tools/call", { name: "get_portfolio", arguments: { account_number: wireId } }, sid),
+        ]);
+        if (!posResult.ok) return { id, wireId, error: `get_equity_positions failed: ${posResult.error}` };
+        if (!portResult.ok) return { id, wireId, error: `get_portfolio failed: ${portResult.error}` };
+        const posObject = mcpToolJson(posResult.result?.content ?? posResult.result);
+        const portObject = mcpToolJson(portResult.result?.content ?? portResult.result);
+        const posData = posObject?.data ?? posObject;
+        const positions = Array.isArray(posData?.positions) ? posData.positions
+          : Array.isArray(posData?.results) ? posData.results
+          : Array.isArray(posData) ? posData : null;
+        if (!positions) return { id, wireId, error: "get_equity_positions returned an unparseable payload" };
+        if (!portObject) return { id, wireId, error: "get_portfolio returned an unparseable payload" };
+        return { id, wireId, positions, portfolio: portObject?.data ?? portObject };
+      } catch (e) {
+        return { id, wireId, error: `Robinhood MCP account capture failed: ${String(e)}` };
+      }
+    }));
+    captured.push(...rows);
+  }
+
+  const symbols = Array.from(new Set(captured.flatMap(a => (a.positions ?? []).map(p =>
+    String(p?.symbol ?? p?.instrument?.symbol ?? "").trim().toUpperCase(),
+  )).filter(Boolean)));
+  const prices = new Map<string, number>();
+  let quoteError: string | undefined;
+  if (symbols.length) {
+    const toolList = await listTools(tk.token, sid);
+    const quoteTool = toolList.tools?.find(t => t.name === "get_equity_quotes");
+    if (!toolList.ok || !quoteTool) {
+      quoteError = toolList.error ?? "get_equity_quotes is not offered by Robinhood MCP";
+    } else {
+      const props = quoteTool.inputSchema?.properties ?? {};
+      const symbolKey = ["symbols", "symbol", "tickers"].find(k => k in props) ?? "symbols";
+      for (let i = 0; i < symbols.length; i += 20) {
+        const batch = symbols.slice(i, i + 20);
+        const rawType = props[symbolKey]?.type;
+        const declaredType = Array.isArray(rawType) ? rawType.find((t: string) => t !== "null") : rawType;
+        const symbolValue = declaredType === "string" ? batch.join(",") : batch;
+        try {
+          const qr = await mcpRpc(tk.token, "tools/call", {
+            name: "get_equity_quotes", arguments: { [symbolKey]: symbolValue },
+          }, sid);
+          if (!qr.ok) { quoteError = qr.error ?? "get_equity_quotes failed"; break; }
+          const qo = mcpToolJson(qr.result?.content ?? qr.result);
+          const qd = qo?.data ?? qo;
+          const quotes: any[] = Array.isArray(qd?.quotes) ? qd.quotes
+            : Array.isArray(qd?.results) ? qd.results : Array.isArray(qd) ? qd : [];
+          if (!quotes.length) quoteError = "get_equity_quotes returned an unparseable payload";
+          for (const q of quotes) {
+            // Robinhood currently wraps each record as { quote: {...} }.
+            const quote = q?.quote ?? q;
+            const symbol = String(quote?.symbol ?? quote?.instrument?.symbol ?? "").trim().toUpperCase();
+            const price = Number(quote?.last_extended_hours_trade_price ?? quote?.last_trade_price
+              ?? quote?.current_price ?? quote?.last_price ?? quote?.mark_price ?? quote?.price);
+            if (symbol && Number.isFinite(price) && price > 0) prices.set(symbol, price);
+          }
+        } catch (e) { quoteError = String(e); break; }
+      }
+    }
+  }
+
+  return captured.map((a): BrokerAccount => {
+    const label = labelFor(a.id);
+    if (a.error) return errorStub(a.error, a.id, label);
+    const holdings: BrokerHolding[] = [];
+    const missingQuotes: string[] = [];
+    for (const p of a.positions ?? []) {
+      const symbol = String(p?.symbol ?? p?.instrument?.symbol ?? "").trim().toUpperCase();
+      const qty = Number(p?.quantity ?? p?.qty ?? p?.shares ?? 0);
+      if (!symbol || !Number.isFinite(qty) || qty <= 0) continue;
+      const averageCost = Number(p?.average_buy_price ?? p?.average_price ?? p?.avg_price ?? p?.avg_cost ?? 0);
+      const currentPrice = prices.get(symbol);
+      if (!currentPrice) { missingQuotes.push(symbol); continue; }
+      const marketValue = qty * currentPrice;
+      const costBasis = Number.isFinite(averageCost) && averageCost >= 0 ? qty * averageCost : undefined;
+      holdings.push({
+        symbol, qty, currentPrice, marketValue, costBasis,
+        unrealizedPnl: costBasis == null ? undefined : marketValue - costBasis,
+        unrealizedPnlPct: costBasis != null && costBasis > 0 ? ((marketValue - costBasis) / costBasis) * 100 : undefined,
+        side: "long", source: "robinhood",
+      });
+    }
+    if (missingQuotes.length) {
+      const suffix = quoteError ? ` (${quoteError})` : "";
+      return errorStub(`Current quote unavailable for ${missingQuotes.join(", ")}${suffix}`, a.id, label);
+    }
+    const portfolio = a.portfolio ?? {};
+    const totalValue = Number(portfolio?.total_value ?? portfolio?.portfolio_value ?? portfolio?.equity);
+    const cashBalance = Number(portfolio?.cash ?? portfolio?.cash_balance
+      ?? portfolio?.buying_power?.cash_available_for_withdrawal ?? 0);
+    const buyingPower = Number(portfolio?.buying_power?.buying_power ?? portfolio?.buying_power ?? 0);
+    if (!Number.isFinite(totalValue) || totalValue < 0) {
+      return errorStub("get_portfolio omitted a valid total_value", a.id, label);
+    }
+    return {
+      source: "robinhood", accountId: a.id, accountLabel: label, totalValue,
+      cashBalance: Number.isFinite(cashBalance) && cashBalance >= 0 ? cashBalance : 0,
+      // Robinhood account types do not all expose the same buying_power shape.
+      // For cash accounts, MCP `cash` is the conservative available-funds value;
+      // use it when the nested buying_power scalar is absent/unparseable.
+      buyingPower: Number.isFinite(buyingPower) && buyingPower >= 0
+        ? buyingPower
+        : (Number.isFinite(cashBalance) && cashBalance >= 0 ? cashBalance : undefined),
+      holdings, fetchedAt,
+    };
+  });
 }
 
 // Held share quantity for a symbol on the live Robinhood account, fetched

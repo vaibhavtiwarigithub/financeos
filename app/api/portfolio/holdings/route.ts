@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { fetchAllAccounts, fetchRobinhoodBrokerAccounts, fetchKiteBrokerAccount } from "@/lib/brokers";
+import { fetchRobinhoodBrokerAccounts, fetchKiteBrokerAccount } from "@/lib/brokers";
 import { computeRiskMetrics } from "@/lib/portfolio-risk";
 import { createServiceClient } from "@/lib/supabase/service";
 import type { BrokerAccount } from "@/lib/brokers/types";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 export async function GET(req: NextRequest) {
   const userClient = await createClient();
@@ -38,20 +39,16 @@ export async function GET(req: NextRequest) {
     return fetchRobinhoodBrokerAccounts();
   }
 
-  const [allAccounts, liveAccounts, pendingProposals] = await Promise.all([
-    fetchAllAccounts(market),  // existing (paper + alpaca) for roll-up / pills
+  const [liveAccounts, pendingProposals] = await Promise.all([
     fetchLiveAccounts(),
     loadProposals(),
   ]);
 
-  // Roll-up risk: use live accounts (Robinhood/Kite) if they have holdings,
-  // otherwise fall back to allAccounts for backward compatibility.
+  // This endpoint is explicitly the LIVE portfolio. Never substitute the paper
+  // book when a broker fetch fails: that produced plausible-looking risk numbers
+  // under a "live" heading while the account pills showed a broker error.
   const liveHoldings = liveAccounts.flatMap(a => a.holdings);
-  const rollupHoldings = liveHoldings.length > 0
-    ? liveHoldings
-    : allAccounts.flatMap(a => a.holdings);
-
-  const risk = await computeRiskMetrics(rollupHoldings, pendingProposals as any, { market, currency });
+  const risk = await computeRiskMetrics(liveHoldings, pendingProposals as any, { market, currency });
 
   // Per-account risk: compute independently for each live account.
   // Skips error-only accounts and accounts with zero holdings.

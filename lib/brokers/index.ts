@@ -1,6 +1,6 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAlpacaAccount } from "./alpaca";
-import { rhFetchAccounts, rhFetchAllPositions } from "./robinhood/rest-client";
+import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 import { getKiteHoldings, getKiteMargins } from "@/lib/kite";
 import type { BrokerAccount, BrokerHolding } from "./types";
 
@@ -80,6 +80,8 @@ export function mergeHoldings(accounts: BrokerAccount[]): BrokerHolding[] {
 // Uses REST API so it works in Vercel serverless (no MCP session needed).
 // Returns an error-flagged single account if the token is absent/expired.
 export async function fetchRobinhoodBrokerAccounts(): Promise<BrokerAccount[]> {
+  return captureAllRobinhoodAccounts();
+  /* legacy private-REST implementation retained temporarily below for rollback reference
   const svc = createServiceClient();
   const fetchedAt = new Date().toISOString();
 
@@ -138,7 +140,7 @@ export async function fetchRobinhoodBrokerAccounts(): Promise<BrokerAccount[]> {
       holdings,
       fetchedAt,
     };
-  });
+  }); */
 }
 
 // Fetch live Kite India account as a single BrokerAccount.

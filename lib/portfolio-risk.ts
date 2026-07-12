@@ -13,11 +13,13 @@ const SECTOR_MAP: Record<string, string> = {
   MRVL:"Technology", SNPS:"Technology", CDNS:"Technology", FTNT:"Technology",
   PANW:"Technology", CRWD:"Technology", SMCI:"Technology", TSM:"Technology",
   ASML:"Technology", ARM:"Technology", PLTR:"Technology", APP:"Technology",
+  CRWV:"Technology",
 
   // Communication Services
   GOOGL:"Communication", GOOG:"Communication", META:"Communication",
   NFLX:"Communication", DIS:"Communication", CMCSA:"Communication",
   VZ:"Communication", T:"Communication", TMUS:"Communication",
+  SPOT:"Communication",
 
   // Consumer Discretionary
   AMZN:"Consumer Discretionary", TSLA:"Consumer Discretionary",
@@ -25,18 +27,21 @@ const SECTOR_MAP: Record<string, string> = {
   NKE:"Consumer Discretionary", SBUX:"Consumer Discretionary",
   TJX:"Consumer Discretionary", BKNG:"Consumer Discretionary",
   ABNB:"Consumer Discretionary", UBER:"Consumer Discretionary",
+  LULU:"Consumer Discretionary", JD:"Consumer Discretionary",
 
   // Financials
   BRK_B:"Financials", JPM:"Financials", V:"Financials", MA:"Financials",
   BAC:"Financials", WFC:"Financials", GS:"Financials", MS:"Financials",
   AXP:"Financials", SPGI:"Financials", BLK:"Financials", CB:"Financials",
   C:"Financials", USB:"Financials", PNC:"Financials", PYPL:"Financials",
+  HOOD:"Financials",
 
   // Healthcare
   LLY:"Healthcare", UNH:"Healthcare", JNJ:"Healthcare", ABBV:"Healthcare",
   MRK:"Healthcare", TMO:"Healthcare", ABT:"Healthcare", DHR:"Healthcare",
   PFE:"Healthcare", AMGN:"Healthcare", ISRG:"Healthcare", GILD:"Healthcare",
   CVS:"Healthcare", BMY:"Healthcare", REGN:"Healthcare", VRTX:"Healthcare",
+  TEM:"Healthcare",
 
   // Industrials
   GE:"Industrials", CAT:"Industrials", RTX:"Industrials", HON:"Industrials",
@@ -46,6 +51,7 @@ const SECTOR_MAP: Record<string, string> = {
   // Energy
   XOM:"Energy", CVX:"Energy", COP:"Energy", EOG:"Energy", SLB:"Energy",
   MPC:"Energy", PSX:"Energy", VLO:"Energy", OXY:"Energy", PXD:"Energy",
+  LNG:"Energy",
 
   // Consumer Staples
   WMT:"Consumer Staples", PG:"Consumer Staples", KO:"Consumer Staples",
@@ -61,6 +67,15 @@ const SECTOR_MAP: Record<string, string> = {
 
   // Materials
   LIN:"Materials", APD:"Materials", SHW:"Materials", FCX:"Materials", NEM:"Materials",
+
+  // Held ETFs / non-sector exposures. These labels prevent broad funds, gold,
+  // Treasuries, and bitcoin from being presented as unknown single-stock risk.
+  IVV:"Diversified Equity", VTV:"Diversified Equity", VONG:"Diversified Equity",
+  SPHQ:"Diversified Equity", SCHD:"Diversified Equity", SPMO:"Diversified Equity", IWM:"Diversified Equity",
+  FEZ:"International Equity", DXJ:"International Equity", EMXC:"International Equity",
+  EUAD:"International Equity", ASHR:"International Equity",
+  SGOV:"Fixed Income", GLD:"Commodities", DBA:"Commodities", IBIT:"Digital Assets",
+  XAR:"Industrials", REMX:"Materials",
 };
 
 // S&P 500 sector weights (approximate, mid-2025)
@@ -77,6 +92,8 @@ const SECTOR_BETA: Record<string, number> = {
   "Financials": 1.10, "Industrials": 1.00, "Materials": 1.00,
   "Energy": 0.95, "Real Estate": 0.85, "Healthcare": 0.80,
   "Consumer Staples": 0.60, "Utilities": 0.50, "Other": 1.0,
+  "Diversified Equity": 1.00, "International Equity": 0.90,
+  "Fixed Income": 0.05, "Commodities": 0.30, "Digital Assets": 1.50,
 };
 
 // Known highly-correlated pairs (from historical data)
@@ -322,9 +339,12 @@ export async function computeRiskMetrics(
   // NIFTY's daily vol by that beta; India without a wired beta uses NIFTY's own
   // daily vol directly (beta-1 assumption) — an honest ₹ figure either way.
   const dailyVol = isIndia ? NIFTY_DAILY_VOL : 0.0085;
+  // Volatility/loss magnitude cannot be negative. A negative benchmark beta is
+  // directionally useful, but multiplying it directly produced a negative VaR
+  // and a UI value such as "−$-42". Use absolute beta for this factor-risk proxy.
   const portfolioDailyVol = isIndia
-    ? (indiaBetaWired ? portfolioBeta * dailyVol : dailyVol)
-    : portfolioBeta * dailyVol;
+    ? (indiaBetaWired ? Math.abs(portfolioBeta) * dailyVol : dailyVol)
+    : Math.abs(portfolioBeta) * dailyVol;
   const var95_pct    = portfolioDailyVol * 1.645;
   const var95_dollar = totalValue * var95_pct; // amount is in `currency`, not always $
 
@@ -352,7 +372,10 @@ export async function computeRiskMetrics(
         sector,
         weightPct,
         sp500WeightPct: benchWeight,
-        overweightPct: isIndia ? 0 : weightPct - benchWeight,
+        // Non-sector asset classes (Treasuries, gold, broad ETFs, bitcoin) do
+        // not have an S&P sector benchmark. Do not call their entire weight an
+        // "overweight" against a nonexistent 0% reference.
+        overweightPct: isIndia || benchWeight === 0 ? 0 : weightPct - benchWeight,
         holdingCount: sectorCounts[sector],
       };
     });
@@ -417,13 +440,15 @@ export async function computeRiskMetrics(
   const riskLabel = riskScore < 30 ? "Low" : riskScore < 55 ? "Moderate" : riskScore < 75 ? "Elevated" : "High";
   const riskColor = riskScore < 30 ? "#34D399" : riskScore < 55 ? "#FBBF24" : riskScore < 75 ? "#F97316" : "#F87171";
 
-  const betaLabel = portfolioBeta > 1
+  const betaLabel = Math.abs(portfolioBeta - 1) < 0.005
+    ? "Your portfolio moves approximately in line with the market"
+    : portfolioBeta > 1
     ? `Your portfolio moves ${Math.round((portfolioBeta - 1) * 100)}% MORE than the market`
     : portfolioBeta < 1
     ? `Your portfolio moves ${Math.round((1 - portfolioBeta) * 100)}% LESS than the market`
     : "Your portfolio moves in line with the market";
 
-  const varLabel = `On a bad day (1-in-20), you could lose up to ${currency}${var95_dollar.toFixed(0)}`;
+  const varLabel = `Benchmark-factor loss proxy (1-in-20): ${currency}${var95_dollar.toFixed(0)}`;
 
   // Proposal impact (if pending proposals provided)
   let proposalImpact: ProposalImpact | undefined;

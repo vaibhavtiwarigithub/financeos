@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchAndStoreAccountSnapshot } from "@/lib/research-agent";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
-import { queryRobinhoodAccount, mcpToolJson } from "@/lib/robinhood-mcp";
+import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 100;
@@ -21,6 +21,40 @@ async function refreshViaMcp(): Promise<{ ok: boolean; error?: string; equity?: 
 
   // Use the configured trading account — never the hardcoded read-only account.
   const tradingAccount: string = (cfg as any)?.active_account_us ?? "605420660";
+
+  try {
+    const accounts = await captureAllRobinhoodAccounts();
+    const valid = accounts.filter(a => !a.error && a.accountId && a.accountId !== "unknown");
+    const active = valid.find(a => a.accountId === tradingAccount);
+    if (!active) {
+      const reason = accounts.find(a => a.accountId === tradingAccount)?.error
+        ?? accounts[0]?.error ?? `active account ${tradingAccount} was not returned by Robinhood MCP`;
+      return { ok: false, error: `${reason} — existing snapshots preserved` };
+    }
+    const capturedAt = new Date().toISOString();
+    const rows = valid.map(a => ({
+      account_id: a.accountId!,
+      equity: a.totalValue,
+      buying_power: a.buyingPower ?? null,
+      portfolio_value: a.totalValue,
+      positions_json: a.holdings.map(h => ({
+        symbol: h.symbol,
+        qty: h.qty,
+        quantity: String(h.qty),
+        avg_price: h.costBasis != null && h.qty > 0 ? h.costBasis / h.qty : null,
+        average_buy_price: h.costBasis != null && h.qty > 0 ? h.costBasis / h.qty : null,
+        current_price: h.currentPrice,
+      })),
+      captured_at: capturedAt,
+    }));
+    const { error: upsertError } = await svc.from("live_account_snapshots").upsert(rows, { onConflict: "account_id" });
+    if (upsertError) return { ok: false, error: `snapshot upsert failed: ${upsertError.message}` };
+    return { ok: true, equity: active.totalValue, buying_power: active.buyingPower ?? null, positions: active.holdings.length };
+  } catch (e) {
+    return { ok: false, error: `snapshot capture/store error: ${String(e)}` };
+  }
+
+  /* Legacy single-account parser retained temporarily for rollback reference.
 
   const res = await queryRobinhoodAccount(tradingAccount);
   if (!res.ok) return { ok: false, error: res.error };
@@ -100,7 +134,7 @@ async function refreshViaMcp(): Promise<{ ok: boolean; error?: string; equity?: 
       captured_at: new Date().toISOString(),
     }, { onConflict: "account_id" });
     return { ok: true, equity, buying_power: buyingPower, positions: posCount };
-  } catch (e) { return { ok: false, error: `snapshot parse/store error: ${String(e)}` }; }
+  } catch (e) { return { ok: false, error: `snapshot parse/store error: ${String(e)}` }; } */
 }
 
 // Standalone Robinhood live-account snapshot refresh. Previously fired
