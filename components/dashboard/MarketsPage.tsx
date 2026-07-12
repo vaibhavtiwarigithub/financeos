@@ -7,7 +7,7 @@ import { useMarket, CURRENCY } from "@/lib/market-context";
 import { fetchIndiaIndices, fetchIndiaSectors, fetchIndiaQuote } from "@/lib/india-data";
 import { NIFTY_50 } from "@/lib/india-universe";
 import SectorTradingViewOverview from "@/components/charts/SectorTradingViewOverview";
-const SectorTreemap = lazy(() => import("@/components/charts/SectorTreemap"));
+import SectorTreemap from "@/components/charts/SectorTreemap";
 const PriceChart = lazy(() => import("@/components/charts/PriceChart"));
 const SectorPerformanceChart = lazy(() => import("@/components/charts/SectorPerformanceChart"));
 const SectorBreadth = lazy(() => import("@/components/dashboard/SectorBreadth"));
@@ -298,7 +298,7 @@ interface SynthIndicator {
 }
 
 interface SynthData {
-  regime: "risk-on" | "neutral" | "risk-off";
+  regime: "risk-on" | "neutral" | "risk-off" | "unknown";
   indicators: SynthIndicator[];
   synthesis: string;
   generatedAt: string | null;
@@ -308,6 +308,7 @@ const REGIME_CHIP: Record<string, { bg: string; color: string; border: string; l
   "risk-on":  { bg: T.greenBg, color: T.green, border: "#065F46", label: "RISK-ON" },
   "neutral":  { bg: "#2D2000", color: T.amber, border: "#5B3A00", label: "NEUTRAL" },
   "risk-off": { bg: T.redBg,  color: T.red,   border: "#5B0000", label: "RISK-OFF" },
+  "unknown":  { bg: T.surface, color: T.muted, border: T.border, label: "INSUFFICIENT DATA" },
 };
 
 function MarketSynthesis() {
@@ -323,7 +324,7 @@ function MarketSynthesis() {
       if (res.ok) {
         const json = await res.json();
         setData({
-          regime: json.regime ?? "neutral",
+          regime: json.signalsAvailable > 0 ? (json.regime ?? "neutral") : "unknown",
           indicators: json.indicators ?? [],
           synthesis: json.synthesis ?? "",
           generatedAt: json.generatedAt ?? null,
@@ -348,7 +349,7 @@ function MarketSynthesis() {
     return hrs === 1 ? "1 hr ago" : `${hrs} hrs ago`;
   }
 
-  const chip = data ? REGIME_CHIP[data.regime] ?? REGIME_CHIP.neutral : REGIME_CHIP.neutral;
+  const chip = data ? REGIME_CHIP[data.regime] ?? REGIME_CHIP.unknown : REGIME_CHIP.unknown;
 
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
@@ -1563,9 +1564,7 @@ export default function MarketsPage() {
           )}
 
           {/* Sector treemap */}
-          <Suspense fallback={<div style={{ background: "#1A1D27", border: "1px solid #252836", borderRadius: "12px", padding: "20px", height: "320px", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280", fontSize: "13px" }}>Loading heatmap…</div>}>
-            <SectorTreemap sectors={data.sectors} />
-          </Suspense>
+          <SectorTreemap sectors={data.sectors} />
 
           {/* Footer note */}
           <div style={{ marginTop: "16px", fontSize: "11px", color: T.muted, textAlign: "right" }}>

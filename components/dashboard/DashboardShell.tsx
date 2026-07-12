@@ -94,20 +94,18 @@ const ADMIN_ITEM = { href: "/dashboard/admin", label: "Admin", icon: "☆", hint
 
 // â"€â"€ Market status â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 function getMarketStatus(): { label: string; color: string; bg: string; detail: string } {
-  // Convert to ET (UTC-4 EDT / UTC-5 EST). We approximate: from mid-March to early Nov = EDT (UTC-4)
-  const now = new Date();
-  const utcH = now.getUTCHours(), utcM = now.getUTCMinutes();
-  const month = now.getUTCMonth() + 1; // 1-12
-  const day = now.getUTCDay(); // 0=Sun
-
-  // EDT Apr—Oct roughly, EST Nov—Mar. Close enough for market status.
-  const offsetH = (month >= 4 && month <= 10) ? 4 : 5; // hours behind UTC
-  let etH = utcH - offsetH;
-  if (etH < 0) etH += 24;
-  const etMin = utcM;
+  // Let the IANA timezone database handle DST boundaries. A month-based UTC
+  // offset is wrong for several weeks each year and can mislabel a session.
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", weekday: "short", hour: "2-digit",
+    minute: "2-digit", hour12: false,
+  }).formatToParts(new Date());
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(p => p.type === type)?.value ?? "0";
+  const etH = Number(part("hour")) % 24;
+  const etMin = Number(part("minute"));
+  const dayName = part("weekday");
   const etTotal = etH * 60 + etMin;
-
-  const isWeekend = day === 0 || day === 6;
+  const isWeekend = dayName === "Sat" || dayName === "Sun";
   const PRE  = 4 * 60;        // 4:00 AM ET
   const OPEN = 9 * 60 + 30;   // 9:30 AM ET
   const CLOSE = 16 * 60;      // 4:00 PM ET
@@ -150,7 +148,7 @@ function useMarketClock() {
   useEffect(() => {
     function update() {
       const now = new Date();
-      setTimeStr(now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }));
+      setTimeStr(now.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }));
       setTick(t => t + 1);
     }
     update();

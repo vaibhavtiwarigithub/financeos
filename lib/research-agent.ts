@@ -907,6 +907,47 @@ Return ONLY valid JSON (no markdown, no prose):
 {"direction":"long","summary":"2-3 sentence thesis citing specific numbers from the data above","key_risks":["specific risk 1","specific risk 2"],"catalysts":["specific catalyst 1","specific catalyst 2"]}`;
 }
 
+// Parse the first complete JSON object without assuming the response contains
+// only one pair of braces. A greedy brace match can join multiple objects (or
+// prose braces) into invalid JSON. This stays fail-closed: no direction is
+// inferred when the provider did not return valid structured output.
+function parseThesisJson(raw: string): { direction?: string; summary?: string; key_risks?: string[]; catalysts?: string[] } {
+  const candidates: string[] = [raw.trim()];
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  if (fenced) candidates.push(fenced);
+  let start = -1, depth = 0, inString = false, escaped = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === "{") { if (depth === 0) start = i; depth++; }
+    else if (ch === "}" && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) { candidates.push(raw.slice(start, i + 1)); start = -1; }
+    }
+  }
+  for (const candidate of candidates) {
+    try {
+      const value = JSON.parse(candidate);
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const direction = ["long", "neutral", "short"].includes(String(value.direction).toLowerCase())
+        ? String(value.direction).toLowerCase() : undefined;
+      return {
+        direction,
+        summary: typeof value.summary === "string" ? value.summary : undefined,
+        key_risks: Array.isArray(value.key_risks) ? value.key_risks.filter((x: unknown) => typeof x === "string").slice(0, 8) : undefined,
+        catalysts: Array.isArray(value.catalysts) ? value.catalysts.filter((x: unknown) => typeof x === "string").slice(0, 8) : undefined,
+      };
+    } catch { /* try the next bounded candidate */ }
+  }
+  return {};
+}
+
 // Process a single symbol: research → write research_packet + agent_signal
 // Phase 0: all 5 scores computed deterministically. LLM writes thesis+direction only.
 // P1: universeSnapshotId links this symbol's decision_observations row to the run's
@@ -1150,11 +1191,7 @@ export async function processSymbol(
   const tokenUsage = { input: llmResult.tokensIn, output: llmResult.tokensOut };
 
   // Parse thesis response — LLM only returns { direction, summary, key_risks, catalysts }
-  let thesis: { direction?: string; summary?: string; key_risks?: string[]; catalysts?: string[] } = {};
-  try {
-    const match = rawText.match(/\{[\s\S]*\}/);
-    if (match) thesis = JSON.parse(match[0]);
-  } catch { /* fallback to empty — scores are still written */ }
+  const thesis = parseThesisJson(rawText);
 
   // Force abstain when evidence is too thin (fewer than 2 usable dimensions —
   // e.g. India with fundamentals unavailable leaves only technical) OR the LLM
@@ -1447,9 +1484,19 @@ export async function processSymbol(
           stage: "research",
           outcome: entryEligible ? "passed" : "rejected",
           reason: entryEligible
-            ? `Score ${analystScore} >= threshold ${scoreThreshold ?? 60}`
-            : `Score ${analystScore} < threshold ${scoreThreshold ?? 60}${signalDirection !== "long" ? ` (direction: ${signalDirection})` : ""}`,
-          detail: { analyst_score: analystScore, score_threshold: scoreThreshold ?? 60, direction: signalDirection, screener },
+            ? `Eligible: long direction and score ${analystScore} >= threshold ${scoreThreshold ?? 60}`
+            : thinEvidence
+              ? `Abstained: thin evidence (${includedDims.length}/5 usable dimensions)`
+              : llmParseFailed
+                ? "Abstained: thesis response was missing a parseable direction"
+                : analystScore < (scoreThreshold ?? 60)
+                  ? `Rejected: score ${analystScore} < threshold ${scoreThreshold ?? 60}`
+                  : `Abstained: score passed but direction was ${signalDirection}; score alone cannot authorize entry`,
+          detail: {
+            analyst_score: analystScore, score_threshold: scoreThreshold ?? 60,
+            direction: signalDirection, screener, included_dimensions: includedDims,
+            thin_evidence: thinEvidence, thesis_parse_failed: llmParseFailed,
+          },
         });
       } catch { /* fail-soft — pre-migration schema or transient error */ }
     }

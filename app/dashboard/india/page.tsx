@@ -218,12 +218,12 @@ export default function IndiaPage() {
       <PageHeader
         title="India · Zerodha Kite"
         subtitle="NSE stocks scored on free data · real orders via Kite"
-        cadence="weekly"
+        cadence="daily"
         whatItDoes="Live NSE holdings from your Zerodha Kite account, plus AI-scored Indian stocks (NIFTY names) you can buy or sell with real orders. Kite issues a fresh access token each day — reconnect when it expires."
         whatToLookFor={[
           "Green status = token valid today; amber = reconnect before trading or reading holdings.",
           "Scored signals: score ≥ 70 green (strong), 50–69 amber (moderate), < 50 red.",
-          "Buy via Kite opens an explicit confirm step — orders are real money and never fire on the first click.",
+          "Only LONG, entry-eligible signals can open the Kite order panel; a second explicit confirmation is still required.",
           "Total value row sums your live NSE holdings in ₹.",
         ]}
       />
@@ -314,6 +314,13 @@ export default function IndiaPage() {
               {signals.map(s => {
                 const c = scoreColor(s.score);
                 const isOpen = orderFor === s.symbol;
+                const entryEligible = s.direction === "long";
+                const canOpenOrder = entryEligible && connected;
+                const rationale = s.rationale && !/^Analyst score \d+, direction neutral\.?$/i.test(s.rationale.trim())
+                  ? s.rationale
+                  : entryEligible
+                    ? "Entry score passed; open Research Journal for the full evidence, catalysts, and risks."
+                    : `No entry: direction is ${s.direction || "neutral"}. A high score alone cannot authorize a new position; see Research Journal for the failed evidence gate.`;
                 return (
                   <div key={s.symbol} style={{ background: T.surface, borderRadius: "10px", padding: "14px 16px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", flexWrap: "wrap" }}>
@@ -329,21 +336,24 @@ export default function IndiaPage() {
                             </span>
                           )}
                         </div>
-                        {s.rationale && (
+                        {rationale && (
                           <div style={{ fontSize: "12px", color: T.textSub, lineHeight: "1.6" }}>
-                            {String(s.rationale).slice(0, 220)}{String(s.rationale).length > 220 ? "…" : ""}
+                            {String(rationale).slice(0, 260)}{String(rationale).length > 260 ? "…" : ""}
                           </div>
                         )}
                       </div>
                       <button
-                        onClick={() => openOrder(s.symbol)}
+                        disabled={!canOpenOrder}
+                        title={!entryEligible ? "Neutral signals cannot open a new BUY" : !connected ? "Reconnect Kite before opening an order" : "Open explicit real-money confirmation"}
+                        onClick={() => { if (canOpenOrder) openOrder(s.symbol); }}
                         style={{
-                          padding: "7px 16px", borderRadius: "7px", fontSize: "12px", fontWeight: 600, cursor: "pointer",
-                          background: isOpen ? T.accentBg : T.accent, color: isOpen ? T.accent : "#fff",
+                          padding: "7px 16px", borderRadius: "7px", fontSize: "12px", fontWeight: 600, cursor: canOpenOrder ? "pointer" : "not-allowed",
+                          background: !canOpenOrder ? T.dim : isOpen ? T.accentBg : T.accent, color: !canOpenOrder ? T.muted : isOpen ? T.accent : "#fff",
                           border: isOpen ? `1px solid ${T.accent}44` : "none", flexShrink: 0, whiteSpace: "nowrap",
+                          opacity: canOpenOrder ? 1 : 0.7,
                         }}
                       >
-                        {isOpen ? "Order below ↓" : "Buy via Kite"}
+                        {!entryEligible ? "Not entry-eligible" : !connected ? "Reconnect Kite" : isOpen ? "Order below ↓" : "Buy via Kite"}
                       </button>
                     </div>
 

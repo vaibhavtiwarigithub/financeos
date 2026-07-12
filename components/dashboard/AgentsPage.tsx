@@ -23,13 +23,13 @@ const AGENTS = [
   { id: "research",     label: "ResearchAgent",  icon: "🔍", desc: "Analyzes stocks, writes signals",          apiPath: "/api/agents/research" },
   { id: "paper-trade",  label: "PaperTrader",    icon: "📄", desc: "Shadow-trades signals on $10k virtual",    apiPath: "/api/agents/paper-trade" },
   { id: "trader",       label: "TraderAgent",    icon: "⚡", desc: "Proposes real trades for approval",        apiPath: "/api/agents/trader" },
-  { id: "learner",      label: "LearnerAgent",   icon: "🧠", desc: "Closes paper trades, adjusts weights",     apiPath: "/api/agents/learner" },
+  { id: "learner",      label: "LearnerAgent",   icon: "🧠", desc: "Evaluates outcomes; proposes governed challengers", apiPath: "/api/agents/learner" },
   { id: "theme-scout",  label: "ThemeScout",     icon: "🎯", desc: "Finds AI/thematic watchlist candidates",   apiPath: "/api/agents/theme-scout" },
   { id: "deepseek",     label: "DeepSeek Research", icon: "🤖", desc: "Runs parallel research via DeepSeek LLM", apiPath: "/api/agents/deepseek-research" },
 ];
 
 function pnlColor(n: number) { return n >= 0 ? T.green : T.red; }
-function fmt(n: number, cur = "$") { return (n >= 0 ? "+" : "") + cur + Math.abs(n).toFixed(2); }
+function fmt(n: number, cur = "$") { return (n >= 0 ? "+" : "-") + cur + Math.abs(n).toFixed(2); }
 function fmtPct(n: number) { return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
 
 function dirBadge(d: string) {
@@ -285,10 +285,10 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         title="AI Agents"
         subtitle="Agent control center · research, trade, learn"
         cadence="daily"
-        whatItDoes="Command center for all agents — ResearchAgent (screens and scores), PaperTrader (executes signals), LearnerAgent (updates weights weekly). Shows live status, paper portfolio, and trade queue."
+        whatItDoes="Command center for all agents — ResearchAgent records evidence, PaperTrader tests eligible signals, and LearnerAgent evaluates outcomes and proposes governed challengers. Shows run health, paper portfolio, and the approval queue."
         whatToLookFor={[
           "ResearchAgent runs daily at 9 AM — scores your watchlist. Check Intelligence for results.",
-          "PaperTrader acts on scores ≥60. It won't trade if Live Trading is disabled (default).",
+          "PaperTrader requires an entry-eligible LONG decision and the configured evidence gates; score alone never authorizes a trade.",
           "Kill Switch disables live trading immediately — use if agent behavior looks wrong.",
           "Trade queue shows pending orders waiting for next PaperTrader cycle.",
         ]}
@@ -686,7 +686,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "14px" }}>Learning Log</div>
           {learningLog.length === 0 ? (
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "30px 0" }}>
-              No learning events yet. LearnerAgent closes paper trades after 7 days and adjusts weights.
+              No learning events yet. LearnerAgent evaluates labeled outcomes and may propose a challenger; promotion remains validation- and governance-gated.
             </div>
           ) : learningLog.map(l => (
             <div key={l.id} style={{ borderTop: `1px solid ${T.border}`, padding: "12px 0" }}>
@@ -888,8 +888,8 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                   <span style={{ fontSize: "11px", color: T.muted, background: T.card, border: `1px solid ${T.border}`, borderRadius: "4px", padding: "2px 8px" }}>Auto-chained after Research</span>
                 </div>
                 <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7", display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <div>Takes <code style={{ background: T.card, padding: "1px 5px", borderRadius: "3px", fontSize: "12px", color: T.accent }}>agent_signals</code> with <strong style={{ color: T.text }}>score &ge; 60</strong> and <strong style={{ color: T.text }}>direction = "long"</strong>.</div>
-                  <div>Sizes positions at <strong style={{ color: T.text }}>10% of paper NAV</strong> ($10k). Fetches real fill price from Robinhood.</div>
+                  <div>Consumes <code style={{ background: T.card, padding: "1px 5px", borderRadius: "3px", fontSize: "12px", color: T.accent }}>agent_signals</code> only after direction, evidence-quality, risk, and eligibility gates pass. Score alone is insufficient.</div>
+                  <div>Sizes within the active market/risk policy and records paper fills from deterministic market-data adapters; it does not ask an LLM for prices.</div>
                   <div>Long-only enforcement — no short positions on screener candidates.</div>
                 </div>
               </div>
@@ -902,7 +902,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                   <span style={{ fontSize: "11px", color: T.muted, background: T.card, border: `1px solid ${T.border}`, borderRadius: "4px", padding: "2px 8px" }}>Sundays 8 PM</span>
                 </div>
                 <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7", display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <div>Closes paper trades older than 7 days. Calculates realized P&L vs benchmark.</div>
+                  <div>Labels observations at defined horizons, evaluates calibration and outcomes, and proposes challengers. It cannot activate its own changes.</div>
                   <div>Writes 1-sentence outcome note per trade + batch summary to <code style={{ background: T.card, padding: "1px 5px", borderRadius: "3px", fontSize: "12px", color: T.accent }}>learning_log</code>.</div>
                   <div><span style={{ color: T.amber, fontWeight: 600 }}>Phase 0:</span> records outcomes only — weight mutation locked until 10+ closed trades.</div>
                 </div>

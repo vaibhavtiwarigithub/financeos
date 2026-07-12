@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   const allPositions: any[] = [];
   for (const snap of snaps) {
     const pos: any[] = Array.isArray(snap.positions_json) ? snap.positions_json : [];
-    for (const p of pos) allPositions.push({ ...p, _account_id: snap.account_id });
+    for (const p of pos) allPositions.push({ ...p, _account_id: snap.account_id, _captured_at: snap.captured_at });
   }
 
   const symbols = [...new Set(allPositions.map((p: any) => p.symbol).filter(Boolean))];
@@ -55,7 +55,12 @@ export async function GET(req: NextRequest) {
     // with a failed quote showed currentValue $0 and a false "-100%" total
     // loss instead of falling back to avg cost (0% unrealized P&L, honest
     // "we don't know" instead of a wrong number).
-    const currentPrice = (q?.price && q.price > 0) ? q.price : avgCost;
+    const snapshotPrice = parseFloat(
+      p.current_price ?? p.currentPrice ?? p.market_price ?? p.last_trade_price ?? "0"
+    );
+    const hasLiveQuote = Number.isFinite(q?.price) && q.price > 0;
+    const hasSnapshotPrice = Number.isFinite(snapshotPrice) && snapshotPrice > 0;
+    const currentPrice = hasLiveQuote ? q.price : hasSnapshotPrice ? snapshotPrice : avgCost;
     const currentValue = qty * currentPrice;
     const costBasis = p._cost;
     const totalPnlDollar = currentValue - costBasis;
@@ -71,7 +76,9 @@ export async function GET(req: NextRequest) {
       totalPnlPct,
       dayChangePct: q?.changePct ?? null,
       dayChangeDollar: q?.change ? q.change * qty : null,
-      priceSource: q?.source ?? "unavailable",
+      priceSource: hasLiveQuote ? (q?.source ?? "quote") : hasSnapshotPrice ? "broker_snapshot" : "cost_basis_fallback",
+      priceAsOf: hasLiveQuote ? (q?.asOf ?? null) : (hasSnapshotPrice ? (p._captured_at ?? null) : null),
+      priceAvailable: hasLiveQuote || hasSnapshotPrice,
       accounts: p._accounts,
     };
   });

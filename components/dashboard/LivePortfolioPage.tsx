@@ -60,7 +60,7 @@ type HoldingRow = {
   currentPrice: number; currentValue: number;
   totalPnlDollar: number; totalPnlPct: number;
   dayChangePct: number | null; dayChangeDollar: number | null;
-  priceSource: string;
+  priceSource: string; priceAsOf: string | null; priceAvailable: boolean;
 };
 
 type ChartPoint = { date: string; portfolio: number; [key: string]: any };
@@ -474,7 +474,8 @@ export default function LivePortfolioPage({
                     </td>
                     <td style={{ padding: "10px 10px", textAlign: "right", fontWeight: 600 }}>
                       {maskText(h.currentPrice > 0 ? "$" + h.currentPrice.toFixed(2) : "—", masked)}
-                      {h.priceSource === "unavailable" && <span style={{ fontSize: "9px", color: T.amber, marginLeft: "4px" }}>⚠</span>}
+                      {!h.priceAvailable && <span title="No market price; cost basis shown only to avoid a false -100% value" style={{ fontSize: "9px", color: T.amber, marginLeft: "4px" }}>⚠</span>}
+                      {h.priceSource === "broker_snapshot" && <span title="Broker snapshot price; external quote unavailable" style={{ fontSize: "9px", color: T.muted, marginLeft: "4px" }}>S</span>}
                     </td>
                     <td style={{ padding: "10px 10px", textAlign: "right" }}>{masked ? "••" : <PctBadge value={h.dayChangePct} />}</td>
                     <td style={{ padding: "10px 10px", textAlign: "right" }}>{masked ? "••" : <PctBadge value={h.totalPnlPct} />}</td>

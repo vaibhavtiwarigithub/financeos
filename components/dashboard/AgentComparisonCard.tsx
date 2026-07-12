@@ -330,27 +330,6 @@ export default function AgentComparisonCard() {
         </div>
       )}
 
-      {/* Footer note */}
-      <div
-        style={{
-          marginTop: "12px",
-          fontSize: "11px",
-          color: T.muted,
-          textAlign: "center",
-        }}
-      >
-        DeepSeek agent starts producing signals after first run with{" "}
-        <code
-          style={{
-            background: T.surface,
-            padding: "1px 4px",
-            borderRadius: "3px",
-            color: T.accent,
-          }}
-        >
-          agent_label=&apos;deepseek&apos;
-        </code>
-      </div>
     </div>
   );
 }

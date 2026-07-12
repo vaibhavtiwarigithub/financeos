@@ -156,10 +156,9 @@ export async function GET(req: NextRequest) {
   add(uup?.changePct ?? null, -1);       // dollar up = risk-off
   add(gld?.changePct ?? null, -1);       // gold up = defensive tilt
 
-  let regime: "risk-on" | "neutral" | "risk-off" = "neutral";
+  let regime: "risk-on" | "neutral" | "risk-off" | "unknown" = "unknown";
   if (scored > 0) {
-    if (score >= 2) regime = "risk-on";
-    else if (score <= -2) regime = "risk-off";
+    regime = score >= 2 ? "risk-on" : score <= -2 ? "risk-off" : "neutral";
   }
 
   // ── Build grounded context string for the LLM ──

@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
+import ResearchFunnel from "@/components/dashboard/ResearchFunnel";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -215,7 +216,7 @@ export default function ResearchJournalPage() {
             </button>
           ))}
         </div>
-        {tab === "funnel" ? <FunnelTab /> : <EvolutionTab />}
+        {tab === "funnel" ? <ResearchFunnel /> : <EvolutionTab />}
       </div>
     </div>
   );
