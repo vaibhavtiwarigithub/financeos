@@ -19,9 +19,30 @@ import { getQuote } from "@/lib/data/quotes";
 // never cross. Guarded: pre-057 (single pool, no market column) it runs exactly
 // as the old US-only path.
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// 120s: the US path (many positions × price fetch + RAG indexing + NAV writes) can
+// exceed 60s and get killed mid-run, leaving NO agent_runs row — which made the
+// stale-check false-fire "PositionMonitor missed" while the run had actually started.
+// pg_net stops waiting at 70s but the function keeps running and writes its own row,
+// so a longer ceiling lets a slow run finish and record regardless.
+export const maxDuration = 120;
 
 const marketOf = (p: any, hasMarketCol: boolean) => (hasMarketCol ? String(p.market ?? "us") : "us");
+
+// Always leave a trace when a scheduled run throws, so the stale-check sees an
+// (errored) run instead of silence, and the real error is captured for diagnosis.
+async function logMonitorError(marketScope: "us" | "india" | null, msg: string) {
+  try {
+    await createServiceClient().from("agent_runs").insert({
+      agent_type: "position_monitor",
+      market: marketScope ?? "us",
+      status: "error",
+      symbols: [],
+      trigger_source: marketScope ? "scheduled" : "manual",
+      result_summary: `PositionMonitor failed: ${msg}`.slice(0, 500),
+      completed_at: new Date().toISOString(),
+    } as any);
+  } catch { /* never mask the original error */ }
+}
 
 async function runMonitor(marketScope?: "us" | "india" | null) {
   const svc = createServiceClient();
@@ -505,8 +526,15 @@ export async function POST(req: NextRequest) {
     }
 
     const mp = new URL(req.url).searchParams.get("market");
-    const result = await runMonitor(mp === "india" ? "india" : mp === "us" ? "us" : null);
-    return NextResponse.json({ success: true, ...result });
+    const scope = mp === "india" ? "india" : mp === "us" ? "us" : null;
+    try {
+      const result = await runMonitor(scope);
+      return NextResponse.json({ success: true, ...result });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await logMonitorError(scope, msg);
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 500 });
@@ -523,12 +551,14 @@ export async function GET(req: NextRequest) {
     const { data: { user } } = await userClient.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const mp = new URL(req.url).searchParams.get("market");
+  const scope = mp === "india" ? "india" : mp === "us" ? "us" : null;
   try {
-    const mp = new URL(req.url).searchParams.get("market");
-    const result = await runMonitor(mp === "india" ? "india" : mp === "us" ? "us" : null);
+    const result = await runMonitor(scope);
     return NextResponse.json({ success: true, ...result });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    await logMonitorError(scope, msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
