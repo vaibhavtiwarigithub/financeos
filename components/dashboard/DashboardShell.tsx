@@ -91,9 +91,7 @@ const NAV_SECTIONS = [
     label: "Settings",
     hint: "",
     items: [
-      { href: "/dashboard/settings",              label: "Settings",   icon: "⚙", hint: "App configuration", alertCat: "" },
-      { href: "/dashboard/settings?tab=models", label: "LLM & Models", icon: "🧠", hint: "Pick the LLM for each agent/flow (DeepSeek, Claude, OpenAI, Gemini, Grok, GLM, Groq) + provider API keys", alertCat: "" },
-      { href: "/dashboard/settings?tab=automation", label: "Automation", icon: "⏱", hint: "All scheduled jobs — times, runner (Supabase pg_cron → Vercel), next run — now a tab in Settings", alertCat: "" },
+      { href: "/dashboard/settings",              label: "Settings",   icon: "⚙", hint: "Profile, preferences, agents, AI Models (LLM per flow + API keys), Automation, Admin, data & access — all as tabs", alertCat: "" },
     ],
   },
 ];

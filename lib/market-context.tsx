@@ -7,6 +7,7 @@
 // (kept in sync here) or delegate rendering to a client child that uses useMarket.
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { useRouter } from "next/navigation";
 
 export type Market = "us" | "india";
 export const CURRENCY: Record<Market, string> = { us: "$", india: "₹" };
@@ -17,6 +18,7 @@ const MarketCtx = createContext<Ctx>({ market: "us", setMarket: () => {}, indiaE
 
 export function MarketProvider({ children, indiaEnabled }: { children: ReactNode; indiaEnabled: boolean }) {
   const [market, setMarketState] = useState<Market>("us");
+  const router = useRouter();
 
   // Restore persisted choice on mount and keep state, localStorage AND the `mkt`
   // cookie in agreement — otherwise server components (which read the cookie) can
@@ -40,6 +42,10 @@ export function MarketProvider({ children, indiaEnabled }: { children: ReactNode
       localStorage.setItem("kairos_market", next);
       document.cookie = `mkt=${next}; path=/; max-age=31536000; samesite=lax`;
     } catch { /* ignore */ }
+    // Server components (e.g. the Home hero) read the `mkt` cookie at render time —
+    // refresh the current route so they re-render for the new market instead of
+    // staying pinned to whatever was rendered on the last navigation.
+    try { router.refresh(); } catch { /* ignore */ }
   };
 
   return <MarketCtx.Provider value={{ market, setMarket, indiaEnabled }}>{children}</MarketCtx.Provider>;
