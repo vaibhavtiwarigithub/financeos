@@ -39,3 +39,7 @@ supabase/.temp/
 
 # Playwright MCP scratch snapshots
 .playwright-mcp/
+
+# Codex/Claude review + audit prompt+result docs — local scratch, never commit
+CODEX_*.md
+CLAUDE_CODE_*.md
