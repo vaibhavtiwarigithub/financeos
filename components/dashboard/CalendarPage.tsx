@@ -153,7 +153,7 @@ export default function CalendarPage() {
             color: tab === t ? "#fff" : T.muted,
             transition: "all 0.15s",
           }}>
-            {t === "earnings" ? "Earnings" : "Economic Events"}
+            {t === "earnings" ? "Earnings" : isIndia ? "US Macro" : "Economic Events"}
           </button>
         ))}
       </div>
@@ -206,6 +206,11 @@ export default function CalendarPage() {
 
       {tab === "econ" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {isIndia && (
+            <div style={{ marginBottom: "4px", fontSize: "11px", color: "#9CA3AF", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "8px 12px" }}>
+              These are <b>US macro</b> events (FOMC / CPI / NFP). India macro (RBI policy, India CPI/IIP) isn&apos;t tracked yet — shown here because US rates still move Indian equities.
+            </div>
+          )}
           {upcomingEcon.map((e, i) => (
             <div key={i} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 18px", display: "flex", alignItems: "center", gap: "16px" }}>
               <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: impactColor(e.impact), flexShrink: 0 }} />

@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
 import PageHeader from "@/components/dashboard/PageHeader";
+import { useMarket } from "@/lib/market-context";
 
 function NewsletterTab() {
   const supabase = createClient();
@@ -195,7 +196,7 @@ function BeliefsTab() {
 
 // ── Brain tab — the unified evolving-belief view ────────────────────────────
 function BrainTab() {
-  const [market, setMarket] = useState<"us" | "india">("us");
+  const { market } = useMarket();
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => { setLoading(true); fetch(`/api/agent-mind/brain?market=${market}`).then(r => r.json()).then(d => { setData(d); setLoading(false); }).catch(() => setLoading(false)); }, [market]);
@@ -216,12 +217,6 @@ function BrainTab() {
   const ev = data.evidence_context ?? {};
   return (
     <div>
-      <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-        {(["us", "india"] as const).map(m => (
-          <button key={m} onClick={() => setMarket(m)} style={{ background: market === m ? TM.accent : TM.surface, border: `1px solid ${market === m ? TM.accent : TM.border}`, borderRadius: "8px", color: market === m ? "#fff" : TM.textSub, padding: "6px 16px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>{m === "us" ? "🇺🇸 US" : "🇮🇳 India"}</button>
-        ))}
-      </div>
-
       <div style={{ background: "#1a1200", border: `1px solid ${TM.amber}44`, borderRadius: "10px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: TM.amber }}>
         Evidence context: {ev.resolved_trades ?? 0} resolved trades, {ev.prior_count ?? 0} beliefs. Confidence is only as strong as the evidence behind it — treat everything below as a working view, not certainty.
       </div>

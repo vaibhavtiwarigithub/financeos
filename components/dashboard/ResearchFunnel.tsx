@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useMarket } from "@/lib/market-context";
 
 const T = {
   surface: "#13151C", card: "#1A1D27", border: "#252836", text: "#ECEDEF",
@@ -42,7 +43,7 @@ function MiniMetric({ label, value, color }: { label: string; value: string; col
 
 export default function ResearchFunnel() {
   const [date, setDate] = useState(today());
-  const [market, setMarket] = useState<"us" | "india">("us");
+  const { market } = useMarket();
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -88,10 +89,6 @@ export default function ResearchFunnel() {
     <div style={{ display: "flex", gap: "10px", marginBottom: "10px", alignItems: "center", flexWrap: "wrap" }}>
       <input aria-label="Journal date" type="date" value={date} onChange={e => setDate(e.target.value)}
         style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "7px", color: T.text, padding: "8px 10px", fontSize: "13px" }} />
-      <select aria-label="Journal market" value={market} onChange={e => setMarket(e.target.value as "us" | "india")}
-        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "7px", color: T.text, padding: "8px 10px", fontSize: "13px" }}>
-        <option value="us">US</option><option value="india">India</option>
-      </select>
       {data && <span style={{ fontSize: "12px", color: T.muted }}>{data.count} symbols · latest decision per symbol</span>}
     </div>
     <div style={{ color: T.muted, fontSize: "11px", marginBottom: "16px" }}>

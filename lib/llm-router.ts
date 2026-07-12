@@ -50,6 +50,12 @@ const SAME_TIER_FALLBACK: Record<string, string> = {
   "gemini-2.5-pro":            "deepseek-reasoner",
   "grok-4":                    "deepseek-reasoner",
   "grok-4-fast":               "deepseek-chat",
+  "gpt-4o":                    "deepseek-reasoner",
+  "gpt-4.1":                   "deepseek-reasoner",
+  "gpt-4o-mini":               "deepseek-chat",
+  "gpt-4.1-mini":              "deepseek-chat",
+  "glm-4.6":                   "deepseek-reasoner",
+  "glm-4.5-air":               "deepseek-chat",
 }
 
 // Does this error mean "the model doesn't exist / is deprecated" (vs a transient
@@ -125,6 +131,13 @@ const PRICING: Record<string, [number, number]> = {
   // xAI Grok — verify against x.ai pricing page; estimates below.
   "grok-4":                    [3.00,  15.00],
   "grok-4-fast":               [0.20,   0.50],
+  // OpenAI + Zhipu GLM — verify against each provider's price page; estimates.
+  "gpt-4o":                    [2.50,  10.00],
+  "gpt-4o-mini":               [0.15,   0.60],
+  "gpt-4.1":                   [2.00,   8.00],
+  "gpt-4.1-mini":              [0.40,   1.60],
+  "glm-4.6":                   [0.60,   2.20],
+  "glm-4.5-air":               [0.20,   1.10],
   "llama-3.3-70b-versatile":   [0,      0],
   "llama-3.1-8b-instant":      [0,      0],
   "mixtral-8x7b-32768":        [0,      0],
@@ -210,6 +223,8 @@ async function dispatchProvider(model: string, opts: LLMCallOpts): Promise<{ tex
   if (model.startsWith("deepseek")) return callDeepSeek(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
   if (model.startsWith("gemini")) return callGemini(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
   if (model.startsWith("grok")) return callGrok(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
+  if (model.startsWith("gpt") || /^o[134]/.test(model)) return callOpenAI(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
+  if (model.startsWith("glm")) return callGLM(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
   if (GROQ_MODELS.has(model)) return callGroq(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
   throw new Error(`Unknown model: ${model}`)
 }
@@ -514,6 +529,71 @@ async function callGemini(
     tokensIn: data.usageMetadata?.promptTokenCount ?? 0,
     tokensOut: data.usageMetadata?.candidatesTokenCount ?? 0,
   }
+}
+
+// OpenAI (ChatGPT) — standard Chat Completions.
+async function callOpenAI(
+  model: string,
+  prompt: string,
+  system?: string,
+  maxTokens = 4096
+): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+  const apiKey = await getProviderKey("openai")
+  if (!apiKey) throw new Error("OPENAI_API_KEY not set")
+
+  const messages: { role: string; content: string }[] = []
+  if (system) messages.push({ role: "system", content: system })
+  messages.push({ role: "user", content: prompt })
+
+  // Reasoning models (o1/o3/o4) use max_completion_tokens and reject temperature.
+  const isReasoner = /^o[134]/.test(model)
+  const body: Record<string, unknown> = { model, messages }
+  body[isReasoner ? "max_completion_tokens" : "max_tokens"] = maxTokens
+
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
+  })
+  if (!resp.ok) {
+    const errText = await resp.text()
+    throw new Error(`OpenAI ${resp.status}: ${errText.slice(0, 200)}`)
+  }
+  const data = await resp.json()
+  const text = data.choices?.[0]?.message?.content ?? ""
+  if (!text) throw new Error(`OpenAI model ${model} returned empty content (raw: ${JSON.stringify(data).slice(0, 200)})`)
+  return { text, tokensIn: data.usage?.prompt_tokens ?? 0, tokensOut: data.usage?.completion_tokens ?? 0 }
+}
+
+// Zhipu GLM — OpenAI-compatible Chat Completions.
+async function callGLM(
+  model: string,
+  prompt: string,
+  system?: string,
+  maxTokens = 4096
+): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+  const apiKey = await getProviderKey("glm")
+  if (!apiKey) throw new Error("GLM_API_KEY not set")
+
+  const messages: { role: string; content: string }[] = []
+  if (system) messages.push({ role: "system", content: system })
+  messages.push({ role: "user", content: prompt })
+
+  const resp = await fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
+    signal: AbortSignal.timeout(120_000),
+  })
+  if (!resp.ok) {
+    const errText = await resp.text()
+    throw new Error(`GLM ${resp.status}: ${errText.slice(0, 200)}`)
+  }
+  const data = await resp.json()
+  const text = data.choices?.[0]?.message?.content ?? ""
+  if (!text) throw new Error(`GLM model ${model} returned empty content (raw: ${JSON.stringify(data).slice(0, 200)})`)
+  return { text, tokensIn: data.usage?.prompt_tokens ?? 0, tokensOut: data.usage?.completion_tokens ?? 0 }
 }
 
 // ── Tool-use agent loop ──────────────────────────────────────────────────────

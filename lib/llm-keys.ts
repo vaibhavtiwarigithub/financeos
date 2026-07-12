@@ -12,7 +12,7 @@
 
 import { createServiceClient } from "@/lib/supabase/service";
 
-export type LLMProvider = "anthropic" | "deepseek" | "groq" | "gemini" | "grok";
+export type LLMProvider = "anthropic" | "deepseek" | "groq" | "gemini" | "grok" | "openai" | "glm";
 
 interface ProviderMeta { vaultKey: string; envVar: string; label: string }
 
@@ -22,6 +22,8 @@ export const LLM_PROVIDERS: Record<LLMProvider, ProviderMeta> = {
   groq:      { vaultKey: "llm_key_groq",      envVar: "GROQ_API_KEY",      label: "Groq (Llama)" },
   gemini:    { vaultKey: "llm_key_gemini",    envVar: "GEMINI_API_KEY",    label: "Google (Gemini)" },
   grok:      { vaultKey: "llm_key_grok",      envVar: "XAI_API_KEY",       label: "xAI (Grok)" },
+  openai:    { vaultKey: "llm_key_openai",    envVar: "OPENAI_API_KEY",    label: "OpenAI (ChatGPT)" },
+  glm:       { vaultKey: "llm_key_glm",       envVar: "GLM_API_KEY",       label: "Zhipu (GLM)" },
 };
 
 export function isLLMProvider(x: string): x is LLMProvider {
@@ -34,6 +36,8 @@ export function providerForModel(model: string): LLMProvider | null {
   if (model.startsWith("deepseek")) return "deepseek";
   if (model.startsWith("gemini")) return "gemini";
   if (model.startsWith("grok")) return "grok";
+  if (model.startsWith("gpt") || model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4")) return "openai";
+  if (model.startsWith("glm")) return "glm";
   if (/^(llama|mixtral|gemma|deepseek-r1-distill)/.test(model)) return "groq";
   return null;
 }

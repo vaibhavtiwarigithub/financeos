@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import DashboardHome from "@/components/dashboard/DashboardHome";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 
 export const revalidate = 30;
 
@@ -13,6 +14,12 @@ export default async function DashboardPage() {
 
   const supabase = createServiceClient();
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Server component — can't call useMarket() (client-only context). Read the
+  // `mkt` cookie MarketProvider keeps in sync, same idiom as the Agents page,
+  // so the PRIMARY Morning-Briefing hero (NAV/P&L/positions/trades/signals)
+  // follows the global US/India switch instead of being pinned to US.
+  const mkt = (await cookies()).get("mkt")?.value === "india" ? "india" : "us";
 
   const [
     { data: profile },
@@ -31,16 +38,20 @@ export default async function DashboardPage() {
     { data: indiaRecentRuns },
   ] = await Promise.all([
     supabase.from("profiles").select("*").eq("id", session.user.id).single(),
-    // Phase 4: US pool only (post-057 there's also an India ₹ row). maybeSingle so a missing market column pre-057 yields null gracefully.
-    supabase.from("paper_portfolio").select("*").eq("market", "us").limit(1).maybeSingle(),
-    // Previously unfiltered — silently blended India positions into what the
-    // hero card presents as the US NAV/positions count. Scoped to match
+    // Hero pool follows the global switch (mkt). maybeSingle so a missing market column pre-057 yields null gracefully.
+    supabase.from("paper_portfolio").select("*").eq("market", mkt).limit(1).maybeSingle(),
+    // Previously unfiltered — silently blended other-market positions into what
+    // the hero card presents as NAV/positions count. Scoped to match
     // paperPortfolio above.
-    supabase.from("paper_positions").select("*").eq("market", "us"),
-    supabase.from("paper_trades").select("*").eq("market", "us").gte("executed_at", sevenDaysAgo).order("executed_at", { ascending: false }),
-    supabase.from("agent_runs").select("*").or("market.eq.us,market.is.null").gte("completed_at", sevenDaysAgo).order("completed_at", { ascending: false }),
-    supabase.from("agent_signals").select("*").eq("market", "us").order("created_at", { ascending: false }).limit(6),
-    supabase.from("agent_signals").select("*").eq("market", "us").eq("status", "pending").gte("analyst_score", 55).order("analyst_score", { ascending: false }).limit(5),
+    supabase.from("paper_positions").select("*").eq("market", mkt),
+    supabase.from("paper_trades").select("*").eq("market", mkt).gte("executed_at", sevenDaysAgo).order("executed_at", { ascending: false }),
+    // agent_runs.market defaults to 'us' for cross-market agents (learner, mentor,
+    // macro-sentinel); a few pre-077 rows are null, so "us" also accepts null.
+    mkt === "india"
+      ? supabase.from("agent_runs").select("*").eq("market", "india").gte("completed_at", sevenDaysAgo).order("completed_at", { ascending: false })
+      : supabase.from("agent_runs").select("*").or("market.eq.us,market.is.null").gte("completed_at", sevenDaysAgo).order("completed_at", { ascending: false }),
+    supabase.from("agent_signals").select("*").eq("market", mkt).order("created_at", { ascending: false }).limit(6),
+    supabase.from("agent_signals").select("*").eq("market", mkt).eq("status", "pending").gte("analyst_score", 55).order("analyst_score", { ascending: false }).limit(5),
     supabase.from("learning_log").select("*").order("created_at", { ascending: false }).limit(3),
     // Filter to the Trading account (••••8641) specifically — without this,
     // "most recent snapshot" could silently return Autopilot or Agentic's

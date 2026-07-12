@@ -12,7 +12,7 @@ interface CheckResult { checked_at: string; findings: Finding[]; providers_ok: R
 
 // Fortnightly-ish freshness check (Ops spec Part 3) — informational only.
 // Never auto-switches a model; changes happen in the agent-config picker below.
-export default function ModelFreshnessCard() {
+export default function ModelFreshnessCard({ refreshKey = 0 }: { refreshKey?: number }) {
   const [agentConfig, setAgentConfig] = useState<{ agent_name: string; model: string }[]>([]);
   const [latest, setLatest] = useState<CheckResult | null>(null);
   const [checking, setChecking] = useState(false);
@@ -20,7 +20,9 @@ export default function ModelFreshnessCard() {
   function load() {
     fetch("/api/models/check").then(r => r.json()).then(d => { setAgentConfig(d.agentConfig ?? []); setLatest(d.latest ?? null); }).catch(() => {});
   }
-  useEffect(() => { load(); }, []);
+  // Re-load on mount AND whenever the parent bumps refreshKey (i.e. a model was
+  // changed in the LLM Config picker), so the assignment list here stays current.
+  useEffect(() => { load(); }, [refreshKey]);
 
   async function checkNow() {
     setChecking(true);

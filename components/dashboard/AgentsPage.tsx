@@ -74,6 +74,9 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [agentConfigs, setAgentConfigs] = useState<any[]>([]);
   const [configUpdating, setConfigUpdating] = useState<string | null>(null);
   const [configUpdateToast, setConfigUpdateToast] = useState("");
+  // Bumped whenever an agent's model/config is saved, so ModelFreshnessCard
+  // (which caches its own copy of agent_config) re-reads and reflects the change.
+  const [modelRefreshKey, setModelRefreshKey] = useState(0);
   const [learnerConfig, setLearnerConfig] = useState<any[]>([]);
   const [weightHistory, setWeightHistory] = useState<any[]>([]);
   const [learnerCtrlSaving, setLearnerCtrlSaving] = useState<string | null>(null);
@@ -140,6 +143,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
     try {
       await fetch("/api/agents/agent-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent_name, [field]: value }) });
       setAgentConfigs(prev => prev.map(c => c.agent_name === agent_name ? { ...c, [field]: value } : c));
+      setModelRefreshKey(k => k + 1);
       setConfigUpdateToast("Saved!");
       setTimeout(() => setConfigUpdateToast(""), 2000);
     } catch {}
@@ -296,7 +300,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
       />
       <div style={{ padding: "0 clamp(12px, 4vw, 28px) 32px" }}>
 
-      <ModelFreshnessCard />
+      <ModelFreshnessCard refreshKey={modelRefreshKey} />
 
       {/* Paper portfolio hero */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "24px" }}>
@@ -1198,6 +1202,15 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                       <optgroup label="xAI Grok (Paid)">
                         <option value="grok-4-fast">grok-4-fast (fast/cheap)</option>
                         <option value="grok-4">grok-4 (best)</option>
+                      </optgroup>
+                      <optgroup label="OpenAI ChatGPT (Paid)">
+                        <option value="gpt-4o-mini">gpt-4o-mini (fast/cheap)</option>
+                        <option value="gpt-4o">gpt-4o</option>
+                        <option value="gpt-4.1">gpt-4.1 (best)</option>
+                      </optgroup>
+                      <optgroup label="Zhipu GLM (Paid)">
+                        <option value="glm-4.5-air">glm-4.5-air (fast/cheap)</option>
+                        <option value="glm-4.6">glm-4.6 (best)</option>
                       </optgroup>
                     </select>
                     <div style={{ fontSize: "11px", color: T.muted, textAlign: "right" }}>

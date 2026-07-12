@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 import ResearchFunnel from "@/components/dashboard/ResearchFunnel";
+import { useMarket } from "@/lib/market-context";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -24,7 +25,7 @@ function terminalBadge(terminal: string) {
 
 function FunnelTab() {
   const [date, setDate] = useState(todayStr());
-  const [market, setMarket] = useState<"us" | "india">("us");
+  const { market } = useMarket();
   const [data, setData] = useState<any>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -42,10 +43,6 @@ function FunnelTab() {
     <div>
       <div style={{ display: "flex", gap: "10px", marginBottom: "16px", alignItems: "center" }}>
         <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", color: T.text, padding: "8px 10px", fontSize: "13px" }} />
-        <select value={market} onChange={e => setMarket(e.target.value as any)} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", color: T.text, padding: "8px 10px", fontSize: "13px" }}>
-          <option value="us">US</option>
-          <option value="india">India</option>
-        </select>
         {data && <span style={{ fontSize: "12px", color: T.muted }}>{data.count} symbol{data.count === 1 ? "" : "s"} scored</span>}
       </div>
 
@@ -120,7 +117,7 @@ function FunnelTab() {
 }
 
 function EvolutionTab() {
-  const [market, setMarket] = useState<"us" | "india">("us");
+  const { market } = useMarket();
   const [data, setData] = useState<any>(null);
 
   useEffect(() => {
@@ -138,11 +135,6 @@ function EvolutionTab() {
 
   return (
     <div>
-      <select value={market} onChange={e => setMarket(e.target.value as any)} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", color: T.text, padding: "8px 10px", fontSize: "13px", marginBottom: "16px" }}>
-        <option value="us">US</option>
-        <option value="india">India</option>
-      </select>
-
       <Card title="LearnerAgent weight changes">
         {!data.learner.enoughHistory ? (
           <div style={{ fontSize: "12px", color: T.muted }}>Only {data.learner.runsCount} learner run(s) in the last 90 days — not enough history to show a trend yet.</div>
