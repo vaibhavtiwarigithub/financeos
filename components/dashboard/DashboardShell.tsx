@@ -30,13 +30,23 @@ const SEV: Record<string, { color: string; dot: string; bg: string }> = {
 };
 
 // â"€â"€ Nav sections â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// Sidebar follows the user funnel top→bottom: Overview → Markets → Signals →
+// Portfolio → Research → Discovery → Learn → Settings. Grouping/labels only —
+// every route below is unchanged. Deeper page-merges (tabbed Portfolio/Research)
+// are a deferred follow-up (see features/nav-restructure/FEATURE_ARCHITECTURE.md).
 const NAV_SECTIONS = [
   {
-    label: "Daily",
-    hint: "Check every trading day",
+    label: "Overview",
+    hint: "Start here every trading day",
     items: [
-      { href: "/dashboard",              label: "Morning Briefing", icon: "⌂", hint: "Portfolio snapshot + today's signals", alertCat: "home" },
+      { href: "/dashboard",              label: "Home",             icon: "⌂", hint: "Portfolio snapshot + today's signals", alertCat: "home" },
       { href: "/dashboard/markets",      label: "Markets",          icon: "◉", hint: "Indices, sectors, VIX proxy",         alertCat: "market" },
+    ],
+  },
+  {
+    label: "Signals",
+    hint: "What the agents want to act on",
+    items: [
       { href: "/dashboard/intelligence", label: "Intelligence",     icon: "◆", hint: "Agent signals + research runs",       alertCat: "cron" },
       { href: "/dashboard/smart-money",  label: "Smart Money",      icon: "🦊", hint: "Trade queue, insider flow, multi-asset signals", alertCat: "" },
     ],
@@ -52,7 +62,7 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: "Agents & Research",
+    label: "Research",
     hint: "How the agents are scoring and evolving",
     items: [
       { href: "/dashboard/agents",       label: "Agents",           icon: "⬡", hint: "Run agents manually, view status",    alertCat: "" },
@@ -85,6 +95,7 @@ const NAV_SECTIONS = [
     hint: "",
     items: [
       { href: "/dashboard/settings",              label: "Settings",   icon: "⚙", hint: "App configuration", alertCat: "" },
+      { href: "/dashboard/settings?tab=models", label: "LLM & Models", icon: "🧠", hint: "Pick the LLM for each agent/flow (DeepSeek, Claude, OpenAI, Gemini, Grok, GLM, Groq) + provider API keys", alertCat: "" },
       { href: "/dashboard/settings/automation",   label: "Automation", icon: "⏱", hint: "All scheduled jobs — times, runner (Supabase pg_cron → Vercel), next run", alertCat: "" },
     ],
   },

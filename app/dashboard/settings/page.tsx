@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { usePrivacySetting } from "@/components/dashboard/PrivacyMask";
+import LLMConfigPanel from "@/components/dashboard/LLMConfigPanel";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -435,7 +436,7 @@ export default function SettingsPage() {
   const inp: React.CSSProperties = { width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", padding: "10px 13px", outline: "none" };
   const sel: React.CSSProperties = { ...inp, cursor: "pointer" };
   const numInp: React.CSSProperties = { width: "90px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", padding: "8px 10px", outline: "none", textAlign: "right" as const };
-  const tabs = ["profile", "preferences", "agents", "data", "access"];
+  const tabs = ["profile", "preferences", "agents", "models", "data", "access"];
 
   useEffect(() => {
     if (tab !== "data" || providers) return;
@@ -472,6 +473,15 @@ export default function SettingsPage() {
           <button key={t} onClick={() => setTab(t)} style={{ background: "none", border: "none", borderBottom: tab === t ? `2px solid ${T.accent}` : "2px solid transparent", color: tab === t ? T.accent : T.muted, padding: "8px 16px", fontSize: "14px", cursor: "pointer", textTransform: "capitalize", marginBottom: "-1px" }}>{t}</button>
         ))}
       </div>
+
+      {tab === "models" && (
+        <div>
+          <div style={{ fontSize: "13px", color: T.textSub, marginBottom: "16px", lineHeight: 1.6 }}>
+            Choose which LLM runs each agent/flow, and set provider API keys (DeepSeek, Claude, OpenAI, Gemini, Grok, GLM, Groq). Keys are stored encrypted in the vault. Changes take effect immediately — no deploy.
+          </div>
+          <LLMConfigPanel />
+        </div>
+      )}
 
       {tab === "profile" && (
         <div style={{ maxWidth: "520px" }}>
@@ -535,7 +545,7 @@ export default function SettingsPage() {
             <div style={{ marginBottom: "24px" }}>
               <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>AI Model</label>
               <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px" }}>
-                This preference is not wired to the agent stack — ResearchAgent, TraderAgent, LearnerAgent, and MentorAgent each use a hardcoded model (DeepSeek / Groq via the LLM router) regardless of this setting. Claude options require <code style={{ color: T.textSub, background: T.card, padding: "1px 5px", borderRadius: "4px" }}>ANTHROPIC_API_KEY</code>, which is not currently configured.
+                This is a legacy per-user chat preference. To set the LLM for each agent/flow (research, trader, mentor, etc.) and manage provider API keys, use the <button onClick={() => setTab("models")} style={{ background: "none", border: "none", color: T.accent, padding: 0, font: "inherit", cursor: "pointer", textDecoration: "underline" }}>AI Models</button> tab.
               </div>
               <select value={profile.ai_model} onChange={e => setProfile({ ...profile, ai_model: e.target.value })} style={sel}>
                 <option value="claude-sonnet">Claude Sonnet (requires ANTHROPIC_API_KEY — not configured)</option>
