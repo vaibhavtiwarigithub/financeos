@@ -465,7 +465,7 @@ export default function SettingsPage() {
         ]}
       />
 
-      <div style={{ padding: "0 28px 28px" }}>
+      <div style={{ padding: "0 clamp(12px,4vw,28px) 28px" }}>
 
       <div style={{ display: "flex", gap: "6px", marginBottom: "24px", borderBottom: `1px solid ${T.border}`, paddingBottom: "0" }}>
         {tabs.map(t => (
@@ -475,7 +475,7 @@ export default function SettingsPage() {
 
       {tab === "profile" && (
         <div style={{ maxWidth: "520px" }}>
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)" }}>
             <div style={{ marginBottom: "16px" }}>
               <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>Full name</label>
               <input value={profile.full_name || ""} onChange={e => setProfile({ ...profile, full_name: e.target.value })} style={inp} />
@@ -525,7 +525,7 @@ export default function SettingsPage() {
 
       {tab === "preferences" && (
         <div style={{ maxWidth: "520px" }}>
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)" }}>
             <div style={{ marginBottom: "16px" }}>
               <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>Theme</label>
               <select value={profile.theme} onChange={e => setProfile({ ...profile, theme: e.target.value as Profile["theme"] })} style={sel}>
@@ -547,7 +547,7 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginTop: "16px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginTop: "16px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "4px" }}>Privacy Mode</div>
@@ -576,14 +576,14 @@ export default function SettingsPage() {
         <div style={{ maxWidth: "560px" }}>
 
           {/* Trading Mode + Broker Card */}
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginBottom: "20px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Live Trading</div>
             <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "20px" }}>Controls whether the agent generates and executes real orders, and which broker to use.</div>
 
             {/* Trading mode */}
             <div style={{ marginBottom: "20px" }}>
               <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "10px" }}>Trading Mode</label>
-              <div style={{ display: "flex", gap: "8px" }}>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" as const }}>
                 {([
                   { key: "disabled", label: "Disabled", desc: "No proposals generated", icon: "⛔", color: T.red },
                   { key: "manual",   label: "Manual",   desc: "Proposals require your approval", icon: "👁", color: T.yellow },
@@ -594,7 +594,7 @@ export default function SettingsPage() {
                     onClick={() => setTradingMode(m.key)}
                     disabled={m.key === "auto"}
                     style={{
-                      flex: 1, padding: "12px 10px", borderRadius: "10px", cursor: m.key === "auto" ? "not-allowed" : "pointer",
+                      flex: "1 1 140px", padding: "12px 10px", borderRadius: "10px", cursor: m.key === "auto" ? "not-allowed" : "pointer",
                       background: tradingMode === m.key ? m.color + "22" : T.surface,
                       border: `2px solid ${tradingMode === m.key ? m.color : T.border}`,
                       color: tradingMode === m.key ? m.color : T.textSub,
@@ -707,7 +707,7 @@ export default function SettingsPage() {
           </div>
 
           {/* Robinhood MCP (US live account + orders) — scaffolding */}
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginBottom: "20px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Robinhood MCP · US</div>
             <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "16px" }}>
               In-app Robinhood connection for the live-account snapshot and (once approved & connected) human-clicked order submission. Read-only viewing is unaffected by the auto-trading toggles above.
@@ -798,7 +798,7 @@ export default function SettingsPage() {
           </div>
 
           {/* Zerodha Kite (India) connection card */}
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginBottom: "20px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Zerodha Kite · India</div>
             <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "16px" }}>
               Connects Indian-market (NSE/BSE) execution. Kite's token expires daily — click Connect each trading morning to refresh it. Requires KITE_API_KEY / KITE_API_SECRET in Admin → API Vault.
@@ -850,7 +850,7 @@ export default function SettingsPage() {
           </div>
 
           {/* Live order limits — hard per-order notional ceiling, per market. */}
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginBottom: "20px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Live Order Limits</div>
             <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "16px" }}>
               Hard ceiling on the notional value (<code>qty × price</code>) of any single <strong>live</strong> order, checked at submit against a fresh quote. A blank field <strong>disables live trading for that market</strong> (fail-closed): the order is refused until you set a cap. Paper trades are unaffected.
@@ -920,7 +920,7 @@ export default function SettingsPage() {
           </div>
 
           {/* Risk Profile Card */}
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginBottom: "20px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Risk Profile</div>
             <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "20px" }}>How aggressive should the agent be when picking and sizing trades?</div>
 
@@ -1046,7 +1046,7 @@ export default function SettingsPage() {
           </div>
 
           {/* LLM Cost Monitor Card */}
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "16px" }}>LLM Cost Monitor</div>
 
             {llmLoading && (
@@ -1144,7 +1144,7 @@ export default function SettingsPage() {
           </div>
 
           {/* Autonomous Trading (PA0 — schema/UI; deployment flag currently false) */}
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginTop: "20px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginTop: "20px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
               <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase" as const }}>Autonomous Trading</div>
               {liveAuto && (
@@ -1255,7 +1255,7 @@ export default function SettingsPage() {
             </div>
 
             {/* Caps */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "16px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: "10px", marginBottom: "16px" }}>
               {([
                 ["Daily cap (USD)", "daily_cap_usd", "e.g. 500"],
                 ["Max per-order (USD)", "max_per_order_usd", "e.g. 100"],
@@ -1461,7 +1461,7 @@ export default function SettingsPage() {
 
       {tab === "access" && (
         <div style={{ maxWidth: "520px" }}>
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)" }}>
             <div style={{ marginBottom: "20px" }}>
               <div style={{ fontSize: "13px", color: T.muted, marginBottom: "4px" }}>Access level</div>
               <div style={{ fontSize: "22px", fontWeight: 700, color: profile.role === "superadmin" ? T.yellow : T.accent, textTransform: "capitalize" }}>

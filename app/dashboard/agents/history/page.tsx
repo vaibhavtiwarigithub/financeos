@@ -81,7 +81,7 @@ export default function AgentHistoryPage() {
         ]}
       />
 
-      <div style={{ padding: "24px", maxWidth: "960px" }}>
+      <div style={{ padding: "16px", maxWidth: "960px" }}>
         {/* Controls */}
         <div style={{ display: "flex", gap: "8px", marginBottom: "20px", alignItems: "center", flexWrap: "wrap" }}>
           {(["1d", "1w", "all"] as const).map(r => (

@@ -134,7 +134,7 @@ export default function SymbolPeers({ symbol }: { symbol: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
         <span style={{ fontSize: "11px", fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>
           Peer Comparison
         </span>

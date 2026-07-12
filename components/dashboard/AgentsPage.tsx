@@ -299,7 +299,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
       <ModelFreshnessCard />
 
       {/* Paper portfolio hero */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "24px", marginBottom: "20px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "24px" }}>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "24px" }}>
         <div>
           <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Paper NAV</div>
           <div style={{ fontSize: "24px", fontWeight: 700 }}>{currency}{currentNAV.toFixed(0)}</div>
@@ -519,7 +519,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
             <span style={{ fontWeight: 600, fontSize: "13px" }}>Screener Parameters</span>
             <span style={{ fontSize: "10px", color: T.muted, background: T.surface, padding: "2px 7px", borderRadius: "4px" }}>Auto-runs before each research cycle</span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px,1fr))", gap: "16px" }}>
             <div>
               <div style={{ fontSize: "9px", fontWeight: 700, color: T.amber, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: "6px" }}>Momentum Bucket (pass 1)</div>
               <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
@@ -606,7 +606,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
 
       {/* Weights tab */}
       {tab === "weights" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px,1fr))", gap: "16px" }}>
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
             <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "16px" }}>Signal Weights</div>
             {weights ? (
@@ -973,7 +973,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
             <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "14px" }}>Section 3</div>
             <div style={{ fontWeight: 700, fontSize: "16px", marginBottom: "20px" }}>Scoring Formula</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px,1fr))", gap: "16px" }}>
               <div>
                 <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "10px", color: T.textSub }}>analyst_score (0–100)</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>

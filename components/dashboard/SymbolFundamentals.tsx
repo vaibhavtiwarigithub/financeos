@@ -102,7 +102,7 @@ function RangeBar({ low, high, current, target }: { low: number; high: number; c
       {targetPct != null && (
         <div style={{ position: "relative", marginBottom: "4px", height: "18px" }}>
           <div style={{ position: "absolute", left: `${targetPct}%`, transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center" }}>
-            <span style={{ fontSize: "9px", color: T.amber, whiteSpace: "nowrap", fontWeight: 700 }}>
+            <span style={{ fontSize: "9px", color: T.amber, whiteSpace: "nowrap", fontWeight: 700, maxWidth: "80px", overflow: "hidden", textOverflow: "ellipsis" }}>
               Target ${target?.toFixed(2)}
             </span>
             <span style={{ color: T.amber, fontSize: "10px", lineHeight: 1 }}>▼</span>

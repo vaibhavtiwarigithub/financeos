@@ -228,7 +228,7 @@ export default function IndiaPage() {
         ]}
       />
 
-      <div style={{ padding: "20px 28px 40px", maxWidth: "1200px" }}>
+      <div style={{ padding: "16px clamp(12px,4vw,28px) 40px", maxWidth: "1200px" }}>
 
         {/* ── a) Connection status bar ── */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "14px 18px", marginBottom: "16px" }}>

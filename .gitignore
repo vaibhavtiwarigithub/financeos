@@ -30,3 +30,6 @@ graphify-out/
 .graphify_python
 .graphify_detect.json
 .graphify_*
+
+.vercel
+.env*

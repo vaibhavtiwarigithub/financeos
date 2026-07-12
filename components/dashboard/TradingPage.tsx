@@ -145,7 +145,7 @@ function PaperPerformancePanel({ strategy }: { strategy: any }) {
   ];
 
   return (
-    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "24px", marginBottom: "20px" }}>
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
 
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
@@ -458,9 +458,9 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: "4px", marginBottom: "16px" }}>
+      <div style={{ display: "flex", gap: "4px", marginBottom: "16px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>
         {(["queue", "signals", "history"] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === t ? T.accent : T.card, color: tab === t ? "#fff" : T.muted, textTransform: "capitalize" }}>
+          <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === t ? T.accent : T.card, color: tab === t ? "#fff" : T.muted, textTransform: "capitalize", flexShrink: 0, whiteSpace: "nowrap" }}>
             {t === "queue" ? `Trade Queue (${queueItems.length})` : t === "signals" ? `Paper Signals (${pendingSignals.length})` : `Paper History (${tradeLog.length})`}
           </button>
         ))}
@@ -480,7 +480,8 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
             </div>
           ) : queueItems.map((q: any) => (
             <div key={q.id} style={{ background: T.card, border: `1px solid ${q.status === "pending_approval" ? T.amber + "60" : T.border}`, borderRadius: "12px", padding: "18px 20px", marginBottom: "10px" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr auto", gap: "12px", alignItems: "center" }}>
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr auto", gap: "12px", alignItems: "center", minWidth: "480px" }}>
                 <div style={{ fontWeight: 800, fontSize: "16px", color: T.accent, cursor: "pointer" }} onClick={() => setChartSymbol(q.symbol)}>
                   {q.symbol} ↗
                 </div>
@@ -512,6 +513,7 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
                   <span style={{ fontSize: "11px", color: T.green, fontWeight: 600 }}>Approved</span>
                 )}
               </div>
+              </div>
               {q.rationale && (
                 <div style={{ marginTop: "10px", fontSize: "13px", color: T.textSub, lineHeight: "1.6", whiteSpace: "pre-wrap", borderTop: `1px solid ${T.border}`, paddingTop: "10px" }}>
                   {q.rationale}
@@ -530,7 +532,8 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
               No pending signals. Run ResearchAgent from the Agents page to generate signals.
             </div>
           ) : pendingSignals.map((s: any) => (
-            <div key={s.id} style={{ background: T.card, border: `1px solid ${s.analyst_score >= 60 && s.direction === "long" ? T.accent + "44" : T.border}`, borderRadius: "12px", padding: "16px 20px", display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr 1fr", gap: "12px", alignItems: "center" }}>
+            <div key={s.id} style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+            <div style={{ background: T.card, border: `1px solid ${s.analyst_score >= 60 && s.direction === "long" ? T.accent + "44" : T.border}`, borderRadius: "12px", padding: "16px 20px", display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr 1fr", gap: "12px", alignItems: "center", minWidth: "460px" }}>
               <div style={{ fontWeight: 800, fontSize: "16px", cursor: "pointer", color: T.accent }} onClick={() => setChartSymbol(s.symbol)}>{s.symbol} ↗</div>
               <div>
                 <div style={{ fontSize: "10px", color: T.muted, marginBottom: "4px" }}>DIRECTION</div>
@@ -552,6 +555,7 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
                   ? <span style={{ color: T.green, fontSize: "12px", fontWeight: 600 }}>Yes — will fill</span>
                   : <span style={{ color: T.muted, fontSize: "12px" }}>No ({s.analyst_score < 60 ? "score < 60" : "not long"})</span>}
               </div>
+            </div>
             </div>
           ))}
         </div>

@@ -567,7 +567,7 @@ export default function WatchlistPanel() {
         >
           <div style={{
             background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px",
-            padding: "24px", width: "420px", maxWidth: "95vw", display: "flex", flexDirection: "column", gap: "14px",
+            padding: "16px", width: "420px", maxWidth: "95vw", display: "flex", flexDirection: "column", gap: "14px",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div>

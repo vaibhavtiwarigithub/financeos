@@ -271,7 +271,7 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
         )}
 
         {/* Tabs */}
-        <div style={{ display: "flex", gap: "4px", marginBottom: "16px", background: T.surface, padding: "4px", borderRadius: "10px", width: "fit-content" }}>
+        <div style={{ display: "flex", gap: "4px", marginBottom: "16px", background: T.surface, padding: "4px", borderRadius: "10px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>
           {([
             { key: "queue", label: `Trade Queue${pending.length ? ` (${pending.length})` : ""}` },
             { key: "insider", label: "Insider Flow" },
@@ -280,7 +280,7 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
             { key: "classes", label: "Asset Classes" },
           ] as const).map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
-              style={{ padding: "7px 16px", borderRadius: "7px", border: "none", cursor: "pointer", fontSize: "12px", fontWeight: 500, background: tab === t.key ? T.card : "transparent", color: tab === t.key ? T.text : T.muted }}>
+              style={{ padding: "7px 16px", borderRadius: "7px", border: "none", cursor: "pointer", fontSize: "12px", fontWeight: 500, flexShrink: 0, whiteSpace: "nowrap", background: tab === t.key ? T.card : "transparent", color: tab === t.key ? T.text : T.muted }}>
               {t.label}
             </button>
           ))}
@@ -295,7 +295,7 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
                 <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                   {pending.map(t => (
                     <div key={t.id} style={{ background: T.surface, borderRadius: "10px", padding: "14px 16px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
                         <div>
                           <span style={{ fontWeight: 700, fontSize: "15px" }}>{t.symbol}</span>
                           <span style={{ marginLeft: "8px", fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "4px", background: T.greenBg, color: T.green }}>{t.order_side?.toUpperCase()}</span>
@@ -451,7 +451,7 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
                 {highInsider.map((s, i) => {
                   const cls = CLASS_META[s.asset_class ?? "us_equity"] ?? CLASS_META.us_equity;
                   return (
-                    <div key={i} style={{ background: T.surface, borderRadius: "10px", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div key={i} style={{ background: T.surface, borderRadius: "10px", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
                       <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
                         <span style={{ fontWeight: 700, fontSize: "14px" }}>{s.symbol}</span>
                         <span style={{ fontSize: "10px", color: cls.color, border: `1px solid ${cls.color}30`, borderRadius: "4px", padding: "1px 5px" }}>{cls.icon} {cls.label}</span>
@@ -536,7 +536,7 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
         )}
         {tab === "form4" && !isIndia && (
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4px", flexWrap: "wrap", gap: "8px" }}>
               <div style={{ fontWeight: 700, fontSize: "14px" }}>SEC Form 4 — Insider Transactions</div>
               {edgarData && (
                 <div style={{ display: "flex", gap: "12px", fontSize: "11px" }}>

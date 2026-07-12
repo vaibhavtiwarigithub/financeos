@@ -276,9 +276,9 @@ export default function LearningPage({
       <PerformanceTruth />
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: "4px", marginBottom: "20px", marginTop: "24px" }}>
+      <div style={{ display: "flex", gap: "4px", marginBottom: "20px", marginTop: "24px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>
         {(["accuracy", "weights", "equity"] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === t ? T.accent : T.card, color: tab === t ? "#fff" : T.muted, textTransform: "capitalize" }}>
+          <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === t ? T.accent : T.card, color: tab === t ? "#fff" : T.muted, textTransform: "capitalize", flexShrink: 0, whiteSpace: "nowrap" }}>
             {t === "accuracy" ? "Accuracy Trend" : t === "weights" ? "Signal Weights" : "Equity Curve"}
           </button>
         ))}

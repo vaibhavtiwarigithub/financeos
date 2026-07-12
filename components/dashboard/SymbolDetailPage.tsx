@@ -58,7 +58,7 @@ function LivePrice({ symbol }: { symbol: string }) {
   const pColor = change === null ? T.text : change >= 0 ? T.green : T.red;
   return (
     <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
-      <span style={{ fontSize: "32px", fontWeight: 800, color: T.text, letterSpacing: "-0.02em" }}>
+      <span style={{ fontSize: "clamp(24px,7vw,32px)", fontWeight: 800, color: T.text, letterSpacing: "-0.02em" }}>
         ${price.toFixed(2)}
       </span>
       {change !== null && (
@@ -120,7 +120,7 @@ function SentimentWidget({ symbol }: { symbol: string }) {
     : "News: n/a";
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "6px 0" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "6px 0", flexWrap: "wrap" }}>
       <span style={{
         fontSize: "11px", fontWeight: 700, padding: "3px 10px", borderRadius: "20px",
         color: chipColor, background: chipBg,
@@ -599,31 +599,31 @@ export default function SymbolDetailPage({
       )}
 
       {tab === "deepdive" && (
-        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px 24px" }}>
+        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px clamp(14px,4vw,24px)" }}>
           <DeepDivePanel symbol={symbol} />
         </div>
       )}
 
       {tab === "signals" && (
-        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px 24px" }}>
+        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px clamp(14px,4vw,24px)" }}>
           <SignalsTab symbol={symbol} signals={signals} trades={trades} />
         </div>
       )}
 
       {tab === "options" && (
-        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px 24px" }}>
+        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px clamp(14px,4vw,24px)" }}>
           <OptionsTab symbol={symbol} />
         </div>
       )}
 
       {tab === "chat" && (
-        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px 24px" }}>
+        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px clamp(14px,4vw,24px)" }}>
           <ChatTab symbol={symbol} />
         </div>
       )}
 
       {tab === "peers" && (
-        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px 24px" }}>
+        <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px clamp(14px,4vw,24px)" }}>
           <SymbolPeers symbol={symbol} />
         </div>
       )}

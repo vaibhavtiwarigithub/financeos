@@ -508,7 +508,7 @@ export default function ScoreTrackerPage() {
         ]}
       />
 
-      <div style={{ padding: "20px 28px 40px", maxWidth: "1400px" }}>
+      <div style={{ padding: "16px clamp(12px,4vw,28px) 40px", maxWidth: "1400px" }}>
 
         {/* ── Symbol picker ── */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "18px 20px", marginBottom: "16px" }}>

@@ -310,9 +310,9 @@ function LearningContent({
       </div>
 
       {/* Inner tabs */}
-      <div style={{ display: "flex", gap: "4px", marginBottom: "20px" }}>
+      <div style={{ display: "flex", gap: "4px", marginBottom: "20px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>
         {(["accuracy", "weights", "equity"] as const).map(t => (
-          <button key={t} onClick={() => setInnerTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: innerTab === t ? T.accent : T.card, color: innerTab === t ? "#fff" : T.muted, textTransform: "capitalize" }}>
+          <button key={t} onClick={() => setInnerTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: innerTab === t ? T.accent : T.card, color: innerTab === t ? "#fff" : T.muted, textTransform: "capitalize", flexShrink: 0, whiteSpace: "nowrap" }}>
             {t === "accuracy" ? "Accuracy Trend" : t === "weights" ? "Signal Weights" : "Equity Curve"}
           </button>
         ))}
@@ -675,7 +675,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
                     <span style={{ fontSize: "20px", color: T.muted }}>No evaluations yet</span>
                   ) : (
                     <>
-                      <span style={{ fontSize: "52px", fontWeight: 800, color: scoreColor, lineHeight: 1, fontFamily: "monospace" }}>{currentScore}</span>
+                      <span style={{ fontSize: "clamp(34px,11vw,52px)", fontWeight: 800, color: scoreColor, lineHeight: 1, fontFamily: "monospace" }}>{currentScore}</span>
                       <span style={{ fontSize: "16px", color: T.muted }}>/100</span>
                       {trend != null && (
                         <span style={{ fontSize: "14px", fontWeight: 700, color: trend > 0 ? T.green : trend < 0 ? T.red : T.muted }}>
@@ -772,11 +772,11 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: "4px", marginBottom: "20px" }}>
+      <div style={{ display: "flex", gap: "4px", marginBottom: "20px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none",
-              background: tab === t.key ? T.accent : T.card, color: tab === t.key ? "#fff" : T.muted }}>
+              background: tab === t.key ? T.accent : T.card, color: tab === t.key ? "#fff" : T.muted, flexShrink: 0, whiteSpace: "nowrap" }}>
             {t.label}
           </button>
         ))}
@@ -784,7 +784,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
 
       {/* Ask the Agent tab */}
       {tab === "coach" && (
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px 24px" }}>
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px clamp(14px,4vw,24px)" }}>
           <MentorCoachPanel />
         </div>
       )}
@@ -1021,7 +1021,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
           </div>
 
           {/* Input form */}
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)" }}>
             <div style={{ fontSize: "11px", color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "18px" }}>
               Submit Your Thesis
             </div>
@@ -1111,11 +1111,11 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
             const verdictColors: Record<string, string> = { strong: T.green, sound: T.green, mixed: T.amber, flawed: T.red, emotional: T.red };
             const vc = verdictColors[jResult.verdict] ?? T.muted;
             return (
-              <div style={{ background: T.card, border: `2px solid ${scoreColor}40`, borderRadius: "12px", padding: "24px" }}>
+              <div style={{ background: T.card, border: `2px solid ${scoreColor}40`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)" }}>
                 {/* Score header */}
                 <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "20px", flexWrap: "wrap" }}>
                   <div style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: "52px", fontWeight: 800, color: scoreColor, lineHeight: 1, fontFamily: "monospace" }}>{score}</div>
+                    <div style={{ fontSize: "clamp(34px,11vw,52px)", fontWeight: 800, color: scoreColor, lineHeight: 1, fontFamily: "monospace" }}>{score}</div>
                     <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>/ 100</div>
                   </div>
                   <div>

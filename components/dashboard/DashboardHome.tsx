@@ -234,7 +234,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px", marginBottom: "20px" }}>
 
         {/* Paper portfolio */}
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "24px 28px", position: "relative", overflow: "hidden" }}>
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "20px clamp(14px,4vw,28px)", position: "relative", overflow: "hidden" }}>
           <div style={{ position: "absolute", top: 0, right: 0, width: "280px", height: "100%", background: `linear-gradient(135deg, ${T.accent}08 0%, #A78BFA0A 100%)`, pointerEvents: "none" }} />
           <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
             <div style={{ fontSize: "11px", color: T.muted }}>{dateStr}</div>
@@ -332,7 +332,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
           profile.market_focus. Was missing entirely (a real gap: this page
           always showed the US pool regardless of the header switcher). */}
       {indiaEnabled && (
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "20px 24px", marginBottom: "20px", position: "relative", overflow: "hidden" }}>
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "18px clamp(14px,4vw,24px)", marginBottom: "20px", position: "relative", overflow: "hidden" }}>
           <div style={{ position: "absolute", top: 0, right: 0, width: "220px", height: "100%", background: `linear-gradient(135deg, ${T.green}08 0%, #FF993308 100%)`, pointerEvents: "none" }} />
           <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
             <span style={{ fontSize: "14px" }}>🇮🇳</span>

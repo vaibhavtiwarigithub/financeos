@@ -229,7 +229,7 @@ export default function BacktestPage() {
         </details>
 
         {/* Config form */}
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px 24px", marginBottom: "20px" }}>
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px clamp(14px,4vw,24px)", marginBottom: "20px" }}>
           <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>Backtest Parameters</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "20px", alignItems: "flex-end", marginBottom: "20px" }}>
             <div>

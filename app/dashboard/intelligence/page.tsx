@@ -40,7 +40,7 @@ function NewsletterTab() {
         ← Back to list
       </button>
       <div style={{ background: T2.card, border: `1px solid ${T2.border}`, borderRadius: "12px", overflow: "hidden" }}>
-        <div style={{ padding: "14px 20px", borderBottom: `1px solid ${T2.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ padding: "14px 20px", borderBottom: `1px solid ${T2.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" as const, gap: "8px" }}>
           <div>
             <div style={{ fontWeight: 600, color: T2.text, fontSize: "14px" }}>{selected.subject}</div>
             <div style={{ color: T2.muted, fontSize: "11px", marginTop: "3px" }}>
@@ -73,7 +73,7 @@ function NewsletterTab() {
       <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
         {newsletters.map(n => (
           <button key={n.id} onClick={() => loadFull(n.id)} style={{ background: T2.card, border: `1px solid ${T2.border}`, borderRadius: "10px", padding: "14px 18px", cursor: "pointer", textAlign: "left", width: "100%" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" as const, gap: "8px" }}>
               <div>
                 <div style={{ fontWeight: 600, color: T2.text, fontSize: "13px" }}>{n.subject}</div>
                 <div style={{ color: T2.muted, fontSize: "11px", marginTop: "3px" }}>
@@ -206,7 +206,7 @@ function BrainTab() {
   const weights = data.champion?.weights_snapshot ?? data.live_weights ?? null;
   const dims = weights ? Object.entries(weights).filter(([k]) => /fundamental|technical|sentiment|macro|insider/i.test(k)) : [];
   const Section = ({ title, sub, children }: any) => (
-    <div style={{ background: TM.card, border: `1px solid ${TM.border}`, borderRadius: "12px", padding: "18px", marginBottom: "16px" }}>
+    <div style={{ background: TM.card, border: `1px solid ${TM.border}`, borderRadius: "12px", padding: "16px", marginBottom: "16px" }}>
       <div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.07em", color: TM.muted, textTransform: "uppercase", marginBottom: sub ? "2px" : "12px" }}>{title}</div>
       {sub && <div style={{ fontSize: "12px", color: TM.muted, marginBottom: "12px" }}>{sub}</div>}
       {children}
@@ -364,7 +364,7 @@ Rules:
           "LLM Comparison: check if Claude and DeepSeek agree — consensus = higher conviction.",
         ]}
       />
-      <div style={{ padding: "0 28px 28px" }}>
+      <div style={{ padding: "0 clamp(12px,4vw,28px) 28px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
         <div />
         <div style={{ fontSize: "12px", color: T.muted }}>
@@ -380,7 +380,7 @@ Rules:
 
       {tab === "analysis" && (
         <div>
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px", marginBottom: "16px" }}>
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px", marginBottom: "16px" }}>
             <div style={{ fontSize: "13px", color: T.muted, marginBottom: "12px" }}>
               Ask about any asset, macro theme, sector, or geopolitical event. Get full thesis + trade idea.
             </div>
@@ -400,7 +400,7 @@ Rules:
           </div>
 
           {result && (
-            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "24px" }}>
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px" }}>
               <div style={{ fontSize: "12px", color: T.muted, marginBottom: "14px", textTransform: "uppercase", letterSpacing: "0.06em" }}>Analysis</div>
               <div style={{ fontSize: "14px", color: T.textSub, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
                 {result.split("\n").map((line, i) => {

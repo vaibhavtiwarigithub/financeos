@@ -207,7 +207,7 @@ export default function StrategyLibraryPage() {
           <a href="/dashboard/strategies" style={{ padding: "8px 14px", fontSize: "13px", fontWeight: 600, color: T.muted, textDecoration: "none", borderBottom: "2px solid transparent" }}>← Fit Scores</a>
           <div style={{ padding: "8px 14px", fontSize: "13px", fontWeight: 600, color: T.accent, borderBottom: `2px solid ${T.accent}`, marginBottom: "-1px" }}>Algo Library</div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "14px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 300px), 1fr))", gap: "14px" }}>
           {ALGO_STRATEGIES.map(s => (
             <StrategyCard key={s.id} strategy={s} onScan={handleScan} />
           ))}

@@ -81,9 +81,9 @@ export default function YouPage({ profile, predictions, journal, quizHistory }: 
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: "4px", marginBottom: "16px" }}>
+      <div style={{ display: "flex", gap: "4px", marginBottom: "16px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>
         {(["dna", "predictions", "journal", "quiz"] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === t ? T.accent : T.card, color: tab === t ? "#fff" : T.muted, textTransform: "capitalize" }}>
+          <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === t ? T.accent : T.card, color: tab === t ? "#fff" : T.muted, textTransform: "capitalize", flexShrink: 0, whiteSpace: "nowrap" }}>
             {t === "dna" ? "DNA Profile" : t === "predictions" ? `Predictions (${predictions.length})` : t === "journal" ? `Journal (${journal.length})` : `Quiz (${quizHistory.length})`}
           </button>
         ))}
@@ -91,7 +91,7 @@ export default function YouPage({ profile, predictions, journal, quizHistory }: 
 
       {/* DNA tab */}
       {tab === "dna" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "20px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "20px" }}>
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "16px" }}>Knowledge DNA</div>
             {dnaKeys.map(k => (

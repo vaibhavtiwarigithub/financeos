@@ -159,7 +159,7 @@ export default function JournalPage() {
         ]}
       />
 
-      <div style={{ padding: "24px", maxWidth: "900px" }}>
+      <div style={{ padding: "16px", maxWidth: "900px" }}>
 
         {/* Filters */}
         <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap" as const, alignItems: "center" }}>
@@ -239,7 +239,7 @@ export default function JournalPage() {
                   borderRadius: "10px", padding: "14px 16px",
                   opacity: entry.resolved ? 0.7 : 1,
                 }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", flexWrap: "wrap" as const }}>
                     <TypeBadge type={entry.entry_type} />
                     {entry.symbol && (
                       <span style={{ fontSize: "12px", fontWeight: 700, color: T.accent, background: T.accentBg, padding: "2px 8px", borderRadius: "4px" }}>

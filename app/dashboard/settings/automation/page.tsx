@@ -207,7 +207,7 @@ export default function AutomationSettingsPage() {
         ]}
       />
 
-      <div style={{ padding: "24px", maxWidth: "1080px" }}>
+      <div style={{ padding: "16px", maxWidth: "1080px" }}>
         {/* Read-only banner */}
         <div style={{ background: T.amberBg, border: `1px solid ${T.amber}44`, borderRadius: "10px", padding: "12px 14px", marginBottom: "18px", fontSize: "12.5px", color: T.amber, display: "flex", gap: "10px", alignItems: "flex-start" }}>
           <span style={{ fontSize: "14px", lineHeight: 1.2 }}>🔒</span>

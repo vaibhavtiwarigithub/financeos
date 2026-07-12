@@ -211,7 +211,7 @@ function PortfolioHeader({
     <>
       {/* Gauge + stats panel */}
       <div style={{
-        display: "grid", gridTemplateColumns: "1fr auto", gap: "0",
+        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px,1fr))", gap: "0",
         background: T.card, border: `1px solid ${T.border}`, borderRadius: "16px",
         overflow: "hidden", marginBottom: "16px",
       }}>
@@ -219,7 +219,7 @@ function PortfolioHeader({
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-around",
           padding: "24px 28px", borderRight: `1px solid ${T.border}`,
-          gap: "8px",
+          gap: "8px", flexWrap: "wrap",
         }}>
           <SemiGauge
             value={winRate}
@@ -242,12 +242,12 @@ function PortfolioHeader({
         {/* Right — key numbers strip */}
         <div style={{
           display: "flex", flexDirection: "column", justifyContent: "center",
-          gap: "20px", padding: "24px 32px", minWidth: "260px",
+          gap: "20px", padding: "24px 32px", minWidth: 0,
         }}>
           {/* Paper NAV */}
           <div>
             <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "4px" }}>Paper NAV</div>
-            <div style={{ fontSize: "32px", fontWeight: 800, letterSpacing: "-0.02em", color: T.text, lineHeight: 1 }}>
+            <div style={{ fontSize: "clamp(22px,7vw,32px)", fontWeight: 800, letterSpacing: "-0.02em", color: T.text, lineHeight: 1 }}>
               {cur}{nav.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </div>
             <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>started {cur}{startingNAV.toLocaleString("en-US")}</div>
@@ -429,9 +429,11 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
             <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "32px", textAlign: "center", color: T.muted, fontSize: "13px" }}>
               No pending trades. Run TraderAgent from the Agents page to propose real Robinhood trades.
             </div>
-          ) : queueItems.map((q: any) => (
+          ) : (
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+            {queueItems.map((q: any) => (
             <div key={q.id} style={{ background: T.card, border: `1px solid ${q.status === "pending_approval" ? T.amber + "60" : T.border}`, borderRadius: "12px", padding: "18px 20px", marginBottom: "10px" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr auto", gap: "12px", alignItems: "center" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr auto", gap: "12px", alignItems: "center", minWidth: "480px" }}>
                 <div style={{ fontWeight: 800, fontSize: "16px", color: T.accent, cursor: "pointer" }} onClick={() => router.push(`/dashboard/symbol/${q.symbol}`)}>
                   {q.symbol} ↗
                 </div>
@@ -469,7 +471,9 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
                 </div>
               )}
             </div>
-          ))}
+            ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -480,8 +484,10 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
             <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "32px", textAlign: "center", color: T.muted, fontSize: "13px" }}>
               No pending signals. Run ResearchAgent from the Agents page to generate signals.
             </div>
-          ) : pendingSignals.map((s: any) => (
-            <div key={s.id} style={{ background: T.card, border: `1px solid ${s.analyst_score >= 60 && s.direction === "long" ? T.accent + "44" : T.border}`, borderRadius: "12px", padding: "16px 20px", display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr 1fr", gap: "12px", alignItems: "center" }}>
+          ) : (
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", display: "flex", flexDirection: "column", gap: "10px" }}>
+            {pendingSignals.map((s: any) => (
+            <div key={s.id} style={{ background: T.card, border: `1px solid ${s.analyst_score >= 60 && s.direction === "long" ? T.accent + "44" : T.border}`, borderRadius: "12px", padding: "16px 20px", display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr 1fr", gap: "12px", alignItems: "center", minWidth: "460px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                 <div style={{ fontWeight: 800, fontSize: "16px", cursor: "pointer", color: T.accent }} onClick={() => router.push(`/dashboard/symbol/${s.symbol}`)}>{s.symbol} ↗</div>
                 <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#2D1B00", color: "#FBBF24", letterSpacing: "0.04em" }}>PAPER</span>
@@ -507,7 +513,9 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
                   : <span style={{ color: T.muted, fontSize: "12px" }}>No ({s.analyst_score < 60 ? "score < 60" : "not long"})</span>}
               </div>
             </div>
-          ))}
+            ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -824,7 +832,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
       />
 
       {/* Charts row */}
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "16px", marginBottom: "20px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px,1fr))", gap: "16px", marginBottom: "20px" }}>
         <Suspense fallback={<div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", height: "280px", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: "13px" }}>Loading chart…</div>}>
           <BenchmarkChart perfRows={perf} market={activeMarket} />
         </Suspense>
