@@ -73,6 +73,15 @@ describe("autonomy ladder helpers", () => {
 });
 
 describe("evaluateAutonomousExecution — fail-closed gate matrix", () => {
+  it("shadow mode bypasses live arming but still enforces evidence quality", async () => {
+    const { evaluateAutonomousExecution } = await loadKernel(false);
+    const pass = evaluateAutonomousExecution(input({ evaluation_mode: "shadow" }));
+    expect(pass.go).toBe(true);
+    const weak = evaluateAutonomousExecution(input({ evaluation_mode: "shadow", evidence_confidence: 0.1 }));
+    expect(weak.go).toBe(false);
+    expect(weak.gate_failed).toBe("confidence_below_floor");
+  });
+
   it("blocks when the deployment flag is off, regardless of DB policy", async () => {
     const { evaluateAutonomousExecution } = await loadKernel(false);
     const r = evaluateAutonomousExecution(input());

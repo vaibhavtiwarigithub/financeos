@@ -25,7 +25,7 @@ export interface ShadowRunResult {
   results: Array<{
     symbol: string;
     market: string;
-    signal_id: number;
+    signal_id: string;
     proposal_id: number | null;
     kernel: KernelResult;
     sizing: SizingResult | null;
@@ -142,6 +142,7 @@ export async function runAutonomousShadow(
     .select("id, symbol, market, direction, analyst_score, evidence_confidence, score_source, rationale")
     .eq("score_source", "deterministic_v1")
     .eq("direction", "long")
+    .eq("market", "us")
     .gte("analyst_score", scoreThreshold)
     .gte("created_at", lookbackCutoff)
     .order("analyst_score", { ascending: false })
@@ -202,6 +203,7 @@ export async function runAutonomousShadow(
       policy,
       current_open_positions: openPositions ?? 0,
       orders_placed_today:    (ordersToday ?? 0) + shadowOrdersThisRun,
+      evaluation_mode:        "shadow",
     });
 
     let sizing: SizingResult | null = null;
@@ -253,6 +255,28 @@ export async function runAutonomousShadow(
     };
 
     await svc.from("trade_proposals").update(proposalUpdate).eq("id", proposal.id);
+
+    const { data: observation } = await svc.from("decision_observations")
+      .select("id,setup_type").eq("signal_id", signal.id)
+      .order("ts", { ascending: false }).limit(1).maybeSingle();
+    const { data: champion } = await svc.from("strategy_versions")
+      .select("id").eq("market", "us").eq("is_champion", true)
+      .order("promoted_at", { ascending: false }).limit(1).maybeSingle();
+    if (observation?.id) {
+      let existingQuery = svc.from("shadow_decisions").select("id").eq("observation_id", observation.id);
+      existingQuery = champion?.id ? existingQuery.eq("policy_version_id", champion.id) : existingQuery.is("policy_version_id", null);
+      const { data: existing } = await existingQuery.maybeSingle();
+      if (!existing) {
+        await svc.from("shadow_decisions").insert({
+          market: "us", symbol: signal.symbol, observation_id: observation.id,
+          policy_version_id: champion?.id ?? null,
+          would_enter: kernel.go && Boolean(sizing?.ok), score: signal.analyst_score,
+          size_pct: sizing?.ok ? sizing.pct_of_nav : null,
+          entry_price: sizing?.ok ? proposalUpdate.price_at_proposal ?? null : null,
+          setup_type: observation.setup_type ?? null,
+        });
+      }
+    }
 
     results.push({
       symbol:      signal.symbol,

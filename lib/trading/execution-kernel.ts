@@ -23,6 +23,7 @@ export interface KernelInput {
   policy: LiveAutoPolicy;
   current_open_positions: number;
   orders_placed_today: number;
+  evaluation_mode?: "live" | "shadow";
 }
 
 export interface KernelResult {
@@ -37,19 +38,20 @@ export interface KernelResult {
 export function evaluateAutonomousExecution(input: KernelInput): KernelResult {
   const { policy } = input;
   const now = new Date();
+  const liveEvaluation = input.evaluation_mode !== "shadow";
 
   // Gate 1: deployment flag — hardcoded false in current deploy
-  if (!AUTONOMOUS_LIVE_ENABLED) {
+  if (liveEvaluation && !AUTONOMOUS_LIVE_ENABLED) {
     return fail("deployment_flag_inactive", "AUTONOMOUS_LIVE_ENABLED=false in deployment", policy, now);
   }
 
   // Gate 2: DB toggle
-  if (!policy.live_auto_enabled) {
+  if (liveEvaluation && !policy.live_auto_enabled) {
     return fail("db_toggle_off", "live_auto_enabled=false in strategy_config", policy, now);
   }
 
   // Gate 3: lease expiry
-  if (policy.live_auto_enabled_until && new Date(policy.live_auto_enabled_until) < now) {
+  if (liveEvaluation && policy.live_auto_enabled_until && new Date(policy.live_auto_enabled_until) < now) {
     return fail(
       "lease_expired",
       `owner lease expired at ${policy.live_auto_enabled_until}`,
