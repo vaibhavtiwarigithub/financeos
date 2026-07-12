@@ -7,20 +7,23 @@ import {
   type SizingResult,
 } from "@/lib/trading/execution-kernel";
 import { getQuote } from "@/lib/data/quotes";
+import { getKiteMargins, getKiteHoldings } from "@/lib/kite";
 
 const SIGNAL_LOOKBACK_HOURS = 24;
-// Trading account for live NAV reads — read-only, never order placement.
-const NAV_ACCOUNT_ID = "605420660";
+// Robinhood agentic account — read-only NAV for US shadow.
+const US_NAV_ACCOUNT_ID = "605420660";
 
 export interface ShadowRunResult {
   run_id: string;
+  market: string;
   evaluated: number;
   would_go: number;
   rejected: number;
   budget_dry_run: {
-    daily_cap_usd: number | null;
-    spent_today_usd: number;
-    remaining_usd: number | null;
+    daily_cap: number | null;
+    currency: string;
+    spent_today: number;
+    remaining: number | null;
   };
   results: Array<{
     symbol: string;
@@ -35,16 +38,20 @@ export interface ShadowRunResult {
 export async function runAutonomousShadow(
   svc: SupabaseClient,
   runId: string,
+  market: "us" | "india" = "us",
 ): Promise<ShadowRunResult> {
   const runStart = new Date().toISOString();
+  const currency = market === "india" ? "INR" : "USD";
 
-  // 1. Snapshot policy from strategy_config.
+  // 1. Snapshot policy + India INR caps from strategy_config.
   const { data: config, error: cfgErr } = await svc
     .from("strategy_config")
     .select(
       "live_auto_enabled,live_auto_enabled_until,live_auto_policy_version," +
-      "live_auto_daily_cap_usd,live_auto_max_per_order_usd,live_auto_min_evidence_confidence," +
-      "live_auto_max_open_positions,live_auto_max_orders_per_day,score_threshold,position_size_pct"
+      "live_auto_daily_cap_usd,live_auto_max_per_order_usd," +
+      "live_auto_min_evidence_confidence,live_auto_max_open_positions," +
+      "live_auto_max_orders_per_day,score_threshold,position_size_pct," +
+      "max_order_notional_inr,max_daily_notional_inr"
     )
     .limit(1)
     .single();
@@ -58,39 +65,67 @@ export async function runAutonomousShadow(
     live_auto_policy_version:          cfg.live_auto_policy_version ?? 1,
     live_auto_daily_cap_usd:           cfg.live_auto_daily_cap_usd ?? null,
     live_auto_max_per_order_usd:       cfg.live_auto_max_per_order_usd ?? null,
+    live_auto_max_per_order_inr:       cfg.max_order_notional_inr ?? null,
     live_auto_min_evidence_confidence: cfg.live_auto_min_evidence_confidence ?? null,
     live_auto_max_open_positions:      cfg.live_auto_max_open_positions ?? null,
     live_auto_max_orders_per_day:      cfg.live_auto_max_orders_per_day ?? null,
   };
   const scoreThreshold: number = cfg.score_threshold ?? 60;
-  const flatSizePct: number = cfg.position_size_pct ?? 10;
+  const flatSizePct: number    = cfg.position_size_pct ?? 10;
 
-  // 2. UTC calendar day start.
+  // 2. Market-local day start for budget window.
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
 
-  // 3. Fetch NAV from live_account_snapshots (read-only; no MCP needed).
-  //    Fails closed — no fallback NAV.
-  const { data: navSnap } = await svc
-    .from("live_account_snapshots")
-    .select("equity, captured_at")
-    .eq("account_id", NAV_ACCOUNT_ID)
-    .order("captured_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const liveNav: number = Number((navSnap as any)?.equity) || 0;
-  const navCapturedAt: string = (navSnap as any)?.captured_at ?? new Date(0).toISOString();
+  // 3. NAV — currency-correct, no cross-currency fallback.
+  //    US: Robinhood USD snapshot. India: live Kite INR margins + holdings.
+  let liveNav        = 0;
+  let navCapturedAt  = new Date(0).toISOString();
 
-  // 4. Fetch paper_trades for Kelly calibration (last 100 closed).
+  if (market === "us") {
+    const { data: navSnap } = await svc
+      .from("live_account_snapshots")
+      .select("equity, captured_at")
+      .eq("account_id", US_NAV_ACCOUNT_ID)
+      .order("captured_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    liveNav       = Number((navSnap as any)?.equity) || 0;
+    navCapturedAt = (navSnap as any)?.captured_at ?? new Date(0).toISOString();
+  } else {
+    // India: live Kite INR equity net + holdings market value.
+    // Fails closed — a missing/stale NAV keeps liveNav=0 → noSize("no_live_nav").
+    try {
+      const [margins, holdings] = await Promise.all([
+        getKiteMargins(svc),
+        getKiteHoldings(svc),
+      ]);
+      let inrNav = 0;
+      if (margins.ok && typeof margins.equityNet === "number") inrNav += margins.equityNet;
+      const hlist: any[] = (holdings as any)?.data ?? (holdings as any)?.holdings ?? [];
+      for (const h of Array.isArray(hlist) ? hlist : []) {
+        const qty = Number(h.quantity ?? h.qty ?? 0);
+        const px  = Number(h.last_price ?? h.ltp ?? 0);
+        if (Number.isFinite(qty) && Number.isFinite(px)) inrNav += qty * px;
+      }
+      if (margins.ok && inrNav > 0) {
+        liveNav       = inrNav;
+        navCapturedAt = new Date().toISOString();
+      }
+    } catch { /* leave liveNav=0 → fail closed */ }
+  }
+
+  // 4. Kelly calibration from last 100 closed paper_trades for this market.
   const { data: closedTrades } = await svc
     .from("paper_trades")
     .select("pnl_pct")
+    .eq("market", market)
     .not("closed_at", "is", null)
     .not("pnl_pct", "is", null)
     .order("closed_at", { ascending: false })
     .limit(100);
 
-  let winRate: number | null = null;
+  let winRate: number | null     = null;
   let payoffRatio: number | null = null;
   const pnls = (closedTrades ?? []).map((t: any) => parseFloat(t.pnl_pct));
   if (pnls.length >= 10) {
@@ -104,35 +139,48 @@ export async function runAutonomousShadow(
     }
   }
 
-  // 5. Budget dry-run: read today's live spend (not the atomic reservation — informational only).
+  // 5. Budget dry-run: today's market-local live spend against the market cap.
+  const dailyCap = market === "india"
+    ? (cfg.max_daily_notional_inr ?? null)
+    : policy.live_auto_daily_cap_usd;
+
   const { data: liveOrders } = await svc
     .from("broker_orders")
     .select("estimated_value")
+    .eq("market", market)
     .in("status", ["pending_submit", "submitted", "partially_filled", "unknown_needs_reconcile"])
     .gte("created_at", todayStart.toISOString());
   const spentToday = (liveOrders ?? []).reduce(
     (s: number, r: any) => s + Number(r.estimated_value ?? 0), 0,
   );
-  const dailyCap = policy.live_auto_daily_cap_usd;
   const budgetDryRun = {
-    daily_cap_usd: dailyCap,
-    spent_today_usd: spentToday,
-    remaining_usd: dailyCap != null ? dailyCap - spentToday : null,
+    daily_cap:  dailyCap,
+    currency,
+    spent_today: spentToday,
+    remaining:  dailyCap != null ? dailyCap - spentToday : null,
   };
 
-  // 6. Count shadow proposals already created today + open positions.
+  // 6. Count shadow proposals already created today + open positions — market-scoped.
   const { count: ordersToday } = await svc
     .from("trade_proposals")
     .select("id", { count: "exact", head: true })
     .eq("execution_mode", "autonomous_shadow")
+    .eq("market", market)
     .gte("created_at", todayStart.toISOString());
 
-  const { count: openPositions } = await svc
+  const { data: fills } = await svc
     .from("broker_orders")
-    .select("id", { count: "exact", head: true })
+    .select("symbol, side, qty")
+    .eq("market", market)
     .eq("status", "filled");
+  const netQty: Record<string, number> = {};
+  for (const o of (fills ?? []) as any[]) {
+    const q = Number(o.qty) || 0;
+    netQty[o.symbol] = (netQty[o.symbol] ?? 0) + (o.side === "sell" ? -q : q);
+  }
+  const openPositions = Object.values(netQty).filter((v) => v > 1e-9).length;
 
-  // 7. Query qualifying signals.
+  // 7. Query qualifying signals for this market.
   const lookbackCutoff = new Date(
     Date.now() - SIGNAL_LOOKBACK_HOURS * 3_600_000,
   ).toISOString();
@@ -142,7 +190,7 @@ export async function runAutonomousShadow(
     .select("id, symbol, market, direction, analyst_score, evidence_confidence, score_source, rationale")
     .eq("score_source", "deterministic_v1")
     .eq("direction", "long")
-    .eq("market", "us")
+    .eq("market", market)
     .gte("analyst_score", scoreThreshold)
     .gte("created_at", lookbackCutoff)
     .order("analyst_score", { ascending: false })
@@ -152,12 +200,11 @@ export async function runAutonomousShadow(
   let shadowOrdersThisRun = 0;
 
   for (const signal of signals ?? []) {
-    // Create proposal row (temp status=pending_review; updated after kernel).
     const { data: proposal, error: propErr } = await svc
       .from("trade_proposals")
       .insert({
         symbol:          signal.symbol,
-        market:          signal.market ?? "us",
+        market,
         side:            "buy",
         order_type:      "market",
         signal_id:       signal.id,
@@ -175,7 +222,7 @@ export async function runAutonomousShadow(
     if (propErr || !proposal) {
       results.push({
         symbol:      signal.symbol,
-        market:      signal.market ?? "us",
+        market,
         signal_id:   signal.id,
         proposal_id: null,
         sizing:      null,
@@ -191,17 +238,16 @@ export async function runAutonomousShadow(
       continue;
     }
 
-    // Run execution kernel (all 9 gates).
     const kernel = evaluateAutonomousExecution({
-      symbol:               signal.symbol,
-      market:               signal.market ?? "us",
-      direction:            signal.direction ?? "long",
-      score:                signal.analyst_score ?? 0,
-      evidence_confidence:  signal.evidence_confidence ?? 0,
-      score_threshold:      scoreThreshold,
-      proposed_notional_usd: 0, // notional gate uses sizing result below
+      symbol:                signal.symbol,
+      market,
+      direction:             signal.direction ?? "long",
+      score:                 signal.analyst_score ?? 0,
+      evidence_confidence:   signal.evidence_confidence ?? 0,
+      score_threshold:       scoreThreshold,
+      proposed_notional_usd: 0,
       policy,
-      current_open_positions: openPositions ?? 0,
+      current_open_positions: openPositions,
       orders_placed_today:    (ordersToday ?? 0) + shadowOrdersThisRun,
       evaluation_mode:        "shadow",
     });
@@ -212,11 +258,10 @@ export async function runAutonomousShadow(
     };
 
     if (kernel.go) {
-      // PA2: compute sizing for proposals that pass all gates.
       let currentPrice = 0;
-      let priceStale = true;
+      let priceStale   = true;
       try {
-        const quote = await getQuote(signal.symbol, svc);
+        const quote  = await getQuote(signal.symbol, svc);
         currentPrice = quote.price ?? 0;
         priceStale   = quote.stale || quote.source === "unavailable" || currentPrice <= 0;
       } catch { /* sizing will reflect no_current_price */ }
@@ -230,6 +275,7 @@ export async function runAutonomousShadow(
         payoff_ratio:     payoffRatio,
         flat_size_pct:    flatSizePct,
         policy,
+        market,
       });
 
       if (sizing.ok) {
@@ -240,47 +286,49 @@ export async function runAutonomousShadow(
         proposalUpdate.price_source      = "autonomous_shadow";
         shadowOrdersThisRun++;
       } else {
-        // Sizing failed — downgrade to manual_review_required.
         proposalUpdate.status = "manual_review_required";
       }
     }
 
     proposalUpdate.policy_snapshot = {
-      policy,
-      score_threshold: scoreThreshold,
-      run_id: runId,
-      run_start: runStart,
-      kernel,
-      sizing,
+      policy, score_threshold: scoreThreshold,
+      run_id: runId, run_start: runStart,
+      kernel, sizing,
     };
 
     await svc.from("trade_proposals").update(proposalUpdate).eq("id", proposal.id);
 
+    // Persist shadow evidence for this market's champion.
     const { data: observation } = await svc.from("decision_observations")
       .select("id,setup_type").eq("signal_id", signal.id)
       .order("ts", { ascending: false }).limit(1).maybeSingle();
     const { data: champion } = await svc.from("strategy_versions")
-      .select("id").eq("market", "us").eq("is_champion", true)
+      .select("id").eq("market", market).eq("is_champion", true)
       .order("promoted_at", { ascending: false }).limit(1).maybeSingle();
     if (observation?.id) {
       let existingQuery = svc.from("shadow_decisions").select("id").eq("observation_id", observation.id);
-      existingQuery = champion?.id ? existingQuery.eq("policy_version_id", champion.id) : existingQuery.is("policy_version_id", null);
+      existingQuery = champion?.id
+        ? existingQuery.eq("policy_version_id", champion.id)
+        : existingQuery.is("policy_version_id", null);
       const { data: existing } = await existingQuery.maybeSingle();
       if (!existing) {
         await svc.from("shadow_decisions").insert({
-          market: "us", symbol: signal.symbol, observation_id: observation.id,
+          market,
+          symbol:           signal.symbol,
+          observation_id:   observation.id,
           policy_version_id: champion?.id ?? null,
-          would_enter: kernel.go && Boolean(sizing?.ok), score: signal.analyst_score,
-          size_pct: sizing?.ok ? sizing.pct_of_nav : null,
-          entry_price: sizing?.ok ? proposalUpdate.price_at_proposal ?? null : null,
-          setup_type: observation.setup_type ?? null,
+          would_enter:      kernel.go && Boolean(sizing?.ok),
+          score:            signal.analyst_score,
+          size_pct:         sizing?.ok ? sizing.pct_of_nav : null,
+          entry_price:      sizing?.ok ? (proposalUpdate.price_at_proposal ?? null) : null,
+          setup_type:       observation.setup_type ?? null,
         });
       }
     }
 
     results.push({
       symbol:      signal.symbol,
-      market:      signal.market ?? "us",
+      market,
       signal_id:   signal.id,
       proposal_id: proposal.id,
       kernel,
@@ -293,14 +341,17 @@ export async function runAutonomousShadow(
 
   await svc.from("decision_journal").insert({
     entry_type: "autonomous_shadow_run",
+    market,
     summary:
-      `Shadow run ${runId}: ${results.length} signal(s) — ` +
-      `${went} sized+queued_auto, ${blocked} rejected/unsized. ` +
-      `Budget: $${spentToday.toFixed(0)} spent / ${dailyCap != null ? "$" + dailyCap : "uncapped"} daily cap.`,
+      `Shadow run ${runId} [${market}]: ${results.length} signal(s) — ` +
+      `${went} sized+queued, ${blocked} rejected/unsized. ` +
+      `Budget: ${currency} ${spentToday.toFixed(0)} spent / ` +
+      `${dailyCap != null ? currency + " " + dailyCap : "uncapped"} daily cap.`,
   } as any);
 
   return {
     run_id:         runId,
+    market,
     evaluated:      results.length,
     would_go:       went,
     rejected:       blocked,

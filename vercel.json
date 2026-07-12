@@ -14,10 +14,6 @@
       "schedule": "0 3 1 * *"
     },
     {
-      "path": "/api/agents/autonomous-shadow/cron",
-      "schedule": "30 7 * * 1-5"
-    },
-    {
       "path": "/api/agents/autonomous-live/cron?market=us",
       "schedule": "0 15 * * 1-5"
     },

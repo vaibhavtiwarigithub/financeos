@@ -7,6 +7,8 @@ export interface LiveAutoPolicy {
   live_auto_policy_version: number;
   live_auto_daily_cap_usd: number | null;
   live_auto_max_per_order_usd: number | null;
+  /** Native INR per-order cap for India market. Prevents USD cap / INR-nav dimensional mismatch. */
+  live_auto_max_per_order_inr?: number | null;
   live_auto_min_evidence_confidence: number | null;
   live_auto_max_open_positions: number | null;
   live_auto_max_orders_per_day: number | null;
@@ -172,12 +174,7 @@ export interface SizingInput {
   /** From strategy_config.position_size_pct — used as flat fallback. */
   flat_size_pct: number;
   policy: LiveAutoPolicy;
-  /**
-   * Market for this order ("us" | "india"). Required to prevent applying a
-   * USD-denominated per-order cap to an INR-denominated India position.
-   * live_auto_max_per_order_usd is skipped for India until a native INR cap
-   * field is added (live_auto_max_per_order_inr).
-   */
+  /** Market for this order ("us" | "india"). Used to select the correct currency cap. */
   market?: string;
 }
 
@@ -210,10 +207,12 @@ export function computeAutonomousSizing(input: SizingInput): SizingResult {
   let size_pct = (input.flat_size_pct / 100) || 0.10;
   let size_method: "kelly" | "flat" = "flat";
 
-  // live_auto_max_per_order_usd is USD-denominated. Applying it to an India order
-  // would divide USD-cap / INR-nav → wrong dimensionless ratio. Skip for India
-  // until a native live_auto_max_per_order_inr field is added.
-  const isUsdMarket = !input.market || input.market !== "india";
+  const isIndiaMarket = input.market === "india";
+  // Per-order notional cap: USD for US, INR for India. Using the wrong
+  // currency's cap would compute cap / nav in mismatched units.
+  const perOrderCap = isIndiaMarket
+    ? (input.policy.live_auto_max_per_order_inr ?? null)
+    : input.policy.live_auto_max_per_order_usd;
 
   if (
     input.win_rate != null &&
@@ -221,8 +220,6 @@ export function computeAutonomousSizing(input: SizingInput): SizingResult {
     input.win_rate > 0 &&
     input.payoff_ratio > 0
   ) {
-    // Kelly cap = min(10%, per-order cap / nav) — USD markets only
-    const perOrderCap = isUsdMarket ? input.policy.live_auto_max_per_order_usd : null;
     const cap = perOrderCap != null
       ? Math.min(0.10, perOrderCap / input.nav)
       : 0.10;
@@ -236,9 +233,8 @@ export function computeAutonomousSizing(input: SizingInput): SizingResult {
     }
   }
 
-  // Clamp to per-order notional cap (USD markets only — see isUsdMarket above)
-  if (isUsdMarket && input.policy.live_auto_max_per_order_usd != null) {
-    size_pct = Math.min(size_pct, input.policy.live_auto_max_per_order_usd / input.nav);
+  if (perOrderCap != null) {
+    size_pct = Math.min(size_pct, perOrderCap / input.nav);
   }
 
   const notional = input.nav * size_pct;
