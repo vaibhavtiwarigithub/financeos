@@ -33,3 +33,9 @@ graphify-out/
 
 .vercel
 .env*
+
+# Supabase CLI local link state — machine-specific, never commit
+supabase/.temp/
+
+# Playwright MCP scratch snapshots
+.playwright-mcp/
