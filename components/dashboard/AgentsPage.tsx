@@ -242,12 +242,14 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         title="AI Agents"
         subtitle="Agent control center · research, trade, learn"
         cadence="daily"
-        whatItDoes="Command center for all agents — ResearchAgent records evidence, PaperTrader tests eligible signals, and LearnerAgent evaluates outcomes and proposes governed challengers. Shows run health, paper portfolio, and the approval queue."
+        whatItDoes="Command center for all agents — run them, watch run health and the paper portfolio, and dig into learning across many tabs (Paper Trades, Signals, Weights, Learning Log, History, Backtest, Architecture, Learner Brain, Learner Controls, Weight History, Experiments, Proposals)."
         whatToLookFor={[
-          "ResearchAgent runs daily at 9 AM — scores your watchlist. Check Intelligence for results.",
-          "PaperTrader requires an entry-eligible LONG decision and the configured evidence gates; score alone never authorizes a trade.",
-          "Kill Switch disables live trading immediately — use if agent behavior looks wrong.",
-          "Trade queue shows pending orders waiting for next PaperTrader cycle.",
+          "Paper Trades / Signals: open + closed paper positions and the pending signal queue; PaperTrader needs an entry-eligible LONG plus the evidence gates — score alone never authorizes a trade.",
+          "Weights / Weight History / Learner Controls: the current scoring weights, how they've changed, and the knobs governing how the LearnerAgent adapts them.",
+          "Learning Log / Learner Brain: per-trade outcome notes and the agent's reasoning behind weight proposals.",
+          "History: the agent-run history — when each agent last ran, its status, and result summary; use it to spot failed or skipped runs.",
+          "Backtest / Experiments / Proposals / Architecture: replay strategies, view champion/challenger experiments, approve governed proposals, and see how the agents connect.",
+          "Kill Switch (top-right) disables live trading immediately — use if agent behavior looks wrong.",
         ]}
         actions={[{ label: saving ? "…" : tradingEnabled ? "⚡ Kill Switch" : "🔴 Enable Trading", onClick: toggleTrading }]}
       />

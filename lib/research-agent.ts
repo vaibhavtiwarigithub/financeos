@@ -7,6 +7,7 @@ import { fetchOptionsSignal, OptionsSignal } from "@/lib/options-signal";
 import { computeScores, type ComputedScores } from "@/lib/data/scores";
 import type { Candle } from "@/lib/data/technicals";
 import { isIndia, fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
+import { fetchIndiaNewsSentiment, type IndiaNewsSentiment } from "@/lib/india-news";
 import { niftyCandidates } from "@/lib/india-universe";
 import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
@@ -154,7 +155,12 @@ export function applicableDimensions(entry: SymbolEntry): Set<Dimension> {
   const india = isIndia(entry.symbol);
   const dims = new Set<Dimension>(["technical", "macro"]); // every tradable symbol has price + macro backdrop
   if (india) {
-    dims.add("fundamental"); // Yahoo/Upstox fundamentals; no US-style insider, no free social/options/analyst
+    dims.add("fundamental"); // Yahoo/Upstox fundamentals; no US-style insider/options/analyst
+    // Sentiment: India equities get a real news-tone signal from GDELT (free, no
+    // key). Structurally applicable to non-ETF India names; per-run availability
+    // is still decided by whether GDELT returns enough toned articles (the
+    // availability mask via dataQuality.sentimentDataAvailable) — never faked.
+    if (!entry.isEtf) dims.add("sentiment");
     return dims;
   }
   if (entry.isEtf) {
@@ -828,6 +834,7 @@ function buildThesisOnlyPrompt(
   analystScore: number,
   scoreThreshold: number,
   marketFocus?: string,
+  indiaNews?: IndiaNewsSentiment | null,
 ): string {
   const { fundamental_score, technical_score, sentiment_score, macro_score, insider_score, evidence } = scores;
   const tech = evidence.technical as Record<string, unknown>;
@@ -856,6 +863,19 @@ function buildThesisOnlyPrompt(
     ? `\nMarket focus: ${marketFocus}. Where relevant, frame risks/catalysts in context of these regions (macro exposure, currency risk, ADR premiums, regulatory environment).`
     : "";
 
+  // India names carry NO StockTwits / Alpha Vantage sentiment (US-only). Their
+  // Sentiment score above is derived from GDELT news TONE — surface the aggregate
+  // tone + recent headlines so the thesis narrative is grounded in the same
+  // evidence that produced the pre-computed Sentiment score (mirrors the US
+  // socialBlock). Only shown when GDELT returned usable data; omitted otherwise.
+  const indiaNewsBlock = indiaNews && indiaNews.available
+    ? `\n\n## India news sentiment (GDELT — recent India news headlines, aggregate tone)
+Aggregate tone: ${indiaNews.avgTone.toFixed(2)} (GDELT scale ~ -10 to +10; 0 = neutral) across ${indiaNews.articleCount} articles → Sentiment ${indiaNews.score}/100.
+Recent headlines:
+${indiaNews.headlines.map(h => `- ${h}`).join("\n")}
+These are India news headlines with an aggregate tone; the Sentiment score above is derived from this news tone. Use them to ground the sentiment reasoning in your thesis (do NOT override the pre-computed Sentiment score).`
+    : "";
+
   return `${DOCTRINE_PREAMBLE}
 
 You are a professional equity analyst. All quantitative scores for ${symbol} were pre-computed from real fetched market data (no LLM estimation). Your ONLY job: write a coherent investment thesis, assign direction, and identify specific key risks and catalysts grounded in the data below.${focusNote}
@@ -866,7 +886,7 @@ Technical:   ${technical_score}/100 | ${techLines}
 Sentiment:   ${sentiment_score}/100
 Macro:       ${macro_score}/100 | regime: ${(evidence.macro as Record<string, unknown>).regime ?? "unknown"}
 Insider:     ${insider_score}/100
-Weighted analyst score: ${analystScore}/100 (threshold for trade: ${scoreThreshold})
+Weighted analyst score: ${analystScore}/100 (threshold for trade: ${scoreThreshold})${indiaNewsBlock}
 
 ${heldNote}
 
@@ -996,6 +1016,31 @@ async function recordRunEvidence(market: string, includedDims: ScoreDimension[],
   } catch { /* health reporting must never break a research run */ }
 }
 
+// Adapt a GDELT India news result into the SocialSentiment shape so India flows
+// through the SAME scoreSentiment / dataQuality path US social sentiment uses.
+// Returns null unless the result is "available" (>=3 toned articles) so a thin or
+// empty GDELT response leaves the sentiment dimension genuinely unavailable
+// (excluded from the weighted score) rather than faked as a neutral 50.
+function indiaNewsToSocial(symbol: string, news: IndiaNewsSentiment | null): SocialSentiment | null {
+  if (!news || !news.available) return null;
+  // GDELT tone (~ -10..+10) → AV's -1..+1 news-sentiment scale. scoreSentiment's
+  // AV path then computes (sent+1)*50 = 50 + tone*5 — the identical 0-100 mapping
+  // toneToScore uses. StockTwits fields are null (India has no StockTwits), so the
+  // AV-news branch is the one taken.
+  const avScaled = Math.max(-1, Math.min(1, news.avgTone / 10));
+  return {
+    symbol,
+    stocktwits_bullish_pct: null,
+    stocktwits_bearish_pct: null,
+    stocktwits_message_count: null,
+    av_news_sentiment: avScaled,
+    av_news_articles: news.articleCount,
+    overall_sentiment: news.score > 60 ? "Bullish" : news.score < 40 ? "Bearish" : "Neutral",
+    fetched_at: new Date().toISOString(),
+    has_data: true,
+  };
+}
+
 // Process a single symbol: research → write research_packet + agent_signal
 // Phase 0: all 5 scores computed deterministically. LLM writes thesis+direction only.
 // P1: universeSnapshotId links this symbol's decision_observations row to the run's
@@ -1020,7 +1065,7 @@ export async function processSymbol(
   const applicable = applicableDimensions(entry);
 
   // Phase 0: fetch all real data in parallel — no LLM-generated numbers
-  const [socialResult, optionsResult, insiderResult, avOverview, candles] = await Promise.all([
+  const [socialResult, optionsResult, insiderResult, avOverview, candles, indiaNews] = await Promise.all([
     applicable.has("sentiment") && !india ? fetchSocialSentiment(symbol).catch(() => null) : Promise.resolve(null),
     applicable.has("options") ? fetchOptionsSignal(symbol).catch(() => null) : Promise.resolve(null),
     // Insider: SEC EDGAR Form 4 primary (free, official, unlimited) → Alpha
@@ -1053,7 +1098,23 @@ export async function processSymbol(
       // RSI/EMA still computed locally from whichever source returns bars, so
       // the scarce AV 25/day budget is no longer spent on candles.
       : fetchUsCandles(symbol, () => fetchAVCandles(symbol, avKey)).then(r => r.candles).catch(() => [] as Candle[]),
+    // India news sentiment (GDELT, free/no-key) — the India equivalent of the
+    // US social/news sentiment fetch above. Non-ETF India names only; US falls
+    // through null (US uses fetchSocialSentiment). Company name isn't known yet
+    // (overview fetches in parallel), so the de-suffixed symbol is the query.
+    india && applicable.has("sentiment")
+      ? fetchIndiaNewsSentiment(symbol).catch(() => null)
+      : Promise.resolve(null),
   ]);
+
+  // For India, synthesize a SocialSentiment-shaped object from the GDELT news
+  // tone so it flows through the EXACT same scoreSentiment / dataQuality path US
+  // social sentiment uses. has_data drives dataQuality.sentimentDataAvailable →
+  // the availability mask: only "available" (>=3 toned articles) counts as real
+  // evidence, so a thin/empty GDELT result leaves sentiment unavailable, not faked.
+  const effectiveSocial: SocialSentiment | null = india
+    ? indiaNewsToSocial(symbol, indiaNews)
+    : socialResult;
 
   // Analyst-recommendation dimension (Finnhub, free). Wall-Street consensus is a
   // genuine predictive axis, but per CLAUDE.md's pushback mandate — don't add a
@@ -1076,7 +1137,7 @@ export async function processSymbol(
     symbol, isEtf,
     avOverview: avOverview as Record<string, string>,
     candles,
-    socialResult,
+    socialResult: effectiveSocial,
     insiderResult,
     supabase,
   });
@@ -1231,7 +1292,7 @@ export async function processSymbol(
   } catch { /* RAG is best-effort — a retrieval failure must not block research */ }
 
   // LLM only writes thesis + direction — no score generation.
-  const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus) + trendNote + memoryNote;
+  const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus, india ? indiaNews : null) + trendNote + memoryNote;
   const llmResult = await callLLM({
     task: "screen",
     model: await getConfiguredModel(supabase, "research", "deepseek-reasoner"),
@@ -1301,7 +1362,8 @@ export async function processSymbol(
         _original_direction: thesis.direction ?? "unparsed",  // P0: LLM opinion (may differ from gate output)
         _direction_override: thesis.direction !== signalDirection,
         _data_quality: scores.dataQuality,
-        _social_sentiment: socialResult ?? null,
+        _social_sentiment: effectiveSocial ?? null,
+        _india_news: india ? (indiaNews ?? null) : null,
         _options_signal:   optionsResult ?? null,
         _using_champion_weights: usingChampion,
       },

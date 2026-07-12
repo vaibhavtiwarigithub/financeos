@@ -377,12 +377,13 @@ Rules:
         title="Intelligence"
         subtitle={`${dailyCount}/${limit === 9999 ? "∞" : limit} queries used today`}
         cadence="daily"
-        whatItDoes="AI research hub — view today's agent signals, run ad-hoc symbol analysis, read the morning market brief, and compare Claude vs DeepSeek calls."
+        whatItDoes="AI research hub with five tabs: run ad-hoc symbol analysis, see where the big money is moving, review and curate the agent's beliefs, inspect the agent's reasoning, and preview the newsletter."
         whatToLookFor={[
-          "Signals tab: high analyst_score (≥70) + direction='long' = strong buy candidate.",
-          "Morning Brief: generated each day from portfolio + market context — read before trading.",
-          "Analysis tab: type any symbol or question for instant LLM research.",
-          "LLM Comparison: check if Claude and DeepSeek agree — consensus = higher conviction.",
+          "Analysis: type any symbol or question for instant LLM research (thesis, catalysts, risks, trade idea, confidence).",
+          "Smart Money: institutional/insider flow and the trade queue — high-insider names and where large players are buying.",
+          "Beliefs: the agent's learned priors by category — toggle any on/off or add your own to steer future scoring.",
+          "Brain: the agent-mind view of how signals were reasoned through, so you can see why it acted.",
+          "Newsletter: preview the generated market newsletter before it goes out.",
         ]}
       />
       <div style={{ padding: "0 clamp(12px,4vw,28px) 28px" }}>

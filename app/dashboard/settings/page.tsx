@@ -460,11 +460,14 @@ export default function SettingsPage() {
         title="Settings"
         subtitle="Profile, preferences, and access"
         cadence="as-needed"
-        whatItDoes="Configure your display name, market focus, knowledge level, theme, and AI model preference. Access tab shows your role and tier."
+        whatItDoes="Everything configurable, grouped into tabs: Profile, Preferences, Agents, AI Models, Automation, Admin, Data, and Access."
         whatToLookFor={[
-          "Market focus affects which data the agents prioritize (US vs India vs Both).",
-          "Knowledge level changes how the Mentor explains concepts.",
-          "AI model preference is used for chat — agents use the LLM router regardless.",
+          "Profile: display name, market focus (US / India / Both — drives which data the agents prioritize), and knowledge level (changes how the Mentor explains things).",
+          "Preferences: theme and the legacy per-user chat model, plus Privacy Mode to hide live dollar amounts.",
+          "Agents: trading mode, broker selection, per-market auto-trading toggles, and the Robinhood MCP / Zerodha Kite connections.",
+          "AI Models: pick which LLM runs each flow (research, trader, mentor, etc.) and set provider API keys.",
+          "Automation: the scheduled jobs (crons) that run the agents day to day.",
+          "Admin: the encrypted API-key vault and other keys; Data: data-provider capacity/usage; Access: your role and tier.",
         ]}
       />
 

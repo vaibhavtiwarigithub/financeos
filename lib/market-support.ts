@@ -21,8 +21,8 @@ export type MarketSupport = {
 // Route prefix → support. Longest prefix wins (so /dashboard/agents/history beats
 // /dashboard/agents beats /dashboard).
 const REGISTRY: Record<string, MarketSupport> = {
-  "/dashboard/live-portfolio": { level: "us-only",    note: "Live Robinhood account (US brokerage). India live holdings live on the India page." },
-  "/dashboard/india":          { level: "india-only", note: "India-only: NSE/BSE via Zerodha Kite + free Yahoo data." },
+  "/dashboard/live-portfolio": { level: "full",       note: "Live holdings for both markets via the header switcher — Robinhood (US, $) or Zerodha Kite (India, ₹). The old separate India page now redirects here." },
+  "/dashboard/india":          { level: "india-only", note: "Redirects to Live Portfolio (India view) — kept for old bookmarks." },
   "/dashboard/markets":        { level: "full",       note: "Both markets: indices, sector heatmap, breadth. US-only: TradingView/macro-sentinel tiles." },
   "/dashboard/scanner":        { level: "full",       note: "US full screen; India screens the full NSE market via a nightly cache (falls back to NIFTY-100 if NSE is blocked)." },
   "/dashboard/backtest":       { level: "full",       note: "US replays on price_cache; India on Yahoo .NS candles, alpha vs NIFTY." },
@@ -41,7 +41,7 @@ const REGISTRY: Record<string, MarketSupport> = {
   "/dashboard/journal":        { level: "full",       note: "Audit trail spans US + India (fixed 2026-07-06 — migration 084 added the missing market column AND fixed a dormant type-mismatch bug that had silently failed every paper_fill/paper_exit journal insert). Broker orders/fills, paper fills/exits, and Kite orders are all market-tagged; risk-profile and cron-gap alerts are genuinely global (not market-specific) and show under the US view." },
   "/dashboard/settings":       { level: "full",       note: "Config applies to both markets. Turn India on/off under Market focus." },
   "/dashboard/admin":          { level: "full",       note: "Keys/vault/config for both markets." },
-  "/dashboard":                { level: "full",       note: "Morning Briefing shows both US and India sections (fixed 2026-07-06) — an India Paper Portfolio card (NAV/P&L/cash/positions/signals) now appears below the US hero when India is enabled." },
+  "/dashboard":                { level: "full",       note: "Home hero follows the header switcher — shows the US ($) or India (₹) paper pool with the right currency and per-market P&L baseline (2026-07-12)." },
 };
 
 export function getMarketSupport(pathname: string): MarketSupport {

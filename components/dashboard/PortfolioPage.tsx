@@ -714,8 +714,9 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
         title="Paper Portfolio"
         subtitle={`NAV ${cur}${nav.toFixed(0)} · ${positions.length} open position${positions.length !== 1 ? "s" : ""}`}
         cadence="weekly"
-        whatItDoes="Your paper trading portfolio — all open positions, closed trades, P&L history, and pending signals queue. Agent executes paper trades automatically each morning."
+        whatItDoes="Your paper trading portfolio — all open positions, closed trades, P&L history, and pending signals queue. Agent executes paper trades automatically each morning. NAV (Net Asset Value) = your uninvested cash + the current market value of everything you hold — what the whole paper account is worth right now."
         whatToLookFor={[
+          "NAV = uninvested cash + current market value of all holdings. Paper pools start at $10,000 (US) and ₹10,00,000 (India); P&L and % are measured against that starting amount. US is always shown in $ and India in ₹ — the two currencies are never mixed.",
           "Positions tab: check unrealized P&L on open trades. Exit if signal flips to 'short'.",
           "Trade Queue tab: signals the agent wants to act on — approve or reject before next cron run.",
           "Win rate should trend above 50% after 20+ trades. Below = prompt/screener adjustment needed.",

@@ -21,6 +21,7 @@ const KEY_ENV: Record<ProviderId, string | null> = {
   twelvedata: "TWELVEDATA_API_KEY",
   upstox: "UPSTOX_ACCESS_TOKEN",
   fred: "FRED_API_KEY",
+  gdelt: null, // free, no API key required
 };
 
 // Decode a JWT's `exp` (seconds) without verifying — only for showing an expiry

@@ -191,10 +191,11 @@ export default function ResearchJournalPage() {
       <PageHeader
         title="Research Journal"
         subtitle="Why the agent did (or didn't) act, and how the learning loop is evolving"
-        whatItDoes="Daily Funnel shows every symbol scored today with its full score breakdown, screener bucket, and pass/reject reason at each pipeline stage (research → portfolio constructor → execution). Evolution shows longer-horizon trends: learner weight changes, feature-registry promotions, calibration drift, shadow-decision agreement."
+        whatItDoes="Three tabs explaining the agent's decisions and how it learns: Daily Funnel (why each symbol passed or failed each stage today), Evolution (how the learning loop is changing over time), and Score Tracker (one stock's AI score history with a drill-down)."
         whatToLookFor={[
-          "A rejected symbol always has a reason — score breakdown, threshold, or a Portfolio Constructor limit.",
-          "Evolution tab is honest about thin history — it won't draw a trend from 1-2 data points.",
+          "Daily Funnel: every symbol scored today with its score breakdown, screener bucket, and pass/reject reason at each pipeline stage (research → portfolio constructor → execution) — a rejected symbol always has a reason.",
+          "Evolution: longer-horizon trends — learner weight changes, feature-registry promotions, calibration drift, shadow-decision agreement — and it's honest about thin history (no trend from 1-2 points).",
+          "Score Tracker: pick a stock to see its AI score move over time, then drill down into what drove each change.",
         ]}
       />
       <div style={{ padding: "0 28px 32px" }}>

@@ -221,6 +221,7 @@ export default function IndiaLivePanel() {
         cadence="daily"
         whatItDoes="Live NSE holdings from your Zerodha Kite account, plus AI-scored Indian stocks (NIFTY names) you can buy or sell with real orders. Kite issues a fresh access token each day — reconnect when it expires."
         whatToLookFor={[
+          "Live NAV comes straight from your broker — your Zerodha Kite holdings value + cash (India, ₹). It updates on each sync, not live-by-the-second.",
           "Green status = token valid today; amber = reconnect before trading or reading holdings.",
           "Scored signals: score ≥ 70 green (strong), 50–69 amber (moderate), < 50 red.",
           "Only LONG, entry-eligible signals can open the Kite order panel; a second explicit confirmation is still required.",

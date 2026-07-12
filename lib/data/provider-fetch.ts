@@ -14,7 +14,7 @@ import { reportIssue } from "@/lib/system-health";
 
 export type ProviderId =
   | "alpha_vantage" | "financialdatasets" | "massive" | "finnhub"
-  | "fmp" | "eodhd" | "twelvedata" | "upstox" | "fred";
+  | "fmp" | "eodhd" | "twelvedata" | "upstox" | "fred" | "gdelt";
 
 interface ProviderConfig {
   label: string;
@@ -34,6 +34,7 @@ const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   massive:           { label: "Massive",           dailyBudget: null }, // 5/min, no daily cap
   upstox:            { label: "Upstox",            dailyBudget: null }, // ~500/min, no daily cap
   fred:              { label: "FRED",              dailyBudget: null }, // rate-limited only
+  gdelt:             { label: "GDELT",             dailyBudget: null }, // free/no-key India news tone, rate-limited only
 };
 
 // AV signals a rate-limit/throttle via a "Note" or "Information" field (no data).

@@ -328,6 +328,11 @@ export default function LivePortfolioPage({
         </div>
       </div>
 
+      {/* NAV explainer */}
+      <div style={{ fontSize: "11px", color: T.muted, marginBottom: "16px", maxWidth: "760px", lineHeight: 1.5 }}>
+        Live NAV comes straight from your broker — Robinhood account equity (US, $). It updates on each sync, not live-by-the-second.
+      </div>
+
       {/* Stats row */}
       <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
         <StatCard label="Total Equity" value={maskText(fmt$(Number(totalEquity)), masked)} sub="Live Robinhood" />
