@@ -46,10 +46,12 @@ export default function ResearchFunnel() {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [contexts, setContexts] = useState<Record<string, any>>({});
+  const [contextLoading, setContextLoading] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let live = true;
-    setData(null); setError(""); setExpanded(new Set());
+    setData(null); setError(""); setExpanded(new Set()); setContexts({});
     fetch(`/api/agents/research-journal?date=${date}&market=${market}`)
       .then(async r => { if (!r.ok) throw new Error(await r.text()); return r.json(); })
       .then(j => {
@@ -67,6 +69,19 @@ export default function ResearchFunnel() {
       if (next.has(symbol)) next.delete(symbol); else next.add(symbol);
       return next;
     });
+  }
+
+  async function loadCurrentContext(symbol: string) {
+    setContextLoading(current => new Set(current).add(symbol));
+    try {
+      const response = await fetch(`/api/agents/research-journal/context?symbol=${encodeURIComponent(symbol)}&market=${market}`);
+      const json = await response.json();
+      setContexts(current => ({ ...current, [symbol]: response.ok ? json : { available: false, message: json.error ?? "Context request failed." } }));
+    } catch {
+      setContexts(current => ({ ...current, [symbol]: { available: false, message: "Current context could not be fetched." } }));
+    } finally {
+      setContextLoading(current => { const next = new Set(current); next.delete(symbol); return next; });
+    }
   }
 
   return <div>
@@ -146,6 +161,27 @@ export default function ResearchFunnel() {
                   {s.counter_evidence.length ? s.counter_evidence.map((x: string, i: number) => <div key={i} style={{ color: T.textSub, fontSize: "12px", marginBottom: "4px" }}>− {x}</div>) : <div style={{ color: T.muted, fontSize: "12px" }}>No specific counter-evidence was recorded.</div>}
                 </section>
               </div>
+
+              <section style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "9px", padding: "12px", marginBottom: "14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ color: T.muted, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase" }}>Current news context · separate from this decision</div>
+                    <div style={{ color: T.textSub, fontSize: "11px", marginTop: "3px" }}>Loaded only when requested to protect free-provider limits.</div>
+                  </div>
+                  <button type="button" onClick={() => loadCurrentContext(s.symbol)} disabled={contextLoading.has(s.symbol)} style={{ background: T.ink, border: `1px solid ${T.blue}55`, color: contextLoading.has(s.symbol) ? T.muted : T.blue, borderRadius: "7px", padding: "6px 10px", cursor: contextLoading.has(s.symbol) ? "default" : "pointer", fontSize: "11px" }}>
+                    {contextLoading.has(s.symbol) ? "Loading…" : contexts[s.symbol] ? "Refresh current news" : "Load current news"}
+                  </button>
+                </div>
+                {contexts[s.symbol] && <div style={{ marginTop: "10px", borderTop: `1px solid ${T.border}`, paddingTop: "9px" }}>
+                  <div style={{ color: T.amber, fontSize: "10px", marginBottom: "7px" }}>{contexts[s.symbol].disclaimer}</div>
+                  {contexts[s.symbol].available ? contexts[s.symbol].items.map((item: any, i: number) => <div key={item.url} style={{ padding: "8px 0", borderTop: i ? `1px solid ${T.border}` : "none" }}>
+                    <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ color: T.text, fontSize: "12px", fontWeight: 700, textDecoration: "none", lineHeight: 1.45 }}>{item.title} ↗</a>
+                    <div style={{ color: T.muted, fontSize: "10px", marginTop: "3px" }}>{item.published_at ? formatDate(item.published_at) : "Publication time unavailable"}{item.sentiment ? ` · provider sentiment: ${item.sentiment}` : ""}</div>
+                    {item.summary && <div style={{ color: T.textSub, fontSize: "11px", lineHeight: 1.45, marginTop: "3px" }}>{item.summary}</div>}
+                  </div>) : <div style={{ color: T.muted, fontSize: "11px", lineHeight: 1.5 }}>{contexts[s.symbol].message}</div>}
+                  {contexts[s.symbol].provider && <div style={{ color: T.muted, fontSize: "9px", marginTop: "7px" }}>Provider: {contexts[s.symbol].provider} · fetched {formatDate(contexts[s.symbol].fetched_at)}</div>}
+                </div>}
+              </section>
 
               <div style={{ color: T.muted, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: "7px" }}>Quant audit · how the available-evidence score was built</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "8px", marginBottom: "14px" }}>

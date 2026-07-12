@@ -231,8 +231,10 @@ application data or treated as scoring evidence.
   novelty/history, novice action/technical translation, missing-dimension honesty,
   score change, and deterministic TradingView/Yahoo/SEC/NSE/BSE links. Uses only
   stored data; no scoring or order-path change.
-- **V2.1:** on-demand cached material-news panel with source, published/available
-  timestamps, deduplication and official-vs-commentary classification.
+- **V2.1 (built 2026-07-12):** on-demand cached provider-backed news panel with
+  source, publication/fetch timestamps, title deduplication, safe HTTPS links and
+  an explicit warning that current context post-dates the historical decision.
+  India fails honestly until a validated free NSE-news adapter is available.
 - **V2.2:** point-in-time peer/theme comparison after comparable-group and provider
   coverage validation. Measure-only until incremental value is proven.
 
@@ -246,4 +248,6 @@ application data or treated as scoring evidence.
   cannot be labeled high confidence.
 - Historical and on-demand current context are visually/time separated.
 - API reads are bounded; partial context failure does not hide the stored decision.
+- Current-news enrichment is owner-gated, opt-in per symbol, cache/budget guarded,
+  deduplicated and never changes the recorded score/action.
 - TypeScript, unit tests, production build, and US/India browser checks pass.
