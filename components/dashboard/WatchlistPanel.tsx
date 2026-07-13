@@ -99,6 +99,7 @@ export default function WatchlistPanel() {
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState("");
   const [newSymbol, setNewSymbol] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -174,14 +175,28 @@ export default function WatchlistPanel() {
     const clean = sym.trim().toUpperCase();
     if (!clean) return;
     setAdding(true);
+    setAddError("");
     setSuggestions([]);
     setShowSuggestions(false);
-    await fetch("/api/watchlist", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol: clean, source, market }),
-    }).catch(() => {});
-    setNewSymbol("");
+    try {
+      const r = await fetch("/api/watchlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: clean, source, market }),
+      });
+      if (!r.ok) {
+        // Surface the market-mismatch (or any) error instead of silently doing nothing.
+        const d = await r.json().catch(() => ({}));
+        setAddError(d.error ?? "Couldn't add that symbol.");
+        setAdding(false);
+        return;
+      }
+      setNewSymbol("");
+    } catch {
+      setAddError("Network error — couldn't add that symbol.");
+      setAdding(false);
+      return;
+    }
     setAdding(false);
     load();
   }
@@ -372,7 +387,7 @@ export default function WatchlistPanel() {
           <div style={{ flex: 1, position: "relative", minWidth: "160px" }}>
             <input
               value={newSymbol}
-              onChange={e => { setNewSymbol(e.target.value.toUpperCase()); setShowSuggestions(true); }}
+              onChange={e => { setNewSymbol(e.target.value.toUpperCase()); setShowSuggestions(true); if (addError) setAddError(""); }}
               onFocus={() => setShowSuggestions(true)}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
               onKeyDown={e => e.key === "Enter" && addManual()}
@@ -436,6 +451,13 @@ export default function WatchlistPanel() {
             📥 Import CSV
           </button>
         </div>
+
+        {/* Add error (e.g. market mismatch) */}
+        {addError && (
+          <div style={{ marginTop: "8px", fontSize: "11px", color: T.red, background: `${T.red}12`, border: `1px solid ${T.red}33`, borderRadius: "6px", padding: "7px 10px", lineHeight: "1.5" }}>
+            {addError}
+          </div>
+        )}
 
         {/* Multi-market note */}
         <div style={{ fontSize: "9px", color: T.muted, marginTop: "6px", lineHeight: "1.5" }}>

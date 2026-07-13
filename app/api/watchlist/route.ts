@@ -70,18 +70,26 @@ export async function POST(req: NextRequest) {
   const symbol = body.symbol?.trim().toUpperCase();
   if (!symbol) return NextResponse.json({ error: "symbol required" }, { status: 400 });
 
-  const company_name = body.company_name ?? await fetchCompanyName(symbol);
+  // Market is decided by the SYMBOL (India names carry a .NS/.BO suffix — that is
+  // exactly how research's isIndia() classifies them and how India data sources are
+  // queried); everything else is US. We VALIDATE the symbol against the market the
+  // user is viewing (the header switch, body.market) and REJECT a mismatch with a
+  // clear message, instead of silently tagging it to the other market — so the
+  // right research agent (US vs India) picks it up and nothing "vanishes" from the
+  // view the user added it in. (Auto-added rows — theme-scout/briefing/robinhood —
+  // skip this: they set source != "manual" and may be Global/Crypto.)
+  const isIndiaSym = /\.(NS|BO)$/i.test(symbol);
+  const isManual = (body.source ?? "manual") === "manual";
+  if (isManual && body.market === "india" && !isIndiaSym) {
+    return NextResponse.json({ error: `"${symbol}" looks like a US symbol. Add NSE names with the .NS suffix (e.g. RELIANCE.NS), or switch to the US market to track a US ticker.` }, { status: 400 });
+  }
+  if (isManual && body.market === "us" && isIndiaSym) {
+    return NextResponse.json({ error: `"${symbol}" is an India (NSE/BSE) symbol. Switch to the India market to track it.` }, { status: 400 });
+  }
+  const marketCol = isIndiaSym ? "India" : "US";
 
+  const company_name = body.company_name ?? await fetchCompanyName(symbol);
   const svc = createServiceClient();
-  // Market is derived FROM THE SYMBOL, not from the header switcher. India
-  // symbols carry a .NS/.BO suffix (that is exactly how research's isIndia()
-  // classifies them and how India data sources are queried); everything else is
-  // US. Deriving from the switcher was a bug: a US ticker added while the switch
-  // was on India (e.g. "SKHYV") got tagged India, so India research tried it with
-  // the wrong data source and US research never saw it. Suffix-inference keeps the
-  // watchlist market tag consistent with how the pipeline actually treats the
-  // symbol. (To add an NSE name, include the .NS suffix, e.g. RELIANCE.NS.)
-  const marketCol = /\.(NS|BO)$/i.test(symbol) ? "India" : "US";
   const { error } = await svc.from("watchlist").upsert({
     user_id: user.id,
     symbol,
