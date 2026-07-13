@@ -1,4 +1,4 @@
-export type BrokerName = "robinhood" | "alpaca_paper" | "alpaca_live" | "internal" | "kite";
+export type BrokerName = "robinhood" | "alpaca_paper" | "alpaca_live" | "internal" | "kite" | "webull";
 
 export interface BrokerHolding {
   symbol: string;

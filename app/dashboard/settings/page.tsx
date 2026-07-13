@@ -112,6 +112,14 @@ export default function SettingsPage() {
   const [activeAccountIndia, setActiveAccountIndia] = useState<string>("");
   const [rhMcpMsg, setRhMcpMsg] = useState<string>("");
 
+  // Webull MCP (Phase 1 — READ-ONLY cloud OAuth connection). Snapshot only; no
+  // order path exists this phase.
+  const [webull, setWebull] = useState<{ connected: boolean; stale?: boolean; expires_at?: string | null; has_refresh?: boolean; oauth_ready: boolean; accounts?: any[] } | null>(null);
+  const [webullMsg, setWebullMsg] = useState<string>("");
+  const loadWebull = () => {
+    fetch("/api/webull/status").then(r => r.json()).then(setWebull).catch(() => {});
+  };
+
   // Per-market live per-order notional caps (money limits — owner-set). Empty = null
   // = that market's live orders fail closed until a cap is set.
   const [usdCap, setUsdCap] = useState<string>("");
@@ -214,6 +222,19 @@ export default function SettingsPage() {
         no_client: "No registered client — retry the connect.",
       };
       setRhMcpMsg(rmap[rh] ?? "");
+      setTab("agents");
+    }
+    // Post-Webull-OAuth status flag
+    const wb = params.get("webull");
+    if (wb) {
+      const wmap: Record<string, string> = {
+        connected: "Webull connected — read-only token stored.",
+        register_failed: "Webull dynamic client registration failed.",
+        state_mismatch: "OAuth state check failed — please retry the connect.",
+        exchange_failed: "Token exchange failed — please retry.",
+        no_client: "No registered client — retry the connect.",
+      };
+      setWebullMsg(wmap[wb] ?? "");
       setTab("agents");
     }
 
@@ -328,6 +349,15 @@ export default function SettingsPage() {
     loadRhMcp();
   }
 
+  async function disconnectWebull() {
+    if (!confirm("Wipe the stored Webull token from this app? The authoritative revoke is Webull's own connected-apps dashboard.")) return;
+    const res = await fetch("/api/webull/disconnect", { method: "POST" });
+    const d = await res.json().catch(() => ({}));
+    setWebullMsg(res.ok ? "Webull token wiped." : (d.error ?? "Disconnect failed"));
+    setTimeout(() => setWebullMsg(""), 3000);
+    loadWebull();
+  }
+
   const ORDER_LIMIT_DEFAULTS = {
     usd: "500", inr: "20000", dailyUsd: "5000", dailyInr: "30000", maxDailyTrades: "",
     paperUsd: "2500", paperInr: "250000", dailyPaperUsd: "5000", dailyPaperInr: "500000",
@@ -409,6 +439,7 @@ export default function SettingsPage() {
     if (tab !== "agents") return;
     loadKite();
     loadRhMcp();
+    loadWebull();
     loadLiveAuto();
     if (llmCosts) return; // already loaded
     setLlmLoading(true);
@@ -876,6 +907,64 @@ export default function SettingsPage() {
 
             <div style={{ fontSize: "11px", color: T.muted, borderTop: `1px solid ${T.border}`, paddingTop: "12px" }}>
               The authoritative, app-independent kill switch is revoking access from Robinhood's own Agentic Trading dashboard — that works even if this app or its database were compromised. Order placement is deliberately human-in-the-loop: no order is ever sent without your explicit approval + Send click.
+            </div>
+          </div>
+
+          {/* Webull (US live account snapshot) — Phase 1 READ-ONLY */}
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Webull · US · Read-only</div>
+            <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "16px" }}>
+              In-app Webull connection for the live-account snapshot (accounts, positions, balances). This is a read-only integration — no orders are placed through Webull in this phase.
+            </div>
+
+            {webullMsg && (
+              <div style={{ fontSize: "13px", color: webullMsg.toLowerCase().includes("fail") ? T.red : T.green, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "14px" }}>{webullMsg}</div>
+            )}
+
+            {/* Connection status + connect/disconnect */}
+            <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" as const, marginBottom: "18px" }}>
+              <div style={{ fontSize: "13px" }}>
+                {!webull ? <span style={{ color: T.muted }}>Checking…</span>
+                  : webull.connected && webull.stale ? (
+                    <span style={{ color: T.red }} title={webull.expires_at ? `Token expired ${new Date(webull.expires_at).toLocaleString()}${webull.has_refresh ? "" : " · no refresh token stored"}` : ""}>
+                      ● Reconnect required — token expired
+                    </span>
+                  )
+                  : webull.connected ? (
+                    <span style={{ color: T.green }} title={webull.expires_at ? `Token valid until ${new Date(webull.expires_at).toLocaleString()}` : ""}>
+                      ● Connected{webull.expires_at ? ` — valid until ${new Date(webull.expires_at).toLocaleString()}` : ""}
+                    </span>
+                  )
+                  : <span style={{ color: T.muted }}>○ Not connected</span>}
+              </div>
+              <button
+                disabled={!webull?.oauth_ready}
+                onClick={() => { if (webull?.oauth_ready) window.location.href = "/api/webull/login"; }}
+                style={{ background: webull?.oauth_ready ? T.accent : T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: webull?.oauth_ready ? "#fff" : T.muted, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: webull?.oauth_ready ? "pointer" : "not-allowed" }}
+              >
+                {webull?.connected ? "Reconnect" : "Connect"}
+              </button>
+              {webull?.connected && (
+                <button onClick={disconnectWebull} style={{ background: "transparent", border: `1px solid ${T.red}`, borderRadius: "8px", color: T.red, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>Disconnect</button>
+              )}
+            </div>
+
+            {/* Read-only account snapshot summary (fail-soft) */}
+            {webull?.connected && Array.isArray(webull.accounts) && webull.accounts.length > 0 && (
+              <div style={{ marginBottom: "14px", display: "flex", flexDirection: "column" as const, gap: "8px" }}>
+                {webull.accounts.map((a: any, i: number) => (
+                  <div key={a.accountId ?? i} style={{ fontSize: "12px", color: a.error ? T.amber : T.textSub, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 12px" }}>
+                    <strong>{a.accountLabel ?? a.accountId ?? "Webull"}</strong>
+                    {a.error
+                      ? ` — ${a.error}`
+                      : ` — ${a.holdings?.length ?? 0} holdings · total ${Number(a.totalValue ?? 0).toLocaleString(undefined, { style: "currency", currency: "USD" })}`}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ fontSize: "11px", color: T.muted, borderTop: `1px solid ${T.border}`, paddingTop: "12px" }}>
+              Phase 1 is read-only: the app only requests account, market, and instrument read access. Order placement through Webull is not enabled. The authoritative, app-independent revoke is Webull's own connected-apps dashboard.
             </div>
           </div>
 

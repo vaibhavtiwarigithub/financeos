@@ -1,7 +1,24 @@
 # Feature Architecture — Webull as 3rd Broker (MCP)
 
-> Status: **APPROVED — order-capable. Discovery done; ready to build (phased).**
+> Status: **Phase 1 (read-only, Cloud MCP) BUILT — awaiting owner OAuth connect.**
+> Decision: **Cloud MCP (OAuth), not OpenAPI** — the OpenAPI REQUIRES an IP
+> whitelist (no free serverless has a static egress IP; would force an Oracle
+> Free VM), whereas the MCP's OAuth is not IP-locked and runs from Vercel free.
+> Reuses the Robinhood MCP OAuth machinery.
 > Last updated: 2026-07-13
+
+## Phase 1 built (read-only)
+- `lib/webull-mcp.ts` — OAuth 2.1 (DCR + PKCE S256, hosted Vercel callback) +
+  CAS token refresh (vault keys `WEBULL_MCP_*`, provider `webull_mcp`) +
+  `webullRpc` JSON-RPC client + `captureWebullAccounts()` (get_account_list →
+  get_account_positions + get_account_balance → get_stock_quotes). Scope
+  `account:read market:read instrument:read` ONLY — no `order:write`, no order code.
+- Routes `app/api/webull/{login,callback,status,disconnect}`.
+- Settings "Connect Webull" card. `BrokerName` union +`webull`.
+- **Owner action:** click Connect Webull once (cloud OAuth) → token in vault →
+  crons reuse it. Then verify holdings appear.
+- **Phase 2 (later):** order adapter (`order:write` + preview→place→status→cancel)
+  behind an explicit per-account allowlist + all existing gates. NOT built.
 
 ## Confirmed integration facts (from public OAuth metadata + Webull MCP docs)
 

@@ -81,6 +81,7 @@ These keys are NOT in `.env.local`. They live in Supabase and are fetched at run
 | `KITE_ACCESS_TOKEN` | Kite Access Token | Daily refresh required (SEBI mandate: expires 6 AM IST) |
 | `ROBINHOOD_ACCESS_TOKEN` | Robinhood OAuth Token | CAS-protected refresh via `lib/robinhood-mcp-client.ts` |
 | `ROBINHOOD_REFRESH_TOKEN` | Robinhood Refresh Token | Used to refresh access token before expiry |
+| `WEBULL_MCP_*` (vault, `provider: webull_mcp`) | Webull Cloud MCP OAuth | `WEBULL_MCP_CLIENT_ID` / `_ACCESS_TOKEN` / `_REFRESH_TOKEN` / `_TOKEN_EXPIRES`. Written on the one-time OAuth connect (`/api/webull/login`→`/callback`); CAS refresh in `lib/webull-mcp.ts`. Read-only (Phase 1). NOT env vars — vault rows |
 | `STOCKTWITS_TOKEN` | StockTwits | Social sentiment for US tickers |
 
 ---
