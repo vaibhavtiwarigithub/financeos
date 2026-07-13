@@ -418,6 +418,34 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     }).eq("id", pool.id);
     if (portfolioErr) navWriteErrors.push(`paper_portfolio(${market}): ${portfolioErr.message}`);
 
+    // Ledger reconciliation guard: cash MUST equal seed − Σopen-cost + Σrealized.
+    // A drift means a cash write was silently lost (this is exactly how the old
+    // open_positions-column bug leaked ₹197k of close-proceeds and tripped a
+    // PHANTOM drawdown). Surface it as its own alert BEFORE the drawdown breaker
+    // acts on a corrupted NAV — never silently trip the kill switch on bad math.
+    try {
+      const seed = market === "india" ? 1_000_000 : 10_000;
+      const openCost = mktPos.reduce(
+        (s: number, p: any) => s + Number(p.qty ?? 0) * Number(p.avg_cost ?? 0), 0);
+      const { data: realizedRows } = await svc.from("paper_trades")
+        .select("realized_pnl").eq("market", market).not("closed_at", "is", null);
+      const realized = (realizedRows ?? []).reduce(
+        (s: number, r: any) => s + Number(r.realized_pnl ?? 0), 0);
+      const ledgerCash = seed - openCost + realized;
+      const drift = Math.abs(cashByMarket[market] - ledgerCash);
+      const tol = Math.max(1, seed * 0.005); // 0.5% of seed
+      if (drift > tol) {
+        await reportIssue({
+          issueKey: `paper-cash-drift:${market}`,
+          severity: "warn", category: "risk",
+          title: `Paper cash ledger drift — ${market.toUpperCase()} (${drift.toFixed(0)})`,
+          detail: `cash_balance ${cashByMarket[market].toFixed(0)} != ledger ${ledgerCash.toFixed(0)} (seed − open-cost + realized). A close-proceeds write was likely lost — reconcile before trusting NAV/drawdown; the drawdown breaker may be acting on a phantom NAV.`,
+        }, svc);
+      } else {
+        await resolveIssue(`paper-cash-drift:${market}`, svc);
+      }
+    } catch { /* guard is advisory — never block the monitor */ }
+
     // C: Benchmark price daily sync — fetch VOO (US) or ^NSEI (India) and upsert
     // paper_performance so bench_nav stays current even on no-trade days.
     let benchNav: number | null = null;

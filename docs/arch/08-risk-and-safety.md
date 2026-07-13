@@ -81,6 +81,19 @@ advisory lock, caps at one shadow (`max_active_shadows` 0–1), and refuses any
 champion/terminal/unvalidated version. Promotion and every execution gate above
 stay separate and owner-only.
 
+**Paper accounting integrity (2026-07-13).** Two silent-write bugs are fixed and
+guarded: (1) `disableTrading` (kill switch) wrote a non-existent `strategy_config.notes`
+column, so PostgREST rejected the whole update and the switch never actually set
+`trading_enabled=false` — `notes` removed, the switch now halts as intended.
+(2) An earlier `paper_portfolio` update bundled a non-existent `open_positions`
+column and silently dropped close-proceeds cash credits, understating NAV and
+tripping a PHANTOM drawdown/kill switch on India (~₹197k). The lost cash was
+reconciled from the trade ledger (`seed − Σopen-cost + Σrealized`), and the
+position-monitor now runs a **ledger reconciliation guard** every cycle: if
+`cash_balance` drifts from the ledger beyond 0.5% of seed it raises
+`paper-cash-drift:<market>` (warn) so drift is visible and actionable BEFORE the
+drawdown breaker acts on corrupted NAV.
+
 ### 3 — Trading/broker/account enablement
 
 All global, per-market, broker, and account toggles must be true. Broker resolution fails closed.

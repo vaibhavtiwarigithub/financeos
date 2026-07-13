@@ -371,9 +371,12 @@ async function disableTrading(
   reason: string,
 ): Promise<void> {
   console.error(`[kill-switch] TRADING DISABLED (${market}): ${reason}`);
+  // NOTE: `notes` is NOT a column on strategy_config — including it made
+  // PostgREST reject the WHOLE update, so the kill switch was silently a no-op
+  // on trading_enabled (it raised the alert but never actually halted trading).
   await supabase
     .from("strategy_config")
-    .update({ trading_enabled: false, notes: `Auto-disabled: ${reason}` })
+    .update({ trading_enabled: false })
     .not("id", "is", null);
   await reportIssue({
     issueKey: `killswitch:${market}`,

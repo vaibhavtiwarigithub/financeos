@@ -119,6 +119,18 @@ export async function providerCachedFetch(
     try {
       const { data: count, error } = await svc.rpc("provider_budget_increment", { p_provider: provider, p_date: todayStr });
       if (error) return lastCached(svc, cacheKey); // fail closed
+      // Early warning at 80% of the daily cap — see pressure BEFORE it exhausts,
+      // so a provider trending toward its ceiling is actionable (add a free
+      // alternate) rather than a surprise at 100%. Auto-clears at UTC midnight.
+      if (typeof count === "number" && count >= Math.floor(cfg.dailyBudget * 0.8) && count <= cfg.dailyBudget) {
+        await reportIssue({
+          issueKey: `provider-budget-pressure:${provider}`,
+          severity: "warn", category: "data",
+          title: `${cfg.label} at ${count}/${cfg.dailyBudget} calls (80%+)`,
+          detail: `${cfg.label} is nearing its daily cap. If it exhausts, fetches fall back to cache. Consider routing more load to a free alternate (Massive/FMP/TwelveData/Finnhub).`,
+          autoExpireAt: nextUtcMidnight(),
+        }, svc);
+      }
       if (typeof count === "number" && count > cfg.dailyBudget) {
         await reportIssue({
           issueKey: `provider-budget-exhausted:${provider}`,
