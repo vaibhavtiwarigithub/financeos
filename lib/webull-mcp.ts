@@ -501,3 +501,30 @@ export async function disconnectWebullMcp(svc?: any): Promise<{ ok: boolean; err
   const { error } = await vaultDel(s, [VK.access, VK.refresh, VK.expiry]);
   return { ok: !error, error };
 }
+
+// ── Server-side OAuth state (migration 173) ─────────────────────────────────
+// The state+PKCE-verifier were kept in a 10-min HttpOnly cookie, but Webull's
+// OAuth is multi-screen (login → trading password → account select → capability
+// select), so the cookie routinely expired or wasn't returned on the callback
+// (cross-domain), yielding "state check failed". Storing it server-side keyed by
+// the state nonce is immune to cookie/domain/expiry — the callback just looks it
+// up. Single-use (deleted on read), 30-min TTL, service-role only.
+export async function saveOAuthState(
+  svc: any, state: string, verifier: string, redirectUri: string, provider = "webull",
+): Promise<void> {
+  await svc.from("oauth_pkce_state").insert({
+    state, provider, verifier, redirect_uri: redirectUri,
+    expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+  });
+}
+export async function consumeOAuthState(
+  svc: any, state: string, provider = "webull",
+): Promise<{ verifier: string; redirectUri: string | null } | null> {
+  const { data } = await svc.from("oauth_pkce_state")
+    .select("verifier, redirect_uri, expires_at, provider").eq("state", state).maybeSingle();
+  if (!data) return null;
+  await svc.from("oauth_pkce_state").delete().eq("state", state); // single-use
+  if ((data as any).provider !== provider) return null;
+  if (new Date((data as any).expires_at).getTime() < Date.now()) return null;
+  return { verifier: (data as any).verifier, redirectUri: (data as any).redirect_uri ?? null };
+}

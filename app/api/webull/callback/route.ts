@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
-import { getOrRegisterClient, exchangeCode, verifyOAuthCookie } from "@/lib/webull-mcp";
+import { getOrRegisterClient, exchangeCode, verifyOAuthCookie, consumeOAuthState } from "@/lib/webull-mcp";
 
 export const dynamic = "force-dynamic";
 const COOKIE = "wb_mcp_oauth";
@@ -26,17 +26,26 @@ export async function GET(req: NextRequest) {
 
   const code = req.nextUrl.searchParams.get("code");
   const state = req.nextUrl.searchParams.get("state");
-  const saved = verifyOAuthCookie(req.cookies.get(COOKIE)?.value);
-
-  // state must be present, unexpired, signed by us, and match the query.
-  if (!code || !state || !saved || saved.state !== state) return done("state_mismatch");
-
   const svc = createServiceClient();
+
+  // PRIMARY: server-side state store (migration 173) — immune to cookie/domain/
+  // expiry. Falls back to the signed cookie only if the row is somehow absent.
+  let verifier: string | null = null;
+  if (code && state) {
+    const server = await consumeOAuthState(svc, state);
+    if (server) {
+      verifier = server.verifier;
+    } else {
+      const cookie = verifyOAuthCookie(req.cookies.get(COOKIE)?.value);
+      if (cookie && cookie.state === state) verifier = cookie.verifier;
+    }
+  }
+  if (!code || !state || !verifier) return done("state_mismatch");
   const appBase = process.env.APP_BASE_URL ?? process.env.NEXT_PUBLIC_APP_URL;
   const redirectUri = `${appBase ?? origin}/api/webull/callback`;
   const reg = await getOrRegisterClient(svc, [redirectUri]); // returns the stored client_id
   if (!reg.ok || !reg.clientId) return done("no_client");
 
-  const ex = await exchangeCode(svc, { code, verifier: saved.verifier, redirectUri, clientId: reg.clientId });
+  const ex = await exchangeCode(svc, { code, verifier, redirectUri, clientId: reg.clientId });
   return done(ex.ok ? "connected" : "exchange_failed");
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
-import { getOrRegisterClient, makePkce, makeState, buildAuthUrl, signOAuthCookie } from "@/lib/webull-mcp";
+import { getOrRegisterClient, makePkce, makeState, buildAuthUrl, signOAuthCookie, saveOAuthState } from "@/lib/webull-mcp";
 
 export const dynamic = "force-dynamic";
 const COOKIE = "wb_mcp_oauth";
@@ -30,11 +30,16 @@ export async function GET(req: NextRequest) {
 
   const { verifier, challenge } = makePkce();
   const state = makeState();
+
+  // PRIMARY: persist state+verifier server-side (migration 173). Webull's OAuth
+  // is multi-screen, so a short cookie routinely expired / wasn't returned on the
+  // callback ("state check failed"). Server-side is immune to cookie/domain/expiry.
+  await saveOAuthState(svc, state, verifier, redirectUri);
+
   const res = NextResponse.redirect(buildAuthUrl({ clientId: reg.clientId, redirectUri, state, challenge }));
-  res.cookies.set(COOKIE, signOAuthCookie({ state, verifier, exp: Date.now() + 10 * 60 * 1000 }), {
-    // Scope to the OAuth routes only — the state+verifier cookie has no business
-    // being sent on every request to the site.
-    httpOnly: true, secure: true, sameSite: "lax", path: "/api/webull", maxAge: 600,
+  // Belt-and-suspenders cookie fallback (30 min to survive the multi-step flow).
+  res.cookies.set(COOKIE, signOAuthCookie({ state, verifier, exp: Date.now() + 30 * 60 * 1000 }), {
+    httpOnly: true, secure: true, sameSite: "lax", path: "/api/webull", maxAge: 1800,
   });
   return res;
 }
