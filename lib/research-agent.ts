@@ -14,6 +14,7 @@ import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
 import { computeWeightedAnalystScore, isThinEvidence, SCORE_DIMENSIONS, type ScoreDimension, type DimensionRecord } from "@/lib/scoring/weighted-score";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { readDeferredCandidates, applyCandidateCarryForward } from "@/lib/research-queue";
 import { routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
@@ -446,9 +447,20 @@ export async function gatherSymbols(
     holdingSet.add(sym);
   }
 
-  // Candidates (new-buy budget): watchlist first (highest priority — Theme Scout picks land here),
-  // then screener stocks. Cap applies only to this bucket, not to holdings above.
+  // Candidates (new-buy budget), in PRIORITY order:
+  //   carried-forward (waited a prior run) → watchlist (Theme Scout picks) → screener.
+  // Cap applies only to this bucket, not to holdings above.
   const candidateMap = new Map<string, SymbolEntry>();
+
+  // Carry-forward first (migration 172) — candidates that missed a prior run's
+  // cap come back with raised priority so a growing pool rotates fairly.
+  const deferredUs = await readDeferredCandidates(supabase, "us");
+  for (const sym of deferredUs) {
+    if (holdingSet.has(sym) || candidateMap.has(sym)) continue;
+    const isMetal = METAL_ETF_SYMBOLS.has(sym);
+    candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: "watchlist" });
+  }
+
   for (const sym of watchlistSymbols) {
     if (!holdingSet.has(sym) && !candidateMap.has(sym)) {
       const isMetal = METAL_ETF_SYMBOLS.has(sym);
@@ -465,7 +477,10 @@ export async function gatherSymbols(
   }
 
   const candidateCap = parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "10");
-  const nonMetals = [...holdingEntries, ...Array.from(candidateMap.values()).slice(0, candidateCap)];
+  // Take the top `candidateCap` this run; carry the overflow forward (raised
+  // priority, no starvation) instead of the old silent `.slice()` drop.
+  const usBatch = new Set(await applyCandidateCarryForward(supabase, "us", Array.from(candidateMap.keys()), candidateCap));
+  const nonMetals = [...holdingEntries, ...Array.from(candidateMap.values()).filter(e => usBatch.has(e.symbol))];
 
   // Metals basket — always appended after candidate cap (4 extra symbols, cheap ETF analysis)
   const metals: SymbolEntry[] = [];
@@ -507,10 +522,22 @@ export async function gatherSymbols(
     }
     // Candidates from the nightly full-market india_screen_cache (dual-bucket:
     // momentum + value), not the static first-8 NIFTY names. Falls back to the
-    // static list only when the cache is empty.
-    const cacheCandidates = await fetchIndiaScreenCandidates(supabase, 8);
-    const candidateList = cacheCandidates.length > 0 ? cacheCandidates : niftyCandidates(8);
-    for (const sym of candidateList) {
+    // static list only when the cache is empty. Carry-forward first (migration
+    // 172), then fresh screener names; overflow beyond the cap rotates next run.
+    const indiaCap = parseInt(process.env.RESEARCH_INDIA_CANDIDATE_CAP ?? "8");
+    const deferredIndia = await readDeferredCandidates(supabase, "india");
+    const cacheCandidates = await fetchIndiaScreenCandidates(supabase, Math.max(20, indiaCap * 2));
+    const rawList = cacheCandidates.length > 0 ? cacheCandidates : niftyCandidates(indiaCap);
+    const orderedIndia: string[] = [];
+    const seenInd = new Set<string>();
+    for (const sym of [...deferredIndia, ...rawList]) {
+      const u = String(sym).toUpperCase();
+      if (seenAll.has(u) || seenInd.has(u)) continue;
+      seenInd.add(u);
+      orderedIndia.push(u);
+    }
+    const indiaBatch = await applyCandidateCarryForward(supabase, "india", orderedIndia, indiaCap);
+    for (const sym of indiaBatch) {
       if (seenAll.has(sym)) continue;
       seenAll.add(sym);
       indiaSymbols.push({ symbol: sym, isHeld: false, isEtf: false, assetClass: "india", discovery_source: "india_screener" });
