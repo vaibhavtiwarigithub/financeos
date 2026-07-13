@@ -78,5 +78,19 @@ export async function POST(req: NextRequest) {
     await resolveIssue(HEALTH_KEY);
   }
 
+  // Heartbeat: write an agent_runs row so the stale-check can detect a
+  // SILENT non-run (pg_net never fired) — the sweep is weekly and otherwise
+  // leaves no trace on a healthy run. agent_type 'validation_sweep', market 'us'
+  // (single cron covering both books; the stale-check registers one entry).
+  await svc.from("agent_runs").insert({
+    agent_type: "validation_sweep",
+    market: "us",
+    status: errs.length > 0 ? "error" : "done",
+    symbols: [],
+    trigger_source: isCron ? "scheduled" : "manual",
+    result_summary: errs.length > 0 ? `validation sweep: ${errs.length} failure(s)` : "validation sweep ok",
+    completed_at: new Date().toISOString(),
+  } as any).then(undefined, () => {});
+
   return NextResponse.json({ success: errs.length === 0, results });
 }
