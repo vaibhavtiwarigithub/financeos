@@ -211,7 +211,7 @@ describe("Test 9a — real checkKillSwitches auto-disables on a breach (blocks n
   it("trips daily_loss and writes trading_enabled=false (the auto-disable that blocks BUYs)", async () => {
     const writes: any[] = [];
     const resolver: Resolver = (q) => {
-      if (q.op === "update") writes.push({ table: q.table, payload: q.payload });
+      if (q.op === "update" || q.op === "upsert") writes.push({ table: q.table, payload: q.payload });
       if (q.table === "strategy_config") {
         if (q.op === "update") return { data: null, error: null };
         return { data: { ks_daily_loss_pct: -20, ks_drawdown_pct: 25, ks_accuracy_pct: 40, live_auto_enabled: false, active_account_us: null, active_account_india: null }, error: null };
@@ -229,8 +229,14 @@ describe("Test 9a — real checkKillSwitches auto-disables on a breach (blocks n
 
     expect(res.safe).toBe(false);
     expect(res.tripped).toBe("daily_loss");
-    // Auto-disable side effect: strategy_config.trading_enabled flipped to false.
-    expect(writes.some((w) => w.table === "strategy_config" && w.payload.trading_enabled === false)).toBe(true);
+    // Auto-disable side effect (migration 171): the kill switch now disables the
+    // TRIPPED MARKET only — writes market_controls(us).trading_enabled = false,
+    // not the global strategy_config flag (which halted both markets).
+    expect(
+      writes.some(
+        (w) => w.table === "market_controls" && w.payload.trading_enabled === false && w.payload.market === "us",
+      ),
+    ).toBe(true);
   });
 });
 

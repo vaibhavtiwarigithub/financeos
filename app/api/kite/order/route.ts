@@ -8,6 +8,7 @@ import { checkKillSwitches } from "@/lib/kill-switches";
 import { reportIssue } from "@/lib/system-health";
 import { checkLivePortfolioLimits } from "@/lib/risk/live-portfolio-gate";
 import { liveOrdersAllowed } from "@/lib/autonomy";
+import { isTradingEnabled } from "@/lib/market-controls";
 
 export const dynamic = "force-dynamic";
 
@@ -66,8 +67,8 @@ export async function POST(req: NextRequest) {
     if (!liveOrdersAllowed((gate as any)?.autonomy_level)) {
       return NextResponse.json({ error: `Live orders blocked by autonomy level '${(gate as any)?.autonomy_level ?? "unset"}' — live requires L3_live_manual or higher (raise it in Settings → Agents).` }, { status: 403 });
     }
-    if (!(gate as any)?.trading_enabled) {
-      return NextResponse.json({ error: "Live trading is disabled (strategy_config.trading_enabled = false)" }, { status: 403 });
+    if (!(await isTradingEnabled(svc, "india"))) {
+      return NextResponse.json({ error: "Live trading is disabled (global master or per-market control)" }, { status: 403 });
     }
     if ((gate as any)?.trading_enabled_india === false) {
       return NextResponse.json({ error: "Live trading is disabled for INDIA (view-only mode — re-enable in Settings → Agents)" }, { status: 403 });

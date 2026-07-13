@@ -210,6 +210,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
   const [bellOpen, setBellOpen] = useState(false);
   const [expandedAlert, setExpandedAlert] = useState<string | null>(null);
   const [pauseState, setPauseState] = useState<{ paused: boolean; paused_at: string | null; paused_reason: string | null } | null>(null);
+  const [marketPauses, setMarketPauses] = useState<{ market: string; paused: boolean; paused_reason: string | null }[]>([]);
   const bellRef = useRef<HTMLDivElement>(null);
   const seenProposalIds = useRef<Set<string>>(new Set());
   const { timeStr, status: mktStatus, indiaStatus } = useMarketClock();
@@ -234,7 +235,26 @@ export default function DashboardShell({ profile, children }: { profile: Profile
       .then(({ data }) => {
         if (data) setPauseState({ paused: !!data.app_paused, paused_at: data.paused_at, paused_reason: data.paused_reason });
       }, () => {});
+
+    // Per-market pause state (market_controls, migration 171): a market's own
+    // drawdown breaker can pause just that market. Surface it so the owner can
+    // review + resume that ONE market without touching the other.
+    fetch("/api/settings/pause")
+      .then(r => r.json())
+      .then(d => setMarketPauses((d.markets ?? []).filter((m: any) => m.paused)))
+      .catch(() => {});
   }, []);
+
+  async function resumeMarket(market: string) {
+    try {
+      await fetch("/api/settings/pause", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ market, paused: false }),
+      });
+      setMarketPauses(prev => prev.filter(m => m.market !== market));
+    } catch { /* non-fatal */ }
+  }
 
   // â"€â"€ Browser push: proposal watcher â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
   useEffect(() => {
@@ -505,6 +525,36 @@ export default function DashboardShell({ profile, children }: { profile: Profile
             )}
           </div>
         )}
+
+        {/* Per-market pause (migration 171) — one market paused by its own
+            drawdown breaker, the other still trading. Resume just that market. */}
+        {!pauseState?.paused && marketPauses.map(mp => (
+          <div key={mp.market} style={{
+            margin: "8px 10px 0", background: "#2D1B0066",
+            border: `1px solid ${T.yellow}55`, borderRadius: "8px", padding: "8px 10px",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px" }}>
+              <span style={{ fontSize: "11px", fontWeight: 700, color: T.yellow, letterSpacing: "0.06em" }}>
+                {mp.market.toUpperCase()} ENTRIES PAUSED
+              </span>
+              <button
+                onClick={() => resumeMarket(mp.market)}
+                style={{
+                  fontSize: "10px", fontWeight: 700, padding: "3px 8px", borderRadius: "6px",
+                  background: T.yellow + "22", color: T.yellow, border: `1px solid ${T.yellow}55`, cursor: "pointer",
+                }}
+              >Resume</button>
+            </div>
+            <div style={{ fontSize: "10px", color: T.muted, marginTop: "3px", lineHeight: "1.4" }}>
+              New {mp.market.toUpperCase()} entries paused · other market unaffected
+            </div>
+            {mp.paused_reason && (
+              <div style={{ fontSize: "10px", color: T.textSub, marginTop: "2px", fontStyle: "italic" }}>
+                {mp.paused_reason}
+              </div>
+            )}
+          </div>
+        ))}
 
         {/* Sectioned nav */}
         <nav style={{ flex: 1, padding: "10px 8px", overflowY: "auto" }}>

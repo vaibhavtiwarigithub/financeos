@@ -13,6 +13,7 @@ import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
 import { loadChampionGenome, type ResolvedGenome } from "@/lib/validation/genome-live";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadTradingMandate, mandateSnapshot, resolveHorizonDays, type TradingMandate } from "@/lib/trading-mandate";
+import { isPaused } from "@/lib/market-controls";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -59,10 +60,10 @@ export async function POST(req: NextRequest) {
 
     const { data: cfg } = await supabase
       .from("strategy_config")
-      .select("app_paused, score_threshold, position_size_pct, stop_loss_pct, target_pct, max_gross_exposure_pct, max_sector_exposure_pct, max_name_exposure_pct, max_portfolio_vol_pct, max_avg_pairwise_corr, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper")
+      .select("score_threshold, position_size_pct, stop_loss_pct, target_pct, max_gross_exposure_pct, max_sector_exposure_pct, max_name_exposure_pct, max_portfolio_vol_pct, max_avg_pairwise_corr, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper")
       .limit(1)
       .single();
-    if ((cfg as any)?.app_paused) {
+    if (await isPaused(supabase, marketScope ?? undefined)) {
       return NextResponse.json({ skipped: true, reason: "App is paused — paper trades disabled" });
     }
     let maxPerSector = 3;

@@ -7,6 +7,7 @@ import {
   type SizingResult,
 } from "@/lib/trading/execution-kernel";
 import { AUTONOMOUS_LIVE_ENABLED } from "@/lib/autonomy";
+import { isPaused } from "@/lib/market-controls";
 import { getQuote } from "@/lib/data/quotes";
 import { getKiteMargins, getKiteHoldings } from "@/lib/kite";
 import { checkKillSwitches } from "@/lib/kill-switches";
@@ -96,6 +97,11 @@ export async function runAutonomousLive(
   if (cfg.live_auto_mode_india === "autonomous" && cfg.trading_enabled_india === true) autonomousMarkets.push("india");
   // Per-market scheduling: a market-scoped cron only processes its own market.
   if (marketFilter) autonomousMarkets = autonomousMarkets.filter((m) => m === marketFilter);
+  // Per-market entry pause (market_controls, migration 171): a market paused by
+  // its OWN drawdown breaker must not place NEW autonomous orders — but the
+  // other market keeps trading, and exits still run via the live-exit monitor.
+  const pausedByMarket = await Promise.all(autonomousMarkets.map((m) => isPaused(svc, m)));
+  autonomousMarkets = autonomousMarkets.filter((_, i) => !pausedByMarket[i]);
   if (autonomousMarkets.length === 0) {
     return { ...earlyExit("no_markets_in_autonomous_mode"), run_id: runId };
   }

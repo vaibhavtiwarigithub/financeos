@@ -17,6 +17,7 @@ import { getKiteHoldings } from "@/lib/kite";
 import { reportIssue } from "@/lib/system-health";
 import { liveOrdersAllowed, autonomousWorkerAllowed } from "@/lib/autonomy";
 import { isSymbolBlocked } from "@/lib/trading/symbol-policy";
+import { isTradingEnabled } from "@/lib/market-controls";
 
 // Fraction of live equity used as the default per-order notional ceiling when
 // strategy_config.max_order_notional is null.
@@ -173,8 +174,8 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
     }
 
     const marketFlag = market === "india" ? (cfg as any)?.trading_enabled_india : (cfg as any)?.trading_enabled_us;
-    if (!(cfg as any)?.trading_enabled) {
-      return { ok: false, status: 403, error: "Live trading is disabled (strategy_config.trading_enabled = false)" };
+    if (!(await isTradingEnabled(supabase, market))) {
+      return { ok: false, status: 403, error: "Live trading is disabled (global master or per-market control)" };
     }
     if (marketFlag === false) {
       return { ok: false, status: 403, error: `Live trading is disabled for ${market.toUpperCase()} (view-only mode — turn it back on in Settings → Agents)` };

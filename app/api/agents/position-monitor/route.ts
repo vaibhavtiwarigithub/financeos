@@ -7,6 +7,7 @@ import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadChampionGenome } from "@/lib/validation/genome-live";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { setMarketPaused } from "@/lib/market-controls";
 import { getQuote } from "@/lib/data/quotes";
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
 
@@ -503,7 +504,10 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       if (oldNav > 0) {
         const weeklyReturn = (newNav - oldNav) / oldNav;
         if (weeklyReturn < -0.05) {
-          await svc.from("strategy_config").update({ app_paused: true }).not("id", "is", null);
+          // Per-market pause (migration 171): pause ONLY this market's new
+          // entries, not the other's. (This breaker paused US research via the
+          // old global app_paused on 2026-07-13.)
+          await setMarketPaused(svc, market, true, `NAV drawdown ${(weeklyReturn * 100).toFixed(1)}%/7d`);
           await reportIssue({
             issueKey,
             severity: "critical",

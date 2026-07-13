@@ -94,6 +94,19 @@ position-monitor now runs a **ledger reconciliation guard** every cycle: if
 `paper-cash-drift:<market>` (warn) so drift is visible and actionable BEFORE the
 drawdown breaker acts on corrupted NAV.
 
+**Per-market pause/kill isolation (migration 171).** The pause and kill-switch
+state was GLOBAL (`strategy_config.app_paused`/`trading_enabled`), so one
+market's breaker halted BOTH — India's phantom drawdown even skipped the US
+research run. Now `market_controls` holds one row per market; the drawdown
+breaker calls `setMarketPaused(market)`, the kill switch `setMarketTrading(market,false)`,
+and every gate reads `isPaused(svc, market)` / `isTradingEnabled(svc, market)`
+(`lib/market-controls.ts`, fail-closed on read error). A market's trip isolates
+to that market; the legacy global flags are retained as a **master-kill** that
+still stops everything. Research is no longer gated by the pause at all (it is
+measurement — only entry paths pause). Exits keep running during a pause. Owner
+resumes a single market from the sidebar per-market banner (`/api/settings/pause`
+with a `market`).
+
 ### 3 — Trading/broker/account enablement
 
 All global, per-market, broker, and account toggles must be true. Broker resolution fails closed.

@@ -10,6 +10,7 @@ import { notifyTradeAction } from "@/lib/trade-notify";
 import { sendTradeAlertEmail } from "@/lib/trade-alert";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { isPaused } from "@/lib/market-controls";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -98,11 +99,11 @@ async function buildProposals(supabase: any, isCron: boolean) {
 
     const { data: cfg } = await supabase
       .from("strategy_config")
-      .select("app_paused, trading_enabled, trading_mode, broker, score_threshold, position_size_pct, stop_loss_pct, target_pct")
+      .select("trading_enabled, trading_mode, broker, score_threshold, position_size_pct, stop_loss_pct, target_pct")
       .limit(1)
       .single();
 
-    if ((cfg as any)?.app_paused) {
+    if (await isPaused(supabase, "us")) {
       return NextResponse.json({ skipped: true, reason: "App is paused" });
     }
     // Support both old trading_enabled boolean and new trading_mode tristate
