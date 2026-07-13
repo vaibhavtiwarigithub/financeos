@@ -200,9 +200,12 @@ Any chain that still can't cover 42 (e.g. India fundamentals) is reported as
 3. ⏳ **PARTIAL** — source chains are code-ordered (Finnhub→Yahoo→SEC→FMP→AV; Massive→EDGAR→AV;
    StockTwits→GDELT→AV). Not yet a config registry with per-source validation gates.
 4. ✅ **DONE** — `data-availability:<market>:<dim>` telemetry (warn<85%/crit<70% among applicable).
-5. ⏳ **NOT BUILT** — prewarm/refresh cron + `evidence_cache` + TTL + priority classes. The biggest
-   remaining lift; cold-start bursts still rely on serve-stale, not a warmed cache.
+5. ✅ **DONE (core)** — bounded+resumable prewarm cron (`/api/agents/prewarm`, `prewarmSymbol`,
+   pg_cron `kairos-prewarm-us`/`-india`) warms `av_cache` (the evidence cache) ahead of scoring,
+   paced so it never bursts. ⏳ Explicit priority classes (holdings-first) + a dedicated
+   `provider_refresh_jobs` queue not built — the bounded tick + 14d-TTL cache-hit skip approximate it.
 6. ⏳ **NOT BUILT** — evidence provenance labels in the journal (still may show generic sources).
+   Also deferred: SEC EDGAR fundamentals (spot-check failed — needs the `frames` API).
 7. ✅ **DONE (fundamentals adapters)** — SEC companyfacts adapter (`lib/data/sec-fundamentals.ts`,
    consistent latest-annual basis, avg-equity ROE, FY-vs-FY growth, US-GAAP+IFRS, symbol→CIK map,
    per-field coverage) + US Yahoo `quoteSummary` (reuses `fetchIndiaOverview`, crumb cache + fail-soft)
