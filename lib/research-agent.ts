@@ -988,6 +988,9 @@ type EvidenceTally = {
   scored: number;                          // symbols scored this run
   thin: number;                            // scored on < MIN_USABLE_DIMS dimensions
   missingInThin: DimensionRecord<number>;  // among thin symbols, how often each dim was unavailable
+  dimApplicable: DimensionRecord<number>;  // per dim: symbols this run for which the dim IS applicable
+  dimAvailable: DimensionRecord<number>;   // per dim: of those, how many had real data (not starved)
+  dimReported: DimensionRecord<boolean>;   // per-dim alert dedupe (avoid rewriting each symbol)
   lastTouched: number;                     // epoch ms of the last symbol recorded
   lastReportedThin: boolean | null;        // last verdict pushed to System Health (dedupes writes)
 };
@@ -996,11 +999,17 @@ const EVIDENCE_RUN_GAP_MS = 10 * 60_000;   // idle gap that starts a fresh tally
 const MIN_USABLE_DIMS = 2;                 // fewer usable dims than this ⇒ insufficient evidence
 const THIN_RUN_FRACTION = 0.5;             // ≥50% of scored symbols thin ⇒ flag
 const THIN_RUN_MIN_SYMBOLS = 2;            // …and at least this many thin symbols
+// Per-dimension starvation: among symbols where a dim IS applicable, the fraction
+// that actually got real data. Below WARN ⇒ warn, below CRIT ⇒ critical — names
+// the starving provider so a degraded source is caught the day it happens.
+const DIM_AVAIL_MIN_APPLICABLE = 4;        // need this many applicable symbols before judging
+const DIM_AVAIL_WARN = 0.85;
+const DIM_AVAIL_CRIT = 0.70;
 
 // Record one symbol's evidence availability and (idempotently) surface a
 // low-confidence alert when a meaningful fraction of the run was scored on thin
 // data. Never throws — a health-reporting failure must not break a research run.
-async function recordRunEvidence(market: string, runKey: string, includedDims: ScoreDimension[], client: any): Promise<void> {
+async function recordRunEvidence(market: string, runKey: string, includedDims: ScoreDimension[], applicable: Set<ScoreDimension>, client: any): Promise<void> {
   try {
     const now = Date.now();
     const tallyKey = `${market}:${runKey}`;
@@ -1009,6 +1018,9 @@ async function recordRunEvidence(market: string, runKey: string, includedDims: S
       acc = {
         scored: 0, thin: 0,
         missingInThin: { fundamental: 0, technical: 0, sentiment: 0, macro: 0, insider: 0 },
+        dimApplicable: { fundamental: 0, technical: 0, sentiment: 0, macro: 0, insider: 0 },
+        dimAvailable: { fundamental: 0, technical: 0, sentiment: 0, macro: 0, insider: 0 },
+        dimReported: { fundamental: false, technical: false, sentiment: false, macro: false, insider: false },
         lastTouched: now, lastReportedThin: null,
       };
       RUN_EVIDENCE.set(tallyKey, acc);
@@ -1018,6 +1030,46 @@ async function recordRunEvidence(market: string, runKey: string, includedDims: S
     if (includedDims.length < MIN_USABLE_DIMS) {
       acc.thin += 1;
       for (const d of SCORE_DIMENSIONS) if (!includedDims.includes(d)) acc.missingInThin[d] += 1;
+    }
+    // Per-dimension availability among APPLICABLE symbols only (a structurally
+    // N/A dim — ETF fundamentals, India US-only sources — is never counted as
+    // starvation).
+    for (const d of SCORE_DIMENSIONS) {
+      if (!applicable.has(d)) continue;
+      acc.dimApplicable[d] += 1;
+      if (includedDims.includes(d)) acc.dimAvailable[d] += 1;
+    }
+    // Fire/clear a per-dimension starvation alert when a dim's availability drops
+    // among enough applicable symbols. Names the likely starving provider chain.
+    const DIM_PROVIDER: Record<string, string> = {
+      fundamental: market === "india" ? "Yahoo quoteSummary" : "Finnhub → Yahoo → SEC EDGAR",
+      technical:   market === "india" ? "Upstox → Yahoo chart" : "Massive → AV",
+      sentiment:   market === "india" ? "GDELT tonechart" : "StockTwits → GDELT → AV NEWS",
+      insider:     market === "india" ? "NSE PIT" : "Massive Form 4 → SEC EDGAR → AV",
+      macro:       "macro_regime table",
+    };
+    for (const d of SCORE_DIMENSIONS) {
+      const appl = acc.dimApplicable[d];
+      if (appl < DIM_AVAIL_MIN_APPLICABLE) continue;
+      const rate = acc.dimAvailable[d] / appl;
+      const dimKey = `data-availability:${market}:${d}`;
+      if (rate < DIM_AVAIL_WARN) {
+        await reportIssue({
+          issueKey: dimKey,
+          severity: rate < DIM_AVAIL_CRIT ? "critical" : "warn",
+          category: "data",
+          title: `${d} data ${Math.round(rate * 100)}% available (${market.toUpperCase()})`,
+          detail:
+            `Only ${acc.dimAvailable[d]}/${appl} ${market.toUpperCase()} symbols where ${d} is applicable got real ${d} ` +
+            `data this run — the rest were starved (provider throttled/exhausted or genuinely no data). ` +
+            `Source chain: ${DIM_PROVIDER[d]}. Check that chain's keys/limits.`,
+          autoExpireAt: new Date(new Date().setUTCHours(24, 0, 0, 0)).toISOString(),
+        }, client).catch(() => {});
+        acc.dimReported[d] = true;
+      } else if (acc.dimReported[d]) {
+        await resolveIssue(dimKey, client).catch(() => {});
+        acc.dimReported[d] = false;
+      }
     }
 
     const issueKey = `low-confidence-research:${market}`;
@@ -1302,7 +1354,7 @@ export async function processSymbol(
   // System Health (data category): accumulate this symbol's evidence
   // availability into the run tally and surface a low-confidence alert if a
   // meaningful fraction of the run was scored on thin data. Fail-soft.
-  await recordRunEvidence(market, evidenceRunId ?? String(universeSnapshotId ?? "unscoped"), includedDims, supabase);
+  await recordRunEvidence(market, evidenceRunId ?? String(universeSnapshotId ?? "unscoped"), includedDims, applicable as Set<ScoreDimension>, supabase);
 
   // Build 1 (genome as live control): the promoted champion's genome sets the
   // entry threshold when present, falling back to strategy_config exactly as
