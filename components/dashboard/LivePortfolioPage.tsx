@@ -97,6 +97,8 @@ export default function LivePortfolioPage({
   const [chartSymbols, setChartSymbols] = useState<string[]>([]);
   const [loadingChart, setLoadingChart] = useState(false);
   const [showHoldingLines, setShowHoldingLines] = useState(false);
+  const [estimated, setEstimated] = useState(false);
+  const [benchSymbol, setBenchSymbol] = useState("VOO");
 
   const [files, setFiles] = useState<FileRecord[]>(initialFiles);
   const [uploading, setUploading] = useState(false);
@@ -158,6 +160,7 @@ export default function LivePortfolioPage({
       if (!d.dates || d.dates.length === 0) return;
       const points: ChartPoint[] = d.dates.map((date: string, i: number) => {
         const pt: ChartPoint = { date: fmtDate(date), portfolio: d.portfolio[i] };
+        if (Array.isArray(d.benchmark) && typeof d.benchmark[i] === "number") pt.bench = d.benchmark[i];
         for (const h of (d.holdings ?? [])) {
           pt[h.symbol] = h.data[i];
         }
@@ -165,6 +168,8 @@ export default function LivePortfolioPage({
       });
       setChartData(points);
       setChartSymbols((d.holdings ?? []).map((h: any) => h.symbol));
+      setEstimated(!!d.estimated);
+      setBenchSymbol(d.benchSymbol ?? "VOO");
     } catch {
       // non-fatal
     } finally {
@@ -237,6 +242,14 @@ export default function LivePortfolioPage({
   const dayPnl = holdings.reduce((s, h) => s + (h.dayChangeDollar ?? 0), 0);
   const totalInvested = holdings.reduce((s, h) => s + h.qty * h.avgCost, 0);
   const totalPnlPct = totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0;
+
+  // Portfolio vs VOO headline: last cumulative-% point of each line.
+  const lastChartPt = chartData[chartData.length - 1];
+  const portfolioLastPct = lastChartPt && typeof lastChartPt.portfolio === "number" ? lastChartPt.portfolio : null;
+  const benchLastPct = lastChartPt && typeof lastChartPt.bench === "number" ? lastChartPt.bench : null;
+  const benchDelta = portfolioLastPct != null && benchLastPct != null
+    ? parseFloat((portfolioLastPct - benchLastPct).toFixed(2)) : null;
+  const hasBench = chartData.some(p => typeof p.bench === "number");
 
   const enrichedDecisions = decisions.filter(d => d.enrichment_status === "enriched");
   const avgOutcome = enrichedDecisions.length > 0
@@ -354,10 +367,27 @@ export default function LivePortfolioPage({
       {/* Performance chart */}
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "20px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
             <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-              Performance
+              Performance <span style={{ textTransform: "none", letterSpacing: 0, color: T.textSub }}>vs {benchSymbol}</span>
             </div>
+            {benchDelta != null && (
+              <span style={{
+                fontSize: "12px", fontWeight: 800, padding: "2px 9px", borderRadius: "6px",
+                color: benchDelta >= 0 ? T.green : T.red,
+                background: benchDelta >= 0 ? T.greenBg : T.redBg,
+              }}>
+                {benchDelta >= 0 ? "+" : ""}{benchDelta.toFixed(2)}% vs {benchSymbol}
+              </span>
+            )}
+            {estimated && chartData.length > 0 && (
+              <span
+                title="No real daily history yet, so this reconstructs the curve from your CURRENT holdings × each symbol's price history — it assumes today's share counts were held throughout, so it distorts where positions changed. Real broker-equity tracking accrues daily and replaces this automatically."
+                style={{ fontSize: "10px", fontWeight: 700, padding: "2px 8px", borderRadius: "5px", background: T.amberBg, color: T.amber, cursor: "help", letterSpacing: "0.04em" }}
+              >
+                ESTIMATED
+              </span>
+            )}
             {loadingChart && <span style={{ fontSize: "11px", color: T.muted }}>Loading…</span>}
           </div>
           <div style={{ display: "flex", gap: "4px", alignItems: "center", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
@@ -414,7 +444,7 @@ export default function LivePortfolioPage({
               <Tooltip
                 contentStyle={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", fontSize: "12px" }}
                 labelStyle={{ color: T.textSub }}
-                formatter={(v: any) => [v?.toFixed(2) + "%", ""]}
+                formatter={(v: any, name: any) => [v?.toFixed(2) + "%", name]}
               />
               {showHoldingLines && chartSymbols.map((sym, i) => (
                 <Area
@@ -437,7 +467,20 @@ export default function LivePortfolioPage({
                 dot={false}
                 name="Portfolio"
               />
-              {showHoldingLines && <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "8px" }} />}
+              {hasBench && (
+                <Area
+                  type="monotone"
+                  dataKey="bench"
+                  stroke={T.textSub}
+                  fill="none"
+                  strokeWidth={1.5}
+                  dot={false}
+                  strokeDasharray="4 2"
+                  name={benchSymbol}
+                  connectNulls
+                />
+              )}
+              {(showHoldingLines || hasBench) && <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "8px" }} />}
             </AreaChart>
           </ResponsiveContainer>
         )}

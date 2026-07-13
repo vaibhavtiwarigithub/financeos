@@ -49,6 +49,28 @@ async function refreshViaMcp(): Promise<{ ok: boolean; error?: string; equity?: 
     }));
     const { error: upsertError } = await svc.from("live_account_snapshots").upsert(rows, { onConflict: "account_id" });
     if (upsertError) return { ok: false, error: `snapshot upsert failed: ${upsertError.message}` };
+
+    // Accrue the durable daily equity curve (live_performance) — one row per
+    // account per calendar day with real broker equity + that day's VOO close.
+    // Robinhood exposes no account-value history, so this is the ONLY way we get
+    // a true live-vs-VOO chart: build it forward, one snapshot at a time.
+    // Best-effort — a benchmark/price hiccup must never fail the snapshot write.
+    try {
+      const day = capturedAt.slice(0, 10);
+      let vooClose: number | null = null;
+      const massiveKey = process.env.MASSIVE_API_KEY;
+      if (massiveKey) {
+        const r = await fetch(`https://api.massive.com/v2/aggs/ticker/VOO/prev?adjusted=true&apiKey=${massiveKey}`);
+        if (r.ok) { const d = await r.json(); vooClose = d?.results?.[0]?.c ?? null; }
+      }
+      const perfRows = valid
+        .filter(a => a.totalValue != null)
+        .map(a => ({ account_id: a.accountId!, date: day, equity: a.totalValue, bench_nav: vooClose }));
+      if (perfRows.length) {
+        await svc.from("live_performance").upsert(perfRows, { onConflict: "account_id,date" });
+      }
+    } catch { /* never let the perf-curve write mask a good snapshot */ }
+
     return { ok: true, equity: active.totalValue, buying_power: active.buyingPower ?? null, positions: active.holdings.length };
   } catch (e) {
     return { ok: false, error: `snapshot capture/store error: ${String(e)}` };

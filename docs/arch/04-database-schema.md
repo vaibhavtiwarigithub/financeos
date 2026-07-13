@@ -1,5 +1,5 @@
 # Kairos — Database Schema
-> Last updated: 2026-07-12 (migrations 165 watchlist.market, 166 LLM-config id fix + seed rows, 167 strategy_config trading_style + target_hold_days)
+> Last updated: 2026-07-12 (migrations 165 watchlist.market, 166 LLM-config id fix + seed rows, 167 strategy_config trading_style + target_hold_days, 169 live_performance per-account live equity curve)
 > Update this file when: any migration adds, removes, or modifies a table, column, index, trigger, or RLS policy.
 
 Migrations in `supabase/migrations/`. Applied via Supabase MCP `apply_migration` or the Supabase SQL editor. **Always verify with `list_migrations` before shipping schema-coupled code.** A migration file existing in the repo does NOT mean it ran against production.
@@ -438,6 +438,17 @@ Daily NAV snapshots per market.
 | `alpha` | numeric | `return_pct - bench_return_pct` |
 | UNIQUE | `(date, market)` | One row per day per market |
 
+### `live_performance` (migration 169)
+Daily equity curve per LIVE (Robinhood) account — the live analogue of `paper_performance`, backing the per-account **Live Portfolio vs VOO** chart. Robinhood's MCP exposes NO account-value history (`get_equity_historicals` is per-symbol OHLC; `get_portfolio` is current-only), so this cannot be backfilled — it is **accrued forward**: each account-snapshot refresh (`/api/live-account/refresh-snapshot`, `robinhood_mcp` source) upserts one row/account/day with real broker equity + that day's VOO close. Until ≥2 real days exist for the selected accounts, `/api/live-portfolio/performance` falls back to a **labeled constant-holdings estimate** (`estimated:true`) reconstructed from current holdings × Massive symbol history. Service-role writes; authenticated SELECT (mirrors `paper_performance`).
+
+| Column | Type | Notes |
+|---|---|---|
+| `account_id` | text | Robinhood account ID; PK part |
+| `date` | date | Calendar day (UTC); PK part |
+| `equity` | numeric | Real broker account value (USD) that day |
+| `bench_nav` | numeric | VOO close the same day (null until a refresh records it) |
+| PK | `(account_id, date)` | One row per account per day |
+
 ---
 
 ## 8.5 Live trading
@@ -846,3 +857,4 @@ Append-only per-account roll-up — one row per run (UNIQUE `(run_id)`; FK → `
 | 165 | `watchlist.market` (text NOT NULL default `US`) — route code read/wrote it for months but the column never existed; GET 500'd (panel "0 tracked") + every manual add failed. Backfills India from `.NS/.BO` |
 | 166 | LLM config data fix: rewrite invalid `deepseek-v4-flash/pro` → `deepseek-chat`/`deepseek-reasoner` in `agent_config`; seed `research`/`trader`/`mentor-evaluate`/`mentor-thesis`/`mentor-ask` rows (per-flow model from Settings) |
 | 167 | `strategy_config` +`trading_style` (default `position`) +`target_hold_days` — Trading Style presets (Swing/Position/Long-term); horizon governs the time-stop only before a champion is promoted |
+| 169 | `live_performance` (`account_id`,`date`,`equity`,`bench_nav`, PK`(account_id,date)`) — real daily equity curve per live Robinhood account for the Live-vs-VOO chart; accrued forward on each snapshot refresh (RH exposes no account-value history). Authenticated SELECT, service-role writes |

@@ -765,6 +765,13 @@
       "nodeId": "RESEARCH",
       "label": "India sentiment (GDELT) + FII/DII macro inputs; per-flow LLM; low-confidence-research quality alert",
       "reason": "India equities were scored with no news source and only US/global macro. Added free GDELT news tone -> India sentiment_score (honest-unavailable when <3 articles) and live NSE FII/DII net flows into the India thesis prompt. LLM per flow moved to Settings (agent_config). New low-confidence-research alert surfaces thin-data runs alongside quota alerts. FII/DII may be null on Vercel if NSE geo-throttles it — verified via /api/india/fii-dii."
+    },
+    {
+      "date": "2026-07-13",
+      "event": "changed",
+      "nodeId": "ACCTBOOK",
+      "label": "Live account book now accrues a per-account daily equity curve (live_performance) for the Live-vs-VOO chart",
+      "reason": "The Live Portfolio page needed a per-Robinhood-account portfolio-vs-VOO comparison mirroring the paper chart, but Robinhood's MCP exposes NO account-value history (get_equity_historicals is per-symbol OHLC; get_portfolio is current-only), so a true curve cannot be backfilled. Added migration 169 live_performance(account_id,date,equity,bench_nav, PK(account_id,date)) and made the snapshot refresh (refreshViaMcp, app/api/live-account/refresh-snapshot, robinhood_mcp source) upsert one row/account/day with real broker equity + that day's VOO close alongside the existing live_account_snapshots write. /api/live-portfolio/performance prefers this real series once >=2 days exist; until then it returns a labeled constant-holdings estimate (estimated:true) reconstructed from current holdings x Massive symbol history, and overlays VOO in both cases. UI (LivePortfolioPage) draws the VOO line, a '+X% vs VOO' headline, and an ESTIMATED badge. ADVISORY read/measure only — no order or money-flow edge changed."
     }
   ]
 }
