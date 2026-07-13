@@ -87,7 +87,10 @@ export async function POST(req: NextRequest) {
   for (const a of assignments) {
     const provider = providerOf(a.model);
     const result = (providers as any)[provider] as ProviderResult;
-    if (!result?.ok || !result.models) continue;
+    // An EMPTY model list (200 but data.data missing / transient provider blip)
+    // must NOT imply every model is deprecated — that's how a DeepSeek hiccup
+    // raised 17 false "deprecated" criticals. Treat empty as "couldn't verify".
+    if (!result?.ok || !result.models || result.models.length === 0) continue;
 
     if (!result.models.includes(a.model)) {
       findings.push({ agent: a.agent_name, assigned: a.model, kind: "deprecated", detail: `${a.model} no longer appears in ${provider}'s model list — may be deprecated.` });
@@ -109,8 +112,15 @@ export async function POST(req: NextRequest) {
   // per (agent, model). They self-resolve the moment the agent is reassigned or
   // the model reappears — but ONLY for providers we actually reached this run, so
   // a transient provider outage never mass-resolves real deprecations.
+  // "Reachable" = returned a NON-EMPTY model list. An empty list can neither
+  // prove a deprecation nor prove one is fixed, so it must not raise OR resolve.
   const reachable = new Set(
-    Object.entries(providers).filter(([, r]) => (r as ProviderResult)?.ok).map(([p]) => p),
+    Object.entries(providers)
+      .filter(([, r]) => {
+        const pr = r as ProviderResult;
+        return pr?.ok && Array.isArray(pr.models) && pr.models.length > 0;
+      })
+      .map(([p]) => p),
   );
   const deprecatedActive = findings
     .filter(f => f.kind === "deprecated" && reachable.has(providerOf(f.assigned)))
