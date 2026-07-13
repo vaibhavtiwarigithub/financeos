@@ -160,23 +160,33 @@ async function fetchCachedQuote(symbol: string, supabase: any): Promise<Determin
 
 /**
  * Get a deterministic quote with provenance.
- * Priority: AV GLOBAL_QUOTE → price_cache (EOD) → unavailable
- * During market hours: price_cache stale if > 15 min old.
+ * Priority: Massive snapshot (FREE, uncapped) → price_cache (EOD, free) →
+ * Alpha Vantage GLOBAL_QUOTE (LAST — 25/day free cap) → unavailable.
+ *
+ * AV is deliberately last so US+India research can score every symbol without
+ * ever leading with the capped provider. It's only reached when both the free
+ * Massive snapshot AND the local EOD cache miss (e.g. a thin/new symbol Massive
+ * doesn't cover). Mirrors getBatchQuotes' Massive-first ordering.
  */
 export async function getQuote(symbol: string, supabase: any): Promise<DeterministicQuote> {
   const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
+  const massiveKey = process.env.MASSIVE_API_KEY ?? "";
   const unavailable: DeterministicQuote = {
     symbol, price: 0, bid: null, ask: null, change: null, changePct: null,
     source: "unavailable", retrievedAt: new Date().toISOString(), stale: true,
   };
 
-  // 1. Alpha Vantage real-time (most accurate during market hours)
-  const avQuote = await fetchAVQuote(symbol, avKey);
-  if (avQuote) return avQuote;
+  // 1. Massive snapshot — free, no daily cap (single-symbol via the batch path).
+  const massive = await fetchMassiveBatchQuotes([symbol], massiveKey);
+  if (massive[symbol]) return massive[symbol];
 
-  // 2. price_cache (EOD — fine outside market hours)
+  // 2. price_cache (EOD — fine outside market hours, free).
   const cached = await fetchCachedQuote(symbol, supabase);
   if (cached) return cached;
+
+  // 3. Alpha Vantage — LAST resort only; every hit counts against the 25/day cap.
+  const avQuote = await fetchAVQuote(symbol, avKey);
+  if (avQuote) return avQuote;
 
   return unavailable;
 }
