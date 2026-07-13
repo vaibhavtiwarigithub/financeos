@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { loadTradingMandate } from "@/lib/trading-mandate";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getQuote, computeFillPrice } from "@/lib/data/quotes";
 import { checkKillSwitches } from "@/lib/kill-switches";
@@ -110,7 +111,8 @@ async function buildProposals(supabase: any, isCron: boolean) {
       return NextResponse.json({ skipped: true, reason: "trading_mode = disabled — set to manual in Settings → Agents to generate proposals" });
     }
 
-    const baseThreshold   = (cfg as any)?.score_threshold   ?? 65;
+    const tradingMandate = await loadTradingMandate(supabase, "us");
+    const baseThreshold = tradingMandate.score_threshold;
     const positionSizePct = (cfg as any)?.position_size_pct ?? 10;
 
     // MacroSentinel: elevate score threshold when regime is stressed
@@ -319,7 +321,7 @@ async function buildProposals(supabase: any, isCron: boolean) {
         price_source:        quote.source,
         price_retrieved_at:  quote.retrievedAt,
         risk_check_pass:     riskPass,
-        risk_check_reasons:  { ...riskReasons, sizing_method: { source: kellySizingSource, pct: effectiveSizePct } },
+        risk_check_reasons:  { ...riskReasons, sizing_method: { source: kellySizingSource, pct: effectiveSizePct }, trading_mandate: tradingMandate },
         estimated_value:     parseFloat((qty * quote.price).toFixed(2)),
         pct_of_nav:          parseFloat(pctOfNav.toFixed(4)),
         status:              "pending_review",

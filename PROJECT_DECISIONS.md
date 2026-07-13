@@ -676,3 +676,16 @@ Alternatives considered: None substantive — both are unambiguous schema/defini
 Impact: Scheduled agent runs (proposal reminders, broker sync, position monitoring, NAV snapshots, rescoring, evening briefing) now actually fire instead of erroring before their SQL body ever executes. Decision Journal's `paper_fill`/`paper_exit` entries — the audit trail for every real paper trade — will populate correctly going forward instead of being silently dropped.
 Files/features affected: `supabase/migrations/083_fix_kairos_call_agent_overload_ambiguity.sql` (new), `supabase/migrations/084_decision_journal_market_column.sql` (new, extended), `app/api/agents/paper-trade/route.ts`, `app/api/agents/position-monitor/route.ts`, `app/api/paper-positions/close/route.ts`, `app/api/strategies/versions/route.ts`, `app/api/kite/order/route.ts`, `app/api/journal/route.ts`, `app/dashboard/journal/page.tsx`, `app/dashboard/agents/page.tsx`, `lib/market-support.ts`.
 Reversal cost: Very low — both are corrective fixes to bugs that were already 100% non-functional; there is no working prior behavior to regress from.
+### Decision 46: Per-market Trading Mandates separate horizon from strategy preference
+
+Date: 2026-07-12
+Status: Approved
+Category: Product / Architecture / Data / Security
+
+Context: The first Trading Style control labeled a 20-day strategy "Long-term" and changed only threshold, stop, target, and a horizon that a champion could silently override. It did not implement momentum or value/quality behavior and applied one global setting to US and India.
+Decision: Replace that concept with independent US and India Trading Mandates. Separate horizon (`short_swing`, `swing`, `position`) from strategy preference (`adaptive`, `momentum`, `balanced`, `value_quality`). User-controlled horizon wins by default; agent optimization requires explicit opt-in and remains bounded. Existing positions are grandfathered by default using their entry-time mandate snapshot. Day trading and genuine long-term investing remain separate future architectures.
+Reason: Visible settings must truthfully govern behavior across research, paper execution, monitoring, learning, validation, explanation, and live proposals without silently broadening authority or mixing markets.
+Alternatives considered: Keep the cosmetic three-preset control; let champions always override the user; implement day trading or months-long investing in the daily swing pipeline.
+Impact: Adds a per-market mandate contract, bounded factor tilts, provenance, market-day horizon resolution, and cross-agent audit context. Hard risk and live approval gates remain unchanged.
+Files/features affected: `features/trading-mandate/FEATURE_ARCHITECTURE.md`, Settings, ResearchAgent, PaperTrader, PositionMonitor, LearnerAgent, validation/backtests, decision journal, and strategy configuration schema.
+Reversal cost: Medium

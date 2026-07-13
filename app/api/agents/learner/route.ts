@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { loadTradingMandate } from "@/lib/trading-mandate";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchQuote } from "@/lib/market-data";
@@ -725,6 +726,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Build system context for agent
+      const tradingMandate = await loadTradingMandate(svc, LEARN_MARKET);
       const enabledDims = Object.entries(dimConfig).filter(([, v]: [string, any]) => v.learn_from).map(([k]) => k);
       const frozenDims = Object.entries(dimConfig).filter(([, v]: [string, any]) => !v.allow_mutation).map(([k]) => k);
 
@@ -779,7 +781,7 @@ REASONING APPROACH:
 9. Mutate weights only if: N≥10 trades + confidence ≥ dim_min_confidence + not auto-guarded
 10. Call finish with complete structured Mermaid`;
 
-      const initialMessage = `Run your weekly learning analysis. Start with read_priors to load background context, then check learner_config for current state. Query all enabled signal dimensions for correlation with P&L. Check macro context to understand if external factors explain performance. Form grounded hypotheses. Only mutate weights if evidence is sufficient. Finish with a complete Mermaid diagram showing ALL inputs consumed this run.`;
+      const initialMessage = `Run your weekly ${LEARN_MARKET.toUpperCase()} learning analysis under this immutable user Trading Mandate: ${JSON.stringify(tradingMandate)}. You may propose challengers but cannot change the mandate; any proposed horizon must remain inside ${tradingMandate.min_hold_days}-${tradingMandate.max_hold_days} market days. Start with read_priors to load background context, then check learner_config for current state. Query all enabled signal dimensions for correlation with P&L. Check macro context to understand if external factors explain performance. Form grounded hypotheses. Only mutate weights if evidence is sufficient. Finish with a complete Mermaid diagram showing ALL inputs consumed this run.`;
 
       const LEARNER_TOOLS = [
         { name: "read_priors", description: "Read human-written Bayesian market principles as background context", parameters: { type: "object", properties: { category: { type: "string", enum: ["fundamental", "technical", "macro", "insider", "general"] } } } },

@@ -12,6 +12,7 @@ import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
 import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
 import { loadChampionGenome, type ResolvedGenome } from "@/lib/validation/genome-live";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { loadTradingMandate, mandateSnapshot, resolveHorizonDays, type TradingMandate } from "@/lib/trading-mandate";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -280,6 +281,8 @@ export async function POST(req: NextRequest) {
     // when no genome-bearing champion exists — the exact values used before this
     // wiring — so a legacy/genome-less market is byte-for-byte unchanged.
     const genomeByMarket = new Map<string, ResolvedGenome>();
+    const mandateByMarket = new Map<string, TradingMandate>();
+    const horizonByMarket = new Map<string, number>();
     for (const m of activeMarkets) {
       try {
         const { data: modelRow } = await supabase.from("model_artifacts").select("coefficients").eq("market", m).eq("kind", "pwin_logistic").maybeSingle();
@@ -287,6 +290,9 @@ export async function POST(req: NextRequest) {
       } catch { pwinModelByMarket.set(m, null); }
       const g = await loadChampionGenome(supabase, m as "us" | "india");
       genomeByMarket.set(m, g);
+      const mandate = await loadTradingMandate(supabase, m as "us" | "india");
+      mandateByMarket.set(m, mandate);
+      horizonByMarket.set(m, resolveHorizonDays(mandate, g.source === "champion" ? g.genome.horizon_days : null).days);
       maeMfeByMarket.set(
         m,
         await getGlobalMaeMfePercentiles(
@@ -359,6 +365,9 @@ export async function POST(req: NextRequest) {
         continue;
       }
       const { price, fillPrice, source, retrievedAt, bid, ask, spread } = pf;
+      const tradingMandate = mandateByMarket.get(market) ?? await loadTradingMandate(supabase, market as "us" | "india");
+      const resolvedHorizonDays = horizonByMarket.get(market) ?? tradingMandate.target_hold_days;
+      const snapshot = mandateSnapshot(tradingMandate, resolvedHorizonDays);
 
       // Dynamic R:R (Phase 2): stop = entry x (1 + p25 MAE), target = entry x (1
       // + p75 MFE) from the ledger's actual outcome distribution, replacing the
@@ -373,11 +382,9 @@ export async function POST(req: NextRequest) {
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "passed", reason: "dynamic_rr_unavailable — using fixed profile stop/target", detail: { stopLossPctCfg, targetPctCfg } });
       }
       const priceTarget = signal.price_target != null ? signal.price_target
-        : maeMfe ? parseFloat((fillPrice * (1 + maeMfe.targetMfePctile)).toFixed(2))
-        : parseFloat((fillPrice * (1 + targetPctCfg / 100)).toFixed(2));
+        : parseFloat((fillPrice * (1 + tradingMandate.target_pct / 100)).toFixed(2));
       const stopLoss = signal.stop_loss != null ? signal.stop_loss
-        : maeMfe ? parseFloat((fillPrice * (1 + maeMfe.stopMaePctile)).toFixed(2))
-        : parseFloat((fillPrice * (1 - stopLossPctCfg / 100)).toFixed(2));
+        : parseFloat((fillPrice * (1 - tradingMandate.stop_loss_pct / 100)).toFixed(2));
 
       // Conviction-scaled sizing (Phase 2): when a calibrated P(win) model
       // exists for this market, size via half-Kelly using this signal's own
@@ -528,6 +535,18 @@ export async function POST(req: NextRequest) {
               .eq("signal_id", signal.id)
               .is("mandate_id", null);
           }
+          await supabase.from("paper_trades").update({
+            mandate_version: tradingMandate.version,
+            mandate_snapshot: snapshot,
+            resolved_horizon_days: resolvedHorizonDays,
+          }).eq("signal_id", signal.id).is("closed_at", null);
+          let positionMandateQ = supabase.from("paper_positions").update({
+            mandate_version: tradingMandate.version,
+            mandate_snapshot: snapshot,
+            resolved_horizon_days: resolvedHorizonDays,
+          }).eq("symbol", signal.symbol);
+          if (hasMarketCol) positionMandateQ = positionMandateQ.eq("market", market);
+          await positionMandateQ;
           if (candSector && !bookByMarket.get(market)?.some(b => b.symbol === signal.symbol)) {
             sectorCount[candSector] = (sectorCount[candSector] ?? 0) + 1;
           }
@@ -581,8 +600,11 @@ export async function POST(req: NextRequest) {
           realized_slip_pct: price > 0 ? fillPrice / price - 1 : null,
           fill_status: "filled",
           mandate_id: (signal as any).mandate_id ?? null,
+          mandate_version: tradingMandate.version,
+          mandate_snapshot: snapshot,
+          resolved_horizon_days: resolvedHorizonDays,
         };
-        const trRes = await insertOptional("paper_trades", tradeRow, ["currency", "market", "expected_price", "realized_slip_pct", "fill_status", "mandate_id"]);
+        const trRes = await insertOptional("paper_trades", tradeRow, ["currency", "market", "expected_price", "realized_slip_pct", "fill_status", "mandate_id", "mandate_version", "mandate_snapshot", "resolved_horizon_days"]);
         if (trRes.error) {
           await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: `trade_insert_failed: ${trRes.error.message}` });
@@ -610,8 +632,11 @@ export async function POST(req: NextRequest) {
             symbol: signal.symbol, qty, avg_cost: fillPrice, current_price: fillPrice,
             price_target: priceTarget, stop_loss: stopLoss, highest_price: fillPrice,
             sector: candSector, market, currency,
+            mandate_version: tradingMandate.version,
+            mandate_snapshot: snapshot,
+            resolved_horizon_days: resolvedHorizonDays,
           };
-          await insertOptional("paper_positions", newPosRow, ["sector", "currency", "market"]);
+          await insertOptional("paper_positions", newPosRow, ["sector", "currency", "market", "mandate_version", "mandate_snapshot", "resolved_horizon_days"]);
           if (candSector) sectorCount[candSector] = (sectorCount[candSector] ?? 0) + 1;
         }
 
@@ -649,7 +674,7 @@ export async function POST(req: NextRequest) {
         entry_type: "paper_fill", symbol: signal.symbol, signal_id: signal.id, market,
         paper_event_id: orderEventId,
         summary: `Paper buy (${market.toUpperCase()}): ${qty} × ${signal.symbol} @ ${sym}${fillPrice.toFixed(2)} (score ${signal.analyst_score}, source: ${source})`,
-        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, sizing: { flat_pct: positionSizePct, kelly_proposed_pct: proposedSizePct, final_pct: sizedPct, used_calibrated_model: !!pwinModel, mode: sizing.mode, cap_pct: kellyCapPct, floor_pct: kellyFloorPct, adjustments: constructed.orders[0]?.adjustments ?? [] }, genome: { source: genomeR?.source ?? "default", hash: genomeR?.hash ?? null, horizon_days: genomeR?.genome.horizon_days ?? 10, score_threshold: genomeR?.genome.entry.score_threshold ?? 60 } },
+        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, trading_mandate: snapshot, sizing: { flat_pct: positionSizePct, kelly_proposed_pct: proposedSizePct, final_pct: sizedPct, used_calibrated_model: !!pwinModel, mode: sizing.mode, cap_pct: kellyCapPct, floor_pct: kellyFloorPct, adjustments: constructed.orders[0]?.adjustments ?? [] }, genome: { source: genomeR?.source ?? "default", hash: genomeR?.hash ?? null, horizon_days: genomeR?.genome.horizon_days ?? 10, score_threshold: genomeR?.genome.entry.score_threshold ?? 60 } },
         evidence_refs: [{ table: "agent_signals", id: signal.id, description: "qualifying signal" }],
         has_verified_facts: true, has_calculations: true, resolved: false,
       });

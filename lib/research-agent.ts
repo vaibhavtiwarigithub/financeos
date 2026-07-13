@@ -19,6 +19,7 @@ import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { isEtfSymbol as canonicalIsEtfSymbol } from "@/lib/asset-classification";
+import { applyStrategyTilt, loadTradingMandate } from "@/lib/trading-mandate";
 
 // Module-level cache: market → default investment_mandates.id.
 // Populated once per process; safe because seed mandates never change name.
@@ -1154,6 +1155,7 @@ export async function processSymbol(
   });
 
   const market = india ? "india" : "us"; // Phase 4: per-market champion weights
+  const tradingMandate = await loadTradingMandate(supabase, market);
 
   const [{ data: weights }, { data: strategy }, { data: profileData }, { data: scoreHistory }] = await Promise.all([
     supabase.from("signal_weights").select("*").single(),
@@ -1236,7 +1238,10 @@ export async function processSymbol(
     macro: dq.macroDataAvailable ?? true,
     insider: dq.insiderDataAvailable ?? true,
   };
-  const weightOf: DimensionRecord<number> = { fundamental: fw, technical: tw, sentiment: sw, macro: mw, insider: iw };
+  const weightOf = applyStrategyTilt<ScoreDimension>(
+    { fundamental: fw, technical: tw, sentiment: sw, macro: mw, insider: iw },
+    tradingMandate.strategy_preference,
+  ) as DimensionRecord<number>;
   const scoreOf: DimensionRecord<number> = {
     fundamental: scores.fundamental_score, technical: scores.technical_score,
     sentiment: scores.sentiment_score, macro: scores.macro_score, insider: scores.insider_score,
@@ -1254,11 +1259,9 @@ export async function processSymbol(
   // before. DEFAULT_GENOME.entry.score_threshold is 60 — identical to the prior
   // final fallback — so a market with no genome-bearing champion is unchanged.
   // The genome's threshold is hard-bounded to [50,75] at promotion time.
-  const genomeThreshold = (champion as any)?.genome?.entry?.score_threshold;
-  const scoreThreshold = (typeof genomeThreshold === "number" ? genomeThreshold : undefined)
-    ?? strategy?.score_threshold ?? strategy?.min_analyst_score ?? 60;
-  const stopLossPct    = strategy?.stop_loss_pct ?? 7;
-  const targetPct      = strategy?.target_pct    ?? 20;
+  const scoreThreshold = tradingMandate.score_threshold;
+  const stopLossPct = tradingMandate.stop_loss_pct;
+  const targetPct = tradingMandate.target_pct;
 
   // Score-trend note from this symbol's recent history — lets the thesis reason
   // about momentum in conviction ("score rising over the last N runs") instead
@@ -1377,6 +1380,7 @@ export async function processSymbol(
         _india_news: india ? (indiaNews ?? null) : null,
         _options_signal:   optionsResult ?? null,
         _using_champion_weights: usingChampion,
+        _trading_mandate: tradingMandate,
       },
     })
     .select()
@@ -1549,6 +1553,7 @@ export async function processSymbol(
         decisionTs: new Date().toISOString(), // P1: precise timestamp this observation was written
         ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}),
         weighting: { renormalized, included_dims: includedDims, base_weights: weightOf, applied_weights: effWeights },
+        trading_mandate: tradingMandate,
         ...(activeFeatureValues ? { active_feature_values: activeFeatureValues } : {}),
         // Analyst consensus (Finnhub) — LOGGED evidence for the learner to grade,
         // not fed into the live weighted score yet (see fetch site).

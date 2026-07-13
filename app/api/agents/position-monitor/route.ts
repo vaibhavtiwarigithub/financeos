@@ -8,6 +8,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadChampionGenome } from "@/lib/validation/genome-live";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { getQuote } from "@/lib/data/quotes";
+import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -133,24 +134,21 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
   // genome.horizon_days wins and this is ignored (we never fight the learner).
   // Best-effort read: pre-167 the column doesn't exist, so a query error simply
   // leaves the genome in charge.
-  let userHoldDays: number | null = null;
-  try {
-    const { data: hd, error: holdDaysError } = await svc.from("strategy_config").select("target_hold_days").maybeSingle();
-    if (holdDaysError) throw holdDaysError;
-    const v = Number((hd as any)?.target_hold_days);
-    if (Number.isFinite(v) && v >= 1) userHoldDays = v;
-  } catch { /* column absent pre-167 → genome governs horizon */ }
-
   const horizonDaysByMarket = new Map<string, number>();
+  const mandateByMarket = new Map<string, TradingMandate>();
   await Promise.allSettled(activeMarkets.map(async (m) => {
     try {
       const g = await loadChampionGenome(svc, m);
+      const mandate = await loadTradingMandate(svc, m);
+      mandateByMarket.set(m, mandate);
       // Champion promoted → learned horizon wins (don't fight the learner).
       // No champion (source "default") → prefer the user's Trading Style
       // target_hold_days, falling back to DEFAULT_GENOME horizon (10) when unset.
-      horizonDaysByMarket.set(m, g.source === "champion" ? g.genome.horizon_days : (userHoldDays ?? g.genome.horizon_days));
+      horizonDaysByMarket.set(m, resolveHorizonDays(mandate, g.source === "champion" ? g.genome.horizon_days : null).days);
     } catch {
-      horizonDaysByMarket.set(m, userHoldDays ?? 10); // DEFAULT_GENOME horizon
+      const mandate = await loadTradingMandate(svc, m);
+      mandateByMarket.set(m, mandate);
+      horizonDaysByMarket.set(m, mandate.target_hold_days);
     }
   }));
 
@@ -247,11 +245,14 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     // Closes slow bleeds that never hit the hard stop but overstay the swing window.
     // Matches the backtest's max_hold_days assumption so live and backtest are consistent.
     if (pos.created_at) {
-      const horizonDays = horizonDaysByMarket.get(market) ?? 10;
-      const ageDays = (Date.now() - new Date(pos.created_at).getTime()) / (1000 * 60 * 60 * 24);
+      const mandate = mandateByMarket.get(market);
+      const storedHorizon = Number(pos.resolved_horizon_days);
+      const grandfathered = mandate?.existing_positions_policy !== "apply" && Number.isFinite(storedHorizon) && storedHorizon >= 2;
+      const horizonDays = grandfathered ? storedHorizon : (horizonDaysByMarket.get(market) ?? 10);
+      const ageDays = tradingWeekdaysBetween(new Date(pos.created_at), new Date());
       if (ageDays > horizonDays) {
         const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
-        await closePosition(pos, currentPrice, `time_stop (${ageDays.toFixed(1)}d > ${horizonDays}d)`, outcome);
+        await closePosition(pos, currentPrice, `time_stop (${ageDays} market days > ${horizonDays}d${grandfathered ? ", grandfathered" : ""})`, outcome);
         continue;
       }
     }
