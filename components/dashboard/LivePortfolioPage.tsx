@@ -1,10 +1,9 @@
 "use client";
 import { useState, useEffect, useRef, useCallback, type ChangeEvent } from "react";
-import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
-} from "recharts";
 import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
 import RhReconnectBanner from "@/components/dashboard/RhReconnectBanner";
+import LiveStatCards from "@/components/dashboard/LiveStatCards";
+import LivePerformanceChart from "@/components/dashboard/LivePerformanceChart";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -17,14 +16,6 @@ const T = {
   purple: "#A78BFA",
 };
 
-const TIMEFRAMES = ["1D", "1W", "1M", "3M", "YTD", "1Y", "All"] as const;
-type TF = typeof TIMEFRAMES[number];
-
-const HOLDING_COLORS = [
-  "#6366F1", "#34D399", "#60A5FA", "#FBBF24", "#F87171",
-  "#A78BFA", "#F59E0B", "#10B981", "#EC4899", "#14B8A6",
-];
-
 function fmt$(n: number) {
   const abs = Math.abs(n);
   const s = abs >= 1_000_000 ? "$" + (abs / 1_000_000).toFixed(2) + "M"
@@ -35,20 +26,6 @@ function fmt$(n: number) {
 function fmtPct(n: number, decimals = 2) {
   return (n >= 0 ? "+" : "") + n.toFixed(decimals) + "%";
 }
-function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-function StatCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
-  return (
-    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px 20px", flex: 1 }}>
-      <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "6px" }}>{label}</div>
-      <div style={{ fontSize: "22px", fontWeight: 700, color: color ?? T.text }}>{value}</div>
-      {sub && <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>{sub}</div>}
-    </div>
-  );
-}
-
 function PctBadge({ value }: { value: number | null }) {
   if (value === null) return <span style={{ color: T.muted, fontSize: "12px" }}>—</span>;
   const color = value >= 0 ? T.green : T.red;
@@ -62,8 +39,6 @@ type HoldingRow = {
   dayChangePct: number | null; dayChangeDollar: number | null;
   priceSource: string; priceAsOf: string | null; priceAvailable: boolean;
 };
-
-type ChartPoint = { date: string; portfolio: number; [key: string]: any };
 
 type FileRecord = {
   id: string; filename: string; trade_count: number; duplicate_count: number;
@@ -91,14 +66,6 @@ export default function LivePortfolioPage({
   const [holdings, setHoldings] = useState<HoldingRow[]>([]);
   const [loadingHoldings, setLoadingHoldings] = useState(liveSnaps.length > 0);
   const [snaps, setSnaps] = useState<any[]>(liveSnaps);
-
-  const [period, setPeriod] = useState<TF>("1M");
-  const [chartData, setChartData] = useState<ChartPoint[]>([]);
-  const [chartSymbols, setChartSymbols] = useState<string[]>([]);
-  const [loadingChart, setLoadingChart] = useState(false);
-  const [showHoldingLines, setShowHoldingLines] = useState(false);
-  const [estimated, setEstimated] = useState(false);
-  const [benchSymbol, setBenchSymbol] = useState("VOO");
 
   const [files, setFiles] = useState<FileRecord[]>(initialFiles);
   const [uploading, setUploading] = useState(false);
@@ -148,36 +115,6 @@ export default function LivePortfolioPage({
   }, [selectedAccounts]);
 
   useEffect(() => { loadHoldings(); }, [loadHoldings]);
-
-  // Load chart data when period or accounts change
-  const loadChart = useCallback(async (tf: TF) => {
-    setLoadingChart(true);
-    setChartData([]);
-    try {
-      const acctParam = selectedAccounts.length > 0 ? `&accounts=${selectedAccounts.join(",")}` : "";
-      const r = await fetch(`/api/live-portfolio/performance?period=${tf}${acctParam}`);
-      const d = await r.json();
-      if (!d.dates || d.dates.length === 0) return;
-      const points: ChartPoint[] = d.dates.map((date: string, i: number) => {
-        const pt: ChartPoint = { date: fmtDate(date), portfolio: d.portfolio[i] };
-        if (Array.isArray(d.benchmark) && typeof d.benchmark[i] === "number") pt.bench = d.benchmark[i];
-        for (const h of (d.holdings ?? [])) {
-          pt[h.symbol] = h.data[i];
-        }
-        return pt;
-      });
-      setChartData(points);
-      setChartSymbols((d.holdings ?? []).map((h: any) => h.symbol));
-      setEstimated(!!d.estimated);
-      setBenchSymbol(d.benchSymbol ?? "VOO");
-    } catch {
-      // non-fatal
-    } finally {
-      setLoadingChart(false);
-    }
-  }, [selectedAccounts]);
-
-  useEffect(() => { loadChart(period); }, [period, loadChart]);
 
   // Load decisions
   const loadDecisions = useCallback(async (page = 0) => {
@@ -247,14 +184,6 @@ export default function LivePortfolioPage({
   const totalInvested = holdings.reduce((s, h) => s + h.qty * h.avgCost, 0);
   const totalPnlPct = totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0;
 
-  // Portfolio vs VOO headline: last cumulative-% point of each line.
-  const lastChartPt = chartData[chartData.length - 1];
-  const portfolioLastPct = lastChartPt && typeof lastChartPt.portfolio === "number" ? lastChartPt.portfolio : null;
-  const benchLastPct = lastChartPt && typeof lastChartPt.bench === "number" ? lastChartPt.bench : null;
-  const benchDelta = portfolioLastPct != null && benchLastPct != null
-    ? parseFloat((portfolioLastPct - benchLastPct).toFixed(2)) : null;
-  const hasBench = chartData.some(p => typeof p.bench === "number");
-
   const enrichedDecisions = decisions.filter(d => d.enrichment_status === "enriched");
   const avgOutcome = enrichedDecisions.length > 0
     ? enrichedDecisions.reduce((s, d) => s + (d.outcome_score ?? 0), 0) / enrichedDecisions.length
@@ -277,10 +206,10 @@ export default function LivePortfolioPage({
             <div style={{ fontSize: "11px", color: T.amber }}>
               Last synced: {new Date(syncedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
               {" · "}
-              <span>manual sync only — no auto-sync cron is wired up yet</span>
+              <span>auto-syncs every 2h on trading days (kairos-live-snapshot); Refresh for on-demand</span>
             </div>
           )}
-          {!hasSnaps && <div style={{ fontSize: "11px", color: T.amber }}>Not yet synced — no auto-sync is configured; a manual Robinhood sync must be run</div>}
+          {!hasSnaps && <div style={{ fontSize: "11px", color: T.amber }}>Not yet synced — the 2h live-snapshot cron will populate this, or hit Refresh now</div>}
 
           {/* Account selector chips */}
           {snaps.length > 1 && (
@@ -358,145 +287,22 @@ export default function LivePortfolioPage({
         Live NAV comes straight from your broker{brokerNames.includes("+") ? "s" : ""} — {brokerNames} account equity (US, $). Each account is tagged (RH / WB). Updates on each sync, not live-by-the-second.
       </div>
 
-      {/* Stats row */}
-      <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
-        <StatCard label="Total Equity" value={maskText(fmt$(Number(totalEquity)), masked)} sub={`Live · ${brokerNames}`} />
-        <StatCard label="Buying Power" value={maskText(fmt$(Number(buyingPower)), masked)} color={T.green} />
-        <StatCard label="Positions" value={masked ? "••" : String(positionCount)} sub={holdings.length > 0 ? maskText(fmt$(totalInvested) + " invested", masked) : undefined} />
-        <StatCard
-          label="Total P&L"
-          value={maskText(fmt$(totalPnl), masked)}
-          sub={totalPnlPct !== 0 ? maskText(fmtPct(totalPnlPct), masked) : undefined}
-          color={totalPnl >= 0 ? T.green : T.red}
-        />
-        <StatCard
-          label="Day P&L"
-          value={dayPnl !== 0 ? maskText(fmt$(dayPnl), masked) : "—"}
-          color={dayPnl >= 0 ? T.green : T.red}
-        />
-      </div>
+      {/* Stats row (shared with India Live) */}
+      <LiveStatCards
+        market="us"
+        equity={Number(totalEquity)}
+        buyingPower={Number(buyingPower)}
+        positions={positionCount}
+        invested={totalInvested}
+        totalPnl={totalPnl}
+        totalPnlPct={totalPnlPct}
+        dayPnl={dayPnl}
+        brokerLabel={brokerNames}
+        masked={masked}
+      />
 
-      {/* Performance chart */}
-      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "20px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-            <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-              Performance <span style={{ textTransform: "none", letterSpacing: 0, color: T.textSub }}>vs {benchSymbol}</span>
-            </div>
-            {benchDelta != null && (
-              <span style={{
-                fontSize: "12px", fontWeight: 800, padding: "2px 9px", borderRadius: "6px",
-                color: benchDelta >= 0 ? T.green : T.red,
-                background: benchDelta >= 0 ? T.greenBg : T.redBg,
-              }}>
-                {benchDelta >= 0 ? "+" : ""}{benchDelta.toFixed(2)}% vs {benchSymbol}
-              </span>
-            )}
-            {estimated && chartData.length > 0 && (
-              <span
-                title="No real daily history yet, so this reconstructs the curve from your CURRENT holdings × each symbol's price history — it assumes today's share counts were held throughout, so it distorts where positions changed. Real broker-equity tracking accrues daily and replaces this automatically."
-                style={{ fontSize: "10px", fontWeight: 700, padding: "2px 8px", borderRadius: "5px", background: T.amberBg, color: T.amber, cursor: "help", letterSpacing: "0.04em" }}
-              >
-                ESTIMATED
-              </span>
-            )}
-            {loadingChart && <span style={{ fontSize: "11px", color: T.muted }}>Loading…</span>}
-          </div>
-          <div style={{ display: "flex", gap: "4px", alignItems: "center", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-            {/* Timeframe buttons */}
-            {TIMEFRAMES.map(tf => (
-              <button
-                key={tf}
-                onClick={() => setPeriod(tf)}
-                style={{
-                  padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 600,
-                  background: period === tf ? T.accent : "none",
-                  color: period === tf ? "#fff" : T.muted,
-                  border: `1px solid ${period === tf ? T.accent : T.border}`,
-                  cursor: "pointer",
-                }}
-              >{tf}</button>
-            ))}
-            <div style={{ width: "1px", height: "20px", background: T.border, margin: "0 4px" }} />
-            <button
-              onClick={() => setShowHoldingLines(s => !s)}
-              style={{
-                padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 600,
-                background: showHoldingLines ? T.accentBg : "none",
-                color: showHoldingLines ? T.accent : T.muted,
-                border: `1px solid ${showHoldingLines ? T.accent + "44" : T.border}`,
-                cursor: "pointer",
-              }}
-            >Holdings</button>
-          </div>
-        </div>
-
-        {chartData.length === 0 && !loadingChart ? (
-          <div style={{ height: "200px", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: "13px", flexDirection: "column", gap: "6px" }}>
-            <div>No price data</div>
-            <div style={{ fontSize: "11px" }}>Needs a synced holdings snapshot + <code style={{ background: T.dim, padding: "1px 4px", borderRadius: "3px" }}>MASSIVE_API_KEY</code> for price history</div>
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={chartData} margin={{ top: 4, right: 0, left: -10, bottom: 0 }}>
-              <defs>
-                <linearGradient id="portfolioGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={T.accent} stopOpacity={0.3} />
-                  <stop offset="95%" stopColor={T.accent} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke={T.border} />
-              <XAxis dataKey="date" tick={{ fontSize: 10, fill: T.muted }} tickLine={false} axisLine={false} />
-              <YAxis
-                tick={{ fontSize: 10, fill: T.muted }}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={v => v + "%"}
-              />
-              <Tooltip
-                contentStyle={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", fontSize: "12px" }}
-                labelStyle={{ color: T.textSub }}
-                formatter={(v: any, name: any) => [v?.toFixed(2) + "%", name]}
-              />
-              {showHoldingLines && chartSymbols.map((sym, i) => (
-                <Area
-                  key={sym}
-                  type="monotone"
-                  dataKey={sym}
-                  stroke={HOLDING_COLORS[i % HOLDING_COLORS.length]}
-                  fill="none"
-                  strokeWidth={1}
-                  dot={false}
-                  strokeDasharray="4 2"
-                />
-              ))}
-              <Area
-                type="monotone"
-                dataKey="portfolio"
-                stroke={T.accent}
-                fill="url(#portfolioGrad)"
-                strokeWidth={2}
-                dot={false}
-                name="Portfolio"
-              />
-              {hasBench && (
-                <Area
-                  type="monotone"
-                  dataKey="bench"
-                  stroke={T.textSub}
-                  fill="none"
-                  strokeWidth={1.5}
-                  dot={false}
-                  strokeDasharray="4 2"
-                  name={benchSymbol}
-                  connectNulls
-                />
-              )}
-              {(showHoldingLines || hasBench) && <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "8px" }} />}
-            </AreaChart>
-          </ResponsiveContainer>
-        )}
-      </div>
+      {/* Performance chart (shared, market-aware) */}
+      <LivePerformanceChart market="us" accounts={selectedAccounts} showHoldingsToggle />
 
       {/* Holdings table */}
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "20px" }}>

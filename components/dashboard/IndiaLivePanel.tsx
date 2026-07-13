@@ -2,6 +2,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { fmtMoney } from "@/lib/format-money";
+import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
+import LiveStatCards from "@/components/dashboard/LiveStatCards";
+import LivePerformanceChart from "@/components/dashboard/LivePerformanceChart";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -44,6 +47,8 @@ type Portfolio = {
   holdings: Holding[];
   connected: boolean;
   currency?: string;
+  cash?: number | null;
+  nav?: number | null;
   error?: string;
 };
 
@@ -91,6 +96,7 @@ export default function IndiaLivePanel() {
   const [orderResult, setOrderResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const connected = !!status?.connected;
+  const { masked, setRevealed } = useRevealToggle();
 
   useEffect(() => {
     fetch("/api/kite/status")
@@ -181,6 +187,13 @@ export default function IndiaLivePanel() {
   const holdingsConnected = portfolio?.connected ?? false;
   const totalValue = holdings.reduce((a, h) => a + (h.value ?? 0), 0);
 
+  // Stat-card aggregates (parity with the US Live view) — all INR.
+  const invested = holdings.reduce((a, h) => a + (h.avg_price ?? 0) * (h.qty ?? 0), 0);
+  const totalPnl = holdings.reduce((a, h) => a + (h.pnl ?? 0), 0);
+  const totalPnlPct = invested > 0 ? (totalPnl / invested) * 100 : 0;
+  const cash = portfolio?.cash ?? null;
+  const nav = portfolio?.nav ?? (cash != null ? cash + totalValue : totalValue);
+
   // ── Status bar content ──────────────────────────────────────────────────────
   function StatusBar() {
     if (statusLoading) {
@@ -241,6 +254,30 @@ export default function IndiaLivePanel() {
           <StatusBar />
         </div>
 
+        {/* ── Privacy toggle (parity with US Live) ── */}
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "12px" }}>
+          <EyeToggle masked={masked} onToggle={() => setRevealed(r => !r)} />
+        </div>
+
+        {/* ── Stat cards (shared with US Live) ── */}
+        {holdingsConnected && (
+          <LiveStatCards
+            market="india"
+            equity={nav}
+            buyingPower={cash}
+            positions={holdings.length}
+            invested={invested}
+            totalPnl={totalPnl}
+            totalPnlPct={totalPnlPct}
+            dayPnl={null}
+            brokerLabel="Zerodha Kite"
+            masked={masked}
+          />
+        )}
+
+        {/* ── Performance vs NIFTY 50 (shared, market-aware) ── */}
+        <LivePerformanceChart market="india" />
+
         {/* ── b) Real holdings table ── */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "16px" }}>
           <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "14px" }}>
@@ -276,20 +313,20 @@ export default function IndiaLivePanel() {
                         {h.tradingsymbol || h.symbol}
                         <span style={{ marginLeft: "7px", fontSize: "9px", color: T.muted, fontWeight: 400 }}>{h.exchange}</span>
                       </td>
-                      <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace" }}>{h.qty}</td>
-                      <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace", color: T.textSub }}>{inr(h.avg_price)}</td>
-                      <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace" }}>{inr(h.last_price)}</td>
+                      <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace" }}>{maskText(String(h.qty), masked)}</td>
+                      <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace", color: T.textSub }}>{maskText(inr(h.avg_price), masked)}</td>
+                      <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace" }}>{maskText(inr(h.last_price), masked)}</td>
                       <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace", fontWeight: 600, color: (h.pnl ?? 0) >= 0 ? T.green : T.red }}>
-                        {(h.pnl ?? 0) >= 0 ? "+" : ""}{inr(h.pnl)}
+                        {maskText(((h.pnl ?? 0) >= 0 ? "+" : "") + inr(h.pnl), masked)}
                       </td>
-                      <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{inr(h.value)}</td>
+                      <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{maskText(inr(h.value), masked)}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr style={{ borderTop: `2px solid ${T.border}` }}>
                     <td colSpan={5} style={{ padding: "10px 12px 4px 0", textAlign: "right", fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>Total Value</td>
-                    <td style={{ padding: "10px 12px 4px 0", textAlign: "right", fontFamily: "monospace", fontWeight: 700, color: T.text }}>{inr(totalValue)}</td>
+                    <td style={{ padding: "10px 12px 4px 0", textAlign: "right", fontFamily: "monospace", fontWeight: 700, color: T.text }}>{maskText(inr(totalValue), masked)}</td>
                   </tr>
                 </tfoot>
               </table>

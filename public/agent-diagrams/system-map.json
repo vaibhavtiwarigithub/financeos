@@ -834,6 +834,13 @@
       "nodeId": "ROTATION",
       "label": "CapitalRotation shadow",
       "reason": "Added P0 shadow-only opportunity-cost rotation evaluator on PaperTrader insufficient_cash. Writes rotation_events only; no sell/buy/proposal execution."
+    },
+    {
+      "date": "2026-07-13",
+      "event": "changed",
+      "nodeId": "ACCTBOOK",
+      "label": "India (Kite) live-equity accrual + unified Live Portfolio view",
+      "reason": "live-account/refresh-snapshot now also accrues the India Kite live-equity curve (refreshKite): NAV = margins.equity.net + Σ(last_price×qty), bench = ^NSEI, one live_performance row market='india'/broker='kite'/currency='INR' keyed by Kite user_id. Writes ONLY live_performance (never live_account_snapshots) so Kite cannot leak into US account chips or the US kill-switch NAV baseline; fail-soft on a stale daily token. /api/live-portfolio/performance gained a market param: us path filters market in (us,null); india path serves the live Kite-vs-NIFTY curve, falling back to the paper India NIFTY series until >=2 live days exist. Frontend: US LivePortfolioPage and India IndiaLivePanel now render the SAME shared LiveStatCards + LivePerformanceChart (market-aware VOO/NIFTY), so the two Live views match. Read/display only; the India inline Kite order panel is unchanged."
     }
   ]
 }

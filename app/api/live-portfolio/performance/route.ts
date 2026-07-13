@@ -50,6 +50,9 @@ export async function GET(req: NextRequest) {
   if (gate) return gate;
 
   const period = new URL(req.url).searchParams.get("period") ?? "1M";
+  const marketParam = new URL(req.url).searchParams.get("market");
+  const market: "us" | "india" = marketParam === "india" ? "india" : "us";
+  const benchSymbol = market === "india" ? "NIFTY 50" : BENCH_SYMBOL;
   const massiveKey = process.env.MASSIVE_API_KEY ?? "";
   const accountIds = new URL(req.url).searchParams.get("accounts")?.split(",").filter(Boolean);
   const svc = createServiceClient();
@@ -65,14 +68,57 @@ export async function GET(req: NextRequest) {
   const startStr = startDate.toISOString().slice(0, 10);
   const endStr = now.toISOString().slice(0, 10);
 
-  const empty = { dates: [], portfolio: [], benchmark: [], holdings: [], estimated: false, benchSymbol: BENCH_SYMBOL };
+  const empty = { dates: [], portfolio: [], benchmark: [], holdings: [], estimated: false, benchSymbol };
+
+  // ── INDIA PATH ────────────────────────────────────────────────────────────
+  // India live equity comes from the Kite accrual (live_performance market='india',
+  // INR NAV + ^NSEI bench). No per-symbol backcast here (Kite gives no price
+  // history in this route); once <2 real live days exist, fall back to the paper
+  // India NIFTY curve so the chart is never blank — labelled estimated:true.
+  if (market === "india") {
+    const { data: liveRows } = await svc
+      .from("live_performance")
+      .select("date, equity, bench_nav")
+      .eq("market", "india")
+      .gte("date", startStr)
+      .order("date", { ascending: true });
+
+    const live = (liveRows ?? []) as any[];
+    if (live.length >= 2) {
+      const dates = live.map(r => String(r.date).slice(0, 10));
+      const equityBase = Number(live[0].equity);
+      const firstBench = live.map(r => r.bench_nav).find(v => v != null) ?? null;
+      const portfolio = live.map(r => pctFrom(Number(r.equity), equityBase) ?? 0);
+      const benchmark = live.map(r => pctFrom(r.bench_nav != null ? Number(r.bench_nav) : null, firstBench != null ? Number(firstBench) : null));
+      return NextResponse.json({ dates, portfolio, benchmark, holdings: [], estimated: false, benchSymbol, trackingSince: dates[0] });
+    }
+
+    // Fallback: paper India NIFTY series (nav + bench_nav), rebased.
+    const { data: paperRows } = await svc
+      .from("paper_performance")
+      .select("date, nav, bench_nav")
+      .eq("market", "india")
+      .gte("date", startStr)
+      .order("date", { ascending: true });
+    const paper = (paperRows ?? []).filter((r: any) => r.nav != null) as any[];
+    if (paper.length < 2) return NextResponse.json(empty);
+    const dates = paper.map(r => String(r.date).slice(0, 10));
+    const navBase = Number(paper[0].nav);
+    const firstBench = paper.map(r => r.bench_nav).find(v => v != null) ?? null;
+    const portfolio = paper.map(r => pctFrom(Number(r.nav), navBase) ?? 0);
+    const benchmark = paper.map(r => pctFrom(r.bench_nav != null ? Number(r.bench_nav) : null, firstBench != null ? Number(firstBench) : null));
+    return NextResponse.json({ dates, portfolio, benchmark, holdings: [], estimated: true, benchSymbol });
+  }
 
   // ── REAL PATH: live_performance (durable, honest broker-equity curve) ──────
   // We accrue one row per account per day (equity + VOO close) from the snapshot
   // refresh. Once >=2 real days exist in the window for the selected accounts,
   // draw the TRUE equity curve; no estimation.
   {
-    let lq = svc.from("live_performance").select("account_id, date, equity, bench_nav").gte("date", startStr).order("date", { ascending: true });
+    // market IS NULL = legacy US rows written before the market column existed;
+    // exclude india (Kite) rows so they can never be summed into US NAV.
+    let lq = svc.from("live_performance").select("account_id, date, equity, bench_nav")
+      .gte("date", startStr).or("market.is.null,market.eq.us").order("date", { ascending: true });
     if (accountIds && accountIds.length > 0) lq = lq.in("account_id", accountIds);
     const { data: real } = await lq;
 

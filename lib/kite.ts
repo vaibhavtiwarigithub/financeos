@@ -244,6 +244,16 @@ export async function getKiteMargins(svc?: any): Promise<{ ok: boolean; equityNe
   return { ok: true, equityNet: net };
 }
 
+/** Immutable Zerodha identity from /user/profile — used as the stable account_id
+ *  key for the India live-performance curve (single Kite account). */
+export async function getKiteProfile(svc?: any): Promise<{ ok: boolean; userId?: string; userName?: string; error?: string }> {
+  const r = await kiteGet("/user/profile", svc);
+  if (!r.ok) return { ok: false, error: r.error };
+  const userId = String((r.data as any)?.user_id ?? "").trim();
+  if (!userId) return { ok: false, error: "Kite /user/profile returned no user_id" };
+  return { ok: true, userId, userName: (r.data as any)?.user_name };
+}
+
 // Verify that the connected Kite session actually belongs to the configured
 // India trading account — the wrong-account guard for every live Kite submit.
 //

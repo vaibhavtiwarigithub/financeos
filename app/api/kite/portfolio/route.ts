@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
-import { getKiteHoldings } from "@/lib/kite";
+import { getKiteHoldings, getKiteMargins } from "@/lib/kite";
 
 export const dynamic = "force-dynamic";
 
 // Real Zerodha holdings (INR). Degrades to a clear "reconnect" state when the
-// daily token is stale, rather than erroring.
+// daily token is stale, rather than erroring. Also returns account cash
+// (margins.equity.net) and NAV so the India Live panel can show stat cards at
+// parity with the US Live view.
 export async function GET() {
   const ownerGate = await requireOwner();
   if (ownerGate) return ownerGate;
@@ -23,5 +25,12 @@ export async function GET() {
     pnl: h.pnl,
     value: (h.last_price ?? 0) * (h.quantity ?? 0),
   }));
-  return NextResponse.json({ holdings, connected: true, currency: "INR" });
+
+  // Liquid cash (buying power) — best-effort; a margins hiccup must not blank holdings.
+  const marg = await getKiteMargins();
+  const cash = marg.ok ? (marg.equityNet ?? null) : null;
+  const holdingsValue = holdings.reduce((s: number, h: { value: number }) => s + (h.value ?? 0), 0);
+  const nav = cash != null ? cash + holdingsValue : null;
+
+  return NextResponse.json({ holdings, connected: true, currency: "INR", cash, nav });
 }

@@ -5,6 +5,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 import { MCP_BROKERS } from "@/lib/brokers/mcp-registry";
 import { captureAccounts, hasToken } from "@/lib/brokers/mcp-driver";
+import { getKiteHoldings, getKiteMargins, getKiteProfile } from "@/lib/kite";
+import { fetchIndiaQuote } from "@/lib/india-data";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 100;
@@ -280,6 +282,61 @@ async function refreshRegistryBrokers(): Promise<{ broker: string; ok: boolean; 
   return out;
 }
 
+// Accrue the durable India live-equity curve from Zerodha Kite — the exact
+// analogue of the US live_performance forward-build, but INR + NIFTF benchmark.
+// Kite exposes no account-value history, so we build it one day at a time:
+//   NAV = margins.equity.net (cash) + Σ(last_price × qty) over live holdings
+//   bench = ^NSEI close (same index the paper India chart uses)
+// Writes ONLY live_performance (market='india'), never live_account_snapshots —
+// so the Kite account can never leak into the US account chips or the US
+// kill-switch NAV baseline. Fully fail-soft: a stale daily token or any read
+// error just skips the day; it must never fail the US/registry refresh.
+async function refreshKite(): Promise<{ ok: boolean; equity?: number; positions?: number; error?: string }> {
+  const svc = createServiceClient();
+  try {
+    const [prof, hold, marg] = await Promise.all([
+      getKiteProfile(svc),
+      getKiteHoldings(svc),
+      getKiteMargins(svc),
+    ]);
+    if (!prof.ok) return { ok: false, error: `kite profile: ${prof.error}` };
+    if (!hold.ok) return { ok: false, error: `kite holdings: ${hold.error}` };
+    if (!marg.ok) return { ok: false, error: `kite margins: ${marg.error}` };
+
+    const holdings: any[] = Array.isArray(hold.data) ? hold.data : [];
+    const holdingsValue = holdings.reduce((s, h) => s + (Number(h.last_price ?? 0) * Number(h.quantity ?? 0)), 0);
+    const nav = Number(marg.equityNet ?? 0) + holdingsValue;
+    if (!Number.isFinite(nav)) return { ok: false, error: "computed India NAV is not finite" };
+
+    // ^NSEI close for the day (fail-soft — a null bench is a valid row, the
+    // chart just skips the benchmark line for that point).
+    let niftyClose: number | null = null;
+    try {
+      const q = await fetchIndiaQuote("^NSEI");
+      const px = (q as any)?.price ?? (q as any)?.close ?? null;
+      niftyClose = typeof px === "number" && px > 0 ? px : null;
+    } catch { /* bench optional */ }
+
+    const day = new Date().toISOString().slice(0, 10);
+    const { error: upErr } = await svc.from("live_performance").upsert(
+      {
+        account_id: prof.userId!,
+        date: day,
+        equity: nav,
+        bench_nav: niftyClose,
+        market: "india",
+        currency: "INR",
+        broker: "kite",
+      },
+      { onConflict: "account_id,date" },
+    );
+    if (upErr) return { ok: false, error: `live_performance upsert: ${upErr.message}` };
+    return { ok: true, equity: nav, positions: holdings.length };
+  } catch (e) {
+    return { ok: false, error: `kite accrual error: ${String(e)}` };
+  }
+}
+
 export async function POST(req: NextRequest) {
   if (!verifyCronSecret(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -292,6 +349,9 @@ export async function POST(req: NextRequest) {
   // Also refresh every connected cloud MCP broker (Webull, etc.) — independent of
   // Robinhood, so it runs even when RH is off/local.
   const registry = await refreshRegistryBrokers();
-  const anyOk = result.ok || registry.some(r => r.ok);
-  return NextResponse.json({ ...result, registry }, { status: anyOk ? 200 : 500 });
+  // Accrue the India (Kite) live-equity curve — independent + fail-soft, so a
+  // stale Kite token never affects the US/registry result.
+  const kite = await refreshKite();
+  const anyOk = result.ok || registry.some(r => r.ok) || kite.ok;
+  return NextResponse.json({ ...result, registry, kite }, { status: anyOk ? 200 : 500 });
 }
