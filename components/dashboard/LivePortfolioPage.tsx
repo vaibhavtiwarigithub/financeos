@@ -230,6 +230,10 @@ export default function LivePortfolioPage({
     loadDecisions(0);
   }
 
+  // Connected brokers across the live snapshots (Robinhood + Webull + future).
+  const brokerNames = Array.from(new Set(snaps.map((s: any) => s.broker).filter(Boolean)))
+    .map((b: any) => (b === "webull" ? "Webull" : b === "robinhood" ? "Robinhood" : String(b))).join(" + ") || "your broker";
+
   // Aggregate stats from selected accounts
   const selectedSnaps = snaps.filter(s => selectedAccounts.includes(s.account_id));
   const totalEquity = selectedSnaps.reduce((s, a) => s + Number(a.equity ?? a.portfolio_value ?? 0), 0);
@@ -321,6 +325,14 @@ export default function LivePortfolioPage({
                       cursor: "pointer",
                     }}
                   >
+                    <span style={{
+                      fontSize: "8px", fontWeight: 800, letterSpacing: "0.06em", padding: "1px 4px",
+                      borderRadius: "4px", marginRight: "5px", verticalAlign: "middle",
+                      background: s.broker === "webull" ? "#2D1B00" : s.broker === "robinhood" ? "#052E16" : T.dim,
+                      color: s.broker === "webull" ? T.amber : s.broker === "robinhood" ? T.green : T.muted,
+                    }}>
+                      {s.broker === "webull" ? "WB" : s.broker === "robinhood" ? "RH" : String(s.broker ?? "??").slice(0, 2).toUpperCase()}
+                    </span>
                     {s.nickname ?? "••••" + s.account_id.slice(-4)}
                     {s.equity ? " · " + maskText(fmt$(Number(s.equity)), masked) : ""}
                     {s.position_count > 0 ? ` · ${masked ? "••" : s.position_count}p` : " · no pos"}
@@ -343,12 +355,12 @@ export default function LivePortfolioPage({
 
       {/* NAV explainer */}
       <div style={{ fontSize: "11px", color: T.muted, marginBottom: "16px", maxWidth: "760px", lineHeight: 1.5 }}>
-        Live NAV comes straight from your broker — Robinhood account equity (US, $). It updates on each sync, not live-by-the-second.
+        Live NAV comes straight from your broker{brokerNames.includes("+") ? "s" : ""} — {brokerNames} account equity (US, $). Each account is tagged (RH / WB). Updates on each sync, not live-by-the-second.
       </div>
 
       {/* Stats row */}
       <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
-        <StatCard label="Total Equity" value={maskText(fmt$(Number(totalEquity)), masked)} sub="Live Robinhood" />
+        <StatCard label="Total Equity" value={maskText(fmt$(Number(totalEquity)), masked)} sub={`Live · ${brokerNames}`} />
         <StatCard label="Buying Power" value={maskText(fmt$(Number(buyingPower)), masked)} color={T.green} />
         <StatCard label="Positions" value={masked ? "••" : String(positionCount)} sub={holdings.length > 0 ? maskText(fmt$(totalInvested) + " invested", masked) : undefined} />
         <StatCard
