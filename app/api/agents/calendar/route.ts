@@ -27,21 +27,31 @@ function classifyRuns(runs: any[]): CellStatus {
   return "ok";
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const userClient = await createClient();
   const { data: { user } } = await userClient.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  // ?market=us|india scopes the grid to that market's runs (follows the header
+  // switch), so the calendar shows whether the US pipeline OR the India pipeline
+  // ran. India = market 'india'; US view also includes cross-market/global agents
+  // (learner, mentor) that run once with market 'us' or null.
+  const market = req.nextUrl.searchParams.get("market") === "india" ? "india" : "us";
+
   const svc = createServiceClient();
   const since = new Date(Date.now() - 30 * 86400_000).toISOString();
-  const { data: runs } = await svc
+  const { data: rawRuns } = await svc
     .from("agent_runs")
-    .select("agent_type, status, started_at, completed_at, result_summary, trigger_source")
+    .select("agent_type, status, started_at, completed_at, result_summary, trigger_source, market")
     .gte("started_at", since)
     .order("started_at", { ascending: false });
 
+  const runs = (rawRuns ?? []).filter((r: any) =>
+    market === "india" ? r.market === "india" : (r.market == null || r.market === "us"),
+  );
+
   const byDateAgent = new Map<string, any[]>();
-  for (const r of (runs ?? []) as any[]) {
+  for (const r of runs as any[]) {
     const date = String(r.started_at).slice(0, 10);
     const key = `${date}|${canon(String(r.agent_type ?? ""))}`;
     if (!byDateAgent.has(key)) byDateAgent.set(key, []);
@@ -84,5 +94,5 @@ export async function GET() {
     days.push({ date: dateStr, agents });
   }
 
-  return NextResponse.json({ days });
+  return NextResponse.json({ days, market });
 }

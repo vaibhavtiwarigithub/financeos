@@ -1,5 +1,6 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
+import { useMarket } from "@/lib/market-context";
 
 const T = {
   card: "#1A1D27", border: "#252836", surface: "#13151C",
@@ -18,18 +19,20 @@ export default function AgentCalendar() {
   const [days, setDays] = useState<Day[] | null>(null);
   const [collapsed, setCollapsed] = useState(true);
   const [popover, setPopover] = useState<{ date: string; agent: string; cell: Cell } | null>(null);
-  const loaded = useRef(false);
+  const { market } = useMarket();
 
   useEffect(() => {
     const stored = localStorage.getItem("kairos_agent_calendar_collapsed");
     if (stored != null) setCollapsed(stored === "1");
   }, []);
 
+  // Re-fetch when opened OR when the market switch changes, so the grid shows the
+  // US pipeline or the India pipeline (whichever the header switch is on).
   useEffect(() => {
-    if (collapsed || loaded.current) return;
-    loaded.current = true;
-    fetch("/api/agents/calendar").then(r => r.json()).then(d => setDays(d.days ?? [])).catch(() => {});
-  }, [collapsed]);
+    if (collapsed) return;
+    setDays(null);
+    fetch(`/api/agents/calendar?market=${market}`).then(r => r.json()).then(d => setDays(d.days ?? [])).catch(() => {});
+  }, [collapsed, market]);
 
   function toggle() {
     const next = !collapsed;
@@ -47,7 +50,7 @@ export default function AgentCalendar() {
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "14px 18px", marginBottom: "16px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={toggle}>
         <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase" as const }}>
-          30-day Agent Calendar
+          30-day Agent Calendar · {market === "india" ? "🇮🇳 India" : "🇺🇸 US"}
         </div>
         <span style={{ fontSize: "11px", color: T.muted }}>{collapsed ? "Expand ▾" : "Collapse ▴"}</span>
       </div>
