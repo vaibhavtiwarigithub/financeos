@@ -456,7 +456,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
           ) : (
             <>
               <StatRow label="Open positions" value={positions.length} sub={positions.length > 0 ? fmtMoney(positionsValue) + " deployed" : undefined} />
-              <StatRow label="Cash available" value={fmtMoney(cash)} sub={`${((cash / nav) * 100).toFixed(0)}% of NAV`} />
+              <StatRow label="Cash available" value={fmtMoney(cash)} sub={nav > 0 ? `${((cash / nav) * 100).toFixed(0)}% of NAV` : "NAV unavailable"} />
               {highConviction.length > 0 && (
                 <>
                   <div style={{ fontSize: "11px", color: T.muted, marginTop: "12px", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>

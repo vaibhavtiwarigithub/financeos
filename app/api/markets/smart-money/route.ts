@@ -13,10 +13,14 @@ export const dynamic = "force-dynamic";
 // exist yet (pre-057) the filtered query errors, so we retry unscoped and
 // fall back to the US path unchanged.
 async function selectScoped<T>(
+  market: "us" | "india",
   run: (applyMarket: boolean) => PromiseLike<{ data: T | null; error: unknown }>
 ): Promise<T | null> {
   const withFilter = await run(true);
   if (!withFilter.error) return withFilter.data;
+  // A pre-market-column schema is US-only. Returning those rows for an India
+  // request would silently relabel US signals/proposals as India data.
+  if (market === "india") return null;
   const unscoped = await run(false);
   return unscoped.data;
 }
@@ -31,7 +35,7 @@ export async function GET(req: NextRequest) {
   const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
 
   const [signals, tradeQueue, highInsider] = await Promise.all([
-    selectScoped<any[]>((applyMarket) => {
+    selectScoped<any[]>(market, (applyMarket) => {
       let q = svc
         .from("agent_signals")
         .select("symbol,direction,analyst_score,insider_score,technical_score,fundamental_score,sentiment_score,macro_score,created_at,asset_class,source")
@@ -39,7 +43,7 @@ export async function GET(req: NextRequest) {
       if (applyMarket) q = q.eq("market", market);
       return q.order("analyst_score", { ascending: false }).limit(60);
     }),
-    selectScoped<any[]>((applyMarket) => {
+    selectScoped<any[]>(market, (applyMarket) => {
       // trade_proposals — the canonical table /api/agents/trader and the
       // Execution Gateway operate on. Aliased to the field names the UI expects.
       let q = svc
@@ -49,7 +53,7 @@ export async function GET(req: NextRequest) {
       if (applyMarket) q = q.eq("market", market); // no market column on trade_proposals yet — resiliently falls back unscoped
       return q.order("created_at", { ascending: false }).limit(30);
     }),
-    selectScoped<any[]>((applyMarket) => {
+    selectScoped<any[]>(market, (applyMarket) => {
       let q = svc
         .from("agent_signals")
         .select("symbol,analyst_score,insider_score,direction,created_at,asset_class")

@@ -712,3 +712,4 @@ Full details in `PROJECT_DECISIONS.md`. Summary here:
 ---
 
 *Last updated: 2026-06-29 by Claude (Sonnet 4.6)*
+| Adversarial audit and remediation of 2026-07-12 Claude changes | Codex / GPT-5 | completed | 2026-07-12 | Fixed provider/tool-loop fallback routing, false-success monitor reads, research run leakage, India/US Smart Money contamination, owner-gate gaps, migration-167 settings degradation, benchmark rebase mismatch, score redirect intent, and zero-NAV display. 305 tests, typecheck, build, and npm audit green; no orders or external mutations. |

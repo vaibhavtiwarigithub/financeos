@@ -4,6 +4,7 @@ import PageHeader from "@/components/dashboard/PageHeader";
 import ResearchFunnel from "@/components/dashboard/ResearchFunnel";
 import ScoreTrackerPanel from "@/components/dashboard/ScoreTrackerPanel";
 import { useMarket } from "@/lib/market-context";
+import { useSearchParams } from "next/navigation";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -184,7 +185,11 @@ function EvolutionTab() {
 }
 
 export default function ResearchJournalPage() {
-  const [tab, setTab] = useState<"funnel" | "evolution" | "scores">("funnel");
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const [tab, setTab] = useState<"funnel" | "evolution" | "scores">(
+    requestedTab === "evolution" || requestedTab === "scores" ? requestedTab : "funnel"
+  );
 
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>

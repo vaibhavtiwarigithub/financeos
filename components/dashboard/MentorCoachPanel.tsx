@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import AiAttribution from "@/components/dashboard/AiAttribution";
 
 const T = {
   surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -22,6 +23,7 @@ function gradeColor(g: number | null) {
 
 export default function MentorCoachPanel() {
   const [insight, setInsight] = useState<Insight | null>(null);
+  const [meta, setMeta] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +59,7 @@ export default function MentorCoachPanel() {
       const d = await res.json();
       if (!res.ok) throw new Error(d.error ?? "Mentor failed");
       setInsight(normalize(d));
+      if (d.meta) setMeta(d.meta);
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -101,6 +104,11 @@ export default function MentorCoachPanel() {
             </div>
             {insight.confidence != null && (
               <div style={{ fontSize: "12px", color: T.textSub }}>Coach confidence: <b style={{ color: T.text }}>{Math.round(insight.confidence * 100)}%</b></div>
+            )}
+            {meta?.agent && meta?.model && (
+              <div style={{ marginLeft: "auto" }}>
+                <AiAttribution agent={meta.agent} model={meta.model} agentKind={meta.agentKind} steps={meta.steps} />
+              </div>
             )}
           </div>
 

@@ -11,14 +11,16 @@
 // position-monitor cron. Rebasing to % return per timeframe is done client-side.
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
+
+  const { createClient } = await import("@/lib/supabase/server");
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const marketParam = req.nextUrl.searchParams.get("market");
   if (marketParam !== "us" && marketParam !== "india") {

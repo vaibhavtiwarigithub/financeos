@@ -87,23 +87,23 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
 
   const { chartData, portfolioLast, benchLast, delta } = useMemo(() => {
     const cut = cutoffFor(tf);
+    // Use a common starting observation. Rebasing portfolio from Monday while
+    // rebasing the benchmark from Wednesday produces a fake relative return.
     const windowed = series.filter(r =>
-      r.nav != null && (cut == null || new Date(r.date).getTime() >= cut));
+      r.nav != null && r.bench_nav != null &&
+      (cut == null || new Date(r.date).getTime() >= cut));
 
     if (windowed.length < 2) {
       return { chartData: [] as any[], portfolioLast: null, benchLast: null, delta: null };
     }
 
     const navBase = Number(windowed[0].nav);
-    // Benchmark rebases off the first row in the window that actually has a
-    // bench_nav (older rows can be null until the cron recorded one).
-    const benchBaseRow = windowed.find(r => r.bench_nav != null);
-    const benchBase = benchBaseRow ? Number(benchBaseRow.bench_nav) : null;
+    const benchBase = Number(windowed[0].bench_nav);
 
     const data = windowed.map(r => ({
       date: r.date,
       portfolio: pct(Number(r.nav), navBase),
-      bench: (benchBase != null && r.bench_nav != null) ? pct(Number(r.bench_nav), benchBase) : null,
+      bench: pct(Number(r.bench_nav), benchBase),
     }));
 
     const pLast = data[data.length - 1].portfolio;

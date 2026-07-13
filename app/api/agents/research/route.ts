@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
       for (const entry of entries) {
         send({ type: "progress", symbol: entry.symbol, status: "analyzing", isHeld: entry.isHeld, isEtf: entry.isEtf });
         try {
-          const result = await processSymbol(entry, supabase);
+          const result = await processSymbol(entry, supabase, null, runId ? String(runId) : null);
           totalTokensIn += result.tokensIn ?? 0;
           totalTokensOut += result.tokensOut ?? 0;
           claudeCalls++;

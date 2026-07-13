@@ -55,9 +55,10 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
   // returned an error that was never checked, and this route silently did
   // nothing on every single run since — including never refreshing
   // current_price, which is why stale prices lingered for days.
-  const { data: allPositionsRaw } = await svc
+  const { data: allPositionsRaw, error: positionsError } = await svc
     .from("paper_positions")
     .select("*");
+  if (positionsError) throw new Error(`paper_positions read failed: ${positionsError.message}`);
 
   // Scope to one market when the caller asks (India cron runs after the NSE close
   // and must only touch India positions, priced off Yahoo; US cron only US).
@@ -82,7 +83,8 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
 
   // Market detection + per-market pools. Post-057 there are 2+ portfolio rows,
   // so `.single()` would THROW — load them all and key by market instead.
-  const { data: poolRows } = await svc.from("paper_portfolio").select("*");
+  const { data: poolRows, error: poolError } = await svc.from("paper_portfolio").select("*");
+  if (poolError) throw new Error(`paper_portfolio read failed: ${poolError.message}`);
   const hasMarketCol = !!poolRows?.[0] && Object.prototype.hasOwnProperty.call(poolRows[0], "market");
   const poolByMarket = new Map<string, any>();
   for (const p of (poolRows ?? []) as any[]) poolByMarket.set(String(p.market ?? "us"), p);
@@ -133,7 +135,8 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
   // leaves the genome in charge.
   let userHoldDays: number | null = null;
   try {
-    const { data: hd } = await svc.from("strategy_config").select("target_hold_days").maybeSingle();
+    const { data: hd, error: holdDaysError } = await svc.from("strategy_config").select("target_hold_days").maybeSingle();
+    if (holdDaysError) throw holdDaysError;
     const v = Number((hd as any)?.target_hold_days);
     if (Number.isFinite(v) && v >= 1) userHoldDays = v;
   } catch { /* column absent pre-167 → genome governs horizon */ }

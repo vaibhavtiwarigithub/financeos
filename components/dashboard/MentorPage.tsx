@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 import MentorCoachPanel from "@/components/dashboard/MentorCoachPanel";
 import SymbolAutocomplete from "@/components/dashboard/SymbolAutocomplete";
+import AiAttribution from "@/components/dashboard/AiAttribution";
 import {
   ResponsiveContainer, LineChart as LC, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine, Label,
@@ -495,9 +496,11 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
 }) {
   const [tab, setTab] = useState<"coach" | "ask" | "decisions" | "learning" | "journal" | "dimensions">("coach");
   const [thesis, setThesis] = useState<string | null>(null);
+  const [thesisMeta, setThesisMeta] = useState<any>(null);
   const [thesisLoading, setThesisLoading] = useState(true);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [askMeta, setAskMeta] = useState<any>(null);
   const [asking, setAsking] = useState(false);
   const answerRef = useRef<HTMLDivElement>(null);
 
@@ -508,6 +511,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
   const [jReasoning, setJReasoning] = useState("");
   const [jSubmitting, setJSubmitting] = useState(false);
   const [jResult, setJResult] = useState<any>(null);
+  const [jMeta, setJMeta] = useState<any>(null);
   const [jError, setJError] = useState<string | null>(null);
   const [jHistory, setJHistory] = useState<any[]>([]);
   const [jHistoryLoading, setJHistoryLoading] = useState(false);
@@ -546,6 +550,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
     if (jSubmitting || !jSymbol.trim() || jReasoning.trim().length < 50) return;
     setJSubmitting(true);
     setJResult(null);
+    setJMeta(null);
     setJError(null);
     try {
       const res = await fetch("/api/mentor/evaluate", {
@@ -561,6 +566,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
       const data = await res.json();
       if (data.error) { setJError(data.error); return; }
       setJResult(data.evaluation);
+      setJMeta(data.meta ?? data.evaluation?.meta ?? null);
       setJHistoryLoaded(false); // force reload history
     } catch (e: any) {
       setJError(e.message ?? "Unknown error");
@@ -572,7 +578,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
   useEffect(() => {
     fetch("/api/mentor/thesis")
       .then(r => r.json())
-      .then(d => { setThesis(d.thesis ?? null); setThesisLoading(false); })
+      .then(d => { setThesis(d.thesis ?? null); setThesisMeta(d.meta ?? null); setThesisLoading(false); })
       .catch(() => setThesisLoading(false));
   }, []);
 
@@ -581,6 +587,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
     if (!text || asking) return;
     setQuestion("");
     setAnswer("");
+    setAskMeta(null);
     setAsking(true);
     setTab("ask");
 
@@ -605,8 +612,14 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
             const payload = line.slice(6);
             if (payload === "[DONE]") break;
             try {
-              const { text: chunk, error } = JSON.parse(payload);
+              const parsed = JSON.parse(payload);
+              const { text: chunk, error, meta } = parsed;
               if (error) { setAnswer(prev => prev + `\n\n[Error: ${error}]`); break; }
+              if (meta) {
+                // First meta event carries { agent, agentKind, model }; the final
+                // one carries { toolsUsed, steps }. Merge both into askMeta.
+                setAskMeta((prev: any) => ({ ...(prev ?? {}), ...meta }));
+              }
               if (chunk) {
                 setAnswer(prev => prev + chunk);
                 answerRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -756,7 +769,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "24px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
           <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.10em", textTransform: "uppercase" }}>Current Market Thesis</div>
-          <button onClick={() => { setThesisLoading(true); fetch("/api/mentor/thesis?bust=1").then(r => r.json()).then(d => { setThesis(d.thesis ?? null); setThesisLoading(false); }).catch(() => setThesisLoading(false)); }}
+          <button onClick={() => { setThesisLoading(true); fetch("/api/mentor/thesis?bust=1").then(r => r.json()).then(d => { setThesis(d.thesis ?? null); setThesisMeta(d.meta ?? null); setThesisLoading(false); }).catch(() => setThesisLoading(false)); }}
             style={{ fontSize: "11px", color: T.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
             ↻ refresh
           </button>
@@ -764,7 +777,14 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
         {thesisLoading ? (
           <div style={{ color: T.muted, fontSize: "13px" }}>Generating thesis from latest research… (may take ~90s)</div>
         ) : thesis ? (
-          <p style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7", margin: 0, whiteSpace: "pre-wrap" }}>{thesis}</p>
+          <>
+            <p style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7", margin: 0, whiteSpace: "pre-wrap" }}>{thesis}</p>
+            {thesisMeta?.agent && thesisMeta?.model && (
+              <div style={{ marginTop: "12px" }}>
+                <AiAttribution agent={thesisMeta.agent} model={thesisMeta.model} agentKind={thesisMeta.agentKind} />
+              </div>
+            )}
+          </>
         ) : (
           <div style={{ color: T.muted, fontSize: "13px" }}>
             No research data yet. Run ResearchAgent first — go to <a href="/dashboard/agents" style={{ color: T.accent }}>Agents →</a>
@@ -810,8 +830,13 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
           {/* Answer display */}
           {(answer || asking) && (
             <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "20px" }}>
-              <div style={{ fontSize: "11px", color: T.accent, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "12px" }}>
-                ◐ Agent Response {asking && <span style={{ color: T.muted }}>(thinking…)</span>}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
+                <div style={{ fontSize: "11px", color: T.accent, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                  ◐ Agent Response {asking && <span style={{ color: T.muted }}>(thinking…)</span>}
+                </div>
+                {askMeta?.agent && askMeta?.model && (
+                  <AiAttribution agent={askMeta.agent} model={askMeta.model} agentKind={askMeta.agentKind} toolsUsed={askMeta.toolsUsed} steps={askMeta.steps} />
+                )}
               </div>
               <div style={{ fontSize: "14px", color: T.text, lineHeight: "1.7", whiteSpace: "pre-wrap" }}>
                 {answer}
@@ -1113,6 +1138,11 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
             const vc = verdictColors[jResult.verdict] ?? T.muted;
             return (
               <div style={{ background: T.card, border: `2px solid ${scoreColor}40`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)" }}>
+                {jMeta?.agent && jMeta?.model && (
+                  <div style={{ marginBottom: "14px" }}>
+                    <AiAttribution agent={jMeta.agent} model={jMeta.model} agentKind={jMeta.agentKind} />
+                  </div>
+                )}
                 {/* Score header */}
                 <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "20px", flexWrap: "wrap" }}>
                   <div style={{ textAlign: "center" }}>

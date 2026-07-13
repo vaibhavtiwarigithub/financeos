@@ -60,6 +60,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -96,6 +98,8 @@ export async function POST(req: NextRequest) {
 
 // PATCH — toggle research_enabled / alert_on_signal / alert_on_earnings per symbol
 export async function PATCH(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -121,6 +125,8 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

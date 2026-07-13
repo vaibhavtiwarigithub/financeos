@@ -267,12 +267,12 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
         })
         model = fb
         result = await dispatchProvider(fb, opts)
-      } else if (isAuthMissing(err) && model.startsWith("claude")) {
+      } else if (isAuthMissing(err) && !model.startsWith("deepseek")) {
         // Anthropic API key missing from env — fall back to DeepSeek so the run
         // doesn't hard-fail. Raises a persistent alert so the key gets re-added.
-        const deepseekFb = "deepseek-chat"
+        const deepseekFb = SAME_TIER_FALLBACK[model] ?? "deepseek-chat"
         await reportIssue({
-          issueKey: "anthropic-key-missing",
+          issueKey: `provider-key-missing:${model}`,
           severity: "critical", category: "models",
           title: "ANTHROPIC_API_KEY missing — Claude calls falling back to DeepSeek",
           detail: `${model} auth failed: ${String(err).slice(0, 200)}. Add ANTHROPIC_API_KEY to Vercel environment variables and redeploy.`,
@@ -639,7 +639,19 @@ export async function runAgentLoop(opts: {
   runId?: string
   symbol?: string
 }): Promise<AgentLoopResult> {
-  const model = resolveModel(opts.model ?? "deepseek-v4-flash")
+  let model = resolveModel(opts.model ?? "deepseek-v4-flash")
+  // Tool loops have typed implementations only for Anthropic and DeepSeek.
+  // Do not accidentally send another provider's model id to DeepSeek's API.
+  if (!model.startsWith("claude") && !model.startsWith("deepseek")) {
+    const requested = model
+    model = SAME_TIER_FALLBACK[requested] ?? "deepseek-chat"
+    await reportIssue({
+      issueKey: `tool-loop-provider-fallback:${requested}`,
+      severity: "warn", category: "models",
+      title: `${requested} is not enabled for tool loops; using ${model}`,
+      detail: `Single-shot calls support ${requested}, but runAgentLoop currently supports Claude and DeepSeek only.`,
+    }).catch(() => {})
+  }
   const maxIter = opts.maxIterations ?? 12
   const start = Date.now()
   let result: AgentLoopResult | undefined
@@ -663,9 +675,22 @@ export async function runAgentLoop(opts: {
   })
 
   try {
-    result = model.startsWith("claude")
-      ? await runClaudeAgentLoop(opts, model, maxIter)
-      : await runDeepSeekAgentLoop(opts, model, maxIter)
+    try {
+      result = model.startsWith("claude")
+        ? await runClaudeAgentLoop(opts, model, maxIter)
+        : await runDeepSeekAgentLoop(opts, model, maxIter)
+    } catch (err) {
+      if (!model.startsWith("claude") || !isAuthMissing(err)) throw err
+      const requested = model
+      model = "deepseek-chat"
+      await reportIssue({
+        issueKey: `provider-key-missing:${requested}`,
+        severity: "critical", category: "models",
+        title: `${requested} credentials missing; tool loop fell back to DeepSeek`,
+        detail: `${requested} auth failed: ${String(err).slice(0, 200)}. Add the Anthropic key in Settings or the deployment environment.`,
+      }).catch(() => {})
+      result = await runDeepSeekAgentLoop(opts, model, maxIter)
+    }
     return result
   } catch (err) {
     success = false

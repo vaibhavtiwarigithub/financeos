@@ -965,17 +965,18 @@ const THIN_RUN_MIN_SYMBOLS = 2;            // …and at least this many thin sym
 // Record one symbol's evidence availability and (idempotently) surface a
 // low-confidence alert when a meaningful fraction of the run was scored on thin
 // data. Never throws — a health-reporting failure must not break a research run.
-async function recordRunEvidence(market: string, includedDims: ScoreDimension[], client: any): Promise<void> {
+async function recordRunEvidence(market: string, runKey: string, includedDims: ScoreDimension[], client: any): Promise<void> {
   try {
     const now = Date.now();
-    let acc = RUN_EVIDENCE.get(market);
+    const tallyKey = `${market}:${runKey}`;
+    let acc = RUN_EVIDENCE.get(tallyKey);
     if (!acc || now - acc.lastTouched > EVIDENCE_RUN_GAP_MS) {
       acc = {
         scored: 0, thin: 0,
         missingInThin: { fundamental: 0, technical: 0, sentiment: 0, macro: 0, insider: 0 },
         lastTouched: now, lastReportedThin: null,
       };
-      RUN_EVIDENCE.set(market, acc);
+      RUN_EVIDENCE.set(tallyKey, acc);
     }
     acc.lastTouched = now;
     acc.scored += 1;
@@ -1050,7 +1051,8 @@ function indiaNewsToSocial(symbol: string, news: IndiaNewsSentiment | null): Soc
 export async function processSymbol(
   entry: SymbolEntry,
   supabase: any,
-  universeSnapshotId?: number | null
+  universeSnapshotId?: number | null,
+  evidenceRunId?: string | null,
 ): Promise<{ symbol: string; analystScore: number; direction: string; conviction: number; source: string; tokensIn: number; tokensOut: number; currentPrice: number | null; priceTarget: number | null; stopLoss: number | null; scoreThreshold: number; obsId: number | null }> {
   const { symbol, isHeld, isEtf, assetClass = "us_equity" } = entry;
   const source: string = isHeld ? "holding" : "screener";
@@ -1245,7 +1247,7 @@ export async function processSymbol(
   // System Health (data category): accumulate this symbol's evidence
   // availability into the run tally and surface a low-confidence alert if a
   // meaningful fraction of the run was scored on thin data. Fail-soft.
-  await recordRunEvidence(market, includedDims, supabase);
+  await recordRunEvidence(market, evidenceRunId ?? String(universeSnapshotId ?? "unscoped"), includedDims, supabase);
 
   // Build 1 (genome as live control): the promoted champion's genome sets the
   // entry threshold when present, falling back to strategy_config exactly as

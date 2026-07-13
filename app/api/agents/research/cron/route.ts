@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
       const i = idx++;
       const entry = entries[i];
       try {
-        results[i] = await processSymbol(entry, supabase, universeSnapshotId);
+        results[i] = await processSymbol(entry, supabase, universeSnapshotId, runId ? String(runId) : null);
       } catch (e) {
         results[i] = { symbol: entry.symbol, error: e instanceof Error ? e.message : String(e) };
       }

@@ -72,11 +72,12 @@ Keep it under 300 words. Plain English, no bullet points.`;
 
   try {
     // Production LLM path (was execClaude → PowerShell, which ENOENTs on Vercel).
-    const { text: thesis } = await callLLM({ task: "thesis", prompt, agentLabel: "mentor-thesis", model: await getConfiguredModel(supabase, "mentor-thesis", "deepseek-reasoner") });
+    const res = await callLLM({ task: "thesis", prompt, agentLabel: "mentor-thesis", model: await getConfiguredModel(supabase, "mentor-thesis", "deepseek-reasoner") });
+    const thesis = res.text;
     const now = new Date().toISOString();
 
     cache = { thesis, generatedAt: now, ts: Date.now() };
-    return NextResponse.json({ thesis, generatedAt: now, source: "live" });
+    return NextResponse.json({ thesis, generatedAt: now, source: "live", meta: { agent: "Market Thesis", agentKind: "grounded", model: res.model } });
   } catch (err) {
     if (cache) return NextResponse.json({ ...cache, source: "stale" });
     return NextResponse.json({ thesis: null, generatedAt: null, source: "error", error: String(err) });

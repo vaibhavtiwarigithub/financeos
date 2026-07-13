@@ -148,10 +148,12 @@ export async function POST(req: NextRequest) {
 
   let raw: string;
   let tokenUsage = { input: 0, output: 0 };
+  let usedModel = "deepseek-reasoner";
   try {
     // Production LLM path (was execClaude → PowerShell, which ENOENTs on Vercel).
     const res = await callLLM({ task: "evaluate", prompt, agentLabel: "mentor-evaluate", model: await getConfiguredModel(cfgSvc, "mentor-evaluate", "deepseek-reasoner"), symbol, maxTokens: 2000 });
     raw = res.text;
+    usedModel = res.model;
     tokenUsage = { input: res.tokensIn, output: res.tokensOut };
   } catch (e) {
     return NextResponse.json({ error: "AI evaluation failed", detail: String(e) }, { status: 500 });
@@ -225,5 +227,6 @@ export async function POST(req: NextRequest) {
     ok: true,
     evaluation,
     entry_id: (entry as any)?.id ?? null,
+    meta: { agent: "Judgment Coach", agentKind: "grounded", model: usedModel },
   });
 }

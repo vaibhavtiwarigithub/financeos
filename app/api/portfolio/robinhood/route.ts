@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,8 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export async function GET(_req: NextRequest) {
   try {
+    const gate = await requireOwner();
+    if (gate) return gate;
     const userClient = await createClient();
     const { data: { user } } = await userClient.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

@@ -109,10 +109,11 @@ Be specific, warm but honest, and concrete. Tie the ONE lesson to BOTH the curre
     { name: "finish", description: "Return the coaching. grade 0-100 (discipline/progress), confidence 0-1, strengths[], focus_areas[] (each a short string), lesson (one, market-tailored), market_note, next_milestone.", parameters: { type: "object", properties: { grade: { type: "integer", minimum: 0, maximum: 100 }, confidence: { type: "number", minimum: 0, maximum: 1 }, strengths: { type: "array", items: { type: "string" } }, focus_areas: { type: "array", items: { type: "string" } }, lesson: { type: "string" }, market_note: { type: "string" }, next_milestone: { type: "string" } }, required: ["grade", "confidence", "strengths", "focus_areas", "lesson", "market_note", "next_milestone"] } },
   ];
 
+  // User-selectable in Settings → AI Models (agent_name="mentor").
+  const coachModel = await getConfiguredModel(svc, "mentor", "deepseek-reasoner");
   try {
     const loop = await runAgentLoop({
-      // User-selectable in Settings → Agents → LLM Config (agent_name="mentor").
-      model: await getConfiguredModel(svc, "mentor", "deepseek-v4-pro"),
+      model: coachModel,
       systemPrompt, initialMessage,
       tools: MENTOR_TOOLS, toolExecutor,
       maxIterations: 10, task: "evaluate", agentLabel: "mentor",
@@ -137,7 +138,7 @@ Be specific, warm but honest, and concrete. Tie the ONE lesson to BOTH the curre
       lesson: a.lesson ?? null,
       market_note: a.market_note ?? null,
       next_milestone: a.next_milestone ?? null,
-      model: "deepseek-v4-pro",
+      model: coachModel,
       tokens_in: loop.tokensIn, tokens_out: loop.tokensOut,
     }).select("id, created_at").single();
 
@@ -150,6 +151,7 @@ Be specific, warm but honest, and concrete. Tie the ONE lesson to BOTH the curre
       grade: a.grade, confidence: a.confidence, strengths: a.strengths, focus_areas: a.focus_areas,
       lesson: a.lesson, market_note: a.market_note, next_milestone: a.next_milestone,
       steps: loop.steps, tokensIn: loop.tokensIn, tokensOut: loop.tokensOut,
+      meta: { agent: "AI Coach", agentKind: "agent-loop", model: coachModel, steps: loop.steps },
     });
   } catch (e: any) {
     return NextResponse.json({ error: `Mentor coaching failed: ${e.message}` }, { status: 500 });

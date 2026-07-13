@@ -203,6 +203,11 @@ export async function PATCH(req: NextRequest) {
   const MONEY_COLS = ["max_order_notional", "max_order_notional_usd", "max_order_notional_inr", "max_daily_notional_usd", "max_daily_notional_inr", "max_daily_trades", "max_order_notional_usd_paper", "max_order_notional_inr_paper", "max_daily_notional_usd_paper", "max_daily_notional_inr_paper"];
   const { error: updErr } = await svc.from("strategy_config").update(update).eq("id", existing.id);
   if (updErr) {
+    if (trading_style !== undefined || target_hold_days !== undefined) {
+      return NextResponse.json({
+        error: `Trading Style was not saved. Apply migration 167 and retry: ${updErr.message}`,
+      }, { status: 503 });
+    }
     if (MONEY_COLS.some(c => c in update)) {
       return NextResponse.json({ error: `Failed to save order limits — no change applied: ${updErr.message}` }, { status: 500 });
     }
@@ -224,9 +229,18 @@ export async function GET() {
   if (gate) return gate;
 
   const svc = createServiceClient();
-  const { data } = await svc
+  const fullSelect = "risk_profile, trading_style, target_hold_days, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_expires_at, base_risk_profile, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr, max_daily_notional_usd, max_daily_notional_inr, max_daily_trades, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper";
+  let { data, error } = await svc
     .from("strategy_config")
-    .select("risk_profile, trading_style, target_hold_days, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_expires_at, base_risk_profile, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr, max_daily_notional_usd, max_daily_notional_inr, max_daily_trades, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper")
+    .select(fullSelect)
     .single();
+  if (error) {
+    const fallback = await svc.from("strategy_config")
+      .select("risk_profile, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker")
+      .single();
+    data = fallback.data as any;
+    error = fallback.error;
+  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data ?? {});
 }
