@@ -488,11 +488,14 @@ export async function POST(req: NextRequest) {
     ? "YESTERDAY'S CLOSE (prior session, pre-market context)"
     : "MOST RECENT CLOSE (today's final data may lag by ~15 min)";
 
-  // Portfolio block
-  const nav = portfolio?.nav ?? 10000;
-  const cash = portfolio?.cash_balance ?? 10000;
-  const pnl = nav - 10000;
-  const pnlPct = (pnl / 10000) * 100;
+  // Portfolio block. Baseline is the market's SEED capital, NOT a hardcoded
+  // $10k — India seeds ₹10,00,000, so `nav - 10000` reported +7800% nonsense on
+  // the India book (same class as the old home-hero bug). Per-market seed:
+  const SEED = market === "india" ? 1_000_000 : 10_000;
+  const nav = portfolio?.nav ?? SEED;
+  const cash = portfolio?.cash_balance ?? SEED;
+  const pnl = nav - SEED;
+  const pnlPct = SEED > 0 ? (pnl / SEED) * 100 : 0;
 
   const portfolioBlock = `NAV: ${cur}${nav.toFixed(0)} | Cash: ${cur}${cash.toFixed(0)} | Total P&L: ${pnl >= 0 ? "+" : ""}${cur}${Math.abs(pnl).toFixed(0)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%) | ${positions.length} open positions`;
 
