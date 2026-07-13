@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { getKiteCreds, kiteLoginUrl } from "@/lib/kite";
 import { makeState, signOAuthCookie } from "@/lib/robinhood-mcp";
@@ -13,13 +13,14 @@ const STATE_COOKIE = "kite_oauth_state";
 // cookie and verify it matches on callback — otherwise a stray/replayed
 // callback hitting /api/kite/callback (no auth gate, by design, since Kite
 // itself drives that redirect) could get exchanged for an access token.
-export async function GET() {
+export async function GET(req: NextRequest) {
   const ownerGate = await requireOwner();
   if (ownerGate) return ownerGate;
 
+  const base = process.env.APP_BASE_URL || req.nextUrl.origin;
   const { apiKey } = await getKiteCreds();
   if (!apiKey) {
-    return NextResponse.redirect(new URL("/dashboard/settings?kite=missing_key", process.env.APP_BASE_URL ?? "http://localhost:3000"));
+    return NextResponse.redirect(new URL("/dashboard/settings?kite=missing_key", base));
   }
   const state = makeState();
   const cookie = signOAuthCookie({ state, verifier: "", exp: Date.now() + 10 * 60 * 1000 });

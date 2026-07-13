@@ -15,7 +15,12 @@ const STATE_COOKIE = "kite_oauth_state";
 // recently initiated the login itself; a forged/replayed hit on this route
 // without that cookie is rejected before the token exchange even runs.
 export async function GET(req: NextRequest) {
-  const base = process.env.APP_BASE_URL ?? "http://localhost:3000";
+  // Redirect back to the SAME origin this callback ran on (Vercel in prod), so we
+  // never hard-bounce to localhost when APP_BASE_URL isn't set. APP_BASE_URL still
+  // wins if explicitly configured. NOTE: the domain Kite redirects TO is set in the
+  // Zerodha developer console ("Redirect URL"), NOT here — it must be
+  // https://<your-app>/api/kite/callback, or the whole flow lands on the wrong host.
+  const base = process.env.APP_BASE_URL || req.nextUrl.origin;
   const requestToken = req.nextUrl.searchParams.get("request_token");
   const status = req.nextUrl.searchParams.get("status");
 
