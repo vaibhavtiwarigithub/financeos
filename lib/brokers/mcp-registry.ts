@@ -51,6 +51,24 @@ export interface McpBrokerConfig {
   vaultKeys: { clientId: string; access: string; refresh: string; expiry: string };
   tools: { accountList: string; positions: string; balance: string; quotes: string };
   fields: McpBrokerFields;
+
+  // ── OPTIONAL Phase-2 ORDER surface (SHIPPED INERT) ─────────────────────────
+  // These fields describe how to place/track/cancel orders on an order-capable
+  // MCP broker. They are DELIBERATELY separate from the read-only `scopes`/`tools`
+  // above so the read path is never coupled to the write path. Presence of these
+  // fields does NOT enable orders — the order adapter (lib/brokers/adapters/
+  // webull.ts) gates on a token + a strategy_config kill switch + a per-account
+  // allowlist, ALL of which are off today. See that adapter for the full gate.
+  //
+  // `orderCapable` is a config-level marker only: leave false/undefined to keep
+  // the broker order-inert even if the runtime flags were ever flipped on.
+  orderCapable?: boolean;
+  // Order scopes are ONLY used if/when the owner reconnects the broker with
+  // orders explicitly enabled. The default read-only `scopes` above is unchanged.
+  orderScopes?: string;
+  // Tool names for the order lifecycle: preview (dry-run review), place (submit),
+  // status (fetch a single order), cancel.
+  orderTools?: { preview: string; place: string; status: string; cancel: string };
 }
 
 // ── Registry ────────────────────────────────────────────────────────────────
@@ -102,6 +120,24 @@ export const MCP_BROKERS: Record<string, McpBrokerConfig> = {
       cash: ["total_cash_balance", "cash_balance", "cash", "settled_cash", "available_cash"],
       buyingPower: ["buying_power", "day_buying_power", "account_currency_assets.0.buying_power"],
       quoteSymbolKeys: ["symbols", "symbol", "tickers"],
+    },
+    // ── Phase-2 ORDER surface — SHIPPED INERT (orders OFF) ────────────────────
+    // orderCapable is FALSE: even the config marker keeps Webull order-inert. The
+    // read-only `scopes` above are UNCHANGED — order:write is requested ONLY if
+    // the owner reconnects Webull with orders explicitly enabled (using
+    // orderScopes below). The webull order adapter additionally requires a
+    // strategy_config kill switch + a per-account allowlist row, neither of which
+    // exists today, so no order can be routed here. Order tool names verified live
+    // against the Webull MCP server, but the end-to-end order PATH is UNTESTED
+    // against a live account — the owner must reconnect with order scopes,
+    // allowlist ONE account, and run a $1 manual test before any real use.
+    orderCapable: false,
+    orderScopes: "account:read order:read order:write market:read instrument:read",
+    orderTools: {
+      preview: "preview_stock_order",
+      place: "place_stock_order",
+      status: "get_order_detail",
+      cancel: "cancel_order",
     },
   },
 };

@@ -43,6 +43,7 @@ import { captureFundamentalsFact } from "@/lib/data/pit-fundamentals";
 import { scoreEdgarInsider } from "@/lib/data/edgar-insider";
 import { fetchUpstoxCandles } from "@/lib/data/upstox";
 import { scoreAnalyst } from "@/lib/data/analyst";
+import { fetchWebullAnalyst, webullAnalystLine, type WebullAnalyst } from "@/lib/data/webull-data";
 import { fetchDaysToEarnings } from "@/lib/data/earnings";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
@@ -865,6 +866,7 @@ function buildThesisOnlyPrompt(
   marketFocus?: string,
   indiaNews?: IndiaNewsSentiment | null,
   indiaMacroLine?: string | null,
+  webullLine?: string | null,
 ): string {
   const { fundamental_score, technical_score, sentiment_score, macro_score, insider_score, evidence } = scores;
   const tech = evidence.technical as Record<string, unknown>;
@@ -916,7 +918,7 @@ Technical:   ${technical_score}/100 | ${techLines}
 Sentiment:   ${sentiment_score}/100
 Macro:       ${macro_score}/100 | regime: ${(evidence.macro as Record<string, unknown>).regime ?? "unknown"}${indiaMacroLine ? `\n             India flows: ${indiaMacroLine} (ground macro/flow reasoning in this; do NOT override the pre-computed Macro score)` : ""}
 Insider:     ${insider_score}/100
-Weighted analyst score: ${analystScore}/100 (threshold for trade: ${scoreThreshold})${indiaNewsBlock}
+Weighted analyst score: ${analystScore}/100 (threshold for trade: ${scoreThreshold})${webullLine ? `\n${webullLine} (external analyst evidence — ground the analyst/target reasoning in this; do NOT override the pre-computed scores)` : ""}${indiaNewsBlock}
 
 ${heldNote}
 
@@ -1165,6 +1167,18 @@ export async function processSymbol(
     ? await scoreAnalyst(symbol).catch(() => null)
     : null;
 
+  // Webull MCP as a FREE, read-only research DATA provider (US symbols ONLY).
+  // Additive + absolutely fail-soft: when Webull isn't connected (or any call
+  // fails) this resolves to null and nothing downstream changes — research runs
+  // exactly as before. It contributes a grounding "Webull analyst: rating X,
+  // target $Y, EPS fcst Z" line to the thesis prompt's evidence section (like
+  // the India FII/DII flow line), NOT a new weighted scoring dimension — same
+  // conservative posture as the Finnhub analyst evidence above. India names skip
+  // it entirely (Webull MCP covers US symbols). Off the AV/provider budget.
+  const webullAnalyst: WebullAnalyst | null = !india
+    ? await fetchWebullAnalyst(symbol).catch(() => null)
+    : null;
+
   // Event-proximity: days to next earnings. Logged for the learner to test the
   // "buy the rumor, sell the news" pattern (does pre-earnings hype fade after
   // the print?). Not a gate or sizing input — just an observed feature. ETFs
@@ -1333,7 +1347,9 @@ export async function processSymbol(
   } catch { /* RAG is best-effort — a retrieval failure must not block research */ }
 
   // LLM only writes thesis + direction — no score generation.
-  const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus, india ? indiaNews : null, indiaMacroLine) + trendNote + memoryNote;
+  // US-only Webull analyst grounding line (null when not connected/India → omitted).
+  const webullLine = !india ? webullAnalystLine(webullAnalyst) : null;
+  const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus, india ? indiaNews : null, indiaMacroLine, webullLine) + trendNote + memoryNote;
   const llmResult = await callLLM({
     task: "screen",
     model: await getConfiguredModel(supabase, "research", "deepseek-reasoner"),

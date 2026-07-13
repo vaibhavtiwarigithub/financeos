@@ -36,6 +36,7 @@ async function refreshViaMcp(): Promise<{ ok: boolean; error?: string; equity?: 
     const capturedAt = new Date().toISOString();
     const rows = valid.map(a => ({
       account_id: a.accountId!,
+      broker: "robinhood",
       equity: a.totalValue,
       buying_power: a.buyingPower ?? null,
       portfolio_value: a.totalValue,
@@ -51,6 +52,29 @@ async function refreshViaMcp(): Promise<{ ok: boolean; error?: string; equity?: 
     }));
     const { error: upsertError } = await svc.from("live_account_snapshots").upsert(rows, { onConflict: "account_id" });
     if (upsertError) return { ok: false, error: `snapshot upsert failed: ${upsertError.message}` };
+
+    // SAFE auto-REMOVE (pruning) — delete only Robinhood's OWN accounts that RH
+    // no longer returns, and ONLY because this capture SUCCEEDED with >=1 valid
+    // account. valid.length >= 1 is guaranteed here (we returned above if the
+    // active account was missing, and `valid` includes it), but assert it
+    // explicitly so an empty/failed capture can NEVER mass-delete the rows the
+    // kill switch reads for its NAV baseline. live_performance is left intact
+    // (append-only equity curve).
+    const keepIds = valid.map(a => a.accountId!);
+    if (keepIds.length >= 1) {
+      const inList = keepIds.map(id => `"${String(id).replace(/"/g, '""')}"`).join(",");
+      const { data: pruned, error: pruneErr } = await svc
+        .from("live_account_snapshots")
+        .delete()
+        .eq("broker", "robinhood")
+        .not("account_id", "in", `(${inList})`)
+        .select("account_id");
+      if (pruneErr) {
+        console.error(`[refresh-snapshot] robinhood prune failed (non-fatal): ${pruneErr.message}`);
+      } else if (pruned?.length) {
+        for (const p of pruned) console.log(`[refresh-snapshot] pruned stale robinhood account_id=${(p as any).account_id}`);
+      }
+    }
 
     // Accrue the durable daily equity curve (live_performance) — one row per
     // account per calendar day with real broker equity + that day's VOO close.
@@ -181,10 +205,11 @@ async function refreshViaMcp(): Promise<{ ok: boolean; error?: string; equity?: 
 // live account book — ADDITIVE to Robinhood, and CLOUD-native (OAuth token in the
 // vault, no local machine). Auto-ADD: a newly-returned account just upserts, so
 // opening an account at the broker makes it appear on the next refresh.
-// Auto-REMOVE (pruning) is deliberately NOT done here — deleting rows near the
-// kill-switch NAV baseline is risky; it needs a broker tag + a success-gated
-// prune (tracked separately). Best-effort per broker; one broker failing never
-// blocks another or Robinhood.
+// Auto-REMOVE (pruning) IS done here, SAFELY: after a broker captures >=1 valid
+// account, its own stale rows (broker=cfg.id, account_id not in the captured set)
+// are deleted — never on a failed/empty capture, and never across brokers, so a
+// broker outage can't wipe the kill-switch NAV baseline. Best-effort per broker;
+// one broker failing (or its prune failing) never blocks another or Robinhood.
 async function refreshRegistryBrokers(): Promise<{ broker: string; ok: boolean; accounts: number; error?: string }[]> {
   const svc = createServiceClient();
   const out: { broker: string; ok: boolean; accounts: number; error?: string }[] = [];
@@ -206,6 +231,7 @@ async function refreshRegistryBrokers(): Promise<{ broker: string; ok: boolean; 
       if (!valid.length) { out.push({ broker: cfg.id, ok: false, accounts: 0, error: accts[0]?.error ?? "no valid accounts" }); continue; }
       const rows = valid.map(a => ({
         account_id: a.accountId!,
+        broker: cfg.id,
         equity: a.totalValue,
         buying_power: a.buyingPower ?? null,
         portfolio_value: a.totalValue,
@@ -221,6 +247,29 @@ async function refreshRegistryBrokers(): Promise<{ broker: string; ok: boolean; 
       }));
       const { error: upErr } = await svc.from("live_account_snapshots").upsert(rows, { onConflict: "account_id" });
       if (upErr) { out.push({ broker: cfg.id, ok: false, accounts: 0, error: upErr.message }); continue; }
+
+      // SAFE auto-REMOVE (pruning) — delete only THIS broker's own accounts that
+      // it no longer returns, gated on a successful capture with >=1 valid
+      // account (guaranteed by the `!valid.length` guard above, re-asserted here
+      // so a partial/empty capture can never mass-delete near the kill-switch NAV
+      // baseline). Scoped by broker=cfg.id; other brokers' rows are untouched.
+      // live_performance history is intentionally left intact (append-only curve).
+      const keepIds = valid.map(a => a.accountId!);
+      if (keepIds.length >= 1) {
+        const inList = keepIds.map(id => `"${String(id).replace(/"/g, '""')}"`).join(",");
+        const { data: pruned, error: pruneErr } = await svc
+          .from("live_account_snapshots")
+          .delete()
+          .eq("broker", cfg.id)
+          .not("account_id", "in", `(${inList})`)
+          .select("account_id");
+        if (pruneErr) {
+          console.error(`[refresh-snapshot] ${cfg.id} prune failed (non-fatal): ${pruneErr.message}`);
+        } else if (pruned?.length) {
+          for (const p of pruned) console.log(`[refresh-snapshot] pruned stale ${cfg.id} account_id=${(p as any).account_id}`);
+        }
+      }
+
       const perfRows = valid.map(a => ({ account_id: a.accountId!, date: day, equity: a.totalValue, bench_nav: vooClose }));
       await svc.from("live_performance").upsert(perfRows, { onConflict: "account_id,date" }).then(undefined, () => {});
       out.push({ broker: cfg.id, ok: true, accounts: valid.length });
