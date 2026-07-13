@@ -192,24 +192,25 @@ prewarm cron over its window, never the scoring cron:
 Any chain that still can't cover 42 (e.g. India fundamentals) is reported as
 `provider_unpriceable`, not silently starved.
 
-## Build order
-1. **Stop the AV sentiment drain (biggest, quickest win):** US sentiment →
-   StockTwits → GDELT tonechart → AV reserve. Drops AV from ~42 to ~0 calls/day.
-2. Supabase-backed pacing (`provider_limits` + ledger + lease RPC) in
-   `providerCachedFetch()`.
-3. Config-driven source chains (registry per dimension×market with validation gates).
-4. Data-availability telemetry + System Health alerts.
-5. Prewarm/refresh cron + `evidence_cache` + TTL + priority classes.
-6. Fix evidence provenance labels.
-7. Build + validate the fundamentals sources properly (endpoints already return
-   data; what remains is the ADAPTER work, not endpoint discovery):
-   - SEC companyfacts adapter with correct TTM/avg-equity/period-matched derivation,
-     US-GAAP+IFRS taxonomy handling, symbol→CIK map, and per-field coverage tracking.
-   - US Yahoo `quoteSummary` adapter (forward-looking fields), crumb cache + fail-soft.
-   - Still-unvalidated ⚠️ sources (Upstox, TwelveData `/time_series`, NSE PIT/
-     announcements) each behind a live probe before enabling.
-   Note: "endpoint returns data" ≠ "correct metric" — sign-off requires the
-   period-equivalence checks above, spot-checked against ≥5 names per market.
+## Build order — SHIPPED status (2026-07-13)
+1. ✅ **DONE** — US sentiment → StockTwits → GDELT tonechart → AV reserve (commit 504cf44).
+2. ✅ **DONE (adapted)** — Supabase-backed pacing: `provider_pacing` + `try_acquire_provider_slot`
+   RPC (migration 176) in `providerCachedFetch()`, for the HARD-limited providers (Massive/GDELT).
+   Serve-stale on no-slot. (Full `provider_limits`/ledger/refresh-jobs deferred with the prewarm cron.)
+3. ⏳ **PARTIAL** — source chains are code-ordered (Finnhub→Yahoo→SEC→FMP→AV; Massive→EDGAR→AV;
+   StockTwits→GDELT→AV). Not yet a config registry with per-source validation gates.
+4. ✅ **DONE** — `data-availability:<market>:<dim>` telemetry (warn<85%/crit<70% among applicable).
+5. ⏳ **NOT BUILT** — prewarm/refresh cron + `evidence_cache` + TTL + priority classes. The biggest
+   remaining lift; cold-start bursts still rely on serve-stale, not a warmed cache.
+6. ⏳ **NOT BUILT** — evidence provenance labels in the journal (still may show generic sources).
+7. ✅ **DONE (fundamentals adapters)** — SEC companyfacts adapter (`lib/data/sec-fundamentals.ts`,
+   consistent latest-annual basis, avg-equity ROE, FY-vs-FY growth, US-GAAP+IFRS, symbol→CIK map,
+   per-field coverage) + US Yahoo `quoteSummary` (reuses `fetchIndiaOverview`, crumb cache + fail-soft)
+   wired into the US chain. ⏳ Still-unvalidated ⚠️ sources (Upstox, TwelveData `/time_series`,
+   NSE PIT/announcements) remain behind a future live probe. Insider adapter (Massive Form 4) shipped
+   earlier (commit 3d742c4).
+   Note: "endpoint returns data" ≠ "correct metric" — a live spot-check of the SEC-derived margin/ROE
+   against ≥5 names is still worth doing before fully trusting the SEC tier.
 
 ## Riskiest assumption
 Fundamentals redundancy now rests on two **unofficial** sources (Yahoo quoteSummary,
