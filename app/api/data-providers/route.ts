@@ -22,6 +22,8 @@ const KEY_ENV: Record<ProviderId, string | null> = {
   upstox: "UPSTOX_ACCESS_TOKEN",
   fred: "FRED_API_KEY",
   gdelt: null, // free, no API key required
+  sec: null,   // SEC EDGAR — official, no key
+  yahoo: null, // Yahoo quoteSummary — unofficial, no key
 };
 
 // Decode a JWT's `exp` (seconds) without verifying — only for showing an expiry

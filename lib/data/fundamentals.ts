@@ -1,4 +1,6 @@
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
+import { fetchIndiaOverview as fetchYahooOverview } from "@/lib/india-data";
+import { fetchSecOverview } from "@/lib/data/sec-fundamentals";
 
 // US fundamentals adapter. Maps FMP's TTM ratio/metric fields into the same
 // Alpha-Vantage-OVERVIEW shape that lib/data/scores.ts:scoreFundamentals already
@@ -86,6 +88,11 @@ export async function fetchFinnhubOverview(symbol: string): Promise<Overview> {
 // source served it. `avFallback` keeps AV as last resort without this module
 // importing it. Requires >=2 real fields (matches hasMinFundamentalFields)
 // before trusting a source, so a thin/empty provider result cascades to the next.
+// US fundamentals chain: Finnhub → Yahoo → SEC EDGAR → FMP → AV (reserve).
+// Each source is live-validated (2026-07-13) and only wins with >=2 real fields,
+// so a dead/thin source cascades to the next and no single provider is a point of
+// failure. They are non-equivalent by design (Finnhub = TTM ratios/profile,
+// Yahoo = forward-looking, SEC = official annual reported) — first sufficient wins.
 export async function fetchUsOverview(
   symbol: string,
   avFallback: () => Promise<Overview>,
@@ -94,6 +101,12 @@ export async function fetchUsOverview(
 
   const finnhub = await fetchFinnhubOverview(symbol).catch(() => ({} as Overview));
   if (realFields(finnhub) >= 2) return { overview: finnhub, source: "finnhub" };
+
+  const yahoo = await fetchYahooOverview(symbol).catch(() => ({} as Overview));
+  if (realFields(yahoo) >= 2) return { overview: yahoo, source: "yahoo" };
+
+  const sec = await fetchSecOverview(symbol).catch(() => ({} as Overview));
+  if (realFields(sec) >= 2) return { overview: sec, source: "sec_edgar" };
 
   const fmp = await fetchFmpOverview(symbol);
   if (realFields(fmp) >= 2) return { overview: fmp, source: "fmp" };
