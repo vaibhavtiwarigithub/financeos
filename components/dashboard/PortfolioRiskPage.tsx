@@ -3,7 +3,12 @@ import { useState, useEffect, useCallback } from "react";
 import PageHeader from "./PageHeader";
 import RhReconnectBanner from "@/components/dashboard/RhReconnectBanner";
 import { useMarket } from "@/lib/market-context";
+import { fmtMoney } from "@/lib/format-money";
 import type { RiskMetrics, HoldingWithRisk, SectorBreakdown } from "@/lib/portfolio-risk";
+
+// The `cur` symbol in this file is always "$" or "₹"; map it to the market so ₹
+// book values group lakh/crore-style (₹12,34,567) while $ stays en-US thousands.
+const mktOf = (cur: string): "us" | "india" => (cur === "₹" ? "india" : "us");
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -81,7 +86,7 @@ function HoldingsTable({ holdings, risk, cur }: { holdings: HoldingWithRisk[]; r
               <tr key={`${h.symbol}-${i}`} style={{ borderBottom: `1px solid ${T.border}44` }}>
                 <td style={{ padding: "8px 10px", fontWeight: 700, color: T.text }}>{h.symbol}</td>
                 <td style={{ padding: "8px 10px", color: T.sub }}>{h.sector}</td>
-                <td style={{ padding: "8px 10px", color: T.text }}>{cur}{h.marketValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                <td style={{ padding: "8px 10px", color: T.text }}>{fmtMoney(h.marketValue, mktOf(cur), 0)}</td>
                 <td style={{ padding: "8px 10px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                     <span style={{ color: weightColor, fontWeight: 600, width: "36px" }}>{(h.weightPct * 100).toFixed(1)}%</span>
@@ -93,7 +98,7 @@ function HoldingsTable({ holdings, risk, cur }: { holdings: HoldingWithRisk[]; r
                 </td>
                 <td style={{ padding: "8px 10px", color: pnlColor }}>
                   {h.unrealizedPnl != null
-                    ? `${(h.unrealizedPnl ?? 0) >= 0 ? "+" : "−"}${cur}${Math.abs(h.unrealizedPnl ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} (${(h.unrealizedPnlPct ?? 0) >= 0 ? "+" : ""}${((h.unrealizedPnlPct ?? 0)).toFixed(1)}%)`
+                    ? `${(h.unrealizedPnl ?? 0) >= 0 ? "+" : "−"}${fmtMoney(Math.abs(h.unrealizedPnl ?? 0), mktOf(cur), 0)} (${(h.unrealizedPnlPct ?? 0) >= 0 ? "+" : ""}${((h.unrealizedPnlPct ?? 0)).toFixed(1)}%)`
                     : "—"}
                 </td>
               </tr>
@@ -152,9 +157,9 @@ function AccountRiskSection({ ar, isIndia }: { ar: AccountRisk; isIndia: boolean
             ? <div style={{ fontSize: "11px", color: T.red, marginTop: "2px" }}>{ar.error.slice(0, 80)}</div>
             : (
               <div style={{ fontSize: "11px", color: T.sub, marginTop: "2px" }}>
-                {cur}{ar.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })} equity
+                {fmtMoney(ar.totalValue, mktOf(cur), 0)} equity
                 · {risk.holdingCount} positions
-                · {cur}{ar.cashBalance.toLocaleString(undefined, { maximumFractionDigits: 0 })} cash
+                · {fmtMoney(ar.cashBalance, mktOf(cur), 0)} cash
               </div>
             )}
         </div>
@@ -173,7 +178,7 @@ function AccountRiskSection({ ar, isIndia }: { ar: AccountRisk; isIndia: boolean
               )}
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: "9px", color: T.muted, textTransform: "uppercase" }}>Factor loss</div>
-                <div style={{ fontSize: "14px", fontWeight: 700, color: T.amber }}>−{cur}{risk.var95_dollar.toFixed(0)}</div>
+                <div style={{ fontSize: "14px", fontWeight: 700, color: T.amber }}>−{fmtMoney(risk.var95_dollar, mktOf(cur), 0)}</div>
               </div>
             </>
           )}
@@ -329,7 +334,7 @@ function DailyHoldingRow({ h, prevScore, cur }: { h: DailyHolding; prevScore: nu
         </td>
         <td style={{ padding: "8px 10px", color: T.sub }}>{h.sector ?? "—"}</td>
         <td style={{ padding: "8px 10px", color: T.text, fontVariantNumeric: "tabular-nums" }}>
-          {h.market_value != null ? `${cur}${h.market_value.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}
+          {h.market_value != null ? fmtMoney(h.market_value, mktOf(cur), 0) : "—"}
         </td>
         <td style={{ padding: "8px 10px", color: T.text, fontVariantNumeric: "tabular-nums" }}>
           {h.weight_pct != null ? `${(h.weight_pct * 100).toFixed(1)}%` : "—"}
@@ -600,7 +605,7 @@ export default function PortfolioRiskPage() {
                 ? <span style={{ color: T.red, marginLeft: "8px" }}>— {a.error.slice(0, 120)}</span>
                 : (
                   <>
-                    <span style={{ color: T.text, fontWeight: 700, marginLeft: "8px" }}>{cur}{a.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                    <span style={{ color: T.text, fontWeight: 700, marginLeft: "8px" }}>{fmtMoney(a.totalValue, mktOf(cur), 0)}</span>
                     <span style={{ color: T.muted, marginLeft: "6px" }}>· {a.holdingCount} positions</span>
                   </>
                 )}
@@ -621,7 +626,7 @@ export default function PortfolioRiskPage() {
               Combined Across All Accounts
             </div>
             <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "20px" }}>
-              <StatCard label="Invested Value" value={`${cur}${risk.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} sub={`${risk.holdingCount} positions · cash excluded`} />
+              <StatCard label="Invested Value" value={fmtMoney(risk.totalValue, mktOf(cur), 0)} sub={`${risk.holdingCount} positions · cash excluded`} />
               <StatCard label="Risk Score" value={`${risk.riskScore}/100`} sub={risk.riskLabel} color={risk.riskColor} />
               <StatCard
                 label="Market Sensitivity"
@@ -633,7 +638,7 @@ export default function PortfolioRiskPage() {
               />
               <StatCard
                 label="1-Day Market-Factor Loss (95%)"
-                value={`−${cur}${risk.var95_dollar.toFixed(0)}`}
+                value={`−${fmtMoney(risk.var95_dollar, mktOf(cur), 0)}`}
                 sub={`${(risk.var95_pct * 100).toFixed(1)}% · benchmark-factor proxy, not full VaR`}
                 color={T.amber}
               />

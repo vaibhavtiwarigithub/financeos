@@ -6,6 +6,7 @@ import GoalCard from "@/components/dashboard/GoalCard";
 import AgentCalendar from "@/components/dashboard/AgentCalendar";
 import SystemHealthCard from "@/components/dashboard/SystemHealthCard";
 import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
+import { fmtMoneyAbbrev } from "@/lib/format-money";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -156,13 +157,10 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
   const { masked: liveNumbersMasked, setRevealed: setLiveRevealed } = useRevealToggle();
 
   // Market-aware money formatter for the PAPER hero (the live Robinhood panel
-  // stays $ — it's a US account). fmt$ is the existing $ formatter.
-  function fmtRs(n: number) {
-    const abs = Math.abs(n);
-    const s = abs >= 1000 ? "₹" + (abs / 1000).toFixed(1) + "k" : "₹" + abs.toFixed(0);
-    return n < 0 ? "-" + s : s;
-  }
-  const fmtMoney = (n: number) => (isIndia ? fmtRs(n) : fmt$(n));
+  // stays $ — it's a US account, fmt$ above). The hero shows compact values, so
+  // route through the shared abbrev helper: India gives ₹8.47L / ₹2.30Cr with the
+  // lakh/crore convention; US is unchanged ($9.9k / $1.2M).
+  const fmtMoney = (n: number) => fmtMoneyAbbrev(n, mkt);
 
   // LLM burn rate banner
   const [llmAlert, setLlmAlert] = useState(false);

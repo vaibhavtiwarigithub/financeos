@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
+import { fmtMoney } from "@/lib/format-money";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -56,10 +57,11 @@ type ScoreRow = {
 
 type Signal = { symbol: string; score: number; direction: string; rationale: string; created_at: string };
 
-// ₹ with thousands separators — plain Indian-numeral-free grouping is fine per spec.
+// ₹ full amount with Indian lakh/crore grouping (₹12,34,567.00) via the shared
+// market-aware helper. Keeps the "₹—" empty display for null/non-finite inputs.
 function inr(v: number | null | undefined, digits = 2): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "₹—";
-  return "₹" + v.toLocaleString("en-IN", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return fmtMoney(v, "india", digits);
 }
 
 function scoreColor(s: number): string {

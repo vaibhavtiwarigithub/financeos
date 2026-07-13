@@ -3,6 +3,7 @@ import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket } from "@/lib/market-context";
+import { fmtMoney } from "@/lib/format-money";
 const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
@@ -19,7 +20,12 @@ const T = {
 const CURRENCY: Record<string, string> = { us: "$", india: "₹" };
 
 function pnlColor(n: number) { return n >= 0 ? T.green : T.red; }
-function fmt(n: number, cur = "$") { return (n >= 0 ? "+" : "") + cur + Math.abs(n).toFixed(2); }
+// Signed money. `cur` maps 1:1 to a market ("$"→us, "₹"→india); route through the
+// shared helper so India groups lakh/crore-style while US stays en-US thousands.
+function fmt(n: number, cur = "$") {
+  const market = cur === "₹" ? "india" : "us";
+  return (n >= 0 ? "+" : "") + fmtMoney(Math.abs(n), market);
+}
 function fmtPct(n: number) { return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
 
 // ── Gauge helpers ─────────────────────────────────────────────────────────────
@@ -121,7 +127,7 @@ function NavSparkline({ perf, cur = "$" }: { perf: any[]; cur?: string }) {
       <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "8px" }}>
         NAV History · {perf.length} days
         <span style={{ marginLeft: "12px", color, fontWeight: 600 }}>
-          {cur}{navs[navs.length - 1].toFixed(0)}
+          {fmtMoney(navs[navs.length - 1], cur === "₹" ? "india" : "us", 0)}
         </span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: `${H}px` }} preserveAspectRatio="none">
@@ -185,9 +191,9 @@ function PortfolioHeader({
           <div>
             <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "4px" }}>Paper NAV</div>
             <div style={{ fontSize: "clamp(22px,7vw,32px)", fontWeight: 800, letterSpacing: "-0.02em", color: T.text, lineHeight: 1 }}>
-              {cur}{nav.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              {fmtMoney(nav, cur === "₹" ? "india" : "us", 0)}
             </div>
-            <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>started {cur}{startingNAV.toLocaleString("en-US")}</div>
+            <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>started {fmtMoney(startingNAV, cur === "₹" ? "india" : "us", 0)}</div>
           </div>
 
           {/* Total P&L */}
@@ -215,7 +221,7 @@ function PortfolioHeader({
               {positions.length} open
               <span style={{ color: T.muted, fontWeight: 400, marginLeft: "6px" }}>·</span>
               <span style={{ color: T.textSub, fontWeight: 500, marginLeft: "6px" }}>
-                {cur}{posValue.toLocaleString("en-US", { maximumFractionDigits: 0 })} deployed
+                {fmtMoney(posValue, cur === "₹" ? "india" : "us", 0)} deployed
               </span>
             </div>
           </div>
@@ -467,7 +473,6 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
 
 function LiveHoldingsTab({ market = "us" }: { market?: string }) {
   const isIndia = market === "india";
-  const sym = isIndia ? "₹" : "$";
   const broker = isIndia ? "Zerodha Kite" : "Robinhood";
   const endpoint = isIndia ? "/api/kite/holdings" : "/api/portfolio/live-holdings";
   const acctLine = isIndia
@@ -542,11 +547,11 @@ function LiveHoldingsTab({ market = "us" }: { market?: string }) {
                       )}
                     </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{p.qty}</td>
-                    <td style={{ padding: "10px 12px 10px 0" }}>{p.avg_cost ? sym + Number(p.avg_cost).toFixed(2) : <span style={{ color: T.muted }}>—</span>}</td>
-                    <td style={{ padding: "10px 12px 10px 0" }}>{cur ? sym + Number(cur).toFixed(2) : <span style={{ color: T.muted }}>—</span>}</td>
-                    <td style={{ padding: "10px 12px 10px 0" }}>{sym}{value.toFixed(0)}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{p.avg_cost ? fmtMoney(Number(p.avg_cost), isIndia ? "india" : "us") : <span style={{ color: T.muted }}>—</span>}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{cur ? fmtMoney(Number(cur), isIndia ? "india" : "us") : <span style={{ color: T.muted }}>—</span>}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{fmtMoney(value, isIndia ? "india" : "us", 0)}</td>
                     <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: pnl >= 0 ? T.green : T.red }}>
-                      {cur && p.avg_cost ? (pnl >= 0 ? "+" : "") + sym + Math.abs(pnl).toFixed(2) : <span style={{ color: T.muted }}>—</span>}
+                      {cur && p.avg_cost ? (pnl >= 0 ? "+" : "") + fmtMoney(Math.abs(pnl), isIndia ? "india" : "us") : <span style={{ color: T.muted }}>—</span>}
                     </td>
                     <td style={{ padding: "10px 0", color: pnlPct >= 0 ? T.green : T.red }}>
                       {cur && p.avg_cost ? (pnlPct >= 0 ? "+" : "") + pnlPct.toFixed(2) + "%" : <span style={{ color: T.muted }}>—</span>}
@@ -560,12 +565,12 @@ function LiveHoldingsTab({ market = "us" }: { market?: string }) {
           <div style={{ borderTop: `1px solid ${T.border}`, marginTop: "12px", paddingTop: "12px", display: "flex", gap: "32px", flexWrap: "wrap" }}>
             <div>
               <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Value</div>
-              <div style={{ fontSize: "18px", fontWeight: 700, color: T.text }}>{sym}{totalValue.toFixed(0)}</div>
+              <div style={{ fontSize: "18px", fontWeight: 700, color: T.text }}>{fmtMoney(totalValue, isIndia ? "india" : "us", 0)}</div>
             </div>
             <div>
               <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total P&L</div>
               <div style={{ fontSize: "18px", fontWeight: 700, color: totalPnl >= 0 ? T.green : T.red }}>
-                {(totalPnl >= 0 ? "+" : "") + sym + Math.abs(totalPnl).toFixed(2)}
+                {(totalPnl >= 0 ? "+" : "") + fmtMoney(Math.abs(totalPnl), isIndia ? "india" : "us")}
               </div>
             </div>
           </div>
@@ -599,7 +604,7 @@ function PositionCard({ p, onChart, cur = "$", market = "us" }: { p: any; onChar
       });
       const d = await res.json();
       if (!res.ok) { setCloseMsg(d.error ?? "Close failed"); return; }
-      setCloseMsg(`Closed @ ${cur}${d.closed_at_price.toFixed(2)} (${d.outcome})`);
+      setCloseMsg(`Closed @ ${fmtMoney(d.closed_at_price, market === "india" ? "india" : "us")} (${d.outcome})`);
       setTimeout(() => window.location.reload(), 1200);
     } finally { setClosing(false); }
   }
@@ -626,10 +631,10 @@ function PositionCard({ p, onChart, cur = "$", market = "us" }: { p: any; onChar
           <span style={{ fontSize: "12px", color: T.muted }}>{p.qty} shares</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: T.textSub }}>
-          <span>{cur}{p.avg_cost.toFixed(2)}</span>
+          <span>{fmtMoney(p.avg_cost, market === "india" ? "india" : "us")}</span>
           <span style={{ color: T.muted }}>→</span>
           <span style={{ color: hasLive ? T.text : T.muted, fontWeight: hasLive ? 600 : 400 }}>
-            {hasLive ? cur + p.current_price.toFixed(2) : "—"}
+            {hasLive ? fmtMoney(p.current_price, market === "india" ? "india" : "us") : "—"}
           </span>
         </div>
       </div>
@@ -648,7 +653,7 @@ function PositionCard({ p, onChart, cur = "$", market = "us" }: { p: any; onChar
             {fmtPct(pnlPct)}
           </span>
         </div>
-        <div style={{ fontSize: "12px", color: T.muted }}>{cur}{posValue.toFixed(0)} value</div>
+        <div style={{ fontSize: "12px", color: T.muted }}>{fmtMoney(posValue, market === "india" ? "india" : "us", 0)} value</div>
         <button
           onClick={handleClose}
           disabled={closing}
@@ -712,7 +717,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
       <PageHeader
         title="Paper Portfolio"
-        subtitle={`NAV ${cur}${nav.toFixed(0)} · ${positions.length} open position${positions.length !== 1 ? "s" : ""}`}
+        subtitle={`NAV ${fmtMoney(nav, activeMarket, 0)} · ${positions.length} open position${positions.length !== 1 ? "s" : ""}`}
         cadence="weekly"
         whatItDoes="Your paper trading portfolio — all open positions, closed trades, P&L history, and pending signals queue. Agent executes paper trades automatically each morning. NAV (Net Asset Value) = your uninvested cash + the current market value of everything you hold — what the whole paper account is worth right now."
         whatToLookFor={[
@@ -838,8 +843,8 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
                       </span>
                     </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{t.qty}</td>
-                    <td style={{ padding: "10px 12px 10px 0" }}>{cur}{t.fill_price?.toFixed(2)}</td>
-                    <td style={{ padding: "10px 12px 10px 0" }}>{cur}{(t.qty * t.fill_price)?.toFixed(0)}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{fmtMoney(Number(t.fill_price), activeMarket)}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{fmtMoney(t.qty * t.fill_price, activeMarket, 0)}</td>
                     <td style={{ padding: "10px 12px 10px 0", color: T.accent }}>{t.analyst_score ?? "—"}</td>
                     <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: t.realized_pnl != null ? pnlColor(t.realized_pnl) : T.muted }}>
                       {t.realized_pnl != null ? fmt(t.realized_pnl, cur) : "—"}
@@ -955,7 +960,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
               </div>
               <div>
                 <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Realized P&L (taken)</div>
-                <div style={{ fontSize: "22px", fontWeight: 700, color: takenPnl >= 0 ? T.green : T.red }}>{takenPnl >= 0 ? "+" : ""}{cur}{takenPnl.toFixed(2)}</div>
+                <div style={{ fontSize: "22px", fontWeight: 700, color: takenPnl >= 0 ? T.green : T.red }}>{takenPnl >= 0 ? "+" : ""}{fmtMoney(Math.abs(takenPnl), activeMarket)}</div>
               </div>
               <div>
                 <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Open Positions</div>
@@ -993,7 +998,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
                         {r.trade ? (r.trade.closed_at ? r.trade.outcome?.toUpperCase() : "open") : "—"}
                       </td>
                       <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: r.trade?.realized_pnl != null ? (r.trade.realized_pnl >= 0 ? T.green : T.red) : T.muted }}>
-                        {r.trade?.realized_pnl != null ? (r.trade.realized_pnl >= 0 ? "+" : "") + cur + Math.abs(r.trade.realized_pnl).toFixed(2) : "—"}
+                        {r.trade?.realized_pnl != null ? (r.trade.realized_pnl >= 0 ? "+" : "") + fmtMoney(Math.abs(r.trade.realized_pnl), activeMarket) : "—"}
                       </td>
                       <td style={{ padding: "10px 0", color: T.muted, fontSize: "11px" }}>{new Date(r.created_at).toLocaleDateString()}</td>
                     </tr>
