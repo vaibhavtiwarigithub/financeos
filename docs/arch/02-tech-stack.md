@@ -98,16 +98,18 @@ registry.
 
 | Provider | What it provides | Auth |
 |---|---|---|
-| Alpha Vantage (AV) | Technicals (RSI, EMA, MA), OVERVIEW fundamentals, NEWS_SENTIMENT, INSIDER_TRANSACTIONS, 8 macro indicators | `ALPHA_VANTAGE_API_KEY` in vault |
-| Massive Market Data | US candles, stock screener, options, quotes | `MASSIVE_API_KEY` in vault |
-| FinancialDatasets (FMP) | `screen_stocks` screener for US momentum/value buckets | `FMP_API_KEY` in vault |
+| Alpha Vantage (AV) | Technicals (RSI, EMA, MA), 8 macro indicators; **last-resort** fundamentals/insider fallback (25/day cap, usually exhausted) | `ALPHA_VANTAGE_API_KEY` in vault |
+| Finnhub | **PRIMARY US fundamentals** — `/stock/metric` (P/E, net margin, ROE, EPS, revenue growth) + `/stock/profile2` (sector), mapped to AV-OVERVIEW shape in `lib/data/fundamentals.ts:fetchFinnhubOverview`. Free 60/min, no daily cap | `FINNHUB_API_KEY` in Vercel env |
+| Massive Market Data | US candles, stock screener, options, quotes; **PRIMARY US insider** — `/stocks/filings/vX/form-4` open-market P/S transaction scoring (`lib/data/massive-insider.ts`) | `MASSIVE_API_KEY` in vault |
+| FMP | `screen_stocks` screener for US momentum/value buckets; **secondary** fundamentals fallback only (its `/stable/ratios-ttm`+`/key-metrics-ttm` are premium-gated on the free plan → usually returns nothing, so Finnhub is primary) | `FMP_API_KEY` in vault |
+| FinancialDatasets | `financial-metrics/snapshot` fundamentals for the scanner — **metered credits; currently $0 balance → returns nothing**, so NOT used for research scoring fundamentals (Finnhub replaced it) | `FINANCIAL_DATASETS_API_KEY` in vault |
 | Jina AI | `jina-embeddings-v3` embeddings (1024-dim, free) + `jina-reranker-v2-base-multilingual` reranker (free, 1M tokens/month, no CC) | `JINA_API_KEY` in `.env.local` |
 | Langfuse | LLM trace/generation observability | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` |
 | Resend | Transactional email (briefings) | `RESEND_API_KEY` |
 | Stripe | Subscription billing (Pro/Elite tiers) | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` |
 | Yahoo Finance | India `.NS` price+candles (free, no auth) + fundamentals (cookie+crumb) | None |
 | NSE public JSON | Full equity list (`EQUITY_L.csv`), insider trades (`corporates-pit`), option chain, **daily FII/DII net cash flows** (`fiidiiTradeReact`, `lib/india-macro.ts` — India macro input, verified reachable from Vercel 2026-07-12) | Cookie handshake via `lib/nse-data.ts` / `lib/india-macro.ts` |
-| GDELT DOC 2.0 | **India news tone → sentiment** (`lib/india-news.ts`, article-tone aggregate); free, no key | None (public API) |
+| GDELT DOC 2.0 | **India news tone → sentiment** (`lib/india-news.ts`); uses `mode=tonechart` (count-weighted mean tone over a 14d tone histogram) — the `artlist` mode carries NO per-article tone, which had left every India name's sentiment unavailable | None (public API) |
 | House Stock Watcher | Congressional stock trade disclosures | None (public S3) |
 | SEC EDGAR | Form 4 CIK lookup + XML → `evidence_records` | None (public) |
 | StockTwits | Social sentiment for US tickers | (check vault) |

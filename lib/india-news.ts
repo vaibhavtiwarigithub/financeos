@@ -28,16 +28,18 @@ export interface IndiaNewsSentiment {
 // confident tone.
 const MIN_ARTICLES = 3;
 
-interface GdeltArticle {
-  title?: string;
-  tone?: number | string;
-  seendate?: string;
-  domain?: string;
-  language?: string;
+// GDELT `tonechart` mode returns a histogram of article emotional tone: one bin
+// per integer tone value, each with a document count and up to a few example
+// articles. (The `artlist` mode does NOT carry a per-article `tone` field, which
+// is why the earlier artlist-based fetch scored EVERY India name as unavailable.)
+interface GdeltToneBin {
+  bin?: number | string;   // integer tone value (~ -100..+100, usually -15..+15)
+  count?: number | string; // documents with this tone
+  toparts?: { url?: string; title?: string }[];
 }
 
-interface GdeltResponse {
-  articles?: GdeltArticle[];
+interface GdeltToneChartResponse {
+  tonechart?: GdeltToneBin[];
 }
 
 // tone → 0-100 score. GDELT tone is roughly -10..+10 centered on 0 (neutral).
@@ -69,41 +71,49 @@ export async function fetchIndiaNewsSentiment(
     // is a daily aggregate, not a live feed, so re-fetching the same name within
     // a day just wastes a call. GDELT has no daily budget cap (rate-limited only),
     // so this only de-dupes; it never starves a budget.
+    //
+    // `tonechart` (NOT `artlist`) is the mode that actually carries tone: it
+    // returns a per-tone-value histogram {bin, count, toparts[]}. We take the
+    // count-weighted mean bin as the aggregate tone, sum the counts as the
+    // article sample, and pull example headlines from each bin's `toparts`.
     const url =
       `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}` +
-      `&mode=artlist&format=json&maxrecords=25&timespan=7d&sort=datedesc`;
+      `&mode=tonechart&format=json&timespan=14d`;
 
-    const data: GdeltResponse | null = await providerCachedFetch(
+    const data: GdeltToneChartResponse | null = await providerCachedFetch(
       "gdelt",
-      `GDELT:${query}`,
+      `GDELT_TONECHART:${query}`,
       url,
       { timeoutMs: 8000, maxAgeDays: 1 },
     );
     if (!data) return null;
 
-    const articles: GdeltArticle[] = Array.isArray(data.articles) ? data.articles : [];
-    if (articles.length === 0) return null;
+    const bins: GdeltToneBin[] = Array.isArray(data.tonechart) ? data.tonechart : [];
+    if (bins.length === 0) return null;
 
-    let toneSum = 0;
-    let toneCount = 0;
+    let weightedToneSum = 0;
+    let articleCount = 0;
     const headlines: string[] = [];
-    for (const a of articles) {
-      const tone = typeof a.tone === "string" ? parseFloat(a.tone) : a.tone;
-      if (typeof tone === "number" && Number.isFinite(tone)) {
-        toneSum += tone;
-        toneCount++;
+    for (const b of bins) {
+      const bin = typeof b.bin === "string" ? parseFloat(b.bin) : b.bin;
+      const count = typeof b.count === "string" ? parseInt(b.count, 10) : b.count;
+      if (typeof bin !== "number" || !Number.isFinite(bin)) continue;
+      if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) continue;
+      weightedToneSum += bin * count;
+      articleCount += count;
+      for (const p of b.toparts ?? []) {
+        if (p.title && headlines.length < 5) headlines.push(String(p.title).trim());
       }
-      if (a.title && headlines.length < 5) headlines.push(String(a.title).trim());
     }
-    if (toneCount === 0) return null; // no parseable tone → honestly unavailable
+    if (articleCount === 0) return null; // no toned documents → honestly unavailable
 
-    const avgTone = toneSum / toneCount;
+    const avgTone = weightedToneSum / articleCount;
     return {
       score: toneToScore(avgTone),
-      articleCount: toneCount,
+      articleCount,
       avgTone,
       headlines,
-      available: toneCount >= MIN_ARTICLES,
+      available: articleCount >= MIN_ARTICLES,
     };
   } catch {
     return null; // never throw into the research pipeline

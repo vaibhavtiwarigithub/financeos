@@ -45,17 +45,59 @@ export async function fetchFmpOverview(symbol: string): Promise<Overview> {
   } catch { return {}; }
 }
 
-// US fundamentals resolver: FMP → (caller's AV OVERVIEW fallback). Returns the
-// AV-OVERVIEW-shaped object scoreFundamentals expects, plus which source served
-// it. `avFallback` keeps AV as last resort without this module importing it.
+// Finnhub fundamentals: /stock/metric (P/E, margin, ROE, EPS, revenue growth) +
+// /stock/profile2 (sector). Finnhub free is 60/min with no daily cap — and,
+// unlike FMP's premium-gated /stable endpoints and FinancialDatasets' metered
+// credits, these two endpoints ARE available on the free tier, so this is the
+// primary US fundamentals source. Percent-scaled Finnhub fields (margin/ROE/
+// growth) are divided by 100 to match AV's fraction convention that
+// scoreFundamentals reads (ProfitMargin 0.27 = 27%).
+export async function fetchFinnhubOverview(symbol: string): Promise<Overview> {
+  const key = process.env.FINNHUB_API_KEY ?? "";
+  if (!key) return {};
+  try {
+    const [metricRes, profileRes] = await Promise.all([
+      providerCachedFetch("finnhub", `FINNHUB_METRIC:${symbol}`,
+        `https://finnhub.io/api/v1/stock/metric?symbol=${encodeURIComponent(symbol)}&metric=all&token=${key}`,
+        { timeoutMs: 8000 }),
+      providerCachedFetch("finnhub", `FINNHUB_PROFILE:${symbol}`,
+        `https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(symbol)}&token=${key}`,
+        { timeoutMs: 8000 }),
+    ]);
+    const m = (metricRes as any)?.metric ?? {};
+    const p = (profileRes as any) ?? {};
+    const ov: Overview = { Symbol: symbol };
+    const setRaw = (k: string, v: any) => { if (typeof v === "number" && Number.isFinite(v)) ov[k] = String(v); };
+    const setFrac = (k: string, v: any) => { if (typeof v === "number" && Number.isFinite(v)) ov[k] = String(v / 100); };
+    setRaw("PERatio", m.peTTM ?? m.peBasicExclExtraTTM);
+    setRaw("EPS", m.epsTTM ?? m.epsBasicExclExtraItemsTTM);
+    setFrac("ProfitMargin", m.netProfitMarginTTM);
+    setFrac("ReturnOnEquityTTM", m.roeTTM);
+    setFrac("QuarterlyRevenueGrowthYOY", m.revenueGrowthQuarterlyYoy ?? m.revenueGrowthTTMYoy);
+    if (typeof m["52WeekHigh"] === "number") ov["52WeekHigh"] = String(m["52WeekHigh"]);
+    if (typeof m["52WeekLow"] === "number") ov["52WeekLow"] = String(m["52WeekLow"]);
+    if (p.finnhubIndustry) ov.Sector = String(p.finnhubIndustry);
+    return ov;
+  } catch { return {}; }
+}
+
+// US fundamentals resolver: Finnhub → FMP → (caller's AV OVERVIEW fallback).
+// Returns the AV-OVERVIEW-shaped object scoreFundamentals expects, plus which
+// source served it. `avFallback` keeps AV as last resort without this module
+// importing it. Requires >=2 real fields (matches hasMinFundamentalFields)
+// before trusting a source, so a thin/empty provider result cascades to the next.
 export async function fetchUsOverview(
   symbol: string,
   avFallback: () => Promise<Overview>,
 ): Promise<{ overview: Overview; source: string }> {
+  const realFields = (ov: Overview) => Object.keys(ov).filter(k => k !== "Symbol").length;
+
+  const finnhub = await fetchFinnhubOverview(symbol).catch(() => ({} as Overview));
+  if (realFields(finnhub) >= 2) return { overview: finnhub, source: "finnhub" };
+
   const fmp = await fetchFmpOverview(symbol);
-  // Require >=2 real fields (matches hasMinFundamentalFields) before trusting FMP.
-  const realFields = Object.keys(fmp).filter(k => k !== "Symbol").length;
-  if (realFields >= 2) return { overview: fmp, source: "fmp" };
+  if (realFields(fmp) >= 2) return { overview: fmp, source: "fmp" };
+
   const av = await avFallback().catch(() => ({} as Overview));
   return { overview: av, source: av.Symbol ? "alpha_vantage" : "unavailable" };
 }

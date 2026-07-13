@@ -39,6 +39,7 @@ async function getDefaultMandateId(market: string, supabase: any): Promise<strin
   return id;
 }
 import { fetchUsOverview } from "@/lib/data/fundamentals";
+import { scoreMassiveInsider } from "@/lib/data/massive-insider";
 import { captureFundamentalsFact } from "@/lib/data/pit-fundamentals";
 import { scoreEdgarInsider } from "@/lib/data/edgar-insider";
 import { fetchUpstoxCandles } from "@/lib/data/upstox";
@@ -123,11 +124,15 @@ async function scoreInsider(symbol: string, avKey: string): Promise<{ score: num
   }
 }
 
-// Insider resolver: SEC EDGAR Form 4 (free, official, unlimited) is primary;
-// Alpha Vantage INSIDER_TRANSACTIONS is the fallback only when EDGAR has no
-// usable data (non-US symbol, fetch failure, or too few filings). Moving the
-// primary off AV frees one AV 25/day slot per US equity researched.
+// Insider resolver: Massive Form 4 (plan-entitled, full transaction detail,
+// no AV cap) is primary; SEC EDGAR Form 4 (free, official) is the second source;
+// Alpha Vantage INSIDER_TRANSACTIONS is the last resort. EDGAR + AV were both
+// returning unavailable in practice (the reason every symbol's insider dimension
+// was stuck at neutral 50), so Massive is now the working primary. Each source
+// only wins when it reports available=true, so a dead source cascades to the next.
 async function resolveInsider(symbol: string, avKey: string): Promise<{ score: number; summary: string; available: boolean }> {
+  const massive = await scoreMassiveInsider(symbol).catch(() => null);
+  if (massive?.available) return massive;
   const edgar = await scoreEdgarInsider(symbol).catch(() => null);
   if (edgar?.available) return edgar;
   return scoreInsider(symbol, avKey);
