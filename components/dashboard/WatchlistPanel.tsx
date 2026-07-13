@@ -439,7 +439,7 @@ export default function WatchlistPanel() {
 
         {/* Multi-market note */}
         <div style={{ fontSize: "9px", color: T.muted, marginTop: "6px", lineHeight: "1.5" }}>
-          US symbols fully supported; other markets show if the data provider returns them.
+          US symbols fully supported. For India (NSE) names, add the <code>.NS</code> suffix — e.g. <code>RELIANCE.NS</code> — so it's tracked as India; a bare ticker is treated as US regardless of the market switch.
         </div>
 
         {/* Filter + search bar */}

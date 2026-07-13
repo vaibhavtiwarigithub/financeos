@@ -73,12 +73,15 @@ export async function POST(req: NextRequest) {
   const company_name = body.company_name ?? await fetchCompanyName(symbol);
 
   const svc = createServiceClient();
-  // body.market ("us"|"india") lets the caller (WatchlistPanel, tagged with
-  // whatever the global market switcher is set to) mark a manually-added
-  // symbol correctly — otherwise it defaults to the column's 'US' default,
-  // which would make an India symbol added while the switcher is on India
-  // silently disappear from the India-filtered view.
-  const marketCol = body.market === "india" ? "India" : body.market === "us" ? "US" : undefined;
+  // Market is derived FROM THE SYMBOL, not from the header switcher. India
+  // symbols carry a .NS/.BO suffix (that is exactly how research's isIndia()
+  // classifies them and how India data sources are queried); everything else is
+  // US. Deriving from the switcher was a bug: a US ticker added while the switch
+  // was on India (e.g. "SKHYV") got tagged India, so India research tried it with
+  // the wrong data source and US research never saw it. Suffix-inference keeps the
+  // watchlist market tag consistent with how the pipeline actually treats the
+  // symbol. (To add an NSE name, include the .NS suffix, e.g. RELIANCE.NS.)
+  const marketCol = /\.(NS|BO)$/i.test(symbol) ? "India" : "US";
   const { error } = await svc.from("watchlist").upsert({
     user_id: user.id,
     symbol,

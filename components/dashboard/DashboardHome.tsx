@@ -268,10 +268,25 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
         {/* Live accounts panel */}
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "20px 22px", minWidth: "220px", maxWidth: "100%", display: "flex", flexDirection: "column", gap: "10px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-            <div style={{ fontSize: "10px", fontWeight: 800, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase" }}>Live Robinhood</div>
+            <div style={{ fontSize: "10px", fontWeight: 800, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase" }}>{isIndia ? "Live Zerodha Kite" : "Live Robinhood"}</div>
             <EyeToggle masked={liveNumbersMasked} onToggle={() => setLiveRevealed(r => !r)} />
           </div>
 
+          {/* India view: the live broker is Zerodha Kite, not Robinhood (US-only).
+             Kite holdings render fully on Live Portfolio (India) — link there rather
+             than showing a US Robinhood account under the India switch. */}
+          {isIndia && (
+            <div style={{ padding: "10px 12px", background: T.dim, borderRadius: "10px", borderLeft: `3px solid ${T.green}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                <span style={{ fontSize: "11px", color: T.muted }}>🇮🇳 Zerodha Kite · REAL MONEY</span>
+                <a href="/dashboard/live-portfolio" style={{ fontSize: "10px", fontWeight: 700, color: T.green, textDecoration: "none" }}>VIEW →</a>
+              </div>
+              <div style={{ fontSize: "12px", color: T.textSub }}>Live NSE/BSE holdings + P&L (₹) on Live Portfolio.</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>Re-login daily in Settings → Kite if the session expired.</div>
+            </div>
+          )}
+
+          {!isIndia && (<>
           <div style={{ padding: "10px 12px", background: T.dim, borderRadius: "10px", borderLeft: `3px solid ${T.blue}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
               <span style={{ fontSize: "11px", color: T.muted }}>••••8641 · READ-ONLY</span>
@@ -325,6 +340,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
             <div style={{ fontSize: "12px", color: T.muted }}>TraderAgent real orders off</div>
             <div style={{ fontSize: "11px", color: T.muted }}>Enable trading_enabled in Settings → Strategy</div>
           </div>
+          </>)}
         </div>
       </div>
 
