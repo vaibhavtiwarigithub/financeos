@@ -1073,6 +1073,10 @@ function indiaNewsToSocial(symbol: string, news: IndiaNewsSentiment | null): Soc
     stocktwits_message_count: null,
     av_news_sentiment: avScaled,
     av_news_articles: news.articleCount,
+    gdelt_score: news.score,
+    gdelt_articles: news.articleCount,
+    // scoreSentiment reads sentiment_score first — feed the GDELT 0-100 directly.
+    sentiment_score: news.score,
     overall_sentiment: news.score > 60 ? "Bullish" : news.score < 40 ? "Bearish" : "Neutral",
     fetched_at: new Date().toISOString(),
     has_data: true,
@@ -1361,7 +1365,11 @@ export async function processSymbol(
     prompt: thesisPrompt,
     symbol,
     agentLabel: "research",
-    maxTokens: 512,
+    // deepseek-reasoner emits a long chain-of-thought BEFORE the answer; 512 tokens
+    // let the reasoning consume the budget and truncated the JSON thesis, so most
+    // symbols hit "[abstained: thesis parse failed]". 1500 leaves room for the
+    // reasoning + the small JSON payload to complete.
+    maxTokens: 1500,
   });
 
   const rawText = llmResult.text;
@@ -1392,16 +1400,19 @@ export async function processSymbol(
   } else if (thinEvidence) {
     signalDirection = "neutral";
     directionNote = ` [abstained: thin evidence (${includedDims.length}/5 dims)]`;
-  } else if (llmParseFailed) {
-    signalDirection = "neutral";
-    directionNote = " [abstained: thesis parse failed]";
   } else {
-    // Mechanical gate: threshold → long, else neutral.
-    // LLM direction opinion intentionally ignored for non-exit signals.
+    // Mechanical gate: threshold → long, else neutral. Direction is DETERMINISTIC
+    // from analyst_score + the evidence mask; the LLM thesis is narrative only and
+    // is intentionally ignored for direction. So a failed/truncated thesis parse
+    // must NOT suppress an otherwise-valid entry (evidence is already sufficient —
+    // thinEvidence handled above). It only means "no narrative", not "abstain".
+    // A deterministic score-based summary is stored as the fallback below.
     signalDirection = analystScore >= (scoreThreshold ?? 60) ? "long" : "neutral";
-    directionNote = thesis.direction && thesis.direction !== signalDirection
-      ? ` [llm=${thesis.direction} overridden by gate → ${signalDirection}]`
-      : "";
+    directionNote = llmParseFailed
+      ? " [no thesis narrative — direction from deterministic gate]"
+      : (thesis.direction && thesis.direction !== signalDirection
+          ? ` [llm=${thesis.direction} overridden by gate → ${signalDirection}]`
+          : "");
   }
 
   const { data: packet } = await supabase

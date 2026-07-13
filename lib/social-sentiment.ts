@@ -1,4 +1,5 @@
 import { avCachedFetch } from "@/lib/av-cache";
+import { fetchNewsToneSentiment } from "@/lib/india-news";
 
 export interface SocialSentiment {
   symbol: string;
@@ -7,6 +8,9 @@ export interface SocialSentiment {
   stocktwits_message_count: number | null;
   av_news_sentiment: number | null;         // -1 to 1 (Alpha Vantage)
   av_news_articles: number | null;
+  gdelt_score: number | null;               // 0-100 GDELT news-tone (uncapped, free)
+  gdelt_articles: number | null;
+  sentiment_score: number | null;           // 0-100 direct score scoreSentiment reads first
   overall_sentiment: "Bullish" | "Bearish" | "Neutral";
   fetched_at: string;
   // This object is ALWAYS returned (never null) even when both providers fail —
@@ -59,28 +63,37 @@ interface AVNewsResponse {
 }
 
 export async function fetchSocialSentiment(symbol: string): Promise<SocialSentiment> {
-  const [stocktwits, avNews] = await Promise.allSettled([
+  // FREE sources first (StockTwits + GDELT news-tone) — neither touches the Alpha
+  // Vantage 25/day cap. On a 42-symbol US day, NEWS_SENTIMENT alone would blow the
+  // whole AV budget, so AV is now a RESERVE: it is called only when BOTH free
+  // sources come back thin/empty, keeping AV free for genuine emergencies.
+  const [stocktwits, gdelt] = await Promise.allSettled([
     fetchStockTwits(symbol),
-    fetchAVNewsSentiment(symbol),
+    fetchNewsToneSentiment(symbol),
   ]);
 
   const stRaw = stocktwits.status === "fulfilled" ? stocktwits.value : null;
-  const av = avNews.status === "fulfilled" ? avNews.value : null;
-  // A thin sample (< MIN_SENTIMENT_SAMPLE tagged messages) already reads as a
-  // fake-neutral 50/50 from fetchStockTwits — but it must ALSO not count as
-  // real evidence here, or "1 bullish message = has_data:true" would still
-  // pass a coin-flip through as a directional signal downstream.
+  // A thin sample (< MIN_SENTIMENT_SAMPLE tagged messages) reads as fake-neutral —
+  // do not count it as real evidence (else "1 bullish message = has_data" leaks a
+  // coin-flip downstream).
   const st = stRaw && stRaw.sentiment_sample_size >= MIN_SENTIMENT_SAMPLE ? stRaw : null;
+  const gd = gdelt.status === "fulfilled" && gdelt.value?.available ? gdelt.value : null;
 
-  // Combine signals: weight stocktwits 40%, AV news 60%
-  let bullishScore = 50; // neutral default
-  if (st && av) {
-    bullishScore = st.bullish_pct * 0.4 + (av.sentiment + 1) / 2 * 100 * 0.6;
-  } else if (st) {
-    bullishScore = st.bullish_pct;
-  } else if (av) {
-    bullishScore = (av.sentiment + 1) / 2 * 100;
+  // RESERVE: only spend an AV NEWS_SENTIMENT call when both free sources failed.
+  let av: AVNewsResult | null = null;
+  if (!st && !gd) {
+    av = await fetchAVNewsSentiment(symbol).catch(() => null);
   }
+
+  // Combine into a single 0-100 sentiment_score (what scoreSentiment reads first).
+  // StockTwits directional % (40%) blended with the news-tone component (60%);
+  // news component = GDELT score when present, else AV (-1..1 → 0..100).
+  const newsComponent = gd ? gd.score : av ? (av.sentiment + 1) / 2 * 100 : null;
+  let sentimentScore: number | null = null;
+  if (st && newsComponent != null) sentimentScore = st.bullish_pct * 0.4 + newsComponent * 0.6;
+  else if (st) sentimentScore = st.bullish_pct;
+  else if (newsComponent != null) sentimentScore = newsComponent;
+  const bullishScore = sentimentScore ?? 50;
 
   return {
     symbol,
@@ -89,9 +102,12 @@ export async function fetchSocialSentiment(symbol: string): Promise<SocialSentim
     stocktwits_message_count: stRaw?.message_count ?? null,
     av_news_sentiment: av?.sentiment ?? null,
     av_news_articles: av?.article_count ?? null,
+    gdelt_score: gd?.score ?? null,
+    gdelt_articles: gd?.articleCount ?? null,
+    sentiment_score: sentimentScore != null ? Math.round(sentimentScore) : null,
     overall_sentiment: bullishScore > 60 ? "Bullish" : bullishScore < 40 ? "Bearish" : "Neutral",
     fetched_at: new Date().toISOString(),
-    has_data: st != null || av != null,
+    has_data: st != null || gd != null || av != null,
   };
 }
 

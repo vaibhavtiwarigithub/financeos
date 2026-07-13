@@ -119,3 +119,8 @@ export async function fetchIndiaNewsSentiment(
     return null; // never throw into the research pipeline
   }
 }
+
+// Market-agnostic alias: GDELT tonechart works for ANY company name/ticker query,
+// so the US sentiment path uses this too (an uncapped alternative to the Alpha
+// Vantage NEWS_SENTIMENT 25/day cap). Same return shape.
+export const fetchNewsToneSentiment = fetchIndiaNewsSentiment;
