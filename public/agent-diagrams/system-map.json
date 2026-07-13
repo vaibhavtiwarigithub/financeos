@@ -793,6 +793,13 @@
       "nodeId": "ACCTBOOK",
       "label": "Generalized the Webull MCP integration into a config-driven MCP broker framework (read-only)",
       "reason": "Refactor (behaviour-neutral for Webull, no agent-flow change). Replaced bespoke lib/webull-mcp.ts with a config-driven framework so future OAuth-MCP read-only brokers (E*TRADE, other US/India) are added by a CONFIG ENTRY, not new code: lib/brokers/mcp-registry.ts (McpBrokerConfig type + MCP_BROKERS registry — endpoints/scopes/vault keys/tool names/response field candidates; seeded with the webull entry using the SAME endpoints/scopes/tools/vault keys) + lib/brokers/mcp-driver.ts (generic driver, every fn takes an McpBrokerConfig: getOrRegisterClient/buildAuthUrl/exchangeCode/getValidAccessToken CAS-refresh/hasToken/mcpRpc/captureAccounts/checkTokenHealth/disconnect/saveOAuthState+consumeOAuthState keyed by broker id; reuses makePkce/makeState/signOAuthCookie/verifyOAuthCookie/mcpToolJson from lib/robinhood-mcp.ts) + generic routes app/api/broker-mcp/[broker]/{login,callback,status,disconnect} (config resolved from MCP_BROKERS, 404 if unknown; login/status/disconnect owner-gated, callback verifies single-use server-side oauth_pkce_state). Settings now iterates MCP_BROKERS so every configured MCP broker renders a connect card generically. Legacy /api/webull/* routes are thin 307 redirects to the generic ones (preserves the DCR-registered /api/webull/callback redirect_uri). lib/webull-mcp.ts deleted (no remaining importers). Robinhood integration untouched (only its shared crypto/cookie/JSON helpers are imported). Still READ-ONLY — no order path added. tsc --noEmit passes."
+    },
+    {
+      "date": "2026-07-13",
+      "event": "changed",
+      "nodeId": "ACCTBOOK",
+      "label": "Webull review correction: connected tools are read-mostly; order adapter remains inert",
+      "reason": "Adversarial review of the Webull/OAuth money path found the current connected Webull MCP surface exposes account/balance/position/order-history style read tools, but not the quote/research/order-placement tools the first architecture draft listed. Docs now mark those names as unverified until deployed tools/list proves them. Code posture remains fail-soft for read capture gaps and fail-closed for orders: orderCapable=false, no requested order:write login scope, no webull_orders_enabled production column, and no broker_accounts Webull trading allowlist row. The Webull adapter scaffold must stay unreachable until an explicit future order-capable architecture is approved."
     }
   ]
 }

@@ -44,4 +44,16 @@ describe("allocator", () => {
     expect(normalizeRegime("bull market")).toBe("risk_on");
     expect(normalizeRegime(null)).toBe("neutral");
   });
+
+  it("does not emit NaN or zero-sum targets when sleeve inputs are malformed", () => {
+    const malformed: SleeveRow[] = [
+      { market: "us", sleeve: "equity", target_pct: Number.NaN, min_pct: 0, max_pct: 0, instruments: [], enabled: true },
+      { market: "us", sleeve: "defensive_etf", target_pct: 0, min_pct: 0, max_pct: 0, instruments: [], enabled: true },
+      { market: "us", sleeve: "cash", target_pct: 0, min_pct: 0, max_pct: 100, instruments: [], enabled: true },
+    ];
+    const r = allocate(malformed, "neutral");
+    expect(r.every(x => Number.isFinite(x.targetPct))).toBe(true);
+    expect(sumPct(r)).toBe(100);
+    expect(r.find(x => x.sleeve === "cash")?.targetPct).toBe(100);
+  });
 });

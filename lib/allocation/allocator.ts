@@ -31,6 +31,11 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
+function finiteOr(v: unknown, fallback: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 /** Normalize a raw macro-regime label to the allocator's 3-state enum. */
 export function normalizeRegime(raw: unknown): Regime {
   const s = String(raw ?? "").toLowerCase();
@@ -51,16 +56,27 @@ export function allocate(sleeves: SleeveRow[], regime: Regime): SleeveTarget[] {
 
   const tilt = regime === "risk_off" ? -15 : regime === "risk_on" ? 10 : 0;
 
-  const raw = active.map((s) => {
-    let t = s.target_pct;
-    if (s.sleeve === "equity") t = s.target_pct + tilt;
-    else if (s.sleeve === "defensive_etf") t = s.target_pct - tilt * 0.6;
-    else if (s.sleeve === "cash") t = s.target_pct - tilt * 0.4;
+  let raw = active.map((s) => {
+    const min = finiteOr(s.min_pct, 0);
+    const max = Math.max(min, finiteOr(s.max_pct, 100));
+    let t = finiteOr(s.target_pct, 0);
+    if (s.sleeve === "equity") t += tilt;
+    else if (s.sleeve === "defensive_etf") t -= tilt * 0.6;
+    else if (s.sleeve === "cash") t -= tilt * 0.4;
     // leveraged + anything else: hold its target (bands still clamp it)
-    return { s, t: clamp(t, s.min_pct, s.max_pct) };
+    return { s, t: clamp(finiteOr(t, 0), min, max), min, max };
   });
 
-  const sum = raw.reduce((a, r) => a + r.t, 0) || 1;
+  let sum = raw.reduce((a, r) => a + r.t, 0);
+  if (!Number.isFinite(sum) || sum <= 0) {
+    const cash = raw.find((r) => r.s.sleeve === "cash" && r.max > 0);
+    raw = raw.map((r) => ({
+      ...r,
+      t: r === cash ? clamp(100, r.min, r.max) : 0,
+    }));
+    sum = raw.reduce((a, r) => a + r.t, 0);
+  }
+  if (!Number.isFinite(sum) || sum <= 0) return [];
   return raw.map((r) => ({
     sleeve: r.s.sleeve,
     targetPct: Math.round((r.t / sum) * 1000) / 10,

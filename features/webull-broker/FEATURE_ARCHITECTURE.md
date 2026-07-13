@@ -1,6 +1,6 @@
 # Feature Architecture — Webull as 3rd Broker (MCP)
 
-> Status: **Phase 1 (read-only, Cloud MCP) BUILT — awaiting owner OAuth connect.**
+> Status: **Phase 1 (read-only, Cloud MCP) BUILT — OAuth connected; live read capture still fail-soft if a configured tool is not offered by the connected MCP surface.**
 > Decision: **Cloud MCP (OAuth), not OpenAPI** — the OpenAPI REQUIRES an IP
 > whitelist (no free serverless has a static egress IP; would force an Oracle
 > Free VM), whereas the MCP's OAuth is not IP-locked and runs from Vercel free.
@@ -8,6 +8,11 @@
 > Last updated: 2026-07-13
 > **Refactored 2026-07-13 onto the config-driven MCP broker framework** — Webull
 > is now a registry entry, not bespoke code (see "Config-driven framework" below).
+> **Reviewer correction 2026-07-13:** the currently connected Codex Webull MCP
+> surface exposes account/balance/position/order-history style read tools, but not
+> the quote/research/order-placement tools listed in the original architecture.
+> Treat quote/research/order tool names as unverified until `tools/list` in the
+> deployed app proves them. The order adapter must remain unreachable.
 
 ## Config-driven framework (2026-07-13 refactor)
 The bespoke `lib/webull-mcp.ts` was generalized so future OAuth-MCP read-only
@@ -36,14 +41,19 @@ brokers (E*TRADE, other US/India) are added by a CONFIG ENTRY, not new code:
   keys `WEBULL_MCP_*`, provider `webull_mcp`) + JSON-RPC client + `captureAccounts()`
   (get_account_list → get_account_positions + get_account_balance → get_stock_quotes),
   now via the generic `lib/brokers/mcp-driver.ts` + `MCP_BROKERS.webull`. Scope
-  `account:read market:read instrument:read` ONLY — no `order:write`, no order code.
+  `account:read market:read instrument:read` ONLY. If the connected MCP surface
+  omits `get_stock_quotes`, capture fails soft rather than fabricating prices.
+  No `order:write` scope is requested by the login route.
 - Legacy routes `app/api/webull/{login,callback,status,disconnect}` → 307 redirects
   to `app/api/broker-mcp/webull/{login,callback,status,disconnect}`.
 - Settings connect card (generic, driven by the registry). `BrokerName` union +`webull`.
-- **Owner action:** click Connect Webull once (cloud OAuth) → token in vault →
-  crons reuse it. Then verify holdings appear.
+- **Owner action:** already connected once through cloud OAuth. Verify holdings
+  appear after the next live snapshot, and investigate only read-tool gaps.
 - **Phase 2 (later):** order adapter (`order:write` + preview→place→status→cancel)
-  behind an explicit per-account allowlist + all existing gates. NOT built.
+  behind an explicit per-account allowlist + all existing gates. Code exists only
+  as an inert adapter scaffold and is not reachable while `orderCapable=false`,
+  `webull_orders_enabled` is absent/false, and no Webull trading allowlist row is
+  configured.
 
 ## Confirmed integration facts (from public OAuth metadata + Webull MCP docs)
 
@@ -57,7 +67,16 @@ helpers are reused with Webull's endpoints:
 - public client (`token_endpoint_auth_method: none`), grants `authorization_code`+`refresh_token`
 - scopes: `account:read order:read order:write market:read instrument:read`
 
-**Tool schema (verbatim), mapped to our adapter contract:**
+**Tool schema status: partly verified, order placement unverified.**
+
+Current connected tool exposure in Codex on 2026-07-13 included:
+`get_account_list`, `get_account_balance`, `get_account_positions`,
+`get_order_detail`, `get_instruments`, `get_open_orders`, `get_order_history`.
+It did **not** expose `get_stock_quotes`, `get_stock_snapshot`,
+`preview_stock_order`, `place_stock_order`, `cancel_order`, or the analyst/
+financial research tools. The table below is therefore a desired/previous-doc
+mapping, not proof that orders can be placed from this app today.
+
 | Need | Webull MCP tool |
 |---|---|
 | accounts | `get_account_list` |
@@ -70,8 +89,9 @@ helpers are reused with Webull's endpoints:
 | open orders | `get_open_orders` |
 | cancel | `cancel_order` |
 
-This is a 1:1 match to `captureAllRobinhoodAccounts` (list→positions→balance→quote)
-and the RH order path (review→place→status→cancel). US equities.
+Only the account/balance/position/order-read portion is currently verified in
+this Codex connection. Quotes and order placement must stay fail-soft/unreachable
+until a deployed `tools/list` proves the tools and schemas.
 
 ## Goal
 Add Webull as a third broker — US equities, parallel to Robinhood — using the
@@ -111,11 +131,12 @@ token in vault → CAS refresh). Steps:
 - Settings: Webull connect card + account list (mirror the RH-MCP card).
 
 ### Phase 2 — Order-capable (only if opted in)
-- `lib/brokers/webull-mcp.ts` implementing `BrokerAdapter` (review → place →
-  snapshot; `needsReconcile` on ambiguous submit / missing order id). Register in
-  `registry.ts`.
+- `lib/brokers/adapters/webull.ts` is an inert adapter scaffold. It must not be
+  enabled until live tool discovery proves preview/place/status/cancel schemas,
+  Webull order scopes are intentionally requested, and the owner approves.
 - An account becomes order-capable ONLY when you explicitly allowlist it
-  (`agentic_allowed=true` on that one account, exactly like RH `605420660`).
+  (`broker_accounts{broker='webull', market='us', role='trading'}`) and the broker
+  registry marks Webull order-capable.
 - Every existing gate applies unchanged: `isTradingEnabled(svc,'us')`,
   per-market controls, kill switch, notional caps, human click + confirm.
 

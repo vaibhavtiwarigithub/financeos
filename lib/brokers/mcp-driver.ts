@@ -329,11 +329,11 @@ export async function mcpRpc(
   const parsed = parseMcpBody(text, res.headers.get("content-type") ?? "");
   if (!res.ok) return { ok: false, error: `MCP ${method} HTTP ${res.status}: ${redactStr(text).slice(0, 300)}`, sessionId: sid ?? undefined };
   if (!parsed) return { ok: false, error: `MCP ${method}: empty/unparseable response`, sessionId: sid ?? undefined };
-  if (parsed.error) return { ok: false, error: `MCP ${method} error: ${JSON.stringify(parsed.error).slice(0, 300)}`, sessionId: sid ?? undefined };
+  if (parsed.error) return { ok: false, error: `MCP ${method} error: ${redactStr(JSON.stringify(parsed.error)).slice(0, 300)}`, sessionId: sid ?? undefined };
   if (parsed.id !== undefined && parsed.id !== reqId) return { ok: false, error: `MCP ${method}: response id mismatch`, sessionId: sid ?? undefined };
   if (!("result" in parsed)) return { ok: false, error: `MCP ${method}: response missing result`, sessionId: sid ?? undefined };
   if (method === "tools/call" && parsed.result?.isError === true) {
-    return { ok: false, error: `MCP tool error: ${JSON.stringify(parsed.result?.content ?? parsed.result).slice(0, 300)}`, sessionId: sid ?? undefined };
+    return { ok: false, error: `MCP tool error: ${redactStr(JSON.stringify(parsed.result?.content ?? parsed.result)).slice(0, 300)}`, sessionId: sid ?? undefined };
   }
   return { ok: true, result: parsed.result, sessionId: sid ?? undefined };
 }
@@ -539,11 +539,16 @@ export async function saveOAuthState(
 export async function consumeOAuthState(
   svc: any, state: string, provider: string,
 ): Promise<{ verifier: string; redirectUri: string | null } | null> {
+  // Atomic single-use claim: delete and return the row in one statement. A
+  // replay or racing duplicate callback gets zero rows and cannot reuse the
+  // verifier for a second token exchange.
   const { data } = await svc.from("oauth_pkce_state")
-    .select("verifier, redirect_uri, expires_at, provider").eq("state", state).maybeSingle();
+    .delete()
+    .eq("state", state)
+    .eq("provider", provider)
+    .select("verifier, redirect_uri, expires_at, provider")
+    .maybeSingle();
   if (!data) return null;
-  await svc.from("oauth_pkce_state").delete().eq("state", state); // single-use
-  if ((data as any).provider !== provider) return null;
   if (new Date((data as any).expires_at).getTime() < Date.now()) return null;
   return { verifier: (data as any).verifier, redirectUri: (data as any).redirect_uri ?? null };
 }

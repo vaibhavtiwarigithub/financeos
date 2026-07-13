@@ -234,6 +234,7 @@ function makeLiveResolver(ackError: (attempt: number) => any) {
   const resolver = (q: Q) => {
     if (q.table === "trade_proposals") return { data: LIVE_PROPOSAL, error: null };
     if (q.table === "strategy_config") return { data: LIVE_CFG, error: null };
+    if (q.table === "market_controls") return { data: { paused: false, trading_enabled: true }, error: null };
     if (q.table === "broker_accounts") return { data: { role: "trading" }, error: null };
     if (q.table === "broker_orders" && q.op === "select") {
       if (q.filters.some((f) => f[0] === "in")) return { data: null, error: null }; // idempotency
