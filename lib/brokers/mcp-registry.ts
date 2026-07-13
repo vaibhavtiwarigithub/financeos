@@ -96,9 +96,11 @@ export const MCP_BROKERS: Record<string, McpBrokerConfig> = {
       avgCost: ["cost_price", "average_cost", "average_price", "avg_price", "avg_cost"],
       positionPrice: ["last_price", "market_price"],
       price: ["last_price", "last_trade_price", "close", "current_price", "mark_price", "price"],
-      equity: ["total_value", "net_liquidation", "net_asset_value", "total_asset", "equity"],
-      cash: ["cash", "cash_balance", "settled_cash", "available_cash"],
-      buyingPower: ["buying_power", "day_buying_power"],
+      // Webull get_account_balance returns total_net_liquidation_value (NLV) as the
+      // account value + a nested account_currency_assets[0] with buying_power.
+      equity: ["total_net_liquidation_value", "net_liquidation_value", "total_value", "net_liquidation", "net_asset_value", "total_market_value", "total_asset", "equity"],
+      cash: ["total_cash_balance", "cash_balance", "cash", "settled_cash", "available_cash"],
+      buyingPower: ["buying_power", "day_buying_power", "account_currency_assets.0.buying_power"],
       quoteSymbolKeys: ["symbols", "symbol", "tickers"],
     },
   },

@@ -3,6 +3,8 @@ import { fetchAndStoreAccountSnapshot } from "@/lib/research-agent";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
+import { MCP_BROKERS } from "@/lib/brokers/mcp-registry";
+import { captureAccounts, hasToken } from "@/lib/brokers/mcp-driver";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 100;
@@ -175,6 +177,60 @@ async function refreshViaMcp(): Promise<{ ok: boolean; error?: string; equity?: 
 // schedule itself -- pg_cron/Vercel can call this endpoint, but the call
 // would fail the same way execClaude always does outside a Windows+Claude
 // Code environment.
+// Capture every CONNECTED registry MCP broker (Webull, and future ones) into the
+// live account book — ADDITIVE to Robinhood, and CLOUD-native (OAuth token in the
+// vault, no local machine). Auto-ADD: a newly-returned account just upserts, so
+// opening an account at the broker makes it appear on the next refresh.
+// Auto-REMOVE (pruning) is deliberately NOT done here — deleting rows near the
+// kill-switch NAV baseline is risky; it needs a broker tag + a success-gated
+// prune (tracked separately). Best-effort per broker; one broker failing never
+// blocks another or Robinhood.
+async function refreshRegistryBrokers(): Promise<{ broker: string; ok: boolean; accounts: number; error?: string }[]> {
+  const svc = createServiceClient();
+  const out: { broker: string; ok: boolean; accounts: number; error?: string }[] = [];
+  const capturedAt = new Date().toISOString();
+  const day = capturedAt.slice(0, 10);
+  let vooClose: number | null = null;
+  const massiveKey = process.env.MASSIVE_API_KEY;
+  if (massiveKey) {
+    try {
+      const r = await fetch(`https://api.massive.com/v2/aggs/ticker/VOO/prev?adjusted=true&apiKey=${massiveKey}`);
+      if (r.ok) { const d = await r.json(); vooClose = d?.results?.[0]?.c ?? null; }
+    } catch { /* bench optional */ }
+  }
+  for (const cfg of Object.values(MCP_BROKERS)) {
+    try {
+      if (!(await hasToken(svc, cfg))) { out.push({ broker: cfg.id, ok: false, accounts: 0, error: "not connected" }); continue; }
+      const accts = await captureAccounts(cfg);
+      const valid = accts.filter(a => !a.error && a.accountId && a.accountId !== "unknown" && a.totalValue != null);
+      if (!valid.length) { out.push({ broker: cfg.id, ok: false, accounts: 0, error: accts[0]?.error ?? "no valid accounts" }); continue; }
+      const rows = valid.map(a => ({
+        account_id: a.accountId!,
+        equity: a.totalValue,
+        buying_power: a.buyingPower ?? null,
+        portfolio_value: a.totalValue,
+        position_count: a.holdings.length,
+        nickname: cfg.label,
+        positions_json: a.holdings.map(h => ({
+          symbol: h.symbol, qty: h.qty, quantity: String(h.qty),
+          avg_price: h.costBasis != null && h.qty > 0 ? h.costBasis / h.qty : null,
+          average_buy_price: h.costBasis != null && h.qty > 0 ? h.costBasis / h.qty : null,
+          current_price: h.currentPrice,
+        })),
+        captured_at: capturedAt,
+      }));
+      const { error: upErr } = await svc.from("live_account_snapshots").upsert(rows, { onConflict: "account_id" });
+      if (upErr) { out.push({ broker: cfg.id, ok: false, accounts: 0, error: upErr.message }); continue; }
+      const perfRows = valid.map(a => ({ account_id: a.accountId!, date: day, equity: a.totalValue, bench_nav: vooClose }));
+      await svc.from("live_performance").upsert(perfRows, { onConflict: "account_id,date" }).then(undefined, () => {});
+      out.push({ broker: cfg.id, ok: true, accounts: valid.length });
+    } catch (e) {
+      out.push({ broker: cfg.id, ok: false, accounts: 0, error: String(e) });
+    }
+  }
+  return out;
+}
+
 export async function POST(req: NextRequest) {
   if (!verifyCronSecret(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -184,5 +240,9 @@ export async function POST(req: NextRequest) {
   const { data: cfg } = await svc.from("strategy_config").select("live_account_source").limit(1).maybeSingle();
   const source = (cfg as any)?.live_account_source ?? "claude_exec";
   const result = source === "robinhood_mcp" ? await refreshViaMcp() : await fetchAndStoreAccountSnapshot();
-  return NextResponse.json(result, { status: result.ok ? 200 : 500 });
+  // Also refresh every connected cloud MCP broker (Webull, etc.) — independent of
+  // Robinhood, so it runs even when RH is off/local.
+  const registry = await refreshRegistryBrokers();
+  const anyOk = result.ok || registry.some(r => r.ok);
+  return NextResponse.json({ ...result, registry }, { status: anyOk ? 200 : 500 });
 }
