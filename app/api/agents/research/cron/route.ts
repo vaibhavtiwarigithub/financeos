@@ -59,11 +59,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Pause check — skip if app is paused
-  const { data: cfg } = await supabase.from("strategy_config").select("app_paused").limit(1).single();
-  if ((cfg as any)?.app_paused) {
-    return NextResponse.json({ skipped: true, reason: "App is paused — research cron disabled" });
-  }
+  // NOTE: research is deliberately NOT gated by app_paused. app_paused is the
+  // drawdown circuit breaker — it pauses new ENTRIES (paper-trade checks it and
+  // skips), not measurement. Gating research here meant one market's drawdown
+  // pause silently blinded the WHOLE pipeline: no scoring, no signals, no
+  // decision-ledger/learning data, and (as seen 2026-07-13) a phantom India
+  // drawdown skipped the entire US research run. Research always scores; only
+  // the downstream entry path respects the pause.
 
   // Posture auto-revert (Part B) — resilient: absent columns pre-migration → no-op.
   try {
