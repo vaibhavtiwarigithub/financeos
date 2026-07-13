@@ -4,6 +4,7 @@ import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/Pri
 import RhReconnectBanner from "@/components/dashboard/RhReconnectBanner";
 import LiveStatCards from "@/components/dashboard/LiveStatCards";
 import LivePerformanceChart from "@/components/dashboard/LivePerformanceChart";
+import LivePortfolioShell from "@/components/dashboard/LivePortfolioShell";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -190,18 +191,16 @@ export default function LivePortfolioPage({
     : null;
 
   return (
-    <div style={{ padding: "clamp(12px, 4vw, 28px)", color: T.text, fontFamily: "'Inter', sans-serif", maxWidth: "1400px" }}>
-
-      <RhReconnectBanner />
-
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "24px", flexWrap: "wrap", gap: "12px" }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
-            <h1 style={{ fontSize: "22px", fontWeight: 700, margin: 0 }}>Live Portfolio</h1>
-            <span style={{ fontSize: "10px", fontWeight: 800, padding: "2px 8px", borderRadius: "4px", background: T.blueBg, color: T.blue, letterSpacing: "0.08em" }}>LIVE</span>
-            <span style={{ fontSize: "10px", color: T.muted }}>••••8641 · READ-ONLY</span>
-          </div>
+    <LivePortfolioShell
+      title="Live Portfolio"
+      badge={
+        <>
+          <span style={{ fontSize: "10px", fontWeight: 800, padding: "2px 8px", borderRadius: "4px", background: T.blueBg, color: T.blue, letterSpacing: "0.08em" }}>LIVE</span>
+          <span style={{ fontSize: "10px", color: T.muted }}>••••8641 · READ-ONLY</span>
+        </>
+      }
+      syncLine={
+        <>
           {syncedAt && (
             <div style={{ fontSize: "11px", color: T.amber }}>
               Last synced: {new Date(syncedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
@@ -210,68 +209,10 @@ export default function LivePortfolioPage({
             </div>
           )}
           {!hasSnaps && <div style={{ fontSize: "11px", color: T.amber }}>Not yet synced — the 2h live-snapshot cron will populate this, or hit Refresh now</div>}
-
-          {/* Account selector chips */}
-          {snaps.length > 1 && (
-            <div style={{ display: "flex", gap: "6px", marginTop: "8px", flexWrap: "wrap" }}>
-              <button
-                onClick={() => {
-                  const next = selectedAccounts.length === snaps.length ? [] : snaps.map(s => s.account_id);
-                  setSelectedAccounts(next);
-                  loadHoldings(next);
-                }}
-                style={{
-                  padding: "3px 10px", borderRadius: "6px", fontSize: "10px", fontWeight: 700,
-                  border: `1px solid ${T.border}`, cursor: "pointer",
-                  background: selectedAccounts.length === snaps.length ? T.accent : "none",
-                  color: selectedAccounts.length === snaps.length ? "#fff" : T.muted,
-                }}
-              >All</button>
-              {snaps.map(s => {
-                const active = selectedAccounts.includes(s.account_id);
-                return (
-                  <button
-                    key={s.account_id}
-                    onClick={() => {
-                      // Isolate to just this account on click, not toggle-within-
-                      // multiselect. With "All" selected by default, clicking a
-                      // single chip used to just *remove* that account (since it
-                      // was already active), leaving every OTHER account selected
-                      // — zeroing equity/buying-power if those accounts had no
-                      // real synced data, while the positions list (aggregated
-                      // from the remaining accounts) still looked "unfiltered".
-                      // Clicking an already-isolated single chip again restores "All".
-                      const isolated = selectedAccounts.length === 1 && active;
-                      const next = isolated ? allAccountIds : [s.account_id];
-                      setSelectedAccounts(next);
-                      loadHoldings(next);
-                    }}
-                    style={{
-                      padding: "3px 10px", borderRadius: "6px", fontSize: "10px", fontWeight: 600,
-                      border: `1px solid ${active ? T.blue + "66" : T.border}`,
-                      background: active ? T.blueBg : "none",
-                      color: active ? T.blue : T.muted,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <span style={{
-                      fontSize: "8px", fontWeight: 800, letterSpacing: "0.06em", padding: "1px 4px",
-                      borderRadius: "4px", marginRight: "5px", verticalAlign: "middle",
-                      background: s.broker === "webull" ? "#2D1B00" : s.broker === "robinhood" ? "#052E16" : T.dim,
-                      color: s.broker === "webull" ? T.amber : s.broker === "robinhood" ? T.green : T.muted,
-                    }}>
-                      {s.broker === "webull" ? "WB" : s.broker === "robinhood" ? "RH" : String(s.broker ?? "??").slice(0, 2).toUpperCase()}
-                    </span>
-                    {s.nickname ?? "••••" + s.account_id.slice(-4)}
-                    {s.equity ? " · " + maskText(fmt$(Number(s.equity)), masked) : ""}
-                    {s.position_count > 0 ? ` · ${masked ? "••" : s.position_count}p` : " · no pos"}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: "8px" }}>
+        </>
+      }
+      toolbar={
+        <>
           <EyeToggle masked={masked} onToggle={() => setRevealed(r => !r)} />
           <button
             onClick={() => loadHoldings()}
@@ -279,8 +220,71 @@ export default function LivePortfolioPage({
           >
             ↻ Refresh
           </button>
+        </>
+      }
+    >
+
+      <RhReconnectBanner />
+
+      {/* Account selector chips */}
+      {snaps.length > 1 && (
+        <div style={{ display: "flex", gap: "6px", marginBottom: "16px", flexWrap: "wrap" }}>
+          <button
+            onClick={() => {
+              const next = selectedAccounts.length === snaps.length ? [] : snaps.map(s => s.account_id);
+              setSelectedAccounts(next);
+              loadHoldings(next);
+            }}
+            style={{
+              padding: "3px 10px", borderRadius: "6px", fontSize: "10px", fontWeight: 700,
+              border: `1px solid ${T.border}`, cursor: "pointer",
+              background: selectedAccounts.length === snaps.length ? T.accent : "none",
+              color: selectedAccounts.length === snaps.length ? "#fff" : T.muted,
+            }}
+          >All</button>
+          {snaps.map(s => {
+            const active = selectedAccounts.includes(s.account_id);
+            return (
+              <button
+                key={s.account_id}
+                onClick={() => {
+                  // Isolate to just this account on click, not toggle-within-
+                  // multiselect. With "All" selected by default, clicking a
+                  // single chip used to just *remove* that account (since it
+                  // was already active), leaving every OTHER account selected
+                  // — zeroing equity/buying-power if those accounts had no
+                  // real synced data, while the positions list (aggregated
+                  // from the remaining accounts) still looked "unfiltered".
+                  // Clicking an already-isolated single chip again restores "All".
+                  const isolated = selectedAccounts.length === 1 && active;
+                  const next = isolated ? allAccountIds : [s.account_id];
+                  setSelectedAccounts(next);
+                  loadHoldings(next);
+                }}
+                style={{
+                  padding: "3px 10px", borderRadius: "6px", fontSize: "10px", fontWeight: 600,
+                  border: `1px solid ${active ? T.blue + "66" : T.border}`,
+                  background: active ? T.blueBg : "none",
+                  color: active ? T.blue : T.muted,
+                  cursor: "pointer",
+                }}
+              >
+                <span style={{
+                  fontSize: "8px", fontWeight: 800, letterSpacing: "0.06em", padding: "1px 4px",
+                  borderRadius: "4px", marginRight: "5px", verticalAlign: "middle",
+                  background: s.broker === "webull" ? "#2D1B00" : s.broker === "robinhood" ? "#052E16" : T.dim,
+                  color: s.broker === "webull" ? T.amber : s.broker === "robinhood" ? T.green : T.muted,
+                }}>
+                  {s.broker === "webull" ? "WB" : s.broker === "robinhood" ? "RH" : String(s.broker ?? "??").slice(0, 2).toUpperCase()}
+                </span>
+                {s.nickname ?? "••••" + s.account_id.slice(-4)}
+                {s.equity ? " · " + maskText(fmt$(Number(s.equity)), masked) : ""}
+                {s.position_count > 0 ? ` · ${masked ? "••" : s.position_count}p` : " · no pos"}
+              </button>
+            );
+          })}
         </div>
-      </div>
+      )}
 
       {/* NAV explainer */}
       <div style={{ fontSize: "11px", color: T.muted, marginBottom: "16px", maxWidth: "760px", lineHeight: 1.5 }}>
@@ -620,6 +624,6 @@ export default function LivePortfolioPage({
           )}
         </div>
       )}
-    </div>
+    </LivePortfolioShell>
   );
 }

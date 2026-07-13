@@ -1,10 +1,10 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
-import PageHeader from "@/components/dashboard/PageHeader";
 import { fmtMoney } from "@/lib/format-money";
 import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
 import LiveStatCards from "@/components/dashboard/LiveStatCards";
 import LivePerformanceChart from "@/components/dashboard/LivePerformanceChart";
+import LivePortfolioShell from "@/components/dashboard/LivePortfolioShell";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -229,22 +229,22 @@ export default function IndiaLivePanel() {
   }
 
   return (
-    <div style={{ color: T.text, fontFamily: "'Inter', sans-serif", minHeight: "100vh", background: T.bg }}>
-      <PageHeader
-        title="India · Zerodha Kite"
-        subtitle="NSE stocks scored on free data · real orders via Kite"
-        cadence="daily"
-        whatItDoes="Live NSE holdings from your Zerodha Kite account, plus AI-scored Indian stocks (NIFTY names) you can buy or sell with real orders. Kite issues a fresh access token each day — reconnect when it expires."
-        whatToLookFor={[
+    <LivePortfolioShell
+      title="India · Zerodha Kite"
+      subtitle="NSE stocks scored on free data · real orders via Kite"
+      cadence="daily"
+      toolbar={<EyeToggle masked={masked} onToggle={() => setRevealed(r => !r)} />}
+      help={{
+        whatItDoes: "Live NSE holdings from your Zerodha Kite account, plus AI-scored Indian stocks (NIFTY names) you can buy or sell with real orders. Kite issues a fresh access token each day — reconnect when it expires.",
+        whatToLookFor: [
           "Live NAV comes straight from your broker — your Zerodha Kite holdings value + cash (India, ₹). It updates on each sync, not live-by-the-second.",
           "Green status = token valid today; amber = reconnect before trading or reading holdings.",
           "Scored signals: score ≥ 70 green (strong), 50–69 amber (moderate), < 50 red.",
           "Only LONG, entry-eligible signals can open the Kite order panel; a second explicit confirmation is still required.",
           "Total value row sums your live NSE holdings in ₹.",
-        ]}
-      />
-
-      <div style={{ padding: "16px clamp(12px,4vw,28px) 40px", maxWidth: "1200px" }}>
+        ],
+      }}
+    >
 
         {/* ── a) Connection status bar ── */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "14px 18px", marginBottom: "16px" }}>
@@ -252,11 +252,6 @@ export default function IndiaLivePanel() {
             Zerodha Connection
           </div>
           <StatusBar />
-        </div>
-
-        {/* ── Privacy toggle (parity with US Live) ── */}
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "12px" }}>
-          <EyeToggle masked={masked} onToggle={() => setRevealed(r => !r)} />
         </div>
 
         {/* ── Stat cards (shared with US Live) ── */}
@@ -517,7 +512,6 @@ export default function IndiaLivePanel() {
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </LivePortfolioShell>
   );
 }
