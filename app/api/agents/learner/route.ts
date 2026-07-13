@@ -9,6 +9,7 @@ import { validateFeatureInputs } from "@/lib/validation/feature-compiler";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { applyLearningTaintFilter } from "@/lib/learning/taint-filter";
+import { runAutomatedValidation } from "@/lib/validation/automation";
 
 export const dynamic = "force-dynamic";
 // The weekly tool loop can legitimately take several provider round-trips.
@@ -558,19 +559,18 @@ export async function POST(req: NextRequest) {
             // block the learner's tool response on it). The challenger cannot be
             // promoted until this produces a PASSED validation_experiments row
             // (see the fail-closed gate in app/api/strategies/versions/route.ts).
-            const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-            fetch(`${appUrl}/api/validation/run`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET ?? "" },
-              body: JSON.stringify({ challenger_id: (challengerRow as any).id, market: LEARN_MARKET }),
-            }).catch(() => {});
+            const automated = await runAutomatedValidation(svc, {
+              challengerId: (challengerRow as any).id,
+              market: LEARN_MARKET,
+            });
 
             return JSON.stringify({
               challenger_created: true,
               challenger_id: (challengerRow as any).id,
               dimension, old: currentVal, new: clamped, reason,
               log_warning: logErr?.message,
-              validation: "queued — challenger cannot be promoted until it passes",
+              validation: automated.validation ?? automated.automation,
+              shadow: automated.shadow ?? null,
               note: "Weight NOT applied yet. Promoted to champion via /dashboard/strategies to take effect, and only after validation passes.",
             });
           }

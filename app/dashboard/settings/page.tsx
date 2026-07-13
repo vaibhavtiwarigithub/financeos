@@ -8,6 +8,7 @@ import LLMConfigPanel from "@/components/dashboard/LLMConfigPanel";
 import AdminPanel from "@/components/dashboard/AdminPanel";
 import AutomationPanel from "@/components/dashboard/AutomationPanel";
 import TradingMandatePanel from "@/components/dashboard/TradingMandatePanel";
+import ValidationAutomationPanel from "@/components/dashboard/ValidationAutomationPanel";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -1128,6 +1129,7 @@ export default function SettingsPage() {
 
           {/* Trading Style Card — holding-horizon preset (Swing / Position / Long-term) */}
           <TradingMandatePanel />
+          <ValidationAutomationPanel />
           <div style={{ display: "none", background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Trading Style</div>
             <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "20px" }}>

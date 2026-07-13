@@ -54,6 +54,20 @@ Impact: Shorts, options, leverage, crypto, intraday trading, and non-agentic acc
 Files/features affected: Strategy Registry, paper execution, Risk Engine, Live Trade Gateway, and trading UI.
 Reversal cost: Medium
 
+### Decision 47: Automated validation routes passing challengers only to bounded shadow evidence
+
+Date: 2026-07-12
+Status: Approved
+Category: Product / Architecture / Security
+
+Context: Manual Backtest remains useful for exploration, but Vaibhav should not need to initiate validation every time LearnerAgent proposes a strategy change. The existing fire-and-forget validation request could be lost, and a passing challenger remained inert until manual action.
+Decision: Store a reversible US/India automation policy. LearnerAgent validates a new challenger synchronously through the deterministic Validation Engine. A passed version may atomically enter at most one non-executing `shadow_paper` slot per market. A cloud sweep retries only challengers that have no experiment. The owner may disable validation or shadow routing independently by market. Champion promotion, paper fills, broker proposals, and live orders remain outside this automation.
+Reason: This converts validation into the normal governed workflow while preserving evidence, market isolation, and the owner-only capital authority boundary.
+Alternatives considered: Automatically promote a passing challenger (rejected: historical evidence is not sufficient for capital authority); rely on TradingView/Pine as an unattended API (rejected: it is not Kairos' reproducible validation backend); retain fire-and-forget local HTTP (rejected: not durable).
+Impact: New challengers receive automatic evidence and bounded forward shadow measurement. Disabling returns immediately to manual handling without deleting history.
+Files/features affected: `features/automated-strategy-validation/FEATURE_ARCHITECTURE.md`, migration 170, Validation Engine automation helper, LearnerAgent, validation sweep, Settings, and cloud scheduler.
+Reversal cost: Low
+
 ### Decision 3: Evidence, Data, and Online Research Policy
 
 Date: 2026-06-27
