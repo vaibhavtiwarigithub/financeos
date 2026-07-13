@@ -1135,6 +1135,35 @@ function indiaNewsToSocial(symbol: string, news: IndiaNewsSentiment | null): Soc
   };
 }
 
+// Prewarm one symbol's evidence caches WITHOUT scoring. Calls the same fundamentals
+// / sentiment / insider fetchers processSymbol uses — each is cache-first + paced,
+// so this just populates av_cache ahead of the scoring run. No LLM, no scoring, no
+// signal/packet writes. Used by the prewarm cron so a cold-start scoring run gets
+// cache hits instead of bursting Massive/GDELT past their limits mid-run.
+// Fully fail-soft: every fetch is caught; a warm failure just leaves that key cold.
+export async function prewarmSymbol(entry: SymbolEntry): Promise<void> {
+  const symbol = entry.symbol;
+  const india = isIndia(symbol);
+  const applicable = applicableDimensions(entry);
+  const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
+  const jobs: Promise<unknown>[] = [];
+  // Fundamentals (skip ETFs — no company fundamentals).
+  if (applicable.has("fundamental")) {
+    jobs.push(india ? fetchIndiaOverview(symbol).catch(() => ({}))
+                    : fetchUsOverview(symbol, () => fetchAVOverview(symbol, avKey)).catch(() => ({})));
+  }
+  // Sentiment (US: StockTwits+GDELT+AV-reserve; India: GDELT news tone).
+  if (applicable.has("sentiment")) {
+    jobs.push(india ? fetchIndiaNewsSentiment(symbol).catch(() => null)
+                    : fetchSocialSentiment(symbol).catch(() => null));
+  }
+  // Insider (US equities only; Massive Form 4 → EDGAR → AV, all cache-warmed).
+  if (applicable.has("insider") && !india) {
+    jobs.push(resolveInsider(symbol, avKey).catch(() => null));
+  }
+  await Promise.allSettled(jobs);
+}
+
 // Process a single symbol: research → write research_packet + agent_signal
 // Phase 0: all 5 scores computed deterministically. LLM writes thesis+direction only.
 // P1: universeSnapshotId links this symbol's decision_observations row to the run's
