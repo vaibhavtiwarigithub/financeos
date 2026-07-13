@@ -22,6 +22,17 @@ Claude should update this summary periodically with:
 
 *Log meaningful instructions below. Skip tiny wording changes and obvious bug fixes.*
 
+### Entry 5 - 2026-07-13
+
+Instruction: Review the benchmark-alpha scorecard architecture for multi-horizon paper/live alpha vs configurable benchmarks, fix design flaws, and keep implementation code out of this design pass.
+Classification: Architecture rule / Feature request
+Affected area: Performance Truth Layer, benchmark data model, paper/live NAV analytics, LearnerAgent objective and promotion gate proposal.
+Impact: High
+Architecture impact: Major
+Risk: Complexity / overfitting / misleading financial metrics if built without provenance and confidence gates.
+Decision status: Proposed
+Notes: Codex corrected `features/benchmark-alpha/FEATURE_ARCHITECTURE.md` before implementation. Key design changes: scorecard belongs inside Performance Truth, not a parallel system; live aggregation requires explicit market/currency/book-scope provenance before summing accounts; info ratio is annualized daily mean excess divided by daily tracking error, not cumulative excess divided by daily stdev; unpriceable benchmarks must write visible unavailable rows instead of disappearing; Phase 2 learner/promotion usage is gated to longer confidence-qualified windows and remains additive to existing validation, not a replacement.
+
 ### Format
 
 ```
