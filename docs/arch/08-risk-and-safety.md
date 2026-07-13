@@ -71,6 +71,16 @@ market-scoped — the former unscoped demote-all fallback is removed and now abo
 the promotion on error, so promoting an India challenger never touches the US
 champion.
 
+**Automated validation boundary** (migration 170, `activate_strategy_shadow` RPC,
+`lib/validation/automation.ts`). Automatic challenger validation + shadow routing
+(gated per-market by `strategy_validation_automation`, fail-closed) has exactly one
+automatic lifecycle transition: a PASSED challenger → non-executing `shadow_paper`.
+It **cannot** promote a champion, create a paper fill, move cash, make a broker
+proposal, or place a live order — the RPC is `service_role`-only, holds a per-market
+advisory lock, caps at one shadow (`max_active_shadows` 0–1), and refuses any
+champion/terminal/unvalidated version. Promotion and every execution gate above
+stay separate and owner-only.
+
 ### 3 — Trading/broker/account enablement
 
 All global, per-market, broker, and account toggles must be true. Broker resolution fails closed.

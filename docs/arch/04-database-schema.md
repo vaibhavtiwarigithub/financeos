@@ -1,5 +1,5 @@
 # Kairos — Database Schema
-> Last updated: 2026-07-12 (migrations 165 watchlist.market, 166 LLM-config id fix + seed rows, 167 strategy_config trading_style + target_hold_days, 169 live_performance per-account live equity curve)
+> Last updated: 2026-07-13 (migrations 165 watchlist.market, 166 LLM-config id fix + seed rows, 167 strategy_config trading_style + target_hold_days, 169 live_performance per-account live equity curve, 170 strategy_validation_automation + activate_strategy_shadow RPC)
 > Update this file when: any migration adds, removes, or modifies a table, column, index, trigger, or RLS policy.
 
 Migrations in `supabase/migrations/`. Applied via Supabase MCP `apply_migration` or the Supabase SQL editor. **Always verify with `list_migrations` before shipping schema-coupled code.** A migration file existing in the repo does NOT mean it ran against production.
@@ -108,6 +108,20 @@ Champion/Challenger governance table.
 | `promoted_at` | timestamptz | Null until promoted |
 | `retired_at` | timestamptz | |
 | `created_at` | timestamptz | |
+
+### `strategy_validation_automation` (migration 170)
+Per-market, owner-controlled policy for **automatic** deterministic challenger validation + shadow routing. Fail-closed: a missing row / read error is treated as fully disabled. Owner-email SELECT RLS; writes only via the service client (Settings PATCH) — `authenticated` cannot write. Seeded `us`/`india` both enabled.
+
+| Column | Type | Notes |
+|---|---|---|
+| `market` | text PK | `us` \| `india` |
+| `enabled` | bool | Master switch — off = no auto validation for this market (challengers still created + manually validatable) |
+| `auto_shadow_enabled` | bool | When on AND validation passes, auto-route the challenger into one `shadow_paper` slot |
+| `max_active_shadows` | int | `0`–`1` (checked) — at most one shadow strategy per market |
+| `updated_by` | uuid | FK → `auth.users` (owner who last changed it) |
+| `created_at` / `updated_at` | timestamptz | |
+
+**RPC `activate_strategy_shadow(p_version_id)` — `SECURITY DEFINER`, `service_role` only.** The single automatic lifecycle transition: atomically flips a challenger to `state='shadow_paper'` under a per-market advisory lock, only if the policy is enabled + `auto_shadow_enabled`, the linked `validation_experiments` row `passed=true`, the version is not a champion / terminal state, and the market is under its `max_active_shadows` cap. Returns a typed reason (`strategy_not_found` / `automation_disabled` / `invalid_strategy_state` / `validation_not_passed` / `shadow_capacity_reached` / `already_shadow`) and **cannot** promote a champion, create a fill, move cash, or place an order. Driver: `runAutomatedValidation()` in `lib/validation/automation.ts`, called in-process by LearnerAgent when it creates a challenger (replaced the old fire-and-forget localhost request) and by the Friday `kairos-validation-sweep` recovery cron. Settings API: `GET`/`PATCH /api/settings/validation-automation` (owner-gated).
 
 ### `investment_mandates`
 Named strategy contexts for attribution and evaluation.
@@ -858,3 +872,4 @@ Append-only per-account roll-up — one row per run (UNIQUE `(run_id)`; FK → `
 | 166 | LLM config data fix: rewrite invalid `deepseek-v4-flash/pro` → `deepseek-chat`/`deepseek-reasoner` in `agent_config`; seed `research`/`trader`/`mentor-evaluate`/`mentor-thesis`/`mentor-ask` rows (per-flow model from Settings) |
 | 167 | `strategy_config` +`trading_style` (default `position`) +`target_hold_days` — Trading Style presets (Swing/Position/Long-term); horizon governs the time-stop only before a champion is promoted |
 | 169 | `live_performance` (`account_id`,`date`,`equity`,`bench_nav`, PK`(account_id,date)`) — real daily equity curve per live Robinhood account for the Live-vs-VOO chart; accrued forward on each snapshot refresh (RH exposes no account-value history). Authenticated SELECT, service-role writes |
+| 170 | **Automated strategy validation**: `strategy_validation_automation` (per-market `enabled`/`auto_shadow_enabled`/`max_active_shadows 0-1`, owner-read RLS, seeded us+india enabled) + `activate_strategy_shadow(bigint)` SECURITY DEFINER RPC (service_role only) that atomically routes a PASSED challenger to `shadow_paper` under a per-market advisory lock + capacity cap. Also schedules pg_cron `kairos-validation-sweep` (Fri 21:45 UTC). Cannot promote/execute — shadow only |

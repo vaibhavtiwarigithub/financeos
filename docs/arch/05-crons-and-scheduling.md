@@ -59,6 +59,7 @@ Scheduled inside Supabase via `cron.schedule`, calling the deployed app through 
 |---|---|---|---|
 | `kairos-holding-risk-us` | Weekdays 21:30 UTC (17:30 ET) | `POST /api/agents/holding-risk?market=us` | Daily Per-Holding Risk: scores every US live-account holding (deterministic score + posture, LLM prose note only). Fires after the 16:00 ET close **and** after `nav-snapshot` refreshes the account book at 21:00 UTC. 290s timeout. **Advisory-only — touches no order path.** |
 | `kairos-holding-risk-india` | Weekdays 11:00 UTC (16:30 IST) | `POST /api/agents/holding-risk?market=india` | Same, India (Kite): fires after the 15:30 IST close. 290s timeout. Advisory-only. |
+| `kairos-validation-sweep` | Fridays 21:45 UTC | `POST /api/validation/sweep` | **Automated strategy validation (migration 170)** recovery sweep: for each market, validates up to 5 never-validated challengers (`state='challenger'`, `validation_experiment_id IS NULL`) through the deterministic Validation Engine, and — when the per-market `strategy_validation_automation` policy allows — auto-routes a PASSED challenger into the single `shadow_paper` slot via the `activate_strategy_shadow` RPC. Catches challengers created outside LearnerAgent or interrupted before in-process validation. Runs 45 min after the Friday learner. **Cannot promote a champion or touch any paper/live execution path — `shadow_paper` is non-executing.** |
 
 The route fails closed (publishes a failed/insufficient-data run, never yesterday-as-today) when a broker
 snapshot is missing/stale, so cron timing is a best-effort ordering, not a correctness dependency. **EDT/EST
@@ -97,4 +98,5 @@ Sun 2 AM UTC — p1-gate (cloud, Vercel)
 1st of month 3 AM UTC — db-cleanup (cloud, Vercel)
 11:00 AM UTC — holding-risk India (pg_cron, weekdays; after 15:30 IST close)
 9:30 PM UTC  — holding-risk US (pg_cron, weekdays; after 16:00 ET close + nav-snapshot)
+Fri 9:45 PM UTC — validation-sweep (pg_cron; recovers never-validated challengers, after learner)
 ```

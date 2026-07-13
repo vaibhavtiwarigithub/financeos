@@ -1,5 +1,5 @@
 # Kairos — Learning Loop
-> Last updated: 2026-07-11 (cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
+> Last updated: 2026-07-13 (automated strategy validation + auto-shadow routing, migration 170; cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
 > Update this file when: the learning flow changes, new guardrails are added to weight mutation, genome parameters change, Phase 1 unlocks, the RAG pipeline changes, or Performance Truth Layer evaluation logic changes.
 
 ---
@@ -95,6 +95,39 @@ LearnerAgent runs a multi-step tool-calling loop (via `runAgentLoop()`). The 9 t
 7. `run_validation` — trigger Validation Engine on the proposed challenger
 8. `get_mentor_insights` — recent coaching notes from MentorAgent
 9. `semantic_search_decisions` — pgvector RAG over trade memories (if Jina key present)
+
+### Automatic validation & shadow routing (migration 170)
+
+When LearnerAgent creates a challenger it runs `runAutomatedValidation()`
+(`lib/validation/automation.ts`) **in-process** — this replaced the earlier
+fire-and-forget localhost request, which was unreliable on cloud cron. The flow,
+gated by the per-market `strategy_validation_automation` policy (fail-closed:
+missing row / read error = fully disabled):
+
+1. Policy `enabled=false` → return immediately, no validation (challenger still
+   exists and can be validated manually).
+2. Else run the deterministic **Validation Engine** (`validateChallenger`), which
+   writes a `validation_experiments` row (pass or fail) exactly as the on-demand
+   Validate button does.
+3. If it **passed** AND `auto_shadow_enabled=true` → call the
+   `activate_strategy_shadow(p_version_id)` RPC, which atomically routes the
+   challenger to `state='shadow_paper'` under a per-market advisory lock and a
+   `max_active_shadows` (0–1) capacity cap.
+
+The **only** automatic lifecycle transition is → `shadow_paper` (non-executing:
+records what it *would* decide, no fills/cash — see the Shadow section). It can
+**never** promote a champion, create a paper fill, move cash, make a broker
+proposal, or place a live order. Champion promotion stays the separate owner-only
+path and remains fail-closed on a PASSED `validation_experiments` row.
+
+A Friday cloud recovery cron — **`kairos-validation-sweep`, 21:45 UTC** (POST
+`/api/validation/sweep`) — validates up to 5 never-validated challengers per
+market (`state='challenger'`, `validation_experiment_id IS NULL`) through the same
+path, catching challengers created outside LearnerAgent or interrupted before
+in-process validation completed. Owner controls both switches per market in
+**Settings → Automatic Strategy Validation** (`GET`/`PATCH
+/api/settings/validation-automation`); disabling preserves every challenger,
+experiment, and shadow. Feature spec: `features/automated-strategy-validation/`.
 
 ### Auto-guard
 
