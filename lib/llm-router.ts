@@ -414,12 +414,26 @@ async function callDeepSeek(
   }
 
   const data = await resp.json()
-  const text = data.choices?.[0]?.message?.content ?? ""
+  const choice = data.choices?.[0]
+  const text = choice?.message?.content ?? ""
   if (!text) {
-    // Empty content usually means the model ID is invalid or the API returned a
-    // non-standard response shape (e.g. reasoning-only field). Throw so callLLM's
-    // same-tier fallback activates instead of propagating an empty string that
-    // silently breaks callers (e.g. health-triage "empty triage" error loop).
+    // Empty `content` has two very different causes; distinguish them so a VALID
+    // model isn't flagged as dead. deepseek-reasoner (R1) streams chain-of-thought
+    // into `reasoning_content` and the answer into `content`; if the call is cut at
+    // max_tokens mid-reasoning (finish_reason "length"), `content` is empty while
+    // the model clearly responded. That is a transient truncation, NOT a bad model.
+    // Only word the error with "invalid/not found" when the response is genuinely
+    // empty — because callLLM's isModelUnavailable() keys on those words to raise
+    // the persistent "model deprecated/unavailable" System Health alert. A truncated
+    // reasoner reply still throws (so same-tier fallback fires for that one call) but
+    // must NOT masquerade as a dead model and spam the health funnel.
+    const reasoning = choice?.message?.reasoning_content ?? ""
+    const finish = choice?.finish_reason ?? ""
+    if (reasoning || finish === "length") {
+      throw new Error(`DeepSeek model ${model} returned no answer content (finish_reason=${finish || "?"}, reasoning_len=${reasoning.length}) — transient truncation, retrying via same-tier fallback (raw: ${JSON.stringify(data).slice(0, 200)})`)
+    }
+    // Genuinely empty response (no content, no reasoning) — likely an invalid/renamed
+    // model id. Keep the "invalid" wording so the unavailable-model alert fires.
     throw new Error(`DeepSeek model ${model} returned empty content — model may be invalid or not found (raw: ${JSON.stringify(data).slice(0, 200)})`)
   }
   return {
