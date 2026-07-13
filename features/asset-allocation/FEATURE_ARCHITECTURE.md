@@ -1,4 +1,33 @@
-# Feature Architecture — Asset-Class Allocation (DRAFT / PROPOSAL)
+# Feature Architecture — Asset-Class Allocation
+
+> Status: **Deterministic CORE built + SHIPPED OFF (migration 175).** Genome
+> evolution, the slow rebalancer, sizing wiring, and UI are the validated
+> follow-up. Owner defaults chosen (below) — change any and say so.
+> Last updated: 2026-07-13
+
+## Built (2026-07-13, ships OFF)
+- Migration 175: `strategy_sleeves(market, sleeve, target_pct, min_pct, max_pct,
+  instruments, enabled)` seeded per market + `strategy_config.allocation_enabled`
+  (default **false** → allocator inert; zero behaviour change today).
+- `lib/allocation/allocator.ts`: deterministic `allocate(sleeves, regime)` — tilts
+  targets by macro regime WITHIN hard bands, drops disabled sleeves, renormalizes
+  to 100%. `computeAllocation(svc, market)` returns null unless enabled. NO LLM.
+  Unit-tested (`tests/allocator.test.ts`).
+- **Default decisions used** (owner-tunable in `strategy_sleeves`):
+  - US: equity 70% (0–90), defensive_etf 20% (0–50, SHY/IEF/TLT/GLD), cash 10% (5–100), leveraged **OFF** (0–15).
+  - India: equity 70%, defensive_etf 20% (LIQUIDBEES.NS/GOLDBEES.NS), cash 10%.
+  - Leveraged sleeve **disabled**; rebalance cadence weekly / 5% deadband (documented; rebalancer not built yet).
+
+## Follow-up (NOT built — money path + evolution)
+1. Wire the equity-sleeve target into paper-trade sizing (only when enabled).
+2. Slow rebalancer for defensive/cash sleeves (weekly cron, deadband).
+3. Genome `allocation` block + LearnerAgent proposal + Validation gate.
+4. Allocation UI (current vs target per sleeve).
+Turn it on with `allocation_enabled=true` only after 1–3 land + are validated.
+
+---
+
+## Original proposal (retained)
 
 > Status: **PROPOSAL — not built.** Needs owner approval before implementation.
 > Last updated: 2026-07-13
