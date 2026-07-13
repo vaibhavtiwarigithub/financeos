@@ -9,6 +9,7 @@ import { constructPortfolio, DEFAULT_LIMITS, type BookPosition } from "@/lib/por
 import { estimateDailyVolPct } from "@/lib/portfolio/inputs";
 import { predictPWin } from "@/lib/validation/calibration";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
+import { computeAllocation } from "@/lib/allocation/allocator";
 import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
 import { loadChampionGenome, type ResolvedGenome } from "@/lib/validation/genome-live";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -203,6 +204,14 @@ export async function POST(req: NextRequest) {
     };
     const bookByMarket = new Map<string, BookPosition[]>();
     const constructorNavByMarket = new Map<string, number>();
+    // Asset-allocation → sizing wire (SHIPPED OFF: computeAllocation returns null
+    // unless strategy_config.allocation_enabled=true). When on, the deterministic
+    // equity-sleeve target for a market TIGHTENS that market's gross-equity cap in
+    // the Portfolio Constructor — e.g. a risk_off regime lowers the equity target,
+    // so new equity buys are capped sooner and cash builds. It only ever SHRINKS
+    // the gross cap (min with the configured limit), never raises it, and touches
+    // no other gate. Default off = zero behaviour change.
+    const allocEquityCapByMarket = new Map<string, number>();
     for (const m of activeMarkets) {
       const pool = poolByMarket.get(m);
       const mktPositions = (openPos ?? []).filter((p: any) => (hasMarketCol ? (p.market ?? "us") : "us") === m);
@@ -214,6 +223,13 @@ export async function POST(req: NextRequest) {
         valuePct: nav > 0 ? (Number(p.qty ?? 0) * Number(p.avg_cost ?? 0) / nav) * 100 : 0,
         beta: null, dailyVol: null,
       })));
+      try {
+        const alloc = await computeAllocation(supabase, m as "us" | "india");
+        const equity = alloc?.find(s => s.sleeve === "equity");
+        if (equity && Number.isFinite(equity.targetPct) && equity.targetPct > 0) {
+          allocEquityCapByMarket.set(m, equity.targetPct);
+        }
+      } catch { /* allocation is advisory — never break paper sizing */ }
     }
     async function resolveSector(sym: string, packetId: string | null): Promise<string | null> {
       try {
@@ -435,10 +451,16 @@ export async function POST(req: NextRequest) {
       // against this market's book (name/sector/gross/vol/correlation limits)
       // before spending cash. Never increases size.
       const dailyVol = await estimateDailyVolPct(signal.symbol, market as "us" | "india", supabase);
+      // Allocation-aware gross cap: tighten (never raise) this market's gross-equity
+      // limit toward the equity-sleeve target when allocation is enabled.
+      const allocEquityCap = allocEquityCapByMarket.get(market);
+      const marketLimits = allocEquityCap != null
+        ? { ...portfolioLimits, maxGrossExposurePct: Math.min(portfolioLimits.maxGrossExposurePct, allocEquityCap) }
+        : portfolioLimits;
       const constructed = constructPortfolio(
         bookByMarket.get(market) ?? [],
         [{ symbol: signal.symbol, market: market as "us" | "india", proposedSizePct, sector: candSector, beta: null, dailyVol }],
-        portfolioLimits
+        marketLimits
       );
       const rawSizedPct = constructed.orders[0]?.finalSizePct ?? 0;
       // Finite-number gate — NaN fails every `<= 0` / `< 1` comparison below
