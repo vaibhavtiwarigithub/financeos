@@ -9,6 +9,15 @@ import AdminPanel from "@/components/dashboard/AdminPanel";
 import AutomationPanel from "@/components/dashboard/AutomationPanel";
 import TradingMandatePanel from "@/components/dashboard/TradingMandatePanel";
 import ValidationAutomationPanel from "@/components/dashboard/ValidationAutomationPanel";
+import { MCP_BROKERS } from "@/lib/brokers/mcp-registry";
+
+// Config-driven MCP broker snapshot status shape (returned by
+// /api/broker-mcp/<id>/status). READ-ONLY connections; no order path.
+type McpBrokerStatus = {
+  broker?: string; label?: string; market?: string; currency?: string;
+  connected: boolean; stale?: boolean; expires_at?: string | null;
+  has_refresh?: boolean; oauth_ready: boolean; accounts?: any[];
+};
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -112,12 +121,19 @@ export default function SettingsPage() {
   const [activeAccountIndia, setActiveAccountIndia] = useState<string>("");
   const [rhMcpMsg, setRhMcpMsg] = useState<string>("");
 
-  // Webull MCP (Phase 1 — READ-ONLY cloud OAuth connection). Snapshot only; no
-  // order path exists this phase.
-  const [webull, setWebull] = useState<{ connected: boolean; stale?: boolean; expires_at?: string | null; has_refresh?: boolean; oauth_ready: boolean; accounts?: any[] } | null>(null);
-  const [webullMsg, setWebullMsg] = useState<string>("");
-  const loadWebull = () => {
-    fetch("/api/webull/status").then(r => r.json()).then(setWebull).catch(() => {});
+  // Config-driven MCP brokers (Phase 1 — READ-ONLY cloud OAuth connections).
+  // Snapshot only; no order path this phase. Every broker in MCP_BROKERS renders
+  // a connect card generically — future brokers auto-appear when added to the
+  // registry. Keyed by broker id.
+  const [mcpBrokers, setMcpBrokers] = useState<Record<string, McpBrokerStatus | null>>({});
+  const [mcpMsgs, setMcpMsgs] = useState<Record<string, string>>({});
+  const loadMcpBrokers = () => {
+    for (const id of Object.keys(MCP_BROKERS)) {
+      fetch(`/api/broker-mcp/${id}/status`)
+        .then(r => r.json())
+        .then(d => setMcpBrokers(prev => ({ ...prev, [id]: d })))
+        .catch(() => {});
+    }
   };
 
   // Per-market live per-order notional caps (money limits — owner-set). Empty = null
@@ -224,17 +240,18 @@ export default function SettingsPage() {
       setRhMcpMsg(rmap[rh] ?? "");
       setTab("agents");
     }
-    // Post-Webull-OAuth status flag
-    const wb = params.get("webull");
-    if (wb) {
-      const wmap: Record<string, string> = {
-        connected: "Webull connected — read-only token stored.",
-        register_failed: "Webull dynamic client registration failed.",
+    // Post-OAuth status flag for any config-driven MCP broker (?<id>=<status>).
+    for (const [id, cfg] of Object.entries(MCP_BROKERS)) {
+      const s = params.get(id);
+      if (!s) continue;
+      const smap: Record<string, string> = {
+        connected: `${cfg.label} connected — read-only token stored.`,
+        register_failed: `${cfg.label} dynamic client registration failed.`,
         state_mismatch: "OAuth state check failed — please retry the connect.",
         exchange_failed: "Token exchange failed — please retry.",
         no_client: "No registered client — retry the connect.",
       };
-      setWebullMsg(wmap[wb] ?? "");
+      setMcpMsgs(prev => ({ ...prev, [id]: smap[s] ?? "" }));
       setTab("agents");
     }
 
@@ -349,13 +366,14 @@ export default function SettingsPage() {
     loadRhMcp();
   }
 
-  async function disconnectWebull() {
-    if (!confirm("Wipe the stored Webull token from this app? The authoritative revoke is Webull's own connected-apps dashboard.")) return;
-    const res = await fetch("/api/webull/disconnect", { method: "POST" });
+  async function disconnectMcpBroker(id: string, label: string) {
+    if (!confirm(`Wipe the stored ${label} token from this app? The authoritative revoke is ${label}'s own connected-apps dashboard.`)) return;
+    const res = await fetch(`/api/broker-mcp/${id}/disconnect`, { method: "POST" });
     const d = await res.json().catch(() => ({}));
-    setWebullMsg(res.ok ? "Webull token wiped." : (d.error ?? "Disconnect failed"));
-    setTimeout(() => setWebullMsg(""), 3000);
-    loadWebull();
+    const msg = res.ok ? `${label} token wiped.` : (d.error ?? "Disconnect failed");
+    setMcpMsgs(prev => ({ ...prev, [id]: msg }));
+    setTimeout(() => setMcpMsgs(prev => ({ ...prev, [id]: "" })), 3000);
+    loadMcpBrokers();
   }
 
   const ORDER_LIMIT_DEFAULTS = {
@@ -439,7 +457,7 @@ export default function SettingsPage() {
     if (tab !== "agents") return;
     loadKite();
     loadRhMcp();
-    loadWebull();
+    loadMcpBrokers();
     loadLiveAuto();
     if (llmCosts) return; // already loaded
     setLlmLoading(true);
@@ -910,63 +928,71 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Webull (US live account snapshot) — Phase 1 READ-ONLY */}
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
-            <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Webull · US · Read-only</div>
-            <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "16px" }}>
-              In-app Webull connection for the live-account snapshot (accounts, positions, balances). This is a read-only integration — no orders are placed through Webull in this phase.
-            </div>
+          {/* Config-driven MCP brokers (READ-ONLY live-account snapshot). One
+              card per MCP_BROKERS entry — future brokers auto-appear when added
+              to lib/brokers/mcp-registry.ts, no new UI code. */}
+          {Object.values(MCP_BROKERS).map((cfg) => {
+            const st = mcpBrokers[cfg.id];
+            const msg = mcpMsgs[cfg.id];
+            return (
+              <div key={cfg.id} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
+                <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>{cfg.label} · {cfg.market.toUpperCase()} · Read-only</div>
+                <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "16px" }}>
+                  In-app {cfg.label} connection for the live-account snapshot (accounts, positions, balances). This is a read-only integration — no orders are placed through {cfg.label} in this phase.
+                </div>
 
-            {webullMsg && (
-              <div style={{ fontSize: "13px", color: webullMsg.toLowerCase().includes("fail") ? T.red : T.green, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "14px" }}>{webullMsg}</div>
-            )}
+                {msg && (
+                  <div style={{ fontSize: "13px", color: msg.toLowerCase().includes("fail") ? T.red : T.green, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "14px" }}>{msg}</div>
+                )}
 
-            {/* Connection status + connect/disconnect */}
-            <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" as const, marginBottom: "18px" }}>
-              <div style={{ fontSize: "13px" }}>
-                {!webull ? <span style={{ color: T.muted }}>Checking…</span>
-                  : webull.connected && webull.stale ? (
-                    <span style={{ color: T.red }} title={webull.expires_at ? `Token expired ${new Date(webull.expires_at).toLocaleString()}${webull.has_refresh ? "" : " · no refresh token stored"}` : ""}>
-                      ● Reconnect required — token expired
-                    </span>
-                  )
-                  : webull.connected ? (
-                    <span style={{ color: T.green }} title={webull.expires_at ? `Token valid until ${new Date(webull.expires_at).toLocaleString()}` : ""}>
-                      ● Connected{webull.expires_at ? ` — valid until ${new Date(webull.expires_at).toLocaleString()}` : ""}
-                    </span>
-                  )
-                  : <span style={{ color: T.muted }}>○ Not connected</span>}
-              </div>
-              <button
-                disabled={!webull?.oauth_ready}
-                onClick={() => { if (webull?.oauth_ready) window.location.href = "/api/webull/login"; }}
-                style={{ background: webull?.oauth_ready ? T.accent : T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: webull?.oauth_ready ? "#fff" : T.muted, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: webull?.oauth_ready ? "pointer" : "not-allowed" }}
-              >
-                {webull?.connected ? "Reconnect" : "Connect"}
-              </button>
-              {webull?.connected && (
-                <button onClick={disconnectWebull} style={{ background: "transparent", border: `1px solid ${T.red}`, borderRadius: "8px", color: T.red, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>Disconnect</button>
-              )}
-            </div>
-
-            {/* Read-only account snapshot summary (fail-soft) */}
-            {webull?.connected && Array.isArray(webull.accounts) && webull.accounts.length > 0 && (
-              <div style={{ marginBottom: "14px", display: "flex", flexDirection: "column" as const, gap: "8px" }}>
-                {webull.accounts.map((a: any, i: number) => (
-                  <div key={a.accountId ?? i} style={{ fontSize: "12px", color: a.error ? T.amber : T.textSub, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 12px" }}>
-                    <strong>{a.accountLabel ?? a.accountId ?? "Webull"}</strong>
-                    {a.error
-                      ? ` — ${a.error}`
-                      : ` — ${a.holdings?.length ?? 0} holdings · total ${Number(a.totalValue ?? 0).toLocaleString(undefined, { style: "currency", currency: "USD" })}`}
+                {/* Connection status + connect/disconnect */}
+                <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" as const, marginBottom: "18px" }}>
+                  <div style={{ fontSize: "13px" }}>
+                    {!st ? <span style={{ color: T.muted }}>Checking…</span>
+                      : st.connected && st.stale ? (
+                        <span style={{ color: T.red }} title={st.expires_at ? `Token expired ${new Date(st.expires_at).toLocaleString()}${st.has_refresh ? "" : " · no refresh token stored"}` : ""}>
+                          ● Reconnect required — token expired
+                        </span>
+                      )
+                      : st.connected ? (
+                        <span style={{ color: T.green }} title={st.expires_at ? `Token valid until ${new Date(st.expires_at).toLocaleString()}` : ""}>
+                          ● Connected{st.expires_at ? ` — valid until ${new Date(st.expires_at).toLocaleString()}` : ""}
+                        </span>
+                      )
+                      : <span style={{ color: T.muted }}>○ Not connected</span>}
                   </div>
-                ))}
-              </div>
-            )}
+                  <button
+                    disabled={!st?.oauth_ready}
+                    onClick={() => { if (st?.oauth_ready) window.location.href = `/api/broker-mcp/${cfg.id}/login`; }}
+                    style={{ background: st?.oauth_ready ? T.accent : T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: st?.oauth_ready ? "#fff" : T.muted, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: st?.oauth_ready ? "pointer" : "not-allowed" }}
+                  >
+                    {st?.connected ? "Reconnect" : "Connect"}
+                  </button>
+                  {st?.connected && (
+                    <button onClick={() => disconnectMcpBroker(cfg.id, cfg.label)} style={{ background: "transparent", border: `1px solid ${T.red}`, borderRadius: "8px", color: T.red, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>Disconnect</button>
+                  )}
+                </div>
 
-            <div style={{ fontSize: "11px", color: T.muted, borderTop: `1px solid ${T.border}`, paddingTop: "12px" }}>
-              Phase 1 is read-only: the app only requests account, market, and instrument read access. Order placement through Webull is not enabled. The authoritative, app-independent revoke is Webull's own connected-apps dashboard.
-            </div>
-          </div>
+                {/* Read-only account snapshot summary (fail-soft) */}
+                {st?.connected && Array.isArray(st.accounts) && st.accounts.length > 0 && (
+                  <div style={{ marginBottom: "14px", display: "flex", flexDirection: "column" as const, gap: "8px" }}>
+                    {st.accounts.map((a: any, i: number) => (
+                      <div key={a.accountId ?? i} style={{ fontSize: "12px", color: a.error ? T.amber : T.textSub, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 12px" }}>
+                        <strong>{a.accountLabel ?? a.accountId ?? cfg.label}</strong>
+                        {a.error
+                          ? ` — ${a.error}`
+                          : ` — ${a.holdings?.length ?? 0} holdings · total ${Number(a.totalValue ?? 0).toLocaleString(undefined, { style: "currency", currency: cfg.currency })}`}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ fontSize: "11px", color: T.muted, borderTop: `1px solid ${T.border}`, paddingTop: "12px" }}>
+                  Phase 1 is read-only: the app only requests account, market, and instrument read access. Order placement through {cfg.label} is not enabled. The authoritative, app-independent revoke is {cfg.label}'s own connected-apps dashboard.
+                </div>
+              </div>
+            );
+          })}
 
           {/* Zerodha Kite (India) connection card */}
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>

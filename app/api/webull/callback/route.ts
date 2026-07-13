@@ -1,51 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireOwner } from "@/lib/auth/require-owner";
-import { createServiceClient } from "@/lib/supabase/service";
-import { getOrRegisterClient, exchangeCode, verifyOAuthCookie, consumeOAuthState } from "@/lib/webull-mcp";
 
 export const dynamic = "force-dynamic";
-const COOKIE = "wb_mcp_oauth";
 
-// Completes the OAuth flow: verifies the signed state cookie (CSRF/PKCE),
-// exchanges the code for tokens (stored server-side in the vault), and redirects
-// back to Settings. Owner-only. Post-auth redirect is hardcoded — no
-// open-redirect `next` param. The redirect_uri used for the exchange MUST match
-// the one the login route registered (the hosted callback).
-export async function GET(req: NextRequest) {
-  const gate = await requireOwner();
-  if (gate) return gate;
-
-  const origin = req.nextUrl.origin;
-  const done = (status: string) => {
-    const r = NextResponse.redirect(`${origin}/dashboard/settings?tab=agents&webull=${status}`);
-    // Must match the path the login route set the cookie with, or the delete
-    // is a no-op and the single-use cookie lingers.
-    r.cookies.delete({ name: COOKIE, path: "/api/webull" });
-    return r;
-  };
-
-  const code = req.nextUrl.searchParams.get("code");
-  const state = req.nextUrl.searchParams.get("state");
-  const svc = createServiceClient();
-
-  // PRIMARY: server-side state store (migration 173) — immune to cookie/domain/
-  // expiry. Falls back to the signed cookie only if the row is somehow absent.
-  let verifier: string | null = null;
-  if (code && state) {
-    const server = await consumeOAuthState(svc, state);
-    if (server) {
-      verifier = server.verifier;
-    } else {
-      const cookie = verifyOAuthCookie(req.cookies.get(COOKIE)?.value);
-      if (cookie && cookie.state === state) verifier = cookie.verifier;
-    }
-  }
-  if (!code || !state || !verifier) return done("state_mismatch");
-  const appBase = process.env.APP_BASE_URL ?? process.env.NEXT_PUBLIC_APP_URL;
-  const redirectUri = `${appBase ?? origin}/api/webull/callback`;
-  const reg = await getOrRegisterClient(svc, [redirectUri]); // returns the stored client_id
-  if (!reg.ok || !reg.clientId) return done("no_client");
-
-  const ex = await exchangeCode(svc, { code, verifier, redirectUri, clientId: reg.clientId });
-  return done(ex.ok ? "connected" : "exchange_failed");
+// Thin redirect → the generic config-driven MCP broker callback. This is the
+// redirect_uri the live Webull DCR client was registered with (webull's
+// callbackPath in the registry is pinned to this path), so Webull still redirects
+// here; we forward the ?code&state to the generic handler which performs the
+// server-side-state lookup + token exchange. 307 preserves the query string.
+export function GET(req: NextRequest) {
+  const url = req.nextUrl.clone();
+  url.pathname = "/api/broker-mcp/webull/callback";
+  return NextResponse.redirect(url, 307);
 }

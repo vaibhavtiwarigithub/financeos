@@ -6,15 +6,40 @@
 > Free VM), whereas the MCP's OAuth is not IP-locked and runs from Vercel free.
 > Reuses the Robinhood MCP OAuth machinery.
 > Last updated: 2026-07-13
+> **Refactored 2026-07-13 onto the config-driven MCP broker framework** — Webull
+> is now a registry entry, not bespoke code (see "Config-driven framework" below).
+
+## Config-driven framework (2026-07-13 refactor)
+The bespoke `lib/webull-mcp.ts` was generalized so future OAuth-MCP read-only
+brokers (E*TRADE, other US/India) are added by a CONFIG ENTRY, not new code:
+- `lib/brokers/mcp-registry.ts` — `McpBrokerConfig` type + `MCP_BROKERS` registry
+  (id/label/market/currency, mcpUrl, oauth endpoints+scopes, vaultProvider+keys,
+  tool names, and response field-name candidates). Seeded with the **webull** entry
+  (same endpoints/scopes/tools/vault keys — behaviour-neutral).
+- `lib/brokers/mcp-driver.ts` — the generic driver: every fn takes an
+  `McpBrokerConfig` — `getOrRegisterClient` / `buildAuthUrl` / `exchangeCode` /
+  `getValidAccessToken` (CAS refresh) / `hasToken` / `mcpRpc` / `captureAccounts`
+  (driven by cfg.tools + cfg.fields → `BrokerAccount[]`) / `checkTokenHealth` /
+  `disconnect` / `saveOAuthState`+`consumeOAuthState` (keyed by broker id).
+  Reuses `makePkce/makeState/signOAuthCookie/verifyOAuthCookie/mcpToolJson` from
+  `lib/robinhood-mcp.ts`.
+- Generic routes `app/api/broker-mcp/[broker]/{login,callback,status,disconnect}`
+  resolve the config from `MCP_BROKERS[broker]` (404 if unknown). Login/status/
+  disconnect owner-gated; callback verifies the single-use server-side state.
+- Settings iterates `MCP_BROKERS` → one connect card per broker (future brokers
+  auto-render). The legacy `app/api/webull/*` routes are thin 307 redirects to the
+  generic ones (preserving the DCR-registered `/api/webull/callback` redirect_uri).
+- `lib/webull-mcp.ts` was **deleted** — nothing imported it after the repoint.
 
 ## Phase 1 built (read-only)
-- `lib/webull-mcp.ts` — OAuth 2.1 (DCR + PKCE S256, hosted Vercel callback) +
-  CAS token refresh (vault keys `WEBULL_MCP_*`, provider `webull_mcp`) +
-  `webullRpc` JSON-RPC client + `captureWebullAccounts()` (get_account_list →
-  get_account_positions + get_account_balance → get_stock_quotes). Scope
+- OAuth 2.1 (DCR + PKCE S256, hosted Vercel callback) + CAS token refresh (vault
+  keys `WEBULL_MCP_*`, provider `webull_mcp`) + JSON-RPC client + `captureAccounts()`
+  (get_account_list → get_account_positions + get_account_balance → get_stock_quotes),
+  now via the generic `lib/brokers/mcp-driver.ts` + `MCP_BROKERS.webull`. Scope
   `account:read market:read instrument:read` ONLY — no `order:write`, no order code.
-- Routes `app/api/webull/{login,callback,status,disconnect}`.
-- Settings "Connect Webull" card. `BrokerName` union +`webull`.
+- Legacy routes `app/api/webull/{login,callback,status,disconnect}` → 307 redirects
+  to `app/api/broker-mcp/webull/{login,callback,status,disconnect}`.
+- Settings connect card (generic, driven by the registry). `BrokerName` union +`webull`.
 - **Owner action:** click Connect Webull once (cloud OAuth) → token in vault →
   crons reuse it. Then verify holdings appear.
 - **Phase 2 (later):** order adapter (`order:write` + preview→place→status→cancel)

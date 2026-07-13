@@ -1,17 +1,11 @@
-import { NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
-import { requireOwner } from "@/lib/auth/require-owner";
-import { disconnectWebullMcp } from "@/lib/webull-mcp";
+import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// Kill switch: wipe the stored Webull MCP token locally. Owner-only. Mirrors the
-// Robinhood/Kite disconnect — wipes regardless of remote reachability. The
-// authoritative revoke is Webull's own connected-apps dashboard.
-export async function POST() {
-  const gate = await requireOwner();
-  if (gate) return gate;
-  const svc = createServiceClient();
-  const res = await disconnectWebullMcp(svc);
-  return NextResponse.json(res, { status: res.ok ? 200 : 500 });
+// Thin redirect → the generic config-driven MCP broker disconnect. 307 preserves
+// the POST method so the kill switch still wipes the Webull token via the driver.
+export function POST(req: NextRequest) {
+  const url = req.nextUrl.clone();
+  url.pathname = "/api/broker-mcp/webull/disconnect";
+  return NextResponse.redirect(url, 307);
 }
