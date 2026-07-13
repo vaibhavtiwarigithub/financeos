@@ -1,6 +1,6 @@
 # Feature Architecture - Benchmark Alpha Scorecard
 
-> Status: **PROPOSAL - architecture reviewed/corrected by Codex on 2026-07-13. Not built.**
+> Status: **P1 BUILT 2026-07-13.** Phase 1 measurement is implemented; Phase 2 learner/promotion wiring remains unbuilt.
 > Scope: deterministic measurement first; no order path, no paper fills, no learner mutation in Phase 1.
 > Build gate: Phase 2 learner/promotion wiring requires a separate owner approval after Phase 1 has accumulated evidence.
 > Update when built: `docs/arch/04-database-schema.md`, `docs/arch/05-crons-and-scheduling.md`, `docs/arch/09-learning-loop.md`, and `public/agent-diagrams/system-map.json`.
@@ -320,7 +320,7 @@ Blend benchmarks ship after single-symbol benchmarks:
 
 ## Files - Phase 1
 
-- `supabase/migrations/17X_benchmark_alpha.sql`
+- `supabase/migrations/20260713143000_benchmark_alpha_rotation_shadow.sql`
 - `lib/analytics/benchmark-alpha.ts`
 - `app/api/agents/benchmark-scorecard/route.ts`
 - `components/dashboard/AlphaScorecard.tsx`

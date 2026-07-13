@@ -4,6 +4,7 @@ import {
   ResponsiveContainer, LineChart as LC, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, Cell,
 } from "recharts";
+import AlphaScorecard from "@/components/dashboard/AlphaScorecard";
 
 // Build 3 — Performance-truth section. Fetches /api/agents/performance/metrics
 // (owner-gated) and renders risk-adjusted truth: Sharpe/Sortino/max-DD,
@@ -254,6 +255,8 @@ export default function PerformanceTruth() {
           n={m.slip.realized.n} insufficient={m.slip.realized.insufficient} tone="neutral"
           sub={`vs modeled ${m.slip.modeledPct.toFixed(2)}%`} />
       </div>
+
+      <AlphaScorecard market={market} />
 
       {/* Charts row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px" }}>

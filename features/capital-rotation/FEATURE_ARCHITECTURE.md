@@ -1,6 +1,6 @@
 # Feature Architecture - Capital Rotation
 
-> Status: **PROPOSAL - architecture corrected, not built.** Needs owner sign-off before implementation.
+> Status: **P0 SHADOW BUILT 2026-07-13.** Paper/live execution remains disabled and unbuilt.
 > Scope: deterministic opportunity-cost reallocation for PAPER first, LIVE approval proposals later.
 > Last updated: 2026-07-13
 > Update when built: `docs/arch/03-agents.md`, `docs/arch/04-database-schema.md`, `docs/arch/08-risk-and-safety.md`, `docs/arch/09-learning-loop.md`, `public/agent-diagrams/system-map.json`.
@@ -188,7 +188,7 @@ Implementation must not overload global `trading_enabled`; rotation has its own 
 
 ### P0 - Shadow-only measurement
 
-Build evaluator and append-only audit rows. On `insufficient_cash`, record whether a rotation would have been eligible and why. No sell, no buy, no proposal. This validates frequency, churn pressure, score persistence, priceability, and missing tax/lot data.
+Built 2026-07-13. The evaluator and append-only audit rows are implemented. On `insufficient_cash`, PaperTrader records whether a rotation would have been eligible and why. No sell, no buy, no proposal. This validates frequency, churn pressure, score persistence, priceability, and missing tax/lot data.
 
 ### P1 - Paper auto-rotation, still default off
 

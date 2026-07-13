@@ -94,6 +94,14 @@ position-monitor now runs a **ledger reconciliation guard** every cycle: if
 `paper-cash-drift:<market>` (warn) so drift is visible and actionable BEFORE the
 drawdown breaker acts on corrupted NAV.
 
+**Capital rotation P0 shadow only (migration 20260713143000).** PaperTrader now
+records a `rotation_events` audit row when a candidate is rejected for
+`insufficient_cash`, showing whether a same-market weaker holding could have
+funded it. This is measurement only: `rotation_paper_execute_enabled=false` and
+`rotation_live_proposals_enabled=false` by default, no paper sell/buy RPC exists
+in this phase, no live proposal is created, and PositionMonitor remains the only
+owner of true exit labels.
+
 **Per-market pause/kill isolation (migration 171).** The pause and kill-switch
 state was GLOBAL (`strategy_config.app_paused`/`trading_enabled`), so one
 market's breaker halted BOTH — India's phantom drawdown even skipped the US

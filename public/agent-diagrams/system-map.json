@@ -365,6 +365,28 @@
       "changeReason": null,
       "removedAt": null,
       "removeReason": null
+    },
+    "ROTATION": {
+      "label": "CapitalRotation shadow",
+      "description": "P0 shadow-only evaluator called by PaperTrader when a same-market candidate fails for insufficient_cash. Writes rotation_events with source/candidate/edge/gate reasons. Does not sell, buy, create a proposal, or move cash.",
+      "addedAt": "2026-07-13",
+      "addReason": "Measure opportunity-cost rotations before any paper/live execution is approved.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "BENCHALPHA": {
+      "label": "BenchmarkAlpha",
+      "description": "Phase-1 Performance Truth measurement surface. Rolls up benchmark_scorecard rows for paper/live, US/India, and 1W/1M/3M/YTD/1Y horizons using common-window excess return and annualized daily information ratio. No learner mutation, posture change, paper fill, or live order.",
+      "addedAt": "2026-07-13",
+      "addReason": "Give Kairos a trustworthy multi-horizon alpha-vs-benchmark scorecard before any learner/promotion use.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     }
   },
   "history": [
@@ -800,6 +822,18 @@
       "nodeId": "ACCTBOOK",
       "label": "Webull review correction: connected tools are read-mostly; order adapter remains inert",
       "reason": "Adversarial review of the Webull/OAuth money path found the current connected Webull MCP surface exposes account/balance/position/order-history style read tools, but not the quote/research/order-placement tools the first architecture draft listed. Docs now mark those names as unverified until deployed tools/list proves them. Code posture remains fail-soft for read capture gaps and fail-closed for orders: orderCapable=false, no requested order:write login scope, no webull_orders_enabled production column, and no broker_accounts Webull trading allowlist row. The Webull adapter scaffold must stay unreachable until an explicit future order-capable architecture is approved."
+    },
+    {
+      "date": "2026-07-13",
+      "nodeId": "BENCHALPHA",
+      "label": "BenchmarkAlpha scorecard",
+      "reason": "Added Phase-1 benchmark-alpha measurement: benchmark_scorecard rollups for paper/live, US/India, multi-horizon excess return and information ratio. Measurement-only; no learner or order path changes."
+    },
+    {
+      "date": "2026-07-13",
+      "nodeId": "ROTATION",
+      "label": "CapitalRotation shadow",
+      "reason": "Added P0 shadow-only opportunity-cost rotation evaluator on PaperTrader insufficient_cash. Writes rotation_events only; no sell/buy/proposal execution."
     }
   ]
 }

@@ -14,6 +14,7 @@ import { loadChampionGenome, type ResolvedGenome } from "@/lib/validation/genome
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadTradingMandate, mandateSnapshot, resolveHorizonDays, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaused } from "@/lib/market-controls";
+import { recordCapitalRotationShadow } from "@/lib/trading/capital-rotation";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -469,6 +470,24 @@ export async function POST(req: NextRequest) {
       }
       const totalCost = qty * fillPrice;
       if (!Number.isFinite(totalCost) || totalCost > portfolio.cash_balance) {
+        try {
+          await recordCapitalRotationShadow(supabase, {
+            runId,
+            candidate: {
+              signalId: signal.id,
+              symbol: signal.symbol,
+              market: market as "us" | "india",
+              currency: currency as "USD" | "INR",
+              score: Number(signal.analyst_score ?? 0),
+              targetNotional: totalCost,
+              cash: Number(portfolio.cash_balance ?? 0),
+            },
+            scoreThreshold,
+            minHoldingDays: tradingMandate.min_hold_days ?? 2,
+          });
+        } catch (e: any) {
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_shadow_log_failed", detail: { error: e?.message ?? String(e) } });
+        }
         await revertClaim(signal.id);
         skipped.push({ symbol: signal.symbol, reason: "insufficient_cash" });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "insufficient_cash", detail: { totalCost, cash: portfolio.cash_balance } });

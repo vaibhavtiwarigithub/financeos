@@ -1,6 +1,7 @@
 # Kairos — Database Schema
 > Last updated: 2026-07-13 (migrations 165 watchlist.market, 166 LLM-config id fix + seed rows, 167 strategy_config trading_style + target_hold_days, 169 live_performance per-account live equity curve, 170 strategy_validation_automation + activate_strategy_shadow RPC, 171 market_controls per-market pause/trading, 172 research_queue, 173 oauth_pkce_state, 174 broker-labelled live snapshots, 175 inert asset-allocation sleeves, 20260713112754 live_performance owner-only RLS tightening)
 > Update this file when: any migration adds, removes, or modifies a table, column, index, trigger, or RLS policy.
+> Latest schema addition: migration `20260713143000_benchmark_alpha_rotation_shadow.sql` adds benchmark-alpha scorecard tables, live-performance provenance columns, rotation shadow config/events, and the benchmark scorecard pg_cron schedule.
 
 Migrations in `supabase/migrations/`. Applied via Supabase MCP `apply_migration` or the Supabase SQL editor. **Always verify with `list_migrations` before shipping schema-coupled code.** A migration file existing in the repo does NOT mean it ran against production.
 
@@ -19,6 +20,7 @@ These tables must never be hard-deleted by any agent, cron, or cleanup job:
 - `holding_risk_runs` — daily per-holding risk run header (trigger blocks UPDATE/DELETE)
 - `holding_risk_snapshots` — daily per-holding risk snapshot (trigger blocks UPDATE/DELETE)
 - `account_risk_snapshots` — daily per-account risk snapshot (trigger blocks UPDATE/DELETE)
+- `rotation_events` — capital-rotation shadow/execution audit ledger (trigger blocks UPDATE/DELETE)
 
 ---
 
@@ -833,7 +835,31 @@ Cross-sectional rank provenance added to the migration-137 table: `rank_quality`
 
 ---
 
-## 8.12 Daily Per-Holding Risk Analytics (advisory, append-only)
+## 8.12 Benchmark Alpha + Capital Rotation Shadow
+
+Migration `20260713143000_benchmark_alpha_rotation_shadow.sql` adds the Phase-1 benchmark-alpha measurement layer and the P0 capital-rotation shadow ledger. Both are deterministic. Benchmark-alpha writes analytics only; capital rotation records shadow opportunities only.
+
+### `benchmarks`
+Config rows for market-local benchmark definitions. One enabled primary benchmark per market is enforced by partial unique index. Seeded primaries: US `VOO` (USD) and India `^NSEI`/NIFTY 50 (INR). Owner can read through RLS; service routes write.
+
+### `benchmark_price_observations`
+Durable benchmark component price observations keyed by `(benchmark_id, component_symbol, date)`. The current scorecard route fills primary benchmark observations from existing `paper_performance.bench_nav` / `live_performance.bench_nav` ledgers. Missing/unpriceable data is surfaced in scorecard rows rather than skipped.
+
+### `benchmark_scorecard`
+Materialized multi-horizon rollup keyed by `(market,currency,book,book_scope,benchmark_id,horizon,as_of)`. Stores common-window portfolio return, benchmark return, excess return, daily tracking error, annualized daily information ratio, sample counts, coverage, confidence, and status. It never feeds orders or learner mutation in Phase 1.
+
+### `rotation_config`
+Per-market/per-book rotation flags and thresholds. `rotation_shadow_enabled=true` by default for measurement. `rotation_paper_execute_enabled=false` and `rotation_live_proposals_enabled=false`; no sell/buy/proposal execution is enabled by this migration.
+
+### `rotation_events`
+Append-only capital-rotation audit ledger. P0 inserts `planned` or `rejected` shadow events from PaperTrader's `insufficient_cash` branch. Trigger `rotation_events_block_mutation` blocks UPDATE/DELETE. Rows include candidate/source symbols, scores, edge, notional, gate results, and explicit `no_execution` audit data.
+
+### `live_performance` provenance columns
+Adds nullable/backfilled `market`, `currency`, `broker`, and `book_scope` so live scorecard rollups can aggregate only explicitly scoped same-market/same-currency rows.
+
+---
+
+## 8.13 Daily Per-Holding Risk Analytics (advisory, append-only)
 
 Three additive tables (migration 154) backing `features/holding-risk-daily`. Owner-only SELECT (email RLS `(auth.jwt() ->> 'email') = 'vterminater@gmail.com'`), service_role writes, anon REVOKEd. Advisory-only: the risk score, posture, and LLM strategy note reach **no order path** for any account, including read-only `965848641`. **No cross-currency roll-up** — every row carries its own `market` + `currency`; USD and INR are never summed. Populated daily post-close by `/api/agents/holding-risk` (cron migration 156). Publish/claim via the migration-155 RPCs.
 
@@ -890,3 +916,4 @@ Append-only per-account roll-up — one row per run (UNIQUE `(run_id)`; FK → `
 | 174 | Live snapshot broker framework - `live_account_snapshots.broker` labels rows by source broker and the registry MCP refresh path auto-adds connected accounts. Pruning is broker-scoped and only runs after a successful non-empty capture, never after an outage or empty result |
 | 175 | `strategy_sleeves` + `strategy_config.allocation_enabled` - deterministic asset-allocation proposal core. Shipped OFF by default; callers return null unless `allocation_enabled=true`. Sanitizes malformed bands/targets and never routes to orders |
 | 20260713112754 | RLS tightening for `live_performance`: drops broad authenticated read policy and replaces it with owner-email SELECT (`(select auth.jwt()) ->> 'email' = 'vterminater@gmail.com'`) |
+| 20260713143000 | Benchmark-alpha scorecard tables (`benchmarks`, `benchmark_price_observations`, `benchmark_scorecard`), `live_performance` provenance columns, capital-rotation shadow config/events (`rotation_config`, append-only `rotation_events`), and pg_cron `kairos-benchmark-scorecard` |

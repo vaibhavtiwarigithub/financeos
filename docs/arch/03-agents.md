@@ -53,6 +53,8 @@ flowchart LR
 | `agent_alerts` | All reporters | Health-Triage, Dashboard, Briefing |
 | `mentor_insights` | MentorAgent | LearnerAgent (context), Dashboard |
 | `strategy_evaluations` | PerformanceTruth/Evaluation | Dashboard |
+| `benchmark_scorecard` | BenchmarkScorecard route | PerformanceTruth dashboard, future gated learner evidence |
+| `rotation_events` | PaperTrader capital-rotation shadow evaluator | Dashboard/audit, future rotation validation |
 | `validation_experiments`, `model_artifacts` | Validation/Calibration | Promotion gate, Dashboard |
 | `broker_orders` | Execution Gateway + order sync | Reconciliation, Dashboard |
 | `broker_order_events` (target) | Execution Gateway + order sync | Audit/reconciliation |
@@ -240,11 +242,14 @@ deterministic score and compare explanation/veto quality.
 - **Pyramid gate:** New BUY only if fill price > existing avg_cost (no averaging down)
 - **Long-only for new positions:** SELL signals only apply to symbols already held
 
+**Capital-rotation shadow (added 2026-07-13):** When a candidate reaches the execution branch and is rejected for `insufficient_cash`, PaperTrader calls the deterministic rotation evaluator and writes one `rotation_events` row with the would-be source holding, edge, notional, and gate reasons. This is P0 measurement only: it does not sell, buy, create a proposal, or move cash. Paper rotation execution and live rotation proposals remain disabled/unbuilt behind `rotation_config`.
+
 **Outputs:**
 - `paper_positions` row (new open position)
 - `paper_trades` row (buy leg)
 - `paper_order_events` row (submitted + filled events)
 - Updates `paper_portfolio.cash` and `paper_portfolio.nav`
+- `rotation_events` row only when `insufficient_cash` triggers a shadow rotation evaluation
 
 ---
 

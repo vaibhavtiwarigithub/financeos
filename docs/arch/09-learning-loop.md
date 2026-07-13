@@ -27,6 +27,16 @@ The loop is:
 6. If the Challenger passes, you promote it to Champion. ResearchAgent uses the new weights
    on its very next run.
 
+### Benchmark-alpha scorecard boundary (2026-07-13)
+
+`/api/agents/benchmark-scorecard` writes Phase-1 measurement rows to
+`benchmark_scorecard` for paper/live, US/India, and 1W/1M/3M/YTD/1Y horizons.
+The math uses common-window rebasing and annualized daily information ratio.
+These rows are displayed in Performance Truth and may be read as evidence, but
+they do **not** change LearnerAgent objectives, promotion gates, posture, sizing,
+paper fills, or live orders in Phase 1. Phase 2 learner/promotion wiring still
+requires a separate owner-approved implementation.
+
 ---
 
 ## Champion and Challenger

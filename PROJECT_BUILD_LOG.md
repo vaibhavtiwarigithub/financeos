@@ -44,6 +44,17 @@ Risk: Complexity / churn / unintended live or paper sell behavior if built witho
 Decision status: Proposed
 Notes: Codex corrected `features/capital-rotation/FEATURE_ARCHITECTURE.md` before implementation. Key design changes: rotation is a deterministic evaluator invoked by existing entry flows, not a standalone autonomous seller; P0 is shadow-only; P1 paper execution requires an atomic sell+buy RPC; P2 live creates approval-required two-leg proposals with broker reconciliation; PositionMonitor exits always win; post-swap portfolio gates, turnover, cost/tax, persistence, benchmark-alpha availability, and append-only audit lifecycle are mandatory.
 
+### Entry 7 - 2026-07-13
+
+Instruction: "go build all pending" after benchmark-alpha and capital-rotation architecture approval.
+Classification: Approved implementation
+Affected area: Performance Truth Layer, benchmark scorecard route/UI/schema, PaperTrader insufficient-cash path, capital-rotation shadow audit, docs/system map.
+Impact: High
+Architecture impact: Major
+Risk: Money-path confusion if rotation execution is mistaken for shadow measurement; mitigated by keeping paper/live execution flags false and wiring only P0 shadow.
+Decision status: Implemented
+Notes: Built benchmark-alpha Phase 1 measurement (`benchmarks`, `benchmark_price_observations`, `benchmark_scorecard`, live provenance columns, `/api/agents/benchmark-scorecard`, `AlphaScorecard`, cron schedule) and capital-rotation P0 shadow (`rotation_config`, append-only `rotation_events`, deterministic evaluator, PaperTrader insufficient_cash shadow logging). No learner objective/promotion wiring, no paper rotation execution, and no live rotation proposals/orders were enabled.
+
 ### Format
 
 ```
