@@ -40,6 +40,17 @@ const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   yahoo:             { label: "Yahoo Finance",     dailyBudget: null }, // unofficial quoteSummary; no published cap (paced + fail-soft)
 };
 
+// Minimum gap between real calls for HARD per-minute-limited providers only.
+// A concurrent burst past these limits 429s anyway, so when the interval hasn't
+// elapsed we serve stale cache instead of hitting the wall (serverless-safe:
+// the gap is enforced by the Supabase try_acquire_provider_slot RPC, not memory).
+// Generous providers (Finnhub 60/min, Upstox ~500/min) are intentionally NOT
+// paced — rejecting their concurrent calls would needlessly starve dimensions.
+const PACING_MS: Partial<Record<ProviderId, number>> = {
+  massive: 12_500, // 5/min
+  gdelt:   5_500,  // 1 req / 5s
+};
+
 // AV signals a rate-limit/throttle via a "Note" or "Information" field (no data).
 function avThrottled(json: any): boolean {
   return !!(json && (json.Note || json.Information)) && !json["Global Quote"] && !json["Technical Analysis: RSI"] && !json.Symbol;
@@ -152,6 +163,17 @@ export async function providerCachedFetch(
     // fire-and-forget promise can be lost before it flushes, undercounting
     // Massive/Finnhub/Upstox/FRED usage.
     try { await svc.rpc("provider_budget_increment", { p_provider: provider, p_date: todayStr }); } catch { /* never block the fetch on logging */ }
+  }
+
+  // 2.5. Rate-limit pacing for hard-limited providers (Massive/GDELT). If the
+  // minimum inter-call gap has not elapsed, DON'T spend the call (it would 429) —
+  // serve the last-known cached payload instead. Serverless-safe atomic lease.
+  const pace = PACING_MS[provider];
+  if (pace) {
+    try {
+      const { data: slot } = await svc.rpc("try_acquire_provider_slot", { p_provider: provider, p_min_interval_ms: pace });
+      if (slot !== true) return lastCached(svc, cacheKey);
+    } catch { return lastCached(svc, cacheKey); /* fail closed to cache, never burst */ }
   }
 
   // 3. Spend one real call.
