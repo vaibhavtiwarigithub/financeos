@@ -490,7 +490,7 @@ export async function gatherSymbols(
     screenerAdded++;
   }
 
-  const candidateCap = parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "10");
+  const candidateCap = parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "50");
   // Take the top `candidateCap` this run; carry the overflow forward (raised
   // priority, no starvation) instead of the old silent `.slice()` drop.
   const usBatch = new Set(await applyCandidateCarryForward(supabase, "us", Array.from(candidateMap.keys()), candidateCap));
