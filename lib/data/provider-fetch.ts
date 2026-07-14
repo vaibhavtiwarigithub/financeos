@@ -15,7 +15,7 @@ import { reportIssue } from "@/lib/system-health";
 export type ProviderId =
   | "alpha_vantage" | "financialdatasets" | "massive" | "finnhub"
   | "fmp" | "eodhd" | "twelvedata" | "upstox" | "fred" | "gdelt"
-  | "sec" | "yahoo";
+  | "sec" | "yahoo" | "webull";
 
 interface ProviderConfig {
   label: string;
@@ -38,6 +38,7 @@ const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   gdelt:             { label: "GDELT",             dailyBudget: null }, // free/no-key India news tone, rate-limited only
   sec:               { label: "SEC EDGAR",         dailyBudget: null }, // official XBRL, no key; ~10 req/s fair-access (paced)
   yahoo:             { label: "Yahoo Finance",     dailyBudget: null }, // unofficial quoteSummary; no published cap (paced + fail-soft)
+  webull:            { label: "Webull",            dailyBudget: null }, // free MCP research tools (analyst/fundamentals); auto-refresh token, no daily cap
 };
 
 // Minimum gap between real calls for HARD per-minute-limited providers only.

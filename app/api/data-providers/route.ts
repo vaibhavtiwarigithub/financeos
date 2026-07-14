@@ -24,6 +24,7 @@ const KEY_ENV: Record<ProviderId, string | null> = {
   gdelt: null, // free, no API key required
   sec: null,   // SEC EDGAR — official, no key
   yahoo: null, // Yahoo quoteSummary — unofficial, no key
+  webull: null, // Webull MCP — OAuth token in vault, not an env key
 };
 
 // Decode a JWT's `exp` (seconds) without verifying — only for showing an expiry

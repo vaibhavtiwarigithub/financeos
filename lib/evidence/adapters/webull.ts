@@ -35,12 +35,9 @@ import {
   type WebullAnalyst,
 } from "@/lib/data/webull-data";
 
-// "webull" is a legitimate evidence provider but not (yet) a compiled member of
-// the shared `ProviderId` union in lib/data/provider-fetch.ts, and this task must
-// not edit that file. Pin the id in ONE place via an explicit cast so provenance
-// stays tsc-clean; when Webull is promoted to a first-class provider this constant
-// collapses to a plain member.
-const WEBULL_PROVIDER_ID = "webull" as unknown as ProviderId;
+// "webull" is a first-class member of the shared ProviderId union
+// (lib/data/provider-fetch.ts) — free MCP research provider, no order path.
+const WEBULL_PROVIDER_ID: ProviderId = "webull";
 const CURRENCY_USD = "USD" as const;
 
 // ── shared guards (deterministic, no side effects) ───────────────────────────
