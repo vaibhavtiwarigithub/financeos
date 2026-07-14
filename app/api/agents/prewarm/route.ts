@@ -28,6 +28,19 @@ export async function POST(req: NextRequest) {
   const market = new URL(req.url).searchParams.get("market") === "india" ? "india" : "us";
   const svc = createServiceClient();
 
+  // Weekend self-skip: markets are closed Sat/Sun and slow-moving evidence doesn't
+  // change, so a weekend warm is only worth its (idle, daily-reset) quota when
+  // there's real backlog to drain. Weekdays ALWAYS run (prewarm feeds the research
+  // run). This lets prewarm be scheduled 7-day to use otherwise-wasted weekend
+  // quota, without pointless runs when the queue is already shallow.
+  const dow = new Date().getUTCDay(); // 0=Sun … 6=Sat
+  if (dow === 0 || dow === 6) {
+    const { count } = await svc.from("research_queue").select("symbol", { count: "exact", head: true }).eq("market", market);
+    if ((count ?? 0) < 10) {
+      return NextResponse.json({ market, skipped: true, reason: "weekend + shallow backlog", backlog: count ?? 0 });
+    }
+  }
+
   let universe;
   try {
     universe = await gatherSymbols(svc);

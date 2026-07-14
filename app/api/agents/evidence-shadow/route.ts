@@ -42,6 +42,18 @@ export async function GET(req: NextRequest) {
   }
   const market: Market = marketParam;
   const svc = createServiceClient();
+
+  // Weekend self-skip (mirrors prewarm): only accumulate shadow evidence on Sat/Sun
+  // when there's backlog worth draining; weekdays always run. Lets this be a 7-day
+  // cron that uses idle weekend capacity without pointless runs.
+  const dow = new Date().getUTCDay();
+  if (dow === 0 || dow === 6) {
+    const { count } = await svc.from("research_queue").select("symbol", { count: "exact", head: true }).eq("market", market);
+    if ((count ?? 0) < 10) {
+      return NextResponse.json({ market, skipped: true, reason: "weekend + shallow backlog", backlog: count ?? 0 });
+    }
+  }
+
   const started = Date.now();
 
   // Universe = research-enabled watchlist for this market (the same names research
