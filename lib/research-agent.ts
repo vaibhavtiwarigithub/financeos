@@ -431,13 +431,19 @@ export async function gatherSymbols(
   const nowIso = new Date().toISOString();
   const [holdings, watchlistResult, screenerSymbols, profileResult] = await Promise.all([
     fetchHoldings(supabase),
-    supabase.from("watchlist").select("symbol").or(`expires_at.is.null,expires_at.gt.${nowIso}`),
+    supabase.from("watchlist").select("symbol, source, created_at").or(`expires_at.is.null,expires_at.gt.${nowIso}`),
     runScreener(supabase),
     supabase.from("profiles").select("market_focus").limit(1).single(),
   ]);
 
-  const watchlistSymbols: string[] =
-    (watchlistResult.data ?? []).map((r: any) => String(r.symbol).toUpperCase());
+  // Split watchlist by source: an OWNER MANUAL add is an explicit "research this"
+  // intent and must beat the machine-generated screener carry-forward backlog —
+  // otherwise a hand-picked ticker starves behind dozens of queued screener names.
+  // Newest manual adds first (most recent intent).
+  const watchlistRows = ((watchlistResult.data ?? []) as any[])
+    .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+  const manualWatchlist: string[] = watchlistRows.filter(r => r.source === "manual").map(r => String(r.symbol).toUpperCase());
+  const otherWatchlist: string[] = watchlistRows.filter(r => r.source !== "manual").map(r => String(r.symbol).toUpperCase());
 
   const rawFocus: string = (profileResult.data as any)?.market_focus ?? "US";
   const focusRegions = rawFocus.split(",").map((s: string) => s.trim()).filter(Boolean);
@@ -457,22 +463,24 @@ export async function gatherSymbols(
   //   carried-forward (waited a prior run) → watchlist (Theme Scout picks) → screener.
   // Cap applies only to this bucket, not to holdings above.
   const candidateMap = new Map<string, SymbolEntry>();
-
-  // Carry-forward first (migration 172) — candidates that missed a prior run's
-  // cap come back with raised priority so a growing pool rotates fairly.
-  const deferredUs = await readDeferredCandidates(supabase, "us");
-  for (const sym of deferredUs) {
-    if (holdingSet.has(sym) || candidateMap.has(sym)) continue;
+  const addCandidate = (sym: string, source: DiscoverySource) => {
+    if (holdingSet.has(sym) || candidateMap.has(sym)) return;
     const isMetal = METAL_ETF_SYMBOLS.has(sym);
-    candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: "watchlist" });
-  }
+    candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: source });
+  };
 
-  for (const sym of watchlistSymbols) {
-    if (!holdingSet.has(sym) && !candidateMap.has(sym)) {
-      const isMetal = METAL_ETF_SYMBOLS.has(sym);
-      candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: "watchlist" });
-    }
-  }
+  // PRIORITY 1 — owner MANUAL watchlist adds. Explicit "research this now" intent
+  // beats everything except holdings, so a hand-picked ticker (e.g. SK Hynix)
+  // never starves behind the screener carry-forward backlog.
+  for (const sym of manualWatchlist) addCandidate(sym, "watchlist");
+
+  // PRIORITY 2 — carry-forward (migration 172): candidates that missed a prior
+  // run's cap come back with raised priority so the pool rotates fairly.
+  const deferredUs = await readDeferredCandidates(supabase, "us");
+  for (const sym of deferredUs) addCandidate(sym, "watchlist");
+
+  // PRIORITY 3 — the rest of the watchlist (Theme Scout / non-manual).
+  for (const sym of otherWatchlist) addCandidate(sym, "watchlist");
 
   const screenerMax = parseInt(process.env.RESEARCH_SCREENER_MAX ?? "6");
   let screenerAdded = 0;
@@ -486,6 +494,25 @@ export async function gatherSymbols(
   // Take the top `candidateCap` this run; carry the overflow forward (raised
   // priority, no starvation) instead of the old silent `.slice()` drop.
   const usBatch = new Set(await applyCandidateCarryForward(supabase, "us", Array.from(candidateMap.keys()), candidateCap));
+  // Backlog visibility: carry-forward prevents silent drops, but if the queue
+  // grows far past daily throughput the pool takes many days to rotate (effective
+  // starvation). Surface it so throughput/cap can be tuned instead of a surprise.
+  try {
+    const { count: qDepth } = await supabase.from("research_queue").select("symbol", { count: "exact", head: true }).eq("market", "us");
+    const backlogDays = Math.ceil((qDepth ?? 0) / Math.max(1, candidateCap));
+    if ((qDepth ?? 0) > candidateCap * 4) {
+      await reportIssue({
+        issueKey: "research-backlog:us",
+        severity: (qDepth ?? 0) > candidateCap * 10 ? "critical" : "warn",
+        category: "data",
+        title: `US research backlog: ${qDepth} queued (~${backlogDays}d to clear at ${candidateCap}/day)`,
+        detail: `The US research carry-forward queue holds ${qDepth} symbols but only ${candidateCap} are researched per run, so a newly-added ticker waits ~${backlogDays} days for its turn. Raise RESEARCH_CANDIDATE_CAP, prune stale screener names, or split runs. Manual watchlist adds are prioritized ahead of this backlog, but screener candidates still rotate slowly.`,
+        autoExpireAt: new Date(new Date().setUTCHours(24, 0, 0, 0)).toISOString(),
+      }, supabase).catch(() => {});
+    } else {
+      await resolveIssue("research-backlog:us", supabase).catch(() => {});
+    }
+  } catch { /* backlog telemetry must never break a research run */ }
   const nonMetals = [...holdingEntries, ...Array.from(candidateMap.values()).filter(e => usBatch.has(e.symbol))];
 
   // Metals basket — always appended after candidate cap (4 extra symbols, cheap ETF analysis)

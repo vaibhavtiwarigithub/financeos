@@ -86,7 +86,9 @@ export async function POST(req: NextRequest) {
   if (isManual && body.market === "us" && isIndiaSym) {
     return NextResponse.json({ error: `"${symbol}" is an India (NSE/BSE) symbol. Switch to the India market to track it.` }, { status: 400 });
   }
-  const marketCol = isIndiaSym ? "India" : "US";
+  // Lowercase to match the market convention every agent/query uses ("us"/"india").
+  // Writing "US"/"India" here caused case-sensitivity mismatches in market-scoped reads.
+  const marketCol = isIndiaSym ? "india" : "us";
 
   const company_name = body.company_name ?? await fetchCompanyName(symbol);
   const svc = createServiceClient();
