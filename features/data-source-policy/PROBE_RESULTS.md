@@ -72,6 +72,32 @@
 - **Current parser bug:** `walk()` recurses only non-array objects; each metric is an
   array, so it is skipped → `{}` → null. Confirmed no usable data.
 
+## Multi-symbol fixtures (2026-07-14, cron context, category:US_STOCK)
+
+| Symbol | Analyst rating | Target mean | Financials | Mode |
+|---|---|---|---|---|
+| AAPL | strong_buy22/buy6/hold17/under_perform1/sell1, number47 → 76 | 315.57 | 8 metrics | full |
+| MSFT | strong_buy41/buy12/hold3/uP0/sell0, number56 | 559.86 | 8 metrics | full |
+| JPM | strong_buy8/buy4/hold12/uP0/sell0, number24 | 353.95 | 8 metrics | full |
+| SPY (ETF) | tool **ok** but payload `{symbol,category}` only — no buckets | null | `values` absent | **empty-ok** |
+| ZZZQFAKE (no-data) | tool **error** `-32603 No fallback available` | — | error | **error** |
+| BRK.B / BRK-B / BRKB | tool **error** `-32603` (all 3 formats) | — | error | **error** |
+
+### Two distinct "no data" modes — matters for the router's negative-cache design
+1. **empty-ok** (ETFs, e.g. SPY): the tool returns 200 with a payload containing
+   only `{symbol, category}` — no rating buckets, no `values`. This is genuine
+   "no analyst/fundamental coverage", NOT a failure. Current parsers null out
+   correctly (buckets absent → rating null; `values` absent → financials null).
+   Router should map this to `genuine_no_data` and MAY long-negative-cache it.
+2. **error** (unknown or uncovered symbols: ZZZQFAKE; Berkshire-B in every symbol
+   format): the tool throws `-32603 "No fallback available"`. Distinct from empty.
+   Router should map to `provider_error`/`genuine_no_data` but must NOT treat a
+   transient -32603 as permanent — short negative cache only (per arch §13).
+- Dual-class / special tickers (BRK.B) have NO Webull analyst coverage in any
+  format. Not in the active screener universe; graceful null is the right behavior.
+- `number` always equals the bucket sum (47, 56, 24 all validate) → use it as the
+  denominator, cross-check against the sum, mark conflict if they diverge (arch §13).
+
 ## Corrections to FEATURE_ARCHITECTURE.md before Phase 1
 - §13 Fundamentals: remove "Request explicit `type` (ANNUAL)". Tool is quarterly-only;
   request no type, take the array, tag basis=quarterly, derive TTM separately (tested).
