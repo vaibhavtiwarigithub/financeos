@@ -838,6 +838,13 @@
     {
       "date": "2026-07-13",
       "event": "changed",
+      "nodeId": "ROTATION",
+      "label": "CapitalRotation Phase 1 paper execution (OFF)",
+      "reason": "Shadow rotation can now actually EXECUTE on the paper book (migration 177 execute_paper_rotation RPC — atomic sell-weakest-holding + buy-candidate in one transaction, rolls back if unfunded after sale). executeCapitalRotationPaper enforces master flag (rotation_paper_execute_enabled default false), per-run/day caps, cooldown, and persistence (>= persistence_runs-1 prior planned runs) before calling it. PositionMonitor exits still win. SHIPPED OFF; paper-only, no live path."
+    },
+    {
+      "date": "2026-07-13",
+      "event": "changed",
       "nodeId": "RESEARCH",
       "label": "Data-availability hardening — fewer starved evidence dimensions",
       "reason": "ResearchAgent evidence dimensions no longer silently starve on max-symbol days. (1) US sentiment moved off the Alpha Vantage 25/day cap: StockTwits + GDELT tonechart free-first, AV NEWS reserve-only. (2) India sentiment GDELT bug fixed (artlist→tonechart carries tone). (3) US fundamentals given real redundancy: Finnhub → Yahoo quoteSummary → SEC EDGAR companyfacts → FMP → AV (was Finnhub-only; FMP/FD/TwelveData/EODHD all dead on free tier). (4) US insider via Massive Form 4 (AV was capped). (5) Per-provider pacing (migration 176 provider_pacing + try_acquire_provider_slot) serves stale cache instead of bursting Massive 5/min / GDELT 1/5s. (6) Per-dimension starvation telemetry: data-availability:<market>:<dim> System Health alert (warn<85%/crit<70% among applicable symbols). (7) Thesis-parse abstentions fixed (reasoner token bump + deterministic-gate fallback). Deterministic money path unchanged; all sources free + keyed."
