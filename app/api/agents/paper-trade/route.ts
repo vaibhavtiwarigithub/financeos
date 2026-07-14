@@ -15,7 +15,7 @@ import { loadChampionGenome, type ResolvedGenome } from "@/lib/validation/genome
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadTradingMandate, mandateSnapshot, resolveHorizonDays, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaused } from "@/lib/market-controls";
-import { recordCapitalRotationShadow } from "@/lib/trading/capital-rotation";
+import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/trading/capital-rotation";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -183,6 +183,7 @@ export async function POST(req: NextRequest) {
 
     const filled: any[] = [];
     const skipped: any[] = [];
+    let rotationsThisRun = 0; // capital-rotation P1 (paper): bounded per-run counter
 
     // Sector cap — count open positions per sector (across all markets; the cap
     // is a book-level concentration limit).
@@ -492,23 +493,39 @@ export async function POST(req: NextRequest) {
       }
       const totalCost = qty * fillPrice;
       if (!Number.isFinite(totalCost) || totalCost > portfolio.cash_balance) {
+        const rotCandidate = {
+          signalId: signal.id,
+          symbol: signal.symbol,
+          market: market as "us" | "india",
+          currency: currency as "USD" | "INR",
+          score: Number(signal.analyst_score ?? 0),
+          targetNotional: totalCost,
+          cash: Number(portfolio.cash_balance ?? 0),
+        };
+        // Always log the shadow evaluation (measurement).
         try {
-          await recordCapitalRotationShadow(supabase, {
-            runId,
-            candidate: {
-              signalId: signal.id,
-              symbol: signal.symbol,
-              market: market as "us" | "india",
-              currency: currency as "USD" | "INR",
-              score: Number(signal.analyst_score ?? 0),
-              targetNotional: totalCost,
-              cash: Number(portfolio.cash_balance ?? 0),
-            },
-            scoreThreshold,
-            minHoldingDays: tradingMandate.min_hold_days ?? 2,
-          });
+          await recordCapitalRotationShadow(supabase, { runId, candidate: rotCandidate, scoreThreshold, minHoldingDays: tradingMandate.min_hold_days ?? 2 });
         } catch (e: any) {
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_shadow_log_failed", detail: { error: e?.message ?? String(e) } });
+        }
+        // Capital-rotation P1 (SHIPPED OFF): if rotation_paper_execute_enabled AND
+        // every guardrail passes, atomically sell the weakest holding to fund this
+        // candidate. Default flag is off → executeCapitalRotationPaper returns
+        // {executed:false} and this is a plain insufficient_cash skip (unchanged).
+        try {
+          const rot = await executeCapitalRotationPaper(supabase, {
+            runId, rotationsThisRun,
+            candidate: { ...rotCandidate, qty, fillPrice, priceTarget, stopLoss, sector: candSector },
+            scoreThreshold, minHoldingDays: tradingMandate.min_hold_days ?? 2,
+          });
+          if (rot.executed) {
+            rotationsThisRun += 1;
+            filled.push({ symbol: signal.symbol, qty, price: fillPrice, via: "capital_rotation", sold: rot.sourceSymbol });
+            await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "filled", reason: `capital_rotation: sold ${rot.sourceSymbol} to fund ${signal.symbol}`, detail: { soldSymbol: rot.sourceSymbol, qty, fillPrice } });
+            continue; // candidate bought + source sold atomically by the RPC (signal already marked paper_traded)
+          }
+        } catch (e: any) {
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_execute_error", detail: { error: e?.message ?? String(e) } });
         }
         await revertClaim(signal.id);
         skipped.push({ symbol: signal.symbol, reason: "insufficient_cash" });

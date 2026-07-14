@@ -248,3 +248,106 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   }
   return evaluation;
 }
+
+// ── Phase 1 PAPER EXECUTION (SHIPPED OFF) ────────────────────────────────────
+// Actually sell the weakest still-valid holding to fund a better candidate, via
+// the atomic execute_paper_rotation RPC (one transaction — never leaves the book
+// in cash). Runs ONLY when rotation_config.rotation_paper_execute_enabled is true
+// (default false) AND every guardrail passes. Paper book only; no live path.
+// Returns {executed, reason}. Fail-soft: any error → not executed (shadow still logged).
+export interface RotationExecInput {
+  runId: string | null;
+  rotationsThisRun: number;
+  candidate: RotationCandidate & {
+    qty: number; fillPrice: number; priceTarget: number | null; stopLoss: number | null; sector: string | null;
+  };
+  scoreThreshold: number;
+  minHoldingDays: number;
+}
+
+export async function executeCapitalRotationPaper(supabase: any, args: RotationExecInput): Promise<{ executed: boolean; reason: string; sourceSymbol?: string }> {
+  const c = args.candidate;
+  try {
+    const { data: cfgRow } = await supabase
+      .from("rotation_config")
+      .select("rotation_paper_execute_enabled, rotation_margin_score, rotation_persistence_runs, rotation_cooldown_days, max_rotations_per_run, max_rotations_per_day")
+      .eq("market", c.market).eq("book_type", "paper").maybeSingle();
+
+    // GATE 0: master execution flag (default OFF).
+    if (!(cfgRow as any)?.rotation_paper_execute_enabled) return { executed: false, reason: "execute_disabled" };
+
+    const persistenceRuns = Math.max(1, Number((cfgRow as any)?.rotation_persistence_runs ?? 2));
+    const cooldownDays = Math.max(0, Number((cfgRow as any)?.rotation_cooldown_days ?? 3));
+    const maxPerRun = Math.max(1, Number((cfgRow as any)?.max_rotations_per_run ?? 1));
+    const maxPerDay = Math.max(1, Number((cfgRow as any)?.max_rotations_per_day ?? 2));
+    const margin = Number((cfgRow as any)?.rotation_margin_score ?? 12);
+
+    // GATE: per-run cap.
+    if (args.rotationsThisRun >= maxPerRun) return { executed: false, reason: "max_rotations_per_run" };
+
+    // Re-run the deterministic eligibility eval against the current book.
+    const { data: positions } = await supabase
+      .from("paper_positions")
+      .select("id, symbol, market, qty, avg_cost, current_price, opened_at, price_target, stop_loss, exit_reason")
+      .eq("market", c.market);
+    const symbols = (positions ?? []).map((p: any) => String(p.symbol)).filter(Boolean);
+    const scores = await latestScoresBySymbol(supabase, c.market, symbols);
+    const holdings: RotationHolding[] = (positions ?? []).map((p: any) => ({
+      id: String(p.id), symbol: String(p.symbol), market: c.market,
+      qty: Number(p.qty ?? 0), avgCost: Number(p.avg_cost ?? 0),
+      currentPrice: Number(p.current_price ?? p.avg_cost ?? 0), openedAt: p.opened_at ?? null,
+      priceTarget: p.price_target == null ? null : Number(p.price_target),
+      stopLoss: p.stop_loss == null ? null : Number(p.stop_loss),
+      exitReason: p.exit_reason ?? null, score: scores.get(String(p.symbol)) ?? null,
+    }));
+    const evaluation = evaluateCapitalRotationShadow({
+      candidate: c, holdings,
+      config: { shadowEnabled: true, marginScore: margin, minHoldingDays: args.minHoldingDays, exitScoreThreshold: args.scoreThreshold - 10, nearTargetPct: 0.03, nearStopPct: 0.03 },
+    });
+    if (!evaluation.eligible || !evaluation.source) return { executed: false, reason: `not_eligible:${evaluation.reason}` };
+    const source = evaluation.source;
+
+    // GATE: per-day cap.
+    const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
+    const { count: todayCount } = await supabase
+      .from("rotation_events").select("id", { count: "exact", head: true })
+      .eq("market", c.market).eq("status", "paper_executed").gte("created_at", dayStart.toISOString());
+    if ((todayCount ?? 0) >= maxPerDay) return { executed: false, reason: "max_rotations_per_day" };
+
+    // GATE: cooldown — no execution touching this candidate or source recently.
+    if (cooldownDays > 0) {
+      const cdStart = new Date(Date.now() - cooldownDays * 86400000).toISOString();
+      const { data: recent } = await supabase
+        .from("rotation_events").select("candidate_symbol, source_symbol")
+        .eq("market", c.market).eq("status", "paper_executed").gte("created_at", cdStart);
+      const hit = (recent ?? []).some((r: any) => r.candidate_symbol === c.symbol || r.source_symbol === source.symbol || r.candidate_symbol === source.symbol);
+      if (hit) return { executed: false, reason: "cooldown_active" };
+    }
+
+    // GATE: persistence — the candidate must have been a planned/eligible rotation
+    // in >= (persistenceRuns-1) prior runs (anti-thrash on a one-day score blip).
+    if (persistenceRuns > 1) {
+      const pStart = new Date(Date.now() - 4 * 86400000).toISOString();
+      const { count: priorPlanned } = await supabase
+        .from("rotation_events").select("id", { count: "exact", head: true })
+        .eq("market", c.market).eq("candidate_symbol", c.symbol).eq("status", "planned").gte("created_at", pStart);
+      if ((priorPlanned ?? 0) < persistenceRuns - 1) return { executed: false, reason: "awaiting_persistence" };
+    }
+
+    // Execute atomically.
+    const idempotencyKey = `paper-exec:${c.market}:${args.runId ?? "manual"}:${c.signalId}:${source.id}`;
+    const { data: rpc, error: rpcErr } = await supabase.rpc("execute_paper_rotation", {
+      p_market: c.market, p_currency: c.currency, p_source_position_id: source.id,
+      p_candidate_symbol: c.symbol, p_candidate_signal_id: c.signalId, p_candidate_qty: c.qty,
+      p_candidate_fill_price: c.fillPrice, p_candidate_price_target: c.priceTarget, p_candidate_stop_loss: c.stopLoss,
+      p_candidate_sector: c.sector, p_candidate_score: c.score, p_source_score: source.score,
+      p_score_edge: evaluation.scoreEdge, p_idempotency_key: idempotencyKey,
+      p_gate_json: { ...evaluation.gates, persistence_runs: persistenceRuns, cooldown_days: cooldownDays },
+    });
+    if (rpcErr) return { executed: false, reason: `rpc_error:${rpcErr.message}` };
+    if (!(rpc as any)?.ok) return { executed: false, reason: `rpc_denied:${(rpc as any)?.error ?? "unknown"}` };
+    return { executed: true, reason: "rotated", sourceSymbol: source.symbol };
+  } catch (e: any) {
+    return { executed: false, reason: `exception:${String(e?.message ?? e)}` };
+  }
+}
