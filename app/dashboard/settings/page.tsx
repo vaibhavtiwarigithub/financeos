@@ -9,6 +9,7 @@ import AdminPanel from "@/components/dashboard/AdminPanel";
 import AutomationPanel from "@/components/dashboard/AutomationPanel";
 import TradingMandatePanel from "@/components/dashboard/TradingMandatePanel";
 import ValidationAutomationPanel from "@/components/dashboard/ValidationAutomationPanel";
+import DataRoutingPanel from "@/components/dashboard/DataRoutingPanel";
 import { MCP_BROKERS } from "@/lib/brokers/mcp-registry";
 
 // Config-driven MCP broker snapshot status shape (returned by
@@ -1655,9 +1656,14 @@ export default function SettingsPage() {
       {tab === "admin" && (<AdminPanel embedded />)}
 
       {tab === "data" && (
-        <div style={{ maxWidth: "820px" }}>
-          <div style={{ fontSize: "13px", color: T.textSub, marginBottom: "16px", lineHeight: 1.5 }}>
-            Every external data source, its daily limit, real usage, and how much headroom is left — so you always know where the ceiling is before an agent starves. Rate-limited providers (Massive, Finnhub, Upstox, FRED) have no daily cap; only capped ones can run out.
+        <div style={{ maxWidth: "1100px" }}>
+          {/* Canonical Evidence Router — Routing Policy (owner-only, shadow mode) */}
+          <DataRoutingPanel />
+
+          <div style={{ borderTop: `1px solid ${T.border}`, margin: "28px 0 20px" }} />
+
+          <div style={{ fontSize: "13px", color: T.textSub, marginBottom: "16px", lineHeight: 1.5, maxWidth: "820px" }}>
+            <strong style={{ color: T.text }}>Provider capacity</strong> — every external data source, its daily limit, real usage, and how much headroom is left — so you always know where the ceiling is before an agent starves. Rate-limited providers (Massive, Finnhub, Upstox, FRED) have no daily cap; only capped ones can run out.
           </div>
 
           {providers?.bottleneck && (
