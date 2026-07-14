@@ -1033,6 +1033,14 @@ const DIM_AVAIL_MIN_APPLICABLE = 4;        // need this many applicable symbols 
 const DIM_AVAIL_WARN = 0.85;
 const DIM_AVAIL_CRIT = 0.70;
 
+// `${market}:${dim}` combos whose SOURCE is sparse by nature — absence is EXPECTED,
+// not a starvation fault. For these the availability alert is capped at "info"
+// with honest wording, so a genuinely-sparse source (India news-tone via GDELT
+// barely covers individual NSE names) never cries critical. The score already
+// renormalizes over the remaining applicable dimensions when one is absent. Real
+// breakage in a dense source (US fundamentals/technical at 0%) still goes critical.
+const EXPECTED_SPARSE_DIMS = new Set<string>(["india:sentiment"]);
+
 // Record one symbol's evidence availability and (idempotently) surface a
 // low-confidence alert when a meaningful fraction of the run was scored on thin
 // data. Never throws — a health-reporting failure must not break a research run.
@@ -1080,16 +1088,21 @@ async function recordRunEvidence(market: string, runKey: string, includedDims: S
       if (appl < DIM_AVAIL_MIN_APPLICABLE) continue;
       const rate = acc.dimAvailable[d] / appl;
       const dimKey = `data-availability:${market}:${d}`;
+      const expectedSparse = EXPECTED_SPARSE_DIMS.has(`${market}:${d}`);
       if (rate < DIM_AVAIL_WARN) {
         await reportIssue({
           issueKey: dimKey,
-          severity: rate < DIM_AVAIL_CRIT ? "critical" : "warn",
+          // Known-sparse source → info (expected, not a fault). Dense source low → warn/critical.
+          severity: expectedSparse ? "info" : (rate < DIM_AVAIL_CRIT ? "critical" : "warn"),
           category: "data",
           title: `${d} data ${Math.round(rate * 100)}% available (${market.toUpperCase()})`,
-          detail:
-            `Only ${acc.dimAvailable[d]}/${appl} ${market.toUpperCase()} symbols where ${d} is applicable got real ${d} ` +
-            `data this run — the rest were starved (provider throttled/exhausted or genuinely no data). ` +
-            `Source chain: ${DIM_PROVIDER[d]}. Check that chain's keys/limits.`,
+          detail: expectedSparse
+            ? `${acc.dimAvailable[d]}/${appl} ${market.toUpperCase()} symbols got real ${d} this run. ` +
+              `This source (${DIM_PROVIDER[d]}) is sparse by nature for many ${market.toUpperCase()} names, so absence is EXPECTED — ` +
+              `the score renormalizes over the remaining applicable dimensions. Not a starvation fault; informational only.`
+            : `Only ${acc.dimAvailable[d]}/${appl} ${market.toUpperCase()} symbols where ${d} is applicable got real ${d} ` +
+              `data this run — the rest were starved (provider throttled/exhausted or genuinely no data). ` +
+              `Source chain: ${DIM_PROVIDER[d]}. Check that chain's keys/limits.`,
           autoExpireAt: new Date(new Date().setUTCHours(24, 0, 0, 0)).toISOString(),
         }, client).catch(() => {});
         acc.dimReported[d] = true;

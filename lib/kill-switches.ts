@@ -49,6 +49,13 @@ const START_NAV: Record<string, number> = { us: 10000, india: 1000000 };
 const LIVE_SNAPSHOT_MAX_AGE_MS =
   Number(process.env.KS_LIVE_SNAPSHOT_MAX_AGE_MS) || 6 * 60 * 60 * 1000;
 
+// Minimum closed-trade sample before the accuracy kill switch may trip. Below
+// this, win-rate is statistical noise (5 trades at 20% = one loss) and halting a
+// market on it is a false alarm — India tripped at exactly 5. Matches the locked
+// "10+ closed trades before Phase 1" rule. Drawdown/daily-loss brakes are
+// unaffected; this ONLY governs the accuracy gate's validity.
+const MIN_ACCURACY_SAMPLE = 10;
+
 // Per-market scope helper for paper tables (pre-057 fallback: no market column → unscoped).
 async function scoped(q: any, market: string): Promise<any> {
   const r = await q.eq("market", market);
@@ -161,7 +168,7 @@ async function getLiveAccuracy(
     if (Number(sell.avg_fill_price) > Number(prior.avg_fill_price)) wins++;
   }
 
-  return counted >= 5 ? { wins, total: counted } : null;
+  return counted >= MIN_ACCURACY_SAMPLE ? { wins, total: counted } : null;
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -294,7 +301,7 @@ export async function checkKillSwitches(
     peak =
       navHistory.length > 0 ? Math.max(...navHistory, startNav) : null;
 
-    if (closedTrades && (closedTrades as any[]).length >= 5) {
+    if (closedTrades && (closedTrades as any[]).length >= MIN_ACCURACY_SAMPLE) {
       const wins = (closedTrades as any[]).filter(
         (t) => t.outcome === "win",
       ).length;
@@ -325,7 +332,10 @@ export async function checkKillSwitches(
   }
 
   // ── Kill switch 2: 30-day accuracy below threshold ────────────────────────
-  if (accuracyData && accuracyData.total >= 5) {
+  // Requires a statistically meaningful sample; below MIN_ACCURACY_SAMPLE the
+  // gate stays silent (accuracyData is already null under the floor, this is a
+  // defensive belt-and-suspenders check).
+  if (accuracyData && accuracyData.total >= MIN_ACCURACY_SAMPLE) {
     const accuracy = (accuracyData.wins / accuracyData.total) * 100;
     if (accuracy < accuracyLimit) {
       await disableTrading(

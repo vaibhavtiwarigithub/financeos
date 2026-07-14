@@ -125,6 +125,8 @@ US order account is exactly Robinhood agentic account `605420660`. Account `9658
 
 `lib/kill-switches.ts` checks per market for daily loss, peak drawdown, and rolling accuracy, disables trading, and creates a critical alert. Submit-time checks must rerun immediately before reserve/send.
 
+**Accuracy-gate minimum sample (`MIN_ACCURACY_SAMPLE = 10`, 2026-07-14).** The rolling-accuracy kill switch trips only when there are **≥10 closed trades** in the window (paper and live paths). Below that, win-rate is statistical noise — India tripped at exactly 5 trades (20% = 1 loss) and halted the whole market on a coin-flip sample. This makes the gate statistically valid (matches the locked "10+ closed trades before Phase 1" rule); the **daily-loss and drawdown brakes are unchanged** and still fire regardless of trade count.
+
 `checkKillSwitches(svc, { market, book, accountId? })` takes an **explicit book/account context** (A1/P0-1). Mode is NO LONGER inferred from `live_auto_enabled` — an L3 manual-live order (`live_auto_enabled=false`) must still measure real live NAV, so the caller declares the book:
 - `book:"paper"`: reads `paper_portfolio` / `paper_performance` / `paper_trades`. A bare-string market arg (`checkKillSwitches(svc, "us")`) is the back-compat paper form.
 - `book:"live"`: reads `live_account_snapshots` for the resolved account (`accountId`, else `active_account_{market}`) — daily-loss + drawdown — and `broker_orders` filled pairs (accuracy).
