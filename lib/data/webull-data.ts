@@ -22,6 +22,12 @@ import { MCP_BROKERS, type McpBrokerConfig } from "@/lib/brokers/mcp-registry";
 
 const CFG: McpBrokerConfig = MCP_BROKERS.webull;
 
+// Webull's analyst/financial data tools REQUIRE this category argument. A bare
+// { symbol } call returns MCP error -32603 "No fallback available" (verified live
+// 2026-07-14 — see features/data-source-policy/PROBE_RESULTS.md). This constant is
+// owned here; callers never omit or override it.
+const WEBULL_CATEGORY = "US_STOCK";
+
 // ── in-memory 6h cache (keyed by tool+symbol) ───────────────────────────────
 // Deliberately NOT routed through providerCachedFetch: that helper does a plain
 // HTTP `fetch(url)`, whereas Webull data comes over MCP JSON-RPC. A tiny
@@ -104,15 +110,34 @@ async function openWebull(): Promise<{ token: string; sessionId?: string } | nul
   }
 }
 
+// Call a tool and return the first object-shaped record (analyst rating / target
+// return a single object). Always injects the required US_STOCK category.
 async function callTool(
   sess: { token: string; sessionId?: string },
   name: string,
   args: Record<string, unknown>,
 ): Promise<any | null> {
   try {
-    const r = await mcpRpc(CFG, sess.token, "tools/call", { name, arguments: args }, sess.sessionId);
+    const r = await mcpRpc(CFG, sess.token, "tools/call", { name, arguments: { ...args, category: WEBULL_CATEGORY } }, sess.sessionId);
     if (!r.ok) return null;
     return unwrapRecord(r.result);
+  } catch {
+    return null;
+  }
+}
+
+// Call a tool and return the raw decoded JSON WITHOUT array-unwrapping — the
+// forecast-EPS and financial-indicators tools return an array / a keyed-array
+// object that must be parsed whole, not collapsed to its first element.
+async function callToolRaw(
+  sess: { token: string; sessionId?: string },
+  name: string,
+  args: Record<string, unknown>,
+): Promise<any | null> {
+  try {
+    const r = await mcpRpc(CFG, sess.token, "tools/call", { name, arguments: { ...args, category: WEBULL_CATEGORY } }, sess.sessionId);
+    if (!r.ok) return null;
+    return mcpToolJson(r.result?.content ?? r.result);
   } catch {
     return null;
   }
@@ -133,21 +158,25 @@ function labelToScore(label: string | null): number | null {
   return null;
 }
 
-// Some Webull rating payloads express consensus as a 1-5 scale (1 = strong buy,
-// 5 = strong sell) or as buy/hold/sell counts. Derive a 0-100 score defensively.
+// Webull get_analyst_rating returns string counts per bucket:
+//   { strong_buy, buy, hold, under_perform, sell, number }
+// (verified 2026-07-14; there is NO strong_sell bucket). Weight the buckets
+// 100/80/50/20/0 and divide by the analyst total. `number` is the reported
+// total; fall back to the bucket sum. Legacy 1-5 / 0-100 shapes still handled.
 function deriveRatingScore(rec: any): number | null {
-  // Counts of buy/hold/sell recommendations, if present.
-  const strongBuy = pickNum(rec, ["strongBuy", "strong_buy", "ratingStrongBuy"]);
+  const strongBuy = pickNum(rec, ["strong_buy", "strongBuy", "ratingStrongBuy"]);
   const buy = pickNum(rec, ["buy", "ratingBuy"]);
   const hold = pickNum(rec, ["hold", "ratingHold"]);
+  const underPerform = pickNum(rec, ["under_perform", "underPerform", "ratingUnderPerform"]);
   const sell = pickNum(rec, ["sell", "ratingSell"]);
-  const strongSell = pickNum(rec, ["strongSell", "strong_sell", "ratingUnderPerform", "ratingStrongSell"]);
-  const counts = [strongBuy, buy, hold, sell, strongSell];
+  const strongSell = pickNum(rec, ["strong_sell", "strongSell", "ratingStrongSell"]);
+  const counts = [strongBuy, buy, hold, underPerform, sell, strongSell];
   if (counts.some((c) => c != null)) {
-    const sB = strongBuy ?? 0, b = buy ?? 0, h = hold ?? 0, s = sell ?? 0, sS = strongSell ?? 0;
-    const total = sB + b + h + s + sS;
+    const sB = strongBuy ?? 0, b = buy ?? 0, h = hold ?? 0, uP = underPerform ?? 0, s = sell ?? 0, sS = strongSell ?? 0;
+    const total = sB + b + h + uP + s + sS;
     if (total > 0) {
-      return Math.round((sB * 100 + b * 80 + h * 50 + s * 20 + sS * 0) / total);
+      // strong_buy 100, buy 80, hold 50, under_perform 20, sell 0, strong_sell 0.
+      return Math.round((sB * 100 + b * 80 + h * 50 + uP * 20 + s * 0 + sS * 0) / total);
     }
   }
 
@@ -160,6 +189,22 @@ function deriveRatingScore(rec: any): number | null {
   // Already a 0-100 style score.
   if (mean != null && mean >= 0 && mean <= 100) return Math.round(mean);
   return null;
+}
+
+// get_stock_forecast_eps → array of { fiscal_year, fiscal_period, actual?, est,
+// reported }. Pick the EARLIEST future (reported:false) period's `est`. If every
+// row is already reported, fall back to the latest row's est (still a forward-
+// looking estimate field), never `actual`.
+function pickForecastEps(raw: any): number | null {
+  const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : null;
+  if (!arr || arr.length === 0) return null;
+  const key = (r: any) => (Number(r?.fiscal_year) || 0) * 10 + (Number(r?.fiscal_period) || 0);
+  const future = arr
+    .filter((r: any) => r && r.reported === false)
+    .sort((a: any, b: any) => key(a) - key(b));
+  const chosen = future[0] ?? [...arr].sort((a: any, b: any) => key(b) - key(a))[0];
+  const est = Number(chosen?.est);
+  return Number.isFinite(est) ? est : null;
 }
 
 export interface WebullAnalyst {
@@ -183,14 +228,14 @@ export async function fetchWebullAnalyst(symbol: string): Promise<WebullAnalyst 
     const sess = await openWebull();
     if (!sess) { cacheSet(cacheKey, null); return null; }
 
-    const [ratingRec, targetRec, epsRec] = await Promise.all([
+    const [ratingRec, targetRec, epsRaw] = await Promise.all([
       callTool(sess, "get_analyst_rating", { symbol: sym }),
       callTool(sess, "get_analyst_target_price", { symbol: sym }),
-      callTool(sess, "get_stock_forecast_eps", { symbol: sym }),
+      callToolRaw(sess, "get_stock_forecast_eps", { symbol: sym }),
     ]);
 
     // All three missing → treat as no data (null), not an empty object.
-    if (!ratingRec && !targetRec && !epsRec) { cacheSet(cacheKey, null); return null; }
+    if (!ratingRec && !targetRec && !epsRaw) { cacheSet(cacheKey, null); return null; }
 
     const ratingLabel = pickStr(ratingRec, [
       "ratingLabel", "rating_label", "ratingText", "rating", "consensusRating",
@@ -203,10 +248,10 @@ export async function fetchWebullAnalyst(symbol: string): Promise<WebullAnalyst 
       "targetPriceMean", "consensusTargetPrice", "avgTargetPrice", "average",
     ]);
 
-    const forecastEps = pickNum(epsRec, [
-      "forecastEps", "forecast_eps", "eps", "epsEstimate", "estimatedEps",
-      "meanEps", "epsMean", "forwardEps", "estimate",
-    ]);
+    // Forward EPS = the nearest fiscal period NOT yet reported (reported:false),
+    // field `est`. The tool returns an ascending array of periods; the trailing
+    // rows are the future estimates. NEVER use a reported period's `actual`.
+    const forecastEps = pickForecastEps(epsRaw);
 
     const out: WebullAnalyst = { rating, ratingLabel, targetPrice, forecastEps };
     cacheSet(cacheKey, out);
@@ -231,24 +276,28 @@ export async function fetchWebullFinancials(symbol: string): Promise<Record<stri
     const sess = await openWebull();
     if (!sess) { cacheSet(cacheKey, null); return null; }
 
-    const rec = await callTool(sess, "get_financial_indicators", { symbol: sym });
-    if (!rec || typeof rec !== "object") { cacheSet(cacheKey, null); return null; }
+    const rec = await callToolRaw(sess, "get_financial_indicators", { symbol: sym });
+    // Shape: { currency, values: { <metric>: [{ fiscal_year, fiscal_period, value }] } }
+    // QUARTERLY, newest-first, last ~5 quarters. Take the newest quarter's value
+    // per metric. Ratios are already FRACTIONS (net_margin 0.266 = 26.6%) — do NOT
+    // rescale here. Basis is quarterly; TTM is NOT computed (would need 4-quarter
+    // derivation — deferred to a tested adapter version).
+    const values = rec?.values;
+    if (!values || typeof values !== "object") { cacheSet(cacheKey, null); return null; }
 
-    // Flatten to numeric leaves only — best-effort, keep whatever Webull returns.
-    const out: Record<string, number> = {};
-    const walk = (obj: any, prefix: string) => {
-      for (const [k, v] of Object.entries(obj)) {
-        if (v && typeof v === "object" && !Array.isArray(v)) {
-          walk(v, prefix ? `${prefix}.${k}` : k);
-        } else {
-          const n = Number(v);
-          if (Number.isFinite(n) && v !== "" && v !== null && typeof v !== "boolean") {
-            out[prefix ? `${prefix}.${k}` : k] = n;
-          }
-        }
-      }
+    const newestValue = (rows: any): number | null => {
+      if (!Array.isArray(rows) || rows.length === 0) return null;
+      const key = (r: any) => (Number(r?.fiscal_year) || 0) * 10 + (Number(r?.fiscal_period) || 0);
+      const newest = [...rows].sort((a, b) => key(b) - key(a))[0];
+      const n = Number(newest?.value);
+      return Number.isFinite(n) ? n : null;
     };
-    walk(rec, "");
+
+    const out: Record<string, number> = {};
+    for (const [metric, rows] of Object.entries(values)) {
+      const v = newestValue(rows);
+      if (v != null) out[metric] = v;
+    }
 
     if (Object.keys(out).length === 0) { cacheSet(cacheKey, null); return null; }
     cacheSet(cacheKey, out);

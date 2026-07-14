@@ -4,6 +4,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { MCP_BROKERS } from "@/lib/brokers/mcp-registry";
 import { getValidAccessToken, mcpRpc, mcpToolJson } from "@/lib/brokers/mcp-driver";
+import { fetchWebullAnalyst, fetchWebullFinancials, webullAnalystLine } from "@/lib/data/webull-data";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -55,6 +56,20 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ broker: str
   if (!cfg) return NextResponse.json({ error: `unknown broker '${broker}'`, known: Object.keys(MCP_BROKERS) }, { status: 404 });
 
   const symbol = (req.nextUrl.searchParams.get("symbol") ?? "AAPL").trim().toUpperCase();
+
+  // ?parsed=1 → skip the raw dual-variant dump and instead prove the ACTUAL
+  // adapter parsers (fetchWebullAnalyst / fetchWebullFinancials) produce the
+  // right numbers on live data. This is the end-to-end Phase-1a proof.
+  if (req.nextUrl.searchParams.get("parsed") === "1" && broker === "webull") {
+    const [analyst, financials] = await Promise.all([
+      fetchWebullAnalyst(symbol),
+      fetchWebullFinancials(symbol),
+    ]);
+    return NextResponse.json({
+      broker, symbol, mode: "parsed", probedAt: new Date().toISOString(),
+      analyst, analystLine: webullAnalystLine(analyst), financials,
+    });
+  }
 
   const svc = createServiceClient();
   const tk = await getValidAccessToken(svc, cfg);
