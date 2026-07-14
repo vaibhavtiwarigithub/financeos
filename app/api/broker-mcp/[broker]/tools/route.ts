@@ -42,3 +42,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ broker: str
     tools: tools.map(t => ({ name: t.name, description: String(t.description ?? "").slice(0, 200) })),
   });
 }
+
+// Alias so the pg_cron kairos_call_agent helper (which POSTs) can invoke the probe too.
+export const POST = GET;
