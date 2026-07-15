@@ -121,6 +121,7 @@ export interface EvidenceEnvelope<T = unknown> {
   intent: EvidenceIntent;
   quality: EvidenceQuality;
   payload: T | null;
+  provenance: FieldProvenance[];
   providersAttempted: ProviderId[];
   policyVersionId: string;
   cacheState: CacheState;
@@ -206,6 +207,9 @@ export interface ProviderAdapter {
   readonly providerId: ProviderId;
   readonly intent: EvidenceIntent;
   readonly contractVersion: string;
+  // Legacy-backed adapters may already acquire this provider's durable lease
+  // inside providerCachedFetch. The router must not acquire it a second time.
+  readonly pacingOwner?: "router" | "adapter";
   fetch(request: ProviderRequest, ctx: ProviderCallContext): Promise<ProviderResult>;
   validate(raw: unknown): ProviderResult;
   toCanonical(result: ProviderResult): { payload: unknown; provenance: FieldProvenance[] };

@@ -409,6 +409,7 @@ interface EvidenceEnvelope<T> {
   intent: EvidenceIntent;
   quality: EvidenceQuality;
   payload: T | null;
+  provenance: FieldProvenance[];
   providersAttempted: ProviderId[];
   policyVersionId: string;
   cacheState: "fresh" | "stale" | "miss";
@@ -618,6 +619,7 @@ a score-affecting policy requires a passing evaluation and explicit owner action
 | `request_fingerprint` | text | contract + normalized request hash |
 | `schema_version` | text | canonical schema |
 | `payload` | jsonb | canonical only, size bounded |
+| `provenance` | jsonb | canonical field/source sidecar; array only |
 | `quality_state` | text | fresh/partial/conflict/quarantined |
 | `observed_at`/`period_end` | timestamptz/date | semantic time |
 | `fetched_at`/`expires_at`/`stale_until` | timestamptz | cache policy |

@@ -21,7 +21,7 @@ import { edgarInsiderAdapter } from "@/lib/evidence/adapters/edgar";
 export const ADAPTERS_BY_INTENT: Partial<Record<EvidenceIntent, ProviderAdapter[]>> = {
   "fundamentals.reported": [finnhubFundamentalsAdapter, webullFundamentalsAdapter, yahooFundamentalsAdapter],
   "analyst.consensus":     [webullAnalystAdapter],
-  // EDGAR (free, ~10/s, unpaced) first; Massive (5/min paced, richer detail) backs
+  // EDGAR (free, ~10/s, router-paced) first; Massive (5/min paced, richer detail) backs
   // the tail. Insider is sparse by nature — most names have <3 open-market trades.
   "insider.transactions":  [edgarInsiderAdapter, massiveInsiderAdapter],
   // Multi-source US candles (Massive→EODHD→TwelveData) inside one adapter.
@@ -51,7 +51,7 @@ export const PROVIDER_SPECS: Partial<Record<ProviderId, ProviderSpec>> = {
     id: "finnhub", label: "Finnhub", transport: "http",
     markets: ["us"], capabilities: ["fundamentals.reported"],
     dailyLimitState: "none", rateLimitState: "known", rateLimitCalls: 60, rateLimitWindowSeconds: 60,
-    minIntervalMs: 0, reserveCalls: 0, entitlementRequired: false, trustTier: 2, official: true,
+    minIntervalMs: 1_000, reserveCalls: 0, entitlementRequired: false, trustTier: 2, official: true,
   },
   yahoo: {
     id: "yahoo", label: "Yahoo Finance", transport: "http",
@@ -76,6 +76,6 @@ export const PROVIDER_SPECS: Partial<Record<ProviderId, ProviderSpec>> = {
     id: "sec", label: "SEC EDGAR", transport: "http",
     markets: ["us"], capabilities: ["insider.transactions"],
     dailyLimitState: "none", rateLimitState: "known", rateLimitCalls: 10, rateLimitWindowSeconds: 1,
-    minIntervalMs: 0, reserveCalls: 0, entitlementRequired: false, trustTier: 1, official: true,
+    minIntervalMs: 100, reserveCalls: 0, entitlementRequired: false, trustTier: 1, official: true,
   },
 };

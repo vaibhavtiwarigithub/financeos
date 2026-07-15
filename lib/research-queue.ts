@@ -55,7 +55,8 @@ export async function enqueueDeferred(svc: Svc, market: "us" | "india", symbols:
       const p = prev.get(symbol);
       return { market, symbol, priority: (p?.priority ?? 0) + 1, attempts: (p?.attempts ?? 0) + 1, deferred_at: now };
     });
-    await svc.from("research_queue").upsert(rows, { onConflict: "market,symbol" });
+    const { error } = await svc.from("research_queue").upsert(rows, { onConflict: "market,symbol" });
+    if (error) console.error("[research-queue] failed to re-defer budget tail:", error.message);
   } catch {
     /* best-effort — a queue write must never break the research run */
   }

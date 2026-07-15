@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { EVIDENCE_INTENTS, isMarket } from "@/lib/evidence/contracts";
-import { adaptersForIntent, PROVIDER_SPECS, ADAPTERS_BY_INTENT } from "@/lib/evidence/registry";
+import { adaptersForIntent, PROVIDER_SPECS } from "@/lib/evidence/registry";
 
 export const dynamic = "force-dynamic";
 
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
     // Allowlisted providers for this intent (Auto-fallback order), market-filtered.
     providers: adaptersForIntent(intent, market).map((a) => a.providerId),
     // Every registry-allowed provider (ignoring market) — the prefer/only choices.
-    allowedProviders: (ADAPTERS_BY_INTENT[intent] ?? []).map((a) => a.providerId),
+    allowedProviders: adaptersForIntent(intent, market).map((a) => a.providerId),
   }));
 
   // Provider availability — code-owned specs, credentials stripped.

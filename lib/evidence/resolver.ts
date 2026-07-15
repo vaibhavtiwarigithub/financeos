@@ -26,12 +26,13 @@ import {
   type EvidenceEnvelope,
   type EvidenceIntent,
   type EvidenceQuality,
+  type FieldProvenance,
   type Market,
   type ProviderAdapter,
   type ProviderId,
   type UnavailableReason,
 } from "@/lib/evidence/contracts";
-import { adaptersForIntent } from "@/lib/evidence/registry";
+import { adaptersForIntent, PROVIDER_SPECS } from "@/lib/evidence/registry";
 
 const MARKET_SYMBOL = "__MARKET__";     // reserved symbol for market-wide intents
 const MAX_SYNC_ATTEMPTS = 2;            // hard Vercel wall-clock bound
@@ -44,12 +45,24 @@ export interface ResolveRequest {
   asOf?: string;   // ISO; defaults to now. Used for provenance + freshness.
   runId?: string;
   timeoutMs?: number;
+  // Shadow collection may exercise an inactive policy. Every other caller is
+  // blocked while router_enabled=false, preventing accidental pre-cutover use.
+  allowDisabledPolicy?: boolean;
 }
 
 interface PolicyRule {
   mode: "auto" | "prefer" | "only" | "off";
   preferred_provider: string | null;
   policy_version_id: string;
+  router_enabled: boolean;
+  max_age_seconds: number;
+  stale_max_seconds: number;
+  max_sync_attempts: number;
+}
+
+interface RuntimeConfig {
+  enabled: boolean;
+  min_interval_ms_override: number | null;
 }
 
 function fingerprint(intent: string, market: string, symbol: string, contractVersion: string): string {
@@ -62,6 +75,7 @@ function envelope<T>(
   quality: EvidenceQuality,
   cacheState: "fresh" | "stale" | "miss",
   payload: T | null,
+  provenance: FieldProvenance[],
   attempted: ProviderId[],
   reason?: UnavailableReason,
 ): EvidenceEnvelope<T> {
@@ -72,6 +86,7 @@ function envelope<T>(
     intent: base.intent,
     quality,
     payload,
+    provenance,
     providersAttempted: attempted,
     policyVersionId,
     cacheState,
@@ -80,23 +95,31 @@ function envelope<T>(
   };
 }
 
-// Load the frozen active policy rule for this market+intent. Returns null when no
-// active pointer/rule exists (treated as default Auto by the caller).
+// Missing policy state is unsafe: migrations seed both markets, so a lookup
+// failure must not silently invent an Auto policy.
 async function loadRule(svc: any, market: Market, intent: EvidenceIntent): Promise<PolicyRule | null> {
-  const { data: ptr } = await svc
+  const { data: ptr, error: ptrError } = await svc
     .from("active_evidence_policy")
     .select("policy_version_id")
     .eq("market", market)
     .maybeSingle();
+  if (ptrError) throw new Error("active policy lookup failed");
   if (!ptr?.policy_version_id) return null;
-  const { data: rule } = await svc
-    .from("evidence_policy_rules")
-    .select("mode, preferred_provider, policy_version_id")
-    .eq("policy_version_id", ptr.policy_version_id)
-    .eq("intent", intent)
-    .maybeSingle();
-  if (!rule) return { mode: "auto", preferred_provider: null, policy_version_id: ptr.policy_version_id };
-  return rule as PolicyRule;
+  const [{ data: version, error: versionError }, { data: rule, error: ruleError }] = await Promise.all([
+    svc.from("evidence_policy_versions")
+      .select("router_enabled")
+      .eq("id", ptr.policy_version_id)
+      .eq("market", market)
+      .maybeSingle(),
+    svc.from("evidence_policy_rules")
+      .select("mode, preferred_provider, policy_version_id, max_age_seconds, stale_max_seconds, max_sync_attempts")
+      .eq("policy_version_id", ptr.policy_version_id)
+      .eq("intent", intent)
+      .maybeSingle(),
+  ]);
+  if (versionError || ruleError) throw new Error("active policy rule lookup failed");
+  if (!version || !rule) return null;
+  return { ...rule, router_enabled: version.router_enabled } as PolicyRule;
 }
 
 // Order the registry chain per policy mode. off → []. only → [preferred]. prefer
@@ -109,9 +132,17 @@ function applyMode(chain: ProviderAdapter[], rule: PolicyRule | null): ProviderA
   return [...pref, ...chain.filter((a) => a.providerId !== rule.preferred_provider)];
 }
 
-async function disabledProviders(svc: any): Promise<Set<string>> {
-  const { data } = await svc.from("provider_runtime_config").select("provider_id").eq("enabled", false);
-  return new Set((data ?? []).map((r: any) => r.provider_id));
+async function loadRuntimeConfig(svc: any): Promise<Map<string, RuntimeConfig>> {
+  const { data, error } = await svc
+    .from("provider_runtime_config")
+    .select("provider_id, enabled, min_interval_ms_override");
+  if (error) throw new Error("provider runtime config lookup failed");
+  return new Map((data ?? []).map((r: any) => [r.provider_id, {
+    enabled: r.enabled !== false,
+    min_interval_ms_override: Number.isFinite(Number(r.min_interval_ms_override))
+      ? Number(r.min_interval_ms_override)
+      : null,
+  }]));
 }
 
 // Best-effort append to the call ledger. Never throws — audit must never block.
@@ -129,38 +160,49 @@ export async function resolveEvidence<T = unknown>(req: ResolveRequest): Promise
 
   // 1. validate + structural applicability
   if (!isMarket(market) || !isEvidenceIntent(intent)) {
-    return envelope<T>(base, "", "unavailable", "miss", null, [], "schema_invalid");
+    return envelope<T>(base, "", "unavailable", "miss", null, [], [], "schema_invalid");
   }
   const spec = INTENT_CATALOG[intent];
   if (!spec.markets.includes(market)) {
-    return envelope<T>(base, "", "not_applicable", "miss", null, [], "not_applicable");
+    return envelope<T>(base, "", "not_applicable", "miss", null, [], [], "not_applicable");
   }
 
   // 2. frozen policy
-  const rule = await loadRule(svc, market, intent);
+  let rule: PolicyRule | null;
+  let runtime: Map<string, RuntimeConfig>;
+  try {
+    [rule, runtime] = await Promise.all([
+      loadRule(svc, market, intent),
+      loadRuntimeConfig(svc),
+    ]);
+  } catch {
+    return envelope<T>(base, "", "unavailable", "miss", null, [], [], "provider_error");
+  }
   const policyVersionId = rule?.policy_version_id ?? "";
+  if (!rule || (!rule.router_enabled && !req.allowDisabledPolicy)) {
+    return envelope<T>(base, policyVersionId, "unavailable", "miss", null, [], [], "disabled_by_policy");
+  }
 
   // 3-4. candidate chain: registry order → policy mode → drop runtime-disabled
-  const disabled = await disabledProviders(svc);
   const chain = applyMode(adaptersForIntent(intent, market), rule)
-    .filter((a) => !disabled.has(a.providerId));
+    .filter((a) => runtime.get(a.providerId)?.enabled !== false);
 
-  if (rule?.mode === "off") {
-    return envelope<T>(base, policyVersionId, "unavailable", "miss", null, [], "disabled_by_policy");
+  if (rule.mode === "off") {
+    return envelope<T>(base, policyVersionId, "unavailable", "miss", null, [], [], "disabled_by_policy");
   }
   if (chain.length === 0) {
-    return envelope<T>(base, policyVersionId, "unavailable", "miss", null, [], "chain_exhausted");
+    return envelope<T>(base, policyVersionId, "unavailable", "miss", null, [], [], "chain_exhausted");
   }
 
   const attempted: ProviderId[] = [];
-  let staleFallback: { payload: T; provider: ProviderId } | null = null;
+  let staleFallback: { payload: T; provenance: FieldProvenance[]; provider: ProviderId } | null = null;
 
   // 5. fresh cache in provider order
   for (const adapter of chain) {
     const fp = fingerprint(intent, market, symbol, adapter.contractVersion);
     const { data: cached } = await svc
       .from("evidence_cache_v2")
-      .select("payload, expires_at, stale_until, quality_state")
+      .select("payload, provenance, expires_at, stale_until, quality_state")
       .eq("market", market).eq("symbol", symbol).eq("intent", intent)
       .eq("provider_id", adapter.providerId).eq("request_fingerprint", fp)
       .maybeSingle();
@@ -171,18 +213,43 @@ export async function resolveEvidence<T = unknown>(req: ResolveRequest): Promise
         await ledger(svc, { provider: adapter.providerId, intent, market, symbol, run_id: req.runId,
           policy_version: policyVersionId, cache_outcome: "fresh", lease_outcome: "skipped",
           contract_version: adapter.contractVersion });
-        return envelope<T>(base, policyVersionId, "fresh", "fresh", cached.payload as T, attempted);
+        return envelope<T>(base, policyVersionId, "fresh", "fresh", cached.payload as T, (cached.provenance ?? []) as FieldProvenance[], attempted);
       }
       const staleOk = cached.stale_until && new Date(cached.stale_until).getTime() > now;
-      if (staleOk && !staleFallback) staleFallback = { payload: cached.payload as T, provider: adapter.providerId };
+      if (staleOk && !staleFallback) staleFallback = {
+        payload: cached.payload as T,
+        provenance: (cached.provenance ?? []) as FieldProvenance[],
+        provider: adapter.providerId,
+      };
     }
   }
 
   // 6. live fetch, at most MAX_SYNC_ATTEMPTS real calls
   let attempts = 0;
   let lastReason: UnavailableReason = "chain_exhausted";
+  const maxAttempts = Math.min(MAX_SYNC_ATTEMPTS, Math.max(0, rule.max_sync_attempts));
   for (const adapter of chain) {
-    if (attempts >= MAX_SYNC_ATTEMPTS) break;
+    if (attempts >= maxAttempts) break;
+    const codeInterval = PROVIDER_SPECS[adapter.providerId]?.minIntervalMs ?? 0;
+    const overrideInterval = runtime.get(adapter.providerId)?.min_interval_ms_override ?? 0;
+    const minIntervalMs = Math.max(codeInterval, overrideInterval);
+    if (adapter.pacingOwner !== "adapter" && minIntervalMs > 0) {
+      const { data: acquired, error: leaseError } = await svc.rpc("try_acquire_provider_slot", {
+        p_provider: adapter.providerId,
+        p_min_interval_ms: minIntervalMs,
+      });
+      if (leaseError || acquired !== true) {
+        lastReason = "rate_limited";
+        attempted.push(adapter.providerId);
+        await ledger(svc, {
+          provider: adapter.providerId, intent, market, symbol, run_id: req.runId,
+          policy_version: policyVersionId, cache_outcome: "miss", lease_outcome: "denied",
+          error_code: "rate_limited", contract_version: adapter.contractVersion,
+        });
+        await enqueueRefresh(svc, market, symbol, intent, adapter.providerId);
+        continue;
+      }
+    }
     attempts++;
     attempted.push(adapter.providerId);
     const startedAt = new Date().toISOString();
@@ -214,26 +281,27 @@ export async function resolveEvidence<T = unknown>(req: ResolveRequest): Promise
     try {
       await svc.from("evidence_cache_v2").upsert({
         market, symbol, intent, provider_id: adapter.providerId, request_fingerprint: fp,
-        schema_version: SCHEMA_VERSION, payload: canonical.payload as any, quality_state: "fresh",
+        schema_version: SCHEMA_VERSION, payload: canonical.payload as any,
+        provenance: canonical.provenance as any, quality_state: "fresh",
         observed_at: canonical.provenance[0]?.observedAt ?? null,
         fetched_at: new Date().toISOString(),
-        expires_at: new Date(now + spec.freshTtlSeconds * 1000).toISOString(),
-        stale_until: new Date(now + spec.staleCeilingSeconds * 1000).toISOString(),
+        expires_at: new Date(now + Math.min(spec.freshTtlSeconds, rule.max_age_seconds) * 1000).toISOString(),
+        stale_until: new Date(now + Math.min(spec.staleCeilingSeconds, rule.stale_max_seconds) * 1000).toISOString(),
         currency: canonical.provenance[0]?.currency ?? null,
         basis: canonical.provenance[0]?.basis ?? null,
         payload_hash: createHash("sha1").update(JSON.stringify(canonical.payload)).digest("hex"),
       }, { onConflict: "market,symbol,intent,provider_id,request_fingerprint" });
     } catch { /* cache write is best-effort; the envelope still returns */ }
     await ledger(svc, { provider: adapter.providerId, intent, market, symbol, run_id: req.runId, policy_version: policyVersionId, cache_outcome: "miss", lease_outcome: "completed", started_at: startedAt, completed_at: new Date().toISOString(), latency_ms: Date.now() - t0, contract_version: adapter.contractVersion });
-    return envelope<T>(base, policyVersionId, "fresh", "miss", canonical.payload as T, attempted);
+    return envelope<T>(base, policyVersionId, "fresh", "miss", canonical.payload as T, canonical.provenance, attempted);
   }
 
   // 9. no live success → policy-allowed stale, else typed unavailable
   if (staleFallback) {
     await enqueueRefresh(svc, market, symbol, intent, staleFallback.provider).catch(() => {});
-    return envelope<T>(base, policyVersionId, "stale", "stale", staleFallback.payload, attempted);
+    return envelope<T>(base, policyVersionId, "stale", "stale", staleFallback.payload, staleFallback.provenance, attempted);
   }
-  return envelope<T>(base, policyVersionId, "unavailable", "miss", null, attempted, lastReason);
+  return envelope<T>(base, policyVersionId, "unavailable", "miss", null, [], attempted, lastReason);
 }
 
 // Enqueue a durable refresh job (idempotent — the partial unique index on

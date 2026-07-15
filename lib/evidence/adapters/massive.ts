@@ -92,6 +92,7 @@ export const massiveInsiderAdapter: ProviderAdapter = {
   providerId: PROVIDER_ID,
   intent: "insider.transactions",
   contractVersion: "massive-insider-v1",
+  pacingOwner: "adapter",
 
   // Massive Form 4 is US-only. A suffixed India symbol resolves to nothing
   // (unavailable) rather than wrong data, so we do not block India at the edge.
@@ -180,6 +181,7 @@ export const massiveBarsAdapter: ProviderAdapter = {
   providerId: PROVIDER_ID,
   intent: "price.daily_bars",
   contractVersion: "us-bars-v2",
+  pacingOwner: "adapter",
 
   async fetch(request: ProviderRequest, _ctx: ProviderCallContext): Promise<ProviderResult> {
     const symbol = (request.symbol ?? "").trim();

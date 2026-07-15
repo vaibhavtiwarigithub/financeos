@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { extractBriefingTickers } from "@/lib/briefing-tickers";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -8,36 +9,6 @@ const T = {
   yellow: "#FBBF24", amber: "#FBBF24", purple: "#A78BFA", teal: "#2DD4BF",
   blue: "#60A5FA", orange: "#FB923C",
 };
-
-const IGNORE = new Set([
-  "A","I","AM","AN","AS","AT","BE","BY","DO","IF","IN","IS","IT","ME","MY","NO","OF","ON","OR","SO","TO","UP","US","WE",
-  "AND","ARE","BUT","CAN","FOR","HAD","HAS","HIM","HIS","HOW","ITS","LET","MAY","NEW","NOT","NOW","ONE","OUR","OUT","PUT",
-  "THE","TOO","WAS","WHO","WHY","YET","YOU","ALL","ANY","FEW","OLD","OWN","PER","SAW","SEE","SET","SHE","TOP","TWO","USE",
-  "VIA","WAY","YTD","ETF","CEO","CFO","GDP","IPO","LTM","NTM","P&L","YOY","QOQ","ROE","ROI","EPS","FCF","NAV",
-  "OPEN","RISK","HIGH","LOW","MUCH","NEXT","ONLY","OVER","PAST","REAL","SAME","SHOW","STAY","TAKE","THAN","THAT","THEM",
-  "THEN","THEY","THIS","THUS","TOLD","UPON","VERY","WELL","WHEN","WITH","YEAR","YOUR","BOND","CASH","DEBT","HOLD",
-  "LONG","SELL","STOP","BUY","TAKE","WAIT","WEEK","DAYS","LAST","BOTH","BEST","NEAR","MOST","MORE","LESS","INTO",
-  "NYSE","NASDAQ","POST","PRE","RATE","PLAN","WANT","SAID","WILL","JUST","ALSO","FROM","BEEN","HAVE","WERE","EACH",
-  "SOME","LIKE","WHAT","EVEN","MUCH","BACK","ONLY","LOOK","MAKE","GOOD","MANY","COME","CALL","KNOW","GIVE","MOVE",
-  // India / macro acronyms that appear in briefs but are NOT tickers.
-  "USD","INR","RBI","FII","DII","NSE","BSE","NIFTY","SENSEX","SEBI","IPO","MSCI","GST","FED","ECB","BOJ","PMI","WPI",
-]);
-
-// Extract ticker-like ALL-CAPS tokens. The (?<![A-Za-z]) / (?![A-Za-z]) anchors
-// require a NON-letter on both sides so a whole word is matched or nothing —
-// without the leading anchor, "RELIANCE" wrongly yielded the trailing "IANCE".
-// Length 2–10 covers longer NSE symbols (RELIANCE, HDFCBANK); title-case words
-// ("Nifty", "Bank") don't match (mixed case), so ALL-CAPS ≈ intended ticker.
-function extractTickers(text: string): string[] {
-  const matches = text.match(/(?<![A-Za-z])\$?[A-Z]{2,10}(?![A-Za-z])/g) ?? [];
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const m of matches) {
-    const sym = m.replace(/^\$/, "");
-    if (!IGNORE.has(sym) && !seen.has(sym)) { seen.add(sym); result.push(sym); }
-  }
-  return result.slice(0, 10);
-}
 
 type Briefing = { id: string; date: string; session: "morning" | "evening"; content: string; model: string | null; created_at: string };
 type WatchlistSymbol = { symbol: string };
@@ -186,7 +157,7 @@ export default function BriefingSection({ initialBriefing }: Props) {
   const eveningIsToday = evening?.date === todayStr;
 
   const todayText = [morning?.content, evening?.content].filter(Boolean).join(" ");
-  const mentionedSymbols = todayText ? extractTickers(todayText) : [];
+  const mentionedSymbols = todayText ? extractBriefingTickers(todayText, watchlist) : [];
   const untracked = mentionedSymbols.filter(s => !watchlist.has(s));
 
   if (loading) {

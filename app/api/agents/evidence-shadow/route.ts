@@ -95,7 +95,13 @@ export async function GET(req: NextRequest) {
       if (Date.now() - started > WALLCLOCK_MS) break outer;
       perIntent[intent] ??= { ok: 0, unavailable: 0 };
       try {
-        const env = await resolveEvidence({ market, intent, symbol, runId: `shadow:${market}` });
+        const env = await resolveEvidence({
+          market,
+          intent,
+          symbol,
+          runId: `shadow:${market}`,
+          allowDisabledPolicy: true,
+        });
         if (env.quality === "fresh" && env.cacheState === "fresh") resolvedFresh++;
         else if (env.quality === "fresh") resolvedLive++;
         if (env.payload != null) perIntent[intent].ok++;

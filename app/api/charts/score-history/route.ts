@@ -29,6 +29,21 @@ function scoreBandBounds(band: string | null): { min: number | null; max: number
   }
 }
 
+function dateBoundary(raw: string, endOfDay: boolean): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const start = new Date(Date.UTC(year, month - 1, day));
+  if (
+    start.getUTCFullYear() !== year ||
+    start.getUTCMonth() !== month - 1 ||
+    start.getUTCDate() !== day
+  ) return null;
+  return new Date(start.getTime() + (endOfDay ? 86_400_000 - 1 : 0)).toISOString();
+}
+
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams;
   // Accept ?symbol=X (single) or ?symbols=X,Y,Z (multi, for the Score Tracker).
@@ -52,9 +67,14 @@ export async function GET(req: NextRequest) {
   // Explicit date range (ISO date, e.g. 2026-01-31). Applied on top of period.
   const fromRaw = (p.get("from") ?? "").trim();
   const toRaw = (p.get("to") ?? "").trim();
-  const fromISO = fromRaw ? new Date(fromRaw).toISOString() : null;
-  // Make `to` inclusive of the whole day by pushing to end-of-day.
-  const toISO = toRaw ? new Date(new Date(toRaw).getTime() + 86400_000 - 1).toISOString() : null;
+  const fromISO = fromRaw ? dateBoundary(fromRaw, false) : null;
+  const toISO = toRaw ? dateBoundary(toRaw, true) : null;
+  if ((fromRaw && !fromISO) || (toRaw && !toISO)) {
+    return NextResponse.json({ error: "from/to must be valid YYYY-MM-DD dates" }, { status: 400 });
+  }
+  if (fromISO && toISO && fromISO > toISO) {
+    return NextResponse.json({ error: "from must be on or before to" }, { status: 400 });
+  }
 
   try {
     const svc = createServiceClient();

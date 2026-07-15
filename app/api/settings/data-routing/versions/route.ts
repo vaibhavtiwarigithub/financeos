@@ -8,7 +8,7 @@ import {
   type EvidenceIntent,
   type PolicyMode,
 } from "@/lib/evidence/contracts";
-import { ADAPTERS_BY_INTENT } from "@/lib/evidence/registry";
+import { adaptersForIntent } from "@/lib/evidence/registry";
 
 export const dynamic = "force-dynamic";
 
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
       if (typeof provider !== "string" || provider.length === 0) {
         return bad(`mode '${mode}' for ${intent} requires a preferred_provider`);
       }
-      const allowed = (ADAPTERS_BY_INTENT[intent] ?? []).map((a) => a.providerId);
+      const allowed = adaptersForIntent(intent, market).map((a) => a.providerId);
       if (!allowed.includes(provider as never)) {
         return bad(
           `preferred_provider '${provider}' is not a registered provider for ${intent}` +

@@ -21,6 +21,7 @@ export const maxDuration = 150;
 // symbols. No param = legacy all-symbols behavior.
 // curl -X POST "http://localhost:3000/api/agents/research/cron?market=india" -H "x-cron-secret: <CRON_SECRET>"
 export async function POST(req: NextRequest) {
+  const routeStartedAt = Date.now();
   if (!verifyCronSecret(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -171,7 +172,10 @@ export async function POST(req: NextRequest) {
   // finish in ceil(42/N) rounds instead of serially. Default 5 keeps well inside
   // the 150s maxDuration (42/5 rounds × ~8s each ≈ 72s). Raise carefully: AV free
   // tier is 5 req/min, but av-cache absorbs repeat calls so burst is rare.
-  const concurrency = parseInt(process.env.RESEARCH_PARALLEL ?? "5");
+  const configuredConcurrency = Number.parseInt(process.env.RESEARCH_PARALLEL ?? "5", 10);
+  const concurrency = Number.isFinite(configuredConcurrency)
+    ? Math.min(10, Math.max(1, configuredConcurrency))
+    : 5;
   // WALL-CLOCK BUDGET: stop starting new symbols once this elapses, leaving the
   // rest of maxDuration (150s) for the rank pass + finalize + chained paper-trade.
   // Previously the loop was unbounded, so a large cap (50) blew past maxDuration
@@ -179,12 +183,17 @@ export async function POST(req: NextRequest) {
   // with only partial signals. Now the loop is time-bounded: whatever doesn't fit
   // is re-deferred to the front of the research queue for the next run, so a
   // higher cap raises throughput on warm/fast runs WITHOUT ever timing out.
-  const runStart = Date.now();
-  const BUDGET_MS = Number(process.env.RESEARCH_BUDGET_MS ?? 105_000);
+  const configuredBudget = Number(process.env.RESEARCH_BUDGET_MS ?? 105_000);
+  // This is an end-to-end route deadline, not a fresh timer after Theme Scout.
+  // Cap it at 105s so rank/finalize/paper chaining retain >=45s of maxDuration.
+  const BUDGET_MS = Number.isFinite(configuredBudget)
+    ? Math.min(105_000, Math.max(15_000, configuredBudget))
+    : 105_000;
+  const processingDeadline = routeStartedAt + BUDGET_MS;
   const results: any[] = new Array(entries.length);
   let idx = 0;
   async function worker() {
-    while (idx < entries.length && Date.now() - runStart < BUDGET_MS) {
+    while (idx < entries.length && Date.now() < processingDeadline) {
       const i = idx++;
       const entry = entries[i];
       try {
@@ -210,6 +219,7 @@ export async function POST(req: NextRequest) {
   // budget) — guard every filter against null so they don't count as errors.
   const ok = results.filter(r => r && !r.error).length;
   const errs = results.filter(r => r && r.error).length;
+  const processed = ok + errs;
 
   // Cross-sectional rank — Pass 2 (features/cross-sectional-rank). Deterministic,
   // no LLM. Replaces the earlier naive mixed-pool percentile with a GROUPED rank
@@ -354,19 +364,19 @@ export async function POST(req: NextRequest) {
   if (errs > 0) {
     const failedSymbols = results.filter(r => r && r.error).map(r => r.symbol).join(", ");
     await emitAlert({
-      severity: errs === results.length ? "error" : "warn",
+      severity: errs === processed ? "error" : "warn",
       category: "cron",
       title: `Research: ${errs} symbol${errs > 1 ? "s" : ""} failed`,
       detail: `Failed: ${failedSymbols}. ${ok} succeeded.`,
       auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
     });
   }
-  if (ok === 0 && batch.length > 0) {
+  if (ok === 0 && processed > 0) {
     await emitAlert({
       severity: "error",
       category: "cron",
       title: "Research cron produced 0 signals",
-      detail: `Attempted ${batch.length} symbols, all failed. Check LLM keys and data APIs.`,
+      detail: `Attempted ${processed} symbols, all failed; ${deferred.length} were deferred without being attempted. Check LLM keys and data APIs.`,
       auto_expire_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
     });
   }
