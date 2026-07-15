@@ -22,6 +22,12 @@ Every entry has one of five decisions:
 | `later_product_idea` | Potential UX/product inspiration, not trading-system infrastructure. |
 | `do_not_integrate` | Wrong domain, wrong stack, unacceptable scope, or would weaken Kairos controls. |
 
+The evidence-rated adoption recommendations for serious candidates are in
+`DEEP_CANDIDATE_CAPABILITY_AUDIT.md`.
+
+This catalog is intake evidence only. `FEATURE_ARCHITECTURE.md` is the sole
+implementation authority after owner approval.
+
 No decision in this catalog authorizes installation, a package update, a fork,
 credentials, a new data source, a broker scope, or a code change.
 
@@ -88,6 +94,9 @@ eligibility-flip guard, then decide on controlled Router cutover.
 ## 4. Detailed Candidate Cards
 
 ### 4.1 Vibe-Trading
+
+> Detailed capability map and Kairos adoption boundaries:
+> `features/external-research-integrations/VIBE_TRADING_CAPABILITY_DEEP_DIVE.md`.
 
 - **Repository:** [HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading)
 - **Observed capabilities:** declarative research-team workflows, specialist
