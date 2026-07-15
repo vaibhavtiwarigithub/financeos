@@ -55,6 +55,17 @@ Risk: Money-path confusion if rotation execution is mistaken for shadow measurem
 Decision status: Implemented
 Notes: Built benchmark-alpha Phase 1 measurement (`benchmarks`, `benchmark_price_observations`, `benchmark_scorecard`, live provenance columns, `/api/agents/benchmark-scorecard`, `AlphaScorecard`, cron schedule) and capital-rotation P0 shadow (`rotation_config`, append-only `rotation_events`, deterministic evaluator, PaperTrader insufficient_cash shadow logging). No learner objective/promotion wiring, no paper rotation execution, and no live rotation proposals/orders were enabled.
 
+### Entry 8 - 2026-07-15
+
+Instruction: Independently review and correct the relationship-graph/event-propagation architecture after its literature-grounding pass.
+Classification: Architecture rule / Feature request
+Affected area: Canonical Evidence Router, issuer identity, disclosed customer relationships, EdgeScout/EdgeIC, research candidate attribution, learning governance, US/India isolation, and downside-hedge boundary.
+Impact: High
+Architecture impact: Major
+Risk: False economic links, look-ahead bias, parallel provenance, overfit preprint-driven complexity, and unintended money-path influence.
+Decision status: Proposed
+Notes: Codex replaced V3 with a narrower V4. The first permissible experiment is US-only, sales-weighted disclosed customer momentum inside the existing measure-only `edge_*` lab. Stable relationships are neutral and separate from events; issuer entities are separate from ticker instruments; assertions are bitemporal, append-only, and evidence-linked; peers cannot seed economic edges; recent embedding papers remain offline hypotheses; India remains unsupported until an official source is validated; and no relationship result may change candidates, scores, suppression, sizing, exits, hedges, or orders without a later approved and validated phase. Recommended next action is P0 source/identity feasibility only.
+
 ### Format
 
 ```
