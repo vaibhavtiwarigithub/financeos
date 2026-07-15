@@ -332,6 +332,18 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: null,
   },
   {
+    name: "price-cache-fill",
+    agent: "price-cache-fill",
+    time: "9:25 AM ET (retry 9:45)",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Pre-market fill of price_cache with the whole Markets ETF universe (regime proxies, 11 sector XLs, leveraged pairs) via ONE grouped-daily Massive call, so the Markets tiles read a warm cache instead of each bursting Massive's ~5/min free tier on page load. Display data only — never on the money/scoring path. Idempotent: the 9:45 tick is a no-op once the 9:25 tick has filled.",
+    handoff: "→ Markets page tiles (synthesis, overview, quotes, sector returns)",
+    agentRunsType: null,
+  },
+  {
     name: "mentor-coach",
     agent: "mentor-coach",
     time: "5:15 PM ET",
