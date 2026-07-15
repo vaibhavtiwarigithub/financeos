@@ -135,8 +135,62 @@ function EvolutionTab() {
     </div>
   );
 
+  const g = data.genome;
+  const DIM_COLORS: Record<string, string> = {
+    fundamental: "#34D399", technical: "#60A5FA", sentiment: "#FBBF24", macro: "#A78BFA", insider: "#F87171",
+  };
+
   return (
     <div>
+      {g && (
+        <Card title={`Current Genome — ${market === "india" ? "🇮🇳 India" : "🇺🇸 US"} champion`}>
+          {/* Phase gate — why the learner has (or hasn't) changed weights */}
+          <div style={{ marginBottom: "14px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+              <span style={{ fontSize: "12px", fontWeight: 700, color: g.phase === "adapting" ? T.green : T.amber }}>
+                {g.phase === "adapting" ? "Phase 1 — adapting weights on outcomes" : "Phase 0 — gathering outcomes"}
+              </span>
+              <span style={{ fontSize: "11px", color: T.muted, fontVariantNumeric: "tabular-nums" as const }}>
+                {g.closedTrades}/{g.phase1Threshold} closed trades
+              </span>
+            </div>
+            <div style={{ height: "6px", background: T.border, borderRadius: "3px", overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${Math.min(100, (g.closedTrades / g.phase1Threshold) * 100)}%`, background: g.phase === "adapting" ? T.green : T.amber }} />
+            </div>
+            <div style={{ fontSize: "11px", color: T.muted, marginTop: "6px", lineHeight: 1.5 }}>
+              {g.phase === "adapting"
+                ? "The learner has enough closed trades to mutate weights on evidence. Changes appear in the timeline below."
+                : `The learner does NOT change weights until ${g.phase1Threshold} trades close for this market — ${g.tradesToUnlock} more to go. Until then it only records outcomes (this is deliberate: mutating on <10 trades would overfit to noise).`}
+            </div>
+          </div>
+
+          {/* Current per-dimension weights (the REAL champion snapshot scoring uses) */}
+          {g.weights ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              {Object.entries(g.weights as Record<string, number | null>).map(([dim, w]) => (
+                <div key={dim} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <span style={{ fontSize: "11px", color: T.textSub, width: "82px", textTransform: "capitalize" as const }}>{dim}</span>
+                  <div style={{ flex: 1, height: "6px", background: T.border, borderRadius: "3px", overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${Math.round((w ?? 0) * 100)}%`, background: DIM_COLORS[dim] ?? T.accent }} />
+                  </div>
+                  <span style={{ fontSize: "11px", fontWeight: 600, color: T.text, width: "38px", textAlign: "right" as const, fontVariantNumeric: "tabular-nums" as const }}>
+                    {w != null ? `${Math.round(w * 100)}%` : "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: "12px", color: T.muted }}>No champion promoted for this market yet — scoring uses the risk-profile default weights.</div>
+          )}
+          <div style={{ fontSize: "10px", color: T.muted, marginTop: "10px" }}>
+            {g.version ? `Champion v${g.version}` : "Seed genome"}
+            {g.promotedAt ? ` · promoted ${new Date(g.promotedAt).toLocaleDateString()}` : ""}
+            {` · ${g.challengers} active challenger${g.challengers === 1 ? "" : "s"}`}
+            {" · US and India each carry their own champion — these weights are this market's alone."}
+          </div>
+        </Card>
+      )}
+
       <Card title="LearnerAgent weight changes">
         {!data.learner.enoughHistory ? (
           <div style={{ fontSize: "12px", color: T.muted }}>Only {data.learner.runsCount} learner run(s) in the last 90 days — not enough history to show a trend yet.</div>

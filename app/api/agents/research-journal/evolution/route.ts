@@ -18,6 +18,50 @@ export async function GET(req: NextRequest) {
   const since = new Date(Date.now() - days * 86400_000).toISOString();
 
   const svc = createServiceClient();
+
+  // ── Current genome + phase gate (per market) ──────────────────────────────
+  // The REAL weights scoring uses are the market-scoped champion's snapshot —
+  // NOT the legacy global signal_weights row. Show them here so US and India are
+  // seen as independent brains. The learner only MUTATES weights after 10 closed
+  // trades (locked Phase-0 rule), so surface the closed-trade count + how many
+  // remain, which explains "why hasn't it changed anything yet."
+  const PHASE1_THRESHOLD = 10;
+  const [{ data: champRow }, { count: closedTrades }, { count: challengerCount }] = await Promise.all([
+    svc.from("strategy_versions")
+      .select("version, weights_snapshot, promoted_at")
+      .eq("is_champion", true).eq("market", market)
+      .order("promoted_at", { ascending: false }).limit(1).maybeSingle(),
+    svc.from("paper_trades").select("*", { count: "exact", head: true })
+      .eq("market", market).not("realized_pnl", "is", null),
+    svc.from("strategy_versions").select("*", { count: "exact", head: true })
+      .eq("market", market).eq("state", "paper_active"),
+  ]);
+  const snap = (champRow as any)?.weights_snapshot ?? null;
+  const pick = (short: string, full: string): number | null => {
+    if (!snap) return null;
+    const v = snap[short] ?? snap[full];
+    return typeof v === "number" ? v : null;
+  };
+  const genomeWeights = snap ? {
+    fundamental: pick("fundamental", "fundamental_weight"),
+    technical: pick("technical", "technical_weight"),
+    sentiment: pick("sentiment", "sentiment_weight"),
+    macro: pick("macro", "macro_weight"),
+    insider: pick("insider", "insider_weight"),
+  } : null;
+  const closed = closedTrades ?? 0;
+  const genome = {
+    version: (champRow as any)?.version ?? null,
+    promotedAt: (champRow as any)?.promoted_at ?? null,
+    weights: genomeWeights,
+    weightsSource: snap ? "market_champion" : "seed_default",
+    challengers: challengerCount ?? 0,
+    closedTrades: closed,
+    phase1Threshold: PHASE1_THRESHOLD,
+    tradesToUnlock: Math.max(0, PHASE1_THRESHOLD - closed),
+    phase: closed >= PHASE1_THRESHOLD ? "adapting" : "gathering",
+  };
+
   const [{ data: learnerRuns }, { data: featureHistory }, { data: calibration }, { data: shadowDecisions }] = await Promise.all([
     svc.from("learner_runs").select("run_date, weight_mutations, weights_changed, win_rate_snapshot, hypotheses, created_at").gte("created_at", since).order("created_at", { ascending: true }),
     svc.from("feature_registry_history").select("*").gte("created_at", since).order("created_at", { ascending: true }),
@@ -45,6 +89,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     market, days,
+    genome,
     learner: { runsCount: learnerRunsArr.length, weightSeries, enoughHistory: learnerRunsArr.length >= 3 },
     featureRegistry: { events: featureTimeline, enoughHistory: featureTimeline.length >= 3 },
     calibration: { series: calibrationSeries, enoughHistory: calibrationSeries.length >= 3 },
