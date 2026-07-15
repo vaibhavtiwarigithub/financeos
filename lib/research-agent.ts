@@ -13,6 +13,7 @@ import { niftyCandidates } from "@/lib/india-universe";
 import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
 import { computeWeightedAnalystScore, isThinEvidence, SCORE_DIMENSIONS, type ScoreDimension, type DimensionRecord } from "@/lib/scoring/weighted-score";
+import { resolveSignalDirection } from "@/lib/signal-direction";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { readDeferredCandidates, applyCandidateCarryForward } from "@/lib/research-queue";
 import { routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
@@ -1519,33 +1520,29 @@ export async function processSymbol(
   // rule) — thin-evidence abstention applies only to NEW long entries, never
   // suppresses an exit signal on an existing holding.
   // P0 mechanical direction gate — direction is deterministic, not LLM-driven.
-  // LLM thesis provides narrative and exit judgment only. For new positions,
-  // direction is `long` iff analystScore clears threshold AND evidence is not thin.
-  // Held-position "short" remains honored as an exit signal (CLAUDE.md locked rule).
-  const llmParseFailed = !thesis.direction;
-  const isExitSignal = isHeld && thesis.direction === "short";
-  let signalDirection: string;
-  let directionNote: string;
-  if (isExitSignal) {
-    signalDirection = "short";
-    directionNote = "";
-  } else if (thinEvidence) {
-    signalDirection = "neutral";
-    directionNote = ` [abstained: thin evidence (${includedDims.length}/5 dims)]`;
-  } else {
-    // Mechanical gate: threshold → long, else neutral. Direction is DETERMINISTIC
-    // from analyst_score + the evidence mask; the LLM thesis is narrative only and
-    // is intentionally ignored for direction. So a failed/truncated thesis parse
-    // must NOT suppress an otherwise-valid entry (evidence is already sufficient —
-    // thinEvidence handled above). It only means "no narrative", not "abstain".
-    // A deterministic score-based summary is stored as the fallback below.
-    signalDirection = analystScore >= (scoreThreshold ?? 60) ? "long" : "neutral";
-    directionNote = llmParseFailed
-      ? " [no thesis narrative — direction from deterministic gate]"
-      : (thesis.direction && thesis.direction !== signalDirection
-          ? ` [llm=${thesis.direction} overridden by gate → ${signalDirection}]`
-          : "");
-  }
+  // LLM thesis provides NARRATIVE ONLY (summary/risks/catalysts). For new
+  // positions, direction is `long` iff analystScore clears threshold AND
+  // evidence is not thin. Held-position exit ("short") is ALSO deterministic:
+  // score below the mandate threshold — NOT the LLM's direction field. This
+  // closes the last LLM-discretion hole on the money path (an LLM "short" used
+  // to become an executable exit signal stored as deterministic_v1, and could
+  // teach the learner from LLM-created outcomes). SELL capability on holdings
+  // is PRESERVED (CLAUDE.md locked rule) — it is just evidence-driven now.
+  // The LLM's raw opinion is still recorded as advisory in
+  // research_packets.raw_data._original_direction for later analysis.
+  // Gate logic lives in lib/signal-direction.ts (pure, unit-tested) so the
+  // invariant "LLM output cannot set an executable direction" is provable.
+  const llmParseFailed = !thesis.direction; // still surfaced in decision_observations
+  const gate = resolveSignalDirection({
+    isHeld,
+    analystScore,
+    scoreThreshold,
+    thinEvidence,
+    includedDimsCount: includedDims.length,
+    llmDirection: thesis.direction,
+  });
+  const signalDirection: string = gate.direction;
+  const directionNote: string = gate.note;
 
   const { data: packet } = await supabase
     .from("research_packets")

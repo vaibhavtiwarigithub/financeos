@@ -125,9 +125,14 @@ export async function POST(req: NextRequest) {
           .limit(1)).single();
 
         if (!sig) continue;
+        // Deterministic reassess-exit: flag only on the evidence-based score (or a
+        // direction that is itself now deterministic — research-agent's mechanical
+        // gate emits "short" only for held names whose score fell below threshold).
+        // Renamed from "llm_exit": no LLM discretion feeds this flag anymore, and
+        // the old name wrongly implied LLM authority over the money path.
         if (sig.analyst_score < 40 || sig.direction === "short") {
-          await svc.from("paper_positions").update({ exit_reason: "llm_exit", target_updated_at: new Date().toISOString() }).eq("id", pos.id);
-          positionReassessments.push(`${pos.symbol}: flagged llm_exit (score=${sig.analyst_score})`);
+          await svc.from("paper_positions").update({ exit_reason: "score_reassess_exit", target_updated_at: new Date().toISOString() }).eq("id", pos.id);
+          positionReassessments.push(`${pos.symbol}: flagged score_reassess_exit (score=${sig.analyst_score})`);
         } else if (sig.analyst_score >= 65 && pos.price_target) {
           const newTarget = parseFloat((pos.price_target * 1.05).toFixed(2));
           await svc.from("paper_positions").update({ price_target: newTarget, target_updated_at: new Date().toISOString() }).eq("id", pos.id);

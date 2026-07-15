@@ -233,10 +233,13 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     const currentPrice = priceMap[pos.symbol];
     const market = marketOf(pos, hasMarketCol);
 
-    // Handle llm_exit flag set by LearnerAgent — close position if flagged and we have a price
-    if (pos.exit_reason === "llm_exit" && currentPrice) {
+    // Handle reassess-exit flag set by LearnerAgent — close position if flagged and
+    // we have a price. "score_reassess_exit" is the current (deterministic,
+    // score-based) flag; "llm_exit" is honored only to drain any legacy rows
+    // flagged before the LLM-discretion exit path was removed (2026-07-15).
+    if ((pos.exit_reason === "score_reassess_exit" || pos.exit_reason === "llm_exit") && currentPrice) {
       const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
-      await closePosition(pos, currentPrice, "llm_exit", outcome);
+      await closePosition(pos, currentPrice, pos.exit_reason, outcome);
       continue;
     }
 
