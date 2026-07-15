@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { gatherSymbols, processSymbol } from "@/lib/research-agent";
 import { computeComparableRank, isRankRejected, type RankCandidate } from "@/lib/scoring/rank";
 import { isIndia } from "@/lib/india-data";
+import { enqueueDeferred } from "@/lib/research-queue";
 import { prewarmPriceCache } from "@/lib/chart-data";
 import { RISK_PROFILES } from "@/lib/risk-profiles";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -171,10 +172,19 @@ export async function POST(req: NextRequest) {
   // the 150s maxDuration (42/5 rounds × ~8s each ≈ 72s). Raise carefully: AV free
   // tier is 5 req/min, but av-cache absorbs repeat calls so burst is rare.
   const concurrency = parseInt(process.env.RESEARCH_PARALLEL ?? "5");
+  // WALL-CLOCK BUDGET: stop starting new symbols once this elapses, leaving the
+  // rest of maxDuration (150s) for the rank pass + finalize + chained paper-trade.
+  // Previously the loop was unbounded, so a large cap (50) blew past maxDuration
+  // mid-run and the function was killed before finalizing → watchdog-reaped ERROR
+  // with only partial signals. Now the loop is time-bounded: whatever doesn't fit
+  // is re-deferred to the front of the research queue for the next run, so a
+  // higher cap raises throughput on warm/fast runs WITHOUT ever timing out.
+  const runStart = Date.now();
+  const BUDGET_MS = Number(process.env.RESEARCH_BUDGET_MS ?? 105_000);
   const results: any[] = new Array(entries.length);
   let idx = 0;
   async function worker() {
-    while (idx < entries.length) {
+    while (idx < entries.length && Date.now() - runStart < BUDGET_MS) {
       const i = idx++;
       const entry = entries[i];
       try {
@@ -186,8 +196,20 @@ export async function POST(req: NextRequest) {
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, entries.length) }, worker));
 
-  const ok = results.filter(r => !r.error).length;
-  const errs = results.filter(r => r.error).length;
+  // Re-defer anything the budget didn't reach (results[i] still empty) so it
+  // rotates to the FRONT of next run's queue instead of silently waiting.
+  const deferred = entries.filter((_, i) => results[i] == null).map((e) => e.symbol);
+  if (deferred.length > 0) {
+    const usDef = deferred.filter((s) => !isIndia(s));
+    const inDef = deferred.filter((s) => isIndia(s));
+    if (usDef.length) await enqueueDeferred(supabase, "us", usDef);
+    if (inDef.length) await enqueueDeferred(supabase, "india", inDef);
+  }
+
+  // results may now contain empty slots (symbols deferred by the wall-clock
+  // budget) — guard every filter against null so they don't count as errors.
+  const ok = results.filter(r => r && !r.error).length;
+  const errs = results.filter(r => r && r.error).length;
 
   // Cross-sectional rank — Pass 2 (features/cross-sectional-rank). Deterministic,
   // no LLM. Replaces the earlier naive mixed-pool percentile with a GROUPED rank
@@ -323,14 +345,14 @@ export async function POST(req: NextRequest) {
     await supabase.from("agent_runs").update({
       status: "done",
       signals_written: ok,
-      result_summary: `cron: ${ok} signals, ${errs} failed | ${batch.join(",")}`,
+      result_summary: `cron: ${ok} signals, ${errs} failed${deferred.length ? `, ${deferred.length} deferred (budget)` : ""} | ${batch.join(",")}`,
       completed_at: new Date().toISOString(),
     } as any).eq("id", runId);
   }
 
   // Emit alerts for failures
   if (errs > 0) {
-    const failedSymbols = results.filter(r => r.error).map(r => r.symbol).join(", ");
+    const failedSymbols = results.filter(r => r && r.error).map(r => r.symbol).join(", ");
     await emitAlert({
       severity: errs === results.length ? "error" : "warn",
       category: "cron",

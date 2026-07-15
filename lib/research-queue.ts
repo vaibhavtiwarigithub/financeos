@@ -28,6 +28,39 @@ export async function readDeferredCandidates(svc: Svc, market: "us" | "india"): 
  * can't starve); and clear any queued symbol that made it into this batch.
  * Returns the symbols to process now.
  */
+/**
+ * Re-defer symbols that WERE selected for this run but did not get processed —
+ * e.g. the run hit its wall-clock budget before reaching them. Raises priority
+ * (and attempts) so the NEXT run does them first. Best-effort; never throws.
+ * This is what lets the research loop be time-bounded (never times out) without
+ * dropping the tail: unprocessed names rotate to the front of the queue.
+ */
+export async function enqueueDeferred(svc: Svc, market: "us" | "india", symbols: string[]): Promise<void> {
+  const list = [...new Set(symbols.map((s) => String(s).toUpperCase()))];
+  if (list.length === 0) return;
+  try {
+    const { data: existing } = await svc
+      .from("research_queue")
+      .select("symbol, priority, attempts")
+      .eq("market", market)
+      .in("symbol", list);
+    const prev = new Map<string, { priority: number; attempts: number }>(
+      (existing ?? []).map((r: any) => [
+        String(r.symbol).toUpperCase(),
+        { priority: Number(r.priority ?? 0), attempts: Number(r.attempts ?? 0) },
+      ] as [string, { priority: number; attempts: number }]),
+    );
+    const now = new Date().toISOString();
+    const rows = list.map((symbol) => {
+      const p = prev.get(symbol);
+      return { market, symbol, priority: (p?.priority ?? 0) + 1, attempts: (p?.attempts ?? 0) + 1, deferred_at: now };
+    });
+    await svc.from("research_queue").upsert(rows, { onConflict: "market,symbol" });
+  } catch {
+    /* best-effort — a queue write must never break the research run */
+  }
+}
+
 export async function applyCandidateCarryForward(
   svc: Svc,
   market: "us" | "india",

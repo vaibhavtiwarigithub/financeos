@@ -490,12 +490,13 @@ export async function gatherSymbols(
     screenerAdded++;
   }
 
-  // 50 overran the research function's platform timeout (LLM thesis per symbol) —
-  // runs died mid-loop and were watchdog-reaped as errors, never finalizing. 25
-  // completes within the timeout while still draining the carry-forward queue
-  // ~2.5x faster than the old 10. The real fix is a wall-clock-bounded, resumable
-  // research loop (carry the tail forward mid-run); until then this stays bounded.
-  const candidateCap = parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "25");
+  // Cap selected candidates per run. Safe to keep high (40) now that the cron
+  // research loop is WALL-CLOCK BOUNDED (app/api/agents/research/cron: RESEARCH_
+  // BUDGET_MS) + re-defers whatever it can't reach — so a big cap raises warm-run
+  // throughput without ever overrunning maxDuration (the 50-cap timeout that
+  // watchdog-reaped runs for 2 days). Overflow beyond the cap already carries
+  // forward via applyCandidateCarryForward.
+  const candidateCap = parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "40");
   // Take the top `candidateCap` this run; carry the overflow forward (raised
   // priority, no starvation) instead of the old silent `.slice()` drop.
   const usBatch = new Set(await applyCandidateCarryForward(supabase, "us", Array.from(candidateMap.keys()), candidateCap));
