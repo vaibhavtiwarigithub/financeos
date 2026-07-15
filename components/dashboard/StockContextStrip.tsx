@@ -39,6 +39,14 @@ interface RevisitReason {
   urgency: "high" | "medium" | "low" | "none";
 }
 
+// Peer-move attention (features/stock-context). ATTENTION-ONLY — related names
+// that moved, NOT trade recommendations. Off the money path.
+interface PeerMove {
+  symbol: string;
+  changePct: number;
+  material: boolean;
+}
+
 function urgencyColor(u: string) {
   if (u === "high") return T.red;
   if (u === "medium") return T.amber;
@@ -57,6 +65,7 @@ function Datum({ label, value, valueColor }: { label: string; value: string; val
 export default function StockContextStrip({ symbol, market }: { symbol: string; market?: "us" | "india" }) {
   const [profile, setProfile] = useState<SymbolProfile | null>(null);
   const [revisit, setRevisit] = useState<RevisitReason | null>(null);
+  const [peerMoves, setPeerMoves] = useState<PeerMove[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -72,6 +81,24 @@ export default function StockContextStrip({ symbol, market }: { symbol: string; 
       })
       .catch(() => {})
       .finally(() => { if (alive) setLoaded(true); });
+    return () => { alive = false; };
+  }, [symbol, market]);
+
+  // Peer moves load separately — a slower, optional attention line that must
+  // never block or delay the main strip. Failure just shows nothing.
+  useEffect(() => {
+    let alive = true;
+    const q = new URLSearchParams({ symbol });
+    if (market) q.set("market", market);
+    fetch(`/api/peer-moves?${q.toString()}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive) return;
+        const moves: PeerMove[] = Array.isArray(d?.moves) ? d.moves : [];
+        // Attention-only: surface just the material movers.
+        setPeerMoves(moves.filter((m) => m?.material));
+      })
+      .catch(() => {});
     return () => { alive = false; };
   }, [symbol, market]);
 
@@ -132,6 +159,38 @@ export default function StockContextStrip({ symbol, market }: { symbol: string; 
               {p}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* Peers today — ATTENTION-ONLY. Related names that moved materially, so
+          the user notices them. NOT recommendations, NOT trade signals — these
+          are context, never clickable trades. Renders nothing when no peer moved
+          (and always empty for India, which has no peers). Mobile-first: wraps. */}
+      {peerMoves.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 10px", alignItems: "center" }}>
+          <span style={{ color: T.muted, fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.06em", marginRight: "2px" }}>
+            Peers today
+          </span>
+          {peerMoves.map((m) => {
+            const up = m.changePct >= 0;
+            const color = up ? T.green : T.red;
+            const arrow = up ? "▲" : "▼"; // ▲ / ▼
+            return (
+              <span
+                key={m.symbol}
+                // Context only — deliberately NOT a link/button.
+                style={{ display: "inline-flex", alignItems: "baseline", gap: "4px", fontSize: "11px", whiteSpace: "nowrap" }}
+              >
+                <span style={{ fontFamily: "monospace", fontWeight: 600, color: T.textSub }}>{m.symbol}</span>
+                <span style={{ color, fontWeight: 700 }}>
+                  {up ? "+" : ""}{m.changePct.toFixed(1)}% {arrow}
+                </span>
+              </span>
+            );
+          })}
+          <span style={{ color: T.muted, fontSize: "10px", fontStyle: "italic" }}>
+            related names that moved — not recommendations
+          </span>
         </div>
       )}
 
