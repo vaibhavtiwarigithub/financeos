@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 import ResearchFunnel from "@/components/dashboard/ResearchFunnel";
 import ScoreTrackerPanel from "@/components/dashboard/ScoreTrackerPanel";
+import DecisionReviewPanel from "@/components/dashboard/DecisionReviewPanel";
 import { useMarket } from "@/lib/market-context";
 import { useSearchParams } from "next/navigation";
 
@@ -241,8 +242,8 @@ function EvolutionTab() {
 export default function ResearchJournalPage() {
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get("tab");
-  const [tab, setTab] = useState<"funnel" | "evolution" | "scores">(
-    requestedTab === "evolution" || requestedTab === "scores" ? requestedTab : "funnel"
+  const [tab, setTab] = useState<"funnel" | "evolution" | "scores" | "review">(
+    requestedTab === "evolution" || requestedTab === "scores" || requestedTab === "review" ? requestedTab : "funnel"
   );
 
   return (
@@ -255,21 +256,22 @@ export default function ResearchJournalPage() {
           "Daily Funnel: every symbol scored today with its score breakdown, screener bucket, and pass/reject reason at each pipeline stage (research → portfolio constructor → execution) — a rejected symbol always has a reason.",
           "Evolution: longer-horizon trends — learner weight changes, feature-registry promotions, calibration drift, shadow-decision agreement — and it's honest about thin history (no trend from 1-2 points).",
           "Score Tracker: pick a stock to see its AI score move over time, then drill down into what drove each change.",
+          "Decision Review: the counterfactual — what we scored vs how the stock actually moved afterward. Per-symbol rows are illustrative (n=1); the aggregate cohorts are actionable only above the 20-matured-outcome floor.",
         ]}
       />
       <div style={{ padding: "0 28px 32px" }}>
         <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
-          {(["funnel", "evolution", "scores"] as const).map(t => (
+          {(["funnel", "evolution", "scores", "review"] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: "8px 18px", borderRadius: "8px", cursor: "pointer", fontSize: "13px", fontWeight: 600,
               background: tab === t ? T.accentBg : T.surface, border: `1px solid ${tab === t ? T.accent : T.border}`,
               color: tab === t ? T.accent : T.textSub,
             }}>
-              {t === "funnel" ? "Daily Funnel" : t === "evolution" ? "Evolution" : "Score Tracker"}
+              {t === "funnel" ? "Daily Funnel" : t === "evolution" ? "Evolution" : t === "scores" ? "Score Tracker" : "Decision Review"}
             </button>
           ))}
         </div>
-        {tab === "funnel" ? <ResearchFunnel /> : tab === "evolution" ? <EvolutionTab /> : <ScoreTrackerPanel embedded />}
+        {tab === "funnel" ? <ResearchFunnel /> : tab === "evolution" ? <EvolutionTab /> : tab === "scores" ? <ScoreTrackerPanel embedded /> : <DecisionReviewPanel />}
       </div>
     </div>
   );

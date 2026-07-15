@@ -24,8 +24,46 @@ interface QuoteResult {
   changePct: number;
 }
 
-async function fetchQuote(symbol: string, apiKey: string | undefined): Promise<QuoteResult | null> {
+// Read the latest cached daily bar per regime ticker from price_cache. The
+// daily price-cache-fill job (/api/agents/price-cache-fill) pre-fills the whole
+// Markets universe pre-market, so on the normal path this is a single warm read
+// with NO Massive traffic — the page never bursts the provider on load.
+async function readCachedQuotes(symbols: string[]): Promise<Map<string, QuoteResult>> {
+  const svc = createServiceClient();
+  const out = new Map<string, QuoteResult>();
+  // One batch query; reduce to the most-recent row per symbol in JS.
+  const { data } = await svc
+    .from("price_cache")
+    .select("symbol, date, open, close")
+    .in("symbol", symbols)
+    .order("date", { ascending: false });
+  for (const row of data ?? []) {
+    const sym = (row as { symbol: string }).symbol;
+    if (out.has(sym)) continue; // rows are date-desc, first seen is latest
+    const open = Number((row as { open: number }).open);
+    const close = Number((row as { close: number }).close);
+    if (!open || !close) continue;
+    out.set(sym, { symbol: sym, open, close, changePct: ((close - open) / open) * 100 });
+  }
+  return out;
+}
+
+// Single-symbol live fetch used ONLY to backfill the few symbols still missing
+// from the cache (e.g. before the day's first fill has run). Gated by the shared
+// serverless-safe Massive lease so it can never burst past ~5/min — on a miss it
+// simply returns null and that indicator degrades gracefully.
+async function fetchQuotePaced(symbol: string, apiKey: string | undefined): Promise<QuoteResult | null> {
   if (!apiKey) return null;
+  const svc = createServiceClient();
+  try {
+    const { data: slot } = await svc.rpc("try_acquire_provider_slot", {
+      p_provider: "massive",
+      p_min_interval_ms: 12_500,
+    });
+    if (slot !== true) return null; // slot busy — don't burst, leave it missing
+  } catch {
+    return null;
+  }
   try {
     const res = await fetch(
       `https://api.massive.com/v2/aggs/ticker/${symbol}/prev?adjusted=true&apiKey=${apiKey}`,
@@ -93,14 +131,18 @@ export async function GET(req: NextRequest) {
 
   const apiKey = process.env.MASSIVE_API_KEY;
 
-  const rawResults = await Promise.allSettled(
-    REGIME_TICKERS.map((sym) => fetchQuote(sym, apiKey))
-  );
-  const q = new Map<string, QuoteResult>();
-  REGIME_TICKERS.forEach((sym, i) => {
-    const r = rawResults[i];
-    if (r.status === "fulfilled" && r.value) q.set(sym, r.value);
-  });
+  // 1. Warm read from price_cache (filled daily by /api/agents/price-cache-fill).
+  //    Normal page loads resolve entirely here — zero Massive calls, no burst.
+  const q = await readCachedQuotes(REGIME_TICKERS);
+
+  // 2. Backfill only the symbols still missing (e.g. before the day's first
+  //    fill). Sequential + lease-gated so we never fire a concurrent burst that
+  //    would 429 and leave the read degraded.
+  const missing = REGIME_TICKERS.filter((sym) => !q.has(sym));
+  for (const sym of missing) {
+    const r = await fetchQuotePaced(sym, apiKey);
+    if (r) q.set(sym, r);
+  }
 
   const get = (sym: string) => q.get(sym) ?? null;
 
@@ -212,11 +254,14 @@ Be specific about which indicators are driving the read. No invented catalysts. 
   const generatedAt = new Date().toISOString();
   const payload = { regime, indicators, synthesis, signalsAvailable: scored, signalsTotal: 7 };
 
-  // Only cache a real result — a transient Massive failure (all 8 quotes
-  // fail) must NOT get cached as "unavailable" for the rest of the day.
-  // That's exactly what happened before this fix: one hiccup poisoned the
-  // whole day's synthesis until someone manually force-refreshed.
-  if (hasData) {
+  // Only cache when a STRONG MAJORITY of the 7 regime proxies resolved. A
+  // degraded read (most proxies null because the cache wasn't filled yet, or a
+  // transient Massive failure) must NOT be frozen for the rest of the day — that
+  // is exactly the bug this fixes: one sparse read poisoned the whole day's
+  // synthesis until someone manually force-refreshed. Leaving a weak read
+  // uncached lets the next fill/regen complete it.
+  const STRONG_MAJORITY = 5; // of 7 scoring signals
+  if (hasData && scored >= STRONG_MAJORITY) {
     await svc.from("briefings").upsert(
       { date: today, session: "synthesis", content: JSON.stringify(payload), model },
       { onConflict: "date,session" }

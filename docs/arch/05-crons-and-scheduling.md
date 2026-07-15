@@ -1,5 +1,5 @@
 # Kairos — Crons & Scheduling
-> Last updated: 2026-07-13 (live account snapshot cron now covers connected registry MCP brokers and broker-scoped safe pruning; validation sweep from migration 170 documented)
+> Last updated: 2026-07-15 (added `kairos-price-cache-fill` daily Markets ETF price-cache fill — migration 20260715140000)
 > Update this file when: a new cron is added or removed, a schedule changes, or a new endpoint is wired to a cron.
 
 **Adding a cron:**
@@ -66,6 +66,7 @@ Scheduled inside Supabase via `cron.schedule`, calling the deployed app through 
 | `kairos-evidence-shadow-india` | **7-day** 04:30/40/50 UTC (after India research) | `POST /api/agents/evidence-shadow?market=india` | Same, India. |
 | `kairos-broker-keepwarm` | **Daily** 06:00 + 18:00 UTC (7 days/week, migration 20260714000000) | `POST /api/broker-mcp/keepwarm` | **MCP token keep-warm.** Iterates every connected MCP broker and calls `getValidAccessToken`, which refreshes + CAS-rotates the refresh token when the short-lived access token (Webull ~1 day) is expiring. Insurance so the OAuth refresh chain never lapses across weekends/holidays when the weekday-only market crons (`broker-sync`, `research`) don't touch it. Read-only — no tool calls, **no order path**. A refresh failure raises a critical System Health issue (`broker-token:<broker>`) for reconnect. |
 | `kairos-validation-sweep` | Fridays 21:45 UTC | `POST /api/validation/sweep` | **Automated strategy validation (migration 170)** recovery sweep: for each market, validates up to 5 never-validated challengers (`state='challenger'`, `validation_experiment_id IS NULL`) through the deterministic Validation Engine, and — when the per-market `strategy_validation_automation` policy allows — auto-routes a PASSED challenger into the single `shadow_paper` slot via the `activate_strategy_shadow` RPC. Catches challengers created outside LearnerAgent or interrupted before in-process validation. Runs 45 min after the Friday learner. Self-reports to **System Health** (`reportIssue`/`resolveIssue`, key `cron-failed:kairos-validation-sweep`) on any execution error, clears on a clean run. Also writes an `agent_runs` heartbeat (`agent_type='validation_sweep'`, market `us`) so **`stale-check`** flags a SILENT non-run — registered as a Friday-only job (expected 21:00 UTC, 2h grace). So both failure modes are covered: errored-when-run and never-fired. **Cannot promote a champion or touch any paper/live execution path — `shadow_paper` is non-executing.** |
+| `kairos-price-cache-fill` (+ `-retry`) | Weekdays 13:25 + 13:45 UTC (pre-market, before the 14:00 briefing; migration 20260715140000) | `POST /api/agents/price-cache-fill` | **Markets display price-cache fill.** Pre-fills `price_cache` with the whole Markets ETF universe (regime proxies SPY/QQQ/IWM/TLT/IEF/HYG/UUP/GLD + VIXY/DIA, the 11 sector XLs, and the leveraged sentiment pairs TQQQ/SQQQ/… ) via ONE Massive **grouped-daily** call (all US tickers in a single request, filtered to the universe) — so the Markets tiles (`markets/synthesis`, `markets/overview`, `markets/quotes`, `charts/sector-returns`) read a warm cache instead of each bursting Massive's ~5/min free tier on page load. The prev-session close is stable all day, so one fill/day is enough; the 13:45 tick is an idempotent no-op once 13:25 has filled (skips when the most-recent session is already cached). Falls back to sequential per-symbol `/prev` (lease-gated 5/min, bounded 45s, resumable) only if the grouped endpoint is unavailable. Raises a System Health `warn` (`price-cache-fill-degraded`, auto-clears at UTC midnight) only on a large shortfall. **Display data only — never on the money/scoring path.** |
 | `kairos-benchmark-scorecard` | Weekdays 22:15 UTC | `POST /api/agents/benchmark-scorecard` | **Benchmark Alpha P1 (migration 20260713143000)** rolls up paper/live scorecard rows for 1W/1M/3M/YTD/1Y after NAV + labels. Writes `benchmark_scorecard` status rows, including missing/unpriceable rows. Measurement-only: no learner mutation, no paper fills, no live orders. |
 
 The route fails closed (publishes a failed/insufficient-data run, never yesterday-as-today) when a broker
@@ -91,6 +92,7 @@ Cron routes do NOT require an owner session — they accept the cron secret as a
 6:35 AM ET  — position-monitor-india
 8:00 AM ET  — brief-morning + macro-sentinel (Mon only)
 9:00 AM ET  — research (US)
+9:25 AM ET  — price-cache-fill (Markets ETF cache; retry 9:45)
 9:45 AM ET  — trader (US proposals)
 10:05 AM ET — paper-trade-us
 4:15 PM ET  — position-monitor (US)

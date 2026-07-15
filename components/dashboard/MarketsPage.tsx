@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, lazy, Suspense } from "react";
+import { useEffect, useState, useRef, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket, CURRENCY } from "@/lib/market-context";
@@ -900,14 +900,25 @@ function MacroReadCard({ market }: { market: "us" | "india" }) {
   const [stale, setStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  // Guards the one-shot self-heal so a persistently-stale read (e.g. no macro
+  // regime data yet) doesn't POST on every re-render. Reset when the market flips.
+  const autoTried = useRef(false);
 
   async function load() {
     setLoading(true);
+    let isStale = false;
     try {
       const res = await fetch(`/api/agent-mind/macro-read?market=${market}`);
-      if (res.ok) { const d = await res.json(); setRead(d.interpretation ?? null); setStale(!!d.stale); }
+      if (res.ok) { const d = await res.json(); setRead(d.interpretation ?? null); isStale = !!d.stale; setStale(isStale); }
     } catch {}
     setLoading(false);
+    // Self-heal: if today's read hasn't been generated yet, regenerate it once so
+    // the card is never frozen showing a previous day's text. Advisory-only and
+    // cached per day, so at most one cheap LLM call per viewer per day.
+    if (isStale && !autoTried.current) {
+      autoTried.current = true;
+      await generate();
+    }
   }
   async function generate() {
     setRunning(true);
@@ -917,7 +928,7 @@ function MacroReadCard({ market }: { market: "us" | "india" }) {
     } catch {}
     setRunning(false);
   }
-  useEffect(() => { load(); }, [market]);
+  useEffect(() => { autoTried.current = false; load(); }, [market]);
 
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
