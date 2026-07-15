@@ -1340,8 +1340,13 @@ export async function processSymbol(
   const market = india ? "india" : "us"; // Phase 4: per-market champion weights
   const tradingMandate = await loadTradingMandate(supabase, market);
 
-  const [{ data: weights }, { data: strategy }, { data: profileData }, { data: scoreHistory }] = await Promise.all([
-    supabase.from("signal_weights").select("*").single(),
+  // Weight resolution is champion-first → static per-risk-profile baseline. The
+  // legacy global `signal_weights` row is NO LONGER read here: it was an
+  // unreachable 3rd fallback (PROFILE_WEIGHTS always resolves first in the ?? chain
+  // below), and reading a single global row on a per-market scoring path was the
+  // vestige Codex Q6 flagged. The table still exists for the Agents-page display;
+  // removing it there is deferred until that view is made market-aware.
+  const [{ data: strategy }, { data: profileData }, { data: scoreHistory }] = await Promise.all([
     supabase.from("strategy_config").select("risk_profile, score_threshold, min_analyst_score, position_size_pct, stop_loss_pct, target_pct").single(),
     supabase.from("profiles").select("market_focus").limit(1).single(),
     // Recent score history for THIS symbol so the thesis prompt can reference the
@@ -1393,11 +1398,11 @@ export async function processSymbol(
   };
   const usingChampion = !!champWeights;
 
-  const fw = cw("fundamental", "fundamental_weight") ?? profileWeights.fundamental ?? weights?.fundamental_weight ?? 0.30;
-  const tw = cw("technical",   "technical_weight")   ?? profileWeights.technical   ?? weights?.technical_weight  ?? 0.25;
-  const sw = cw("sentiment",   "sentiment_weight")   ?? profileWeights.sentiment   ?? weights?.sentiment_weight  ?? 0.20;
-  const mw = cw("macro",       "macro_weight")       ?? profileWeights.macro       ?? weights?.macro_weight      ?? 0.15;
-  const iw = cw("insider",     "insider_weight")     ?? profileWeights.insider     ?? weights?.insider_weight    ?? 0.10;
+  const fw = cw("fundamental", "fundamental_weight") ?? profileWeights.fundamental ?? 0.30;
+  const tw = cw("technical",   "technical_weight")   ?? profileWeights.technical   ?? 0.25;
+  const sw = cw("sentiment",   "sentiment_weight")   ?? profileWeights.sentiment   ?? 0.20;
+  const mw = cw("macro",       "macro_weight")       ?? profileWeights.macro       ?? 0.15;
+  const iw = cw("insider",     "insider_weight")     ?? profileWeights.insider     ?? 0.10;
 
   // Renormalize across only applicable + available dimensions instead of always
   // applying the fixed 5-way split against a fabricated neutral-50 default.
