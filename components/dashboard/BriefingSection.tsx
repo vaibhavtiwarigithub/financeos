@@ -19,10 +19,17 @@ const IGNORE = new Set([
   "LONG","SELL","STOP","BUY","TAKE","WAIT","WEEK","DAYS","LAST","BOTH","BEST","NEAR","MOST","MORE","LESS","INTO",
   "NYSE","NASDAQ","POST","PRE","RATE","PLAN","WANT","SAID","WILL","JUST","ALSO","FROM","BEEN","HAVE","WERE","EACH",
   "SOME","LIKE","WHAT","EVEN","MUCH","BACK","ONLY","LOOK","MAKE","GOOD","MANY","COME","CALL","KNOW","GIVE","MOVE",
+  // India / macro acronyms that appear in briefs but are NOT tickers.
+  "USD","INR","RBI","FII","DII","NSE","BSE","NIFTY","SENSEX","SEBI","IPO","MSCI","GST","FED","ECB","BOJ","PMI","WPI",
 ]);
 
+// Extract ticker-like ALL-CAPS tokens. The (?<![A-Za-z]) / (?![A-Za-z]) anchors
+// require a NON-letter on both sides so a whole word is matched or nothing —
+// without the leading anchor, "RELIANCE" wrongly yielded the trailing "IANCE".
+// Length 2–10 covers longer NSE symbols (RELIANCE, HDFCBANK); title-case words
+// ("Nifty", "Bank") don't match (mixed case), so ALL-CAPS ≈ intended ticker.
 function extractTickers(text: string): string[] {
-  const matches = text.match(/\$?[A-Z]{2,5}\b/g) ?? [];
+  const matches = text.match(/(?<![A-Za-z])\$?[A-Z]{2,10}(?![A-Za-z])/g) ?? [];
   const seen = new Set<string>();
   const result: string[] = [];
   for (const m of matches) {

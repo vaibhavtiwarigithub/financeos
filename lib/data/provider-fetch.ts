@@ -140,7 +140,11 @@ export async function providerCachedFetch(
       if (typeof count === "number" && count >= Math.floor(cfg.dailyBudget * 0.8) && count <= cfg.dailyBudget) {
         await reportIssue({
           issueKey: `provider-budget-pressure:${provider}`,
-          severity: "warn", category: "data",
+          // INFO not WARN: on the free-cloud-only tier, brushing a provider's
+          // daily cap is the expected steady state (cache fallback keeps scoring
+          // running), not an incident. Kept visible for transparency; auto-clears
+          // at UTC midnight. Escalate to the Router if we want to actually shed load.
+          severity: "info", category: "data",
           title: `${cfg.label} at ${count}/${cfg.dailyBudget} calls (80%+)`,
           detail: `${cfg.label} is nearing its daily cap. If it exhausts, fetches fall back to cache. Consider routing more load to a free alternate (Massive/FMP/TwelveData/Finnhub).`,
           autoExpireAt: nextUtcMidnight(),
@@ -149,7 +153,10 @@ export async function providerCachedFetch(
       if (typeof count === "number" && count > cfg.dailyBudget) {
         await reportIssue({
           issueKey: `provider-budget-exhausted:${provider}`,
-          severity: "warn", category: "data",
+          // INFO not WARN: exhausting a free-tier daily cap is expected on this
+          // stack — we fail-safe to cached payloads and scoring keeps running.
+          // Not an incident; auto-clears at UTC midnight when the quota resets.
+          severity: "info", category: "data",
           title: `${cfg.label} daily budget exhausted`,
           detail: `Used ${count}/${cfg.dailyBudget} ${cfg.label} calls today. Further fetches serve cached payloads until the quota resets (00:00 UTC). Scoring inputs may be staler than usual.`,
           autoExpireAt: nextUtcMidnight(),
