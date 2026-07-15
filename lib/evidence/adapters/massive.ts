@@ -18,10 +18,16 @@ import type {
   FieldProvenance,
 } from "@/lib/evidence/contracts";
 import { scoreMassiveInsider } from "@/lib/data/massive-insider";
-import { fetchMassiveCandles } from "@/lib/data/candles";
+import { fetchUsCandles } from "@/lib/data/candles";
 import type { Candle } from "@/lib/data/technicals";
+import type { ProviderId } from "@/lib/evidence/contracts";
 
 const PROVIDER_ID = "massive" as const;
+
+// Map a fetchUsCandles source string to a ProviderId for honest provenance.
+function barsSourceProvider(source: string): ProviderId {
+  return (["massive", "eodhd", "twelvedata"].includes(source) ? source : "massive") as ProviderId;
+}
 
 // ── shared guards ─────────────────────────────────────────────────────────────
 
@@ -148,8 +154,9 @@ export const massiveInsiderAdapter: ProviderAdapter = {
 // `adjusted` is preserved as a first-class flag rather than silently assumed.
 export interface CanonicalDailyBars {
   bars: Candle[];    // ascending by date; {date, open, high, low, close, volume}
-  adjusted: boolean; // true — fetchMassiveCandles requests adjusted=true
+  adjusted: boolean; // adjusted close (all US candle sources request adjusted)
   count: number;
+  source: string;    // which provider actually served (massive|eodhd|twelvedata)
 }
 
 function isValidBar(x: unknown): x is Candle {
@@ -164,37 +171,47 @@ function isValidBar(x: unknown): x is Candle {
   );
 }
 
+// Uses the existing multi-source US candle resolver (Massive → EODHD →
+// TwelveData) rather than Massive alone: Massive is 5/min-paced and starves at
+// 50 symbols/run, whereas TwelveData (800/day) reliably backs the tail, lifting
+// daily-bar coverage from ~30% to near-complete. Provenance records the source
+// that actually served, not a nominal one.
 export const massiveBarsAdapter: ProviderAdapter = {
   providerId: PROVIDER_ID,
   intent: "price.daily_bars",
-  contractVersion: "massive-bars-v1",
+  contractVersion: "us-bars-v2",
 
   async fetch(request: ProviderRequest, _ctx: ProviderCallContext): Promise<ProviderResult> {
     const symbol = (request.symbol ?? "").trim();
     if (!symbol) return { ok: false, unavailableReason: "genuine_no_data" };
     try {
-      const bars = await fetchMassiveCandles(symbol);
-      if (!Array.isArray(bars) || bars.length === 0) {
+      // No AV fallback here — AV is 25/day and reserve-only; the router relies on
+      // Massive → EODHD → TwelveData, which is enough for daily bars.
+      const { candles, source } = await fetchUsCandles(symbol, async () => []);
+      if (!Array.isArray(candles) || candles.length === 0) {
         return { ok: false, unavailableReason: "genuine_no_data" };
       }
-      return { ok: true, payload: bars, raw: bars };
+      return { ok: true, payload: { bars: candles, source }, raw: { source } };
     } catch {
       return { ok: false, unavailableReason: "provider_error" };
     }
   },
 
   validate(raw: unknown): ProviderResult {
-    if (!Array.isArray(raw) || raw.length === 0) return { ok: false, unavailableReason: "schema_invalid" };
-    if (!raw.every(isValidBar)) return { ok: false, unavailableReason: "schema_invalid" };
+    if (!isPlainObject(raw) || hasForbiddenKeys(raw)) return { ok: false, unavailableReason: "schema_invalid" };
+    const bars = (raw as any).bars;
+    if (!Array.isArray(bars) || bars.length === 0) return { ok: false, unavailableReason: "schema_invalid" };
+    if (!bars.every(isValidBar)) return { ok: false, unavailableReason: "schema_invalid" };
     return { ok: true, payload: raw, raw };
   },
 
   toCanonical(result: ProviderResult): { payload: unknown; provenance: FieldProvenance[] } {
-    const bars = (result.payload as Candle[]) ?? [];
+    const p = (result.payload as { bars: Candle[]; source: string }) ?? { bars: [], source: "massive" };
     const retrievedAt = new Date().toISOString();
-    const payload: CanonicalDailyBars = { bars, adjusted: true, count: bars.length };
+    const provider = barsSourceProvider(p.source);
+    const payload: CanonicalDailyBars = { bars: p.bars, adjusted: true, count: p.bars.length, source: p.source };
     const provenance: FieldProvenance[] = [
-      { providerId: PROVIDER_ID, providerField: "aggs.day", basis: "eod", unit: "currency", retrievedAt },
+      { providerId: provider, providerField: "daily_bars", basis: "eod", unit: "currency", retrievedAt },
     ];
     return { payload, provenance };
   },

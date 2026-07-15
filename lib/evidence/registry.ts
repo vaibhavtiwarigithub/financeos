@@ -13,6 +13,7 @@ import { finnhubFundamentalsAdapter } from "@/lib/evidence/adapters/finnhub";
 import { yahooFundamentalsAdapter } from "@/lib/evidence/adapters/yahoo";
 import { webullAnalystAdapter, webullFundamentalsAdapter } from "@/lib/evidence/adapters/webull";
 import { massiveInsiderAdapter, massiveBarsAdapter } from "@/lib/evidence/adapters/massive";
+import { edgarInsiderAdapter } from "@/lib/evidence/adapters/edgar";
 
 // Default ordered chains per intent. Order = Auto-mode fallback order. Finnhub
 // leads US fundamentals while Webull shadows (Webull fundamentals are QUARTERLY —
@@ -20,7 +21,10 @@ import { massiveInsiderAdapter, massiveBarsAdapter } from "@/lib/evidence/adapte
 export const ADAPTERS_BY_INTENT: Partial<Record<EvidenceIntent, ProviderAdapter[]>> = {
   "fundamentals.reported": [finnhubFundamentalsAdapter, webullFundamentalsAdapter, yahooFundamentalsAdapter],
   "analyst.consensus":     [webullAnalystAdapter],
-  "insider.transactions":  [massiveInsiderAdapter],
+  // EDGAR (free, ~10/s, unpaced) first; Massive (5/min paced, richer detail) backs
+  // the tail. Insider is sparse by nature — most names have <3 open-market trades.
+  "insider.transactions":  [edgarInsiderAdapter, massiveInsiderAdapter],
+  // Multi-source US candles (Massive→EODHD→TwelveData) inside one adapter.
   "price.daily_bars":      [massiveBarsAdapter],
   // sentiment.news / fundamentals.valuation / macro.regime_inputs / events.* /
   // price.quote — deferred: their existing chains stay legacy until adapters land.
@@ -67,5 +71,11 @@ export const PROVIDER_SPECS: Partial<Record<ProviderId, ProviderSpec>> = {
     markets: ["us"], capabilities: ["insider.transactions", "price.daily_bars"],
     dailyLimitState: "none", rateLimitState: "known", rateLimitCalls: 5, rateLimitWindowSeconds: 60,
     minIntervalMs: 12_500, reserveCalls: 0, entitlementRequired: false, trustTier: 2, official: true,
+  },
+  sec: {
+    id: "sec", label: "SEC EDGAR", transport: "http",
+    markets: ["us"], capabilities: ["insider.transactions"],
+    dailyLimitState: "none", rateLimitState: "known", rateLimitCalls: 10, rateLimitWindowSeconds: 1,
+    minIntervalMs: 0, reserveCalls: 0, entitlementRequired: false, trustTier: 1, official: true,
   },
 };

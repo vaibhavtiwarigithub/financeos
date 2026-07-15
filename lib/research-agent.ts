@@ -1039,7 +1039,12 @@ const DIM_AVAIL_CRIT = 0.70;
 // barely covers individual NSE names) never cries critical. The score already
 // renormalizes over the remaining applicable dimensions when one is absent. Real
 // breakage in a dense source (US fundamentals/technical at 0%) still goes critical.
-const EXPECTED_SPARSE_DIMS = new Set<string>(["india:sentiment"]);
+// india:sentiment — GDELT barely covers NSE names.
+// us:insider — insider is genuinely sparse: SEC Form 4 open-market P/S trades are
+//   rare (most companies have <3 in 90d; awards/options/tax are excluded), so a
+//   low availability rate is EXPECTED absence, not provider starvation. The
+//   availability mask already renormalizes; alerting critical here is false noise.
+const EXPECTED_SPARSE_DIMS = new Set<string>(["india:sentiment", "us:insider"]);
 
 // Record one symbol's evidence availability and (idempotently) surface a
 // low-confidence alert when a meaningful fraction of the run was scored on thin
