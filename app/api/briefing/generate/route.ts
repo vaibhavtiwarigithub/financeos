@@ -579,17 +579,42 @@ MENTOR PROGRESS: ${mentorLine}
   // The rich data (market table, portfolio cards, signals, movers) is rendered
   // deterministically as HTML blocks below. The LLM writes ONLY a short editor's
   // note — the human voice/takeaway — so we never regurgitate numbers as prose.
+  // Structured 4-section format so the dashboard BriefingSection renders real
+  // section cards (Today's Focus / Portfolio Status / Risk Watch / One Thing)
+  // instead of one bare paragraph. Grounded HARD in the real-data block above —
+  // the LLM composes/prioritizes prose, it does NOT invent numbers or events.
+  // Section headers MUST be exactly `**N. NAME**` (BriefingSection parses that).
   const morningPrompt = `You are the editor of a personal markets briefing. Below is today's real data.
 
 ${contextBlock}
 
-Write a SHORT "What matters today" note: 2-3 sentences max, ~45 words. Forward-looking, present/future tense, second person. Point to the single most important thing to watch or do today based on the actual signals/earnings/positions above. If nothing is actionable (no signals, no positions), say plainly what today is for (e.g. "a clean slate — let the pre-market scan run"). Use ONLY the data above. No headings, no bullet points, no disclaimers, no invented events. Just the note.`;
+Write the morning briefing in EXACTLY these four sections. Each header on its own line, verbatim, in this format:
+**1. TODAY'S FOCUS**
+**2. PORTFOLIO STATUS**
+**3. RISK WATCH**
+**4. ONE THING**
+
+Rules: second person, present/future tense. Under each header, 1-2 short sentences OR up to 3 bullets (start each bullet with "- "). Use ONLY the data block above — never invent a number, ticker, or event. If a section has no data, say so plainly in one short line (do NOT pad or fabricate). No disclaimers.
+- TODAY'S FOCUS: the single most important thing to watch/do today from the pending signals, upcoming earnings, and research status. If no signals and no earnings: "Clean slate — let the pre-market scan run."
+- PORTFOLIO STATUS: open paper positions and their P&L (and the live Robinhood equity line if present). If no open positions: "Flat — no open positions."
+- RISK WATCH: any position near its stop, concentration, an active kill-switch/paused state, or a macro-regime risk from the data. If none evident: "No elevated risk in the data."
+- ONE THING: the single action (or deliberate non-action) for today, in one sentence.`;
 
   const eveningPrompt = `You are the editor of a personal markets briefing. Below is today's real data.
 
 ${contextBlock}
 
-Write a SHORT "Today's takeaway" note: 2-3 sentences max, ~45 words. Retrospective, past tense for today. Second person. Capture the one thing that mattered today from the actual index closes / position P&L / signals above, and what it sets up for tomorrow. Use ONLY the data above — do not say "markets were mixed" unless the index data supports it. No headings, no bullets, no disclaimers, no invented events. Just the note.`;
+Write the evening summary in EXACTLY these four sections. Each header on its own line, verbatim, in this format:
+**1. WHAT HAPPENED**
+**2. POSITIONS CHECK**
+**3. TOMORROW PREP**
+**4. LEARNING**
+
+Rules: second person, past tense for today's events. Under each header, 1-2 short sentences OR up to 3 bullets (start each bullet with "- "). Use ONLY the data block above — never invent. Do not say "markets were mixed" unless the index data supports it. If a section has no data, say so plainly. No disclaimers.
+- WHAT HAPPENED: the one thing that mattered today from the actual index closes / signals / research run.
+- POSITIONS CHECK: open paper positions and P&L today (and live equity if present). If flat: "Flat — no open positions."
+- TOMORROW PREP: what tomorrow sets up — upcoming earnings, watchlist candidates, regime read.
+- LEARNING: closed-trade outcomes or learning-loop status from the LEARNING LOG block (state Phase-0 plainly if no closed trades).`;
 
   // Weekends: markets are closed and there's rarely anything "actionable today",
   // so instead of a bland "nothing to do" note, give a real weekly recap +
@@ -609,7 +634,7 @@ If a category above has no data (e.g. no agent runs, no mentor grade), say so pl
     // User-selectable in Settings → Agents → LLM Config (agent_name="briefing").
     model: await getConfiguredModel(svc, "briefing", "deepseek-v4-flash"),
     prompt: isWeekend ? weekendPrompt : (session === "morning" ? morningPrompt : eveningPrompt),
-    maxTokens: isWeekend ? 320 : 150,
+    maxTokens: isWeekend ? 320 : 500,   // 4 grounded sections need more room than the old 1-paragraph note
   });
   const editorNote = result.text.trim();
   const content = editorNote; // in-app briefing shows the editor's note
