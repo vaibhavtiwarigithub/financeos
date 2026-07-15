@@ -180,6 +180,15 @@ export async function fetchIndiaOverview(symbol: string): Promise<Record<string,
     if (hi != null) ov["52WeekHigh"] = String(hi);
     const target = num(fd.targetMeanPrice);
     if (target != null) ov.AnalystTargetPrice = String(target);
+    // Additive display-only fields consumed by the Stock Context feature
+    // (features/stock-context). The scorer reads specific keys and ignores
+    // these, so adding them is harmless for the money path. Name/exchange/
+    // market-cap are not used by scoring — only by symbol_profiles.
+    const name = pr.longName ?? pr.shortName ?? null;
+    if (name) ov.Name = String(name);
+    if (pr.exchangeName) ov.Exchange = String(pr.exchangeName);
+    const mcap = num(pr.marketCap) ?? num(sd.marketCap);
+    if (mcap != null) ov.MarketCapitalization = String(mcap);
     return ov;
   } catch {
     return {};

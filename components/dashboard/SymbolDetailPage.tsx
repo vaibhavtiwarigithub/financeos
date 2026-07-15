@@ -5,6 +5,7 @@ import TradingViewChart from "@/components/charts/TradingViewChart";
 import SymbolFundamentals from "@/components/dashboard/SymbolFundamentals";
 import SymbolPeers from "@/components/dashboard/SymbolPeers";
 import DeepDivePanel from "@/components/dashboard/DeepDivePanel";
+import StockContextStrip from "@/components/dashboard/StockContextStrip";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -534,9 +535,9 @@ function ChatTab({ symbol }: { symbol: string }) {
 }
 
 export default function SymbolDetailPage({
-  symbol, signals, trades,
+  symbol, market, signals, trades,
 }: {
-  symbol: string; signals: any[]; trades: any[];
+  symbol: string; market?: "us" | "india"; signals: any[]; trades: any[];
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("chart");
@@ -577,6 +578,9 @@ export default function SymbolDetailPage({
           )}
         </div>
       </div>
+
+      {/* Stock Context strip — display-only "what is this stock" (off money path) */}
+      <StockContextStrip symbol={symbol} market={market} />
 
       {/* Tab bar */}
       <div style={{ display: "flex", gap: "4px", borderBottom: `1px solid ${T.border}`, paddingBottom: "4px", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>

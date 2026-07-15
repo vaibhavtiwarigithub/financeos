@@ -19,9 +19,13 @@ export default async function SymbolPage({ params }: { params: Promise<{ symbol:
       .limit(10),
   ]);
 
+  // Market drives the Stock Context strip's provider (US Finnhub vs India Yahoo).
+  const market = /\.(NS|BO)$/i.test(sym) ? "india" : "us";
+
   return (
     <SymbolDetailPage
       symbol={sym}
+      market={market}
       signals={signals ?? []}
       trades={trades ?? []}
     />
