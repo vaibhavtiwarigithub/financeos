@@ -1,7 +1,28 @@
 # Decision Review / Counterfactual — Feature Architecture
 
-> Status: **DRAFT (design only, unapproved)**. No code, no migration, no deployment.
+> Status: **IMPLEMENTED (Phase A — measure-only, read-only)**. No migration, no writes.
 > Last updated: 2026-07-15
+>
+> **Build note (2026-07-15):** Shipped as a read-only tab in Research Journal.
+> Files: `app/api/decision-review/route.ts` (owner-gated SELECT-only join of
+> `decision_observations` × `observation_labels` × `v_decision_quality`) and
+> `components/dashboard/DecisionReviewPanel.tsx` (4th tab:
+> `Daily Funnel | Evolution | Score Tracker | Decision Review`,
+> `/dashboard/research-journal?tab=review`).
+>
+> **DB-reality deviations from the draft below:**
+> - **No `v_decision_review` view created** — used the API-only deterministic join
+>   (§9 open decision 3, "API-only path avoids a migration entirely"). Read-only,
+>   no migration, honors the hard "no migration" boundary.
+> - **Horizons surfaced are data-driven, not fixed at 2/5/20.** As of build, only
+>   `horizon_days` 2 and 5 have matured in `observation_labels`; 10/20 back-fill as
+>   they mature. The API returns the canonical horizons that actually have labels;
+>   the "1d" question (§4) is moot — 1d is not in the pipeline and none was added.
+> - **20-floor gate is live** (`MATURED_FLOOR = 20`): a cohort with fewer matured
+>   outcomes at a horizon renders "N/20 matured — insufficient sample, not yet
+>   actionable"; at/above the floor it shows hit-rate + avg fwd + avg alpha.
+> - **Per-symbol attribution is decorative**, always tagged "n=1 · ILLUSTRATIVE"
+>   (locked owner decision). No LLM prose pass was wired (kept fully deterministic).
 > Update this file when: the per-symbol decision-review data contract, the
 > attribution method, or the UI surface changes; keep it aligned with
 > `docs/arch/09-learning-loop.md` (Performance Truth / P1 gate) and
