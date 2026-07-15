@@ -76,6 +76,16 @@ RLS: `authenticated`-read, service_role write (matches the security pattern). Ap
 3. **Displaced/bearish edges**: suppress-a-long only, vs also feed the downside-hedge path. Recommend suppress-only until the hedge itself is proven.
 4. **This overlaps** the `external-research-integrations` work (some repos do knowledge-graph analysis) and `graphify`. Decide whether to build native or adopt a repo's extractor as a sandboxed worker.
 
+## 7b. Research grounding (added after literature review)
+
+The intuition is academically established, not speculative:
+- **Cohen & Frazzini (2008), "Economic Links and Predictable Returns"** — the seminal result: customer-return momentum propagates to suppliers because of **limited investor attention / slow information diffusion**; a long-short strategy earns ~6%+/yr, Sharpe ~0.7. **Key design detail I originally missed: the propagation edge should be weighted by the supplier's REVENUE EXPOSURE to that customer** (a customer that is 30% of a supplier's revenue transmits more than one that is 3%), not just extraction confidence. Source: 10-K customer-concentration disclosures (firms must name customers >10% of revenue) — a free, structured supplier→customer edge source via EDGAR + FinancialDatasets `segmented_financials`.
+- **Diffusion direction + horizon**: customers *lead* suppliers; the mispricing corrects over days-to-weeks — which matches our swing horizon, and means the signal is a **drift**, not an instant reaction.
+- **Current SOTA (2026) is almost exactly this doc's P2/P3**: *"Supply Chain Propagation of Textual Signals: LLM Embeddings and Cross-Sectional Return Predictability"* (arXiv 2606.29290) — FinBERT embeddings of 10-K MD&A × supply-chain KG propagation; the network-augmented factor gives Sharpe 0.86, FF5 alpha **7.27%/yr**, survives OOS/placebo/sector-neutralization. Refinement to adopt: carry the signal as **LLM/FinBERT text embeddings propagated through the graph**, not just a discrete +1/−1 edge.
+- Related: *Cross-Stock Predictability via LLM-Augmented Semantic Networks* (arXiv 2604.19476); GNN relational stock ranking (Feng et al. RSR) and interpretable KG models (TRACE) for the eventual model layer — heterogeneous edges (price-corr, fundamental similarity, sector, supply-chain) in one graph.
+
+Net: the design was directionally right; the refinements are **revenue-exposure weighting**, **customer→supplier lag/drift horizon**, and **embedding-propagation** as the signal carrier.
+
 ## 8. Why not now
 
 Phase 0, tiny sample, free-tier, and this is a big LLM-dependent build. The **P0 peer-move MVP** delivers the intuition cheaply today; the full graph is real research edge but should follow the Canonical Evidence Router (for the data snapshot the extractor consumes) and the sandbox (for isolated compute). Captured here so the design is ready when sequencing allows.
