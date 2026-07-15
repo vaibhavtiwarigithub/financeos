@@ -1,60 +1,180 @@
-# Known-Anomaly Backlog (PEAD-first) — FEATURE ARCHITECTURE
+# Known-Anomaly Research Backlog
 
-> Status: **Draft / not approved / implementation not allowed.** Design only.
-> Last updated: 2026-07-15.
-> Per-market applicability: **both** (US + India), but coverage differs — US analyst/earnings data is deep; India analyst coverage is thinner, so PEAD/revision signals may be US-first with India gated on data sufficiency (measure per-market, never assume parity). Currency never cross-summed.
-> Update this file when: a listed anomaly is promoted to build, its data source/contract changes, or the measure-only→scoring gate changes.
+> Status: **REVIEWED DESIGN DRAFT. NOT APPROVED FOR IMPLEMENTATION.**
+> Last reviewed: 2026-07-15 by Codex.
+> Scope: measure-only anomaly research. No score, rank, sizing, order, or exit effect.
+> Market applicability: US feasibility first. India is unavailable until an
+> independently validated point-in-time event and expectation contract exists.
 
-## 1. Why this doc
+## 1. Decision
 
-A literature review (see §5) surfaced several well-established return anomalies Kairos is **not** exploiting despite already holding most of the data. This doc captures them as a prioritized, falsifiable backlog. Each is **measure-only first** in the existing Edge/Factor lab; none influences a score, size, or order until it clears the standard Feature-Registry / Validation / Champion-Challenger governance — same gate as every other dimension.
+Do not begin by implementing PEAD as a scored feature. Begin with a bounded US
+data-feasibility study. Kairos currently stores upcoming earnings estimates, but
+the refresh path writes `eps_actual = null`; Webull supplies a current consensus
+snapshot, not a durable pre-announcement estimate history. The app therefore
+does not yet possess the point-in-time actual/expectation pair required for PEAD
+or the vintages required for revision momentum.
 
-Ranking principle: **robustness × cheapness × data-we-already-have**, minus **data-coverage risk**. On that axis the relationship-graph is *last* (data-coverage gamble); PEAD is *first* (zero data risk).
+This backlog is subordinate to `features/advanced-learning` and the existing
+Edge/Validation governance. Each distinct signal definition is a separate trial
+and counts toward multiple-testing controls. A combined signal is another trial,
+not a free improvement.
 
-## 2. Non-negotiable boundaries (inherited)
+## 2. Non-Negotiable Invariants
 
-- Deterministic on the money path — **no LLM** sets a score/direction/size/gate/order. LLM (if any) only produces textual features that are themselves measured, off the money path.
-- **Measure-only → shadow → governed promotion.** A new anomaly registers as a versioned `edge_*` signal, is scored by EdgeIC over forward-return labels, and can only affect real scoring via an approved Challenger / feature-registry change.
-- **Per-market** (US/India independent); currency never cross-summed.
-- **Long-only for new positions.** A bearish anomaly reading suppresses/deprioritizes a long or feeds the *separate governed* downside path — never places a short.
-- **Point-in-time / no lookahead.** Every signal uses only data whose `available_at` ≤ decision time. Earnings/filing timestamps are knowledge-time, not event-time.
-- Reuse the **Canonical Evidence Router** for provider acquisition; no parallel provider calls or provenance store.
+1. No LLM output changes a deterministic score, eligibility result, size, order,
+   stop, target, or exit.
+2. Every feature is point-in-time: `available_at <= decision_at`. Event date alone
+   is insufficient.
+3. US and India are evaluated separately. Currency and return pools never mix.
+4. A negative observation is measurement only. It cannot enter downside hedging,
+   suppress candidates, or create a short without a separately approved feature.
+5. Promotion defaults to no change and uses the existing Challenger, validation,
+   lineage, and Performance Truth layers.
+6. Data comes through the Canonical Evidence Router and existing evidence
+   provenance. Do not create an anomaly-specific provider or truth layer.
+7. The existing `post_earnings_drift` archetype is not evidence that PEAD exists:
+   it currently reacts to pre-earnings proximity and reweights existing dimensions.
+   A true PEAD edge must use a different versioned identifier until that naming
+   collision is resolved.
 
-## 3. The backlog (priority order)
+## 3. P0: US PEAD Data Feasibility
 
-### P1 — Post-Earnings-Announcement Drift (PEAD)  ★ recommended next build
-- **Claim (very robust):** stocks with large positive earnings surprises drift *up* for weeks-to-months; large negative surprises drift down. One of the most persistent anomalies in asset pricing.
-- **Signal (deterministic):** standardized surprise = (actual − expected) / dispersion, from the data we already fetch (earnings calendar + analyst consensus / prior-quarter series). Both analyst-based and time-series-based surprise; combining them strengthens the drift (§5). Sign of surprise + magnitude → a measure-only edge with a multi-week horizon.
-- **Data we already have:** earnings calendar, analyst consensus (Webull), historical EPS. Marginal new data ≈ none. **Zero coverage risk.**
-- **Textual upgrade (later, off money path):** earnings-call tone / negative sentiment interacts with the surprise to widen the drift (PEAD.txt). LLM produces the tone feature; it is measured, never scores directly.
-- **Horizon fit:** drift persists beyond our swing window, so PEAD can inform both entry timing and hold length.
+### Required event record
 
-### P2 — Analyst-revision momentum
-- **Claim:** analysts are slow to fully incorporate revenue/earnings surprises; the *direction and momentum of estimate revisions* predicts continued drift.
-- **Signal:** rolling change in consensus EPS/target + revision breadth. We already pull analyst consensus (Webull) — this systematizes the revision *delta*, which we currently ignore.
-- **Coverage risk:** low (data already fetched).
+For each issuer/reporting period, the immutable event snapshot must contain:
 
-### P3 — "Lazy Prices" (filing language change)
-- **Claim (Cohen-Malloy-Nguyen):** firms that materially *change* their 10-K/10-Q language year-over-year subsequently underperform; no-change firms are steadier.
-- **Signal:** cosine / edit-distance similarity of consecutive filings' text (MD&A / risk factors). LLM-light (embeddings or plain text similarity), off money path; the *similarity score* is the measured feature.
-- **Data:** free via EDGAR full-text. Moderate build (filing diffing pipeline).
+- canonical symbol and issuer identity;
+- fiscal period and period end;
+- announcement timestamp and session (`before_open`, `during_session`,
+  `after_close`, or `unknown`);
+- first-reported actual EPS, basis, currency, source, and `available_at`;
+- last valid consensus EPS strictly before the announcement, snapshot timestamp,
+  contributing analyst count, basis, currency, and source;
+- later correction/restatement links without overwriting the original value;
+- split/corporate-action adjustment metadata; and
+- Router policy version and evidence-record references.
 
-### P4 — Second tier (capture, not scheduled)
-Short-interest / squeeze; 13F institutional-flow changes; options-implied skew/put-call (we read options lightly); calendar/seasonality drift. Each is a candidate edge; none is prioritized until P1–P3 prove out.
+Unknown announcement session, incompatible EPS bases, a post-release estimate,
+zero/near-zero scaling denominator, or missing provenance causes abstention.
 
-## 4. Phased rollout (applies per anomaly)
+### Candidate surprise definitions
 
-1. **Measure-only edge**: register in `edge_catalog` / `edge_signals` / `edge_signal_inputs`; compute deterministically per covered name per market; write to `edge_ic_history`.
-2. **EdgeIC evaluation**: forward-return correlation over `decision_observations × observation_labels`, per market, after costs, with multiple-testing correction (many anomalies tested ⇒ deflate).
-3. **Shadow**: run alongside the champion, record what it *would* tilt, no money effect.
-4. **Governed promotion**: only via an approved Validation-Engine Challenger or feature-registry change; per-market; never auto.
+Pre-register and evaluate separately:
 
-## 5. Research grounding
-- **PEAD**: [Post–Earnings-Announcement Drift — overview](https://en.wikipedia.org/wiki/Post%E2%80%93earnings-announcement_drift); [Quantpedia — Post-Earnings Announcement Effect](https://quantpedia.com/strategies/post-earnings-announcement-effect); textual form: [PEAD.txt, Philadelphia Fed WP21-07](https://www.philadelphiafed.org/-/media/frbp/assets/working-papers/2021/wp21-07.pdf). Combining analyst + time-series surprise strengthens drift.
-- **Economic-link / customer momentum** (the relationship-graph prior, kept in its own doc): [Cohen & Frazzini (2008)](https://pages.stern.nyu.edu/~afrazzin/pdf/Economic%20Links%20and%20Predictable%20Returns%20-%20Cohen%20and%20Frazzini.pdf).
+1. `pead_analyst_price_scaled_v1 = (actual_eps - consensus_eps) / pre_event_price`.
+2. `pead_analyst_abs_scaled_v1 = (actual_eps - consensus_eps) /
+   max(abs(consensus_eps), epsilon)`, with a documented epsilon and winsorization.
+3. A time-series SUE only after a restatement-safe historical EPS series exists;
+   scale the unexpected change by its own historical variability.
 
-## 6. Open decisions (for owner / Codex)
-1. **PEAD surprise definition**: analyst-consensus vs time-series vs combined? Recommend combined (strongest per lit), fail-closed when analyst dispersion is missing.
-2. **PEAD horizon**: how long to hold the drift given our swing/position styles + costs?
-3. **Sequencing**: confirm PEAD before the relationship-graph P0 feasibility study (both cheap; PEAD has no coverage risk).
-4. **Multiple-testing discipline**: since we're now testing several anomalies, adopt the Deflated-Sharpe / PBO gate from `features/advanced-learning` before *any* promotion, so we don't overfit the backlog.
+Do **not** divide surprise by analyst dispersion. Dispersion measures disagreement,
+may be absent or near zero, and can create unbounded values. It may be tested as a
+separate conditioning variable once point-in-time analyst-level coverage exists.
+
+### Feasibility output
+
+P0 produces a coverage report, not `edge_signals`:
+
+- eligible events / all events by year, sector, market-cap bucket, and session;
+- consensus age and analyst-count distributions;
+- basis/currency conflicts and correction rates;
+- source outages and survivorship/delisting coverage; and
+- estimated provider call/storage cost.
+
+Proceed only if the owner approves explicit coverage floors after seeing this
+report. Do not label PEAD “zero data risk” or “data already available.”
+
+## 4. P1: Measure-Only PEAD Edge
+
+After P0 approval:
+
+1. Freeze the definition, universe, horizon set, cost model, and winsorization.
+2. Assign returns from the first tradable session after the verified publication
+   time. An after-close result cannot use that same close.
+3. Evaluate fixed forward horizons aligned with Kairos styles, with overlapping-
+   return robust errors, sector/year breakdowns, event clustering, liquidity,
+   delistings, and realistic spread/slippage.
+4. Evaluate long-only behavior. Negative-surprise names are an excluded/observed
+   cohort, not automatic shorts.
+5. Write measure-only edge observations linked to existing decision observations
+   and evidence snapshots. Never manufacture a decision observation solely because
+   an external event exists.
+6. Count every definition, horizon, filter, and combination in the declared trial
+   family used by DSR/PBO and promotion review.
+
+Only an approved, out-of-sample Challenger may later consume the edge.
+
+## 5. Deferred Candidates
+
+### Analyst-revision momentum
+
+Blocked until Kairos stores immutable estimate vintages. A current Webull target or
+forecast cannot reconstruct revisions. A valid contract needs estimate timestamp,
+fiscal period, basis, analyst count, revision breadth, stable analyst universe, and
+strict pre-decision availability. Evaluate EPS and target revisions separately.
+
+### Filing-language change (Lazy Prices)
+
+US-only feasibility initially. Use point-in-time EDGAR filings, issuer/form/period
+identity, acceptance timestamp, amendment links, section-aware extraction, and a
+versioned tokenizer/diff algorithm. Never compare a filing with a later amendment
+that was not yet known. Plain deterministic similarity is the first candidate;
+embeddings or LLM interpretation require a separate untrusted-compute review.
+
+### PEAD.txt-style textual surprise
+
+This is not generic earnings-call tone. The cited research constructs a numerical
+text-based earnings-surprise measure. Reproducing it requires a separately reviewed
+document corpus, labels, training/evaluation protocol, and point-in-time controls.
+It is not an incremental prose feature for P1.
+
+Short interest, 13F flows, options skew, and seasonality remain intake ideas only.
+
+## 6. Validation And Promotion Gates
+
+- common, point-in-time universe and benchmark;
+- market-local net returns after costs;
+- walk-forward splits with an untouched final holdout;
+- sample floors per year/regime/sector, not only aggregate `N`;
+- Newey-West or event-cluster-aware uncertainty where observations overlap;
+- declared trial-family count and advanced-learning DSR/PBO controls;
+- incremental value over the current champion, not standalone significance;
+- stable effect direction and no dependency on one provider/year/sector; and
+- owner-approved Challenger promotion. No automatic promotion.
+
+## 7. Build Order
+
+1. Resolve the `post_earnings_drift` naming/semantic collision.
+2. Specify and capability-probe a US point-in-time earnings contract.
+3. Run P0 coverage only; retain no scoring effect.
+4. If approved, add immutable event snapshots through Router provenance.
+5. Build one pre-registered PEAD definition and evaluation.
+6. Add other definitions one at a time as counted trials.
+7. Consider revision momentum, filing changes, and India only after their own
+   evidence contracts pass feasibility.
+
+## 8. Acceptance And Rollback
+
+P0 passes when every reported numerator/denominator is reproducible from immutable
+source references and no post-event fact enters a pre-event snapshot. P1 passes only
+when reruns from the same snapshot produce byte-equivalent feature values and the
+edge remains measure-only. Disable by stopping new edge computation; immutable
+history remains. No positions, signals, policies, or orders require rollback.
+
+## 9. Primary Research References
+
+- Bernard and Thomas, post-earnings-announcement drift:
+  https://www.jstor.org/stable/2491062
+- Philadelphia Fed, PEAD.txt project and revisions:
+  https://www.philadelphiafed.org/the-economy/banking-and-financial-markets/pead-txt-post-earnings-announcement-drift-using-text
+- Cohen, Malloy, and Nguyen, Lazy Prices:
+  https://onlinelibrary.wiley.com/doi/abs/10.1111/jofi.12885
+
+## 10. Owner Decisions Before Build
+
+1. Approve P0 as US coverage measurement only.
+2. Approve one analyst-surprise definition after the coverage report; do not
+   approve a combined definition in advance.
+3. Set coverage and sample floors from observed feasibility, not guesses.
+4. Keep India blocked until a separate point-in-time data proof exists.

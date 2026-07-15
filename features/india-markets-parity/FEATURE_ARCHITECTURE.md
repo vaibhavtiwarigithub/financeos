@@ -1,46 +1,169 @@
-# India Markets-Page Parity — FEATURE ARCHITECTURE
+# India Markets Verification And Hardening
 
-> Status: **Draft / not approved / implementation not allowed.** Design only.
-> Last updated: 2026-07-15.
-> Per-market applicability: **India-focused** (closes an India gap on a shared page); must not regress US.
-> Update this file when: India index/sector/regime sources or the US-only-tile gap list change.
+> Status: **REVIEWED DESIGN DRAFT. NOT APPROVED FOR IMPLEMENTATION.**
+> Last reviewed: 2026-07-15 by Codex.
+> Scope: India Markets page correctness and resilience; no scoring or trading.
 
-## 1. Reality check (correct the record)
+## 1. Correct Current-State Assessment
 
-`components/dashboard/MarketsPage.tsx` is already market-aware, not US-hardcoded:
-- India selected → `fetchIndiaIndices` (NIFTY 50 / SENSEX / BANK NIFTY / India VIX) + `fetchIndiaSectors` (10 free NSE sector indices via Yahoo `.NS`).
-- Genuinely-US-only tiles (TradingView sector charts, Macro Recession Sentinel, leveraged bull/bear pairs, sector-breadth) are wrapped in an honest `IndiaGapNote` — the code explicitly refuses to fabricate India data.
+India Markets is implemented, but not yet production-proven:
 
-So this is **not** "India Markets is broken." It is: **(a)** verify the India Yahoo fetches actually return under live conditions, and **(b)** decide which honestly-labeled US-only tiles deserve a real India equivalent (free source permitting).
+- `MarketsPage` displays NIFTY 50, SENSEX, BANK NIFTY, India VIX, and ten
+  sector-index tiles.
+- `IndiaBreadth` fetches only the first ten fixed NIFTY-50 constituents. It is a
+  sample, not NIFTY-50 market breadth.
+- The client component imports `lib/india-data.ts` and calls Yahoo directly.
+  Browser-side Yahoo access cannot rely on the server-only `User-Agent` header or
+  Next.js revalidation semantics and bypasses Router pacing, durable caching,
+  provenance, and health telemetry.
+- `IndiaGapNote` conflates a transient India-source failure with a structural
+  absence of an India equivalent.
+- The page heading remains US-specific when India is selected.
 
-Note: the in-app market switch is a **context toggle, not a URL param** — `?market=india` does not flip it. Any live verification must click the switcher (or set the context), which is why an unauthenticated URL check shows the US view.
+The feature is therefore a verification and hardening project, not a greenfield
+parity build. Sector and breadth UI must not be built twice.
 
-## 2. Scope
+## 2. Invariants
 
-**P0 — verify + harden India data path (measure, then fix only if broken):**
-- Confirm `fetchIndiaIndices` / `fetchIndiaSectors` return non-empty for a normal session; if Yahoo `.NS` is flaky, add the same cache-first + graceful-degrade pattern the US Markets fix uses (read a cached India snapshot, one bounded fetch, honest gap note on miss — never a permanent "Loading…").
-- Ensure "Loading…" always resolves to either data or an `IndiaGapNote`, never spins forever.
+1. The browser never calls Yahoo, NSE, RBI, Kite, Upstox, or a provider directly.
+2. US/USD and India/INR snapshots, caches, labels, and health are isolated.
+3. Missing or partial data is displayed as unavailable/partial, never zero or a
+   fabricated neutral market state.
+4. Markets remains advisory. No tile changes scores, sizing, orders, or exits.
+5. An unofficial source is capability-probed, cached, paced, and fail-soft; it is
+   never described as guaranteed, unlimited, or an authoritative NSE feed.
+6. Structural product gaps and transient operational failures use different UI
+   states and System Health codes.
 
-**P1 — India equivalents for the US-only tiles (only where a free source exists):**
-| US-only tile today | India equivalent | Free source | Verdict |
-|---|---|---|---|
-| Sector performance / heatmap | NSE sectoral indices (NIFTY IT, BANK, AUTO, PHARMA, FMCG, METAL, REALTY, ENERGY…) | Yahoo `.NS` (already partially wired) | **buildable** |
-| Sector breadth (advance/decline) | NIFTY 50 / sector advance-decline | Yahoo per-constituent or NSE | **buildable, bounded** |
-| Macro Recession Sentinel (US: FRED indicators) | India macro read (RBI repo, CPI/WPI, IIP, yield curve, INR) | curated RBI calendar + reachable NSE/GDELT macro (see [[india-data-coverage]]) | **partial — advisory only** |
-| Market synthesis / regime read | India regime from India indices + India VIX + macro | derived from the above, deterministic | **buildable** |
-| TradingView sector charts | TradingView India symbols (NSE:…) | TradingView embed | **cheap** |
-| Leveraged bull/bear pairs | — India has ~no liquid leveraged/inverse ETFs | none | **keep honest gap note** |
+## 3. Target Contract
 
-**Out of scope / stays US-only by reality:** leveraged-pair sentiment (no India instruments) — same reason the downside-hedge is US-only.
+Create one owner/cron-gated server boundary that returns a frozen India market
+snapshot. It must consume Canonical Evidence Router contracts or a temporary
+compatibility adapter that is explicitly retired at Router cutover.
 
-## 3. Boundaries
-- Display/advisory only — the Markets page never touches scoring/sizing/orders.
-- Deterministic prices/indices; LLM only for the advisory regime prose (already the case), never for the regime math.
-- **Per-market never mixed** — India tiles use India sources + ₹; US tiles use US sources + $; no cross-summing.
-- Free-cloud-only sources (Yahoo `.NS`, NSE, RBI, GDELT). No paid India data.
-- Reuse the US Markets cache-first pattern (`price_cache` analogue or an India snapshot) so page-load never bursts a provider.
+```ts
+type IndiaMarketsSnapshot = {
+  market: "india";
+  currency: "INR";
+  asOf: string;
+  fetchedAt: string;
+  status: "complete" | "partial" | "unavailable";
+  policyVersionId: string;
+  indices: Array<{
+    symbol: string;
+    label: string;
+    price: number;
+    changePct: number;
+    observedAt: string;
+    source: string;
+    quality: "fresh" | "stale";
+  }>;
+  sectors: Array<{
+    symbol: string;
+    label: string;
+    price: number;
+    changePct: number;
+    observedAt: string;
+    source: string;
+    quality: "fresh" | "stale";
+  }>;
+  breadth: null | {
+    universeId: "nifty_50";
+    universeAsOf: string;
+    eligibleN: number;
+    resolvedN: number;
+    advanced: number;
+    declined: number;
+    unchanged: number;
+    unavailable: number;
+    coveragePct: number;
+    quality: "complete" | "partial";
+  };
+  unavailable: Array<{ component: string; reasonCode: string }>;
+};
+```
 
-## 4. Open decisions (owner / Codex)
-1. **How far to chase India parity** vs accept honest gap notes? Recommend: P0 (verify/harden) always; P1 sector + breadth + regime (buildable free); leave leveraged-pairs as an honest gap.
-2. **India macro sentinel**: build a real India recession/regime indicator set, or keep it a labeled gap until a reliable free India-macro feed is proven? Recommend: start advisory-only from the curated RBI calendar + NSE FII/DII, clearly low-confidence.
-3. **Verification method**: needs a live in-app market switch (context), not a URL — add a lightweight self-test/log that records whether India fetches returned, surfaced in System Health.
+The response contains no raw provider payload, token-bearing error, URL, cookie,
+or arbitrary prose. Numeric fields must be finite and currency/basis validated.
+
+## 4. Data Acquisition
+
+- Use server-side, code-allowlisted adapters only.
+- Prefer a fresh durable cache; serve bounded stale data with an explicit timestamp
+  when allowed; enqueue bounded refresh work rather than burst on page load.
+- Fetch index/sector symbols with bounded concurrency and atomic provider pacing.
+- Use Kite/Upstox only when the owner's entitlement and contract allow it. Provider
+  selection is policy-controlled, not hardcoded in the component.
+- Yahoo is an unofficial fallback. Contract-test symbol semantics and adjustment
+  basis; treat CORS, throttling, schema drift, and no-data as expected failures.
+- Never scrape arbitrary NSE/RBI pages from a client or silently change source.
+
+## 5. Breadth Correctness
+
+Choose one honest product:
+
+1. **Full NIFTY-50 breadth:** use a versioned, current constituent snapshot; resolve
+   all eligible names from a common observation window; show breadth only at a
+   pre-approved coverage floor and report `resolvedN/eligibleN`.
+2. **Ten-name sample:** retain current behavior but rename it “10-name NIFTY sample,”
+   disclose coverage, and never use the word breadth or compare it with full US
+   breadth.
+
+Recommended target is full NIFTY-50 breadth built asynchronously from cache, not 50
+provider calls during page render. Constituents need effective dates so historical
+replay does not use today's index membership. Advance/decline compares the current
+session's valid reference close on a consistent adjustment basis; unchanged and
+unavailable names remain in the denominator report.
+
+## 6. Product States
+
+- `loading`: bounded skeleton while the server request is active.
+- `complete`: data plus `asOf`/source-quality summary.
+- `partial`: render available rows and explicit coverage; no healthy-looking total.
+- `temporarily_unavailable`: India capability exists but failed/staled out.
+- `not_supported`: no approved India equivalent exists.
+
+The India page heading and explanatory copy name India instruments. Leveraged bull/
+bear pairs remain `not_supported`; they must not be synthesized. TradingView embeds
+are optional third-party display surfaces, not a parity requirement or evidence.
+
+## 7. Macro And Regime Boundary
+
+Do not build an “India recession sentinel” in this feature. RBI policy rate, CPI,
+WPI, IIP, yields, INR, and FII/DII flows differ in release cadence, revision,
+economic meaning, and source authority. FII/DII flow is not a macro regime proxy.
+
+A future India macro architecture must define official series, publication and
+revision vintages, release calendar, staleness, deterministic regime math, and
+validation. Until then, show a structural gap. LLM prose cannot create regime math.
+
+## 8. Verification Plan
+
+1. Add server-adapter fixture tests for success, partial payload, throttling, schema
+   drift, stale fallback, bad currency, and non-finite values.
+2. Verify no provider hostname appears in the client bundle/network log.
+3. Browser-test the actual context switch, persistence, refresh, failure, and stale
+   states; `?market=india` is not the context contract unless separately designed.
+4. Verify India requests never read/write US cache keys and vice versa.
+5. Verify the page always exits loading after timeout/error.
+6. Verify full breadth coverage arithmetic and constituent-version identity, or
+   verify the ten-name product is consistently labeled as a sample.
+7. Confirm desktop/mobile layout and market-specific heading with Playwright.
+
+## 9. Build Order
+
+1. Live-test the current market switch and capture current browser/network failures.
+2. Add the server-side snapshot contract and cache compatibility layer.
+3. Remove direct client imports/calls to `lib/india-data.ts`.
+4. Correct headings, transient-vs-structural states, and timestamps.
+5. Decide full breadth versus explicitly labeled sample; implement only one.
+6. Add System Health aggregation by component/provider, not one alert per symbol.
+7. Revisit optional India-only displays after source contracts are proven.
+
+## 10. Rollback And Acceptance
+
+Disable the India snapshot endpoint/flag and render an honest temporary-unavailable
+state; US remains untouched. Acceptance requires zero direct browser provider calls,
+reproducible market-local cache keys, bounded loading, explicit partial coverage,
+and no scoring/order imports. No Supabase migration or provider activation is
+authorized by this document until the design is owner-approved.

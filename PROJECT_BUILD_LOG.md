@@ -66,6 +66,17 @@ Risk: False economic links, look-ahead bias, parallel provenance, overfit prepri
 Decision status: Proposed
 Notes: Codex replaced V3 with a narrower V4. The first permissible experiment is US-only, sales-weighted disclosed customer momentum inside the existing measure-only `edge_*` lab. Stable relationships are neutral and separate from events; issuer entities are separate from ticker instruments; assertions are bitemporal, append-only, and evidence-linked; peers cannot seed economic edges; recent embedding papers remain offline hypotheses; India remains unsupported until an official source is validated; and no relationship result may change candidates, scores, suppression, sizing, exits, hedges, or orders without a later approved and validated phase. Recommended next action is P0 source/identity feasibility only.
 
+### Entry 9 - 2026-07-15
+
+Instruction: Independently review and correct the known-anomalies, India Markets parity, external-research shadow, and Canonical Evidence Router cutover architecture documents.
+Classification: Architecture rule / Feature request
+Affected area: Point-in-time anomaly research, India Markets data delivery, untrusted GitHub Actions compute, Router scoring cutover, eligibility and rollback governance.
+Impact: High
+Architecture impact: Major
+Risk: Look-ahead bias, misleading breadth/coverage, provider bypass, supply-chain compromise, and missing-data changes creating new trade eligibility.
+Decision status: Proposed
+Notes: Codex corrected all four designs without implementation. PEAD is now a US-first data-feasibility study because Kairos does not store the required actual/consensus vintages; each definition is a separately counted trial. India Markets is a server-side hardening project because sectors and a ten-name sample already exist but call Yahoo from the client; the sample cannot be labeled full breadth. External research now uses trusted acquisition plus immutable snapshots and explicit `docker run --network none`; self-sourcing untrusted repos, secrets, direct candidate influence, and parallel provenance are prohibited. Router cutover now requires frozen same-input cohort evaluation before activation plus a separate runtime degradation guard, immutable policy activation, one market/intent family at a time, and a proven warm legacy rollback path.
+
 ### Format
 
 ```
