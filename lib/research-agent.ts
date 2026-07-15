@@ -490,7 +490,12 @@ export async function gatherSymbols(
     screenerAdded++;
   }
 
-  const candidateCap = parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "50");
+  // 50 overran the research function's platform timeout (LLM thesis per symbol) —
+  // runs died mid-loop and were watchdog-reaped as errors, never finalizing. 25
+  // completes within the timeout while still draining the carry-forward queue
+  // ~2.5x faster than the old 10. The real fix is a wall-clock-bounded, resumable
+  // research loop (carry the tail forward mid-run); until then this stays bounded.
+  const candidateCap = parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "25");
   // Take the top `candidateCap` this run; carry the overflow forward (raised
   // priority, no starvation) instead of the old silent `.slice()` drop.
   const usBatch = new Set(await applyCandidateCarryForward(supabase, "us", Array.from(candidateMap.keys()), candidateCap));
