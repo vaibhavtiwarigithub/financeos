@@ -83,3 +83,26 @@ alter function public.provider_budget_increment(p_provider text, p_date date) se
 alter function public.se_no_update() set search_path = public;
 alter function public.set_initial_stop_loss() set search_path = public;
 alter function public.try_acquire_provider_slot(p_provider text, p_min_interval_ms integer) set search_path = public;
+
+-- ── 6. Tighten 7 always-true RLS policies. The `service_all` ones targeted PUBLIC
+-- (FOR ALL USING/CHECK true) -> anon had full read+WRITE on these tables. Replace
+-- each with an authenticated SELECT-only policy: anon loses all access, owner keeps
+-- read, service_role writes via bypass. No browser client reads these (verified). ─
+drop policy if exists service_all on public.agent_alerts;
+create policy agent_alerts_auth_read on public.agent_alerts for select to authenticated using (true);
+drop policy if exists authenticated_only on public.agent_runs;
+create policy agent_runs_auth_read on public.agent_runs for select to authenticated using (true);
+drop policy if exists service_all on public.briefings;
+create policy briefings_auth_read on public.briefings for select to authenticated using (true);
+drop policy if exists service_all on public.earnings_calendar;
+create policy earnings_calendar_auth_read on public.earnings_calendar for select to authenticated using (true);
+drop policy if exists service_all on public.llm_call_log;
+create policy llm_call_log_auth_read on public.llm_call_log for select to authenticated using (true);
+drop policy if exists service_all on public.strategy_classifications;
+create policy strategy_classifications_auth_read on public.strategy_classifications for select to authenticated using (true);
+drop policy if exists service_all on public.strategy_templates;
+create policy strategy_templates_auth_read on public.strategy_templates for select to authenticated using (true);
+
+-- ── 7. The two pgvector RPCs need `extensions` on the path (vector <=> operator). ─
+alter function public.match_doc_chunks(vector, integer, text, text) set search_path = public, extensions;
+alter function public.match_trade_memories(vector, integer, text) set search_path = public, extensions;
