@@ -18,6 +18,17 @@ function periodCutoff(period: string | null): string | null {
   }
 }
 
+// Score band → [min, max) bounds on analyst_score (null = unbounded).
+function scoreBandBounds(band: string | null): { min: number | null; max: number | null } {
+  switch ((band ?? "").toLowerCase()) {
+    case "high": return { min: 80, max: null };   // ≥80 (high conviction)
+    case "mid": return { min: 50, max: 80 };       // 50–79
+    case "low": return { min: null, max: 50 };     // <50
+    case "all":
+    default: return { min: null, max: null };
+  }
+}
+
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams;
   // Accept ?symbol=X (single) or ?symbols=X,Y,Z (multi, for the Score Tracker).
@@ -27,16 +38,41 @@ export async function GET(req: NextRequest) {
 
   const cutoff = periodCutoff(p.get("period"));
 
+  // ── Optional additive filters (all default to no-op = fully back-compatible) ──
+  // These map 1:1 to real signal_score_history columns; a value of "all"/absent
+  // means "don't constrain this column".
+  const norm = (v: string | null) => {
+    const s = (v ?? "").trim().toLowerCase();
+    return s && s !== "all" ? s : null;
+  };
+  const marketF = norm(p.get("market"));       // us | india
+  const directionF = norm(p.get("direction")); // long | short | neutral
+  const sourceF = norm(p.get("source"));       // holding | watchlist | screener
+  const band = scoreBandBounds(p.get("scoreBand")); // analyst_score bounds
+  // Explicit date range (ISO date, e.g. 2026-01-31). Applied on top of period.
+  const fromRaw = (p.get("from") ?? "").trim();
+  const toRaw = (p.get("to") ?? "").trim();
+  const fromISO = fromRaw ? new Date(fromRaw).toISOString() : null;
+  // Make `to` inclusive of the whole day by pushing to end-of-day.
+  const toISO = toRaw ? new Date(new Date(toRaw).getTime() + 86400_000 - 1).toISOString() : null;
+
   try {
     const svc = createServiceClient();
     // Request the explain columns (migration 055). If they don't exist yet the
     // query errors, so fall back to the base column set.
-    const FULL = "symbol, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, direction, source, rationale, research_packet_id, used_champion_weights, created_at";
+    const FULL = "symbol, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, direction, source, rationale, research_packet_id, used_champion_weights, market, created_at";
     const BASE = "symbol, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, direction, source, created_at";
 
     const runQuery = (cols: string) => {
       let q = svc.from("signal_score_history").select(cols).in("symbol", symbols).order("created_at", { ascending: true }).limit(500);
       if (cutoff) q = q.gte("created_at", cutoff);
+      if (marketF) q = q.eq("market", marketF);
+      if (directionF) q = q.eq("direction", directionF);
+      if (sourceF) q = q.eq("source", sourceF);
+      if (band.min !== null) q = q.gte("analyst_score", band.min);
+      if (band.max !== null) q = q.lt("analyst_score", band.max);
+      if (fromISO) q = q.gte("created_at", fromISO);
+      if (toISO) q = q.lte("created_at", toISO);
       return q;
     };
 
