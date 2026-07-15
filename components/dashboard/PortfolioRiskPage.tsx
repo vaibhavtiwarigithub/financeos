@@ -93,8 +93,8 @@ function HoldingsTable({ holdings, risk, cur }: { holdings: HoldingWithRisk[]; r
                     <Bar pct={h.weightPct} color={weightColor} maxPct={0.25} />
                   </div>
                 </td>
-                <td style={{ padding: "8px 10px", color: risk.betaComingSoon ? T.muted : betaColor(h.beta) }}>
-                  {risk.betaComingSoon ? "—" : h.beta.toFixed(2)}
+                <td style={{ padding: "8px 10px", color: (risk.betaComingSoon || h.beta == null) ? T.muted : betaColor(h.beta) }}>
+                  {(risk.betaComingSoon || h.beta == null) ? "—" : h.beta.toFixed(2)}
                 </td>
                 <td style={{ padding: "8px 10px", color: pnlColor }}>
                   {h.unrealizedPnl != null
@@ -687,9 +687,9 @@ export default function PortfolioRiskPage() {
                 <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
                   <div>
                     <div style={{ fontSize: "10px", color: T.muted, marginBottom: "2px" }}>Beta now → after</div>
-                    <span style={{ color: betaColor(risk.portfolioBeta) }}>{risk.portfolioBeta.toFixed(2)}</span>
+                    <span style={{ color: betaColor(risk.portfolioBeta ?? 0) }}>{risk.portfolioBeta != null ? risk.portfolioBeta.toFixed(2) : "—"}</span>
                     <span style={{ color: T.muted }}> → </span>
-                    <span style={{ color: betaColor(risk.proposalImpact.newBeta), fontWeight: 700 }}>{risk.proposalImpact.newBeta.toFixed(2)}</span>
+                    <span style={{ color: betaColor(risk.proposalImpact.newBeta ?? 0), fontWeight: 700 }}>{risk.proposalImpact.newBeta != null ? risk.proposalImpact.newBeta.toFixed(2) : "—"}</span>
                   </div>
                   <div>
                     <div style={{ fontSize: "10px", color: T.muted, marginBottom: "2px" }}>Tech % now → after</div>
