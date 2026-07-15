@@ -482,6 +482,15 @@ or successfully-refreshed token it resolves the issue. It runs in two places:
   reading `agent_alerts`, so every 6h it both keeps the token refreshed and surfaces a genuine dead-refresh
   state even when no order/snapshot path ran to trigger the lazy check in `getValidAccessToken`.
 
+## Downside hedge boundary
+
+The downside hedge is a US paper-book overlay, not a new alpha strategy or live authority.
+Ordinary agents block `SH`, `PSQ`, `DOG`, and `RWM`. Only `execute_paper_hedge_fill` admits
+`SH`/`PSQ`, after dedicated flags, fresh audited evaluation, state, one-position, cash, and NAV
+checks. Hedge trades are excluded from learning, cash-funded, and bounded by stop, five-session
+hold, hysteresis, and cooldown. There is no true short, option, leveraged inverse ETF, India,
+LLM decision, broker call, or live control.
+
 Why it exists: a dead RH refresh grant makes `fetchRobinhoodBrokerAccounts()` return an `"unknown"`
 account id, which silently drops **all** Robinhood accounts out of holding-risk and freezes
 `live_account_snapshots`. The lazy `getValidAccessToken` reporter only fired when something tried to use

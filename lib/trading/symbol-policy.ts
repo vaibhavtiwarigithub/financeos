@@ -9,6 +9,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // Leveraged (2x/3x) + inverse US ETFs. NSE has effectively no leveraged ETFs, so
 // this is US-centric; the DB blocklist covers any India-specific names.
 export const LEVERAGED_INVERSE_ETFS = new Set<string>([
+  // Unleveraged inverse. These remain blocked from every generic agent flow;
+  // the paper-only downside-hedge controller has its own narrow SH/PSQ RPC.
+  "SH", "PSQ", "DOG", "RWM",
   // 3x bull
   "TQQQ", "SOXL", "SPXL", "UPRO", "TECL", "FAS", "LABU", "TNA", "UDOW", "DFEN",
   "YINN", "NUGT", "JNUG", "BOIL", "FNGU", "NVDL", "MSTU", "TSLL", "WEBL", "HIBL",

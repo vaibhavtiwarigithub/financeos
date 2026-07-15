@@ -703,3 +703,17 @@ Alternatives considered: Keep the cosmetic three-preset control; let champions a
 Impact: Adds a per-market mandate contract, bounded factor tilts, provenance, market-day horizon resolution, and cross-agent audit context. Hard risk and live approval gates remain unchanged.
 Files/features affected: `features/trading-mandate/FEATURE_ARCHITECTURE.md`, Settings, ResearchAgent, PaperTrader, PositionMonitor, LearnerAgent, validation/backtests, decision journal, and strategy configuration schema.
 Reversal cost: Medium
+
+### Decision 47: Downside hedging is a bounded paper-only overlay
+
+Date: 2026-07-15
+Status: Approved
+Category: Product / Architecture / Money-path safety
+
+Decision: Add a separate deterministic US paper hedge controller using only unleveraged `SH` and
+`PSQ`, macro plus market confirmation, persistence/hysteresis, a 5% target/8% hard NAV cap, one
+hedge, five-session maximum hold, cash-only funding, and cooldown. Ship shadow and paper execution
+OFF independently, exclude hedge outcomes from alpha learning, and add no live path.
+Reason: This adds measurable portfolio insurance without broadening generic long-only agents or
+violating per-market accounting, explicit authority, and no-LLM-on-money-path rules.
+Reversal cost: Low while OFF; close any open paper hedge before disabling the controller.

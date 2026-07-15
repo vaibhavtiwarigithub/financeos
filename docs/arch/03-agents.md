@@ -559,5 +559,15 @@ alpha vs benchmark, execution slip (mean realized vs 0.05% modeled).
 - Tainted trades are counted (P&L must not hide them) but labeled as tainted
 - `health_label` summarizes: `insufficient_sample` → `negative_or_zero_edge` → `promising_but_unvalidated` → `validation_required`
 
+### Downside Hedge Controller
+
+**File:** `app/api/agents/downside-hedge/route.ts`, `lib/trading/downside-hedge.ts`
+
+Deterministic US paper-book overlay. It combines MacroSentinel with locally computed SPY/QQQ
+confirmation and an audited `off -> armed -> active -> exit_pending -> cooldown` state machine.
+Generic agents block inverse ETFs; only the paper-only hedge RPC may buy unleveraged `SH`/`PSQ`
+when both settings flags are enabled. No LLM, live-order, broker, rotation, or cross-market path.
+It ships fully OFF.
+
 **P1 gate:** Weekly Vercel cron counts closed evaluable trades per market. Fires a System
 Health info alert when ≥ 20 accumulate.

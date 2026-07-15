@@ -159,6 +159,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
   const exitThreshold = Math.max(35, entryThreshold - hysteresis); // e.g. enter 60, exit below 45
   const latestScore: Record<string, { score: number | null; direction: string | null }> = {};
   for (const pos of positions) {
+    if (pos.position_role === "hedge") continue;
     const sym = String(pos.symbol);
     if (latestScore[sym]) continue;
     let q = svc.from("agent_signals").select("analyst_score, direction").eq("symbol", sym);
@@ -208,6 +209,19 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     }
 
     await svc.from("paper_positions").delete().eq("id", pos.id);
+    if (pos.position_role === "hedge") {
+      const { error } = await svc.rpc("complete_paper_hedge_exit", { p_symbol: pos.symbol, p_reason: exitReason });
+      if (error) {
+        await reportIssue({
+          issueKey: "downside-hedge-state-reconcile",
+          severity: "warn", category: "risk",
+          title: "Paper hedge closed but controller state needs reconciliation",
+          detail: `The ${pos.symbol} paper position closed, but cooldown state could not be recorded: ${error.message}. The hedge controller will reconcile before another entry.`,
+        }, svc);
+      } else {
+        await resolveIssue("downside-hedge-state-reconcile", svc);
+      }
+    }
 
     // Decision Journal was showing "0 entries" because nothing ever wrote to
     // it for exits — only the initial buy fill (paper-trade/route.ts) did.
@@ -237,7 +251,12 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     // we have a price. "score_reassess_exit" is the current (deterministic,
     // score-based) flag; "llm_exit" is honored only to drain any legacy rows
     // flagged before the LLM-discretion exit path was removed (2026-07-15).
-    if ((pos.exit_reason === "score_reassess_exit" || pos.exit_reason === "llm_exit") && currentPrice) {
+    if (pos.position_role === "hedge" && pos.exit_reason === "hedge_exit" && currentPrice) {
+      const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
+      await closePosition(pos, currentPrice, "hedge_exit", outcome);
+      continue;
+    }
+    if (pos.position_role !== "hedge" && (pos.exit_reason === "score_reassess_exit" || pos.exit_reason === "llm_exit") && currentPrice) {
       const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
       await closePosition(pos, currentPrice, pos.exit_reason, outcome);
       continue;
@@ -252,7 +271,9 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       const mandate = mandateByMarket.get(market);
       const storedHorizon = Number(pos.resolved_horizon_days);
       const grandfathered = mandate?.existing_positions_policy !== "apply" && Number.isFinite(storedHorizon) && storedHorizon >= 2;
-      const horizonDays = grandfathered ? storedHorizon : (horizonDaysByMarket.get(market) ?? 10);
+      const horizonDays = pos.position_role === "hedge"
+        ? (Number.isFinite(storedHorizon) && storedHorizon >= 1 ? storedHorizon : 5)
+        : grandfathered ? storedHorizon : (horizonDaysByMarket.get(market) ?? 10);
       const ageDays = tradingWeekdaysBetween(new Date(pos.created_at), new Date());
       if (ageDays > horizonDays) {
         const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
@@ -275,7 +296,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     // emitting "68 < 37" for a flip is nonsense. Direction flip takes precedence.
     const scoreBelowExit = sc?.score != null && sc.score < exitThreshold;
     const directionFlipped = !!(sc?.direction && sc.direction !== "long");
-    if (sc?.score != null && (scoreBelowExit || directionFlipped)) {
+    if (pos.position_role !== "hedge" && sc?.score != null && (scoreBelowExit || directionFlipped)) {
       const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
       // closePosition takes a string reason; prefix with a machine-readable code.
       const exitReason = directionFlipped
@@ -311,7 +332,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     if (currentPrice <= trailingStop) {
       exitReason = "stop_hit";
       outcome = currentPrice > pos.avg_cost ? "win" : "loss";
-    } else if (priceTarget && currentPrice >= priceTarget) {
+    } else if (pos.position_role !== "hedge" && priceTarget && currentPrice >= priceTarget) {
       // Partial profit-taking: close half at target, move stop to breakeven on remainder.
       // Only split if qty >= 2 — a single share must fully close.
       const halfQty = Math.floor(pos.qty / 2);

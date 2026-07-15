@@ -9,6 +9,7 @@ import AdminPanel from "@/components/dashboard/AdminPanel";
 import AutomationPanel from "@/components/dashboard/AutomationPanel";
 import TradingMandatePanel from "@/components/dashboard/TradingMandatePanel";
 import ValidationAutomationPanel from "@/components/dashboard/ValidationAutomationPanel";
+import DownsideHedgePanel from "@/components/dashboard/DownsideHedgePanel";
 import DataRoutingPanel from "@/components/dashboard/DataRoutingPanel";
 import { MCP_BROKERS } from "@/lib/brokers/mcp-registry";
 
@@ -1245,6 +1246,7 @@ export default function SettingsPage() {
 
           {/* Trading Style Card — holding-horizon preset (Swing / Position / Long-term) */}
           <TradingMandatePanel />
+          <DownsideHedgePanel />
           <ValidationAutomationPanel />
           <div style={{ display: "none", background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Trading Style</div>
