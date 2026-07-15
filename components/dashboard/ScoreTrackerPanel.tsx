@@ -27,6 +27,48 @@ const LINE_COLORS = [
 ];
 
 const STORAGE_KEY = "kairos-score-tracker-symbols";
+const FILTERS_KEY = "kairos-score-tracker-filters";
+
+// ── Score Tracker filters (additive, read-only — no scoring/money impact) ─────
+// Each field maps 1:1 to a real signal_score_history column that the
+// score-history API now understands. "all"/"" means "don't constrain".
+type Filters = {
+  market: "all" | "us" | "india";
+  scoreBand: "all" | "high" | "mid" | "low";
+  direction: "all" | "long" | "short" | "neutral";
+  source: "all" | "holding" | "watchlist" | "screener";
+  from: string; // ISO date (yyyy-mm-dd) or ""
+  to: string;   // ISO date (yyyy-mm-dd) or ""
+};
+const DEFAULT_FILTERS: Filters = {
+  market: "all", scoreBand: "all", direction: "all", source: "all", from: "", to: "",
+};
+// Human-readable option labels (detail-over-cryptic: say what each value means).
+const FILTER_OPTIONS = {
+  market: [
+    { v: "all", label: "All markets" },
+    { v: "us", label: "US" },
+    { v: "india", label: "India" },
+  ],
+  scoreBand: [
+    { v: "all", label: "Any score" },
+    { v: "high", label: "≥ 80 (high conviction)" },
+    { v: "mid", label: "50–79 (moderate)" },
+    { v: "low", label: "< 50 (low / bearish)" },
+  ],
+  direction: [
+    { v: "all", label: "Any direction" },
+    { v: "long", label: "Long" },
+    { v: "short", label: "Short" },
+    { v: "neutral", label: "Neutral" },
+  ],
+  source: [
+    { v: "all", label: "Any source" },
+    { v: "holding", label: "Holding (owned position)" },
+    { v: "watchlist", label: "Watchlist" },
+    { v: "screener", label: "Screener candidate" },
+  ],
+} as const;
 
 const DIMENSIONS: { key: keyof ScoreRow; label: string }[] = [
   { key: "fundamental_score", label: "Fundamental" },
@@ -270,6 +312,7 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
   const [customTicker, setCustomTicker] = useState("");
 
   const [period, setPeriod] = useState<Period>("1M");
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [bySymbol, setBySymbol] = useState<Record<string, ScoreRow[]>>({});
   const [loading, setLoading] = useState(false);
   const [versions, setVersions] = useState<StrategyVersion[]>([]);
@@ -285,6 +328,11 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) saved = JSON.parse(raw);
+    } catch { /* non-fatal */ }
+
+    try {
+      const rawF = localStorage.getItem(FILTERS_KEY);
+      if (rawF) setFilters({ ...DEFAULT_FILTERS, ...JSON.parse(rawF) });
     } catch { /* non-fatal */ }
 
     async function loadCandidates() {
@@ -331,12 +379,32 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(selectedSymbols)); } catch { /* non-fatal */ }
   }, [selectedSymbols, hydrated]);
 
+  // ── Persist filter selection ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!hydrated) return;
+    try { localStorage.setItem(FILTERS_KEY, JSON.stringify(filters)); } catch { /* non-fatal */ }
+  }, [filters, hydrated]);
+
+  const filtersActive = useMemo(
+    () => JSON.stringify(filters) !== JSON.stringify(DEFAULT_FILTERS),
+    [filters],
+  );
+
   // ── Fetch score history when symbols or period change ───────────────────────
   const loadHistory = useCallback(async () => {
     if (selectedSymbols.length === 0) { setBySymbol({}); return; }
     setLoading(true);
     try {
-      const r = await fetch(`/api/charts/score-history?symbols=${selectedSymbols.join(",")}&period=${period}`);
+      const qs = new URLSearchParams({ symbols: selectedSymbols.join(","), period });
+      // Only append filters that constrain (keeps the URL — and the query — a
+      // no-op when nothing is filtered, so default behavior is unchanged).
+      if (filters.market !== "all") qs.set("market", filters.market);
+      if (filters.direction !== "all") qs.set("direction", filters.direction);
+      if (filters.source !== "all") qs.set("source", filters.source);
+      if (filters.scoreBand !== "all") qs.set("scoreBand", filters.scoreBand);
+      if (filters.from) qs.set("from", filters.from);
+      if (filters.to) qs.set("to", filters.to);
+      const r = await fetch(`/api/charts/score-history?${qs.toString()}`);
       const d = await r.json();
       setBySymbol(d.bySymbol ?? {});
     } catch {
@@ -344,7 +412,7 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     } finally {
       setLoading(false);
     }
-  }, [selectedSymbols, period]);
+  }, [selectedSymbols, period, filters]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -564,6 +632,68 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
           </div>
         </div>
 
+        {/* ── Filter bar (additive, read-only — narrows which scored points show) ── */}
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "16px 20px", marginBottom: "16px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "12px", flexWrap: "wrap" }}>
+            <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+              Filters {filtersActive && <span style={{ color: T.accent, fontWeight: 400 }}>· active</span>}
+            </div>
+            {filtersActive && (
+              <button
+                onClick={() => setFilters(DEFAULT_FILTERS)}
+                style={{ background: "none", border: `1px solid ${T.border}`, color: T.textSub, borderRadius: "6px", padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+            {/* Dropdown filters — each maps to a real column on signal_score_history */}
+            {([
+              { key: "market", label: "Market", hint: "Which market's scored points to show" },
+              { key: "scoreBand", label: "Score band", hint: "Filter by analyst_score range" },
+              { key: "direction", label: "Direction", hint: "Long / short / neutral call" },
+              { key: "source", label: "Discovery source", hint: "How the symbol entered research" },
+            ] as const).map(({ key, label, hint }) => (
+              <label key={key} title={hint} style={{ display: "flex", flexDirection: "column", gap: "5px", minWidth: "150px", flex: "1 1 150px" }}>
+                <span style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.06em", textTransform: "uppercase" }}>{label}</span>
+                <select
+                  value={filters[key]}
+                  onChange={e => setFilters(f => ({ ...f, [key]: e.target.value as any }))}
+                  style={{ background: T.dim, border: `1px solid ${T.border}`, color: T.text, borderRadius: "7px", padding: "7px 10px", fontSize: "12px", fontWeight: 500, cursor: "pointer", width: "100%" }}
+                >
+                  {FILTER_OPTIONS[key].map(o => (
+                    <option key={o.v} value={o.v} style={{ background: T.card, color: T.text }}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+
+            {/* Date range — created_at from/to */}
+            <label title="Only show points scored on or after this date" style={{ display: "flex", flexDirection: "column", gap: "5px", minWidth: "140px", flex: "1 1 140px" }}>
+              <span style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.06em", textTransform: "uppercase" }}>From date</span>
+              <input
+                type="date"
+                value={filters.from}
+                max={filters.to || undefined}
+                onChange={e => setFilters(f => ({ ...f, from: e.target.value }))}
+                style={{ background: T.dim, border: `1px solid ${T.border}`, color: T.text, borderRadius: "7px", padding: "6px 10px", fontSize: "12px", cursor: "pointer", width: "100%", colorScheme: "dark" }}
+              />
+            </label>
+            <label title="Only show points scored on or before this date" style={{ display: "flex", flexDirection: "column", gap: "5px", minWidth: "140px", flex: "1 1 140px" }}>
+              <span style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.06em", textTransform: "uppercase" }}>To date</span>
+              <input
+                type="date"
+                value={filters.to}
+                min={filters.from || undefined}
+                onChange={e => setFilters(f => ({ ...f, to: e.target.value }))}
+                style={{ background: T.dim, border: `1px solid ${T.border}`, color: T.text, borderRadius: "7px", padding: "6px 10px", fontSize: "12px", cursor: "pointer", width: "100%", colorScheme: "dark" }}
+              />
+            </label>
+          </div>
+        </div>
+
         {/* ── Chart card ── */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "16px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
@@ -595,8 +725,20 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
               Pick one or more symbols above to plot their score history.
             </div>
           ) : !hasHistory && !loading ? (
-            <div style={{ height: "260px", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: "13px", textAlign: "center", padding: "0 20px" }}>
-              No score history yet for these symbols — the research agent writes a point each run (Mon-Fri mornings).
+            <div style={{ height: "260px", display: "flex", flexDirection: "column", gap: "8px", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: "13px", textAlign: "center", padding: "0 20px" }}>
+              {filtersActive ? (
+                <>
+                  <span>No scored symbols match these filters.</span>
+                  <button
+                    onClick={() => setFilters(DEFAULT_FILTERS)}
+                    style={{ background: T.accentBg, border: `1px solid ${T.accent}44`, color: T.accent, borderRadius: "7px", padding: "5px 12px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+                  >
+                    Clear filters
+                  </button>
+                </>
+              ) : (
+                <span>No score history yet for these symbols — the research agent writes a point each run (Mon-Fri mornings).</span>
+              )}
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={300}>
