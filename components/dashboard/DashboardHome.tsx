@@ -224,6 +224,13 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
   return (
     <div style={{ padding: "clamp(12px, 4vw, 28px)", color: T.text, fontFamily: "'Inter', sans-serif" }}>
 
+      {/* Daily Briefing — moved to the TOP: it's the "start your day" summary and
+          was previously buried below the 30-day agent calendar, System Health, the
+          NAV hero and the goal tracker, so it was easy to miss entirely. */}
+      <div style={{ marginBottom: "16px" }}>
+        <BriefingSection initialBriefing={latestBriefing} />
+      </div>
+
       <AgentCalendar />
 
       <SystemHealthCard />
@@ -348,11 +355,6 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
 
       {/* Goal tracker — measured dashboard only, never an agent input (Decision 34) */}
       <GoalCard />
-
-      {/* Briefing section */}
-      <div style={{ marginBottom: "16px" }}>
-        <BriefingSection initialBriefing={latestBriefing} />
-      </div>
 
       {/* Macro regime banner — only shows when regime != green */}
       {macroRegime && macroRegime !== "green" && (

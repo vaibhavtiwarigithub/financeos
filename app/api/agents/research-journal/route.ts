@@ -257,7 +257,14 @@ export async function GET(req: NextRequest) {
         : `Sentiment was strongest, but the historical packet did not record a supporting sample size, so treat it cautiously.`
       : strongest ? `${titleCase(String(strongest[0]))} evidence was strongest, with a score of ${(strongest[1] as any).score}.`
       : "No usable evidence dimension was recorded.";
-    const mainRisk = missingInputs.length ? `${missingInputs[0]} evidence is unavailable or degraded.`
+    // Known-sparse dims (India sentiment via GDELT, US insider via Form 4) are
+    // absent on most names by nature — say so, instead of implying a fault. The
+    // availability mask already renormalizes the score over the present dimensions.
+    const SPARSE_BY_NATURE = new Set(["sentiment", "insider"]);
+    const mainRisk = missingInputs.length
+      ? (SPARSE_BY_NATURE.has(String(missingInputs[0]).toLowerCase())
+          ? `${titleCase(String(missingInputs[0]))} coverage is limited for this name (expected — this signal is sparse); the score is renormalized over the available evidence.`
+          : `${missingInputs[0]} evidence is unavailable or degraded.`)
       : weakDimensions.length ? `${weakDimensions[0]} evidence is below neutral.`
       : packet?.key_risks?.[0] ?? "No specific counter-evidence was recorded.";
     const fundRisks = Array.isArray(packet?.key_risks)
