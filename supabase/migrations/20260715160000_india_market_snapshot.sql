@@ -21,7 +21,13 @@ create table if not exists india_market_snapshot (
   created_at  timestamptz not null default now()
 );
 
-alter table india_market_snapshot disable row level security;
+-- RLS ON (corrected 2026-07-15 via 20260715162000_india_market_snapshot_enable_rls):
+-- a public table with RLS disabled is anon-readable via the API key. service_role
+-- (cron + route) bypasses RLS; authenticated (owner) gets read.
+alter table india_market_snapshot enable row level security;
+drop policy if exists india_market_snapshot_authenticated_read on india_market_snapshot;
+create policy india_market_snapshot_authenticated_read
+  on india_market_snapshot for select to authenticated using (true);
 
 create index if not exists india_market_snapshot_fetched_idx
   on india_market_snapshot(fetched_at desc);

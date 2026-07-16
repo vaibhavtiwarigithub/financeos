@@ -1,5 +1,5 @@
 # Kairos — Crons & Scheduling
-> Last updated: 2026-07-15 (added `kairos-price-cache-fill` daily Markets ETF price-cache fill — migration 20260715140000)
+> Last updated: 2026-07-15 (added 3 crons: `kairos-symbol-profiles-backfill` 11:40 UTC weekdays — fills `symbol_profiles`+`watchlist.company_name`; `kairos-india-markets-fill` 10:15 + `-retry` 10:45 UTC weekdays — post-close India Markets snapshot fill. Prior: `kairos-price-cache-fill` daily Markets ETF price-cache fill — migration 20260715140000)
 > Update this file when: a new cron is added or removed, a schedule changes, or a new endpoint is wired to a cron.
 
 **Adding a cron:**
