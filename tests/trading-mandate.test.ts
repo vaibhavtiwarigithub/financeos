@@ -29,11 +29,18 @@ describe("trading mandates", () => {
   });
 
   it("hydrates malformed rows into safe 2-20 day bounds", () => {
-    const m = hydrateMandate("us", { horizon_style: "position", min_hold_days: -1, target_hold_days: 99, max_hold_days: 80, strategy_preference: "unknown" });
+    const m = hydrateMandate("us", { horizon_style: "position", min_hold_days: -1, target_hold_days: 99, max_hold_days: 80, strategy_preference: "unknown", max_open_positions: 999, max_signal_age_sessions: -3 });
     expect(m.min_hold_days).toBe(2);
     expect(m.target_hold_days).toBe(20);
     expect(m.max_hold_days).toBe(20);
     expect(m.strategy_preference).toBe("balanced");
+    expect(m.max_open_positions).toBe(50);
+    expect(m.max_signal_age_sessions).toBe(0);
+  });
+
+  it("defaults per-market capacity and score freshness conservatively", () => {
+    expect(defaultMandate("us").max_open_positions).toBe(10);
+    expect(defaultMandate("india").max_signal_age_sessions).toBe(2);
   });
 
   it("counts weekdays rather than calendar days", () => {

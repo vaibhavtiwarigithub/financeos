@@ -10,7 +10,7 @@ import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { setMarketPaused } from "@/lib/market-controls";
 import { getQuote } from "@/lib/data/quotes";
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
-import { paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
+import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -156,22 +156,27 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
 
   const { data: strategyCfg } = await svc.from("strategy_config").select("exit_hysteresis").maybeSingle();
   const hysteresis = Number((strategyCfg as any)?.exit_hysteresis) || 15; // profile-scaled (Part A2); resilient default
-  const latestScore: Record<string, { score: number | null; direction: string | null }> = {};
+  const latestScore: Record<string, { score: number | null; direction: string | null; createdAt: string | null }> = {};
   for (const pos of positions) {
     if (pos.position_role === "hedge") continue;
     const sym = String(pos.symbol);
-    if (latestScore[sym]) continue;
-    let q = svc.from("agent_signals").select("analyst_score, direction").eq("symbol", sym);
-    if (hasMarketCol) q = q.eq("market", marketOf(pos, hasMarketCol)); // don't read a US score for an India position
+    const scoreMarket = marketOf(pos, hasMarketCol) as "us" | "india";
+    const scoreKey = `${scoreMarket}:${sym}`;
+    if (latestScore[scoreKey]) continue;
+    let q = svc.from("agent_signals").select("analyst_score, direction, created_at")
+      .eq("symbol", sym).eq("score_source", "deterministic_v1");
+    if (hasMarketCol) q = q.eq("market", scoreMarket); // don't read a US score for an India position
     const { data: sig } = await q.order("created_at", { ascending: false }).limit(1).maybeSingle();
-    latestScore[sym] = {
+    latestScore[scoreKey] = {
       score: (sig as any)?.analyst_score != null ? Number((sig as any).analyst_score) : null,
       direction: (sig as any)?.direction ?? null,
+      createdAt: (sig as any)?.created_at ?? null,
     };
   }
 
   const closed: string[] = [];
   const updated: string[] = [];
+  const staleScoresHeld: string[] = [];
 
   // Closing a position = deleting the paper_positions row (it only tracks
   // currently-held qty, no closed/open flag) + marking the matching open
@@ -230,7 +235,13 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
 
   for (const pos of positions) {
     const currentPrice = priceMap[pos.symbol];
-    const market = marketOf(pos, hasMarketCol);
+    const market = marketOf(pos, hasMarketCol) as "us" | "india";
+    const sc = latestScore[`${market}:${String(pos.symbol)}`];
+    const mandate = mandateByMarket.get(market);
+    const entryThreshold = mandate?.score_threshold ?? 60;
+    const exitThreshold = resolvePaperExitThreshold(entryThreshold, hysteresis);
+    const maxScoreAge = mandate?.max_signal_age_sessions ?? 2;
+    const scoreFresh = isPaperScoreFresh(sc?.createdAt, new Date(), market, maxScoreAge);
 
     // Handle reassess-exit flag set by LearnerAgent — close position if flagged and
     // we have a price. "score_reassess_exit" is the current (deterministic,
@@ -242,9 +253,13 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       continue;
     }
     if (pos.position_role !== "hedge" && (pos.exit_reason === "score_reassess_exit" || pos.exit_reason === "llm_exit") && currentPrice) {
-      const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
-      await closePosition(pos, currentPrice, pos.exit_reason, outcome);
-      continue;
+      if (scoreFresh && sc?.score != null && sc.score < exitThreshold) {
+        const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
+        await closePosition(pos, currentPrice, `score_reassess_exit (${sc.score} < ${exitThreshold})`, outcome);
+        continue;
+      }
+      await svc.from("paper_positions").update({ exit_reason: null, updated_at: new Date().toISOString() }).eq("id", pos.id);
+      staleScoresHeld.push(`${pos.symbol} (flag cleared: ${scoreFresh ? "latest score no longer below exit threshold" : "score stale/unavailable"})`);
     }
 
     if (!currentPrice) continue;
@@ -275,15 +290,16 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     // secondary/slower path. Only act when we actually have a recent score;
     // a missing score means research hasn't covered this symbol, so we hold
     // and let the mechanical stop/target below protect it.
-    const sc = latestScore[pos.symbol];
-    const entryThreshold = mandateByMarket.get(market)?.score_threshold ?? 60;
-    const exitThreshold = resolvePaperExitThreshold(entryThreshold, hysteresis);
     // Two DISTINCT exit conditions share this branch; label them separately with
     // structured reason codes so the trade record isn't mislabeled. A direction
     // flip (held long, fresh signal now points away) is NOT a score comparison —
     // emitting "68 < 37" for a flip is nonsense. Direction flip takes precedence.
-    const scoreBelowExit = sc?.score != null && sc.score < exitThreshold;
-    const directionFlipped = !!(sc?.direction && sc.direction !== "long");
+    const scoreBelowExit = scoreFresh && sc?.score != null && sc.score < exitThreshold;
+    const directionFlipped = scoreFresh && !!(sc?.direction && sc.direction !== "long");
+    if (pos.position_role !== "hedge" && sc?.score != null && !scoreFresh
+        && pos.exit_reason !== "score_reassess_exit" && pos.exit_reason !== "llm_exit") {
+      staleScoresHeld.push(`${pos.symbol} (${marketSessionsSince(sc.createdAt ?? "", new Date(), market)} sessions old; max ${maxScoreAge})`);
+    }
     if (pos.position_role !== "hedge" && sc?.score != null && (scoreBelowExit || directionFlipped)) {
       const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
       // closePosition takes a string reason; prefix with a machine-readable code.
@@ -510,7 +526,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       trigger_source: marketScope ? "scheduled" : "manual",
       result_summary: navWriteFailed
         ? `NAV/performance write FAILED: ${navWriteErrors.join("; ")}`.slice(0, 500)
-        : `Checked ${positions.length}, closed ${closed.length}, updated ${updated.length}.`,
+        : `Checked ${positions.length}, closed ${closed.length}, updated ${updated.length}, stale scores held ${staleScoresHeld.length}.`,
       completed_at: new Date().toISOString(),
     } as any);
   } catch { /* best-effort — never fail the monitor run over bookkeeping */ }
@@ -533,6 +549,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     closed: closed.length,
     closedDetails: closed,
     updated: updated.length,
+    stale_scores_held: staleScoresHeld,
     nav_write_ok: !navWriteFailed,
     nav_write_errors: navWriteErrors,
     nav_invariant_ok: navInvariantOk,

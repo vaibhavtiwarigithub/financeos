@@ -33,3 +33,12 @@ Production migration: `168_trading_mandates.sql` applied and verified on Finance
 - Use mandate defaults in manual backtest controls.
 
 These follow-ups do not block mandate configuration or the core US/India agent behavior.
+
+## 2026-07-16 Safety Addendum
+
+- Added owner-configurable `max_open_positions` per market (default 10). It is an entry-only gate: lowering it below the current book never liquidates positions.
+- Added `max_signal_age_sessions` per market (default 2). PositionMonitor ignores stale score/direction evidence but continues stop, target, time-stop, hedge, and other price-based exits.
+- The fill RPC reads the canonical mandate cap and treats the application parameter as tighten-only defense in depth.
+- Research now unions current paper alpha positions with only the latest live snapshot per account. Held symbols are marked `isHeld`, researched before discovery, and do not consume the new-candidate cap.
+- Migration `20260716013000_mandate_capacity_and_score_freshness.sql` was applied to `dionkikgdmlaotvtbnfr`. Production remained at 11 US / 13 India alpha positions, proving the cap change did not force-close.
+- Correlation-aware P0/P1 was not activated because candidate-to-book pair observations are not persisted today. The corrected prerequisite and shadow gate are recorded in `features/correlation-aware-construction/FEATURE_ARCHITECTURE.md`.

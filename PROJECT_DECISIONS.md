@@ -730,3 +730,15 @@ Reason: A hands-off loop is safe only when operator stops remain latched, policy
 Impact: Existing 11-US/13-India books remain intact but cannot add a new alpha name until each market falls below 10; exits continue automatically and atomically. Live approval authority is unchanged (`L3_live_manual`).
 Files/features affected: PaperTrader, PositionMonitor, Home, SystemHealthCard, deterministic health triage, provider-budget alert reconciliation, migrations `20260716010000_paper_autonomy_safety.sql`, `20260716011000_fix_paper_rpc_generated_column.sql`, and `20260716012000_enforce_paper_exit_lot_parity.sql`.
 Reversal cost: Medium — rollback requires restoring the prior fill signature and JS exit sequence; existing trade data remains compatible.
+
+### Decision 49: Per-market capacity and score freshness are mandate policy; measured correlation requires PIT shadow evidence
+
+Date: 2026-07-16
+Status: Approved / Partially implemented
+Category: Product / Architecture / Money-path safety / Research priority
+
+Decision: Store `max_open_positions` and `max_signal_age_sessions` on each market's Trading Mandate. Capacity remains an entry-only gate; changing it never opens or closes a position. Research always prioritizes current paper and live holdings, independent of the new-candidate cap. PositionMonitor accepts score/direction exits only from a fresh same-market `deterministic_v1` signal. Do not activate correlation-aware P0/P1 from Holding Risk summaries: immutable point-in-time return observations and a shadow parity ledger must exist first.
+Reason: Capacity and freshness are per-market policy, while managing owned names outranks discovery. The proposed correlation wiring assumed candidate-to-book pair data and measured per-symbol beta that are not persisted today; using cluster summaries or sector beta as if measured would create false precision on the money path.
+Impact: US and India remain capped at 10 by default, with 11/13 existing names preserved to drain naturally. Held names bypass discovery caps and receive deterministic reassessment. Stale scores cannot close positions. Correlation construction remains on its conservative existing behavior pending evidence-safe prerequisites.
+Files/features affected: Trading Mandates API/Settings, ResearchAgent holdings gathering, PaperTrader, PositionMonitor, `features/correlation-aware-construction/FEATURE_ARCHITECTURE.md`, migration `20260716013000_mandate_capacity_and_score_freshness.sql`.
+Reversal cost: Low for policy/UI; no position or trade data migration.

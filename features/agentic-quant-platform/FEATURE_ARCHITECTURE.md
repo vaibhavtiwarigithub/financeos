@@ -711,8 +711,8 @@ All Phase 0 acceptance criteria met:
 **Live Portfolio + Trade History Layer added outside original Phase 0 scope (does not block Phase 1 gate).**
 
 #### All-Accounts ResearchAgent Fix
-- `lib/research-agent.ts::fetchHoldings()` — removed `account_id` filter, now reads ALL `live_account_snapshots` rows
-- SELL signals now possible for holdings across all 6 Robinhood accounts
+- `lib/research-agent.ts::fetchHoldings()` — uses only the latest snapshot per live account, then unions open paper alpha positions; older snapshots cannot keep closed names in the universe
+- Deterministic held-position reassessment is available across live and paper books; holdings bypass discovery caps
 
 #### Trade Decision Enrichment Pipeline
 - Migration 043 applied: `trade_decisions` + `uploaded_trade_files`

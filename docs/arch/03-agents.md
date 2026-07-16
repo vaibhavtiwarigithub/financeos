@@ -240,7 +240,7 @@ deterministic score and compare explanation/veto quality.
 
 **Risk gates (added 2026-07-09):**
 - **Latched controls:** both pause and trading-enabled controls are checked per market; a recovered kill-switch metric cannot silently re-enable entries
-- **Name cap:** maximum 10 distinct alpha names per market, enforced again inside the row-locked fill RPC
+- **Name cap:** `trading_mandates.max_open_positions` per market (default 10), enforced again from the canonical DB value inside the row-locked fill RPC. It gates new names only and never liquidates an over-cap book.
 - **Re-entry cooldown:** 5-calendar-day block after a position in a symbol closes
 - **Pyramid gate:** New BUY only if fill price > existing avg_cost (no averaging down)
 - **Long-only for new positions:** SELL signals only apply to symbols already held
@@ -268,11 +268,11 @@ deterministic score and compare explanation/veto quality.
 1. Fetch current prices for all open `paper_positions` in the market
 2. Update `highest_price` if today's price is a new high
 3. Run exit checks (in priority order):
-   - **Time stop:** age > holding horizon → close. Horizon resolution (2026-07-12): a promoted **champion genome's `horizon_days` always wins** (learner untouched); ONLY before any champion exists does the user's **Trading Style** preset (`strategy_config.target_hold_days`, set by Swing/Position/Long-term in Settings → Agents) govern, falling back to `DEFAULT_GENOME.horizon_days` (10) when unset.
+   - **Time stop:** age from `paper_positions.opened_at` > holding horizon → close. The per-market Trading Mandate is authoritative unless its governance explicitly permits a promoted champion horizon within the mandate bounds.
    - **Trailing stop:** `stop_loss = max(original_stop, highest_price × 0.93)` → close if breached
    - **Price target:** at target price → **partial profit-taking** (sell half, move stop to
      breakeven on remainder; full close only when qty < 2)
-   - **Score drop exit:** fresh `analyst_score` < exit threshold → `exit_reason = 'llm_exit'`
+   - **Score/direction exit:** the latest same-market `deterministic_v1` signal must be no older than `trading_mandates.max_signal_age_sessions` (default 2). A stale/unavailable score can never close a position; price, stop, target, time-stop, and hedge exits remain active. Legacy score flags are revalidated and cleared when stale or no longer below the exit threshold.
 4. **NAV drawdown circuit breaker:** if weekly NAV return < -5%, set
    `strategy_config.app_paused = true` and fire a critical System Health alert
 5. **Benchmark sync:** upsert `paper_performance.bench_nav` with today's VOO (US) / ^NSEI (India) price

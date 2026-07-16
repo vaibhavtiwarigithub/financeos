@@ -42,12 +42,20 @@ export async function PATCH(req: NextRequest) {
   const preference = body.strategy_preference as StrategyPreference;
   const governance = body.horizon_governance as HorizonGovernance;
   const positionPolicy = body.existing_positions_policy as ExistingPositionsPolicy;
+  const maxOpenPositions = Number(body.max_open_positions);
+  const maxSignalAgeSessions = Number(body.max_signal_age_sessions);
 
   if (!MARKETS.has(market)) return NextResponse.json({ error: "market must be us or india" }, { status: 400 });
   if (!(style in HORIZON_PRESETS)) return NextResponse.json({ error: "invalid horizon_style" }, { status: 400 });
   if (!(preference in STRATEGY_TILTS)) return NextResponse.json({ error: "invalid strategy_preference" }, { status: 400 });
   if (!GOVERNANCE.has(governance)) return NextResponse.json({ error: "invalid horizon_governance" }, { status: 400 });
   if (!POSITION_POLICIES.has(positionPolicy)) return NextResponse.json({ error: "invalid existing_positions_policy" }, { status: 400 });
+  if (!Number.isInteger(maxOpenPositions) || maxOpenPositions < 1 || maxOpenPositions > 50) {
+    return NextResponse.json({ error: "max_open_positions must be an integer from 1 to 50" }, { status: 400 });
+  }
+  if (!Number.isInteger(maxSignalAgeSessions) || maxSignalAgeSessions < 0 || maxSignalAgeSessions > 10) {
+    return NextResponse.json({ error: "max_signal_age_sessions must be an integer from 0 to 10" }, { status: 400 });
+  }
 
   const preset = HORIZON_PRESETS[style];
   const svc = createServiceClient();
@@ -61,6 +69,8 @@ export async function PATCH(req: NextRequest) {
     strategy_preference: preference,
     horizon_governance: governance,
     ...preset,
+    max_open_positions: maxOpenPositions,
+    max_signal_age_sessions: maxSignalAgeSessions,
     existing_positions_policy: positionPolicy,
     version: Number((current as any)?.version ?? 0) + 1,
     updated_by: user?.id ?? null,
@@ -71,7 +81,7 @@ export async function PATCH(req: NextRequest) {
 
   await svc.from("decision_journal").insert({
     entry_type: "trading_mandate_change",
-    summary: `${market.toUpperCase()} mandate v${row.version}: ${style}, ${preference}, horizon ${preset.min_hold_days}-${preset.max_hold_days} market days (${governance} governed), existing positions ${positionPolicy}.`,
+    summary: `${market.toUpperCase()} mandate v${row.version}: ${style}, ${preference}, horizon ${preset.min_hold_days}-${preset.max_hold_days} market days (${governance} governed), max ${maxOpenPositions} open alpha names, score freshness ${maxSignalAgeSessions} sessions, existing positions ${positionPolicy}.`,
     calculations: row,
     has_verified_facts: true,
     has_calculations: true,

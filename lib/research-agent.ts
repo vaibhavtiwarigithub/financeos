@@ -22,6 +22,7 @@ import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { isEtfSymbol as canonicalIsEtfSymbol } from "@/lib/asset-classification";
 import { applyStrategyTilt, loadTradingMandate } from "@/lib/trading-mandate";
+import { symbolsFromLatestLiveSnapshots, symbolsFromPaperPositions, unionHoldingSymbols } from "@/lib/research/holding-symbols";
 
 // Module-level cache: market → default investment_mandates.id.
 // Populated once per process; safe because seed mandates never change name.
@@ -228,24 +229,20 @@ export function extractParsed(claudeRaw: string): any {
   return null;
 }
 
-// Phase 1A — fetch holdings from ALL live_account_snapshots (no MCP cold-start)
+// Holdings-first: latest live snapshot per account plus the US paper alpha book.
 export async function fetchHoldings(supabase: any): Promise<string[]> {
   try {
-    const { data } = await supabase
-      .from("live_account_snapshots")
-      .select("positions_json")
-      .order("captured_at", { ascending: false });
-
-    if (!data || !Array.isArray(data)) return [];
-    const symbols = new Set<string>();
-    for (const row of data) {
-      const positions = row?.positions_json;
-      if (!Array.isArray(positions)) continue;
-      for (const p of positions) {
-        if (p?.symbol && typeof p.symbol === "string") symbols.add(p.symbol.toUpperCase());
-      }
-    }
-    return Array.from(symbols);
+    const [live, paper] = await Promise.all([
+      supabase.from("live_account_snapshots")
+        .select("account_id, broker, positions_json, captured_at")
+        .order("captured_at", { ascending: false }).limit(100),
+      supabase.from("paper_positions")
+        .select("symbol, qty").eq("market", "us").eq("position_role", "alpha"),
+    ]);
+    return unionHoldingSymbols(
+      symbolsFromLatestLiveSnapshots(live.data ?? []),
+      symbolsFromPaperPositions(paper.data ?? [], "us"),
+    );
   } catch {
     return [];
   }
@@ -550,16 +547,18 @@ export async function gatherSymbols(
   // via Yahoo — real Indian equities, not just US-listed India ETFs. asset_class
   // "india" so PaperTrader skips them (INR-priced; India acts via Kite).
   const indiaSymbols: SymbolEntry[] = [];
+  // Holdings are an obligation, not a discovery preference. Include them even
+  // when the profile later changes; only new India candidates follow focus.
+  const indiaHeld = await fetchIndiaHoldings(supabase);
+  for (const sym of indiaHeld) {
+    if (seenAll.has(sym)) continue;
+    seenAll.add(sym);
+    indiaSymbols.push({ symbol: sym, isHeld: true, isEtf: false, assetClass: "india", discovery_source: "india_holding" });
+  }
   if (focusRegions.includes("India")) {
     // Holdings-first (parity with US): real Kite holdings enter the batch as
     // isHeld:true so SELL/exit signals are possible on owned India positions —
     // long-only enforcement applies only to NEW positions, not exits.
-    const indiaHeld = await fetchIndiaHoldings(supabase);
-    for (const sym of indiaHeld) {
-      if (seenAll.has(sym)) continue;
-      seenAll.add(sym);
-      indiaSymbols.push({ symbol: sym, isHeld: true, isEtf: false, assetClass: "india", discovery_source: "india_holding" });
-    }
     // Candidates from the nightly full-market india_screen_cache (dual-bucket:
     // momentum + value), not the static first-8 NIFTY names. Falls back to the
     // static list only when the cache is empty. Carry-forward first (migration
@@ -591,16 +590,22 @@ export async function gatherSymbols(
 // symbols the Yahoo-based India scorer expects. Empty on any error (no Kite
 // token today, market closed, etc.) — never throws into gatherSymbols.
 async function fetchIndiaHoldings(svc: any): Promise<string[]> {
-  try {
-    const res: any = await getKiteHoldings(svc);
-    const rows: any[] = res?.data ?? res ?? [];
-    if (!Array.isArray(rows)) return [];
-    return rows
+  const [kiteResult, paperResult] = await Promise.allSettled([
+    getKiteHoldings(svc),
+    svc.from("paper_positions").select("symbol, qty").eq("market", "india").eq("position_role", "alpha"),
+  ]);
+  const kiteRows: any[] = kiteResult.status === "fulfilled"
+    ? (kiteResult.value?.data ?? kiteResult.value ?? [])
+    : [];
+  const kiteSymbols = Array.isArray(kiteRows)
+    ? kiteRows
       .map(r => String(r?.tradingsymbol ?? "").toUpperCase().trim())
       .filter(Boolean)
-      .filter(s => Number(rows.find(x => String(x?.tradingsymbol).toUpperCase().trim() === s)?.quantity ?? 0) > 0)
-      .map(s => (s.endsWith(".NS") || s.endsWith(".BO") ? s : `${s}.NS`));
-  } catch { return []; }
+      .filter(s => Number(kiteRows.find(x => String(x?.tradingsymbol).toUpperCase().trim() === s)?.quantity ?? 0) > 0)
+      .map(s => (s.endsWith(".NS") || s.endsWith(".BO") ? s : `${s}.NS`))
+    : [];
+  const paperRows = paperResult.status === "fulfilled" ? (paperResult.value.data ?? []) : [];
+  return unionHoldingSymbols(kiteSymbols, symbolsFromPaperPositions(paperRows, "india"));
 }
 
 // Freshness window for the nightly india_screen_cache. The cache is refreshed

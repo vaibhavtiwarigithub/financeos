@@ -16,7 +16,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadTradingMandate, mandateSnapshot, resolveHorizonDays, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaused, isTradingEnabled } from "@/lib/market-controls";
 import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/trading/capital-rotation";
-import { canOpenPaperName, MAX_ALPHA_NAMES_PER_MARKET } from "@/lib/trading/paper-entry-policy";
+import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -382,9 +382,10 @@ export async function POST(req: NextRequest) {
       if (!portfolio) { skipped.push({ symbol: signal.symbol, reason: `no_pool_for_${market}` }); continue; }
 
       const openNames = openAlphaNamesByMarket.get(market) ?? new Set<string>();
-      if (!canOpenPaperName(openNames, signal.symbol)) {
-        skipped.push({ symbol: signal.symbol, reason: `max_open_names (${MAX_ALPHA_NAMES_PER_MARKET})` });
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason: "max_open_names", detail: { current: openNames.size, cap: MAX_ALPHA_NAMES_PER_MARKET } });
+      const marketNameCap = mandateByMarket.get(market)?.max_open_positions ?? 10;
+      if (!canOpenPaperName(openNames, signal.symbol, marketNameCap)) {
+        skipped.push({ symbol: signal.symbol, reason: `max_open_names (${marketNameCap})` });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason: "max_open_names", detail: { current: openNames.size, cap: marketNameCap } });
         continue;
       }
 
@@ -620,7 +621,7 @@ export async function POST(req: NextRequest) {
           p_mandate_version: tradingMandate.version,
           p_mandate_snapshot: snapshot,
           p_resolved_horizon_days: resolvedHorizonDays,
-          p_max_open_names: MAX_ALPHA_NAMES_PER_MARKET,
+          p_max_open_names: tradingMandate.max_open_positions,
           p_max_sector_names: maxPerSector,
           p_per_trade_cap: perTradeCapPaper,
           p_daily_notional_cap: dailyCapPaper,

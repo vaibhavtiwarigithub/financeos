@@ -185,6 +185,19 @@ Notes: Production verification also found and fixed two silent pre-existing exit
 
 ---
 
+### Entry 7 - 2026-07-16 (Per-market capacity, holdings priority, and score freshness)
+
+Instruction: Review and build the post-`f0ba0037` four-item handoff: configurable position caps, holdings-priority research, score-age exits, and correlation-aware construction P0/P1.
+Classification: Product policy, money-path safety, research scheduling, and adversarial architecture correction
+Affected area: Trading Mandates API/Settings, ResearchAgent holdings gathering, PaperTrader, PositionMonitor, mandate/fill RPC schema, correlation-construction architecture
+Impact: High for paper policy and exit correctness; no live-order authority change
+Architecture impact: Per-market mandates now own both capacity and score freshness. Current paper plus latest-live holdings bypass discovery caps. Correlation P0/P1 was rejected for activation because the assumed candidate-to-book pair evidence is not persisted; the design now requires immutable PIT return observations and shadow parity first.
+Risk: Capacity is gate-only and tested under rollback at a temporary cap of 5; 11 US / 13 India positions remained unchanged. Stale scores can only remove score/direction authority, never stop price-based exits. Existing conservative constructor behavior remains active.
+Decision status: Decision 49 partially implemented; correlation measurement prerequisite remains design-only
+Notes: Migrations `20260716013000` and `20260716013100` applied to `dionkikgdmlaotvtbnfr`; mandate values, constraints, RLS, policy, RPC ACL, cap enforcement, and no-force-close behavior verified. 446 tests passed (6 skipped), typecheck and production build passed. No trade or position mutation was performed.
+
+---
+
 ## Drift Warnings
 
 - Current prototype routes use LLM-generated prices and direct weight mutation, which conflict with the approved architecture.

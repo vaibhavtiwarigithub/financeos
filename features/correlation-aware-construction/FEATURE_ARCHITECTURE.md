@@ -1,10 +1,29 @@
 # Correlation-Aware Portfolio Construction — FEATURE ARCHITECTURE
 
-> Status: **Draft / not approved / implementation not allowed.** Design only.
+> Status: **Reviewed / measurement prerequisite required / P0-P1 activation not approved.** Design only.
 > Last updated: 2026-07-16.
 > Per-market applicability: **both** — correlation **gating/sizing is strictly per-market** (US/USD and India/INR pools are separate; never cross-summed). Cross-market correlation is **display-only awareness, never a gate**.
 > Sequencing: folds in **after** the in-flight Codex paper-autonomy fixes (they own `paper-trade`/`position-monitor` right now) and alongside the holdings-priority research fix.
 > Update this file when: the risk inputs, estimator, selection rule, or the gating/display boundary change.
+
+## 0. 2026-07-16 adversarial correction (authoritative over the earlier draft)
+
+The earlier draft overstates what is reusable from Holding Risk. Do **not** wire P0/P1 as originally written:
+
+- Holding Risk computes pairwise correlations in memory only among **already-held** names. It persists per-name cluster summaries, not the pairwise matrix needed to estimate a new candidate's marginal risk.
+- A new candidate is not part of that Holding Risk run, so there is no measured candidate-to-book correlation to consume at entry.
+- The persisted per-holding `beta` is currently derived from sector beta in the account enrichment path; it is not a uniformly measured symbol-to-benchmark beta contract. India can replace the account-level aggregate beta, but that does not make every persisted holding beta measured.
+- PaperTrader already estimates candidate daily volatility, but the India implementation fetches candles synchronously on the entry path and the US path depends on whatever history exists in `price_cache`. This does not satisfy the proposed no-provider-call, point-in-time evidence contract.
+- P1 intentionally reorders already-eligible candidates. Therefore “no previously rejected name becomes eligible” can apply only to **safety-gate rejection**, not selection rank; otherwise P1's stated purpose is impossible.
+
+### Required prerequisite before activation
+
+1. During ResearchAgent's existing candle fetch, append a compact, immutable per-symbol return observation with `market`, `symbol`, `as_of`, `available_at`, provider/source, return dates, daily vol, benchmark beta when measurable, overlap count, and input fingerprint. Do not make another provider call for this record.
+2. Build candidate-to-held pair estimates from observations where `available_at <= decision_at`, with at least 60 shared sessions, deterministic shrinkage, and sector-proxy fallback explicitly labeled `low_confidence`.
+3. Run the measured penalty in **shadow only** and persist baseline size/rank, shadow size/rank, evidence IDs, fallback reason, and every eligibility flip.
+4. Activate P0 only after a frozen-cohort test proves no order is larger and no baseline safety rejection becomes eligible. Activate P1 separately after shadow evidence shows the reordering improves diversification without weakening score, mandate, liquidity, capacity, or execution gates.
+
+Until those prerequisites exist, the production constructor remains on its current conservative volatility/sector-proxy behavior. Faking candidate correlations from held-name cluster averages is prohibited.
 
 ## 1. Verified current state (not assumed — read from code)
 

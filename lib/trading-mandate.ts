@@ -13,6 +13,8 @@ export interface TradingMandate {
   target_hold_days: number;
   max_hold_days: number;
   score_threshold: number;
+  max_open_positions: number;
+  max_signal_age_sessions: number;
   stop_loss_pct: number;
   target_pct: number;
   existing_positions_policy: ExistingPositionsPolicy;
@@ -44,6 +46,8 @@ export function defaultMandate(market: TradingMarket): TradingMandate {
     strategy_preference: "balanced",
     horizon_governance: "user",
     ...HORIZON_PRESETS.swing,
+    max_open_positions: 10,
+    max_signal_age_sessions: 2,
     existing_positions_policy: "grandfather",
     version: 1,
     source: "default",
@@ -72,6 +76,8 @@ export function hydrateMandate(market: TradingMarket, row: any): TradingMandate 
     target_hold_days: target,
     max_hold_days: max,
     score_threshold: Math.max(0, Math.min(100, validNumber(row.score_threshold, preset.score_threshold))),
+    max_open_positions: Math.max(1, Math.min(50, Math.round(validNumber(row.max_open_positions, fallback.max_open_positions)))),
+    max_signal_age_sessions: Math.max(0, Math.min(10, Math.round(validNumber(row.max_signal_age_sessions, fallback.max_signal_age_sessions)))),
     stop_loss_pct: Math.max(1, Math.min(30, validNumber(row.stop_loss_pct, preset.stop_loss_pct))),
     target_pct: Math.max(1, Math.min(100, validNumber(row.target_pct, preset.target_pct))),
     existing_positions_policy: row.existing_positions_policy === "apply" ? "apply" : "grandfather",
