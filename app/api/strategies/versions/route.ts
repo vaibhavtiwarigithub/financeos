@@ -4,15 +4,22 @@ import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+// GET /api/strategies/versions?market=us|india
+// Market-scoped: each market promotes its OWN champion, so listing both markets'
+// versions together renders two rows both badged CHAMPION with nothing telling
+// them apart. `strategy_versions.market` is NOT NULL DEFAULT 'us', so plain
+// equality is a complete filter. Missing/unknown ?market= defaults to "us".
+export async function GET(req: NextRequest) {
   try {
     const supabase = createServiceClient();
+    const market: "us" | "india" =
+      new URL(req.url).searchParams.get("market") === "india" ? "india" : "us";
     const { data: versions, error } = await supabase.from("strategy_versions").select(`
       *, experiment_runs (
         id, run_type, win_rate, avg_return_pct, sharpe_ratio, gate_pass,
         signal_count, alpha_pct, benchmark_return_pct, completed_at, status
       )
-    `).order("created_at", { ascending: false });
+    `).eq("market", market).order("created_at", { ascending: false });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     const ids = (versions ?? []).map((v: any) => v.validation_experiment_id).filter((id: any) => id != null);
@@ -22,7 +29,7 @@ export async function GET() {
         .select("id, passed, p_improvement, n_effective, fail_reason, created_at").in("id", ids);
       validationById = Object.fromEntries((data ?? []).map((e: any) => [e.id, e]));
     }
-    return NextResponse.json({ versions: (versions ?? []).map((v: any) => ({
+    return NextResponse.json({ market, versions: (versions ?? []).map((v: any) => ({
       ...v, validation: v.validation_experiment_id ? validationById[v.validation_experiment_id] ?? null : null,
     })) });
   } catch (err: unknown) {

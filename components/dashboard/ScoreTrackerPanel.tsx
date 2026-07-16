@@ -366,8 +366,10 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     }
     loadCandidates();
 
-    // Weight-change context — fetch strategy versions once
-    fetch("/api/strategies/versions")
+    // Weight-change context — scoped to the selected market, since these versions
+    // annotate this market's score history. Unscoped, an India promotion drew a
+    // weight-change marker on a US chart. This effect already re-runs on `market`.
+    fetch(`/api/strategies/versions?market=${market}`)
       .then(r => r.json())
       .then(d => setVersions(d.versions ?? []))
       .catch(() => {});
