@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import PageHeader from "@/components/dashboard/PageHeader";
+import { fmtMoney, type Mkt } from "@/lib/format-money";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -109,7 +110,10 @@ interface EventMeta {
   subtext: string;
 }
 
-function getEventMeta(ev: TimelineEvent): EventMeta {
+// `market` scopes the currency of every money value rendered below. The page
+// only ever holds ONE market's rows (the server component filters on the `mkt`
+// cookie), so a single symbol is correct — US and India are never interleaved.
+function getEventMeta(ev: TimelineEvent, market: Mkt): EventMeta {
   const r = ev.raw;
 
   if (ev.kind === "agent_run") {
@@ -152,12 +156,12 @@ function getEventMeta(ev: TimelineEvent): EventMeta {
     const qty = r.qty ?? r.quantity ?? r.shares ?? 1;
     const symbol = r.symbol ?? "???";
     const price = typeof r.fill_price === "number" ? r.fill_price : parseFloat(r.fill_price ?? "0");
-    const priceStr = isNaN(price) ? "—" : `$${price.toFixed(2)}`;
+    const priceStr = isNaN(price) ? "—" : fmtMoney(price, market);
 
     let subtext = "";
     if (r.closed_at && typeof r.pnl === "number") {
       const pnl = r.pnl;
-      subtext = `Closed ${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(2)} P&L`;
+      subtext = `Closed ${pnl >= 0 ? "+" : "-"}${fmtMoney(Math.abs(pnl), market)} P&L`;
     } else if (r.status) {
       subtext = `Status: ${r.status}`;
     }
@@ -170,12 +174,14 @@ function getEventMeta(ev: TimelineEvent): EventMeta {
     };
   }
 
-  // learning_log
+  // learning_log — the table has NO market column: the LearnerAgent writes one
+  // global set of notes covering both books. Label it so a note appearing in the
+  // India feed doesn't read as an India-specific observation.
   const note = r.note ?? r.content ?? r.text ?? "";
   return {
     icon: "🧠",
     dotColor: T.amber,
-    label: "Learning note",
+    label: "Learning note · all markets",
     subtext: note.length > 500 ? note.slice(0, 500) + "…" : note,
   };
 }
@@ -200,7 +206,7 @@ function DayHeader({ dayKey }: { dayKey: string }) {
   );
 }
 
-function ExpandedDetails({ ev }: { ev: TimelineEvent }) {
+function ExpandedDetails({ ev, market }: { ev: TimelineEvent; market: Mkt }) {
   const raw = ev.raw;
   const style: React.CSSProperties = {
     borderTop: `1px solid ${T.border}`,
@@ -238,9 +244,9 @@ function ExpandedDetails({ ev }: { ev: TimelineEvent }) {
     return (
       <div style={style}>
         <div style={{ fontSize: "12px", color: T.textSub }}>
-          <div><b>Side:</b> {raw.order_side?.toUpperCase()} | <b>Qty:</b> {raw.qty} | <b>Fill:</b> ${Number(raw.fill_price).toFixed(2)}</div>
-          <div><b>Total cost:</b> ${(raw.qty * raw.fill_price).toFixed(2)}</div>
-          {raw.exit_price && <div><b>Exit:</b> ${Number(raw.exit_price).toFixed(2)} | <b>P&L:</b> ${Number(raw.realized_pnl).toFixed(2)} ({raw.outcome})</div>}
+          <div><b>Side:</b> {raw.order_side?.toUpperCase()} | <b>Qty:</b> {raw.qty} | <b>Fill:</b> {fmtMoney(Number(raw.fill_price), market)}</div>
+          <div><b>Total cost:</b> {fmtMoney(raw.qty * raw.fill_price, market)}</div>
+          {raw.exit_price && <div><b>Exit:</b> {fmtMoney(Number(raw.exit_price), market)} | <b>P&L:</b> {fmtMoney(Number(raw.realized_pnl), market)} ({raw.outcome})</div>}
           {raw.rationale && <div style={{ marginTop: 6, fontSize: "13px", color: T.textSub, lineHeight: "1.6", whiteSpace: "pre-wrap" }}><b>Rationale:</b> {raw.rationale}</div>}
         </div>
       </div>
@@ -253,18 +259,23 @@ function ExpandedDetails({ ev }: { ev: TimelineEvent }) {
       <div style={{ fontSize: "12px", color: T.textSub }}>
         <div style={{ fontStyle: "italic" }}>{raw.note}</div>
         {raw.trades_evaluated != null && <div style={{ marginTop: 4 }}><b>Trades evaluated:</b> {raw.trades_evaluated}</div>}
+        <div style={{ marginTop: 6, color: T.muted }}>
+          <b>Scope:</b> global — learning notes aren&apos;t recorded per market, so this
+          note covers the US and India books together and shows in both feeds.
+        </div>
       </div>
     </div>
   );
 }
 
-function EventCard({ ev, expandedId, setExpandedId }: {
+function EventCard({ ev, expandedId, setExpandedId, market }: {
   ev: TimelineEvent;
   expandedId: string | null;
   setExpandedId: (id: string | null) => void;
+  market: Mkt;
 }) {
   const router = useRouter();
-  const meta = getEventMeta(ev);
+  const meta = getEventMeta(ev, market);
   const isExpanded = expandedId === ev.id;
   const evSymbol: string | null = (ev.kind === "signal" || ev.kind === "paper_trade") ? (ev.raw.symbol ?? null) : null;
 
@@ -377,17 +388,18 @@ function EventCard({ ev, expandedId, setExpandedId }: {
         </div>
 
         {/* Expanded details */}
-        {isExpanded && <ExpandedDetails ev={ev} />}
+        {isExpanded && <ExpandedDetails ev={ev} market={market} />}
       </div>
     </div>
   );
 }
 
-function DaySection({ dayKey, events, expandedId, setExpandedId }: {
+function DaySection({ dayKey, events, expandedId, setExpandedId, market }: {
   dayKey: string;
   events: TimelineEvent[];
   expandedId: string | null;
   setExpandedId: (id: string | null) => void;
+  market: Mkt;
 }) {
   return (
     <div style={{ marginBottom: "28px" }}>
@@ -416,7 +428,7 @@ function DaySection({ dayKey, events, expandedId, setExpandedId }: {
         {/* Event cards stacked */}
         <div style={{ flex: 1, marginLeft: "-32px" }}>
           {events.map((ev) => (
-            <EventCard key={ev.id} ev={ev} expandedId={expandedId} setExpandedId={setExpandedId} />
+            <EventCard key={ev.id} ev={ev} expandedId={expandedId} setExpandedId={setExpandedId} market={market} />
           ))}
         </div>
       </div>
@@ -431,15 +443,21 @@ export default function ActivityPage({
   signals,
   trades,
   learningLog,
+  market,
 }: {
   runs: any[];
   signals: any[];
   trades: any[];
   learningLog: any[];
+  // Resolved from the `mkt` cookie by the server component — every row handed to
+  // this page already belongs to this market (except learning_log, which is
+  // global and labelled as such). Currencies are never mixed in one feed.
+  market: Mkt;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const events = buildEvents(runs, signals, trades, learningLog);
   const grouped = groupByDay(events);
+  const marketLabel = market === "india" ? "🇮🇳 India (₹)" : "🇺🇸 US ($)";
 
   return (
     <div style={{
@@ -452,13 +470,13 @@ export default function ActivityPage({
     }}>
       <PageHeader
         title="Activity"
-        subtitle="Agent runs, signals, trades, and learning notes"
+        subtitle={`${marketLabel} · agent runs, signals, trades, and learning notes`}
         cadence="daily"
-        whatItDoes="Real-time feed of everything the agent system did — research runs, signals generated, paper trades executed, and what the LearnerAgent noted after each outcome."
+        whatItDoes={`Real-time feed of everything the agent system did in the ${market === "india" ? "India (₹)" : "US ($)"} book — research runs, signals generated, paper trades executed, and what the LearnerAgent noted after each outcome. Switch markets with the US/India toggle in the header; the two feeds never mix and every amount is shown in that market's own currency.`}
         whatToLookFor={[
           "Red signals = agent passed. Yellow = agent researched but no trade. Green = trade executed.",
-          "Learning notes appear after paper trades close — they're what the agent learned.",
-          "Agent runs show which LLM was used and how long it took.",
+          "Learning notes appear after paper trades close — they're what the agent learned. They're recorded globally (not per market), so the same note shows in both the US and India feeds.",
+          "Agent runs show which LLM was used and how long it took. Cross-market agents (learner, mentor, macro-sentinel) are filed under US.",
           "If runs stopped appearing, check that pg_cron is scheduled and CRON_SECRET is set.",
         ]}
       />
@@ -473,17 +491,17 @@ export default function ActivityPage({
         }}>
           <div style={{ fontSize: "32px", marginBottom: "16px" }}>◐</div>
           <div style={{ fontSize: "15px", fontWeight: 500, color: T.textSub }}>
-            No activity yet.
+            No activity yet in the {market === "india" ? "India (₹)" : "US ($)"} book.
           </div>
           <div style={{ fontSize: "13px", marginTop: "6px", color: T.muted }}>
-            Run an agent to get started.
+            Run an agent to get started, or switch markets with the US/India toggle in the header.
           </div>
         </div>
       )}
 
       {/* Timeline */}
       {grouped.map(([dayKey, dayEvents]) => (
-        <DaySection key={dayKey} dayKey={dayKey} events={dayEvents} expandedId={expandedId} setExpandedId={setExpandedId} />
+        <DaySection key={dayKey} dayKey={dayKey} events={dayEvents} expandedId={expandedId} setExpandedId={setExpandedId} market={market} />
       ))}
       </div>
     </div>
