@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/service";
-import { reportIssue } from "@/lib/system-health";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 // Generic per-provider cached fetch + daily budget guard. Generalizes the
 // original AV-only avCachedFetch (lib/av-cache.ts) so each external data
@@ -161,6 +161,7 @@ export async function providerCachedFetch(
           detail: `Used ${count}/${cfg.dailyBudget} ${cfg.label} calls today. Further fetches serve cached payloads until the quota resets (00:00 UTC). Scoring inputs may be staler than usual.`,
           autoExpireAt: nextUtcMidnight(),
         }, svc);
+        await resolveIssue(`provider-budget-pressure:${provider}`, svc);
         return lastCached(svc, cacheKey);
       }
     } catch { return lastCached(svc, cacheKey); }

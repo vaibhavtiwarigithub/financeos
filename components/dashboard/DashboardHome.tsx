@@ -7,6 +7,7 @@ import AgentCalendar from "@/components/dashboard/AgentCalendar";
 import SystemHealthCard from "@/components/dashboard/SystemHealthCard";
 import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
 import { fmtMoneyAbbrev } from "@/lib/format-money";
+import type { TradingMandate } from "@/lib/trading-mandate";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -130,7 +131,7 @@ function nextFridayLabel(): string {
   return next.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + " 5:00 PM ET";
 }
 
-export default function DashboardHome({ profile, paperPortfolio, positions, recentTrades, recentRuns, recentSignals, pendingSignals, recentLog, liveSnap, latestBriefing, mkt = "us" }: {
+export default function DashboardHome({ profile, paperPortfolio, positions, recentTrades, recentRuns, recentSignals, pendingSignals, recentLog, liveSnap, latestBriefing, mkt = "us", tradingMandate, livePolicy }: {
   profile: any;
   paperPortfolio: any;
   positions: any[];
@@ -142,6 +143,8 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
   liveSnap: any | null;
   latestBriefing: any | null;
   mkt?: "us" | "india";
+  tradingMandate: TradingMandate;
+  livePolicy: { trading_enabled?: boolean; robinhood_mcp_enabled?: boolean; autonomy_level?: string; active_account_us?: string | null } | null;
 }) {
   // The whole hero follows the global US/India switch (page.tsx scopes every query
   // to `mkt` and passes it here). Currency symbol AND the P&L baseline are
@@ -161,6 +164,13 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
   // route through the shared abbrev helper: India gives ₹8.47L / ₹2.30Cr with the
   // lakh/crore convention; US is unchanged ($9.9k / $1.2M).
   const fmtMoney = (n: number) => fmtMoneyAbbrev(n, mkt);
+  const entryThreshold = tradingMandate.score_threshold;
+  const holdDays = tradingMandate.target_hold_days;
+  const livePolicyKnown = livePolicy != null;
+  const liveEnabled = livePolicyKnown && livePolicy.trading_enabled === true && livePolicy.robinhood_mcp_enabled === true;
+  const liveAuto = livePolicy?.autonomy_level === "L4_live_small_auto";
+  const liveStatus = !livePolicyKnown ? "STATUS UNAVAILABLE" : !liveEnabled ? "DISABLED" : liveAuto ? "AUTO-LIVE" : "APPROVAL REQUIRED";
+  const liveStatusColor = !livePolicyKnown ? T.amber : !liveEnabled ? T.red : liveAuto ? T.green : T.amber;
 
   // LLM burn rate banner
   const [llmAlert, setLlmAlert] = useState(false);
@@ -207,7 +217,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
     ? closedTrades.reduce((best, t) => (t.pnl_pct ?? 0) > (best.pnl_pct ?? 0) ? t : best, closedTrades[0])
     : null;
   const researchRuns = recentRuns.filter(r => r.agent_type === "research").length;
-  const paperFills = recentRuns.filter(r => r.agent_type === "paper_trader").length;
+  const paperFills = recentTrades.filter(t => (t.order_side ?? "buy").toLowerCase() === "buy").length;
   const learnerRuns = recentRuns.filter(r => r.agent_type === "learner").length;
   const newSignals = recentSignals.filter(s => {
     const d = new Date(s.created_at);
@@ -216,8 +226,8 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
 
   // This-week stats
   const positionsValue = positions.reduce((s, p) => s + p.qty * (p.current_price ?? p.avg_cost), 0);
-  const highConviction = pendingSignals.filter(s => s.analyst_score >= 60);
-  const watchList = pendingSignals.filter(s => s.analyst_score >= 55 && s.analyst_score < 60);
+  const highConviction = pendingSignals.filter(s => s.analyst_score >= entryThreshold);
+  const watchList = pendingSignals.filter(s => s.analyst_score >= Math.max(0, entryThreshold - 5) && s.analyst_score < entryThreshold);
 
   const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 
@@ -340,10 +350,14 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
           <div style={{ padding: "10px 12px", background: T.dim, borderRadius: "10px", borderLeft: `3px solid ${T.red}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "3px" }}>
               <span style={{ fontSize: "11px", color: T.muted }}>••••0660 · AGENTIC</span>
-              <span style={{ fontSize: "10px", fontWeight: 700, color: T.red }}>DISABLED</span>
+              <span style={{ fontSize: "10px", fontWeight: 700, color: liveStatusColor }}>{liveStatus}</span>
             </div>
-            <div style={{ fontSize: "12px", color: T.muted }}>TraderAgent real orders off</div>
-            <div style={{ fontSize: "11px", color: T.muted }}>Enable trading_enabled in Settings → Strategy</div>
+            <div style={{ fontSize: "12px", color: T.muted }}>
+              {!livePolicyKnown ? "Live policy could not be read" : !liveEnabled ? "Live orders are disabled" : liveAuto ? "Small autonomous live orders enabled" : "Every live order requires your approval"}
+            </div>
+            <div style={{ fontSize: "11px", color: T.muted }}>
+              {livePolicy?.active_account_us ? `Account ${livePolicy.active_account_us}` : "No active US execution account"}
+            </div>
           </div>
           </>)}
         </div>
@@ -432,11 +446,11 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
                 })}
               </ExpandableStatRow>
               <ExpandableStatRow label="Paper fills" value={paperFills}>
-                {recentTrades.filter((t: any) => !t.closed_at).slice(0, 15).map((t: any) => (
+                {recentTrades.slice(0, 15).map((t: any) => (
                   <DetailItem
                     key={t.id}
                     left={`${t.symbol} · ${(t.order_side ?? t.direction ?? "BUY").toUpperCase()} · ${fmtDate(t.executed_at ?? t.created_at, { month: "short", day: "numeric" })}`}
-                    right={t.fill_price != null ? `$${Number(t.fill_price).toFixed(2)}` : t.entry_price != null ? `$${Number(t.entry_price).toFixed(2)}` : "—"}
+                    right={t.fill_price != null ? fmtMoney(Number(t.fill_price)) : t.entry_price != null ? fmtMoney(Number(t.entry_price)) : "—"}
                     color={t.direction === "long" || t.order_side === "buy" ? T.green : T.red}
                     sub={`${t.qty ?? "?"} shares · analyst score ${t.analyst_score ?? t.conviction ?? "?"}`}
                   />
@@ -476,7 +490,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
               {highConviction.length > 0 && (
                 <>
                   <div style={{ fontSize: "11px", color: T.muted, marginTop: "12px", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                    Pending signals → <span style={{ color: T.amber }}>PAPER</span> (score ≥60)
+                    Pending signals → <span style={{ color: T.amber }}>PAPER</span> (score ≥{entryThreshold})
                   </div>
                   {highConviction.map((s: any) => (
                     <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0" }}>
@@ -489,7 +503,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
               {watchList.length > 0 && (
                 <>
                   <div style={{ fontSize: "11px", color: T.muted, marginTop: "12px", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                    Watch (score 55–59)
+                    Watch (score {Math.max(0, entryThreshold - 5)}–{entryThreshold - 1})
                   </div>
                   {watchList.map((s: any) => (
                     <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0" }}>
@@ -533,7 +547,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
             <div style={{ padding: "12px", background: T.dim, borderRadius: "8px" }}>
               <div style={{ fontSize: "11px", color: T.muted, marginBottom: "4px" }}>Phase 0 status</div>
               <div style={{ fontSize: "13px", fontWeight: 600 }}>
-                {closedTrades.length + (recentTrades.filter(t => t.closed_at).length)}/10 trades closed
+                {closedTrades.length}/10 trades closed
               </div>
               <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>
                 {closedTrades.length >= 10
@@ -558,7 +572,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
           </div>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
             {recentSignals.map((s: any) => {
-              const scoreColor = s.analyst_score >= 70 ? T.green : s.analyst_score >= 60 ? T.amber : T.muted;
+              const scoreColor = s.analyst_score >= entryThreshold + 10 ? T.green : s.analyst_score >= entryThreshold ? T.amber : T.muted;
               const dirColor = s.direction === "long" ? T.green : s.direction === "short" ? T.red : T.amber;
               return (
                 <div key={s.id} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", minWidth: "120px" }}>
@@ -628,17 +642,17 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
               : `LearnerAgent: ${r.result_summary ?? "evaluated recent trades"}`;
             const why = isResearch
               ? sigCount >= 3
-                ? `Signals ≥60 score go to paper trade queue. Check Intelligence → Signals for details.`
+                ? `Long signals at the ${entryThreshold} market-mandate threshold go to the paper queue. Check Intelligence → Signals for details.`
                 : sigCount > 0
                 ? `Only ${sigCount} signal(s) hit threshold. Markets may be uncertain or watchlist thin.`
-                : `No signals passed threshold (score ≥60). Research ran but found no high-conviction setups.`
+                : `No signals passed the market mandate threshold (score ≥${entryThreshold}). Research ran but found no qualifying setups.`
               : isPaper
-              ? `PaperTrader runs after ResearchAgent. It places paper orders for signals with analyst_score ≥60.`
+              ? `PaperTrader runs after ResearchAgent. It opens paper positions for fresh deterministic long signals at score ≥${entryThreshold}, subject to risk and capacity gates.`
               : isThemeScout
               ? `ThemeScout found thematic candidates and added them to watchlist with 7-day expiry. Review in Watchlist.`
               : isDeepSeek
               ? `DeepSeek ran the same research as Claude in parallel. Compare signal quality in Intelligence → A/B Comparison.`
-              : `LearnerAgent closes trades older than 7 days and writes outcome notes. Phase 1 unlocks at 10 trades.`;
+              : `LearnerAgent evaluates closed outcomes and can propose governed challengers. It does not close positions or bypass promotion gates.`;
             return {
               ts,
               icon: isThemeScout ? "🎯" : isDeepSeek ? "🤖" : "◐",
@@ -656,7 +670,7 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
             const score = t.analyst_score ?? t.conviction;
             const detail = `Paper ${isBuy ? "BUY" : "SELL"} ${t.qty ?? "?"} share${t.qty !== 1 ? "s" : ""} ${t.symbol} @ ${price}${score != null ? ` · score ${score}` : ""}`;
             const why = isBuy
-              ? `Agent bought because analyst_score ≥60. Position will be evaluated after 7 days or if SELL signal fires.`
+              ? `Agent bought under the score ≥${entryThreshold} mandate. The current target horizon is ${holdDays} market days; stops, targets, and fresh score exits are checked automatically.`
               : t.outcome === "win"
               ? `Sold for profit${t.pnl_pct != null ? ` (${t.pnl_pct >= 0 ? "+" : ""}${Number(t.pnl_pct).toFixed(1)}%)` : ""}. Position closed on SELL signal or 7-day rule.`
               : `Closed position${t.realized_pnl != null ? ` — P&L: $${Number(t.realized_pnl).toFixed(2)}` : ""}.`;

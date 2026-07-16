@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import DashboardHome from "@/components/dashboard/DashboardHome";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
+import { loadTradingMandate } from "@/lib/trading-mandate";
 
 export const revalidate = 30;
 
@@ -20,6 +21,7 @@ export default async function DashboardPage() {
   // so the PRIMARY Morning-Briefing hero (NAV/P&L/positions/trades/signals)
   // follows the global US/India switch instead of being pinned to US.
   const mkt = (await cookies()).get("mkt")?.value === "india" ? "india" : "us";
+  const tradingMandate = await loadTradingMandate(supabase, mkt);
 
   const [
     { data: profile },
@@ -32,6 +34,7 @@ export default async function DashboardPage() {
     { data: recentLog },
     { data: liveSnap },
     { data: latestBriefing },
+    { data: strategyConfig },
   ] = await Promise.all([
     supabase.from("profiles").select("*").eq("id", session.user.id).single(),
     // Hero pool follows the global switch (mkt). maybeSingle so a missing market column pre-057 yields null gracefully.
@@ -47,13 +50,14 @@ export default async function DashboardPage() {
       ? supabase.from("agent_runs").select("*").eq("market", "india").gte("completed_at", sevenDaysAgo).order("completed_at", { ascending: false })
       : supabase.from("agent_runs").select("*").or("market.eq.us,market.is.null").gte("completed_at", sevenDaysAgo).order("completed_at", { ascending: false }),
     supabase.from("agent_signals").select("*").eq("market", mkt).order("created_at", { ascending: false }).limit(6),
-    supabase.from("agent_signals").select("*").eq("market", mkt).eq("status", "pending").gte("analyst_score", 55).order("analyst_score", { ascending: false }).limit(5),
+    supabase.from("agent_signals").select("*").eq("market", mkt).eq("status", "pending").gte("analyst_score", Math.max(0, tradingMandate.score_threshold - 5)).order("analyst_score", { ascending: false }).limit(5),
     supabase.from("learning_log").select("*").order("created_at", { ascending: false }).limit(3),
     // Filter to the Trading account (••••8641) specifically — without this,
     // "most recent snapshot" could silently return Autopilot or Agentic's
     // row instead, mislabeled under the hardcoded "••••8641" UI text.
     supabase.from("live_account_snapshots").select("*").eq("account_id", "965848641").order("captured_at", { ascending: false }).limit(1).single(),
     supabase.from("briefings").select("*").order("created_at", { ascending: false }).limit(1).single(),
+    supabase.from("strategy_config").select("trading_enabled, robinhood_mcp_enabled, autonomy_level, active_account_us").limit(1).maybeSingle(),
   ]);
 
   return (
@@ -69,6 +73,8 @@ export default async function DashboardPage() {
       liveSnap={liveSnap ?? null}
       latestBriefing={latestBriefing ?? null}
       mkt={mkt}
+      tradingMandate={tradingMandate}
+      livePolicy={strategyConfig ?? null}
     />
   );
 }

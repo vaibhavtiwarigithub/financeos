@@ -69,19 +69,20 @@ function ActionButton({ label, state, okLabel, onClick, color }: {
 export default function SystemHealthCard() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [triage, setTriage] = useState<{ content: string; model?: string } | null>(null);
+  const [triage, setTriage] = useState<{ content: string; model?: string; open_alerts?: number; ts?: string } | null>(null);
   const [running, setRunning] = useState(false);
   const [applying, setApplying] = useState<Record<string, "pending" | "ok" | "err">>({});
 
   useEffect(() => {
     fetch("/api/alerts")
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error("health read failed"); return r.json(); })
       .then(d => setAlerts(Array.isArray(d.alerts) ? d.alerts : []))
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoaded(true));
     fetch("/api/agents/health-triage")
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error("triage read failed"); return r.json(); })
       .then(d => setTriage(d.triage ?? null))
       .catch(() => {});
   }, []);
@@ -91,7 +92,7 @@ export default function SystemHealthCard() {
     try {
       const r = await fetch("/api/agents/health-triage", { method: "POST" });
       const d = await r.json();
-      if (d.ok) setTriage({ content: d.content, model: d.model });
+      if (d.ok) setTriage({ content: d.content, model: d.model, open_alerts: d.open_alerts, ts: d.ts });
     } catch { /* best-effort */ } finally { setRunning(false); }
   }
 
@@ -123,6 +124,19 @@ export default function SystemHealthCard() {
 
   if (!loaded) return null;
 
+  if (loadError) {
+    return (
+      <div style={{ background: T.card, border: `1px solid ${T.yellow}66`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
+          <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: T.yellow }} />
+          <span style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase" }}>System Health</span>
+          <span style={{ fontSize: "12px", fontWeight: 600, color: T.yellow, marginLeft: "auto" }}>Status unavailable</span>
+        </div>
+        <div style={{ fontSize: "12px", color: T.textSub, marginTop: "8px" }}>The alert feed could not be read. This is not treated as a healthy state; reload or inspect Intelligence.</div>
+      </div>
+    );
+  }
+
   const sorted = [...alerts].sort(
     (a, b) => (SEV_RANK[b.severity] ?? 0) - (SEV_RANK[a.severity] ?? 0)
       || (a.created_at < b.created_at ? 1 : -1),
@@ -132,6 +146,9 @@ export default function SystemHealthCard() {
   const clean = alerts.length === 0;
 
   const headColor = clean ? T.green : SEV_COLOR[worst] ?? T.blue;
+  const newestAlertMs = Math.max(0, ...alerts.map((alert) => Date.parse(alert.created_at) || 0));
+  const triageMs = Date.parse(triage?.ts ?? "") || 0;
+  const triageStale = !!triage && (triage.open_alerts !== alerts.length || triageMs < newestAlertMs);
 
   return (
     <div style={{ background: T.card, border: `1px solid ${clean ? T.border : headColor + "66"}`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
@@ -203,19 +220,24 @@ export default function SystemHealthCard() {
         </div>
       )}
 
-      {/* AI triage — read-only SRE summary + suggested fixes (health-triage agent). */}
+      {/* Deterministic triage snapshot. Raw open alerts above remain authoritative. */}
       <div style={{ marginTop: clean ? "12px" : "14px", borderTop: `1px solid ${T.border}`, paddingTop: "12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>🔧 AI Triage</span>
+          <span style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>Health Triage</span>
           <button onClick={runTriage} disabled={running}
             style={{ marginLeft: "auto", background: "transparent", border: `1px solid ${T.border}`, borderRadius: "6px", color: T.textSub, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: running ? "default" : "pointer" }}>
             {running ? "Running…" : "Run triage"}
           </button>
         </div>
-        {triage?.content && (
+        {triageStale && (
+          <div style={{ fontSize: "12px", color: T.yellow, lineHeight: 1.5, marginTop: "8px" }}>
+            Triage snapshot is older than the current alert feed. Run triage to reconcile it.
+          </div>
+        )}
+        {triage?.content && !triageStale && (
           <div style={{ fontSize: "12px", color: T.textSub, lineHeight: 1.6, whiteSpace: "pre-wrap", marginTop: "8px" }}>
             {triage.content}
-            {triage.model && <div style={{ fontSize: "10px", color: T.muted, marginTop: "6px" }}>— {triage.model} · advisory only</div>}
+            {triage.model && <div style={{ fontSize: "10px", color: T.muted, marginTop: "6px" }}>— {triage.model} · {triage.ts ? new Date(triage.ts).toLocaleString() : "latest snapshot"}</div>}
           </div>
         )}
       </div>

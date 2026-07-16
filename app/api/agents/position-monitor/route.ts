@@ -10,6 +10,7 @@ import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { setMarketPaused } from "@/lib/market-controls";
 import { getQuote } from "@/lib/data/quotes";
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
+import { paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -153,10 +154,8 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     }
   }));
 
-  const { data: strategyCfg } = await svc.from("strategy_config").select("score_threshold, min_analyst_score, exit_hysteresis").maybeSingle();
-  const entryThreshold = Number((strategyCfg as any)?.score_threshold ?? (strategyCfg as any)?.min_analyst_score ?? 60);
+  const { data: strategyCfg } = await svc.from("strategy_config").select("exit_hysteresis").maybeSingle();
   const hysteresis = Number((strategyCfg as any)?.exit_hysteresis) || 15; // profile-scaled (Part A2); resilient default
-  const exitThreshold = Math.max(35, entryThreshold - hysteresis); // e.g. enter 60, exit below 45
   const latestScore: Record<string, { score: number | null; direction: string | null }> = {};
   for (const pos of positions) {
     if (pos.position_role === "hedge") continue;
@@ -181,34 +180,32 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
   // paper_trades, not learning_log, is the real trade-outcome record —
   // learning_log is the learner's own weight-mutation audit log and has no
   // symbol/outcome columns) + crediting cash.
-  async function closePosition(pos: any, currentPrice: number, exitReason: string, outcome: string) {
+  async function closePosition(
+    pos: any,
+    currentPrice: number,
+    exitReason: string,
+    _outcome: string,
+    exitQty?: number,
+    partialStopLoss?: number,
+  ) {
     const market = marketOf(pos, hasMarketCol);
     const cur = market === "india" ? "₹" : "$";
-    const realizedPnl = (currentPrice - pos.avg_cost) * pos.qty;
-    const pnlPct = pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0;
+    const requestedQty = exitQty ?? Number(pos.qty);
+    const { data, error } = await svc.rpc("execute_paper_exit", {
+      p_position_id: pos.id,
+      p_exit_price: currentPrice,
+      p_exit_reason: exitReason,
+      p_exit_qty: requestedQty,
+      p_partial_stop_loss: partialStopLoss ?? null,
+    });
+    if (error) throw new Error(`execute_paper_exit failed (${pos.symbol}): ${error.message}`);
+    const result = data as any;
+    if (!result?.ok) throw new Error(`execute_paper_exit denied (${pos.symbol}): ${result?.error ?? "unknown"}`);
 
-    // Close each open lot with ITS OWN realized P&L (qty × its own fill_price) —
-    // NOT the aggregated position-level figure, which would double-count P&L and
-    // mislabel each lot's return when a symbol was accumulated over >1 fill.
-    let tq = svc.from("paper_trades").select("id, qty, fill_price").eq("symbol", pos.symbol).is("closed_at", null);
-    if (hasMarketCol) tq = tq.eq("market", market);
-    const { data: openTrades } = await tq;
-    for (const t of openTrades ?? []) {
-      const tQty = Number((t as any).qty ?? 0);
-      const tFill = Number((t as any).fill_price ?? pos.avg_cost);
-      const tPnl = (currentPrice - tFill) * tQty;
-      const tPnlPct = tFill > 0 ? ((currentPrice - tFill) / tFill) * 100 : 0;
-      const tOutcome = classifyOutcome(tPnlPct);
-      await svc.from("paper_trades").update({
-        exit_price: currentPrice, realized_pnl: tPnl, pnl_pct: tPnlPct,
-        outcome: tOutcome, exit_reason: exitReason, closed_at: new Date().toISOString(),
-      }).eq("id", (t as any).id);
-      // Index this now-closed trade into the RAG memory corpus (Tier-3 #10).
-      // Best-effort: no-op when embeddings are off; a failure never blocks the exit.
-      await indexClosedTrade(String((t as any).id)).catch(() => {});
+    for (const tradeId of result.closed_trade_ids ?? []) {
+      await indexClosedTrade(String(tradeId)).catch(() => {});
     }
 
-    await svc.from("paper_positions").delete().eq("id", pos.id);
     if (pos.position_role === "hedge") {
       const { error } = await svc.rpc("complete_paper_hedge_exit", { p_symbol: pos.symbol, p_reason: exitReason });
       if (error) {
@@ -223,24 +220,12 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       }
     }
 
-    // Decision Journal was showing "0 entries" because nothing ever wrote to
-    // it for exits — only the initial buy fill (paper-trade/route.ts) did.
-    // Log the exit so the journal actually reflects the position lifecycle.
-    const { error: journalError } = await svc.from("decision_journal").insert({
-      entry_type: "paper_exit",
-      symbol: pos.symbol,
-      market,
-      summary: `Paper exit (${market.toUpperCase()}): ${pos.qty} × ${pos.symbol} @ ${cur}${currentPrice.toFixed(2)} (${exitReason}), P&L ${cur}${realizedPnl.toFixed(2)} (${outcome})`,
-      calculations: { market, qty: pos.qty, exit_price: currentPrice, avg_cost: pos.avg_cost, realized_pnl: realizedPnl, pnl_pct: pnlPct, exit_reason: exitReason },
-      has_verified_facts: true,
-      has_calculations: true,
-      resolved: true,
-      resolved_at: new Date().toISOString(),
-    });
-    if (journalError) console.error("[position-monitor] decision_journal insert failed:", journalError.message);
-
-    cashByMarket[market] = (cashByMarket[market] ?? 0) + currentPrice * pos.qty; // credit THIS market's pool
-    closed.push(`${pos.symbol} (${exitReason}: ${cur}${currentPrice.toFixed(2)}, P&L: ${cur}${realizedPnl.toFixed(2)})`);
+    cashByMarket[market] = (cashByMarket[market] ?? 0) + Number(result.proceeds ?? 0);
+    if (Number(result.remaining_qty ?? 0) > 0) {
+      updated.push(`${pos.symbol} (partial_target: ${requestedQty}/${pos.qty} closed, stop→breakeven)`);
+    } else {
+      closed.push(`${pos.symbol} (${exitReason}: ${cur}${currentPrice.toFixed(2)}, P&L: ${cur}${Number(result.realized_pnl ?? 0).toFixed(2)})`);
+    }
   }
 
   for (const pos of positions) {
@@ -267,14 +252,15 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     // Time stop: close if position age exceeds champion genome's horizon_days.
     // Closes slow bleeds that never hit the hard stop but overstay the swing window.
     // Matches the backtest's max_hold_days assumption so live and backtest are consistent.
-    if (pos.created_at) {
+    const openedAt = paperPositionOpenedAt(pos);
+    if (openedAt) {
       const mandate = mandateByMarket.get(market);
       const storedHorizon = Number(pos.resolved_horizon_days);
       const grandfathered = mandate?.existing_positions_policy !== "apply" && Number.isFinite(storedHorizon) && storedHorizon >= 2;
       const horizonDays = pos.position_role === "hedge"
         ? (Number.isFinite(storedHorizon) && storedHorizon >= 1 ? storedHorizon : 5)
         : grandfathered ? storedHorizon : (horizonDaysByMarket.get(market) ?? 10);
-      const ageDays = tradingWeekdaysBetween(new Date(pos.created_at), new Date());
+      const ageDays = tradingWeekdaysBetween(new Date(openedAt), new Date());
       if (ageDays > horizonDays) {
         const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
         await closePosition(pos, currentPrice, `time_stop (${ageDays} market days > ${horizonDays}d${grandfathered ? ", grandfathered" : ""})`, outcome);
@@ -290,6 +276,8 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     // a missing score means research hasn't covered this symbol, so we hold
     // and let the mechanical stop/target below protect it.
     const sc = latestScore[pos.symbol];
+    const entryThreshold = mandateByMarket.get(market)?.score_threshold ?? 60;
+    const exitThreshold = resolvePaperExitThreshold(entryThreshold, hysteresis);
     // Two DISTINCT exit conditions share this branch; label them separately with
     // structured reason codes so the trade record isn't mislabeled. A direction
     // flip (held long, fresh signal now points away) is NOT a score comparison —
@@ -337,46 +325,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       // Only split if qty >= 2 — a single share must fully close.
       const halfQty = Math.floor(pos.qty / 2);
       if (halfQty >= 1) {
-        const remainQty = pos.qty - halfQty;
-        const proceeds = halfQty * currentPrice;
-        cashByMarket[market] = (cashByMarket[market] ?? 0) + proceeds;
-        await svc.from("paper_positions").update({
-          qty: remainQty,
-          stop_loss: parseFloat(Number(pos.avg_cost).toFixed(2)),
-          price_target: null,
-          current_price: currentPrice,
-          highest_price: Math.max(pos.highest_price ?? pos.avg_cost, currentPrice),
-          updated_at: new Date().toISOString(),
-        }).eq("id", pos.id);
-        // Close open trade lots FIFO proportionally.
-        let remainToClose = halfQty;
-        let lotQ = svc.from("paper_trades").select("id, qty, fill_price, executed_at").eq("symbol", pos.symbol).is("closed_at", null).order("executed_at", { ascending: true });
-        if (hasMarketCol) lotQ = lotQ.eq("market", market);
-        const { data: openLots } = await lotQ;
-        for (const lot of openLots ?? []) {
-          if (remainToClose <= 0) break;
-          const lotQty = Number((lot as any).qty ?? 0);
-          const closeQty = Math.min(lotQty, remainToClose);
-          const lotFill = Number((lot as any).fill_price ?? pos.avg_cost);
-          const lotPnlPct = lotFill > 0 ? ((currentPrice - lotFill) / lotFill) * 100 : 0;
-          if (closeQty < lotQty) {
-            await svc.from("paper_trades").update({ qty: lotQty - closeQty }).eq("id", (lot as any).id);
-          } else {
-            await svc.from("paper_trades").update({
-              exit_price: currentPrice, realized_pnl: (currentPrice - lotFill) * closeQty,
-              pnl_pct: lotPnlPct, outcome: "win", exit_reason: "partial_target",
-              closed_at: new Date().toISOString(),
-            }).eq("id", (lot as any).id);
-          }
-          remainToClose -= closeQty;
-        }
-        await svc.from("decision_journal").insert({
-          entry_type: "paper_exit", symbol: pos.symbol, market,
-          summary: `Partial exit: closed ${halfQty}/${pos.qty} × ${pos.symbol} @ ${currentPrice.toFixed(2)} (target). Remaining ${remainQty} shares, stop moved to breakeven.`,
-          calculations: { halfQty, remainQty, exit_price: currentPrice, avg_cost: pos.avg_cost, exit_reason: "partial_target" },
-          has_verified_facts: true, has_calculations: true, resolved: true, resolved_at: new Date().toISOString(),
-        }).catch(() => {});
-        updated.push(`${pos.symbol} (partial_target: ${halfQty}/${pos.qty} closed, stop→breakeven)`);
+        await closePosition(pos, currentPrice, "partial_target", "win", halfQty, Number(pos.avg_cost));
         continue;
       }
       // qty == 1 — can't split

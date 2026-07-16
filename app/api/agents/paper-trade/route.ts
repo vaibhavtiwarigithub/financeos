@@ -14,8 +14,9 @@ import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
 import { loadChampionGenome, type ResolvedGenome } from "@/lib/validation/genome-live";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadTradingMandate, mandateSnapshot, resolveHorizonDays, type TradingMandate } from "@/lib/trading-mandate";
-import { isPaused } from "@/lib/market-controls";
+import { isPaused, isTradingEnabled } from "@/lib/market-controls";
 import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/trading/capital-rotation";
+import { canOpenPaperName, MAX_ALPHA_NAMES_PER_MARKET } from "@/lib/trading/paper-entry-policy";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -65,24 +66,18 @@ export async function POST(req: NextRequest) {
       .select("score_threshold, position_size_pct, stop_loss_pct, target_pct, max_gross_exposure_pct, max_sector_exposure_pct, max_name_exposure_pct, max_portfolio_vol_pct, max_avg_pairwise_corr, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper")
       .limit(1)
       .single();
-    if (await isPaused(supabase, marketScope ?? undefined)) {
-      return NextResponse.json({ skipped: true, reason: "App is paused — paper trades disabled" });
-    }
     let maxPerSector = 3;
     try {
       const { data: capRow } = await supabase.from("strategy_config").select("max_positions_per_sector").limit(1).single();
       if ((capRow as any)?.max_positions_per_sector != null) maxPerSector = Number((capRow as any).max_positions_per_sector);
     } catch { /* column not present yet — keep default 3 */ }
 
-    const scoreThreshold  = (cfg as any)?.score_threshold   ?? 60;
     const positionSizePct = (cfg as any)?.position_size_pct ?? 10;
     // Paper order caps (per market, scaled to paper NAV). null → not enforced.
     const perTradeCapUsdPaper = (cfg as any)?.max_order_notional_usd_paper ?? null;
     const perTradeCapInrPaper = (cfg as any)?.max_order_notional_inr_paper ?? null;
     const dailyCapUsdPaper = (cfg as any)?.max_daily_notional_usd_paper ?? null;
     const dailyCapInrPaper = (cfg as any)?.max_daily_notional_inr_paper ?? null;
-    const stopLossPctCfg  = (cfg as any)?.stop_loss_pct     ?? 7;
-    const targetPctCfg    = (cfg as any)?.target_pct        ?? 20;
 
     const { data: runRow } = await supabase.from("agent_runs").insert({
       agent_type: "paper_trader", status: "running",
@@ -90,6 +85,14 @@ export async function POST(req: NextRequest) {
       market: marketScope,
     } as any).select().single();
     runId = (runRow as any)?.id ?? null;
+    const finishSkippedRun = async (summary: string) => {
+      if (!runId) return;
+      await supabase.from("agent_runs").update({
+        status: "done", signals_written: 0, result_summary: summary,
+        completed_at: new Date().toISOString(), tokens_input: 0,
+        tokens_output: 0, claude_calls: 0,
+      } as any).eq("id", runId);
+    };
 
     // ── Pools per market ──────────────────────────────────────────────────────
     // One paper_portfolio row per market. Pre-057 there's a single row with no
@@ -103,10 +106,24 @@ export async function POST(req: NextRequest) {
       if (newP) poolByMarket.set("us", newP);
     }
     if (!poolByMarket.has("us")) {
-      return NextResponse.json({ error: "No paper portfolio found" }, { status: 500 });
+      throw new Error("No paper portfolio found");
     }
     let activeMarkets = [...poolByMarket.keys()]; // 'us' always; 'india' when 057 applied
     if (marketScope) activeMarkets = activeMarkets.filter(m => m === marketScope); // scoped cron run
+
+    // Both controls are latched operator/risk controls. A fresh kill-switch
+    // calculation returning safe must never bypass a prior manual/automatic
+    // trading disable. Evaluate each market independently so one can continue.
+    const controlBlocks: Record<string, string> = {};
+    for (const m of activeMarkets) {
+      if (await isPaused(supabase, m)) controlBlocks[m] = "paused";
+      else if (!(await isTradingEnabled(supabase, m))) controlBlocks[m] = "trading_disabled";
+    }
+    activeMarkets = activeMarkets.filter((m) => !controlBlocks[m]);
+    if (activeMarkets.length === 0) {
+      await finishSkippedRun(`Paper entries disabled by market controls: ${JSON.stringify(controlBlocks)}`);
+      return NextResponse.json({ skipped: true, reason: "Paper entries disabled by market controls", markets: controlBlocks });
+    }
 
     // Kill-switches are evaluated PER MARKET (each on its own currency's NAV/
     // drawdown/accuracy). A tripped market is skipped; the others still fill.
@@ -115,7 +132,16 @@ export async function POST(req: NextRequest) {
     activeMarkets = activeMarkets.filter(m => ksByMarket[m].safe);
     if (activeMarkets.length === 0) {
       const first = Object.values(ksByMarket)[0];
+      await finishSkippedRun(first?.reason ?? "All markets kill-switched");
       return NextResponse.json({ skipped: true, reason: first?.reason ?? "All markets kill-switched", tripped: first?.tripped });
+    }
+
+    // The per-market mandate is the canonical entry policy. strategy_config's
+    // legacy global threshold is display/back-compat only and must not loosen a
+    // US or India mandate.
+    const mandateByMarket = new Map<string, TradingMandate>();
+    for (const m of activeMarkets) {
+      mandateByMarket.set(m, await loadTradingMandate(supabase, m as "us" | "india"));
     }
 
     // ── Market-local trading-day freshness ───────────────────────────────────
@@ -140,6 +166,7 @@ export async function POST(req: NextRequest) {
     let expiredTotal = 0;
     for (const m of activeMarkets) {
       const cutoff = cutoffByMarket.get(m)!;
+      const entryThreshold = mandateByMarket.get(m)?.score_threshold ?? 60;
       // Expire this market's stale pending long signals (older than today's open).
       let expQ = supabase.from("agent_signals").update({ status: "expired" })
         .eq("status", "pending").eq("direction", "long").lt("created_at", cutoff);
@@ -152,7 +179,7 @@ export async function POST(req: NextRequest) {
       // Fetch only fresh (same-trading-day) pending long candidates.
       let selQ = supabase.from("agent_signals").select("*")
         .eq("status", "pending").eq("direction", "long")
-        .gte("analyst_score", scoreThreshold).gte("created_at", cutoff)
+        .gte("analyst_score", entryThreshold).gte("created_at", cutoff)
         // Positive allowlist: ONLY the versioned deterministic source is fill-eligible.
         // A negative filter (is.null OR neq llm_advisory) failed OPEN — it admitted
         // null/unknown score_source, so any untagged signal could be traded.
@@ -177,20 +204,34 @@ export async function POST(req: NextRequest) {
     }
 
     if (signals.length === 0) {
-      if (runId) await supabase.from("agent_runs").update({ status: "done", signals_written: 0, result_summary: `No fresh qualifying long signals (score ≥ ${scoreThreshold}, same trading day). ${expiredTotal} stale expired.`, completed_at: new Date().toISOString() } as any).eq("id", runId);
-      return NextResponse.json({ skipped: true, reason: `No fresh qualifying long signals (score ≥ ${scoreThreshold}, same trading day)`, expired: expiredTotal });
+      const thresholds = Object.fromEntries([...mandateByMarket].map(([m, mandate]) => [m, mandate.score_threshold]));
+      if (runId) await supabase.from("agent_runs").update({ status: "done", signals_written: 0, result_summary: `No fresh qualifying long signals for market mandate threshold(s) ${JSON.stringify(thresholds)}. ${expiredTotal} stale expired.`, completed_at: new Date().toISOString() } as any).eq("id", runId);
+      return NextResponse.json({ skipped: true, reason: "No fresh qualifying long signals for market mandate threshold", thresholds, expired: expiredTotal });
     }
 
     const filled: any[] = [];
     const skipped: any[] = [];
     let rotationsThisRun = 0; // capital-rotation P1 (paper): bounded per-run counter
 
-    // Sector cap — count open positions per sector (across all markets; the cap
-    // is a book-level concentration limit).
-    const { data: openPos } = await supabase.from("paper_positions").select("symbol, sector, qty, avg_cost, market");
-    const sectorCount: Record<string, number> = {};
+    // Sector cap is market-local. US sector occupancy must never block an India
+    // name (or vice versa); the books and currencies are independent.
+    const { data: openPos } = await supabase.from("paper_positions").select("symbol, sector, qty, avg_cost, market, position_role");
+    const sectorCountByMarket = new Map<string, Record<string, number>>();
     for (const p of (openPos ?? []) as any[]) {
-      if (p.sector) sectorCount[p.sector] = (sectorCount[p.sector] ?? 0) + 1;
+      if (!p.sector) continue;
+      const m = hasMarketCol ? String(p.market ?? "us") : "us";
+      const counts = sectorCountByMarket.get(m) ?? {};
+      counts[p.sector] = (counts[p.sector] ?? 0) + 1;
+      sectorCountByMarket.set(m, counts);
+    }
+    const openAlphaNamesByMarket = new Map<string, Set<string>>();
+    for (const m of activeMarkets) openAlphaNamesByMarket.set(m, new Set());
+    for (const p of (openPos ?? []) as any[]) {
+      if ((p.position_role ?? "alpha") !== "alpha") continue;
+      const m = hasMarketCol ? String(p.market ?? "us") : "us";
+      const names = openAlphaNamesByMarket.get(m) ?? new Set<string>();
+      names.add(String(p.symbol).toUpperCase());
+      openAlphaNamesByMarket.set(m, names);
     }
 
     // Portfolio Constructor: per-market book (name/sector/gross/vol/correlation
@@ -300,7 +341,6 @@ export async function POST(req: NextRequest) {
     // when no genome-bearing champion exists — the exact values used before this
     // wiring — so a legacy/genome-less market is byte-for-byte unchanged.
     const genomeByMarket = new Map<string, ResolvedGenome>();
-    const mandateByMarket = new Map<string, TradingMandate>();
     const horizonByMarket = new Map<string, number>();
     for (const m of activeMarkets) {
       try {
@@ -309,8 +349,7 @@ export async function POST(req: NextRequest) {
       } catch { pwinModelByMarket.set(m, null); }
       const g = await loadChampionGenome(supabase, m as "us" | "india");
       genomeByMarket.set(m, g);
-      const mandate = await loadTradingMandate(supabase, m as "us" | "india");
-      mandateByMarket.set(m, mandate);
+      const mandate = mandateByMarket.get(m) ?? await loadTradingMandate(supabase, m as "us" | "india");
       horizonByMarket.set(m, resolveHorizonDays(mandate, g.source === "champion" ? g.genome.horizon_days : null).days);
       maeMfeByMarket.set(
         m,
@@ -342,6 +381,13 @@ export async function POST(req: NextRequest) {
       const portfolio = poolByMarket.get(market);
       if (!portfolio) { skipped.push({ symbol: signal.symbol, reason: `no_pool_for_${market}` }); continue; }
 
+      const openNames = openAlphaNamesByMarket.get(market) ?? new Set<string>();
+      if (!canOpenPaperName(openNames, signal.symbol)) {
+        skipped.push({ symbol: signal.symbol, reason: `max_open_names (${MAX_ALPHA_NAMES_PER_MARKET})` });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason: "max_open_names", detail: { current: openNames.size, cap: MAX_ALPHA_NAMES_PER_MARKET } });
+        continue;
+      }
+
       // Idempotent claim — stamp ownership so only THIS run can revert it later.
       const { data: claimed } = await supabase
         .from("agent_signals")
@@ -351,6 +397,7 @@ export async function POST(req: NextRequest) {
 
       // Sector cap
       const candSector = await resolveSector(signal.symbol, signal.research_packet_id ?? null);
+      const sectorCount = sectorCountByMarket.get(market) ?? {};
       if (candSector && (sectorCount[candSector] ?? 0) >= maxPerSector) {
         await revertClaim(signal.id);
         skipped.push({ symbol: signal.symbol, reason: `sector_cap (${candSector} already at ${maxPerSector})` });
@@ -398,7 +445,7 @@ export async function POST(req: NextRequest) {
         // profile stop/target — safe, but previously invisible. Record it so
         // the briefing/Research Journal can tell the user whether sizing used
         // learned risk or static defaults for this fill.
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "passed", reason: "dynamic_rr_unavailable — using fixed profile stop/target", detail: { stopLossPctCfg, targetPctCfg } });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "passed", reason: "dynamic_rr_unavailable — using mandate stop/target", detail: { stopLossPct: tradingMandate.stop_loss_pct, targetPct: tradingMandate.target_pct } });
       }
       const priceTarget = signal.price_target != null ? signal.price_target
         : parseFloat((fillPrice * (1 + tradingMandate.target_pct / 100)).toFixed(2));
@@ -504,7 +551,7 @@ export async function POST(req: NextRequest) {
         };
         // Always log the shadow evaluation (measurement).
         try {
-          await recordCapitalRotationShadow(supabase, { runId, candidate: rotCandidate, scoreThreshold, minHoldingDays: tradingMandate.min_hold_days ?? 2 });
+          await recordCapitalRotationShadow(supabase, { runId, candidate: rotCandidate, scoreThreshold: tradingMandate.score_threshold, minHoldingDays: tradingMandate.min_hold_days ?? 2 });
         } catch (e: any) {
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_shadow_log_failed", detail: { error: e?.message ?? String(e) } });
         }
@@ -516,7 +563,7 @@ export async function POST(req: NextRequest) {
           const rot = await executeCapitalRotationPaper(supabase, {
             runId, rotationsThisRun,
             candidate: { ...rotCandidate, qty, fillPrice, priceTarget, stopLoss, sector: candSector },
-            scoreThreshold, minHoldingDays: tradingMandate.min_hold_days ?? 2,
+            scoreThreshold: tradingMandate.score_threshold, minHoldingDays: tradingMandate.min_hold_days ?? 2,
           });
           if (rot.executed) {
             rotationsThisRun += 1;
@@ -569,6 +616,15 @@ export async function POST(req: NextRequest) {
           // Build 4a: pre-slippage decision price. fill_price already carries the
           // slipped value; the RPC computes realized_slip_pct = fill/expected - 1.
           p_expected_price: price,
+          p_mandate_id: (signal as any).mandate_id ?? null,
+          p_mandate_version: tradingMandate.version,
+          p_mandate_snapshot: snapshot,
+          p_resolved_horizon_days: resolvedHorizonDays,
+          p_max_open_names: MAX_ALPHA_NAMES_PER_MARKET,
+          p_max_sector_names: maxPerSector,
+          p_per_trade_cap: perTradeCapPaper,
+          p_daily_notional_cap: dailyCapPaper,
+          p_day_start: cutoffByMarket.get(market) ?? null,
         } as any);
         const rpcMissing = rpcErr && (String((rpcErr as any).code ?? "") === "PGRST202" ||
           /could not find the function|does not exist/i.test(String(rpcErr.message ?? "")));
@@ -586,28 +642,9 @@ export async function POST(req: NextRequest) {
           }
           orderEventId = result.event_id;
           rpcSucceeded = true;
-          // Backfill mandate_id on the paper_trade the RPC just created (pre-135 RPC
-          // doesn't accept p_mandate_id; update is safe since RPC committed).
-          if ((signal as any).mandate_id) {
-            await supabase.from("paper_trades")
-              .update({ mandate_id: (signal as any).mandate_id })
-              .eq("signal_id", signal.id)
-              .is("mandate_id", null);
-          }
-          await supabase.from("paper_trades").update({
-            mandate_version: tradingMandate.version,
-            mandate_snapshot: snapshot,
-            resolved_horizon_days: resolvedHorizonDays,
-          }).eq("signal_id", signal.id).is("closed_at", null);
-          let positionMandateQ = supabase.from("paper_positions").update({
-            mandate_version: tradingMandate.version,
-            mandate_snapshot: snapshot,
-            resolved_horizon_days: resolvedHorizonDays,
-          }).eq("symbol", signal.symbol);
-          if (hasMarketCol) positionMandateQ = positionMandateQ.eq("market", market);
-          await positionMandateQ;
           if (candSector && !bookByMarket.get(market)?.some(b => b.symbol === signal.symbol)) {
             sectorCount[candSector] = (sectorCount[candSector] ?? 0) + 1;
+            sectorCountByMarket.set(market, sectorCount);
           }
         }
       }
@@ -697,6 +734,7 @@ export async function POST(req: NextRequest) {
           };
           await insertOptional("paper_positions", newPosRow, ["sector", "currency", "market", "mandate_version", "mandate_snapshot", "resolved_horizon_days"]);
           if (candSector) sectorCount[candSector] = (sectorCount[candSector] ?? 0) + 1;
+          sectorCountByMarket.set(market, sectorCount);
         }
 
         portfolio.cash_balance -= totalCost;
@@ -725,6 +763,8 @@ export async function POST(req: NextRequest) {
       if (existingBookIdx >= 0) currentBook[existingBookIdx].valuePct += bookEntry.valuePct;
       else currentBook.push(bookEntry);
       bookByMarket.set(market, currentBook);
+      openNames.add(String(signal.symbol).toUpperCase());
+      openAlphaNamesByMarket.set(market, openNames);
 
       await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "filled", reason: `${qty} @ ${fillPrice.toFixed(2)}`, detail: { qty, fillPrice, totalCost, sizedPct } });
 

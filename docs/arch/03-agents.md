@@ -219,6 +219,7 @@ deterministic score and compare explanation/veto quality.
 
 **Inputs:**
 - `agent_signals` WHERE `status = 'pending'` AND `created_at` is today (market timezone) AND `market = ?`
+- the market's `trading_mandates.score_threshold` (canonical entry threshold; the legacy global threshold cannot loosen it)
 - deterministic `score_source` and a strategy version currently in `paper_active` lifecycle
 - `paper_portfolio` for pool cash
 - `paper_positions` for existing open positions
@@ -238,6 +239,8 @@ deterministic score and compare explanation/veto quality.
 - Records `expected_price` and `realized_slip_pct` on every fill
 
 **Risk gates (added 2026-07-09):**
+- **Latched controls:** both pause and trading-enabled controls are checked per market; a recovered kill-switch metric cannot silently re-enable entries
+- **Name cap:** maximum 10 distinct alpha names per market, enforced again inside the row-locked fill RPC
 - **Re-entry cooldown:** 5-calendar-day block after a position in a symbol closes
 - **Pyramid gate:** New BUY only if fill price > existing avg_cost (no averaging down)
 - **Long-only for new positions:** SELL signals only apply to symbols already held
@@ -275,11 +278,8 @@ deterministic score and compare explanation/veto quality.
 5. **Benchmark sync:** upsert `paper_performance.bench_nav` with today's VOO (US) / ^NSEI (India) price
 
 **On close:**
-- Delete the `paper_positions` row
-- Mark the `paper_trades` buy row closed (exit_price, realized_pnl, pnl_pct, outcome, exit_reason)
-- Credit cash back to `paper_portfolio`
+- Call `execute_paper_exit`, which atomically realizes FIFO lots (including a closed slice for a partial lot), updates/deletes the position, credits the correct market pool, and writes the decision journal; any mismatch rolls the whole exit back
 - Call `indexClosedTrade()` for RAG (if Voyage embeddings are configured)
-- Append to `paper_order_events`
 
 ---
 
@@ -401,28 +401,23 @@ only — never touches money, weights, or positions.
 
 ### Health-Triage — the SRE
 
-**File:** `app/api/agents/triage/route.ts`
+**File:** `app/api/agents/health-triage/route.ts`
 **Schedule:** Every 6h + on-demand from dashboard
-**LLM:** Claude Haiku 4.5 (`claude-fast`)
+**LLM:** None — operational truth is deterministic
 
 **Read-only — can never change config, money limits, weights, orders, or code.**
 
-**Inputs:**
-- All open `agent_alerts`
-- Recent `agent_runs` for stale/error status
-- `llm_call_log` for budget burn rate
-- AV daily budget remaining
-- `live_account_snapshots` freshness
+**Inputs:** Current open `agent_alerts` plus the latest run per agent/market in the last 48h.
 
-**Key behavior:** Reads and enriches existing alerts with `structured_issues` (machine-readable
-`issue_key`, `root_cause`, `blast_radius`, `suggested_fix`). Creates new alerts for newly
-discovered issues. Suggests fixes in plain English.
+**Key behavior:** Builds machine-readable `structured_issues` deterministically. An older failed
+run disappears from current triage once a newer successful run for the same agent/market exists.
+The snapshot carries its alert count and timestamp so Home can mark it stale against the live feed.
 
 **Dashboard display:** `SystemHealthCard` on dashboard home. Green when clean. Severity-ranked.
 Deep-link fix hints. Tier-1 safe actions (retry, resolve info/warn) are one-click.
 
-**Outputs:** `structured_issues` on existing `agent_alerts`; new `agent_alerts` rows for
-newly discovered issues
+**Outputs:** Append-only `health_triage` snapshots and an `agent_runs` bookkeeping row. It never
+creates inferred alerts or modifies trading/configuration state.
 
 ---
 

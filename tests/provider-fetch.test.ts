@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   budgetCount: 1 as number | null,
   budgetError: null as any,
   report: vi.fn(),
+  resolve: vi.fn(),
   upserts: [] as any[],
 }));
 
@@ -35,14 +36,17 @@ function serviceMock() {
 }
 
 vi.mock("@/lib/supabase/service", () => ({ createServiceClient: () => serviceMock() }));
-vi.mock("@/lib/system-health", () => ({ reportIssue: (...a: any[]) => h.report(...a) }));
+vi.mock("@/lib/system-health", () => ({
+  reportIssue: (...a: any[]) => h.report(...a),
+  resolveIssue: (...a: any[]) => h.resolve(...a),
+}));
 
 import { providerCachedFetch, providerConfig } from "@/lib/data/provider-fetch";
 
 describe("providerCachedFetch free-tier and degradation contract", () => {
   beforeEach(() => {
     h.todayPayload = null; h.stalePayload = null; h.staleDate = new Date().toISOString();
-    h.budgetCount = 1; h.budgetError = null; h.report.mockReset(); h.upserts = [];
+    h.budgetCount = 1; h.budgetError = null; h.report.mockReset(); h.resolve.mockReset(); h.upserts = [];
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -62,6 +66,7 @@ describe("providerCachedFetch free-tier and degradation contract", () => {
     h.stalePayload = { stale: true }; h.budgetCount = 26;
     expect(await providerCachedFetch("alpha_vantage", "AV:X", "https://example.test")).toEqual({ stale: true });
     expect(h.report).toHaveBeenCalledOnce();
+    expect(h.resolve).toHaveBeenCalledWith("provider-budget-pressure:alpha_vantage", expect.anything());
     expect(fetch).not.toHaveBeenCalled();
   });
 

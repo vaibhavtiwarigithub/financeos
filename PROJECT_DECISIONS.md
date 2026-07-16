@@ -717,3 +717,16 @@ OFF independently, exclude hedge outcomes from alpha learning, and add no live p
 Reason: This adds measurable portfolio insurance without broadening generic long-only agents or
 violating per-market accounting, explicit authority, and no-LLM-on-money-path rules.
 Reversal cost: Low while OFF; close any open paper hedge before disabling the controller.
+
+### Decision 48: Paper autonomy is mandate-driven, capacity-bounded, and transactionally closed
+
+Date: 2026-07-16
+Status: Approved
+Category: Product / Architecture / Money-path safety / Operational truth
+
+Context: A live-state review proved the paper loop runs without approval, but found four contradictions: PaperTrader ignored latched `trading_enabled` controls, queried the legacy global threshold 52 while both market mandates required 60, had no enforceable 10-name cap, and PositionMonitor committed lot/position/cash/journal exit writes separately. Home repeated stale threshold/horizon/live-status copy, while LLM health triage could describe a recovered run as a current failure.
+Decision: The US/India trading mandate is the canonical paper threshold and risk preset. New paper entries require both per-market pause and trading-enabled controls, with a 10-distinct-alpha-name cap enforced in TypeScript and the row-locked fill RPC. The RPC also enforces no averaging down and writes mandate provenance atomically. All full and partial paper exits use a service-role-only FIFO transaction covering lots, position, native-currency cash, and journal. Home reads the effective mandate/live posture. System Health classification is deterministic; stale/unavailable health data can never render green.
+Reason: A hands-off loop is safe only when operator stops remain latched, policy is singular, capacity is bounded under concurrency, financial truth cannot partially commit, and the dashboard reports current policy rather than legacy constants.
+Impact: Existing 11-US/13-India books remain intact but cannot add a new alpha name until each market falls below 10; exits continue automatically and atomically. Live approval authority is unchanged (`L3_live_manual`).
+Files/features affected: PaperTrader, PositionMonitor, Home, SystemHealthCard, deterministic health triage, provider-budget alert reconciliation, migrations `20260716010000_paper_autonomy_safety.sql`, `20260716011000_fix_paper_rpc_generated_column.sql`, and `20260716012000_enforce_paper_exit_lot_parity.sql`.
+Reversal cost: Medium — rollback requires restoring the prior fill signature and JS exit sequence; existing trade data remains compatible.

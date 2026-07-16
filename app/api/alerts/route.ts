@@ -16,7 +16,7 @@ export async function GET() {
     .or(`auto_expire_at.is.null,auto_expire_at.gt.${new Date().toISOString()}`)
     .order("created_at", { ascending: false })
     .limit(20);
-  if (error) return NextResponse.json({ alerts: [] });
+  if (error) return NextResponse.json({ error: "System Health is temporarily unavailable" }, { status: 500 });
   return NextResponse.json({ alerts: data ?? [] });
 }
 

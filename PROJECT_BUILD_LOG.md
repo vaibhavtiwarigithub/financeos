@@ -172,6 +172,19 @@ Notes: Confirmed and fixed a report-date look-ahead path, missing capture cadenc
 
 ---
 
+### Entry 6 - 2026-07-16 (Paper autonomy and operational-truth remediation)
+
+Instruction: Verify that the US and India paper loops are genuinely hands-off, review Home and System Health against production reality, and fix every confirmed architectural, logic, security, and product issue.
+Classification: Money-path correctness, accounting atomicity, operational truth, and dashboard accuracy
+Affected area: PaperTrader, PositionMonitor, paper fill/exit RPCs, trading-mandate entry/exit policy, Home, System Health, deterministic triage, provider-budget alert reconciliation, schema and system-map documentation
+Impact: High for paper-trading safety and accounting; no live-order authority change
+Architecture impact: Decision 48 makes each market mandate canonical, keeps operator/risk disables latched, limits each market to 10 alpha names, and requires atomic FIFO exits. Existing over-cap books are preserved but cannot add names until below cap.
+Risk: The first applied RPC migration incorrectly named generated `paper_trades.total_value`; corrective migration `20260716011000_fix_paper_rpc_generated_column.sql` was applied immediately. Migration `20260716012000_enforce_paper_exit_lot_parity.sql` then made any position/lot drift fail closed. Rollback-only production tests proved atomic fill, partial exit, full exit, generated-value consistency, parity rejection, cash movement, and audit writes with zero synthetic residue.
+Decision status: Implemented and production-verified
+Notes: Production verification also found and fixed two silent pre-existing exit defects: PositionMonitor used the legacy global score threshold instead of each market mandate, and time stops read nonexistent `created_at` instead of `paper_positions.opened_at`. Verification: 439 tests passed (6 skipped), `npx tsc --noEmit`, `npm run build`, Supabase function ACL checks, migration-history checks, and Security/Performance Advisors. No real or paper trade was executed by the audit.
+
+---
+
 ## Drift Warnings
 
 - Current prototype routes use LLM-generated prices and direct weight mutation, which conflict with the approved architecture.
