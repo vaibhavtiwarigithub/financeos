@@ -260,8 +260,7 @@ export type GateFailureCode =
   | "artifact_created_eligibility"
   | "adverse_rank_displacement_from_missingness"
   | "coverage_below_non_inferiority_margin"
-  | "hard_semantic_failure"
-  | "unreviewed_genuine_change";
+  | "hard_semantic_failure";
 
 export interface CoverageStat {
   fieldId: string;
@@ -302,7 +301,7 @@ export interface CohortEvaluation {
     hardSemanticFailures: number;
   };
   failures: GateFailure[];
-  /** May this candidate be activated? Only ever true when failures is empty. */
+  /** Did every deterministic machine gate pass? Human review is separate. */
   passed: boolean;
   /** Genuine changes needing explicit owner sign-off before activation. */
   requiresOwnerReview: SymbolDelta[];
@@ -471,17 +470,6 @@ export function evaluateCohort(cohort: FrozenCohort): CohortEvaluation {
         detail: `${stat.fieldId}: candidate covers ${(stat.candidateRate * 100).toFixed(1)}% vs legacy ${(stat.legacyRate * 100).toFixed(1)}% of ${stat.applicable} applicable symbols (Δ ${(stat.delta * 100).toFixed(1)}%, margin ${(cohort.coverageNonInferiorityMargin * 100).toFixed(1)}%)`,
       });
     }
-  }
-
-  // A genuine change that would create a long still requires explicit owner
-  // approval. The evaluation cannot grant it, so it records the requirement and
-  // does not pass on its own.
-  for (const d of requiresOwnerReview) {
-    failures.push({
-      code: "unreviewed_genuine_change",
-      symbol: d.symbol,
-      detail: `${d.note} — owner must classify this divergence before activation`,
-    });
   }
 
   const counts = {

@@ -282,8 +282,8 @@ describe("cohort — a routing artifact may never create a new long (§5)", () =
     expect(e.deltas[0].blocking).toBe(false);
     // ...but it cannot self-approve: added coverage is measured, not approved.
     expect(e.requiresOwnerReview).toHaveLength(1);
-    expect(e.passed).toBe(false);
-    expect(e.failures.some((f) => f.code === "unreviewed_genuine_change")).toBe(true);
+    expect(e.passed).toBe(true);
+    expect(e.failures).toEqual([]);
   });
 
   it("becoming MORE conservative (eligible → ineligible) never blocks", () => {

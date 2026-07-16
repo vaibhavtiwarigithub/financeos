@@ -34,6 +34,16 @@ export async function POST(req: NextRequest) {
   if (typeof version_id !== "string" || version_id.length === 0) return bad("version_id is required");
 
   const svc = createServiceClient();
+  const { data: target, error: targetError } = await svc
+    .from("evidence_policy_versions")
+    .select("router_enabled")
+    .eq("id", version_id)
+    .eq("market", market)
+    .maybeSingle();
+  if (targetError || !target) return bad("unknown policy version for this market");
+  if (target.router_enabled) {
+    return bad("enabled router versions require a fresh bound evaluation and owner-approved divergences");
+  }
   const { error } = await svc.rpc("activate_evidence_policy", {
     p_market: market,
     p_version_id: version_id,

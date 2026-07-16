@@ -15,10 +15,26 @@ import {
   type FieldState,
 } from "@/lib/evidence/degradation-guard";
 import { fieldContract } from "@/lib/evidence/intent-classification";
-import { observationsFromLegacyMask, symbolShapeOf } from "@/lib/evidence/degradation-runtime";
+import { guardRuntimeFailureResult, observationsFromLegacyMask, symbolShapeOf } from "@/lib/evidence/degradation-runtime";
 
 const usable: FieldState = { availability: "available", quality: "fresh", ageSeconds: 3600, contractOk: true };
 const missing: FieldState = { availability: "missing", quality: "unavailable", ageSeconds: null, contractOk: false };
+
+describe("runtime failure policy", () => {
+  it("fails closed only for a new long while enforcing", () => {
+    expect(guardRuntimeFailureResult({ isHeld: false, proposedDirection: "long" }, "enforce").direction).toBe("neutral");
+    expect(guardRuntimeFailureResult({ isHeld: false, proposedDirection: "short" }, "enforce").direction).toBe("short");
+    expect(guardRuntimeFailureResult({ isHeld: true, proposedDirection: "short" }, "enforce").direction).toBe("short");
+    expect(guardRuntimeFailureResult({ isHeld: true, proposedDirection: "long" }, "enforce").direction).toBe("long");
+  });
+
+  it("never changes a direction in measure-only mode", () => {
+    const result = guardRuntimeFailureResult({ isHeld: false, proposedDirection: "long" }, "measure_only");
+    expect(result.direction).toBe("long");
+    expect(result.applied).toBe(false);
+    expect(result.wouldAbstain).toBe(true);
+  });
+});
 
 function obs(over: Partial<FieldObservation> & { fieldId: string }): FieldObservation {
   return {

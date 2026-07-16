@@ -46,24 +46,25 @@ export async function loadBaseline(
 ): Promise<FieldMask | null> {
   const svc = client ?? createServiceClient();
   try {
-    const { data } = await svc
+    const { data, error } = await svc
       .from("evidence_field_baselines")
       .select("mask")
       .eq("market", market)
       .eq("symbol", symbol.toUpperCase())
       .maybeSingle();
+    if (error) throw new Error(`baseline read failed: ${error.message}`);
     const mask = (data as any)?.mask;
     return mask && typeof mask === "object" ? (mask as FieldMask) : null;
-  } catch {
+  } catch (error) {
     // No baseline → the guard defaults to abstain for unusable required fields.
-    return null;
+    throw error;
   }
 }
 
 async function acceptBaseline(decision: GuardDecision, client?: any): Promise<void> {
   const svc = client ?? createServiceClient();
   try {
-    await svc.from("evidence_field_baselines").upsert(
+    const { error } = await svc.from("evidence_field_baselines").upsert(
       {
         market: decision.market,
         symbol: decision.symbol.toUpperCase(),
@@ -75,7 +76,8 @@ async function acceptBaseline(decision: GuardDecision, client?: any): Promise<vo
       },
       { onConflict: "market,symbol" },
     );
-  } catch { /* baseline write is best-effort */ }
+    if (error) throw new Error(`baseline write failed: ${error.message}`);
+  } catch (error) { throw error; }
 }
 
 // ── append-only evidence ─────────────────────────────────────────────────────
@@ -89,7 +91,7 @@ async function recordEvent(
 ): Promise<void> {
   const svc = client ?? createServiceClient();
   try {
-    await svc.from("evidence_degradation_events").insert({
+    const { error } = await svc.from("evidence_degradation_events").insert({
       market: decision.market,
       symbol: decision.symbol.toUpperCase(),
       evidence_run_id: decision.evidenceRunId || null,
@@ -106,7 +108,8 @@ async function recordEvent(
       current_mask: decision.currentMask as any,
       transitions: decision.transitions as any,
     });
-  } catch { /* audit write must never block a run */ }
+    if (error) throw new Error(`degradation audit write failed: ${error.message}`);
+  } catch (error) { throw error; }
 }
 
 // ── per-run aggregation (ONE health event, not one per symbol) ───────────────
@@ -208,6 +211,22 @@ export interface GuardRunResult {
   mode: GuardMode;
 }
 
+/** Pure failure policy so the money-path invariant is directly testable. */
+export function guardRuntimeFailureResult(
+  input: Pick<GuardRunInput, "isHeld" | "proposedDirection">,
+  mode: GuardMode,
+): GuardRunResult {
+  const mustAbstain = mode === "enforce" && !input.isHeld && input.proposedDirection === "long";
+  return {
+    direction: mustAbstain ? "neutral" : input.proposedDirection,
+    note: mustAbstain ? "new long withheld: evidence guard could not complete safely" : "",
+    applied: mustAbstain,
+    wouldAbstain: mode === "measure_only" && !input.isHeld && input.proposedDirection === "long",
+    decision: null,
+    mode,
+  };
+}
+
 /**
  * Evaluate one symbol and (in `enforce` mode only) apply the abstain.
  *
@@ -265,8 +284,17 @@ export async function runDegradationGuard(input: GuardRunInput): Promise<GuardRu
       decision,
       mode,
     };
-  } catch {
-    return { direction: input.proposedDirection, note: "", applied: false, wouldAbstain: false, decision: null, mode };
+  } catch (error) {
+    await reportIssue({
+      issueKey: `evidence-degradation-runtime:${input.market}:${input.runKey}`,
+      severity: mode === "enforce" ? "critical" : "warn",
+      category: "data",
+      title: `${input.market.toUpperCase()} evidence guard runtime failure`,
+      detail: `The degradation guard could not complete for ${input.symbol.toUpperCase()}. ` +
+        `${mode === "enforce" ? "New long entries fail closed; held-position exits and short directions remain available." : "Measure-only mode left directions unchanged."} ` +
+        `Cause: ${error instanceof Error ? error.message : "unknown guard error"}`,
+    }, input.client).catch(() => {});
+    return guardRuntimeFailureResult(input, mode);
   }
 }
 

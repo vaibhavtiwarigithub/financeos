@@ -67,6 +67,7 @@ export async function persistEvaluation(opts: PersistOptions): Promise<string> {
       requires_owner_review: evaluation.requiresOwnerReview.map((d) => ({
         symbol: d.symbol, cause: d.cause, note: d.note,
       })),
+      required_intents: gatedIntents(cohort.market),
       schema_failures: evaluation.counts.hardSemanticFailures,
       score_delta: Object.fromEntries(evaluation.deltas.map((d) => [d.symbol, d.scoreDelta])),
       eligibility_flips: evaluation.counts.newlyEligible + evaluation.counts.newlyIneligible,
@@ -77,7 +78,9 @@ export async function persistEvaluation(opts: PersistOptions): Promise<string> {
       outage_drills: opts.outageDrills ?? null,
       passed: evaluation.passed,
       reason: evaluation.passed
-        ? "all activation gates satisfied"
+        ? (evaluation.requiresOwnerReview.length > 0
+          ? "machine gates passed; owner review required before activation"
+          : "all machine gates satisfied")
         : evaluation.failures.map((f) => `${f.code}${f.symbol ? `:${f.symbol}` : ""}`).join("; "),
       expires_at: new Date(Date.now() + ttl * 3600_000).toISOString(),
     })
