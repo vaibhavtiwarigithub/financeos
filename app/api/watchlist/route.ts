@@ -25,18 +25,25 @@ export async function GET(req: NextRequest) {
   const svc = createServiceClient();
   const now = new Date().toISOString();
   // ?market=us|india scopes the list to the global market switcher (lib/market-context.tsx).
-  // "us" also includes Global/Crypto rows (not India-specific); "india" shows only India rows.
-  // watchlist.market defaults to 'US' (migration 001), so rows written before this filter
-  // existed are unaffected — they simply appear under the US view, which matches prior
-  // (unfiltered) behavior for every US user.
+  // Values are LOWERCASE 'us'/'india' — the convention POST writes and every agent
+  // queries. This filter used to read capitalized 'US'/'India'/'Global'/'Crypto' while
+  // POST wrote lowercase, so the US view showed only the handful of rows that inherited
+  // the old 'US' column default and the India view was always empty. Migration
+  // 20260716202749 backfilled every row to lowercase, set the default to 'us', and
+  // re-added the CHECK constraint that enforces this two-value convention.
+  //
+  // "india" = India rows only. "us" = every non-India row, so a row that somehow lands
+  // outside the convention still surfaces somewhere rather than silently vanishing from
+  // both views — which is exactly how this bug stayed invisible. (The legacy
+  // 'Global'/'Crypto' values had zero rows and are no longer writable.)
   const market = req.nextUrl.searchParams.get("market");
   let q = svc
     .from("watchlist")
     .select("id, symbol, source, theme, reason, notes, auto_added, expires_at, created_at, research_enabled, alert_on_signal, alert_on_earnings, company_name, market")
     .or(`expires_at.is.null,expires_at.gt.${now}`)
     .order("created_at", { ascending: false });
-  if (market === "india") q = q.eq("market", "India");
-  else if (market === "us") q = q.in("market", ["US", "Global", "Crypto"]);
+  if (market === "india") q = q.eq("market", "india");
+  else if (market === "us") q = q.neq("market", "india");
   const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

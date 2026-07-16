@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { useMarket } from "@/lib/market-context";
+import { useMarket, CURRENCY } from "@/lib/market-context";
 
 const T = {
   card: "#1A1D27", border: "#252836", text: "#ECEDEF", textSub: "#9B9EA8",
@@ -312,7 +312,7 @@ export default function WatchlistPanel() {
 
           {q ? (
             <div style={{ textAlign: "right", marginRight: "4px" }}>
-              <div style={{ fontSize: "12px", fontWeight: 600, color: T.text }}>${q.price.toFixed(2)}</div>
+              <div style={{ fontSize: "12px", fontWeight: 600, color: T.text }}>{CURRENCY[market]}{q.price.toFixed(2)}</div>
               <div style={{ fontSize: "10px", color: q.changePct >= 0 ? T.green : T.red, fontWeight: 600 }}>
                 {q.changePct >= 0 ? "+" : ""}{q.changePct.toFixed(2)}%
               </div>
