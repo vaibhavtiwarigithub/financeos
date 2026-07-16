@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
-import { useMarket } from "@/lib/market-context";
+import { useMarket, CURRENCY } from "@/lib/market-context";
 
 const WATCHLIST = ["AAPL", "NVDA", "TSLA", "MSFT", "META", "GOOGL", "AMZN", "SPY"];
 
@@ -91,6 +91,7 @@ function DaysChip({ days }: { days: number }) {
 export default function CalendarPage() {
   const { market } = useMarket();
   const isIndia = market === "india";
+  const cur = CURRENCY[market] ?? "$";
   const earningsEndpoint = isIndia ? "/api/calendar/earnings-india" : "/api/calendar/earnings";
 
   const [earnings, setEarnings] = useState<EarningsEvent[]>([]);
@@ -215,8 +216,10 @@ export default function CalendarPage() {
                       <div style={{ fontSize: "13px", fontWeight: 500 }}>{e.name || e.symbol}</div>
                       <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>
                         {timingLabel && <span>{timingLabel} · </span>}
-                        Est. EPS: <span style={{ color: "#9CA3AF" }}>{e.epsEstimate ? `$${e.epsEstimate}` : "—"}</span>
-                        {e.epsActual && <span> · Actual: <span style={{ color: "#34D399" }}>${e.epsActual}</span></span>}
+                        {/* Earnings come from the market-specific endpoint above, so
+                            India EPS is a ₹ figure — it must not render with a "$". */}
+                        Est. EPS: <span style={{ color: "#9CA3AF" }}>{e.epsEstimate ? `${cur}${e.epsEstimate}` : "—"}</span>
+                        {e.epsActual && <span> · Actual: <span style={{ color: "#34D399" }}>{cur}{e.epsActual}</span></span>}
                       </div>
                     </div>
                     <div style={{ textAlign: "right", flexShrink: 0 }}>

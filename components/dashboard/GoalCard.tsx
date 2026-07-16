@@ -1,5 +1,6 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useMarket, MARKET_LABEL } from "@/lib/market-context";
 
 const T = {
   card: "#1A1D27", border: "#252836", surface: "#13151C",
@@ -19,16 +20,29 @@ type GoalResp = {
 // Goal tracker — a MEASURED dashboard only. Never read by any agent route
 // (see Decision 34: return targets are never agent parameters).
 export default function GoalCard() {
+  // Goals are per-market (trading_goals.market; /api/goals reads+writes both).
+  // This card used to hardcode market=us, so the India switch still showed —
+  // and let you overwrite — the US goal.
+  const { market } = useMarket();
   const [data, setData] = useState<GoalResp | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [targetPct, setTargetPct] = useState(10);
   const [horizonDays, setHorizonDays] = useState(30);
   const [saving, setSaving] = useState(false);
 
-  function load() {
-    fetch("/api/goals?market=us").then(r => r.json()).then(setData).catch(() => {});
-  }
-  useEffect(() => { load(); }, []);
+  const load = useCallback(() => {
+    fetch(`/api/goals?market=${market}`).then(r => r.json()).then(setData).catch(() => {});
+  }, [market]);
+
+  // Drop the previous market's goal before refetching — otherwise the US card
+  // lingers under India until the new response lands. No goal for this market
+  // yet ⇒ the API returns { goal: null } and the create form below is the
+  // honest empty state.
+  useEffect(() => {
+    setData(null);
+    setShowForm(false);
+    load();
+  }, [market, load]);
 
   async function setGoal() {
     setSaving(true);
@@ -36,7 +50,7 @@ export default function GoalCard() {
       await fetch("/api/goals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ market: "us", target_return_pct: targetPct, horizon_days: horizonDays }),
+        body: JSON.stringify({ market, target_return_pct: targetPct, horizon_days: horizonDays }),
       });
       setShowForm(false);
       load();
@@ -48,7 +62,14 @@ export default function GoalCard() {
   if (!data.goal || showForm) {
     return (
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
-        <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "10px" }}>Goal</div>
+        <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "10px" }}>
+          Goal · {MARKET_LABEL[market]}
+        </div>
+        {!data.goal && !showForm && (
+          <div style={{ fontSize: "12px", color: T.textSub, marginBottom: "10px" }}>
+            No goal set for this market yet — set one below. Goals are tracked per market and never shared across US and India.
+          </div>
+        )}
         <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" as const }}>
           <label style={{ fontSize: "12px", color: T.textSub }}>Target</label>
           <input type="number" value={targetPct} min={1} max={500} onChange={e => setTargetPct(parseFloat(e.target.value) || 0)}
@@ -79,7 +100,7 @@ export default function GoalCard() {
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
         <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase" as const }}>
-          Goal · {target}% in {g.horizon_days}d
+          Goal · {MARKET_LABEL[market]} · {target}% in {g.horizon_days}d
         </div>
         <button onClick={() => setShowForm(true)} style={{ background: "transparent", border: "none", color: T.textSub, fontSize: "11px", cursor: "pointer", textDecoration: "underline" }}>Change</button>
       </div>

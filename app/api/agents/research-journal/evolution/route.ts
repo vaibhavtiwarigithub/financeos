@@ -63,7 +63,14 @@ export async function GET(req: NextRequest) {
   };
 
   const [{ data: learnerRuns }, { data: featureHistory }, { data: calibration }, { data: shadowDecisions }] = await Promise.all([
-    svc.from("learner_runs").select("run_date, weight_mutations, weights_changed, win_rate_snapshot, hypotheses, created_at").gte("created_at", since).order("created_at", { ascending: true }),
+    // Per-market: each market's learner runs on its own cohort, so an India weight
+    // mutation must not appear in the US evolution trend. Column is NOT NULL
+    // DEFAULT 'us', so plain equality is a complete filter.
+    svc.from("learner_runs").select("run_date, weight_mutations, weights_changed, win_rate_snapshot, hypotheses, created_at").eq("market", market).gte("created_at", since).order("created_at", { ascending: true }),
+    // INTENTIONALLY GLOBAL — do not "fix" this to filter by market.
+    // `feature_registry_history` has NO market column: the feature registry is one
+    // shared set of features, and promoting/retiring a feature applies to every
+    // market at once. There is nothing to scope this by.
     svc.from("feature_registry_history").select("*").gte("created_at", since).order("created_at", { ascending: true }),
     svc.from("model_artifacts").select("kind, calibration, n_observations, fitted_at").eq("market", market).gte("fitted_at", since).order("fitted_at", { ascending: true }),
     svc.from("shadow_decisions").select("would_enter, score, ts").eq("market", market).gte("ts", since),

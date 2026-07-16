@@ -3,6 +3,7 @@ import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 import PageHeader from "@/components/dashboard/PageHeader";
+import { fmtMoney, fmtMoneyAbbrev, type Mkt } from "@/lib/format-money";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip as RechartsTooltip,
@@ -15,42 +16,50 @@ const T = {
   greenBg: "#052E16", redBg: "#3B0000", amberBg: "#2D1B00",
 };
 
-function fmt(n: number) { return (n >= 0 ? "+" : "") + "$" + Math.abs(n).toFixed(2); }
+// Signed money in the given market's own currency/grouping ($1,234.56 / ₹1,23,456.78).
+function fmtSigned(n: number, market: Mkt) { return (n >= 0 ? "+" : "-") + fmtMoney(Math.abs(n), market); }
 function fmtPct(n: number) { return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
 function pnlColor(n: number) { return n >= 0 ? T.green : T.red; }
+
+// Paper starting NAV per market — mirrors SEED in /api/agents/performance and
+// migration 057 (US $10k pool, India ₹10,00,000 pool). Never share a baseline.
+const SEED: Record<Mkt, number> = { us: 10_000, india: 1_000_000 };
 
 // ── Paper Performance Panel ──────────────────────────────────────────────────
 
 interface PerfData {
+  market: Mkt;
+  seed: number;
+  benchLabel: string;
   navHistory: { date: string; nav: number }[];
   trades: any[];
   winRate: number;
   avgReturn: number;
   totalPnl: number;
-  spyReturn: number;
+  benchReturn: number;
   paperReturn: number;
   closedCount: number;
-  gates: { minTrades: boolean; winRate: boolean; positiveReturn: boolean; beatsSpy: boolean };
+  gates: { minTrades: boolean; winRate: boolean; positiveReturn: boolean; beatsBench: boolean };
   allGatesPassed: boolean;
   nav: number;
   cash: number;
 }
 
-function NavChartTooltip({ active, payload, label }: any) {
+function NavChartTooltip({ active, payload, label, market }: any) {
   if (!active || !payload?.length) return null;
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", fontSize: "12px" }}>
       <div style={{ color: T.muted, marginBottom: "6px" }}>{label}</div>
       {payload.map((p: any) => (
         <div key={p.name} style={{ color: p.color, fontWeight: 600, marginBottom: "2px" }}>
-          {p.name}: ${Number(p.value).toFixed(0)}
+          {p.name}: {fmtMoney(Number(p.value), market, 0)}
         </div>
       ))}
     </div>
   );
 }
 
-function PaperPerformancePanel({ strategy }: { strategy: any }) {
+function PaperPerformancePanel({ strategy, market }: { strategy: any; market: Mkt }) {
   const [perf, setPerf] = useState<PerfData | null>(null);
   const [loading, setLoading] = useState(true);
   const [snapshotting, setSnapshotting] = useState(false);
@@ -58,10 +67,12 @@ function PaperPerformancePanel({ strategy }: { strategy: any }) {
   const [enablingLive, setEnablingLive] = useState(false);
   const router = useRouter();
 
+  // ?market= scopes the whole panel to this book. Without it the route defaults
+  // to US and the ₹ view showed the $ track record.
   async function loadPerf() {
     setLoading(true);
     try {
-      const res = await fetch("/api/agents/performance");
+      const res = await fetch(`/api/agents/performance?market=${market}`, { cache: "no-store" });
       const data = await res.json();
       setPerf(data);
     } catch {
@@ -70,7 +81,7 @@ function PaperPerformancePanel({ strategy }: { strategy: any }) {
     setLoading(false);
   }
 
-  useEffect(() => { loadPerf(); }, []);
+  useEffect(() => { loadPerf(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [market]);
 
   async function snapshotNav() {
     setSnapshotting(true);
@@ -83,7 +94,9 @@ function PaperPerformancePanel({ strategy }: { strategy: any }) {
       });
       const data = await res.json();
       if (data.snapshotted) {
-        setSnapshotMsg(`Snapshotted NAV $${Number(data.nav).toFixed(0)} for ${data.date}`);
+        // POST is the US $ book only (paper_nav_history has no market column) —
+        // the button is hidden under India, so "us" is always right here.
+        setSnapshotMsg(`Snapshotted NAV ${fmtMoney(Number(data.nav), "us", 0)} for ${data.date}`);
         await loadPerf();
       } else {
         setSnapshotMsg(data.error ?? "Snapshot failed");
@@ -118,30 +131,36 @@ function PaperPerformancePanel({ strategy }: { strategy: any }) {
 
   if (!perf) return null;
 
-  const { navHistory, winRate, avgReturn, totalPnl, spyReturn, paperReturn, closedCount, gates, allGatesPassed } = perf;
+  const { navHistory, winRate, avgReturn, totalPnl, benchReturn, paperReturn, closedCount, gates, allGatesPassed } = perf;
   const tradingActive = strategy?.trading_enabled === true;
+  // Benchmark and baseline come from the route so they always match the market it
+  // actually queried (US = SPY/$10k, India = NIFTY 50/₹10,00,000).
+  const benchLabel = perf.benchLabel ?? (market === "india" ? "NIFTY 50" : "SPY");
+  const seed = perf.seed ?? SEED[market];
+  // Live order routing is Robinhood-US only — there is no India broker path, so
+  // the ₹ book's gates are a track record, not an unlock.
+  const isIndia = market === "india";
 
-  // Build chart data: paper NAV + SPY rescaled to $10,000 start
-  const firstNav = navHistory.length > 0 ? navHistory[0].nav : 10000;
-  const spyBase = firstNav; // SPY rescaled to same start
-  // We only have nav history here — SPY line uses the spyReturn we have (linear interpolation as proxy)
-  // Build a two-line dataset: paper line from navHistory, SPY estimated line
+  // Build chart data: paper NAV + benchmark rescaled to the same starting NAV
+  const firstNav = navHistory.length > 0 ? navHistory[0].nav : seed;
+  const benchBase = firstNav; // benchmark rescaled to same start
+  // We only have nav history here — the benchmark line uses the cumulative
+  // benchReturn we have (linear interpolation as a proxy across the window).
   const chartData = navHistory.map((row, i) => {
-    // SPY line: linear interpolation from base to final spyReturn over the history window
     const progress = navHistory.length > 1 ? i / (navHistory.length - 1) : 0;
-    const spyVal = spyBase * (1 + (spyReturn / 100) * progress);
+    const benchVal = benchBase * (1 + (benchReturn / 100) * progress);
     return {
       date: row.date,
       paper: Number(row.nav),
-      spy: parseFloat(spyVal.toFixed(2)),
+      bench: parseFloat(benchVal.toFixed(2)),
     };
   });
 
   const gateRows: { label: string; pass: boolean; detail: string }[] = [
     { label: "10+ closed paper trades", pass: gates.minTrades, detail: `(${closedCount} so far)` },
     { label: "Win rate ≥ 55%", pass: gates.winRate, detail: `(currently ${winRate.toFixed(1)}%)` },
-    { label: "Net positive return", pass: gates.positiveReturn, detail: `(${paperReturn >= 0 ? "+" : ""}${paperReturn.toFixed(2)}%)` },
-    { label: "Outperforming SPY", pass: gates.beatsSpy, detail: `(paper ${paperReturn >= 0 ? "+" : ""}${paperReturn.toFixed(2)}% vs SPY ${spyReturn >= 0 ? "+" : ""}${spyReturn.toFixed(2)}%)` },
+    { label: "Net positive return", pass: gates.positiveReturn, detail: `(${paperReturn >= 0 ? "+" : ""}${paperReturn.toFixed(2)}% vs ${fmtMoney(seed, market, 0)} start)` },
+    { label: `Outperforming ${benchLabel}`, pass: gates.beatsBench, detail: `(paper ${paperReturn >= 0 ? "+" : ""}${paperReturn.toFixed(2)}% vs ${benchLabel} ${benchReturn >= 0 ? "+" : ""}${benchReturn.toFixed(2)}%)` },
   ];
 
   return (
@@ -150,18 +169,27 @@ function PaperPerformancePanel({ strategy }: { strategy: any }) {
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
         <div>
-          <div style={{ fontSize: "14px", fontWeight: 700, color: T.text }}>Agent Performance · Paper Track Record</div>
+          <div style={{ fontSize: "14px", fontWeight: 700, color: T.text }}>
+            Agent Performance · {isIndia ? "India (₹)" : "US ($)"} Paper Track Record
+          </div>
           <div style={{ fontSize: "12px", color: T.muted, marginTop: "3px" }}>
-            {closedCount} closed trade{closedCount !== 1 ? "s" : ""} · gates must pass before live trading unlocks
+            {closedCount} closed trade{closedCount !== 1 ? "s" : ""} · benchmarked vs {benchLabel} · {fmtMoney(seed, market, 0)} start
+            {isIndia ? " · read-only track record (live routing is US only)" : " · gates must pass before live trading unlocks"}
           </div>
         </div>
-        <button
-          onClick={snapshotNav}
-          disabled={snapshotting}
-          style={{ padding: "8px 16px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.textSub, fontSize: "12px", fontWeight: 600, cursor: snapshotting ? "not-allowed" : "pointer" }}
-        >
-          {snapshotting ? "Snapshotting…" : "Snapshot NAV"}
-        </button>
+        {/* Snapshot NAV writes paper_nav_history, which has NO market column —
+            snapshotting the ₹ book there would overwrite the $ series for the
+            same date. The India ₹ NAV series is recorded per-market by the
+            paper-trade cron instead, so the button is US-only. */}
+        {!isIndia && (
+          <button
+            onClick={snapshotNav}
+            disabled={snapshotting}
+            style={{ padding: "8px 16px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.textSub, fontSize: "12px", fontWeight: 600, cursor: snapshotting ? "not-allowed" : "pointer" }}
+          >
+            {snapshotting ? "Snapshotting…" : "Snapshot NAV"}
+          </button>
+        )}
       </div>
 
       {snapshotMsg && (
@@ -173,7 +201,9 @@ function PaperPerformancePanel({ strategy }: { strategy: any }) {
       {/* NAV Chart */}
       {chartData.length < 2 ? (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "40px", textAlign: "center", color: T.muted, fontSize: "13px", marginBottom: "20px" }}>
-          Run paper trades to build history — snapshot NAV daily after each PaperTrader run
+          {isIndia
+            ? "No ₹ NAV history yet — the India paper-trade cron records one NAV point per market session."
+            : "Run paper trades to build history — snapshot NAV daily after each PaperTrader run"}
         </div>
       ) : (
         <div style={{ marginBottom: "20px" }}>
@@ -195,17 +225,17 @@ function PaperPerformancePanel({ strategy }: { strategy: any }) {
                 tick={{ fontSize: 10, fill: T.muted }}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={(v: number) => "$" + v.toFixed(0)}
+                tickFormatter={(v: number) => fmtMoneyAbbrev(v, market)}
                 width={56}
               />
-              <RechartsTooltip content={<NavChartTooltip />} />
+              <RechartsTooltip content={<NavChartTooltip market={market} />} />
               <Line type="monotone" dataKey="paper" name="Paper NAV" stroke={T.accent} strokeWidth={2.5} dot={false} />
-              <Line type="monotone" dataKey="spy" name="SPY (rescaled)" stroke={T.muted} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />
+              <Line type="monotone" dataKey="bench" name={`${benchLabel} (rescaled)`} stroke={T.muted} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />
             </LineChart>
           </ResponsiveContainer>
           <div style={{ display: "flex", gap: "16px", justifyContent: "flex-end", fontSize: "11px", color: T.muted, marginTop: "6px" }}>
             <span><span style={{ color: T.accent, fontWeight: 700 }}>—</span> Paper NAV</span>
-            <span><span style={{ color: T.muted }}>- -</span> SPY baseline</span>
+            <span><span style={{ color: T.muted }}>- -</span> {benchLabel} baseline</span>
           </div>
         </div>
       )}
@@ -225,13 +255,13 @@ function PaperPerformancePanel({ strategy }: { strategy: any }) {
           },
           {
             label: "Total P&L",
-            value: (totalPnl >= 0 ? "+$" : "-$") + Math.abs(totalPnl).toFixed(0),
+            value: (totalPnl >= 0 ? "+" : "-") + fmtMoney(Math.abs(totalPnl), market, 0),
             color: totalPnl >= 0 ? T.green : T.red,
           },
           {
-            label: "vs SPY",
-            value: (paperReturn - spyReturn >= 0 ? "+" : "") + (paperReturn - spyReturn).toFixed(2) + "%",
-            color: paperReturn > spyReturn ? T.green : T.red,
+            label: `vs ${benchLabel}`,
+            value: (paperReturn - benchReturn >= 0 ? "+" : "") + (paperReturn - benchReturn).toFixed(2) + "%",
+            color: paperReturn > benchReturn ? T.green : T.red,
           },
         ].map(s => (
           <div key={s.label} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 16px" }}>
@@ -244,7 +274,7 @@ function PaperPerformancePanel({ strategy }: { strategy: any }) {
       {/* Gate checklist */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "16px", marginBottom: "20px" }}>
         <div style={{ fontSize: "12px", fontWeight: 600, color: T.textSub, marginBottom: "12px", textTransform: "uppercase", letterSpacing: "0.07em" }}>
-          Live Trading Gates
+          {isIndia ? "₹ Paper Track Record" : "Live Trading Gates"}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           {gateRows.map(g => (
@@ -257,8 +287,22 @@ function PaperPerformancePanel({ strategy }: { strategy: any }) {
         </div>
       </div>
 
-      {/* Enable Real Trading / Live badge */}
-      {tradingActive ? (
+      {/* Enable Real Trading / Live badge — US only. The live path is Robinhood
+          order routing, which has no India equivalent, and the toggle it writes
+          (strategy_config.trading_enabled) is the US book's switch. Under the ₹
+          view these gates are a track record, so say that instead of offering an
+          unlock that wouldn't route anything. */}
+      {isIndia ? (
+        <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "12px 18px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px" }}>
+          <span style={{ fontSize: "15px", lineHeight: 1.3 }}>🇮🇳</span>
+          <span style={{ color: T.muted, fontSize: "12px", lineHeight: 1.6 }}>
+            These gates track the ₹ paper book&apos;s record only — they don&apos;t unlock an
+            India live path. Real order routing runs through Robinhood (US) and has no
+            India equivalent yet, so there is nothing to enable here. Switch to the US
+            view to manage live trading.
+          </span>
+        </div>
+      ) : tradingActive ? (
         <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 18px", background: "#052E16", border: `1px solid ${T.green}40`, borderRadius: "10px" }}>
           <span style={{ fontSize: "16px" }}>⚡</span>
           <span style={{ color: T.green, fontWeight: 700, fontSize: "14px" }}>LIVE TRADING ACTIVE</span>
@@ -299,8 +343,12 @@ function ScoreBar({ score }: { score: number }) {
   );
 }
 
-export default function TradingPage({ pendingSignals, tradeLog, strategy, portfolio, queue }: {
+export default function TradingPage({ pendingSignals, tradeLog, strategy, portfolio, queue, market }: {
   pendingSignals: any[]; tradeLog: any[]; strategy: any; portfolio: any; queue: any[];
+  // Resolved from the `mkt` cookie by the server component. Every row here is
+  // already scoped to this market and every amount renders in its currency —
+  // US ($) and India (₹) NAV are never blended.
+  market: Mkt;
 }) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
@@ -311,6 +359,11 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   const [queueItems, setQueueItems] = useState<any[]>(queue);
   const [actionLog, setActionLog] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
+
+  // The server refetches `queue` per market when the switcher calls
+  // router.refresh(). Without resyncing, this optimistic state would keep
+  // rendering (and counting) the previous market's rows after a switch.
+  useEffect(() => { setQueueItems(queue); }, [queue]);
 
   // Approve/reject go through the canonical trade_proposals route (/api/agents/trader).
   async function approveTradeItem(tradeId: string) {
@@ -337,9 +390,13 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
     router.refresh();
   }
 
-  const nav = portfolio?.nav ?? 10000;
-  const cash = portfolio?.cash_balance ?? 10000;
-  const pnl = nav - 10000;
+  // Per-market seed: US $10k pool, India ₹10,00,000 pool (migration 057). A
+  // hardcoded 10000 baseline would render the ₹ book as a ~+9,800% return.
+  const isIndia = market === "india";
+  const seed = SEED[market];
+  const nav = portfolio?.nav ?? seed;
+  const cash = portfolio?.cash_balance ?? seed;
+  const pnl = nav - seed;
   const longSignals = pendingSignals.filter(s => s.direction === "long" && s.analyst_score >= 60);
 
   async function runPositionMonitor() {
@@ -373,11 +430,23 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
       } else if (data.error) {
         setRunLog(["Error: " + data.error]);
       } else {
+        // PaperTrader runs every active market in one pass: each filled row
+        // carries its own `market`, and `data.nav` is a per-market map
+        // ({ us: 10012, india: 988960 }) — NOT a number. Render each in its own
+        // currency and never sum them.
         const filled = data.trades ?? [];
+        const navByMarket: Record<string, number> = data.nav ?? {};
         setRunLog([
           `Filled ${data.filled} trade(s), skipped ${data.skipped ?? 0}.`,
-          ...filled.map((t: any) => `${t.symbol}: ${t.qty} shares @ $${t.fillPrice?.toFixed(2)} (${t.priceSource})`),
-          `NAV: $${data.nav?.toFixed(0)}`,
+          ...filled.map((t: any) => {
+            const m: Mkt = t.market === "india" ? "india" : "us";
+            const price = t.fillPrice ?? t.price;
+            const priceStr = typeof price === "number" ? fmtMoney(price, m) : "—";
+            return `[${m.toUpperCase()}] ${t.symbol}: ${t.qty} shares @ ${priceStr}${t.priceSource ? ` (${t.priceSource})` : ""}`;
+          }),
+          ...Object.entries(navByMarket).map(
+            ([m, n]) => `NAV (${m.toUpperCase()}): ${fmtMoney(Number(n), m === "india" ? "india" : "us", 0)}`
+          ),
         ]);
         router.refresh();
       }
@@ -392,29 +461,29 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
 
       <PageHeader
         title="Trading"
-        subtitle="Paper trading · agent executes signals automatically"
+        subtitle={`${isIndia ? "🇮🇳 India (₹)" : "🇺🇸 US ($)"} paper book · agent executes signals automatically`}
         cadence="daily"
-        whatItDoes="PaperTrader runs daily after ResearchAgent — buys if signal score ≥60, sells if score drops. All trades are paper (simulated) on the agentic Robinhood account. Real trading requires explicit enable."
+        whatItDoes={`PaperTrader runs daily after ResearchAgent — buys if signal score ≥60, sells if score drops. All trades are paper (simulated). This page shows the ${isIndia ? "India (₹)" : "US ($)"} book only; switch with the US/India toggle in the header. The two pools have separate cash, NAV and baselines (${fmtMoney(SEED.us, "us", 0)} US, ${fmtMoney(SEED.india, "india", 0)} India) and are never summed together.`}
         whatToLookFor={[
           "Score ≥60 = agent may enter. Score <40 on existing position = agent may exit.",
           "P&L is paper — no real money moves until Live Trading is explicitly enabled.",
-          "Run PaperTrader manually to force a cycle right now with current signals.",
-          "Live Trading toggle is a kill switch — off by default, enable only when ready.",
+          "Run PaperTrader manually to force a cycle right now with current signals. It runs every active market in one pass, so the run log reports each market's fills and NAV separately.",
+          "Live Trading toggle is a kill switch — off by default, enable only when ready. Live order routing is Robinhood (US) only.",
         ]}
         actions={[{ label: running ? "Running…" : "Run PaperTrader", onClick: runPaperTrade, primary: true }]}
       />
       <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 32px" }}>
 
       {/* Paper Performance Panel */}
-      <PaperPerformancePanel strategy={strategy} />
+      <PaperPerformancePanel strategy={strategy} market={market} />
 
-      {/* Stats */}
+      {/* Stats — this market's pool only, in this market's currency */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "16px", marginBottom: "20px" }}>
         {[
-          { label: "Paper NAV", value: "$" + nav.toFixed(0), sub: pnl >= 0 ? "+" + pnl.toFixed(0) : "-" + Math.abs(pnl).toFixed(0), color: pnlColor(pnl) },
-          { label: "Cash Available", value: "$" + cash.toFixed(0), sub: ((cash / nav) * 100).toFixed(1) + "% liquid" },
+          { label: "Paper NAV", value: fmtMoney(nav, market, 0), sub: fmtSigned(pnl, market) + ` vs ${fmtMoney(seed, market, 0)} start`, color: pnlColor(pnl) },
+          { label: "Cash Available", value: fmtMoney(cash, market, 0), sub: nav > 0 ? ((cash / nav) * 100).toFixed(1) + "% liquid" : "NAV unavailable" },
           { label: "Pending Signals", value: String(longSignals.length), sub: "score ≥ 60, direction = long", color: longSignals.length > 0 ? T.amber : T.muted },
-          { label: "Mode", value: strategy?.mode ?? "paper", sub: "long-only, $10k virtual" },
+          { label: "Mode", value: strategy?.mode ?? "paper", sub: `long-only, ${fmtMoney(seed, market, 0)} virtual` },
         ].map(s => (
           <div key={s.label} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px" }}>
             <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>{s.label}</div>
@@ -461,13 +530,24 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
       <div style={{ display: "flex", gap: "4px", marginBottom: "16px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>
         {(["queue", "signals", "history"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === t ? T.accent : T.card, color: tab === t ? "#fff" : T.muted, textTransform: "capitalize", flexShrink: 0, whiteSpace: "nowrap" }}>
-            {t === "queue" ? `Trade Queue (${queueItems.length})` : t === "signals" ? `Paper Signals (${pendingSignals.length})` : `Paper History (${tradeLog.length})`}
+            {t === "queue" ? (isIndia ? "Trade Queue (US only)" : `Trade Queue (${queueItems.length})`) : t === "signals" ? `Paper Signals (${pendingSignals.length})` : `Paper History (${tradeLog.length})`}
           </button>
         ))}
       </div>
 
-      {/* Trade queue — real Robinhood approval flow */}
-      {tab === "queue" && (
+      {/* Trade queue — real Robinhood approval flow. US only: there is no India
+          order routing, so under the ₹ view we show a note rather than leaking
+          US rows into it (the server doesn't even fetch them). Same treatment as
+          PortfolioPage's Trade Queue tab. */}
+      {tab === "queue" && isIndia && (
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "32px", textAlign: "center", color: T.muted, fontSize: "13px", lineHeight: 1.7 }}>
+          Trade Queue is US only — Robinhood order routing isn&apos;t available for the
+          India (₹) pool, so there are no orders to approve here.
+          <br />
+          India signals still fill into the ₹ paper book automatically; see Paper Signals and Paper History.
+        </div>
+      )}
+      {tab === "queue" && !isIndia && (
         <div>
           {actionLog && (
             <div style={{ background: T.surface, border: `1px solid ${actionLog.ok ? T.green : T.red}`, borderRadius: "10px", padding: "12px 16px", marginBottom: "16px", fontSize: "13px", color: actionLog.ok ? T.green : T.red }}>
@@ -493,7 +573,8 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
                 </div>
                 <div>
                   <div style={{ fontSize: "10px", color: T.muted, marginBottom: "3px" }}>LIMIT PRICE</div>
-                  <span style={{ fontSize: "14px", fontWeight: 600 }}>${q.limit_price?.toFixed(2)}</span>
+                  {/* Queue is US-only, so $ is correct here by construction. */}
+                  <span style={{ fontSize: "14px", fontWeight: 600 }}>{q.limit_price != null ? fmtMoney(Number(q.limit_price), "us") : "—"}</span>
                 </div>
                 <div>
                   <div style={{ fontSize: "10px", color: T.muted, marginBottom: "3px" }}>SCORE / STATUS</div>
@@ -592,8 +673,8 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
                       </span>
                     </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{t.qty}</td>
-                    <td style={{ padding: "10px 12px 10px 0" }}>${t.fill_price?.toFixed(2)}</td>
-                    <td style={{ padding: "10px 12px 10px 0" }}>${(t.qty * t.fill_price)?.toFixed(0)}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{t.fill_price != null ? fmtMoney(Number(t.fill_price), market) : "—"}</td>
+                    <td style={{ padding: "10px 12px 10px 0" }}>{t.fill_price != null ? fmtMoney(t.qty * t.fill_price, market, 0) : "—"}</td>
                     <td style={{ padding: "10px 12px 10px 0", color: T.accent }}>{t.analyst_score ?? "—"}</td>
                     <td style={{ padding: "10px 12px 10px 0" }}>
                       {t.outcome

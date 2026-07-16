@@ -6,7 +6,7 @@ import GoalCard from "@/components/dashboard/GoalCard";
 import AgentCalendar from "@/components/dashboard/AgentCalendar";
 import SystemHealthCard from "@/components/dashboard/SystemHealthCard";
 import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
-import { fmtMoneyAbbrev } from "@/lib/format-money";
+import { fmtMoneyAbbrev, fmtMoney as fmtMoneyFull } from "@/lib/format-money";
 import type { TradingMandate } from "@/lib/trading-mandate";
 
 const T = {
@@ -164,6 +164,9 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
   // route through the shared abbrev helper: India gives ₹8.47L / ₹2.30Cr with the
   // lakh/crore convention; US is unchanged ($9.9k / $1.2M).
   const fmtMoney = (n: number) => fmtMoneyAbbrev(n, mkt);
+  // Recent Activity shows exact per-trade fills / realized P&L, not compact hero
+  // values — full grouping in the market's own convention ($9,979.65 / ₹8,47,199.50).
+  const fmtMoneyExact = (n: number) => fmtMoneyFull(n, mkt);
   const entryThreshold = tradingMandate.score_threshold;
   const holdDays = tradingMandate.target_hold_days;
   const livePolicyKnown = livePolicy != null;
@@ -666,14 +669,16 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
             const ts = safeDate(t.executed_at)?.getTime() ?? 0;
             const side = (t.order_side ?? "buy").toLowerCase();
             const isBuy = side === "buy";
-            const price = t.fill_price != null ? `$${Number(t.fill_price).toFixed(2)}` : "—";
+            // recentTrades is already scoped to `mkt` by page.tsx — so an India
+            // fill is a ₹ number and must not render with a "$".
+            const price = t.fill_price != null ? fmtMoneyExact(Number(t.fill_price)) : "—";
             const score = t.analyst_score ?? t.conviction;
             const detail = `Paper ${isBuy ? "BUY" : "SELL"} ${t.qty ?? "?"} share${t.qty !== 1 ? "s" : ""} ${t.symbol} @ ${price}${score != null ? ` · score ${score}` : ""}`;
             const why = isBuy
               ? `Agent bought under the score ≥${entryThreshold} mandate. The current target horizon is ${holdDays} market days; stops, targets, and fresh score exits are checked automatically.`
               : t.outcome === "win"
               ? `Sold for profit${t.pnl_pct != null ? ` (${t.pnl_pct >= 0 ? "+" : ""}${Number(t.pnl_pct).toFixed(1)}%)` : ""}. Position closed on SELL signal or 7-day rule.`
-              : `Closed position${t.realized_pnl != null ? ` — P&L: $${Number(t.realized_pnl).toFixed(2)}` : ""}.`;
+              : `Closed position${t.realized_pnl != null ? ` — P&L: ${fmtMoneyExact(Number(t.realized_pnl))}` : ""}.`;
             return {
               ts,
               icon: "◈",

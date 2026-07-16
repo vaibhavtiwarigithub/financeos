@@ -3,6 +3,8 @@ import { useState } from "react";
 import { lazy, Suspense } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 import PerformanceTruth from "@/components/dashboard/PerformanceTruth";
+import { fmtMoney, type Mkt } from "@/lib/format-money";
+import { navReturnPct, paperStartNav } from "@/lib/paper-nav";
 const LineChart = lazy(() => import("recharts").then(m => ({ default: m.LineChart })));
 import {
   ResponsiveContainer, LineChart as LC, Line, BarChart, Bar,
@@ -82,6 +84,7 @@ export default function LearningPage({
   weights,
   totalTrades,
   winRate,
+  market,
 }: {
   learningLog: WeightRow[];
   fullLog: LearningLogRow[];
@@ -89,6 +92,9 @@ export default function LearningPage({
   weights: WeightConfig | null;
   totalTrades: number;
   winRate: number;
+  /** Book being displayed. `performance`/`totalTrades`/`winRate` are already
+   *  scoped to it upstream — used here for the NAV seed and currency. */
+  market: Mkt;
 }) {
   const [tab, setTab] = useState<"accuracy" | "weights" | "equity">("accuracy");
 
@@ -100,10 +106,11 @@ export default function LearningPage({
     { signal: "Insider",     value: +(weights.insider_weight     * 100).toFixed(1) },
   ] : [];
 
+  // Return % is measured against THIS market's own paper seed ($10k / ₹10L).
   const equityCurve = performance.map(p => ({
     date: p.date.slice(5),
-    nav: p.nav,
-    return: +(((p.nav - 10000) / 10000) * 100).toFixed(2),
+    nav: fmtMoney(p.nav, market),
+    return: navReturnPct(p.nav, market),
   }));
 
   const accData = performance
@@ -386,9 +393,9 @@ export default function LearningPage({
 
       {/* Equity curve */}
       {tab === "equity" && (
-        <Card title="Paper Portfolio Equity Curve">
+        <Card title={`Paper Portfolio Equity Curve · ${market === "india" ? "India" : "US"} book vs ${fmtMoney(paperStartNav(market), market, 0)} seed`}>
           {equityCurve.length === 0
-            ? <Empty msg="Equity curve builds after first paper trades" />
+            ? <Empty msg={`No ${market === "india" ? "India" : "US"} paper performance yet — the curve builds after this book's first paper trades.`} />
             : (
               <ResponsiveContainer width="100%" height={280}>
                 <LC data={equityCurve} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>

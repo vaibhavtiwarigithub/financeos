@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
+import { CURRENCY, type Market } from "@/lib/market-context";
+import { fmtMoneyAbbrev } from "@/lib/format-money";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -29,8 +31,12 @@ interface FundamentalsData {
   error?: string;
 }
 
-function fmtMarketCap(v: number | null | undefined): string {
+// India market caps read in the lakh/crore convention via the shared helper
+// (₹2.30Cr), US keeps the familiar T/B/M scale. Either way the currency follows
+// the symbol's own market — a .NS name's numbers are ₹, never "$".
+function fmtMarketCap(v: number | null | undefined, market: Market): string {
   if (v == null) return "—";
+  if (market === "india") return fmtMoneyAbbrev(v, market);
   if (v >= 1e12) return `$${(v / 1e12).toFixed(2)}T`;
   if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
   if (v >= 1e6) return `$${(v / 1e6).toFixed(0)}M`;
@@ -79,7 +85,7 @@ function SkeletonBox() {
   );
 }
 
-function RangeBar({ low, high, current, target }: { low: number; high: number; current?: number; target?: number | null }) {
+function RangeBar({ low, high, current, target, cur }: { low: number; high: number; current?: number; target?: number | null; cur: string }) {
   const range = high - low;
   if (range <= 0) return null;
 
@@ -103,7 +109,7 @@ function RangeBar({ low, high, current, target }: { low: number; high: number; c
         <div style={{ position: "relative", marginBottom: "4px", height: "18px" }}>
           <div style={{ position: "absolute", left: `${targetPct}%`, transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <span style={{ fontSize: "9px", color: T.amber, whiteSpace: "nowrap", fontWeight: 700, maxWidth: "80px", overflow: "hidden", textOverflow: "ellipsis" }}>
-              Target ${target?.toFixed(2)}
+              Target {cur}{target?.toFixed(2)}
             </span>
             <span style={{ color: T.amber, fontSize: "10px", lineHeight: 1 }}>▼</span>
           </div>
@@ -141,17 +147,21 @@ function RangeBar({ low, high, current, target }: { low: number; high: number; c
 
       {/* Labels */}
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: "6px" }}>
-        <span style={{ fontSize: "11px", color: T.red, fontWeight: 600 }}>${low.toFixed(2)}</span>
+        <span style={{ fontSize: "11px", color: T.red, fontWeight: 600 }}>{cur}{low.toFixed(2)}</span>
         {current != null && (
-          <span style={{ fontSize: "11px", color: T.text, fontWeight: 700 }}>${current.toFixed(2)}</span>
+          <span style={{ fontSize: "11px", color: T.text, fontWeight: 700 }}>{cur}{current.toFixed(2)}</span>
         )}
-        <span style={{ fontSize: "11px", color: T.green, fontWeight: 600 }}>${high.toFixed(2)}</span>
+        <span style={{ fontSize: "11px", color: T.green, fontWeight: 600 }}>{cur}{high.toFixed(2)}</span>
       </div>
     </div>
   );
 }
 
-export default function SymbolFundamentals({ symbol, currentPrice }: { symbol: string; currentPrice?: number }) {
+// `market` comes from the symbol's own .NS/.BO suffix (resolved by the symbol
+// page), not the global switcher — a .NS name's fundamentals are ₹ regardless of
+// which market the user is currently browsing.
+export default function SymbolFundamentals({ symbol, currentPrice, market = "us" }: { symbol: string; currentPrice?: number; market?: Market }) {
+  const cur = CURRENCY[market] ?? "$";
   const [data, setData] = useState<FundamentalsData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -205,11 +215,11 @@ export default function SymbolFundamentals({ symbol, currentPrice }: { symbol: s
 
       {/* Fundamentals row */}
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-        <StatBox label="Market Cap" value={fmtMarketCap(data.marketCap)} />
+        <StatBox label="Market Cap" value={fmtMarketCap(data.marketCap, market)} />
         <StatBox label="P/E (TTM)" value={data.peRatio != null ? `${data.peRatio.toFixed(1)}x` : "—"} color={peColor} />
         <StatBox label="Fwd P/E" value={data.forwardPE != null ? `${data.forwardPE.toFixed(1)}x` : "—"} />
         <StatBox label="P/S" value={data.psRatio != null ? `${data.psRatio.toFixed(1)}x` : "—"} />
-        <StatBox label="EPS" value={data.eps != null ? `$${data.eps.toFixed(2)}` : "—"} color={epsColor} />
+        <StatBox label="EPS" value={data.eps != null ? `${cur}${data.eps.toFixed(2)}` : "—"} color={epsColor} />
         <StatBox label="Gross Margin" value={data.grossMargin != null ? `${data.grossMargin.toFixed(1)}%` : "—"} />
         <StatBox label="Div Yield" value={data.dividendYield != null ? `${data.dividendYield.toFixed(2)}%` : "—"} />
         <StatBox label="Beta" value={data.beta != null ? data.beta.toFixed(2) : "—"} color={betaColor} />
@@ -223,10 +233,11 @@ export default function SymbolFundamentals({ symbol, currentPrice }: { symbol: s
             high={data.week52High}
             current={currentPrice}
             target={data.analystTarget}
+            cur={cur}
           />
         )}
         {data.analystTarget != null && (
-          <StatBox label="Analyst Target" value={`$${data.analystTarget.toFixed(2)}`} color={T.amber} />
+          <StatBox label="Analyst Target" value={`${cur}${data.analystTarget.toFixed(2)}`} color={T.amber} />
         )}
         {data.pbRatio != null && (
           <StatBox label="P/B" value={`${data.pbRatio.toFixed(1)}x`} />

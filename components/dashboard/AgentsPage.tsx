@@ -88,15 +88,22 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [backtestResult, setBacktestResult] = useState<any | null>(null);
   const [proposalToast, setProposalToast] = useState("");
 
+  // Brain / Experiments / Proposals are per-market reads. `market` comes from the
+  // server page (which reads the `mkt` cookie MarketProvider keeps in sync), so it
+  // already tracks the global switcher — pass it down and refetch when it flips,
+  // otherwise these panels stay pinned to whatever market first painted.
+  // learner-controls is deliberately NOT market-scoped: it's the global learner
+  // config + weight-history ledger, which has no market column.
   useEffect(() => {
-    fetch("/api/agents/learner-brain").then(r => r.json()).then(d => { if (d.runs) setLearnerRuns(d.runs); }).catch(() => {});
+    setLearnerRunIdx(0);
+    fetch(`/api/agents/learner-brain?market=${market}`).then(r => r.json()).then(d => { if (d.runs) setLearnerRuns(d.runs); }).catch(() => {});
     fetch("/api/agents/learner-controls").then(r => r.json()).then(d => {
       if (d.config) setLearnerConfig(d.config);
       if (d.history) setWeightHistory(d.history);
     }).catch(() => {});
-    fetch("/api/strategies/versions").then(r => r.json()).then(d => { if (d.versions) setStrategyVersions(d.versions); }).catch(() => {});
-    fetch("/api/agents/trader").then(r => r.json()).then(d => { if (d.proposals) setProposals(d.proposals); }).catch(() => {});
-  }, []);
+    fetch(`/api/strategies/versions?market=${market}`).then(r => r.json()).then(d => { if (d.versions) setStrategyVersions(d.versions); }).catch(() => {});
+    fetch(`/api/agents/trader?market=${market}`).then(r => r.json()).then(d => { if (d.proposals) setProposals(d.proposals); }).catch(() => {});
+  }, [market]);
 
   async function updateLearnerConfig(dimension: string, field: string, value: unknown) {
     setLearnerCtrlSaving(dimension + "." + field);
@@ -1272,6 +1279,14 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                         <span style={{ fontWeight: 700, fontSize: "13px" }}>v{v.version}</span>
                         <span style={{ fontSize: "12px", color: T.muted }}>{v.name}</span>
+                        {/* Market is rendered explicitly: each market promotes its own
+                            champion, so without this badge two CHAMPION rows were
+                            indistinguishable. The list is market-filtered now, but the
+                            badge keeps "which market is this?" impossible to get wrong. */}
+                        <span title={`This strategy version belongs to the ${v.market === "india" ? "India" : "US"} market`}
+                          style={{ fontSize: "10px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: T.surface, border: `1px solid ${T.border}`, color: T.textSub }}>
+                          {v.market === "india" ? "🇮🇳 INDIA" : "🇺🇸 US"}
+                        </span>
                         {v.is_champion && <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: T.accent + "18", color: T.accent }}>CHAMPION</span>}
                         <span style={{ fontSize: "10px", padding: "2px 8px", borderRadius: "4px", background: T.surface, border: `1px solid ${T.border}`, color: T.muted }}>{v.state}</span>
                       </div>
@@ -1288,7 +1303,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                               setValidatingId(v.id);
                               try {
                                 await fetch("/api/validation/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ challenger_id: v.id, market: v.market ?? "us" }) });
-                                const d = await fetch("/api/strategies/versions").then(r => r.json());
+                                const d = await fetch(`/api/strategies/versions?market=${market}`).then(r => r.json());
                                 if (d.versions) setStrategyVersions(d.versions);
                               } finally { setValidatingId(null); }
                             }}

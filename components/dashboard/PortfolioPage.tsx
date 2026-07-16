@@ -763,7 +763,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
         </Suspense>
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <Suspense fallback={null}>
-            <AllocationDonut positions={positions} cash={portfolio?.cash_balance ?? startingNAV} />
+            <AllocationDonut positions={positions} cash={portfolio?.cash_balance ?? startingNAV} market={activeMarket} />
           </Suspense>
         </div>
       </div>
@@ -771,7 +771,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
       {/* P&L bar */}
       <div style={{ marginBottom: "20px" }}>
         <Suspense fallback={null}>
-          <PnlBarChart trades={trades} />
+          <PnlBarChart trades={trades} market={activeMarket} />
         </Suspense>
       </div>
 

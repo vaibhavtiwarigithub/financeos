@@ -18,10 +18,14 @@ export default async function Page() {
     weights,
     { data: tradesArr },
   ] = await Promise.all([
+    // learning_log has NO market column — it is legitimately global. Left unscoped.
     supabase.from("learning_log").select("*").order("created_at", { ascending: false }).limit(50),
-    supabase.from("paper_performance").select("date, nav, win_rate, total_trades").order("date", { ascending: true }).limit(90),
+    // Scoped: NAV is a currency amount. Unscoped, the equity curve interleaved
+    // USD and INR NAV points into one series.
+    supabase.from("paper_performance").select("date, nav, win_rate, total_trades").eq("market", market).order("date", { ascending: true }).limit(90),
     resolveDisplayWeights(supabase, market),
-    supabase.from("paper_trades").select("outcome").not("outcome", "is", null),
+    // Scoped: win rate must describe one book, not a blend of both.
+    supabase.from("paper_trades").select("outcome").eq("market", market).not("outcome", "is", null),
   ]);
 
   const trades = tradesArr ?? [];
@@ -37,6 +41,7 @@ export default async function Page() {
       weights={weights}
       totalTrades={totalTrades}
       winRate={winRate}
+      market={market}
     />
   );
 }

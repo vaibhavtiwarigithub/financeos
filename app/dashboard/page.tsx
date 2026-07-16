@@ -56,7 +56,11 @@ export default async function DashboardPage() {
     // "most recent snapshot" could silently return Autopilot or Agentic's
     // row instead, mislabeled under the hardcoded "••••8641" UI text.
     supabase.from("live_account_snapshots").select("*").eq("account_id", "965848641").order("captured_at", { ascending: false }).limit(1).single(),
-    supabase.from("briefings").select("*").order("created_at", { ascending: false }).limit(1).single(),
+    // Scoped to `mkt` (briefings.market, migration 085) — unfiltered, the newest
+    // briefing of EITHER market rendered under both, so the India hero could show
+    // a US brief (and vice versa). maybeSingle: a market with no briefing yet
+    // yields null instead of an error row.
+    supabase.from("briefings").select("*").eq("market", mkt).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("strategy_config").select("trading_enabled, robinhood_mcp_enabled, autonomy_level, active_account_us").limit(1).maybeSingle(),
   ]);
 

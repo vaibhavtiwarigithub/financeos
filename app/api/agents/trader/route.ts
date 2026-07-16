@@ -21,22 +21,38 @@ const AGENTIC_ACCOUNT = "605420660";
 // Proposal expires after 30 min — stale price cannot be used
 const PROPOSAL_EXPIRY_MINUTES = 30;
 
-// GET: list pending proposals for user review
-export async function GET() {
+// GET: list pending proposals for user review — READ PATH ONLY.
+// GET /api/agents/trader?market=us|india
+// A ₹ India proposal listed next to a $ US one is unreviewable, so scope to one
+// market. `trade_proposals.market` is NULLABLE (older rows predate the column and
+// were never backfilled), so "us" must also match NULL or those proposals silently
+// disappear from review — same convention as agent_runs in app/dashboard/agents/page.tsx.
+// Missing/unknown ?market= defaults to "us", keeping existing callers working.
+// NOTE: this touches listing only. Proposal generation, scoring, sizing and every
+// order path in POST below are deliberately unchanged.
+export async function GET(req: NextRequest) {
   try {
     const userClient = await createClient();
     const { data: { user } } = await userClient.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    const market: "us" | "india" =
+      new URL(req.url).searchParams.get("market") === "india" ? "india" : "us";
+
     const supabase = createServiceClient();
-    const { data } = await supabase
+    let query = supabase
       .from("trade_proposals")
       .select("*")
-      .in("status", ["pending_review", "approved", "submitted"])
+      .in("status", ["pending_review", "approved", "submitted"]);
+    query = market === "india"
+      ? query.eq("market", "india")
+      : query.or("market.eq.us,market.is.null");
+
+    const { data } = await query
       .order("created_at", { ascending: false })
       .limit(20);
 
-    return NextResponse.json({ proposals: data ?? [] });
+    return NextResponse.json({ market, proposals: data ?? [] });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }

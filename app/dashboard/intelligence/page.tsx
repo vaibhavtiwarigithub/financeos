@@ -3,11 +3,12 @@ import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
 import PageHeader from "@/components/dashboard/PageHeader";
-import { useMarket } from "@/lib/market-context";
+import { useMarket, CURRENCY, type Market } from "@/lib/market-context";
 import SmartMoneyPage from "@/components/dashboard/SmartMoneyPage";
 
 function NewsletterTab() {
   const supabase = createClient();
+  const { market } = useMarket();
   const [newsletters, setNewsletters] = useState<any[]>([]);
   const [selected, setSelected] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
@@ -18,13 +19,27 @@ function NewsletterTab() {
     accent: "#6366F1", green: "#34D399", red: "#F87171",
   };
 
+  // Newsletters are per-market (migration 085 added `market`): a ₹ India edition
+  // listed among $ US ones mixes currencies in the NAV column. Scope to the
+  // switcher's market and refetch when it flips.
+  // `newsletters.market` is NULLABLE — editions sent before 085 were never
+  // backfilled — so "us" must also match NULL, or those older editions vanish
+  // from the archive. Same null-tolerant US convention as agent_runs.
+  // (RLS on this table is a blanket authenticated-read, so filtering by market
+  // client-side returns rows normally — verified against the live DB.)
   useEffect(() => {
-    supabase.from("newsletters")
-      .select("id, edition, subject, sent_at, nav_at_send, signals_count, positions_count, resend_id")
+    setLoading(true);
+    setSelected(null);
+    let query = supabase.from("newsletters")
+      .select("id, market, edition, subject, sent_at, nav_at_send, signals_count, positions_count, resend_id");
+    query = market === "india"
+      ? query.eq("market", "india")
+      : query.or("market.eq.us,market.is.null");
+    query
       .order("sent_at", { ascending: false })
       .limit(30)
       .then(({ data }) => { setNewsletters(data ?? []); setLoading(false); });
-  }, []);
+  }, [market]);
 
   if (loading) return <div style={{ color: T2.muted, padding: "40px", textAlign: "center" }}>Loading newsletters...</div>;
   if (newsletters.length === 0) return (
@@ -80,7 +95,9 @@ function NewsletterTab() {
                 <div style={{ fontWeight: 600, color: T2.text, fontSize: "13px" }}>{n.subject}</div>
                 <div style={{ color: T2.muted, fontSize: "11px", marginTop: "3px" }}>
                   {new Date(n.sent_at).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
-                  {n.nav_at_send ? ` · NAV $${Number(n.nav_at_send).toFixed(0)}` : ""}
+                  {/* Currency follows the edition's OWN market — India NAV is ₹, never $.
+                      Reachable here for the first time now this tab is market-scoped. */}
+                  {n.nav_at_send ? ` · NAV ${CURRENCY[(n.market === "india" ? "india" : "us") as Market]}${Number(n.nav_at_send).toFixed(0)}` : ""}
                   {n.signals_count > 0 ? ` · ${n.signals_count} signals` : ""}
                 </div>
               </div>
@@ -316,6 +333,7 @@ const TAB_LABELS: Record<string, string> = {
 
 export default function IntelligencePage() {
   const supabase = createClient();
+  const { market } = useMarket();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [tab, setTab] = useState("analysis");
   const [prompt, setPrompt] = useState("");
@@ -350,12 +368,21 @@ export default function IntelligencePage() {
     if (!prompt.trim()) return;
     setLoading(true); setResult("");
     try {
-      const sys = `You are a world-class financial analyst. Market focus: ${profile?.market_focus}. Level: ${profile?.knowledge_level}.
+      // Market comes from the global switcher, NOT profiles.market_focus.
+      // market_focus is a MANDATE SET ("US,India") — the markets the user has
+      // enabled — so passing it here told the analyst "US,India" and let it answer
+      // about US tickers in $ while the rest of the app was showing India in ₹.
+      // The switcher is the single ACTIVE market and is always a subset of
+      // market_focus (MarketProvider pins to "us" unless India is enabled), so it
+      // is strictly more specific and can never select a market the user disabled.
+      const sys = `You are a world-class financial analyst. Level: ${profile?.knowledge_level}.
+Market: ${market === "india" ? "India — NSE/BSE listed equities, prices and targets in ₹ INR" : "US — NYSE/NASDAQ listed equities, prices and targets in $ USD"}.
 Rules:
 1. NEVER fabricate prices or data
-2. Format: THESIS | CATALYSTS | RISKS | TECHNICAL SETUP | TRADE IDEA (entry/stop/target) | CONFIDENCE (X/100) | LEARN: [one key concept]
-3. Be specific, data-driven, no fluff
-4. Think like a top hedge fund PM`;
+2. Stay in the stated market: only discuss tickers listed there, and quote every price, entry, stop and target in that market's currency
+3. Format: THESIS | CATALYSTS | RISKS | TECHNICAL SETUP | TRADE IDEA (entry/stop/target) | CONFIDENCE (X/100) | LEARN: [one key concept]
+4. Be specific, data-driven, no fluff
+5. Think like a top hedge fund PM`;
       const text = await callAI(prompt, sys);
       setResult(text);
     } catch (e: unknown) {
