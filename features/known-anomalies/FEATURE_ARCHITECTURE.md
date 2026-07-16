@@ -162,6 +162,43 @@ when reruns from the same snapshot produce byte-equivalent feature values and th
 edge remains measure-only. Disable by stopping new edge computation; immutable
 history remains. No positions, signals, policies, or orders require rollback.
 
+## 8b. Implementation Note — Data Capture Enabler (2026-07-15)
+
+Build-order steps 1–2 (plus the vintage table and a feasibility read) are
+implemented as **data capture only**. No scored feature, no `edge_signals`, no
+scoring/sizing/order/exit effect exists. Deterministic; no LLM.
+
+- **Naming collision (step 1) resolved.** `lib/scoring/archetypes.ts`: the
+  archetype formerly `id: "post_earnings_drift"` / label "Post-Earnings Drift"
+  is renamed to `id: "pre_earnings_proximity_reweight_v1"` / "Pre-Earnings
+  Proximity Reweight". Behavior (weights, `daysToEarnings <= 10` routing, shadow
+  role) is unchanged — only the identifier/label/comment. The `pead_*` namespace
+  is now reserved for a future true surprise-based edge. Historical
+  `shadow_decisions.setup_type = 'post_earnings_drift'` rows remain queryable
+  under the old string; the rename starts a new series going forward.
+- **First-reported actuals (step 2).** Migration
+  `20260715210000_earnings_pit_actual_capture_columns.sql` adds
+  `eps_actual_first`, `revenue_actual_first`, `actual_available_at`,
+  `announcement_session`, `eps_basis`, `actual_currency`, `actual_source`,
+  `restated_eps`, `restated_available_at`, `restated_source`, `market` to
+  `earnings_calendar`. `lib/data/earnings-pit.ts` fills `eps_actual_first`
+  **once** and never overwrites it; a later differing print is logged to
+  `restated_eps`. Source: Finnhub earnings calendar (free, no daily cap, already
+  wired); its `hour` field maps to the announcement session.
+- **Consensus vintages (step 3).** Append-only table
+  `earnings_consensus_snapshots` (migration `20260715210100_...`) accumulates the
+  last-valid pre-announcement consensus. A new vintage is appended only when the
+  consensus changes since the last snapshot. `analyst_count` is null on the free
+  Finnhub calendar (surfaced in the coverage report).
+- **Feasibility read (§3).** `GET /api/calendar/earnings/coverage`, owner-gated
+  (`requireOwner`), read-only. Reports eligible events (both a first-reported
+  actual AND a pre-announcement consensus vintage) by year and session, plus
+  analyst-count coverage, corrections, and basis conflicts. It is a coverage
+  report, not `edge_signals`.
+- **Cadence.** Capture runs from `POST /api/calendar/earnings/refresh` after the
+  cache bust, fail-soft. RLS is on for both tables (authenticated-read,
+  service-role-write), verified via `information_schema` + `pg_policies`.
+
 ## 9. Primary Research References
 
 - Bernard and Thomas, post-earnings-announcement drift:

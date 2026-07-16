@@ -27,8 +27,17 @@ export const ARCHETYPES: ArchetypeConfig[] = [
     role: "shadow",
   },
   {
-    id: "post_earnings_drift",
-    label: "Post-Earnings Drift",
+    // NAMING-COLLISION FIX (features/known-anomalies §2.7): this archetype is
+    // NOT real post-earnings-announcement drift (PEAD). It fires on pre-earnings
+    // PROXIMITY (daysToEarnings <= 10, see routeToArchetypes) and merely reweights
+    // the existing five scoring dimensions — it has no first-reported-actual vs
+    // pre-announcement-consensus surprise input at all. The `post_earnings_drift`
+    // / "Post-Earnings Drift" identifiers were misleading and would collide with a
+    // future TRUE PEAD edge. Renamed to `pre_earnings_proximity_reweight_v1` so the
+    // `pead_*` namespace is reserved for the real surprise-based edge. Behavior
+    // (weights, routing threshold, shadow role) is UNCHANGED by this rename.
+    id: "pre_earnings_proximity_reweight_v1",
+    label: "Pre-Earnings Proximity Reweight",
     weights: { fundamental: 0.20, technical: 0.30, sentiment: 0.35, macro: 0.10, insider: 0.05 },
     role: "shadow",
   },
@@ -78,7 +87,9 @@ export function routeToArchetypes(input: ArchetypeRouterInput): ArchetypeConfig[
   // US equity: quality_momentum always; conditional additions
   const active: ArchetypeConfig[] = [ARCHETYPE_BY_ID.get("quality_momentum")!];
   if (daysToEarnings != null && daysToEarnings <= 10) {
-    active.push(ARCHETYPE_BY_ID.get("post_earnings_drift")!);
+    // Pre-earnings proximity reweight (renamed from the misleading
+    // "post_earnings_drift" — see ARCHETYPES comment). Not a PEAD surprise edge.
+    active.push(ARCHETYPE_BY_ID.get("pre_earnings_proximity_reweight_v1")!);
   }
   if (fundamentalScore >= 50) {
     active.push(ARCHETYPE_BY_ID.get("value_inflection")!);
