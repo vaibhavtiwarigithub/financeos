@@ -50,6 +50,8 @@ import { fetchUpstoxCandles } from "@/lib/data/upstox";
 import { scoreAnalyst } from "@/lib/data/analyst";
 import { fetchWebullAnalyst, webullAnalystLine, type WebullAnalyst } from "@/lib/data/webull-data";
 import { fetchDaysToEarnings } from "@/lib/data/earnings";
+import { getBenchmarkSeries } from "@/lib/data/benchmark-series";
+import { captureReturnObservation } from "@/lib/data/return-observations";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
 // US, ^NSEI for India) — computed once per market per process, not per symbol.
@@ -60,14 +62,13 @@ async function getRegimeFeatures(market: string, supabase: any): Promise<RegimeF
   const cached = regimeCache.get(market);
   if (cached && Date.now() - cached.at < REGIME_CACHE_TTL_MS) return cached.features;
   try {
-    let closes: number[] = [];
-    if (market === "india") {
-      const candles = await fetchIndiaCandles("^NSEI", "1y");
-      closes = candles.map(c => c.close);
-    } else {
-      const { data } = await supabase.from("price_cache").select("close").eq("symbol", "SPY").order("date", { ascending: true }).limit(260);
-      closes = (data ?? []).map((r: any) => parseFloat(r.close));
-    }
+    // Benchmark closes now come from the shared run-level cache (lib/data/
+    // benchmark-series.ts) rather than being fetched inline here. Same sources
+    // (SPY from price_cache for US, ^NSEI for India), same 260-bar US window —
+    // hoisted so the return-observation capture reuses this ONE series instead of
+    // costing a second fetch per run.
+    const bars = await getBenchmarkSeries(market, supabase);
+    const closes: number[] = bars.map(b => b.close);
     const features = computeRegimeFeatures(closes);
     regimeCache.set(market, { at: Date.now(), features });
     return features;
@@ -1248,7 +1249,7 @@ export async function processSymbol(
   const applicable = applicableDimensions(entry);
 
   // Phase 0: fetch all real data in parallel — no LLM-generated numbers
-  const [socialResult, optionsResult, insiderResult, avOverview, candles, indiaNews, fiiDii] = await Promise.all([
+  const [socialResult, optionsResult, insiderResult, avOverview, candleResult, indiaNews, fiiDii] = await Promise.all([
     applicable.has("sentiment") && !india ? fetchSocialSentiment(symbol).catch(() => null) : Promise.resolve(null),
     applicable.has("options") ? fetchOptionsSignal(symbol).catch(() => null) : Promise.resolve(null),
     // Insider: SEC EDGAR Form 4 primary (free, official, unlimited) → Alpha
@@ -1270,17 +1271,25 @@ export async function processSymbol(
         : fetchUsOverview(symbol, () => fetchAVOverview(symbol, avKey))
             .then(r => { void captureFundamentalsFact(supabase, { symbol, market: "us", values: r.overview, source: r.source }); return r.overview; })
             .catch(() => ({})),
+    // The resolved candle SOURCE is carried alongside the bars now (it was
+    // previously discarded) so the return-observation contract can record the
+    // provider its evidence came from. Same fetches, same fallback order.
     india
       // India candles: Upstox (official, analytics token) primary → Yahoo
       // chart (unofficial) fallback. Upstox is more reliable than the Yahoo
       // endpoint that can change shape / anti-bot without notice.
       ? fetchUpstoxCandles(symbol)
-          .then(c => c.length >= 15 ? c : fetchIndiaCandles(symbol))
-          .catch(() => fetchIndiaCandles(symbol).catch(() => [] as Candle[]))
+          .then(c => c.length >= 15
+            ? { candles: c, source: "upstox" }
+            : fetchIndiaCandles(symbol).then(y => ({ candles: y, source: y.length ? "yahoo" : "unavailable" })))
+          .catch(() => fetchIndiaCandles(symbol)
+            .then(y => ({ candles: y, source: y.length ? "yahoo" : "unavailable" }))
+            .catch(() => ({ candles: [] as Candle[], source: "unavailable" })))
       // US candles: Massive → EODHD → Twelve Data → Alpha Vantage (fallback).
       // RSI/EMA still computed locally from whichever source returns bars, so
       // the scarce AV 25/day budget is no longer spent on candles.
-      : fetchUsCandles(symbol, () => fetchAVCandles(symbol, avKey)).then(r => r.candles).catch(() => [] as Candle[]),
+      : fetchUsCandles(symbol, () => fetchAVCandles(symbol, avKey))
+          .catch(() => ({ candles: [] as Candle[], source: "unavailable" })),
     // India news sentiment (GDELT, free/no-key) — the India equivalent of the
     // US social/news sentiment fetch above. Non-ETF India names only; US falls
     // through null (US uses fetchSocialSentiment). Company name isn't known yet
@@ -1295,7 +1304,28 @@ export async function processSymbol(
     // the US/global backdrop. NEVER fabricates a flow number.
     india ? fetchFiiDiiFlows().catch(() => null) : Promise.resolve(null),
   ]);
+  const candles: Candle[] = candleResult.candles;
   const indiaMacroLine = india ? fiiDiiMacroLine(fiiDii) : null;
+
+  // Return-observation capture (features/correlation-aware-construction §0 item 1).
+  // MEASURE-ONLY: appends an immutable per-symbol return observation (vol, and beta
+  // ONLY when genuinely measurable vs the market's own benchmark) from the candles
+  // ALREADY fetched above — no additional provider call. The benchmark series is the
+  // shared run-level one the regime path already loads, so this adds no fetch either.
+  // Fire-and-forget: never awaited, never throws into scoring. NOTHING on the money
+  // path (constructor/scoring/sizing/eligibility/order/exit) reads these rows — this
+  // only starts the clock so correlation can eventually be measured.
+  if (candles.length >= 2) {
+    void getBenchmarkSeries(india ? "india" : "us", supabase)
+      .then(benchmark => captureReturnObservation(supabase, {
+        symbol,
+        market: india ? "india" : "us",
+        candles,
+        source: candleResult.source,
+        benchmark,
+      }))
+      .catch(() => null);
+  }
 
   // For India, synthesize a SocialSentiment-shaped object from the GDELT news
   // tone so it flows through the EXACT same scoreSentiment / dataQuality path US
