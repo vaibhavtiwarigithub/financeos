@@ -186,6 +186,13 @@ Rules:
         auto_added: true,
         expires_at: expiry,
         updated_at: new Date().toISOString(),
+        // Tag the market EXPLICITLY rather than inheriting the column default.
+        // Relying on the default is what produced capitalized 'US' rows that the
+        // watchlist GET's lowercase filter couldn't match. This scout prompts for
+        // and existence-checks US equities only (tickerExists → Alpha Vantage
+        // OVERVIEW), so 'us' is correct; a .NS/.BO name would still classify
+        // correctly if the prompt ever changes.
+        market: /\.(NS|BO)$/i.test(clean) ? "india" : "us",
       });
     }
   }
