@@ -175,7 +175,7 @@ export default function SettingsPage() {
   const [postureSelect, setPostureSelect] = useState<RiskProfileKey>("aggressive");
   const [postureDays, setPostureDays] = useState(30);
   const [savingPosture, setSavingPosture] = useState(false);
-  const [hasChampion, setHasChampion] = useState(false);
+  const [championMarkets, setChampionMarkets] = useState<string[]>([]);
 
   // LLM cost monitor state
   const [llmCosts, setLlmCosts] = useState<LLMCosts | null>(null);
@@ -291,9 +291,15 @@ export default function SettingsPage() {
       })
       .catch(() => {});
 
-    // A3: does a promoted champion exist for the active market? (scoring weights overridden)
-    supabase.from("strategy_versions").select("id").eq("is_champion", true).limit(1)
-      .then(({ data }) => setHasChampion(!!data && data.length > 0), () => {});
+    // A3: which markets have a promoted champion? (its weights override this
+    // profile's scoring weights). Champions are per-market (strategy_versions.market,
+    // migration 057) but this Risk Profile card is global — an unfiltered "a champion
+    // exists" boolean couldn't say WHICH market was overridden, so name them instead.
+    supabase.from("strategy_versions").select("market").eq("is_champion", true)
+      .then(({ data }) => {
+        const markets = Array.from(new Set((data ?? []).map(r => r.market === "india" ? "india" : "us")));
+        setChampionMarkets(markets.sort());
+      }, () => {});
 
     fetch("/api/brokers").then(r => r.json()).then(setBrokerList).catch(() => {});
   }, []);
@@ -1123,9 +1129,12 @@ export default function SettingsPage() {
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Risk Profile</div>
             <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "20px" }}>How aggressive should the agent be when picking and sizing trades?</div>
 
-            {hasChampion && (
+            {championMarkets.length > 0 && (
               <div style={{ background: T.amberBg, border: `1px solid ${T.amber}44`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.amber }}>
-                ⚠ A promoted champion currently overrides this profile's scoring weights (profile still controls sizing/exits/kill-switches).
+                ⚠ A promoted champion overrides this profile&apos;s scoring weights in{" "}
+                <b>{championMarkets.map(m => (m === "india" ? "India" : "US")).join(" and ")}</b>
+                {championMarkets.length === 1 && <> (the other market still uses this profile&apos;s weights)</>}.
+                {" "}The profile still controls sizing/exits/kill-switches in both markets.
               </div>
             )}
 

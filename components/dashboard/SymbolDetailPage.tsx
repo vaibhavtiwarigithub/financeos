@@ -6,6 +6,7 @@ import SymbolFundamentals from "@/components/dashboard/SymbolFundamentals";
 import SymbolPeers from "@/components/dashboard/SymbolPeers";
 import DeepDivePanel from "@/components/dashboard/DeepDivePanel";
 import StockContextStrip from "@/components/dashboard/StockContextStrip";
+import { CURRENCY, type Market } from "@/lib/market-context";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -40,7 +41,11 @@ function ScoreBadge({ score }: { score: number | null }) {
   );
 }
 
-function LivePrice({ symbol }: { symbol: string }) {
+// `market` is derived from the symbol's .NS/.BO suffix by the server page — NOT
+// from the global switcher — because a symbol belongs to one market no matter
+// what the switcher says. The quote it renders is in that market's currency.
+function LivePrice({ symbol, market = "us" }: { symbol: string; market?: Market }) {
+  const cur = CURRENCY[market] ?? "$";
   const [price, setPrice] = useState<number | null>(null);
   const [change, setChange] = useState<number | null>(null);
 
@@ -60,7 +65,7 @@ function LivePrice({ symbol }: { symbol: string }) {
   return (
     <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
       <span style={{ fontSize: "clamp(24px,7vw,32px)", fontWeight: 800, color: T.text, letterSpacing: "-0.02em" }}>
-        ${price.toFixed(2)}
+        {cur}{price.toFixed(2)}
       </span>
       {change !== null && (
         <span style={{ fontSize: "14px", fontWeight: 600, color: pColor, background: pColor + "18", padding: "3px 8px", borderRadius: "6px" }}>
@@ -281,7 +286,8 @@ function ScoreTrajectory({ symbol }: { symbol: string }) {
   );
 }
 
-function SignalsTab({ symbol, signals, trades }: { symbol: string; signals: any[]; trades: any[] }) {
+function SignalsTab({ symbol, signals, trades, market = "us" }: { symbol: string; signals: any[]; trades: any[]; market?: Market }) {
+  const cur = CURRENCY[market] ?? "$";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
       <ScoreTrajectory symbol={symbol} />
@@ -341,7 +347,7 @@ function SignalsTab({ symbol, signals, trades }: { symbol: string; signals: any[
                   {(t.order_side ?? "").toUpperCase()}
                 </span>
                 <span style={{ fontSize: "13px", color: T.text, fontFamily: "monospace" }}>
-                  {t.qty}× @ ${Number(t.fill_price).toFixed(2)}
+                  {t.qty}× @ {cur}{Number(t.fill_price).toFixed(2)}
                 </span>
                 <span style={{ fontSize: "11px", color: T.muted, marginLeft: "auto" }}>
                   {t.executed_at ? new Date(t.executed_at).toLocaleDateString() : ""}
@@ -563,7 +569,7 @@ export default function SymbolDetailPage({
           <div style={{ fontSize: "28px", fontWeight: 800, color: T.text, letterSpacing: "-0.02em", marginBottom: "4px" }}>
             {symbol}
           </div>
-          <LivePrice symbol={symbol} />
+          <LivePrice symbol={symbol} market={market} />
           <SentimentWidget symbol={symbol} />
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: "8px", alignItems: "center" }}>
@@ -598,7 +604,7 @@ export default function SymbolDetailPage({
       {tab === "chart" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <TradingViewChart symbol={symbol} height={520} />
-          <SymbolFundamentals symbol={symbol} />
+          <SymbolFundamentals symbol={symbol} market={market} />
         </div>
       )}
 
@@ -610,7 +616,7 @@ export default function SymbolDetailPage({
 
       {tab === "signals" && (
         <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px clamp(14px,4vw,24px)" }}>
-          <SignalsTab symbol={symbol} signals={signals} trades={trades} />
+          <SignalsTab symbol={symbol} signals={signals} trades={trades} market={market} />
         </div>
       )}
 

@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { extractBriefingTickers } from "@/lib/briefing-tickers";
+import { useMarket } from "@/lib/market-context";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -96,6 +97,10 @@ function renderInline(text: string): ReactNode[] {
 type Props = { initialBriefing?: { id: string; date: string; session: string; content: string; model: string | null; created_at: string } | null }
 
 export default function BriefingSection({ initialBriefing }: Props) {
+  // Briefings are per-market; the server hero passes the `mkt`-scoped one in, so
+  // this client refetch has to be scoped the same way or it re-introduces the
+  // other market's briefing on mount.
+  const { market } = useMarket();
   const [briefings, setBriefings] = useState<Briefing[]>([]);
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -107,7 +112,7 @@ export default function BriefingSection({ initialBriefing }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     const [briefRes, watchRes] = await Promise.allSettled([
-      fetch("/api/briefing").then(r => r.json()),
+      fetch(`/api/briefing?market=${market}`).then(r => r.json()),
       fetch("/api/watchlist").then(r => r.json()),
     ]);
     if (briefRes.status === "fulfilled") setBriefings(briefRes.value.briefings ?? []);
@@ -116,8 +121,10 @@ export default function BriefingSection({ initialBriefing }: Props) {
       setWatchlist(new Set(syms));
     }
     setLoading(false);
-  }, []);
+  }, [market]);
 
+  // Re-runs on market switch (load depends on market), so the panel follows the
+  // global US/India toggle instead of keeping the first market's briefing.
   useEffect(() => { load(); }, [load]);
 
   async function generate(session: "morning" | "evening") {

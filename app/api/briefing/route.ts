@@ -4,13 +4,18 @@ import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
   const svc = createServiceClient();
+  // Scoped to one market (briefings.market, migration 085). Unfiltered, the
+  // caller's `find(session === "morning")` picked whichever market's briefing was
+  // newest and showed it under BOTH markets. Defaults to us when unspecified.
+  const market = new URL(req.url).searchParams.get("market") === "india" ? "india" : "us";
   const { data } = await svc
     .from("briefings")
     .select("*")
+    .eq("market", market)
     .order("created_at", { ascending: false })
     .limit(14); // 7 days * 2 sessions
 
