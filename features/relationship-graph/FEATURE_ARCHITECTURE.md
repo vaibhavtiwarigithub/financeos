@@ -1,9 +1,38 @@
 # Relationship Graph and Cross-Company Propagation - Feature Architecture
 
-> Status: **Draft V4 / independently reviewed / not approved / implementation not allowed.**
-> Last updated: 2026-07-15 by Codex after primary-source and Kairos architecture review.
-> Scope of this revision: design only. No migration, provider activation, scoring change, candidate insertion, or order path is authorized.
+> Status: **P0 feasibility study RUN AND FAILED. Recommendation: do not build. Design retained for the record.**
+> Last updated: 2026-07-16 — P0 coverage study completed; see [`P0_COVERAGE_STUDY.md`](./P0_COVERAGE_STUDY.md).
+> Previous revision: 2026-07-15 by Codex after primary-source and Kairos architecture review.
+> Scope: design only. No migration, provider activation, scoring change, candidate insertion, or order path is authorized.
 > Update this file when: source contracts, identity resolution, relationship schema, EdgeScout integration, validation gates, or money-path boundaries change.
+
+## 0. P0 outcome (2026-07-16) — measured, not estimated
+
+The P0 study §11 authorized was run against live SEC EDGAR over Kairos's real US universe
+(92 US non-ETF symbols → **79 domestic 10-K filers**). Full report and method:
+[`P0_COVERAGE_STUDY.md`](./P0_COVERAGE_STUDY.md). Probe: `scripts/sec-customer-coverage-probe.mjs`.
+
+| P0 exit question (§11) | Measured result |
+|---|---|
+| Named-customer coverage **with a revenue %** | **5 / 79 = 6.3%** (CHD, SWK, AMT, CELH, CRWV — 10 links total) |
+| Named, but no usable exposure % | 2 / 79 (QCOM ≥10% floor only; BX $-denominated, non-traded funds) |
+| Identity resolution on those 10 strings | **60% resolved**, 20% ambiguous, 20% unresolved; a silent false positive (BCRED→BX) appeared immediately |
+| Point-in-time `available_at` | **Works.** `acceptanceDateTime` on 79/79, intraday-precise; amendments carry their own timestamps, so as-of is deterministic |
+| Freshness | exposure weight is **~6.5 months stale at median**, up to 381 days; refreshes annually |
+| Cost | **$0**, 167 requests, ~3 min, ~169 MB/year raw |
+
+**Answer to §16 open decision 1 ("Is free disclosed-customer coverage high enough to justify P1?"): No.**
+
+The single riskiest assumption named in §17 — whether Kairos can obtain enough point-in-time, correctly
+resolved, economically weighted public relationships for its actual US universe — **failed on measurement**.
+US GAAP requires the *amount* of a ≥10% customer, not the *name*, and issuers overwhelmingly take the
+anonymity option on exactly the highest-exposure links (NVDA 22%, ENPH 39%, AMAT 19%, MU 17%, INTC 43%;
+FFIV/FSLR/RGTI literally letter or number their customers). §5.3's caution was correct and is now evidenced.
+
+**Recommendation: do not build P1–P5.** n=5 cannot support the §9.1 cross-sectional experiment or the §9.2
+evaluation battery; it cannot even reach EdgeIC's `nObs >= 12` preliminary diagnostic. Per §17, retain the
+peer-move display and stop. Revisit only if the covered universe reaches ~500+ US issuers (the falsifiable
+precondition derived in the study); re-running the probe then costs three minutes.
 
 ## 1. Review verdict
 
@@ -507,7 +536,9 @@ Before implementation is approved, the owner/reviewer should require:
 
 ## 16. Open decisions
 
-1. Is free disclosed-customer coverage high enough to justify P1? **Answer only after P0 probe.**
+1. ~~Is free disclosed-customer coverage high enough to justify P1?~~ **ANSWERED 2026-07-16: No — 5/79
+   filers (6.3%) yield a named customer with a revenue share. See §0 and `P0_COVERAGE_STUDY.md`.**
+   Decisions 2-6 below are now moot unless the revisit precondition (~500+ covered US issuers) is met.
 2. Should accepted assertions require owner review indefinitely, or only until fixture precision
    clears a pre-registered threshold?
 3. Should the first later integration be candidate discovery or a logged feature? Do not combine
