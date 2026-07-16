@@ -18,30 +18,15 @@ import type {
   FieldProvenance,
 } from "@/lib/evidence/contracts";
 import { scoreMassiveInsider } from "@/lib/data/massive-insider";
-import { fetchUsCandles } from "@/lib/data/candles";
-import type { Candle } from "@/lib/data/technicals";
-import type { ProviderId } from "@/lib/evidence/contracts";
+import { fetchMassiveCandles } from "@/lib/data/candles";
+import { makeBarsAdapter } from "@/lib/evidence/adapters/bars";
+import {
+  hasForbiddenKeys,
+  isFiniteNumber,
+  isPlainObject,
+} from "@/lib/evidence/adapters/shared";
 
 const PROVIDER_ID = "massive" as const;
-
-// Map a fetchUsCandles source string to a ProviderId for honest provenance.
-function barsSourceProvider(source: string): ProviderId {
-  return (["massive", "eodhd", "twelvedata"].includes(source) ? source : "massive") as ProviderId;
-}
-
-// ── shared guards ─────────────────────────────────────────────────────────────
-
-// Reject prototype-pollution keys before we ever treat an object as a payload.
-const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
-function hasForbiddenKeys(obj: object): boolean {
-  return Object.keys(obj).some((k) => FORBIDDEN_KEYS.has(k));
-}
-function isPlainObject(x: unknown): x is Record<string, unknown> {
-  return typeof x === "object" && x !== null && !Array.isArray(x);
-}
-function isFiniteNumber(x: unknown): x is number {
-  return typeof x === "number" && Number.isFinite(x);
-}
 
 // ── insider.transactions ──────────────────────────────────────────────────────
 
@@ -149,72 +134,22 @@ export const massiveInsiderAdapter: ProviderAdapter = {
   },
 };
 
-// ── price.daily_bars ──────────────────────────────────────────────────────────
-
-// Canonical daily-bar series. Massive aggregates are fetched adjusted=true, so
-// `adjusted` is preserved as a first-class flag rather than silently assumed.
-export interface CanonicalDailyBars {
-  bars: Candle[];    // ascending by date; {date, open, high, low, close, volume}
-  adjusted: boolean; // adjusted close (all US candle sources request adjusted)
-  count: number;
-  source: string;    // which provider actually served (massive|eodhd|twelvedata)
-}
-
-function isValidBar(x: unknown): x is Candle {
-  if (!isPlainObject(x) || hasForbiddenKeys(x)) return false;
-  return (
-    typeof x.date === "string" &&
-    isFiniteNumber(x.open) &&
-    isFiniteNumber(x.high) &&
-    isFiniteNumber(x.low) &&
-    isFiniteNumber(x.close) &&
-    isFiniteNumber(x.volume)
-  );
-}
-
-// Uses the existing multi-source US candle resolver (Massive → EODHD →
-// TwelveData) rather than Massive alone: Massive is 5/min-paced and starves at
-// 50 symbols/run, whereas TwelveData (800/day) reliably backs the tail, lifting
-// daily-bar coverage from ~30% to near-complete. Provenance records the source
-// that actually served, not a nominal one.
-export const massiveBarsAdapter: ProviderAdapter = {
+// ── price.daily_bars — Massive ONLY ───────────────────────────────────────────
+//
+// Previously this adapter called fetchUsCandles(), which silently fell back
+// Massive → EODHD → TwelveData while still reporting providerId "massive".
+// Provenance named a nominal source, `mode: "only"` could not actually pin a
+// provider, and three providers' pacing/budget were accounted as one. The
+// fallback now belongs to the ROUTER (registry chain + policy mode); this
+// adapter hits Massive and nothing else. See lib/evidence/adapters/bars.ts.
+export const massiveBarsAdapter: ProviderAdapter = makeBarsAdapter({
   providerId: PROVIDER_ID,
-  intent: "price.daily_bars",
-  contractVersion: "us-bars-v2",
-  pacingOwner: "adapter",
+  // Bumped from us-bars-v2: the contract changed meaning (single-source, and
+  // "source" is now guaranteed to equal the adapter's provider), so cached
+  // multi-source rows must not be read back under the new contract. The
+  // fingerprint includes contractVersion, so old entries are simply missed.
+  contractVersion: "massive-bars-v1",
+  fetchCandles: (symbol) => fetchMassiveCandles(symbol),
+});
 
-  async fetch(request: ProviderRequest, _ctx: ProviderCallContext): Promise<ProviderResult> {
-    const symbol = (request.symbol ?? "").trim();
-    if (!symbol) return { ok: false, unavailableReason: "genuine_no_data" };
-    try {
-      // No AV fallback here — AV is 25/day and reserve-only; the router relies on
-      // Massive → EODHD → TwelveData, which is enough for daily bars.
-      const { candles, source } = await fetchUsCandles(symbol, async () => []);
-      if (!Array.isArray(candles) || candles.length === 0) {
-        return { ok: false, unavailableReason: "genuine_no_data" };
-      }
-      return { ok: true, payload: { bars: candles, source }, raw: { source } };
-    } catch {
-      return { ok: false, unavailableReason: "provider_error" };
-    }
-  },
-
-  validate(raw: unknown): ProviderResult {
-    if (!isPlainObject(raw) || hasForbiddenKeys(raw)) return { ok: false, unavailableReason: "schema_invalid" };
-    const bars = (raw as any).bars;
-    if (!Array.isArray(bars) || bars.length === 0) return { ok: false, unavailableReason: "schema_invalid" };
-    if (!bars.every(isValidBar)) return { ok: false, unavailableReason: "schema_invalid" };
-    return { ok: true, payload: raw, raw };
-  },
-
-  toCanonical(result: ProviderResult): { payload: unknown; provenance: FieldProvenance[] } {
-    const p = (result.payload as { bars: Candle[]; source: string }) ?? { bars: [], source: "massive" };
-    const retrievedAt = new Date().toISOString();
-    const provider = barsSourceProvider(p.source);
-    const payload: CanonicalDailyBars = { bars: p.bars, adjusted: true, count: p.bars.length, source: p.source };
-    const provenance: FieldProvenance[] = [
-      { providerId: provider, providerField: "daily_bars", basis: "eod", unit: "currency", retrievedAt },
-    ];
-    return { payload, provenance };
-  },
-};
+export type { CanonicalDailyBars } from "@/lib/evidence/adapters/bars";

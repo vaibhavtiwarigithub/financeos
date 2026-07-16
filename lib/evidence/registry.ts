@@ -13,6 +13,8 @@ import { finnhubFundamentalsAdapter } from "@/lib/evidence/adapters/finnhub";
 import { yahooFundamentalsAdapter } from "@/lib/evidence/adapters/yahoo";
 import { webullAnalystAdapter, webullFundamentalsAdapter } from "@/lib/evidence/adapters/webull";
 import { massiveInsiderAdapter, massiveBarsAdapter } from "@/lib/evidence/adapters/massive";
+import { eodhdBarsAdapter } from "@/lib/evidence/adapters/eodhd";
+import { twelvedataBarsAdapter } from "@/lib/evidence/adapters/twelvedata";
 import { edgarInsiderAdapter } from "@/lib/evidence/adapters/edgar";
 
 // Default ordered chains per intent. Order = Auto-mode fallback order. Finnhub
@@ -24,8 +26,17 @@ export const ADAPTERS_BY_INTENT: Partial<Record<EvidenceIntent, ProviderAdapter[
   // EDGAR (free, ~10/s, router-paced) first; Massive (5/min paced, richer detail) backs
   // the tail. Insider is sparse by nature — most names have <3 open-market trades.
   "insider.transactions":  [edgarInsiderAdapter, massiveInsiderAdapter],
-  // Multi-source US candles (Massive→EODHD→TwelveData) inside one adapter.
-  "price.daily_bars":      [massiveBarsAdapter],
+  // US candles: Massive → EODHD → TwelveData as an EXPLICIT router chain (§8).
+  // These used to be one "massive" adapter that hid the fallback internally, so
+  // provenance recorded a nominal source rather than the serving one and a
+  // `mode: "only"` policy could not actually pin a provider. Each source is now
+  // its own adapter; the router owns the fallback and the ledger sees three
+  // distinct providers. Order is unchanged: Massive first (no daily cap),
+  // TwelveData (800/day) backs the tail that Massive's 5/min starves.
+  // NOTE: the resolver caps a single resolve at MAX_SYNC_ATTEMPTS=2 live calls,
+  // so the third source is reached via the durable refresh queue rather than
+  // synchronously — a deliberate Vercel wall-clock bound, not an oversight.
+  "price.daily_bars":      [massiveBarsAdapter, eodhdBarsAdapter, twelvedataBarsAdapter],
   // sentiment.news / fundamentals.valuation / macro.regime_inputs / events.* /
   // price.quote — deferred: their existing chains stay legacy until adapters land.
 };
@@ -71,6 +82,23 @@ export const PROVIDER_SPECS: Partial<Record<ProviderId, ProviderSpec>> = {
     markets: ["us"], capabilities: ["insider.transactions", "price.daily_bars"],
     dailyLimitState: "none", rateLimitState: "known", rateLimitCalls: 5, rateLimitWindowSeconds: 60,
     minIntervalMs: 12_500, reserveCalls: 0, entitlementRequired: false, trustTier: 2, official: true,
+  },
+  eodhd: {
+    id: "eodhd", label: "EODHD", transport: "http",
+    markets: ["us"], capabilities: ["price.daily_bars"],
+    // Free tier is day-capped; the exact ceiling is not documented per-key, so
+    // it stays "unknown" rather than being displayed as unlimited (§3 P1).
+    dailyLimitState: "unknown", rateLimitState: "unknown",
+    minIntervalMs: 0, reserveCalls: 0, entitlementRequired: false, credentialRef: "EODHD_API_KEY",
+    trustTier: 2, official: true,
+  },
+  twelvedata: {
+    id: "twelvedata", label: "Twelve Data", transport: "http",
+    markets: ["us"], capabilities: ["price.daily_bars"],
+    dailyLimitState: "known", dailyLimit: 800,
+    rateLimitState: "known", rateLimitCalls: 8, rateLimitWindowSeconds: 60,
+    minIntervalMs: 7_500, reserveCalls: 0, entitlementRequired: false, credentialRef: "TWELVEDATA_API_KEY",
+    trustTier: 2, official: true,
   },
   sec: {
     id: "sec", label: "SEC EDGAR", transport: "http",

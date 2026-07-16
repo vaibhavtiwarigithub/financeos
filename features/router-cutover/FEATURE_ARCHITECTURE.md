@@ -217,3 +217,124 @@ and the owner sees an explicit evaluation rather than a generic “parity passed
 3. Choose the first market and first score-affecting intent family after shadow data
    is sufficient.
 4. Approve the exact legacy-retirement observation period separately from cutover.
+
+---
+
+## 14. Implementation Notes — Prerequisites Built (2026-07-16)
+
+> **NOT A CUTOVER.** `router_enabled` remains `false` for BOTH markets; no enabled
+> policy version exists; no scorer consumes `EvidenceEnvelope`. Verified in
+> production after this change: both markets' active policy version is v1,
+> `router_enabled=false`, and zero evaluations exist. This section records the
+> machinery that must exist *before* a future owner-approved cutover.
+
+### §3 — Intent classification (`lib/evidence/intent-classification.ts`)
+
+Code-owned. `classifyIntent(intent, market)` returns
+`score_affecting | eligibility_affecting | narrative_only | unsupported`. Per §3:
+`analyst.consensus` is **narrative_only in US, unsupported in India**, and
+`gatedIntents()` excludes it in both — it can never block a scoring cutover, and
+India parity for it is not required. `SCORER_FIELD_CONTRACTS` declares, per field:
+required intent, minimum field contract (`minFields`/`minCount`), acceptable
+quality + freshness ceiling, allowed bases, structural applicability, and the
+legacy module/symbol it maps to today. `contractClassViolations()` is asserted by
+tests, so a narrative intent cannot quietly acquire a scoring dimension.
+
+**Required (gating) fields:** `technical.daily_bars` (all shapes) and
+`fundamental.reported_core` (equity/ADR only). Everything else is optional and
+renormalizes exactly as today. `sentiment`/`insider` are deliberately NOT required
+— they are genuinely sparse (india:sentiment, us:insider), and requiring them
+would abstain on healthy runs.
+
+### §6 — Runtime degradation guard — **SHIPPED IN MEASURE-ONLY MODE**
+
+- Pure core: `lib/evidence/degradation-guard.ts`. Impure shell:
+  `lib/evidence/degradation-runtime.ts`. Wired into `lib/research-agent.ts`
+  immediately after `resolveSignalDirection`.
+- **Mode:** `EVIDENCE_DEGRADATION_GUARD_MODE` ∈ `off | measure_only | enforce`,
+  **defaulting to `measure_only`** — it records what it *would* abstain and
+  changes no direction. An unparseable value falls back to `measure_only`: a
+  broken config can never silently enforce, nor silently stop recording.
+- **Strictly subtractive.** `applyDegradationGuard` has exactly one
+  transformation: `long → neutral`. `short` (deterministic exit on a holding) and
+  `neutral` return untouched in *every* mode — checked before the mode branch, so
+  no configuration can make the guard interfere with a sell. This is also enforced
+  in the schema (`degradation_guard_is_subtractive` CHECK), so no future code path
+  can persist a guard event that created or upsized an entry.
+- **Trigger:** a *required*, *applicable* field is unusable **and** the scorer
+  renormalized around it (§6.3 — "eligibility depends on renormalizing around that
+  degradation"). A required field unusable but *not* renormalized around did not
+  shape the decision, so it does not abstain. §6.4 holds: the required-field gate
+  fires even when ≥2 other dimensions are present.
+- **Defaults to abstain:** no baseline + unusable required field →
+  `no_baseline_required_field` → abstain. A persistent outage keeps abstaining; it
+  never normalizes, because only a clean run is promoted to baseline.
+- **One aggregated health event per run** (`evidence-degradation:<market>:<runKey>`),
+  never one per symbol; auto-resolves on a clean run.
+- **Known limitation (honest):** the legacy path supplies availability and contract
+  satisfaction but *not* observation age, so `ageSeconds` is reported as `null`
+  rather than an invented zero. In practice the legacy path therefore exercises
+  `available→missing` and `contract_broken`, not `fresh→stale`. The core handles
+  age/quality transitions and they are unit-tested; real ages arrive with the
+  Router once an intent family is cut over.
+
+### §4/§5 — Frozen dual-run evaluation + activation binding
+
+- `lib/evidence/evaluation/parity.ts` — semantic comparator. Semantic axes
+  (nullability → provenance → basis → period → currency → unit → adjustment →
+  conflict) are all checked **before** any value comparison, so a numeric tolerance
+  is unreachable while the two values describe different facts. Cross-family bases
+  (TTM/quarterly/annual/forward) and adjusted/unadjusted are hard mismatches even
+  when the numbers are identical. Unknown fields default to exact-match.
+- `lib/evidence/evaluation/cohort.ts` — freezes universe/as-of/baseline/candidate/
+  strategy/threshold/ranks/price basis; scores **both paths with the production
+  scorer and production direction gate** (never a re-implementation); ranks
+  cohort-wide; classifies every flip with a bounded cause. Rows where either path
+  abstains or fails are first-class. Artifact causes (availability, stale fallback,
+  field omission, conflict resolution, basis mapping, renormalization) can never
+  create eligibility; a `genuine_value_change` is classified as such but cannot
+  self-approve. Becoming *more* conservative never blocks.
+- `lib/evidence/evaluation/persist.ts` + `activate_evidence_policy_bound()` — the
+  RPC binds approval to candidate + baseline + evaluation ID + evaluation code
+  version + strategy version + market + expiry, and additionally requires the
+  evaluation's baseline to still be the *active* policy and every flagged
+  divergence to carry an approving review row. Production-probed: unknown/stale
+  evaluation and invalid market are both refused.
+
+### §8 — Massive candle adapter split (Codex pre-cutover finding)
+
+`price.daily_bars` was one `massive` adapter wrapping `fetchUsCandles()`, which
+silently fell back Massive→EODHD→TwelveData while reporting `providerId: "massive"`.
+Three harms: provenance named a nominal source; `mode: "only"` could not actually
+pin a provider; three providers' pacing/budget accounted as one. Now
+`lib/evidence/adapters/bars.ts` builds one adapter per source
+(`massive-bars-v1`, `eodhd-bars-v1`, `twelvedata-bars-v1`), each hitting exactly one
+provider and refusing a payload that claims another source. The **router** owns the
+fallback via the registry chain. Contract version bumped from `us-bars-v2` so
+multi-source cache rows are not read back under the new single-source contract.
+Note: the resolver's `MAX_SYNC_ATTEMPTS=2` means the third source is reached via the
+refresh queue, not synchronously — a deliberate Vercel wall-clock bound.
+
+### Migration
+
+`supabase/migrations/20260716210000_router_cutover_prerequisites.sql` →
+`evidence_field_baselines` (mutable — it is a moving reference point, not evidence),
+`evidence_degradation_events`, `evidence_evaluation_details`,
+`evidence_evaluation_reviews` (all append-only via `no_mutate`), plus frozen-cohort
+and binding columns on `evidence_policy_evaluations`. RLS on + owner-read policy on
+all four; anon has no grants; writes are service-role only; the RPC is
+`security definer` with `search_path=public` and executable by `service_role` only.
+
+### Deferred (not built)
+
+- §7 release evidence floors: the numeric sample floors, tolerances, evaluation
+  expiry, and rollback SLO are owner decisions (§13.2) to be set from observed
+  traffic. `DEFAULT_EVALUATION_TTL_HOURS=72` and the comparator tolerances in
+  `DEFAULT_COMPARATORS` are placeholders pending that approval.
+- The cohort **builder** (resolving real frozen observations from both paths into a
+  `FrozenCohort`) and the outage drills. `evaluateCohort` is the decision engine;
+  nothing yet feeds it live data, deliberately — a builder that fetches is the step
+  that risks provider bursts, and reverse-shadow cache reuse (§4.2) must be designed
+  with it.
+- §9 rollback drill + circuit-breaker triggers.
+- No API route or UI surface for evaluations/activation.
