@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { resolveDisplayWeights } from "@/lib/champion-weights";
 
 export const dynamic = "force-dynamic";
 
@@ -25,11 +26,10 @@ export async function GET(req: NextRequest) {
     parent = data ?? null;
   }
 
-  // 2. Live per-dimension weights actually scoring today.
-  const { data: liveWeights } = await svc
-    .from("signal_weights")
-    .select("fundamental_weight, technical_weight, sentiment_weight, macro_weight, insider_weight, updated_at")
-    .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  // 2. Live per-dimension weights actually scoring today — the market's promoted
+  // champion snapshot (falling back to the static per-risk-profile baseline), NOT
+  // the vestigial global signal_weights row. US and India each show their own.
+  const liveWeights = await resolveDisplayWeights(svc, market);
 
   // 3. Belief drift — priors whose confidence moved most (needs >=2 history rows).
   const { data: priors } = await svc.from("learning_priors").select("id, category, principle, confidence, enabled");

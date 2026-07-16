@@ -447,6 +447,67 @@ function buildLearnerWeightsSection(weights: any[]): string {
   return sectionCard("Learner Agent — Dimension Weights", "ðŸ§ ", html, "#6366F1");
 }
 
+// Per-market champion dimension weights (NOT the vestigial global signal_weights
+// row) — mirrors lib/champion-weights.ts / lib/research-agent.ts resolution so the
+// newsletter shows the SAME weights scoring actually uses. Champion-first →
+// static per-risk-profile baseline. Returns a { data: [row] } shape so the caller's
+// existing `weights[0]` consumer is unchanged. Inlined because Deno edge functions
+// can't import the app's lib/.
+const PROFILE_WEIGHTS: Record<string, Record<string, number>> = {
+  conservative: { fundamental: 0.4, technical: 0.2, sentiment: 0.15, macro: 0.15, insider: 0.1 },
+  balanced: { fundamental: 0.3, technical: 0.25, sentiment: 0.2, macro: 0.15, insider: 0.1 },
+  aggressive: { fundamental: 0.2, technical: 0.3, sentiment: 0.25, macro: 0.15, insider: 0.1 },
+};
+
+async function resolveChampionWeightsRow(supabase: any, market: string): Promise<{ data: any[] }> {
+  let champion: any = null;
+  const scoped = await supabase
+    .from("strategy_versions")
+    .select("version, weights_snapshot, promoted_at")
+    .eq("is_champion", true)
+    .eq("market", market)
+    .order("promoted_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (scoped.error) {
+    const legacy = await supabase
+      .from("strategy_versions")
+      .select("version, weights_snapshot, promoted_at")
+      .eq("is_champion", true)
+      .order("promoted_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    champion = legacy.data;
+  } else {
+    champion = scoped.data;
+  }
+
+  const { data: strategy } = await supabase
+    .from("strategy_config")
+    .select("risk_profile")
+    .limit(1)
+    .maybeSingle();
+  const profileKey = (strategy?.risk_profile ?? "balanced") as string;
+  const baseline = PROFILE_WEIGHTS[profileKey] ?? PROFILE_WEIGHTS.balanced;
+
+  const snap = champion?.weights_snapshot ?? null;
+  const cw = (short: string, full: string): number | undefined => {
+    if (!snap) return undefined;
+    const v = snap[short] ?? snap[full];
+    return typeof v === "number" ? v : undefined;
+  };
+
+  const row = {
+    fundamental_weight: cw("fundamental", "fundamental_weight") ?? baseline.fundamental,
+    technical_weight: cw("technical", "technical_weight") ?? baseline.technical,
+    sentiment_weight: cw("sentiment", "sentiment_weight") ?? baseline.sentiment,
+    macro_weight: cw("macro", "macro_weight") ?? baseline.macro,
+    insider_weight: cw("insider", "insider_weight") ?? baseline.insider,
+    updated_at: snap ? (champion?.promoted_at ?? null) : null,
+  };
+  return { data: [row] };
+}
+
 function buildOpenPositionsSection(positions: any[]): string {
   if (positions.length === 0) {
     return sectionCard("Open Positions", "â—‰", `<div style="color:#6B7280;font-size:13px;">No open paper positions. Paper trader enters when signals score â‰¥65.</div>`);
@@ -567,7 +628,9 @@ serve(async (req) => {
     supabase.from("agent_signals").select("symbol,direction,analyst_score,summary,risks,catalysts,agent_label").eq("is_holding", false).eq("direction", "long").gte("analyst_score", 72).gte("created_at", since48h).order("analyst_score", { ascending: false }).limit(4),
     supabase.from("evidence_records").select("symbol,payload,observed_at,retrieved_at").eq("evidence_type", "insider").eq("source", "sec_edgar").gte("retrieved_at", since7d).order("observed_at", { ascending: false }).limit(15),
     supabase.from("trade_proposals").select("id,symbol,order_side,qty,limit_price,analyst_score,rationale,approval_expires_at,created_at").eq("status", "pending_review").order("created_at", { ascending: false }).limit(5),
-    supabase.from("signal_weights").select("fundamental_weight,technical_weight,sentiment_weight,macro_weight,insider_weight,updated_at").order("updated_at", { ascending: false }).limit(1),
+    // Champion dimension weights for the US book (this newsletter is US-only —
+    // HOLDINGS_ACCOUNT is the US trading account); NOT the global signal_weights row.
+    resolveChampionWeightsRow(supabase, "us"),
     fetchMarketNews(avKey),
     fetchVOOReturn(avKey),
   ]);
