@@ -1,4 +1,6 @@
+import { cookies } from "next/headers";
 import { createServiceClient } from "@/lib/supabase/service";
+import { resolveDisplayWeights } from "@/lib/champion-weights";
 import MentorPage from "@/components/dashboard/MentorPage";
 
 export const revalidate = 30;
@@ -6,13 +8,18 @@ export const revalidate = 30;
 export default async function Page() {
   const supabase = createServiceClient();
 
+  // Read the `mkt` cookie MarketProvider keeps in sync so weights are the
+  // per-market champion's, not a shared global blob (same pattern as Agents).
+  const cookieStore = await cookies();
+  const market = cookieStore.get("mkt")?.value === "india" ? "india" : "us";
+
   const [
     { data: packets },
     { data: trades },
     { data: fullLog },
     { data: signals },
     { data: performance },
-    { data: weightsArr },
+    weights,
     { data: allTradesArr },
   ] = await Promise.all([
     supabase
@@ -36,7 +43,8 @@ export default async function Page() {
       .order("created_at", { ascending: false })
       .limit(20),
     supabase.from("paper_performance").select("date, nav, win_rate, total_trades").order("date", { ascending: true }).limit(90),
-    supabase.from("signal_weights").select("*").limit(1),
+    // Per-market champion weights (NOT the vestigial global signal_weights row).
+    resolveDisplayWeights(supabase, market),
     supabase.from("paper_trades").select("outcome").not("outcome", "is", null),
   ]);
 
@@ -49,7 +57,7 @@ export default async function Page() {
       fullLog={fullLog ?? []}
       signals={signals ?? []}
       performance={performance ?? []}
-      weights={weightsArr?.[0] ?? null}
+      weights={weights}
       allTrades={allTrades}
     />
   );

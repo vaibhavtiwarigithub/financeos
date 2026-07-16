@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { createServiceClient } from "@/lib/supabase/service";
+import { resolveDisplayWeights } from "@/lib/champion-weights";
 import AgentsPage from "@/components/dashboard/AgentsPage";
 
 export const revalidate = 30;
@@ -16,7 +17,7 @@ export default async function Page() {
 
   const [
     { data: signals },
-    { data: weights },
+    weights,
     { data: strategyArr },
     { data: learningLog },
     { data: paperPortfolio },
@@ -26,7 +27,10 @@ export default async function Page() {
     { data: agentRuns },
   ] = await Promise.all([
     supabase.from("agent_signals").select("*").eq("market", market).order("created_at", { ascending: false }).limit(20),
-    supabase.from("signal_weights").select("*").single(),
+    // Per-market champion weights (NOT the vestigial global signal_weights row) so
+    // US and India each show their own learned weights. Falls back to the static
+    // per-risk-profile baseline when no champion is promoted.
+    resolveDisplayWeights(supabase, market),
     supabase.from("strategy_config").select("*").limit(1),
     supabase.from("learning_log").select("*").order("created_at", { ascending: false }).limit(10),
     supabase.from("paper_portfolio").select("*").eq("market", market).limit(1).maybeSingle(),

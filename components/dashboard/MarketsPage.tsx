@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState, useRef, lazy, Suspense } from "react";
+import { useEffect, useState, useRef, useCallback, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket, CURRENCY } from "@/lib/market-context";
-import { fetchIndiaIndices, fetchIndiaSectors, fetchIndiaQuote } from "@/lib/india-data";
-import { NIFTY_50 } from "@/lib/india-universe";
+// India market data is fetched from the server route /api/markets/india — the
+// browser NEVER calls Yahoo/NSE directly. `import type` is erased at build, so no
+// provider hostname or adapter code lands in the client bundle.
+import type { IndiaMarketsSnapshot } from "@/lib/india-markets/snapshot";
 import SectorTradingViewOverview from "@/components/charts/SectorTradingViewOverview";
 import SectorTreemap from "@/components/charts/SectorTreemap";
 const PriceChart = lazy(() => import("@/components/charts/PriceChart"));
@@ -1219,111 +1221,75 @@ function LoadingSkeleton() {
   );
 }
 
-// Muted "no free India equivalent" note shown in place of US-only panels when
-// India is selected. Honest gap — we don't fabricate India sector/breadth data.
-// India sector heatmap — 10 free NSE sector indices from Yahoo. Same visual
-// treatment as the US SectorHeatmap (color by changePct). Falls back to the
-// gap note only when Yahoo returns nothing.
-function IndiaSectors({ onSymbol }: { onSymbol: (sym: string) => void }) {
-  const [sectors, setSectors] = useState<SectorQuote[] | null>(null);
+// ─── India Markets (server-snapshot driven) ─────────────────────────────────
+//
+// All India tiles read ONE frozen snapshot from /api/markets/india (server-side,
+// allowlisted, paced, cached). Product states are explicit and honest:
+//   loading → bounded skeleton (always exits on timeout/error)
+//   complete/partial → available rows + explicit coverage (never a fake total)
+//   temporarily_unavailable → capability exists but failed/staled
+//   not_supported → no India equivalent (structural gap; never synthesized)
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const rows = await fetchIndiaSectors();
-        if (cancelled) return;
-        setSectors(
-          rows.map((r) => ({
-            symbol: r.symbol,
-            name: r.label,
-            price: r.price,
-            change: (r.price * r.changePct) / 100,
-            changePct: r.changePct,
-          }))
-        );
-      } catch {
-        if (!cancelled) setSectors([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  if (!sectors) {
-    return (
-      <div style={{ height: "180px", background: T.card, borderRadius: "12px", border: `1px solid ${T.border}`, animation: "pulse 1.5s ease-in-out infinite" }} />
-    );
-  }
-  if (sectors.length === 0) {
-    return <IndiaGapNote label="India sector rotation" />;
-  }
-  return <SectorHeatmap sectors={sectors} onSymbol={onSymbol} />;
+// A capability that exists for India but currently failed or staled out. Distinct
+// from `NotSupportedNote` (a structural absence) — different meaning, different UI.
+function TempUnavailableNote({ label, detail, onRetry }: { label: string; detail?: string; onRetry?: () => void }) {
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.amber}30`, borderRadius: "12px", padding: "18px 20px", fontSize: "12px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+      <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", padding: "2px 8px", borderRadius: "5px", background: "#2D2000", border: `1px solid ${T.amber}40`, color: T.amber }}>Temporarily unavailable</span>
+      <span style={{ color: T.textSub }}>{label}{detail ? ` — ${detail}` : ""}</span>
+      {onRetry && (
+        <button onClick={onRetry} style={{ marginLeft: "auto", padding: "5px 12px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "7px", color: T.text, fontSize: "12px", fontWeight: 500, cursor: "pointer" }}>Retry</button>
+      )}
+    </div>
+  );
 }
 
-// India breadth — advancers/decliners from a NIFTY-50 sample (first 10 names,
-// fetched sequentially to stay under Yahoo rate limits). Mirrors the US breadth
-// tile's advancers/decliners bar.
-function IndiaBreadth() {
-  const [counts, setCounts] = useState<{ up: number; down: number } | null>(null);
+// A structural gap — there is no approved free India equivalent for this US-only
+// surface. NOT a transient failure; never synthesized.
+function NotSupportedNote({ label }: { label: string }) {
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px", color: T.muted, fontSize: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
+      <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", padding: "2px 8px", borderRadius: "5px", background: T.surface, border: `1px solid ${T.border}`, color: T.textSub }}>Not supported</span>
+      {label} has no approved India equivalent — US only.
+    </div>
+  );
+}
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      let up = 0;
-      let down = 0;
-      const sample = NIFTY_50.slice(0, 10);
-      for (const sym of sample) {
-        try {
-          const q = await fetchIndiaQuote(sym);
-          if (q) {
-            if (q.changePct > 0) up += 1;
-            else if (q.changePct < 0) down += 1;
-          }
-        } catch {
-          /* skip failed quote */
-        }
-        await new Promise((r) => setTimeout(r, 300));
-        if (cancelled) return;
-      }
-      if (!cancelled) setCounts({ up, down });
-    })();
-    return () => { cancelled = true; };
-  }, []);
+function snapRowToQuote(r: IndiaMarketsSnapshot["indices"][number]): IndexQuote {
+  return { symbol: r.symbol, name: r.label, price: r.price, change: (r.price * r.changePct) / 100, changePct: r.changePct };
+}
 
-  if (!counts) {
-    return (
-      <div style={{ height: "120px", background: T.card, borderRadius: "12px", border: `1px solid ${T.border}`, animation: "pulse 1.5s ease-in-out infinite" }} />
-    );
-  }
-
-  const total = counts.up + counts.down;
-  const upPct = total > 0 ? (counts.up / total) * 100 : 50;
-
+// NIFTY-50 breadth from the snapshot. Honest: shows advanced/declined over the
+// RESOLVED names and always discloses resolvedN/eligibleN coverage. Labeled
+// "partial coverage" below the coverage floor — never presented as a full total.
+function IndiaBreadthBlock({ breadth }: { breadth: NonNullable<IndiaMarketsSnapshot["breadth"]> }) {
+  const decided = breadth.advanced + breadth.declined;
+  const upPct = decided > 0 ? (breadth.advanced / decided) * 100 : 50;
+  const partial = breadth.quality === "partial";
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
-      <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>
-        Market Breadth · advancers vs decliners
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "6px", marginBottom: "16px" }}>
+        <span style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+          NIFTY-50 breadth · advancers vs decliners
+        </span>
+        <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", padding: "2px 8px", borderRadius: "5px", background: partial ? "#2D2000" : T.surface, border: `1px solid ${partial ? T.amber + "40" : T.border}`, color: partial ? T.amber : T.textSub }}>
+          {partial ? "Partial coverage" : "Full coverage"}
+        </span>
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-        <span style={{ fontSize: "13px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: T.green }}>{counts.up} up</span>
-        <span style={{ fontSize: "13px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: T.red }}>{counts.down} down</span>
+        <span style={{ fontSize: "13px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: T.green }}>{breadth.advanced} up</span>
+        <span style={{ fontSize: "13px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: T.red }}>{breadth.declined} down</span>
       </div>
       <div style={{ display: "flex", height: "10px", borderRadius: "5px", overflow: "hidden", background: T.surface }}>
         <div style={{ width: `${upPct}%`, background: T.green }} />
         <div style={{ width: `${100 - upPct}%`, background: T.red }} />
       </div>
       <div style={{ fontSize: "11px", color: T.muted, marginTop: "10px" }}>
-        breadth from NIFTY-50 sample
+        {breadth.resolvedN}/{breadth.eligibleN} constituents resolved ({breadth.coveragePct}% coverage)
+        {breadth.unchanged > 0 ? ` · ${breadth.unchanged} unchanged` : ""}
+        {breadth.unavailable > 0 ? ` · ${breadth.unavailable} unavailable` : ""}
+        {" · membership as of "}{breadth.universeAsOf}
       </div>
-    </div>
-  );
-}
-
-function IndiaGapNote({ label }: { label: string }) {
-  return (
-    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px", color: T.muted, fontSize: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
-      <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", padding: "2px 8px", borderRadius: "5px", background: T.surface, border: `1px solid ${T.border}`, color: T.textSub }}>US only</span>
-      {label} has no free India data source yet — hidden for 🇮🇳 India.
     </div>
   );
 }
@@ -1339,10 +1305,28 @@ export default function MarketsPage() {
   const [lastFetch, setLastFetch] = useState<string | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [showRecessions, setShowRecessions] = useState(false);
-  // India index/VIX quotes (NIFTY 50 / SENSEX / BANK NIFTY / India VIX), fetched
-  // client-side from Yahoo. Only populated when India is the selected market.
-  const [indiaIndices, setIndiaIndices] = useState<IndexQuote[] | null>(null);
-  const [indiaLoading, setIndiaLoading] = useState(false);
+  // India markets snapshot — fetched from the server route (never Yahoo directly).
+  // `indiaState` drives the explicit product states; loading ALWAYS exits (bounded
+  // by a client-side abort timeout as well as the server's own bounded fetch).
+  const [indiaSnap, setIndiaSnap] = useState<IndiaMarketsSnapshot | null>(null);
+  const [indiaState, setIndiaState] = useState<"loading" | "ready" | "unavailable">("loading");
+
+  const loadIndia = useCallback(() => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15_000); // hard bound — loading must exit
+    setIndiaState("loading");
+    fetch("/api/markets/india", { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((j: IndiaMarketsSnapshot) => {
+        setIndiaSnap(j);
+        setIndiaState(j.status === "unavailable" ? "unavailable" : "ready");
+      })
+      .catch(() => setIndiaState((prev) => (indiaSnap ? "ready" : "unavailable")))
+      .finally(() => clearTimeout(timer));
+    return () => { ctrl.abort(); clearTimeout(timer); };
+  // indiaSnap intentionally excluded — used only as a fallback read inside catch
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function fetchMarkets() {
     setLoading(true);
@@ -1376,45 +1360,32 @@ export default function MarketsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When India is selected, pull NIFTY/SENSEX/BANK NIFTY/India VIX from Yahoo
-  // (client-side, CORS-allowed) and map into the same IndexQuote shape the US
-  // index bar uses — identical cards, India data.
+  // When India is selected, load the server snapshot and refresh every 5 min.
+  // The server route handles all provider access, pacing, caching, and provenance.
   useEffect(() => {
     if (!isIndia) return;
-    let cancelled = false;
-    async function loadIndia() {
-      setIndiaLoading(true);
-      try {
-        const rows = await fetchIndiaIndices();
-        if (cancelled) return;
-        setIndiaIndices(
-          rows.map((r) => ({
-            symbol: r.symbol,
-            name: r.label,
-            price: r.price,
-            change: (r.price * r.changePct) / 100, // absolute move from % (no raw prev close exposed)
-            changePct: r.changePct,
-          }))
-        );
-      } catch {
-        if (!cancelled) setIndiaIndices([]);
-      } finally {
-        if (!cancelled) setIndiaLoading(false);
-      }
-    }
-    loadIndia();
+    const cleanup = loadIndia();
     const iv = setInterval(loadIndia, 5 * 60 * 1000);
-    return () => { cancelled = true; clearInterval(iv); };
-  }, [isIndia]);
+    return () => { cleanup(); clearInterval(iv); };
+  }, [isIndia, loadIndia]);
 
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
       <PageHeader
-        title="Markets"
-        subtitle="Live indices, sector rotation, and VIX proxy"
+        title={isIndia ? "Markets · India" : "Markets"}
+        subtitle={isIndia
+          ? "NIFTY 50, SENSEX, BANK NIFTY, India VIX, NSE sector indices & breadth (₹)"
+          : "Live indices, sector rotation, and VIX proxy"}
         cadence="daily"
-        whatItDoes="Shows S&P 500, Nasdaq, Dow, and VIX proxy (VIXY) plus all 11 S&P sector ETF performances. Data refreshes every 5 minutes during market hours."
-        whatToLookFor={[
+        whatItDoes={isIndia
+          ? "Shows NIFTY 50, SENSEX, BANK NIFTY and India VIX plus 10 NSE sector indices and NIFTY-50 market breadth. India data comes from a server-side snapshot (Yahoo .NS, unofficial) refreshed on a schedule — advisory display only."
+          : "Shows S&P 500, Nasdaq, Dow, and VIX proxy (VIXY) plus all 11 S&P sector ETF performances. Data refreshes every 5 minutes during market hours."}
+        whatToLookFor={isIndia ? [
+          "Red sectors = risk-off rotation. Green sectors = risk-on. Note which NSE sectors lead.",
+          "India VIX rising = elevated volatility / fear — consider sizing down new entries.",
+          "NIFTY vs BANK NIFTY divergence tells you whether financials are leading or lagging.",
+          "Breadth shows how many of the NIFTY-50 are advancing — check coverage before reading it.",
+        ] : [
           "Red sectors = risk-off rotation. Green sectors = risk-on. Note which sectors lead.",
           "VIXY > $20 = elevated volatility / fear — consider sizing down new entries.",
           "If S&P and Nasdaq diverge, tech is driving or lagging — check XLK.",
@@ -1486,43 +1457,86 @@ export default function MarketsPage() {
         </div>
       )}
 
-      {/* India index bar — NIFTY 50 / SENSEX / BANK NIFTY / India VIX.
-          Same card layout as US, India data. Non-clickable (no per-symbol page). */}
+      {/* India — server-snapshot driven. Explicit product states; loading is
+          bounded and always exits (client abort + server-side bounded fetch). */}
       {isIndia && (
         <>
-          {indiaLoading && !indiaIndices && (
+          {/* loading */}
+          {indiaState === "loading" && !indiaSnap && (
             <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
               {[...Array(4)].map((_, i) => (
                 <div key={i} style={{ flex: "1 1 180px", minWidth: 0, height: "110px", background: T.card, borderRadius: "12px", border: `1px solid ${T.border}`, animation: "pulse 1.5s ease-in-out infinite" }} />
               ))}
             </div>
           )}
-          {indiaIndices && indiaIndices.length > 0 && (
-            <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
-              {indiaIndices.map(q => (
-                <div key={q.symbol}>
-                  <IndexCard q={q} currency={CURRENCY.india} />
-                </div>
-              ))}
-            </div>
-          )}
-          {indiaIndices && indiaIndices.length === 0 && (
+
+          {/* temporarily_unavailable — capability exists but the fetch failed/staled */}
+          {indiaState === "unavailable" && (
             <div style={{ marginBottom: "16px" }}>
-              <IndiaGapNote label="India index quotes" />
+              <TempUnavailableNote
+                label="India market data"
+                detail="the snapshot could not be fetched or has no rows yet"
+                onRetry={loadIndia}
+              />
             </div>
           )}
-          <div style={{ marginBottom: "16px" }}>
-            <IndiaSectors onSymbol={setSelectedSymbol} />
-          </div>
-          <div style={{ marginBottom: "16px" }}>
-            <IndiaBreadth />
-          </div>
-          <div style={{ marginBottom: "16px" }}>
-            <IndiaGapNote label="TradingView sector overview, macro sentinel & leveraged-pair sentiment" />
-          </div>
-          <div style={{ fontSize: "11px", color: T.muted, textAlign: "right" }}>
-            India indices &amp; sectors via Yahoo Finance · refreshed every 5 min
-          </div>
+
+          {/* complete / partial */}
+          {indiaState === "ready" && indiaSnap && (
+            <>
+              {indiaSnap.status === "partial" && (
+                <div style={{ marginBottom: "12px", fontSize: "11px", color: T.amber, background: "#2D2000", border: `1px solid ${T.amber}30`, borderRadius: "8px", padding: "8px 12px" }}>
+                  Partial data — some India components did not resolve this fetch. Available rows are shown with explicit coverage below; no healthy-looking total is implied.
+                </div>
+              )}
+
+              {/* Index bar (non-clickable — no per-symbol India page) */}
+              {indiaSnap.indices.length > 0 ? (
+                <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+                  {indiaSnap.indices.map((r) => (
+                    <div key={r.symbol}>
+                      <IndexCard q={snapRowToQuote(r)} currency={CURRENCY.india} />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ marginBottom: "16px" }}>
+                  <TempUnavailableNote label="India index quotes" detail="no index rows resolved this fetch" onRetry={loadIndia} />
+                </div>
+              )}
+
+              {/* Sector heatmap */}
+              <div style={{ marginBottom: "16px" }}>
+                {indiaSnap.sectors.length > 0 ? (
+                  <SectorHeatmap
+                    sectors={indiaSnap.sectors.map((r) => ({ symbol: r.symbol, name: r.label, price: r.price, change: (r.price * r.changePct) / 100, changePct: r.changePct }))}
+                    onSymbol={setSelectedSymbol}
+                  />
+                ) : (
+                  <TempUnavailableNote label="India sector rotation" detail="no NSE sector rows resolved this fetch" onRetry={loadIndia} />
+                )}
+              </div>
+
+              {/* NIFTY-50 breadth */}
+              <div style={{ marginBottom: "16px" }}>
+                {indiaSnap.breadth ? (
+                  <IndiaBreadthBlock breadth={indiaSnap.breadth} />
+                ) : (
+                  <TempUnavailableNote label="NIFTY-50 breadth" detail="awaiting the scheduled full-constituent fill" />
+                )}
+              </div>
+
+              {/* Structural gaps — no approved India equivalent (never synthesized) */}
+              <div style={{ marginBottom: "16px" }}>
+                <NotSupportedNote label="TradingView sector overview, macro sentinel & leveraged-pair sentiment" />
+              </div>
+
+              {/* Provenance / freshness footer */}
+              <div style={{ fontSize: "11px", color: T.muted, textAlign: "right" }}>
+                India indices &amp; NSE sectors via Yahoo Finance (unofficial · not an authoritative NSE feed) · as of {indiaSnap.asOf} · status {indiaSnap.status}
+              </div>
+            </>
+          )}
         </>
       )}
 

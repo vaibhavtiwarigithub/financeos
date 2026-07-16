@@ -167,3 +167,47 @@ state; US remains untouched. Acceptance requires zero direct browser provider ca
 reproducible market-local cache keys, bounded loading, explicit partial coverage,
 and no scoring/order imports. No Supabase migration or provider activation is
 authorized by this document until the design is owner-approved.
+
+## 11. Implementation Notes (2026-07-15)
+
+Built to this design. Files/routes:
+
+- `lib/india-markets/adapter.ts` — server-only, allowlisted Yahoo chart adapter.
+  Pure validate core `toAdapterQuote(symbol, FetchOutcome, now)` handles success /
+  no_data / throttled / http_error / network_error / bad_currency (currency must be
+  INR) / non_finite. `fetchQuotes` runs bounded concurrency + pacing. Never called
+  authoritative.
+- `lib/india-markets/constituents.ts` — versioned NIFTY-50 snapshot
+  (`universeId:"nifty_50"`, `universeAsOf:"2026-07-01"`, `BREADTH_COVERAGE_FLOOR=0.8`).
+- `lib/india-markets/snapshot.ts` — types + pure `buildSnapshot` / `computeBreadth`.
+  Status: `unavailable` (0 index rows) / `complete` (all indices+sectors + breadth
+  complete) / `partial` (anything else). Breadth counts only resolved names;
+  unresolved stay in the denominator (`resolvedN/eligibleN`, `coveragePct`).
+- `app/api/markets/india/route.ts` — the ONLY India market-data surface.
+  `GET` = cache-first, bounded, LIGHT (refreshes 14 index+sector symbols inline,
+  carries breadth forward, never bursts 50 constituents on load). `POST` =
+  owner/cron-gated FULL fill incl. NIFTY-50 breadth, persisted. System Health
+  aggregates ONE issue by overall status (`india-markets-degraded`), not per-symbol.
+
+Breadth choice: **Option 1 (full NIFTY-50 breadth)**, built asynchronously by the
+scheduled `POST` fill (not during page render), with a versioned constituent
+snapshot and 80% coverage floor. The GET path carries the last full breadth block
+forward and shows `temporarily_unavailable` until the first fill runs.
+
+Cache isolation: new India-only table `india_market_snapshot` (migration
+`20260715160000`), fully separate from US `price_cache`. India data is never
+written to `price_cache` and vice-versa — no cross-read is possible.
+
+Cron: `20260715160500_india_market_snapshot_cron.sql` — post-close full fills at
+10:15 / 10:45 UTC (15:30 IST close, no DST) via `kairos_call_agent` (injects
+`x-cron-secret`). Both migrations applied to the target DB and verified.
+
+Client (`components/dashboard/MarketsPage.tsx`): removed all direct
+`lib/india-data` Yahoo calls; India path fetches `/api/markets/india` with a 15s
+client abort so loading always exits. Product states: loading skeleton,
+complete/partial (available rows + explicit coverage), `TempUnavailableNote`
+(transient), `NotSupportedNote` (structural — leveraged pairs / macro sentinel /
+TradingView, never synthesized). Market-aware heading names India instruments.
+Verified: no provider hostname in the client static bundle; the markets page chunk
+references `/api/markets/india`. Gates: `tsc`, `vitest` (423 pass), `next build`
+all green.

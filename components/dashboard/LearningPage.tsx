@@ -72,7 +72,7 @@ interface WeightConfig {
   sentiment_weight: number;
   macro_weight: number;
   insider_weight: number;
-  updated_at: string;
+  updated_at: string | null;
 }
 
 export default function LearningPage({

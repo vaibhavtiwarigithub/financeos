@@ -1,5 +1,7 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { getEmailProvider } from "@/lib/providers/email";
+import { resolveDisplayWeights } from "@/lib/champion-weights";
+import { isIndia } from "@/lib/india-data";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "vterminater@gmail.com";
 const FROM = "Kairos <alerts@kairos.trade>";
@@ -81,18 +83,21 @@ export async function sendTradeAlertEmail(opts: TradeAlertOpts): Promise<void> {
 
   const sb = createServiceClient();
 
+  // Weights shown in the email are the champion's for the trade's market (US or
+  // India, inferred from the symbol) — NOT the vestigial global signal_weights row.
+  const market = isIndia(opts.symbol) ? "india" : "us";
+
   // Fetch enrichment data in parallel
-  const [signalRes, weightsRes, learnerRes, regimeRes] = await Promise.all([
+  const [signalRes, weights, learnerRes, regimeRes] = await Promise.all([
     opts.signalId
       ? sb.from("agent_signals").select("fundamental_score,technical_score,sentiment_score,macro_score,analyst_score,insider_score,rationale,risks,summary,is_holding,conviction").eq("id", opts.signalId).single()
       : Promise.resolve({ data: null }),
-    sb.from("signal_weights").select("*").single(),
+    resolveDisplayWeights(sb, market),
     sb.from("learner_runs").select("win_rate_snapshot,weight_mutations,mutations_paused,run_date").order("created_at", { ascending: false }).limit(1).single(),
     sb.from("macro_regime").select("regime,danger_score,computed_at").order("computed_at", { ascending: false }).limit(1).single(),
   ]);
 
   const sig     = (signalRes.data ?? {}) as any;
-  const weights = (weightsRes.data ?? {}) as any;
   const learner = (learnerRes.data ?? {}) as any;
   const regime  = (regimeRes.data ?? {}) as any;
 

@@ -344,6 +344,18 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: null,
   },
   {
+    name: "symbol-profiles-backfill",
+    agent: "symbol-profiles-backfill",
+    time: "7:40 AM ET",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Pre-market fill of symbol_profiles (Stock Context 'what is this stock' layer) for watchlist symbols lacking a fresh (<30d) profile, and backfill of watchlist.company_name where null, from Finnhub/Yahoo. Bounded by a ~90s wall-clock budget and idempotent — fresh profiles are skipped and the rest re-defer to the next run. Covers both US + India watchlist symbols in one pass. Display data only — never on the money/scoring path.",
+    handoff: "→ Watchlist / Stock Context display",
+    agentRunsType: null,
+  },
+  {
     name: "mentor-coach",
     agent: "mentor-coach",
     time: "5:15 PM ET",
