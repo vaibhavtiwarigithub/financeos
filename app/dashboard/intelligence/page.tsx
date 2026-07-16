@@ -28,6 +28,7 @@ function NewsletterTab() {
   // (RLS on this table is a blanket authenticated-read, so filtering by market
   // client-side returns rows normally — verified against the live DB.)
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setSelected(null);
     let query = supabase.from("newsletters")
@@ -38,7 +39,10 @@ function NewsletterTab() {
     query
       .order("sent_at", { ascending: false })
       .limit(30)
-      .then(({ data }) => { setNewsletters(data ?? []); setLoading(false); });
+      .then(({ data }) => {
+        if (!cancelled) { setNewsletters(data ?? []); setLoading(false); }
+      });
+    return () => { cancelled = true; };
   }, [market]);
 
   if (loading) return <div style={{ color: T2.muted, padding: "40px", textAlign: "center" }}>Loading newsletters...</div>;

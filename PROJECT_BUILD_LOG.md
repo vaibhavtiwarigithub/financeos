@@ -198,6 +198,19 @@ Notes: Migrations `20260716013000` and `20260716013100` applied to `dionkikgdmla
 
 ---
 
+### Entry 8 - 2026-07-16 (Market-switcher retrofit adversarial remediation)
+
+Instruction: Independently review the full market-switcher retrofit, verify its database assumptions against production, fix every confirmed correctness/security/product issue, and keep all scoring, sizing, order, and exit behavior unchanged.
+Classification: Cross-market correctness, private-read security, and dashboard truth
+Affected area: Agents dashboard, Score Tracker, briefings/goals/newsletters client state, Watchlist TradingView import, paper-performance/strategy-history APIs, market-support registry
+Impact: High for India display correctness; no money-path impact
+Architecture impact: Preserves one global US/India switcher as the active market authority. Symbol pages remain suffix-scoped, global learning/provenance tables remain global, and live Trader proposals remain US-only.
+Risk: Display/API-only remediation. Trader POST is byte-identical to the pre-retrofit version; PaperTrader and PositionMonitor routes are absent from the retrofit diff.
+Decision status: Implemented and production-verified
+Notes: Fixed the Agents page's surviving $10k India baseline, blocked US proposal generation from the India view, threaded market explicitly into embedded backtests, corrected benchmark labels, eliminated stale cross-market response races, owner-gated service-role performance/strategy/score-history reads, and replaced permissive CSV rewriting with tested exchange-aware normalization (`NSE:`→`.NS`, `BSE:`→`.BO`). Production verified 249 intact lowercase US watchlist rows, zero invalid/mis-suffixed rows, NOT NULL/default/check enforcement, and nullable legacy-row handling for proposals/newsletters/agent runs.
+
+---
+
 ## Drift Warnings
 
 - Current prototype routes use LLM-generated prices and direct weight mutation, which conflict with the approved architecture.

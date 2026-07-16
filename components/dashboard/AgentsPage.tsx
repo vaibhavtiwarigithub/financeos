@@ -7,6 +7,8 @@ import PageHeader from "@/components/dashboard/PageHeader";
 import AgentDiagram from "@/components/dashboard/AgentDiagram";
 import AgentHistoryPanel from "@/components/dashboard/AgentHistoryPanel";
 import InfoTooltip from "@/components/dashboard/InfoTooltip";
+import { fmtMoney } from "@/lib/format-money";
+import { paperStartNav } from "@/lib/paper-nav";
 const SignalCharts = lazy(() => import("@/components/charts/SignalChartsWrapper"));
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 const MermaidChart = lazy(() => import("@/components/dashboard/MermaidChart"));
@@ -21,7 +23,7 @@ const T = {
 
 const AGENTS = [
   { id: "research",     label: "ResearchAgent",  icon: "🔍", desc: "Analyzes stocks, writes signals",          apiPath: "/api/agents/research" },
-  { id: "paper-trade",  label: "PaperTrader",    icon: "📄", desc: "Shadow-trades signals on $10k virtual",    apiPath: "/api/agents/paper-trade" },
+  { id: "paper-trade",  label: "PaperTrader",    icon: "📄", desc: "Shadow-trades eligible paper signals",     apiPath: "/api/agents/paper-trade" },
   { id: "trader",       label: "TraderAgent",    icon: "⚡", desc: "Proposes real trades for approval",        apiPath: "/api/agents/trader" },
   { id: "learner",      label: "LearnerAgent",   icon: "🧠", desc: "Evaluates outcomes; proposes governed challengers", apiPath: "/api/agents/learner" },
   { id: "theme-scout",  label: "ThemeScout",     icon: "🎯", desc: "Finds AI/thematic watchlist candidates",   apiPath: "/api/agents/theme-scout" },
@@ -95,14 +97,20 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   // learner-controls is deliberately NOT market-scoped: it's the global learner
   // config + weight-history ledger, which has no market column.
   useEffect(() => {
+    let cancelled = false;
     setLearnerRunIdx(0);
-    fetch(`/api/agents/learner-brain?market=${market}`).then(r => r.json()).then(d => { if (d.runs) setLearnerRuns(d.runs); }).catch(() => {});
+    setLearnerRuns([]);
+    setStrategyVersions([]);
+    setProposals([]);
+    setBacktestResult(null);
+    fetch(`/api/agents/learner-brain?market=${market}`).then(r => r.json()).then(d => { if (!cancelled && d.runs) setLearnerRuns(d.runs); }).catch(() => {});
     fetch("/api/agents/learner-controls").then(r => r.json()).then(d => {
-      if (d.config) setLearnerConfig(d.config);
-      if (d.history) setWeightHistory(d.history);
+      if (!cancelled && d.config) setLearnerConfig(d.config);
+      if (!cancelled && d.history) setWeightHistory(d.history);
     }).catch(() => {});
-    fetch(`/api/strategies/versions?market=${market}`).then(r => r.json()).then(d => { if (d.versions) setStrategyVersions(d.versions); }).catch(() => {});
-    fetch(`/api/agents/trader?market=${market}`).then(r => r.json()).then(d => { if (d.proposals) setProposals(d.proposals); }).catch(() => {});
+    fetch(`/api/strategies/versions?market=${market}`).then(r => r.json()).then(d => { if (!cancelled && d.versions) setStrategyVersions(d.versions); }).catch(() => {});
+    fetch(`/api/agents/trader?market=${market}`).then(r => r.json()).then(d => { if (!cancelled && d.proposals) setProposals(d.proposals); }).catch(() => {});
+    return () => { cancelled = true; };
   }, [market]);
 
   async function updateLearnerConfig(dimension: string, field: string, value: unknown) {
@@ -232,7 +240,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   }
 
   // Paper stats
-  const startingNAV = 10000;
+  const startingNAV = paperStartNav(market);
   const currentNAV = paperPortfolio?.nav ?? startingNAV;
   const totalPnl = currentNAV - startingNAV;
   const totalPnlPct = (totalPnl / startingNAV) * 100;
@@ -266,8 +274,8 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "24px" }}>
         <div>
           <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Paper NAV</div>
-          <div style={{ fontSize: "24px", fontWeight: 700 }}>{currency}{currentNAV.toFixed(0)}</div>
-          <div style={{ fontSize: "12px", color: T.muted }}>started $10,000</div>
+          <div style={{ fontSize: "24px", fontWeight: 700 }}>{fmtMoney(currentNAV, market, 0)}</div>
+          <div style={{ fontSize: "12px", color: T.muted }}>started {fmtMoney(startingNAV, market, 0)}</div>
         </div>
         <div>
           <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Total P&L</div>
@@ -276,7 +284,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         </div>
         <div>
           <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Cash</div>
-          <div style={{ fontSize: "24px", fontWeight: 700 }}>{currency}{(paperPortfolio?.cash_balance ?? 10000).toFixed(0)}</div>
+          <div style={{ fontSize: "24px", fontWeight: 700 }}>{fmtMoney(paperPortfolio?.cash_balance ?? startingNAV, market, 0)}</div>
           <div style={{ fontSize: "12px", color: T.muted }}>{paperPositions.length} position{paperPositions.length !== 1 ? "s" : ""}</div>
         </div>
         <div>
@@ -298,17 +306,20 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           const runs = agentRuns?.[runKey] ?? [];
           const lastRun = runs[0];
           const isExpanded = expandedRuns === a.id;
+          const unavailableForMarket = market === "india" && a.id === "trader";
           return (
             <div key={a.id} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px" }}>
               <div style={{ fontSize: "20px", marginBottom: "6px" }}>{a.icon}</div>
               <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "3px" }}>{a.label}</div>
-              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "10px" }}>{a.desc}</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "10px" }}>
+                {unavailableForMarket ? "US live proposals only; unavailable in the India view" : a.desc}
+              </div>
               <button
                 onClick={() => runAgent(a.id, a.apiPath)}
-                disabled={!!running}
-                style={{ width: "100%", padding: "7px", background: running === a.id ? T.border : T.accent + "18", border: `1px solid ${T.accent}35`, borderRadius: "7px", color: running === a.id ? T.muted : T.accent, fontSize: "12px", fontWeight: 600, cursor: running ? "default" : "pointer" }}
+                disabled={!!running || unavailableForMarket}
+                style={{ width: "100%", padding: "7px", background: running === a.id || unavailableForMarket ? T.border : T.accent + "18", border: `1px solid ${T.accent}35`, borderRadius: "7px", color: running === a.id || unavailableForMarket ? T.muted : T.accent, fontSize: "12px", fontWeight: 600, cursor: running || unavailableForMarket ? "default" : "pointer" }}
               >
-                {running === a.id ? "Running..." : "▶ Run"}
+                {unavailableForMarket ? "US only" : running === a.id ? "Running..." : "▶ Run"}
               </button>
               {/* Run history */}
               <div style={{ marginTop: "10px", borderTop: `1px solid ${T.border}`, paddingTop: "8px" }}>
@@ -1247,6 +1258,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
+                        market,
                         date_from: new Date(Date.now() - 90 * 86400000).toISOString().split("T")[0],
                         date_to: new Date().toISOString().split("T")[0],
                         score_threshold: strategy?.score_threshold ?? 60,
@@ -1356,7 +1368,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                       { label: "Avg Return", val: backtestResult.avg_return_pct != null ? (backtestResult.avg_return_pct >= 0 ? "+" : "") + backtestResult.avg_return_pct.toFixed(1) + "%" : "—", color: (backtestResult.avg_return_pct ?? 0) >= 0 ? T.green : T.red },
                       { label: "Sharpe", val: backtestResult.sharpe_ratio?.toFixed(2) ?? "—", color: (backtestResult.sharpe_ratio ?? 0) >= 0.5 ? T.green : T.amber },
                       { label: "Drawdown", val: backtestResult.max_drawdown_pct != null ? backtestResult.max_drawdown_pct.toFixed(1) + "%" : "—", color: (backtestResult.max_drawdown_pct ?? 99) < 25 ? T.green : T.red },
-                      { label: "Alpha vs SPY", val: backtestResult.alpha_pct != null ? (backtestResult.alpha_pct >= 0 ? "+" : "") + backtestResult.alpha_pct.toFixed(1) + "%" : "—", color: (backtestResult.alpha_pct ?? 0) >= 0 ? T.green : T.red },
+                      { label: `Alpha vs ${backtestResult.benchmark_symbol ?? (market === "india" ? "NIFTY 50" : "SPY")}`, val: backtestResult.alpha_pct != null ? (backtestResult.alpha_pct >= 0 ? "+" : "") + backtestResult.alpha_pct.toFixed(1) + "%" : "—", color: (backtestResult.alpha_pct ?? 0) >= 0 ? T.green : T.red },
                     ].map(m => (
                       <div key={m.label} style={{ background: T.surface, borderRadius: "8px", padding: "12px 14px" }}>
                         <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "4px" }}>{m.label}</div>
@@ -1379,7 +1391,12 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
       )}
 
       {/* Proposals tab */}
-      {tab === "proposals" && (
+      {tab === "proposals" && (market === "india" ? (
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "40px 20px", textAlign: "center" }}>
+          <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "6px" }}>Live proposals are US-only</div>
+          <div style={{ color: T.muted, fontSize: "13px" }}>The connected live proposal and approval flow uses the US broker account. Switch to US to review or generate proposals.</div>
+        </div>
+      ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
@@ -1514,7 +1531,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
             )}
           </div>
         </div>
-      )}
+      ))}
 
       {/* History tab */}
       {tab === "history" && (

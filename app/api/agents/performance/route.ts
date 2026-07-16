@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { requireOwner } from "@/lib/auth/require-owner";
 import type { Mkt } from "@/lib/format-money";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,8 @@ const SEED: Record<Mkt, number> = { us: 10_000, india: 1_000_000 };
 const BENCH_LABEL: Record<Mkt, string> = { us: "SPY", india: "NIFTY 50" };
 
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   try {
     const svc = createServiceClient();
 

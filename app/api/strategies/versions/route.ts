@@ -10,6 +10,8 @@ export const dynamic = "force-dynamic";
 // them apart. `strategy_versions.market` is NOT NULL DEFAULT 'us', so plain
 // equality is a complete filter. Missing/unknown ?market= defaults to "us".
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   try {
     const supabase = createServiceClient();
     const market: "us" | "india" =

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -45,11 +46,16 @@ function dateBoundary(raw: string, endOfDay: boolean): string | null {
 }
 
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
   const p = req.nextUrl.searchParams;
   // Accept ?symbol=X (single) or ?symbols=X,Y,Z (multi, for the Score Tracker).
   const raw = (p.get("symbols") ?? p.get("symbol") ?? "").toUpperCase();
   const symbols = raw.split(",").map(s => s.trim()).filter(Boolean);
   if (symbols.length === 0) return NextResponse.json({ history: [], bySymbol: {} });
+  if (symbols.length > 50 || symbols.some(symbol => !/^[A-Z0-9^&.-]{1,24}$/.test(symbol))) {
+    return NextResponse.json({ error: "invalid symbol list" }, { status: 400 });
+  }
 
   const cutoff = periodCutoff(p.get("period"));
 

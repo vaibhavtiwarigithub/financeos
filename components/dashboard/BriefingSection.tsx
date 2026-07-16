@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { extractBriefingTickers } from "@/lib/briefing-tickers";
 import { useMarket } from "@/lib/market-context";
 
@@ -108,13 +108,17 @@ export default function BriefingSection({ initialBriefing }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [addedNow, setAddedNow] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<"morning" | "evening" | null>("morning");
+  const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     setLoading(true);
+    setBriefings([]);
     const [briefRes, watchRes] = await Promise.allSettled([
       fetch(`/api/briefing?market=${market}`).then(r => r.json()),
-      fetch("/api/watchlist").then(r => r.json()),
+      fetch(`/api/watchlist?market=${market}`).then(r => r.json()),
     ]);
+    if (sequence !== loadSequence.current) return;
     if (briefRes.status === "fulfilled") setBriefings(briefRes.value.briefings ?? []);
     if (watchRes.status === "fulfilled") {
       const syms = (watchRes.value.items ?? []).map((i: WatchlistSymbol) => i.symbol);
@@ -125,7 +129,10 @@ export default function BriefingSection({ initialBriefing }: Props) {
 
   // Re-runs on market switch (load depends on market), so the panel follows the
   // global US/India toggle instead of keeping the first market's briefing.
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    return () => { loadSequence.current += 1; };
+  }, [load]);
 
   async function generate(session: "morning" | "evening") {
     setGenerating(session);

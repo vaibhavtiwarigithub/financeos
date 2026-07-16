@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useMarket, MARKET_LABEL } from "@/lib/market-context";
 
 const T = {
@@ -29,9 +29,14 @@ export default function GoalCard() {
   const [targetPct, setTargetPct] = useState(10);
   const [horizonDays, setHorizonDays] = useState(30);
   const [saving, setSaving] = useState(false);
+  const loadSequence = useRef(0);
 
-  const load = useCallback(() => {
-    fetch(`/api/goals?market=${market}`).then(r => r.json()).then(setData).catch(() => {});
+  const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
+    try {
+      const next = await fetch(`/api/goals?market=${market}`).then(r => r.json());
+      if (sequence === loadSequence.current) setData(next);
+    } catch { /* non-fatal display read */ }
   }, [market]);
 
   // Drop the previous market's goal before refetching — otherwise the US card
@@ -42,6 +47,7 @@ export default function GoalCard() {
     setData(null);
     setShowForm(false);
     load();
+    return () => { loadSequence.current += 1; };
   }, [market, load]);
 
   async function setGoal() {

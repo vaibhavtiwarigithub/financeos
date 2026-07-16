@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useMarket, CURRENCY } from "@/lib/market-context";
+import { parseWatchlistCsvSymbols } from "@/lib/watchlist-symbols";
 
 const T = {
   card: "#1A1D27", border: "#252836", text: "#ECEDEF", textSub: "#9B9EA8",
@@ -80,31 +81,6 @@ function Toggle({
       {label}
     </button>
   );
-}
-
-// A flat `length <= 5` cap used to silently drop EVERY India symbol from CSV
-// import — `INFY.NS` is 7 chars and `RELIANCE.NS` is 11 — so the India watchlist
-// could not be populated this way at all. Validate symbol SHAPE instead of raw
-// length. `&` and `-` are preserved through sanitization because real symbols
-// contain them (NSE `M&M`, `M&MFIN`; US class shares `BRK-B`); stripping them
-// silently rewrote M&M into the unrelated ticker MM.
-function isPlausibleSymbol(s: string): boolean {
-  if (!s) return false;
-  // India: NSE/BSE base (letters/digits/&/-) + explicit .NS/.BO suffix.
-  if (/^[A-Z0-9&-]{1,20}\.(NS|BO)$/.test(s)) return true;
-  // US: 1-5 letters, optional single-letter class suffix (BRK.B / BRK-B).
-  if (/^[A-Z]{1,5}([.-][A-Z])?$/.test(s)) return true;
-  return false;
-}
-
-function parseCsvSymbols(text: string): string[] {
-  return text
-    .split(/[\n,\r]+/)
-    .map(s => s.trim())
-    .map(s => s.includes(":") ? s.split(":")[1] : s)  // strip exchange prefix e.g. NASDAQ:CRNT
-    .map(s => s.replace(/[^A-Z0-9.&-]/gi, "").toUpperCase())
-    .filter(isPlausibleSymbol)
-    .filter((s, i, arr) => arr.indexOf(s) === i); // dedupe
 }
 
 export default function WatchlistPanel() {
@@ -623,7 +599,7 @@ export default function WatchlistPanel() {
 
             <textarea
               value={csvText}
-              onChange={e => { setCsvText(e.target.value); setCsvParsed(parseCsvSymbols(e.target.value)); }}
+              onChange={e => { setCsvText(e.target.value); setCsvParsed(parseWatchlistCsvSymbols(e.target.value)); }}
               placeholder={"NASDAQ:NVDA,NVIDIA Corp\nNYSE:AMD,Advanced Micro Devices\nCRNT\nAAPL"}
               rows={6}
               disabled={csvImporting}

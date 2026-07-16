@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from "recharts";
@@ -56,9 +56,19 @@ const FILTER_KEYS = Object.keys(DEFAULT_FILTERS) as (keyof Filters)[];
 function sanitizeFilters(raw: unknown): Filters {
   const out = { ...DEFAULT_FILTERS };
   if (!raw || typeof raw !== "object") return out;
-  for (const k of FILTER_KEYS) {
-    const v = (raw as any)[k];
-    if (typeof v === "string") (out as any)[k] = v;
+  const value = raw as Record<string, unknown>;
+  const allowed = {
+    scoreBand: new Set(["all", "high", "mid", "low"]),
+    direction: new Set(["all", "long", "short", "neutral"]),
+    source: new Set(["all", "holding", "watchlist", "screener"]),
+  } as const;
+  for (const key of ["scoreBand", "direction", "source"] as const) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && allowed[key].has(candidate as never)) out[key] = candidate as never;
+  }
+  for (const key of ["from", "to"] as const) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && (/^\d{4}-\d{2}-\d{2}$/.test(candidate) || candidate === "")) out[key] = candidate;
   }
   return out;
 }
@@ -336,9 +346,11 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
   // Rich "why" evidence for the currently-selected point (fetched on click).
   const [pointDetail, setPointDetail] = useState<PointDetailResp | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const historySequence = useRef(0);
 
   // ── Hydrate selection from localStorage + fetch candidate symbols ──────────
   useEffect(() => {
+    let cancelled = false;
     let saved: string[] = [];
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -372,6 +384,7 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
       // Include any saved symbols not in the candidate lists so custom tickers persist as chips
       for (const s of saved) collected.add(String(s).toUpperCase());
       const list = [...collected];
+      if (cancelled) return;
       setAllSymbols(list);
 
       const validSaved = saved.map(s => s.toUpperCase()).filter(s => list.includes(s));
@@ -386,8 +399,9 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     // weight-change marker on a US chart. This effect already re-runs on `market`.
     fetch(`/api/strategies/versions?market=${market}`)
       .then(r => r.json())
-      .then(d => setVersions(d.versions ?? []))
+      .then(d => { if (!cancelled) setVersions(d.versions ?? []); })
       .catch(() => {});
+    return () => { cancelled = true; };
   }, [market]);
 
   // ── Persist selection ──────────────────────────────────────────────────────
@@ -409,6 +423,7 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
 
   // ── Fetch score history when symbols or period change ───────────────────────
   const loadHistory = useCallback(async () => {
+    const sequence = ++historySequence.current;
     if (selectedSymbols.length === 0) { setBySymbol({}); return; }
     setLoading(true);
     try {
@@ -424,11 +439,11 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
       if (filters.to) qs.set("to", filters.to);
       const r = await fetch(`/api/charts/score-history?${qs.toString()}`);
       const d = await r.json();
-      setBySymbol(d.bySymbol ?? {});
+      if (sequence === historySequence.current) setBySymbol(d.bySymbol ?? {});
     } catch {
-      setBySymbol({});
+      if (sequence === historySequence.current) setBySymbol({});
     } finally {
-      setLoading(false);
+      if (sequence === historySequence.current) setLoading(false);
     }
   }, [selectedSymbols, period, filters, market]);
 
