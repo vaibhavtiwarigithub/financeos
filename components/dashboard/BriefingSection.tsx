@@ -130,10 +130,14 @@ export default function BriefingSection({ initialBriefing }: Props) {
   async function generate(session: "morning" | "evening") {
     setGenerating(session);
     setError(null);
+    // `market` is REQUIRED: /api/briefing/generate resolves the market from the
+    // POST body (`body.market === "india" ? "india" : "us"`), so omitting it
+    // silently defaulted to "us" — hitting Regen while the switcher was on India
+    // generated a US briefing and left the India view stale.
     const r = await fetch("/api/briefing/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session }),
+      body: JSON.stringify({ session, market }),
     }).catch(() => null);
     if (!r?.ok) {
       const msg = await r?.text().catch(() => "Unknown error") ?? "Unknown error";
