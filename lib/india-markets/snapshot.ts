@@ -132,8 +132,12 @@ function assembleRows(
  */
 export function computeBreadth(quotes: AdapterQuote[]): BreadthBlock {
   const eligibleN = NIFTY50_UNIVERSE.symbols.length;
+  const eligible = new Set(NIFTY50_UNIVERSE.symbols);
+  const seen = new Set<string>();
   let advanced = 0, declined = 0, unchanged = 0, resolvedN = 0;
   for (const q of quotes) {
+    if (!eligible.has(q.symbol) || seen.has(q.symbol)) continue;
+    seen.add(q.symbol);
     if (!q.ok || q.changePct == null) continue;
     resolvedN += 1;
     if (q.changePct > 0) advanced += 1;

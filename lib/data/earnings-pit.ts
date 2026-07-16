@@ -8,7 +8,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 //
 // Two things get captured on the earnings-refresh cadence:
 //
-//   1. First-reported actual EPS/revenue (+ announcement session) — stored on the
+//   1. First-observed provider actual EPS/revenue (+ announcement session) — stored on the
 //      earnings_calendar row in the immutable `eps_actual_first` field. Once set it
 //      is NEVER overwritten; a later differing print is a correction and lands in
 //      `restated_eps` instead. `actual_available_at` records when WE could first
@@ -27,6 +27,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 // HTTP fit for a Vercel cron.
 
 const FINNHUB_BASE = "https://finnhub.io/api/v1";
+const US_MARKET_TZ = "America/New_York";
 
 // Finnhub `hour` → canonical announcement session (matches the DB check constraint).
 function mapSession(hour: unknown): "before_open" | "during_session" | "after_close" | "unknown" {
@@ -39,6 +40,31 @@ function mapSession(hour: unknown): "before_open" | "during_session" | "after_cl
 
 function fmtDate(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+function dateInTimeZone(d: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const pick = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${pick("year")}-${pick("month")}-${pick("day")}`;
+}
+
+// Conservative PIT rule: without an exact announcement timestamp, never capture
+// a consensus on the report's US-market calendar date. This prevents a delayed
+// actual from making a post-announcement estimate look pre-announcement later.
+export function isStrictlyPreAnnouncementVintage(
+  availableAt: string | Date,
+  reportDate: string,
+): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) return false;
+  const d = availableAt instanceof Date ? availableAt : new Date(availableAt);
+  if (!Number.isFinite(d.getTime())) return false;
+  return dateInTimeZone(d, US_MARKET_TZ) < reportDate;
 }
 
 // Small tolerance so provider float noise on an unchanged print is NOT logged as a
@@ -113,7 +139,11 @@ export async function captureEarningsPit(
 
         if (hasActual) {
           await captureActual(svc, symbol, market, reportDate, row, res);
-        } else if (typeof row.epsEstimate === "number" && Number.isFinite(row.epsEstimate)) {
+        } else if (
+          typeof row.epsEstimate === "number" &&
+          Number.isFinite(row.epsEstimate) &&
+          isStrictlyPreAnnouncementVintage(now, reportDate)
+        ) {
           // Upcoming report → snapshot the consensus as a pre-announcement vintage.
           await snapshotConsensus(svc, symbol, market, reportDate, fiscalPeriod, row, res);
         }
@@ -142,19 +172,20 @@ async function captureActual(
   const session = mapSession(row.hour);
 
   // Look up the existing row (upserted by the estimates path on symbol,report_date).
-  const { data: existing } = await svc
+  const { data: existing, error: existingError } = await svc
     .from("earnings_calendar")
     .select("id, eps_actual_first")
     .eq("symbol", symbol)
     .eq("report_date", reportDate)
     .maybeSingle();
+  if (existingError) throw new Error("earnings_actual_lookup_failed");
 
   if (existing && (existing as { eps_actual_first: number | null }).eps_actual_first != null) {
     // Immutable first-reported actual already present. A materially different value
     // now is a correction/restatement → store separately, never overwrite.
     const first = Number((existing as { eps_actual_first: number }).eps_actual_first);
     if (Math.abs(first - epsActual) > RESTATE_EPS_EPSILON) {
-      const { error } = await svc
+      const { data: changed, error } = await svc
         .from("earnings_calendar")
         .update({
           restated_eps: epsActual,
@@ -163,8 +194,10 @@ async function captureActual(
         })
         .eq("id", (existing as { id: string }).id)
         // Only write if we haven't already logged this same correction (idempotent).
-        .or(`restated_eps.is.null,restated_eps.neq.${epsActual}`);
-      if (!error) res.correctionsLogged++;
+        .or(`restated_eps.is.null,restated_eps.neq.${epsActual}`)
+        .select("id");
+      if (error) throw new Error("earnings_restatement_write_failed");
+      if ((changed ?? []).length > 0) res.correctionsLogged++;
     }
     return;
   }
@@ -174,7 +207,9 @@ async function captureActual(
     revenue_actual_first: revActual,
     actual_available_at: nowIso,
     announcement_session: session,
-    eps_basis: "finnhub_reported",
+    // Finnhub's free calendar does not identify GAAP versus adjusted EPS.
+    // Provider identity is not an accounting basis, so keep this unknown.
+    eps_basis: null,
     actual_currency: "USD",
     actual_source: "finnhub",
     // Legacy display columns (read by GET /api/calendar/earnings). Set once here so
@@ -186,18 +221,21 @@ async function captureActual(
   };
 
   if (existing) {
-    const { error } = await svc
+    const { data: changed, error } = await svc
       .from("earnings_calendar")
       .update(actualFields)
       .eq("id", (existing as { id: string }).id)
       // Guard against a race: only fill if still empty (never overwrite a first).
-      .is("eps_actual_first", null);
-    if (!error) res.actualsCaptured++;
+      .is("eps_actual_first", null)
+      .select("id");
+    if (error) throw new Error("earnings_actual_write_failed");
+    if ((changed ?? []).length > 0) res.actualsCaptured++;
   } else {
-    // Event not in the table (never had an estimate row) — insert it with the actual.
-    const { error } = await svc
+    // Event not in the table (never had an estimate row) — insert, but never use
+    // an upsert that could overwrite a concurrent first-observed actual.
+    const { data: inserted, error } = await svc
       .from("earnings_calendar")
-      .upsert({
+      .insert({
         symbol,
         market,
         report_date: reportDate,
@@ -206,8 +244,10 @@ async function captureActual(
         revenue_estimate: typeof row.revenueEstimate === "number" ? Math.round(row.revenueEstimate) : null,
         fetched_at: nowIso,
         ...actualFields,
-      }, { onConflict: "symbol,report_date" });
-    if (!error) res.actualsCaptured++;
+      })
+      .select("id");
+    if (error) throw new Error("earnings_actual_insert_failed");
+    if ((inserted ?? []).length > 0) res.actualsCaptured++;
   }
 }
 
@@ -225,7 +265,7 @@ async function snapshotConsensus(
 ): Promise<void> {
   const consensus = row.epsEstimate as number;
 
-  const { data: latest } = await svc
+  const { data: latest, error: latestError } = await svc
     .from("earnings_consensus_snapshots")
     .select("consensus_eps")
     .eq("symbol", symbol)
@@ -234,6 +274,7 @@ async function snapshotConsensus(
     .order("snapshot_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (latestError) throw new Error("earnings_consensus_lookup_failed");
 
   if (latest && Number((latest as { consensus_eps: number }).consensus_eps) === consensus) {
     return; // no revision since last vintage — nothing to add
@@ -249,11 +290,13 @@ async function snapshotConsensus(
       fiscal_period: fiscalPeriod,
       consensus_eps: consensus,
       analyst_count: null, // Finnhub free calendar does not expose a contributor count
-      basis: "finnhub_estimate",
+      // Provider identity does not prove GAAP/adjusted comparability.
+      basis: null,
       currency: "USD",
       source: "finnhub",
       snapshot_at: nowIso,
       available_at: nowIso,
     });
-  if (!error) res.consensusSnapshots++;
+  if (error) throw new Error("earnings_consensus_insert_failed");
+  res.consensusSnapshots++;
 }

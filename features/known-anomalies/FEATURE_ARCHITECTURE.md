@@ -176,27 +176,36 @@ scoring/sizing/order/exit effect exists. Deterministic; no LLM.
   is now reserved for a future true surprise-based edge. Historical
   `shadow_decisions.setup_type = 'post_earnings_drift'` rows remain queryable
   under the old string; the rename starts a new series going forward.
-- **First-reported actuals (step 2).** Migration
+- **First-observed provider actuals (step 2).** Migration
   `20260715210000_earnings_pit_actual_capture_columns.sql` adds
   `eps_actual_first`, `revenue_actual_first`, `actual_available_at`,
   `announcement_session`, `eps_basis`, `actual_currency`, `actual_source`,
   `restated_eps`, `restated_available_at`, `restated_source`, `market` to
   `earnings_calendar`. `lib/data/earnings-pit.ts` fills `eps_actual_first`
-  **once** and never overwrites it; a later differing print is logged to
-  `restated_eps`. Source: Finnhub earnings calendar (free, no daily cap, already
+  **once** and never overwrites it; migration `20260715220000_...` enforces that
+  immutability in Postgres. A later differing provider print is logged to
+  `restated_eps`. This is the first value Kairos observed, not proof that a sparse
+  polling cadence captured the issuer's literal first print. Source: Finnhub earnings calendar (free, no daily cap, already
   wired); its `hour` field maps to the announcement session.
 - **Consensus vintages (step 3).** Append-only table
   `earnings_consensus_snapshots` (migration `20260715210100_...`) accumulates the
   last-valid pre-announcement consensus. A new vintage is appended only when the
-  consensus changes since the last snapshot. `analyst_count` is null on the free
-  Finnhub calendar (surfaced in the coverage report).
+  consensus changes since the last snapshot; a database trigger blocks UPDATE/
+  DELETE. The conservative timestamp rule rejects consensus captured on or after
+  the US report date, preventing delayed actual publication from creating
+  look-ahead. `analyst_count` is null on the free
+  Finnhub calendar (surfaced in the coverage report). Finnhub also does not
+  identify GAAP versus adjusted EPS, so provider identity is never treated as
+  accounting basis; these observations remain measurement-only and ineligible
+  until another source proves basis comparability.
 - **Feasibility read (§3).** `GET /api/calendar/earnings/coverage`, owner-gated
   (`requireOwner`), read-only. Reports eligible events (both a first-reported
-  actual AND a pre-announcement consensus vintage) by year and session, plus
+  actual AND a pre-announcement consensus vintage with explicitly matching
+  basis/currency) by year and session, plus
   analyst-count coverage, corrections, and basis conflicts. It is a coverage
   report, not `edge_signals`.
-- **Cadence.** Capture runs from `POST /api/calendar/earnings/refresh` after the
-  cache bust, fail-soft. RLS is on for both tables (authenticated-read,
+- **Cadence.** `kairos-earnings-pit-capture` invokes `POST /api/calendar/earnings/refresh`
+  daily at 02:10 UTC; the capture runs after the cache bust, fail-soft. RLS is on for both tables (authenticated-read,
   service-role-write), verified via `information_schema` + `pg_policies`.
 
 ## 9. Primary Research References

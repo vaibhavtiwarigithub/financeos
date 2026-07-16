@@ -184,9 +184,9 @@ Built to this design. Files/routes:
   complete) / `partial` (anything else). Breadth counts only resolved names;
   unresolved stay in the denominator (`resolvedN/eligibleN`, `coveragePct`).
 - `app/api/markets/india/route.ts` — the ONLY India market-data surface.
-  `GET` = cache-first, bounded, LIGHT (refreshes 14 index+sector symbols inline,
-  carries breadth forward, never bursts 50 constituents on load). `POST` =
-  owner/cron-gated FULL fill incl. NIFTY-50 breadth, persisted. System Health
+  `GET` = cache-only and never contacts Yahoo from a page request. `POST` =
+  owner/cron-gated FULL fill incl. NIFTY-50 breadth through one deduplicated,
+  paced stream; persistence failure returns an error instead of false success. System Health
   aggregates ONE issue by overall status (`india-markets-degraded`), not per-symbol.
 
 Breadth choice: **Option 1 (full NIFTY-50 breadth)**, built asynchronously by the
@@ -198,8 +198,8 @@ Cache isolation: new India-only table `india_market_snapshot` (migration
 `20260715160000`), fully separate from US `price_cache`. India data is never
 written to `price_cache` and vice-versa — no cross-read is possible.
 
-Cron: `20260715160500_india_market_snapshot_cron.sql` — post-close full fills at
-10:15 / 10:45 UTC (15:30 IST close, no DST) via `kairos_call_agent` (injects
+Cron: `20260715160500_india_market_snapshot_cron.sql` plus audit correction
+`20260715220000_...` — post-close full fills at 10:15 / 10:35 UTC (15:30 IST close, no DST) via `kairos_call_agent` (injects
 `x-cron-secret`). Both migrations applied to the target DB and verified.
 
 Client (`components/dashboard/MarketsPage.tsx`): removed all direct

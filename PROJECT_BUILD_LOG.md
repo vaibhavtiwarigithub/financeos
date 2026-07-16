@@ -159,6 +159,19 @@ Risk: Complexity
 Decision status: Approved
 Notes: Approved as a governed multi-agent platform. Long-only 2-20 market-day swing trading; Robinhood-supported US equities and ETFs subject to quality filters; dynamic statistical eligibility plus manual promotion; approval required for every initial live order; free-first data; layered daily briefing and decision journal. Canonical specification: `features/agentic-quant-platform/FEATURE_ARCHITECTURE.md`. Production implementation is not yet authorized.
 
+### Entry 5 - 2026-07-15 (Codex adversarial audit of earnings PIT, India Markets, and display weights)
+
+Instruction: Independently review the implementation batch at `a3703600..820213e2`, fix every confirmed issue, verify production Supabase state, and push only after typecheck, build, and full tests pass.
+Classification: Correctness, security, and operational hardening; no new trading feature
+Affected area: Earnings point-in-time capture/coverage, India Markets cache/fill/UI, per-market display weights, symbol-profile backfill, Supabase triggers/crons, architecture/schedule/system-map documentation
+Impact: Medium for data integrity and availability; zero money-path impact
+Architecture impact: Preserves the approved measurement/display-only boundaries. Earnings evidence remains ineligible for PEAD while accounting basis is unknown; India data remains INR-only and separate from US caches; display failures now fall back to static profile weights instead of another market's champion.
+Risk: Production DDL is limited to two invariant triggers plus one new capture cron and one cron reschedule. No score, sizing, eligibility, order, cash, or exit consumer was added or changed.
+Decision status: Implemented and production-verified
+Notes: Confirmed and fixed a report-date look-ahead path, missing capture cadence, app-only immutability, false provider-as-accounting-basis compatibility, a live 10:45 UTC cron collision, page-load Yahoo fan-out, unbounded aggregate concurrency, ignored persistence errors, duplicate/out-of-universe breadth inflation, stale-data loss after transient refresh failure, cross-market champion fallback, and suffix-only market inference. Supabase project `dionkikgdmlaotvtbnfr` now has active PIT/append-only triggers, authenticated-read RLS policies, service-role inserts, anon zero-row reads, and separated 10:15/10:35/10:45 India jobs. Verification: `npx tsc --noEmit`, `npm run build`, `npx vitest run` (430 passed, 6 skipped), and no Yahoo provider hostname in `.next/static/chunks`.
+
+---
+
 ## Drift Warnings
 
 - Current prototype routes use LLM-generated prices and direct weight mutation, which conflict with the approved architecture.

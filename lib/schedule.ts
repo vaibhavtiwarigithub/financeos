@@ -44,6 +44,18 @@ export interface ScheduledJob {
  */
 export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
   {
+    name: "earnings-pit-capture",
+    agent: "earnings-pit-capture",
+    time: "10:10 PM ET (02:10 UTC next day)",
+    days: "Daily",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Point-in-time US earnings capture: appends changing pre-report consensus vintages and stores the first provider actual observed after release. Capture-only; no scoring or order consumer.",
+    handoff: "→ Earnings PIT coverage report (future PEAD feasibility only)",
+    agentRunsType: null,
+  },
+  {
     name: "scan-india-refresh",
     agent: "scan-india-refresh",
     time: "6:45 AM ET",
@@ -53,6 +65,18 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     description:
       "Nightly full-NSE pre-score cache refresh — rotates ~600 names/run so the India scanner reads the whole market.",
     handoff: "→ ResearchAgent (India)",
+    agentRunsType: null,
+  },
+  {
+    name: "india-markets-fill",
+    agent: "india-markets-fill",
+    time: "6:15 AM ET (retry 6:35 AM ET)",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Post-close India Markets display snapshot: one paced, deduplicated server fetch for indices, sectors, and versioned NIFTY-50 breadth. Retry moved to 10:35 UTC so it does not collide with the 10:45 India scanner.",
+    handoff: "→ Markets page India cache",
     agentRunsType: null,
   },
   {

@@ -39,9 +39,8 @@ const PROFILE_WEIGHTS: Record<string, Record<string, number>> = {
  * snapshot, falling back to the static per-risk-profile baseline. Never reads the
  * global `signal_weights` row.
  *
- * Resilient to a pre-057 schema (no `market` column on strategy_versions): the
- * market-filtered query errors, so we fall back to the global champion, preserving
- * prior behavior.
+ * Fail closed on a scoped-query error: display the static baseline. Never select
+ * an unscoped/global champion because that can show US weights in India or vice versa.
  */
 export async function resolveDisplayWeights(
   svc: SupabaseClient,
@@ -57,18 +56,7 @@ export async function resolveDisplayWeights(
       .order("promoted_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (scoped.error) {
-      const legacy = await svc
-        .from("strategy_versions")
-        .select("version, weights_snapshot, promoted_at")
-        .eq("is_champion", true)
-        .order("promoted_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      champion = legacy.data;
-    } else {
-      champion = scoped.data;
-    }
+    champion = scoped.error ? null : scoped.data;
   }
 
   // Risk-profile baseline (global strategy_config; risk_profile is not per-market).

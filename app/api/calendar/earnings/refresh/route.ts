@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
-const CRON_SECRET = process.env.CRON_SECRET;
+export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 /**
  * POST /api/calendar/earnings/refresh
@@ -8,16 +10,10 @@ const CRON_SECRET = process.env.CRON_SECRET;
  * Cron refresh endpoint — invalidates the Supabase cache for all default
  * watchlist symbols so the next GET re-fetches from Massive API.
  *
- * Authenticate with: Authorization: Bearer <CRON_SECRET>
- * or:                x-cron-secret: <CRON_SECRET>
+ * Authenticate with: x-cron-secret: <CRON_SECRET>
  */
 export async function POST(req: Request) {
-  // Auth check
-  const authHeader = req.headers.get("authorization") ?? "";
-  const cronHeader = req.headers.get("x-cron-secret") ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : cronHeader;
-
-  if (!CRON_SECRET || token !== CRON_SECRET) {
+  if (!verifyCronSecret(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

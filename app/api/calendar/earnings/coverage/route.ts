@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
+import { isStrictlyPreAnnouncementVintage } from "@/lib/data/earnings-pit";
 
 // GET /api/calendar/earnings/coverage
 //
@@ -24,17 +25,17 @@ export async function GET() {
 
   const { data: events, error: evErr } = await svc
     .from("earnings_calendar")
-    .select("symbol, report_date, market, eps_actual_first, actual_available_at, announcement_session, restated_eps, eps_basis")
+    .select("symbol, report_date, market, eps_actual_first, actual_available_at, announcement_session, restated_eps, eps_basis, actual_currency")
     .eq("market", "us");
   if (evErr) return NextResponse.json({ error: evErr.message }, { status: 500 });
 
   const { data: snaps, error: snErr } = await svc
     .from("earnings_consensus_snapshots")
-    .select("symbol, report_date, consensus_eps, analyst_count, snapshot_at, available_at, basis")
+    .select("symbol, report_date, consensus_eps, analyst_count, snapshot_at, available_at, basis, currency")
     .eq("market", "us");
   if (snErr) return NextResponse.json({ error: snErr.message }, { status: 500 });
 
-  type Snap = { symbol: string; report_date: string; consensus_eps: number | null; analyst_count: number | null; snapshot_at: string; available_at: string; basis: string | null };
+  type Snap = { symbol: string; report_date: string; consensus_eps: number | null; analyst_count: number | null; snapshot_at: string; available_at: string; basis: string | null; currency: string | null };
   const snapList = (snaps ?? []) as Snap[];
 
   // Index snapshots by (symbol|report_date).
@@ -44,7 +45,7 @@ export async function GET() {
     (snapsByKey.get(k) ?? snapsByKey.set(k, []).get(k)!).push(s);
   }
 
-  type Ev = { symbol: string; report_date: string; eps_actual_first: number | null; actual_available_at: string | null; announcement_session: string | null; restated_eps: number | null; eps_basis: string | null };
+  type Ev = { symbol: string; report_date: string; eps_actual_first: number | null; actual_available_at: string | null; announcement_session: string | null; restated_eps: number | null; eps_basis: string | null; actual_currency: string | null };
   const evList = (events ?? []) as Ev[];
 
   const yearOf = (d: string) => (d && d.length >= 4 ? d.slice(0, 4) : "unknown");
@@ -74,19 +75,27 @@ export async function GET() {
     const evSnaps = snapsByKey.get(key) ?? [];
     // Pre-announcement = snapshot available strictly before the actual was known.
     // If no actual yet, any snapshot still counts as a pre-announcement vintage.
-    const preSnaps = evSnaps.filter((s) =>
-      !ev.actual_available_at || new Date(s.available_at).getTime() <= new Date(ev.actual_available_at).getTime());
+    const preSnaps = evSnaps.filter((s) => {
+      if (s.consensus_eps == null) return false;
+      if (!isStrictlyPreAnnouncementVintage(s.available_at, ev.report_date)) return false;
+      return !ev.actual_available_at ||
+        new Date(s.available_at).getTime() < new Date(ev.actual_available_at).getTime();
+    });
     const hasPreConsensus = preSnaps.length > 0;
     if (hasPreConsensus) { withPreConsensus++; byYear[yr].withConsensus++; }
 
     for (const s of preSnaps) {
       if (s.analyst_count != null) { analystCounts.push(s.analyst_count); consensusWithCount++; }
-      if (hasActual && ev.eps_basis && s.basis && !s.basis.startsWith(ev.eps_basis.split("_")[0])) {
-        basisConflicts.push(`${ev.symbol} ${ev.report_date}: actual=${ev.eps_basis} vs consensus=${s.basis}`);
+      if (hasActual && (!ev.eps_basis || !s.basis || ev.eps_basis !== s.basis || !ev.actual_currency || !s.currency || ev.actual_currency !== s.currency)) {
+        basisConflicts.push(`${ev.symbol} ${ev.report_date}: actual=${ev.eps_basis ?? "unknown"}/${ev.actual_currency ?? "unknown"} vs consensus=${s.basis ?? "unknown"}/${s.currency ?? "unknown"}`);
       }
     }
 
-    if (hasActual && hasPreConsensus) { eligible++; byYear[yr].eligible++; bySession[ss].eligible++; }
+    const hasComparableConsensus = preSnaps.some((s) =>
+      !!ev.eps_basis && !!s.basis && ev.eps_basis === s.basis &&
+      !!ev.actual_currency && !!s.currency && ev.actual_currency === s.currency
+    );
+    if (hasActual && hasComparableConsensus) { eligible++; byYear[yr].eligible++; bySession[ss].eligible++; }
   }
 
   return NextResponse.json({
@@ -107,7 +116,8 @@ export async function GET() {
     by_session: bySession,
     basis_conflicts: basisConflicts.slice(0, 50),
     caveats: [
-      "eligible_events counts events with BOTH a first-reported actual and a pre-announcement consensus vintage.",
+      "eligible_events requires a first-observed actual plus a pre-announcement consensus with explicitly matching EPS basis and currency; unknown basis is ineligible.",
+      "Finnhub's free earnings calendar does not identify GAAP versus adjusted EPS, so its rows remain measurement-only and ineligible until basis is proven by another source.",
       "Analyst-count coverage is expected to be 0% on the free Finnhub calendar (no contributor count field).",
       "Vintages only accumulate going forward from first capture; historical pre-announcement consensus cannot be reconstructed.",
     ],

@@ -1273,7 +1273,7 @@ function IndiaBreadthBlock({ breadth }: { breadth: NonNullable<IndiaMarketsSnaps
           NIFTY-50 breadth · advancers vs decliners
         </span>
         <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", padding: "2px 8px", borderRadius: "5px", background: partial ? "#2D2000" : T.surface, border: `1px solid ${partial ? T.amber + "40" : T.border}`, color: partial ? T.amber : T.textSub }}>
-          {partial ? "Partial coverage" : "Full coverage"}
+          {partial ? "Below coverage floor" : "Coverage floor met"}
         </span>
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
@@ -1309,6 +1309,7 @@ export default function MarketsPage() {
   // `indiaState` drives the explicit product states; loading ALWAYS exits (bounded
   // by a client-side abort timeout as well as the server's own bounded fetch).
   const [indiaSnap, setIndiaSnap] = useState<IndiaMarketsSnapshot | null>(null);
+  const indiaSnapRef = useRef<IndiaMarketsSnapshot | null>(null);
   const [indiaState, setIndiaState] = useState<"loading" | "ready" | "unavailable">("loading");
 
   const loadIndia = useCallback(() => {
@@ -1318,14 +1319,13 @@ export default function MarketsPage() {
     fetch("/api/markets/india", { signal: ctrl.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((j: IndiaMarketsSnapshot) => {
+        indiaSnapRef.current = j;
         setIndiaSnap(j);
         setIndiaState(j.status === "unavailable" ? "unavailable" : "ready");
       })
-      .catch(() => setIndiaState((prev) => (indiaSnap ? "ready" : "unavailable")))
+      .catch(() => setIndiaState(indiaSnapRef.current ? "ready" : "unavailable"))
       .finally(() => clearTimeout(timer));
     return () => { ctrl.abort(); clearTimeout(timer); };
-  // indiaSnap intentionally excluded — used only as a fallback read inside catch
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function fetchMarkets() {

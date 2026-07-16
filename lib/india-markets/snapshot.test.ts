@@ -39,6 +39,16 @@ describe("computeBreadth — honest coverage accounting", () => {
     expect(b.coveragePct).toBe(40);
     expect(b.quality).toBe("partial"); // below 80% floor
   });
+
+  it("ignores duplicate and out-of-universe rows so coverage cannot exceed 100%", () => {
+    const quotes = NIFTY50_UNIVERSE.symbols.map((s) => ok(s, 1));
+    quotes.push(ok(NIFTY50_UNIVERSE.symbols[0], -1), ok("NOT-IN-NIFTY.NS", 1));
+    const b = computeBreadth(quotes);
+    expect(b.resolvedN).toBe(50);
+    expect(b.advanced).toBe(50);
+    expect(b.declined).toBe(0);
+    expect(b.coveragePct).toBe(100);
+  });
 });
 
 describe("buildSnapshot — product status honesty", () => {

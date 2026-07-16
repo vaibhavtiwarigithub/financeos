@@ -58,7 +58,10 @@ export async function POST(req: NextRequest) {
   for (const row of wlRows ?? []) {
     const symbol = String((row as any).symbol ?? "").toUpperCase();
     if (!symbol) continue;
-    const market: ProfileMarket = isIndia(symbol) ? "india" : "us";
+    // The stored market is authoritative. Suffix inference is only a compatibility
+    // fallback for older rows; bare India symbols must never be backfilled as US.
+    const rowMarket = String((row as any).market ?? "").toLowerCase();
+    const market: ProfileMarket = rowMarket === "india" || isIndia(symbol) ? "india" : "us";
     const key = `${symbol}::${market}`;
     if (seen.has(key)) continue;
     seen.add(key);

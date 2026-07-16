@@ -135,13 +135,13 @@ export function toAdapterQuote(
 // Fetch one symbol's chart meta from the auth-free Yahoo chart endpoint and map
 // it to a FetchOutcome. The URL host is fixed to the allowlist; only the symbol
 // (URL-encoded) varies.
-async function fetchYahooChart(symbol: string): Promise<FetchOutcome> {
+async function fetchYahooChart(symbol: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<FetchOutcome> {
   const url = `https://${YAHOO_ALLOWED_HOSTS[0]}/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`;
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0" },
       cache: "no-store",
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status === 429) return { kind: "throttled" };
     if (!res.ok) return { kind: "http_error", status: res.status };
@@ -154,8 +154,8 @@ async function fetchYahooChart(symbol: string): Promise<FetchOutcome> {
 }
 
 /** Fetch + validate a single symbol into an AdapterQuote (server-only). */
-export async function fetchQuote(symbol: string): Promise<AdapterQuote> {
-  const outcome = await fetchYahooChart(symbol);
+export async function fetchQuote(symbol: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<AdapterQuote> {
+  const outcome = await fetchYahooChart(symbol, timeoutMs);
   return toAdapterQuote(symbol, outcome);
 }
 
@@ -165,14 +165,15 @@ export async function fetchQuote(symbol: string): Promise<AdapterQuote> {
  */
 export async function fetchQuotes(
   symbols: string[],
-  opts: { concurrency?: number; pacingMs?: number } = {},
+  opts: { concurrency?: number; pacingMs?: number; timeoutMs?: number } = {},
 ): Promise<AdapterQuote[]> {
   const concurrency = Math.max(1, opts.concurrency ?? 5);
   const pacingMs = opts.pacingMs ?? 150;
+  const timeoutMs = Math.max(500, opts.timeoutMs ?? FETCH_TIMEOUT_MS);
   const out: AdapterQuote[] = new Array(symbols.length);
   for (let i = 0; i < symbols.length; i += concurrency) {
     const batch = symbols.slice(i, i + concurrency);
-    const rows = await Promise.all(batch.map((s) => fetchQuote(s)));
+    const rows = await Promise.all(batch.map((s) => fetchQuote(s, timeoutMs)));
     rows.forEach((r, j) => { out[i + j] = r; });
     if (i + concurrency < symbols.length && pacingMs > 0) {
       await new Promise((r) => setTimeout(r, pacingMs));

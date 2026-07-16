@@ -387,6 +387,28 @@
       "changeReason": null,
       "removedAt": null,
       "removeReason": null
+    },
+    "EARNPIT": {
+      "label": "Earnings PIT capture",
+      "description": "Daily deterministic capture of first-observed earnings actuals and append-only pre-announcement consensus vintages. Strict report-date, accounting-basis, and currency checks keep unknown or post-announcement data out of eligible PEAD coverage. Measurement only; no score, size, gate, order, or exit consumer.",
+      "addedAt": "2026-07-15",
+      "addReason": "Accrue point-in-time evidence for a future PEAD feasibility decision without creating a trading feature.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "INDIAFILL": {
+      "label": "India Markets fill",
+      "description": "Weekday server-side bounded Yahoo quote collection. Writes one INR-only india_market_snapshot and never touches the US price cache or a trading path. The Markets India page reads only this cache.",
+      "addedAt": "2026-07-15",
+      "addReason": "Move unofficial-provider fan-out off page loads and into paced background fills.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
     }
   },
   "history": [

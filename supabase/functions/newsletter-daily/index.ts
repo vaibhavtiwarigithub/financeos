@@ -469,18 +469,9 @@ async function resolveChampionWeightsRow(supabase: any, market: string): Promise
     .order("promoted_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (scoped.error) {
-    const legacy = await supabase
-      .from("strategy_versions")
-      .select("version, weights_snapshot, promoted_at")
-      .eq("is_champion", true)
-      .order("promoted_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    champion = legacy.data;
-  } else {
-    champion = scoped.data;
-  }
+  // Fail closed to the static baseline. An unscoped champion fallback can cross
+  // US/India books on any query error and is therefore forbidden.
+  champion = scoped.error ? null : scoped.data;
 
   const { data: strategy } = await supabase
     .from("strategy_config")
