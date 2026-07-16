@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
 import { getConfiguredModel } from "@/lib/agent-model-config";
@@ -6,17 +7,30 @@ import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
-// Cache thesis for 24h — regenerate once per day after morning cron
-let cache: { thesis: string; generatedAt: string; ts: number } | null = null;
+// Cache thesis for 24h — regenerate once per day after morning cron.
+// Keyed BY MARKET: the thesis is built from that market's signals, so a single
+// time-keyed singleton would hand the US thesis to India (and vice versa) for up
+// to 24h. One entry per market, never shared.
+type CacheEntry = { thesis: string; generatedAt: string; ts: number };
+const cache = new Map<Market, CacheEntry>();
 const TTL = 24 * 60 * 60 * 1000;
+
+type Market = "us" | "india";
+const readMarket = (v: string | null): Market => (v === "india" ? "india" : "us");
 
 export async function GET(req: Request) {
   const gate = await requireOwner();
   if (gate) return gate;
-  const bust = new URL(req.url).searchParams.has("bust");
+  const params = new URL(req.url).searchParams;
+  const bust = params.has("bust");
+  // Client passes ?market=; fall back to the `mkt` cookie so a direct hit still
+  // resolves to the market the rest of the app is showing.
+  const cookieStore = await cookies();
+  const market = readMarket(params.get("market") ?? cookieStore.get("mkt")?.value ?? null);
 
-  if (!bust && cache && Date.now() - cache.ts < TTL) {
-    return NextResponse.json({ ...cache, source: "cache" });
+  const hit = cache.get(market);
+  if (!bust && hit && Date.now() - hit.ts < TTL) {
+    return NextResponse.json({ ...hit, market, source: "cache" });
   }
 
   const supabase = createServiceClient();
@@ -32,9 +46,13 @@ export async function GET(req: Request) {
       .select("note, created_at")
       .order("created_at", { ascending: false })
       .limit(5),
+    // Scoped: signals carry `market`, so the thesis reasons about one book only.
+    // research_packets / learning_log above have NO market column — they stay
+    // global by necessity, not by choice.
     supabase
       .from("agent_signals")
       .select("symbol, direction, analyst_score, status")
+      .eq("market", market)
       .order("created_at", { ascending: false })
       .limit(8),
   ]);
@@ -76,10 +94,12 @@ Keep it under 300 words. Plain English, no bullet points.`;
     const thesis = res.text;
     const now = new Date().toISOString();
 
-    cache = { thesis, generatedAt: now, ts: Date.now() };
-    return NextResponse.json({ thesis, generatedAt: now, source: "live", meta: { agent: "Market Thesis", agentKind: "grounded", model: res.model } });
+    cache.set(market, { thesis, generatedAt: now, ts: Date.now() });
+    return NextResponse.json({ thesis, generatedAt: now, market, source: "live", meta: { agent: "Market Thesis", agentKind: "grounded", model: res.model } });
   } catch (err) {
-    if (cache) return NextResponse.json({ ...cache, source: "stale" });
-    return NextResponse.json({ thesis: null, generatedAt: null, source: "error", error: String(err) });
+    // Stale fallback must also be this market's — never another book's thesis.
+    const stale = cache.get(market);
+    if (stale) return NextResponse.json({ ...stale, market, source: "stale" });
+    return NextResponse.json({ thesis: null, generatedAt: null, market, source: "error", error: String(err) });
   }
 }

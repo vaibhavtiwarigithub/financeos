@@ -6,6 +6,7 @@ import {
 import PageHeader from "@/components/dashboard/PageHeader";
 import SymbolAutocomplete from "@/components/dashboard/SymbolAutocomplete";
 import { useMarket } from "@/lib/market-context";
+import { fmtMoney, type Mkt } from "@/lib/format-money";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -32,8 +33,12 @@ const FILTERS_KEY = "kairos-score-tracker-filters";
 // ── Score Tracker filters (additive, read-only — no scoring/money impact) ─────
 // Each field maps 1:1 to a real signal_score_history column that the
 // score-history API now understands. "all"/"" means "don't constrain".
+//
+// `market` is deliberately NOT a local filter. The chart's market is owned by the
+// global US/India switcher (useMarket) — a local dropdown defaulting to "all"
+// meant flipping to India still plotted US points alongside India's. One
+// authority, no silent override.
 type Filters = {
-  market: "all" | "us" | "india";
   scoreBand: "all" | "high" | "mid" | "low";
   direction: "all" | "long" | "short" | "neutral";
   source: "all" | "holding" | "watchlist" | "screener";
@@ -41,15 +46,25 @@ type Filters = {
   to: string;   // ISO date (yyyy-mm-dd) or ""
 };
 const DEFAULT_FILTERS: Filters = {
-  market: "all", scoreBand: "all", direction: "all", source: "all", from: "", to: "",
+  scoreBand: "all", direction: "all", source: "all", from: "", to: "",
 };
+const FILTER_KEYS = Object.keys(DEFAULT_FILTERS) as (keyof Filters)[];
+
+// Drop unknown/stale keys from persisted filters — older builds stored a
+// `market` filter here; carrying it forward would re-introduce the override and
+// permanently mark the filter bar "active".
+function sanitizeFilters(raw: unknown): Filters {
+  const out = { ...DEFAULT_FILTERS };
+  if (!raw || typeof raw !== "object") return out;
+  for (const k of FILTER_KEYS) {
+    const v = (raw as any)[k];
+    if (typeof v === "string") (out as any)[k] = v;
+  }
+  return out;
+}
+
 // Human-readable option labels (detail-over-cryptic: say what each value means).
 const FILTER_OPTIONS = {
-  market: [
-    { v: "all", label: "All markets" },
-    { v: "us", label: "US" },
-    { v: "india", label: "India" },
-  ],
   scoreBand: [
     { v: "all", label: "Any score" },
     { v: "high", label: "≥ 80 (high conviction)" },
@@ -150,7 +165,7 @@ function toneColor(tone: Verdict["tone"]) {
 
 // Turn one dimension's evidence object into a human sentence with inline
 // strong/moderate/weak verdicts. Returns null if there's genuinely nothing.
-function explainDimension(dim: string, evidence: any, score: number | null): { parts: Verdict[]; note: string | null } | null {
+function explainDimension(dim: string, evidence: any, score: number | null, market: Mkt): { parts: Verdict[]; note: string | null } | null {
   if (!evidence || typeof evidence !== "object") {
     return { parts: [], note: null };
   }
@@ -187,7 +202,7 @@ function explainDimension(dim: string, evidence: any, score: number | null): { p
     const eps = num(evidence.eps);
     if (eps !== null) parts.push({ text: `EPS ${eps.toFixed(2)}`, tone: eps > 0 ? "green" : "red" });
     const tgt = num(evidence.analyst_target);
-    if (tgt !== null) parts.push({ text: `analyst target $${tgt.toFixed(0)}`, tone: "muted" });
+    if (tgt !== null) parts.push({ text: `analyst target ${fmtMoney(tgt, market, 0)}`, tone: "muted" });
     if (evidence.sector) parts.push({ text: `Sector: ${evidence.sector}`, tone: "muted" });
     return { parts, note };
   }
@@ -332,7 +347,7 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
 
     try {
       const rawF = localStorage.getItem(FILTERS_KEY);
-      if (rawF) setFilters({ ...DEFAULT_FILTERS, ...JSON.parse(rawF) });
+      if (rawF) setFilters(sanitizeFilters(JSON.parse(rawF)));
     } catch { /* non-fatal */ }
 
     async function loadCandidates() {
@@ -395,10 +410,11 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     if (selectedSymbols.length === 0) { setBySymbol({}); return; }
     setLoading(true);
     try {
-      const qs = new URLSearchParams({ symbols: selectedSymbols.join(","), period });
+      // Market always comes from the global switcher — the chart is never allowed
+      // to plot two books at once, so this is unconditional, not a filter.
+      const qs = new URLSearchParams({ symbols: selectedSymbols.join(","), period, market });
       // Only append filters that constrain (keeps the URL — and the query — a
       // no-op when nothing is filtered, so default behavior is unchanged).
-      if (filters.market !== "all") qs.set("market", filters.market);
       if (filters.direction !== "all") qs.set("direction", filters.direction);
       if (filters.source !== "all") qs.set("source", filters.source);
       if (filters.scoreBand !== "all") qs.set("scoreBand", filters.scoreBand);
@@ -412,7 +428,7 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     } finally {
       setLoading(false);
     }
-  }, [selectedSymbols, period, filters]);
+  }, [selectedSymbols, period, filters, market]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -528,7 +544,7 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     const priorScores = prior?.scores ?? {};
 
     const dims = EVIDENCE_DIMS.map(({ key, label }) => {
-      const explained = explainDimension(key, rows[key], num(curScores[key]));
+      const explained = explainDimension(key, rows[key], num(curScores[key]), market);
       const curScore = num(curScores[key]);
       const prvScore = prior ? num(priorScores[key]) : null;
       const scoreDelta = curScore !== null && prvScore !== null ? curScore - prvScore : null;
@@ -560,7 +576,7 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     }
 
     return { detail, prior, dims, biggestDriver, caveats };
-  }, [pointDetail]);
+  }, [pointDetail, market]);
 
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif", minHeight: "100vh", background: T.bg }}>
@@ -649,9 +665,21 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
           </div>
 
           <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+            {/* Market is read-only here — owned by the global US/India switcher so
+                the chart can never plot both books at once. */}
+            <div
+              title="The chart follows the global US/India switcher in the header. Change market there."
+              style={{ display: "flex", flexDirection: "column", gap: "5px", minWidth: "150px", flex: "1 1 150px" }}
+            >
+              <span style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.06em", textTransform: "uppercase" }}>Market</span>
+              <div style={{ background: T.dim, border: `1px solid ${T.border}`, color: T.textSub, borderRadius: "7px", padding: "7px 10px", fontSize: "12px", fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px" }}>
+                <span style={{ color: T.text }}>{market === "india" ? "🇮🇳 India" : "🇺🇸 US"}</span>
+                <span style={{ fontSize: "10px", color: T.muted }}>global switcher</span>
+              </div>
+            </div>
+
             {/* Dropdown filters — each maps to a real column on signal_score_history */}
             {([
-              { key: "market", label: "Market", hint: "Which market's scored points to show" },
               { key: "scoreBand", label: "Score band", hint: "Filter by analyst_score range" },
               { key: "direction", label: "Direction", hint: "Long / short / neutral call" },
               { key: "source", label: "Discovery source", hint: "How the symbol entered research" },
@@ -728,7 +756,10 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
             <div style={{ height: "260px", display: "flex", flexDirection: "column", gap: "8px", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: "13px", textAlign: "center", padding: "0 20px" }}>
               {filtersActive ? (
                 <>
-                  <span>No scored symbols match these filters.</span>
+                  <span>
+                    No <strong style={{ color: T.textSub }}>{market === "india" ? "India" : "US"}</strong> scored points match these filters.
+                    {" "}The chart only shows the {market === "india" ? "India" : "US"} book — switch market in the header to see the other one.
+                  </span>
                   <button
                     onClick={() => setFilters(DEFAULT_FILTERS)}
                     style={{ background: T.accentBg, border: `1px solid ${T.accent}44`, color: T.accent, borderRadius: "7px", padding: "5px 12px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
@@ -737,7 +768,10 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
                   </button>
                 </>
               ) : (
-                <span>No score history yet for these symbols — the research agent writes a point each run (Mon-Fri mornings).</span>
+                <span>
+                  No <strong style={{ color: T.textSub }}>{market === "india" ? "India" : "US"}</strong> score history yet for these symbols.
+                  {" "}The research agent writes a point each run (Mon-Fri mornings). If these tickers trade in the other market, switch market in the header.
+                </span>
               )}
             </div>
           ) : (

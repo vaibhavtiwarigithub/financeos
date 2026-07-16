@@ -4,6 +4,8 @@ import PageHeader from "@/components/dashboard/PageHeader";
 import MentorCoachPanel from "@/components/dashboard/MentorCoachPanel";
 import SymbolAutocomplete from "@/components/dashboard/SymbolAutocomplete";
 import AiAttribution from "@/components/dashboard/AiAttribution";
+import { fmtMoney, type Mkt } from "@/lib/format-money";
+import { navReturnPct, paperStartNav } from "@/lib/paper-nav";
 import {
   ResponsiveContainer, LineChart as LC, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine, Label,
@@ -36,7 +38,7 @@ function ScoreBar({ label, value }: { label: string; value: number | null }) {
   );
 }
 
-function DecisionCard({ packet, signal, trade }: { packet: any; signal?: any; trade?: any }) {
+function DecisionCard({ packet, signal, trade, market }: { packet: any; signal?: any; trade?: any; market: Mkt }) {
   const [open, setOpen] = useState(false);
   const outcome = trade?.outcome;
   const outcomeColor = outcome === "win" ? T.green : outcome === "loss" ? T.red : outcome === "breakeven" ? T.amber : T.muted;
@@ -114,9 +116,9 @@ function DecisionCard({ packet, signal, trade }: { packet: any; signal?: any; tr
             <div style={{ marginTop: "16px", padding: "12px 14px", background: outcome === "win" ? T.greenBg : outcome === "loss" ? T.redBg : T.dim, borderRadius: "8px", borderLeft: `3px solid ${outcomeColor}` }}>
               <div style={{ fontSize: "11px", color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Trade outcome</div>
               <div style={{ fontSize: "13px", color: T.text }}>
-                Bought {trade.qty}sh @ ${trade.fill_price?.toFixed(2)}
-                {trade.exit_price ? ` → sold @ $${trade.exit_price?.toFixed(2)}` : " (open)"}
-                {trade.realized_pnl != null ? ` · ${trade.realized_pnl >= 0 ? "+" : ""}$${trade.realized_pnl.toFixed(2)}` : ""}
+                Bought {trade.qty}sh @ {trade.fill_price != null ? fmtMoney(trade.fill_price, market) : "—"}
+                {trade.exit_price != null ? ` → sold @ ${fmtMoney(trade.exit_price, market)}` : " (open)"}
+                {trade.realized_pnl != null ? ` · ${trade.realized_pnl >= 0 ? "+" : ""}${fmtMoney(trade.realized_pnl, market)}` : ""}
               </div>
               {trade.rationale && (
                 <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.6", whiteSpace: "pre-wrap", marginTop: "6px" }}>
@@ -161,11 +163,14 @@ function LearningContent({
   performance,
   weights,
   allTrades,
+  market,
 }: {
   fullLog: any[];
   performance: any[];
   weights: any;
   allTrades: any[];
+  /** `performance` / `allTrades` are already scoped to this book upstream. */
+  market: Mkt;
 }) {
   const [innerTab, setInnerTab] = useState<"accuracy" | "weights" | "equity">("accuracy");
 
@@ -184,10 +189,11 @@ function LearningContent({
     { signal: "Insider",     value: +(weights.insider_weight     * 100).toFixed(1) },
   ] : [];
 
+  // Return % is measured against THIS market's own paper seed ($10k / ₹10L).
   const equityCurve = performance.map((p: any) => ({
     date: p.date.slice(5),
-    nav: p.nav,
-    return: +(((p.nav - 10000) / 10000) * 100).toFixed(2),
+    nav: fmtMoney(p.nav, market),
+    return: navReturnPct(p.nav, market),
   }));
 
   const accData = performance
@@ -422,9 +428,9 @@ function LearningContent({
 
       {/* Equity curve */}
       {innerTab === "equity" && (
-        <LearningCard title="Paper Portfolio Equity Curve">
+        <LearningCard title={`Paper Portfolio Equity Curve · ${market === "india" ? "India" : "US"} book vs ${fmtMoney(paperStartNav(market), market, 0)} seed`}>
           {equityCurve.length === 0
-            ? <LearningEmpty msg="Equity curve builds after first paper trades" />
+            ? <LearningEmpty msg={`No ${market === "india" ? "India" : "US"} paper performance yet — the curve builds after this book's first paper trades.`} />
             : (
               <ResponsiveContainer width="100%" height={280}>
                 <LC data={equityCurve} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -490,9 +496,12 @@ const STARTER_QUESTIONS = [
   "How should I think about the difference between a score of 62 vs 78?",
 ];
 
-export default function MentorPage({ packets, trades, fullLog, signals, performance, weights, allTrades }: {
+export default function MentorPage({ packets, trades, fullLog, signals, performance, weights, allTrades, market }: {
   packets: any[]; trades: any[]; fullLog: any[]; signals: any[];
   performance: any[]; weights: any; allTrades: any[];
+  /** Book this page is rendering. Server already scoped every market-bearing
+   *  query to it; used here for currency, NAV seed and the thesis fetch. */
+  market: Mkt;
 }) {
   const [tab, setTab] = useState<"coach" | "ask" | "decisions" | "learning" | "journal" | "dimensions">("coach");
   const [thesis, setThesis] = useState<string | null>(null);
@@ -575,12 +584,15 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
     }
   }
 
+  // Thesis is per-market (the API caches one entry per book) — refetch when the
+  // global switcher moves, otherwise India would keep showing the US thesis.
   useEffect(() => {
-    fetch("/api/mentor/thesis")
+    setThesisLoading(true);
+    fetch(`/api/mentor/thesis?market=${market}`)
       .then(r => r.json())
       .then(d => { setThesis(d.thesis ?? null); setThesisMeta(d.meta ?? null); setThesisLoading(false); })
       .catch(() => setThesisLoading(false));
-  }, []);
+  }, [market]);
 
   async function ask(q?: string) {
     const text = (q ?? question).trim();
@@ -769,7 +781,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "24px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
           <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.10em", textTransform: "uppercase" }}>Current Market Thesis</div>
-          <button onClick={() => { setThesisLoading(true); fetch("/api/mentor/thesis?bust=1").then(r => r.json()).then(d => { setThesis(d.thesis ?? null); setThesisMeta(d.meta ?? null); setThesisLoading(false); }).catch(() => setThesisLoading(false)); }}
+          <button onClick={() => { setThesisLoading(true); fetch(`/api/mentor/thesis?bust=1&market=${market}`).then(r => r.json()).then(d => { setThesis(d.thesis ?? null); setThesisMeta(d.meta ?? null); setThesisLoading(false); }).catch(() => setThesisLoading(false)); }}
             style={{ fontSize: "11px", color: T.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
             ↻ refresh
           </button>
@@ -889,6 +901,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
                   packet={p}
                   signal={signalMap.get(p.symbol)}
                   trade={tradeMap.get(p.symbol)}
+                  market={market}
                 />
               ))}
             </>
@@ -1032,6 +1045,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
           performance={performance}
           weights={weights}
           allTrades={allTrades}
+          market={market}
         />
       )}
 
