@@ -13,6 +13,8 @@ import { niftyCandidates } from "@/lib/india-universe";
 import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
 import { computeWeightedAnalystScore, isThinEvidence, SCORE_DIMENSIONS, type ScoreDimension, type DimensionRecord } from "@/lib/scoring/weighted-score";
+import { observationsFromLegacyMask, runDegradationGuard, symbolShapeOf } from "@/lib/evidence/degradation-runtime";
+import type { Market } from "@/lib/evidence/contracts";
 import { resolveSignalDirection } from "@/lib/signal-direction";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { readDeferredCandidates, applyCandidateCarryForward } from "@/lib/research-queue";
@@ -1551,8 +1553,40 @@ export async function processSymbol(
     includedDimsCount: includedDims.length,
     llmDirection: thesis.direction,
   });
-  const signalDirection: string = gate.direction;
-  const directionNote: string = gate.note;
+  // Runtime evidence-degradation guard (router-cutover §6). STRICTLY SUBTRACTIVE
+  // and independent of the Router (which stays disabled): it protects the LEGACY
+  // path too. It compares this symbol's REQUIRED evidence fields against the last
+  // accepted market-local baseline and abstains from a NEW long whose eligibility
+  // now rests on renormalizing around a field we lost. It can only turn "long"
+  // into "neutral" — an exit ("short") passes through untouched, because an
+  // evidence outage must never suppress a stop or a mandatory exit.
+  //
+  // SHIPPED IN MEASURE-ONLY MODE (EVIDENCE_DEGRADATION_GUARD_MODE unset): it
+  // records what it WOULD abstain and changes nothing, so it can be observed on
+  // real traffic before it bites. Set the env to "enforce" to make it apply.
+  const guardRun = await runDegradationGuard({
+    market: market as Market,
+    symbol,
+    shape: symbolShapeOf({ isEtf, isAdr: US_ADRS.has(symbol.toUpperCase()), isMetal: assetClass === "metal" }),
+    isHeld,
+    observations: observationsFromLegacyMask({
+      isEtf,
+      isAdr: US_ADRS.has(symbol.toUpperCase()),
+      isMetal: assetClass === "metal",
+      applicable: applicable as Set<string>,
+      included: included as Record<string, boolean>,
+      renormalized,
+      technicalDataPoints: dq.technicalDataPoints ?? 0,
+    }),
+    proposedDirection: gate.direction,
+    policyVersionId: "",   // legacy path: no frozen router policy governs this run
+    evidenceRunId: evidenceRunId ?? String(universeSnapshotId ?? "unscoped"),
+    runKey: evidenceRunId ?? String(universeSnapshotId ?? "unscoped"),
+    client: supabase,
+  });
+
+  const signalDirection: string = guardRun.direction;
+  const directionNote: string = gate.note + guardRun.note;
 
   const { data: packet } = await supabase
     .from("research_packets")
