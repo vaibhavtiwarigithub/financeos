@@ -22,33 +22,6 @@ both copies asserted `MACRO --> RESEARCH` unqualified long after `macro_score` b
 
 The table below is the chapter's own altitude: **which tables** carry the coordination, not which
 arrows exist.
-```mermaid
-flowchart LR
-  MACRO[MacroSentinel] --> |macro_regime · US only| RESEARCH[ResearchAgent]
-  MACRO --> |macro_regime · US only| MACROREAD[Macro read · narrative only]
-  MACROREAD --> |macro_interpretations| MARKETS[/dashboard/markets/]
-  UNIVERSE[PIT Universe + Providers] --> RESEARCH
-  RESEARCH --> |agent_signals + decision_observations| PAPER[PaperTrader]
-  RESEARCH --> |eligible proposal| TRADER[TraderAgent]
-  RESEARCH --> |qualifying signal| SHADOW[AutonomousShadow]
-  SHADOW --> |shadow proposal queued_auto / manual_review_required| PROPOSALS[(trade_proposals)]
-  RESEARCH --> |qualifying signal autonomous markets| LIVE[AutonomousLive]
-  LIVE --> |reserve_live_order_budget_v2| BUDGET[(broker_orders atomic)]
-  LIVE --> |live order| BROKER2[Robinhood REST or Kite REST]
-  LIVE --> |live proposal + events| LIVEAUDIT[(trade_proposals broker_order_events)]
-  TRADER --> GATEWAY[Shared Execution Gateway]
-  GATEWAY --> BROKER[Robinhood or Kite Adapter]
-  RESEARCH --> |signal_score_history| RESEARCH
-  PAPER --> |paper_positions paper_trades| MONITOR[PositionMonitor]
-  MONITOR --> |closed paper_trades| LEARNER[LearnerAgent]
-  LEARNER --> |challenger proposal| VALIDATE[Validation Engine]
-  VALIDATE --> |evidence| USER((You))
-  USER --> |promote champion| RESEARCH
-  MONITOR --> |closed paper_trades| MENTOR[MentorAgent]
-  MENTOR --> |mentor_insights| USER
-  HEALTH[Health-Triage] --> |agent_alerts structured_issues| USER
-  LEARNER --> |trade_memories via RAG| RESEARCH
-```
 
 ### Table-to-agent matrix
 
