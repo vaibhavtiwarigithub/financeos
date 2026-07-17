@@ -1,23 +1,250 @@
 {
   "agentId": "research-agent",
   "agentLabel": "ResearchAgent",
-  "diagram": "flowchart TD\n  SCHED[\"⏰ Weekday 9:00 AM\"] --> HOLD[\"📋 Holdings first\\nRobinhood positions (read-only)\"]\n  SCHED --> SCREEN[\"🔎 Dual-bucket screener\\nMomentum + Value\"]\n  HOLD --> SCORE\n  SCREEN --> SCORE[\"📊 Score 5 dimensions\\nfundamental·technical·sentiment·macro·insider\"]\n  SCORE --> ANALYST[\"🎯 analyst_score (0-100)\"]\n  ANALYST --> LONGONLY{\"Held vs new?\"}\n  LONGONLY -->|\"Held\"| SELLOK[\"SELL allowed on holdings\"]\n  LONGONLY -->|\"New\"| LONG[\"LONG-only, top 3/day\"]\n  SELLOK --> WRITE[\"💾 Write agent_signals\"]\n  LONG --> WRITE\n  WRITE --> HANDOFF[\"➡️ signals ≥60 → PaperTrader\"]",
+  "diagram": "flowchart TD\n  SCHED[\"⏰ pg_cron · US 13:00 UTC\\nIndia 04:00 UTC · weekdays\"] --> HOLD[\"📋 Holdings first\\nlive_account_snapshots ∪ paper_positions\"]\n  SCHED --> SCREEN[\"🔎 Dual-bucket screener\\nfundamental momentum + value\"]\n  HOLD --> ROTATE[\"🔄 Staleness-ordered rotation\\nunder ~105s wall-clock budget\"]\n  ROTATE --> SCORE\n  SCREEN --> SCORE[\"📊 Score 5 dimensions deterministically\\nfundamental·technical·sentiment·macro·insider\"]\n  SCORE --> WEIGHTS[\"⚖️ Champion weights_snapshot\\n→ PROFILE_WEIGHTS → literal · then tilt\"]\n  WEIGHTS --> ANALYST[\"🎯 analyst_score 0-100\\navailability-masked + renormalized\"]\n  ANALYST --> GATE{\"🚦 Deterministic direction gate\\nLLM opinion never decides\"}\n  GATE -->|\"held + below threshold\"| SELLOK[\"📉 short · exit signal\"]\n  GATE -->|\"thin evidence <2 dims\"| NEUTRAL[\"⚪ neutral · abstain\"]\n  GATE -->|\"score ≥ mandate threshold\"| LONG[\"📈 long · new position\"]\n  SELLOK --> WRITE[\"💾 Write agent_signals\\nscore_source = deterministic_v1\"]\n  NEUTRAL --> WRITE\n  LONG --> WRITE\n  WRITE --> HANDOFF[\"➡️ PaperTrader\\nmandate score_threshold · default 60\"]",
   "nodes": {
-    "SCHED": { "label": "Weekday 9:00 AM", "description": "Runs pre-market every weekday via Windows Task Scheduler. Model is llama-3.3-70b on Groq (free tier) per agent_config — fast, zero cost for the scoring pass.", "addedAt": "2026-06-25", "addReason": "Pre-market timing so signals are ready before open.", "status": "changed", "changedAt": "2026-07-04", "changeReason": "Model corrected to llama-3.3-70b (Groq); diagram was generic.", "removedAt": null, "removeReason": null },
-    "HOLD": { "label": "Holdings first", "description": "Pulls current Robinhood positions (read-only, account 965848641) BEFORE screening — highest priority so the agent can flag SELL on names you already own.", "addedAt": "2026-06-28", "addReason": "Locked decision: holdings must be researched first; SELL signals allowed on owned positions.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "SCREEN": { "label": "Dual-bucket screener", "description": "Two buckets always run (no explicit regime switch): Momentum (RSI>60, price>50DMA, revenue accel) and Value (P/E<sector median, high FCF yield, insider buying). FinancialDatasets screen_stocks + Alpha Vantage technicals.", "addedAt": "2026-06-28", "addReason": "Regime adaptation emerges from scoring, not hardcoded bull/bear logic.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "SCORE": { "label": "Score 5 dimensions", "description": "Each candidate scored on fundamental, technical, sentiment, macro, insider — combined by the current signal_weights into analyst_score.", "addedAt": "2026-06-25", "addReason": "Multi-dimensional scoring is the core of the strategy.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "ANALYST": { "label": "analyst_score", "description": "The 0-100 composite. Weights are tuned over time by the LearnerAgent (via promoted challengers).", "addedAt": "2026-06-25", "addReason": "Single comparable score across candidates.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "LONGONLY": { "label": "Held vs new", "description": "Long-only enforcement applies to NEW positions; exits (SELL) are allowed on existing holdings.", "addedAt": "2026-06-28", "addReason": "Locked: SELL only on owned names; new = long-only.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "SELLOK": { "label": "SELL allowed", "description": "Owned names can receive a SELL signal when the score drops or direction flips.", "addedAt": "2026-06-28", "addReason": "Exit capability on holdings.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "LONG": { "label": "LONG-only, top 3/day", "description": "New candidates are long-only, capped at the top 3 by analyst_score per day to avoid overtrading.", "addedAt": "2026-06-28", "addReason": "3/day cap is a locked anti-overtrading rule.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "WRITE": { "label": "Write agent_signals", "description": "Persists signals with direction, analyst_score, per-dimension scores, and rationale.", "addedAt": "2026-06-25", "addReason": "Signals are the durable output other agents consume.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "HANDOFF": { "label": "Handoff to PaperTrader", "description": "Signals scoring ≥60 become buy candidates for the PaperTrader flow.", "addedAt": "2026-06-25", "addReason": "Clean pipeline handoff.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null }
+    "SCHED": {
+      "label": "pg_cron · US + India",
+      "description": "Two separate per-market jobs on Supabase pg_cron, calling the Vercel route over HTTP — NOT Windows Task Scheduler. US 'kairos-research' 0 13 * * 1-5 (9:00 ET); India 'kairos-research-india' 0 4 * * 1-5 (09:30 IST, realigned by migration 082 from its original 11:00 UTC). The LLM is per-flow from Settings (agent_config where agent_name='research'), defaulting to deepseek-reasoner — and it only writes the thesis narrative; every number is computed deterministically before the model is called.",
+      "addedAt": "2026-06-25",
+      "addReason": "Pre-market timing so signals are ready before open.",
+      "status": "changed",
+      "changedAt": "2026-07-17",
+      "changeReason": "Model and mechanism were both false: the 2026-07-04 entry claimed Groq llama-3.3-70b under Windows Task Scheduler. Real model is per-flow config, default deepseek-reasoner; real scheduler is pg_cron with a separate India job.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "HOLD": {
+      "label": "Holdings first",
+      "description": "Reads the union of the latest live_account_snapshots row per account/broker and open paper_positions (position_role='alpha') — it does NOT make a live Robinhood call, and it is not scoped to account 965848641. Snapshot capture was decoupled into its own endpoint, so this path only reads what that endpoint stored. Fails LOUD and never empty-on-error: a holdings read failure raises a critical 'research-holdings-fetch:<market>' issue and throws, because a silently-empty holdings list would look identical to 'you own nothing' and would silently drop every exit signal.",
+      "addedAt": "2026-06-28",
+      "addReason": "Locked decision: holdings must be researched first; SELL signals allowed on owned positions.",
+      "status": "changed",
+      "changedAt": "2026-07-17",
+      "changeReason": "Diagram claimed a live read-only Robinhood pull on account 965848641. That is not what runs: the source is live_account_snapshots ∪ paper_positions, and fetchAndStoreAccountSnapshot is explicitly no longer fired from this path. Fail-loud behaviour was undocumented.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "ROTATE": {
+      "label": "Staleness-ordered rotation",
+      "description": "Holdings are ordered by how long ago each was last scored (never-scored first) and worked through under a wall-clock budget (RESEARCH_BUDGET_MS, default ~105s) so a slow provider day degrades into 'the stalest names got scored' rather than 'the same first N names got scored forever'. Names that fall off the end raise a deferred-holdings alert naming the count, so a budget-truncated run is visible instead of silent. Holdings are exempt from the candidate cap.",
+      "addedAt": "2026-07-17",
+      "addReason": "A fixed-order holdings loop under a timeout always starves the tail of the list; staleness ordering makes the truncation fair and the alert makes it honest.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "SCREEN": {
+      "label": "Dual-bucket screener",
+      "description": "Two buckets always run (no explicit regime switch), interleaved round-robin and capped at 6. US is a FinancialDatasets REST screener and is FUNDAMENTALS-ONLY: momentum = revenue_growth>0.15, earnings_growth>0.10, gross_margin>0.25, ROE>0.15, mcap>2B — a fundamental-momentum proxy, NOT price/RSI momentum. Value = absolute pe_ratio 0-18, FCF yield>0.04, debt_to_equity<1.0, mcap>1B — an absolute P/E cap, not sector-relative, and with no insider-buying filter. Price momentum (RSI>60, above 50DMA) exists only on the India leg, from india_screen_cache.",
+      "addedAt": "2026-06-28",
+      "addReason": "Regime adaptation emerges from scoring, not hardcoded bull/bear logic.",
+      "status": "changed",
+      "changedAt": "2026-07-17",
+      "changeReason": "The stated criteria described a screener that does not exist. The US leg has no RSI and no 50DMA filter at all, its P/E test is absolute rather than sector-median, and it has no insider-buying filter. Dual-bucket itself is accurate and unchanged.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "SCORE": {
+      "label": "Score 5 dimensions",
+      "description": "Exactly 5 dimensions are scored and weighted: fundamental, technical, sentiment, macro, insider — all computed deterministically before the LLM runs. Insider resolves through a cascade (Massive Form 4 → SEC EDGAR → Alpha Vantage), first available:true wins; ADRs skip it entirely. India macro is honestly UNAVAILABLE and excluded: MacroSentinel is US-only by construction and macro_regime carries no market column, so an India name renormalizes over its remaining dimensions rather than being handed a fabricated 50. US macro also fails closed on staleness (>10 days) or fewer than 3 indicators. India sentiment comes from GDELT tonechart; an FII/DII flow line is fed to the thesis prompt as narrative only and is deliberately NOT part of macro_score. Two further dimensions exist in the type (options, analyst) but are logged evidence only and are never weighted.",
+      "addedAt": "2026-06-25",
+      "addReason": "Multi-dimensional scoring is the core of the strategy.",
+      "status": "changed",
+      "changedAt": "2026-07-17",
+      "changeReason": "Node asserted the dimensions are 'combined by the current signal_weights' — false, and the exact class of claim this diagram exists to prevent. Weighting moved to its own WEIGHTS node. Also documented the insider cascade, the India macro exclusion, GDELT/FII-DII, and the availability mask, all of which shipped without a diagram update.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "WEIGHTS": {
+      "label": "Champion-first weights",
+      "description": "The legacy global signal_weights row is NO LONGER read on the scoring path. The real chain is: the per-market champion's weights_snapshot from strategy_versions (is_champion=true) → PROFILE_WEIGHTS[risk_profile] → a hardcoded literal, then applyStrategyTilt for the mandate's strategy_preference. Dimensions that are unavailable for a symbol (ETF fundamentals, technicals with <15 candles, India macro) are masked out and the surviving weights are renormalized, so an absent dimension shrinks the evidence base instead of silently scoring as average. signal_weights survives only as an Agents-page display row and a learner baseline — it moves nothing.",
+      "addedAt": "2026-07-17",
+      "addReason": "Split out of SCORE because the weighting source is exactly what the old diagram got wrong, and it is the seam where approved learning enters live scoring.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "ANALYST": {
+      "label": "analyst_score",
+      "description": "The 0-100 composite over the included dimensions only, with effective weights renormalized to the available evidence. Weights are tuned over time by the LearnerAgent, but only via a challenger the user promotes to champion — this node is where that approved learning is consumed.",
+      "addedAt": "2026-06-25",
+      "addReason": "Single comparable score across candidates.",
+      "status": "changed",
+      "changedAt": "2026-07-17",
+      "changeReason": "Verified accurate on the learning-loop claim; amended only to state that the composite is over included dimensions with renormalized weights, not over all five unconditionally.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "GATE": {
+      "label": "Deterministic direction gate",
+      "description": "Direction is decided by lib/signal-direction.ts, not by the model: the LLM's own direction opinion never influences the output and is kept advisory in raw_data._original_direction. Order matters — the held-and-below-threshold check runs FIRST, so a decayed holding still produces an exit even when its evidence has thinned. A separate degradation guard can only downgrade long→neutral, never suppress an exit, and currently ships measure-only unless explicitly set to enforce.",
+      "addedAt": "2026-07-17",
+      "addReason": "Replaces the old 'Held vs new?' node, which framed direction as a prompt/LLM outcome. It is a deterministic gate, and which check runs first is load-bearing for exits.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "SELLOK": {
+      "label": "short · exit signal",
+      "description": "A held name scoring below the mandate threshold is emitted as direction='short'. This branch is evaluated before the thin-evidence branch so that degraded evidence can never trap you in a position.",
+      "addedAt": "2026-06-28",
+      "addReason": "Exit capability on holdings.",
+      "status": "changed",
+      "changedAt": "2026-07-17",
+      "changeReason": "Capability unchanged and still correct; restated in the code's own vocabulary (direction='short') and pinned to its precedence over the thin-evidence branch.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "NEUTRAL": {
+      "label": "neutral · abstain",
+      "description": "Fewer than 2 usable dimensions means the system abstains rather than guessing: direction='neutral', which the PaperTrader will not act on. Reached only for names that are not held-and-decayed.",
+      "addedAt": "2026-07-17",
+      "addReason": "The abstain path is a real, frequently-taken outcome and was invisible on the diagram — the old version drew only held/new.",
+      "status": "new",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "LONG": {
+      "label": "long · new position",
+      "description": "New candidates are long-only. There is NO 'top 3 per day' rule anywhere in the code: the real bounds are pre-scoring caps on candidate count — screener slice of 6, RESEARCH_CANDIDATE_CAP 40 (India 8) — with holdings exempt and overflow carried forward to the next run behind a backlog alert.",
+      "addedAt": "2026-06-28",
+      "addReason": "Long-only for new positions is a locked rule.",
+      "status": "changed",
+      "changedAt": "2026-07-17",
+      "changeReason": "'Top 3/day by analyst_score' was false — no such cap exists in code, and the caps that do exist bound candidates BEFORE scoring rather than ranking after it. Long-only itself verified accurate and unchanged.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "WRITE": {
+      "label": "Write agent_signals",
+      "description": "Persists direction, analyst_score, per-dimension scores, rationale, market, asset_class, mandate_id, and score_source='deterministic_v1' / scoring_version. Also writes research_packets, signal_score_history, decision_observations, pipeline_stage_events, and shadow_decisions.",
+      "addedAt": "2026-06-25",
+      "addReason": "Signals are the durable output other agents consume.",
+      "status": "changed",
+      "changedAt": "2026-07-17",
+      "changeReason": "Was accurate but incomplete. Added score_source, which is the field that structurally fences advisory LLM rows out of execution, plus the five companion tables this run writes.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "HANDOFF": {
+      "label": "Handoff to PaperTrader",
+      "description": "PaperTrader selects pending, direction='long' signals at or above the MANDATE's per-market score_threshold — 60 is only the fallback default (horizon presets: short_swing 65, swing 60, position 58). It additionally requires a freshness cutoff and score_source='deterministic_v1' as a positive allowlist.",
+      "addedAt": "2026-06-25",
+      "addReason": "Clean pipeline handoff.",
+      "status": "changed",
+      "changedAt": "2026-07-17",
+      "changeReason": "'≥60' was stated as the rule; it is a default. The threshold is mandate-driven per market and Settings-editable, and the handoff also filters on freshness and score_source, neither of which was drawn.",
+      "removedAt": null,
+      "removeReason": null
+    }
   },
   "history": [
-    { "date": "2026-06-25", "event": "add", "nodeId": "SCHED", "label": "Schedule", "reason": "Initial build" },
-    { "date": "2026-06-28", "event": "add", "nodeId": "HOLD", "label": "Holdings first", "reason": "Locked: research holdings first" },
-    { "date": "2026-06-28", "event": "add", "nodeId": "SCREEN", "label": "Dual-bucket screener", "reason": "Momentum + Value always on" },
-    { "date": "2026-07-04", "event": "modify", "nodeId": "SCHED", "label": "Schedule", "reason": "Model corrected to Groq llama-3.3-70b" }
+    {
+      "date": "2026-06-25",
+      "event": "add",
+      "nodeId": "SCHED",
+      "label": "Schedule",
+      "reason": "Initial build"
+    },
+    {
+      "date": "2026-06-28",
+      "event": "add",
+      "nodeId": "HOLD",
+      "label": "Holdings first",
+      "reason": "Locked: research holdings first"
+    },
+    {
+      "date": "2026-06-28",
+      "event": "add",
+      "nodeId": "SCREEN",
+      "label": "Dual-bucket screener",
+      "reason": "Momentum + Value always on"
+    },
+    {
+      "date": "2026-07-04",
+      "event": "modify",
+      "nodeId": "SCHED",
+      "label": "Schedule",
+      "reason": "Model corrected to Groq llama-3.3-70b"
+    },
+    {
+      "date": "2026-07-17",
+      "event": "modify",
+      "nodeId": "SCORE",
+      "label": "signal_weights is NOT the scoring path — champion-first is (WEIGHTS node added)",
+      "reason": "The diagram asserted dimensions are 'combined by the current signal_weights'. Code says the opposite in its own comment: the legacy global signal_weights row is NO LONGER read on the scoring path; it was an unreachable third fallback and survives only as an Agents-page display row and a learner baseline. The live chain is per-market champion weights_snapshot (strategy_versions, is_champion=true) → PROFILE_WEIGHTS[risk_profile] → hardcoded literal, then applyStrategyTilt for the mandate's strategy_preference. This was not a wording nit: the diagram pointed a reader at a table they could edit with zero effect on scoring, while hiding the champion promotion that is the ONLY way learning reaches live money. Split into a dedicated WEIGHTS node rather than patched inline, because the weighting source is the single most load-bearing claim on this page. Also recorded the availability mask + renormalization that ships with it: unavailable dimensions are excluded and surviving weights renormalize, so absent evidence shrinks the base instead of scoring as a silent 50."
+    },
+    {
+      "date": "2026-07-17",
+      "event": "modify",
+      "nodeId": "SCHED",
+      "label": "Model was Groq llama-3.3-70b, is per-flow DeepSeek; scheduler was never Windows Task Scheduler",
+      "reason": "The 2026-07-04 history entry recorded a 'correction' to Groq llama-3.3-70b that was itself wrong, so the diagram has been confidently lying for two weeks. Real model: getConfiguredModel(supabase,'research','deepseek-reasoner') — per-flow from Settings via agent_config, prod row deepseek-reasoner. Groq appears in the LLM router only as a generic dispatch branch and is never named for research. Real scheduler: Supabase pg_cron calling the Vercel route over HTTP (kairos-research 0 13 * * 1-5), plus a SECOND India job (kairos-research-india, realigned to 0 4 * * 1-5 by migration 082) that the single-schedule diagram never showed. Also recorded that the LLM writes the thesis narrative ONLY — every score is deterministic before the model is called — which is the inverse of what a 'model runs the scoring pass' reading implies."
+    },
+    {
+      "date": "2026-07-17",
+      "event": "add",
+      "nodeId": "GATE",
+      "label": "Direction is a deterministic gate, not an LLM opinion (NEUTRAL abstain path drawn)",
+      "reason": "The old LONGONLY 'Held vs new?' node framed direction as an outcome of the research prompt. It is not: lib/signal-direction.ts decides, and the LLM's direction opinion NEVER influences the output — it is retained advisory-only in raw_data._original_direction. Three branches now drawn where the diagram drew two. held + analyst_score < threshold → 'short'; thin evidence (<2 usable dimensions) → 'neutral' abstain; else score ≥ threshold → 'long'. Branch ORDER is itself load-bearing and now documented: the held-and-below-threshold check runs BEFORE the thin-evidence check, so a decayed holding still exits rather than being trapped by its own thinning evidence. The abstain path was previously invisible despite being a real and frequent outcome. The evidence-degradation guard is noted as measure-only and one-directional (can downgrade long→neutral, can never suppress an exit)."
+    },
+    {
+      "date": "2026-07-17",
+      "event": "add",
+      "nodeId": "ROTATE",
+      "label": "Holdings staleness-ordered rotation under wall-clock budget + deferred-holdings alert",
+      "reason": "Shipped since 2026-07-04 and entirely absent from the diagram. Holdings are ordered by last-scored age (never-scored first) and processed under RESEARCH_BUDGET_MS (~105s), with names that fall off the end raising a deferred-holdings alert. Drawn as its own node because it changes what a truncated run MEANS: without it, a slow-provider day silently re-scores the same head of the list forever and starves the tail; with it, truncation is fair and visible. Paired with the fail-loud fetchHoldings note on HOLD — a holdings read failure raises a critical issue and throws rather than returning [], because an empty list is indistinguishable from 'you own nothing' and would silently drop every exit signal."
+    },
+    {
+      "date": "2026-07-17",
+      "event": "modify",
+      "nodeId": "HOLD",
+      "label": "Source is live_account_snapshots ∪ paper_positions — not a live RH call on 965848641",
+      "reason": "Diagram claimed it 'pulls current Robinhood positions (read-only, account 965848641) BEFORE screening'. Code reads the latest live_account_snapshots row per account/broker unioned with open paper_positions (position_role='alpha'); 965848641 appears only in the snapshot-capture endpoint, which gatherSymbols explicitly no longer calls (decoupled). The distinction matters operationally: holdings freshness is now a property of the snapshot job, not of this run, so a stalled snapshot job silently ages the holdings this agent researches — invisible under the old description. Holdings-first priority and SELL-on-holdings are verified accurate and unchanged."
+    },
+    {
+      "date": "2026-07-17",
+      "event": "modify",
+      "nodeId": "LONG",
+      "label": "'Top 3/day by analyst_score' does not exist — caps are pre-scoring on candidate count",
+      "reason": "No 3/day cap exists anywhere in the code. Real bounds: screener returns .slice(0,6); RESEARCH_CANDIDATE_CAP default 40 (India 8); holdings are cap-EXEMPT; overflow is carried forward to the next run behind a backlog alert. The difference is not cosmetic — 'top 3 by analyst_score' describes ranking AFTER scoring, while the real caps bound the candidate list BEFORE scoring, so the system never learns what the names it dropped would have scored. Long-only enforcement on new positions is verified accurate and unchanged. Note the CLAUDE.md locked rule still says 'screener target: 3 candidates/day'; the code's screener cap is 6 — flagged as a rule/code divergence, not resolved here."
+    },
+    {
+      "date": "2026-07-17",
+      "event": "modify",
+      "nodeId": "SCREEN",
+      "label": "US screener is fundamentals-only — no RSI, no 50DMA, absolute P/E, no insider filter",
+      "reason": "Momentum was described as 'RSI>60, price>50DMA, revenue accel' and Value as 'P/E<sector median … insider buying'. The US leg is a FinancialDatasets REST screener with no price data at all: momentum is revenue_growth>0.15 / earnings_growth>0.10 / gross_margin>0.25 / ROE>0.15 — a fundamental-momentum proxy the code names as such — and value uses an ABSOLUTE pe_ratio 0-18 cap with no sector comparison and no insider-buying filter. RSI>60 / above-50DMA exist only on the India leg via india_screen_cache. Dual-bucket-always-on verified accurate and unchanged; only the criteria moved."
+    },
+    {
+      "date": "2026-07-17",
+      "event": "modify",
+      "nodeId": "HANDOFF",
+      "label": "≥60 is a mandate default, not the rule; freshness + deterministic_v1 allowlist added",
+      "reason": "The handoff threshold is trading_mandates.score_threshold per market (horizon presets: short_swing 65, swing 60, position 58); 60 is only the ?? fallback. Research and PaperTrader read the same mandate source, so the number is Settings-editable and can differ US vs India — a hardcoded '≥60' on the diagram would send a reader to change the wrong thing. Also drew the two filters the handoff has always applied but the diagram never showed: a signal freshness cutoff, and score_source='deterministic_v1' as a POSITIVE allowlist (a negative filter would fail open and let advisory LLM rows reach fills)."
+    },
+    {
+      "date": "2026-07-17",
+      "event": "remove",
+      "nodeId": "LONGONLY",
+      "label": "'Held vs new?' decision node removed, superseded by GATE",
+      "reason": "Removed rather than edited. The node framed the held/new split as the decision, when the real decision is a three-branch deterministic gate whose thin-evidence abstain path the old node could not express and whose branch ordering it actively obscured. Kept as a removal record rather than a silent deletion so the shape change is auditable."
+    },
+    {
+      "date": "2026-07-17",
+      "event": "modify",
+      "nodeId": "ANALYST",
+      "label": "Verified accurate — champion/promotion claim unchanged",
+      "reason": "'Weights are tuned over time by the LearnerAgent (via promoted challengers)' is TRUE and matches the code comment at the champion read: LearnerAgent proposes weight challengers → user promotes one to champion → this is where that approved learning gets consumed. Only amendment: the composite is over INCLUDED dimensions with renormalized effective weights, not over all five unconditionally. No churn invented."
+    }
   ]
 }
