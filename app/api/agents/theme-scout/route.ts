@@ -81,8 +81,14 @@ interface ThemeResult {
 }
 
 export async function POST(req: NextRequest) {
+  // Cron OR owner. This was cron-secret-only, so the ▶ Run button on
+  // /dashboard/agents — which posts from the browser with no cron secret
+  // (AgentsPage.tsx sends Content-Type and nothing else) — 401'd on every click.
+  // The documented way to run Theme Scout by hand had never worked. GET below was
+  // already owner-gated; only POST was missing the same path.
   if (!verifyCronSecret(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await requireOwner();
+    if (gate) return gate;
   }
 
   const supabase = createServiceClient();

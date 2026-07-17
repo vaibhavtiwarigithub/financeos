@@ -4,7 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
 import { avCachedFetch } from "@/lib/av-cache";
 import { getConfiguredModel, isAgentEnabled } from "@/lib/agent-model-config";
-import { getProviderKey } from "@/lib/llm-keys";
+import { getProviderKey, providerForModel, LLM_PROVIDERS } from "@/lib/llm-keys";
 import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
@@ -69,13 +69,31 @@ export async function POST(req: NextRequest) {
   // "AAPL/?x" can't reach the provider URL path.
   if (!/^[A-Z]{1,5}([.-][A-Z]{1,2})?$/.test(symbol)) return NextResponse.json({ error: "valid US ticker required" }, { status: 400 });
 
-  if (!(await getProviderKey("deepseek"))) return NextResponse.json({ error: "DEEPSEEK_API_KEY not set" }, { status: 503 });
-
   const svc = createServiceClient();
   if (!(await isAgentEnabled(svc, "deep-dive"))) {
     return NextResponse.json({ error: "deep-dive is disabled in Settings -> Agents -> LLM Config" }, { status: 200 });
   }
   const model = await getConfiguredModel(svc, "deep-dive");
+
+  // Key-check the provider this agent is CONFIGURED for, not a hardcoded one.
+  // This used to demand DEEPSEEK_API_KEY before the model was even resolved, so
+  // pointing deep-dive at any non-DeepSeek model in Settings -> Agents -> LLM
+  // Config returned 503 "DEEPSEEK_API_KEY not set" — a per-flow model picker that
+  // silently only accepted one provider. It read as correct only because the prod
+  // row happens to be deepseek-reasoner.
+  const provider = providerForModel(model);
+  if (!provider) {
+    return NextResponse.json(
+      { error: `deep-dive is configured for an unrecognized model "${model}" — pick a supported model in Settings -> Agents -> LLM Config` },
+      { status: 503 },
+    );
+  }
+  if (!(await getProviderKey(provider, svc))) {
+    return NextResponse.json(
+      { error: `${LLM_PROVIDERS[provider].envVar} not set — deep-dive is configured for "${model}" (${provider}). Add the key, or pick a model whose provider is configured.` },
+      { status: 503 },
+    );
+  }
 
   // ── Data bundle: quote + fundamentals + our signal scores + macro + holding ──
   const [quote, fundamentals, { data: sig }, { data: macro }, { data: pos }, { data: wl }] = await Promise.all([
