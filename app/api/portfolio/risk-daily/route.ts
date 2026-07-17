@@ -16,6 +16,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import {
+  buildResearchBlock,
+  indexLatestSignals,
+  researchKey,
+  type ResearchSignalRow,
+} from "@/lib/research/risk-annotation";
 
 export const dynamic = "force-dynamic";
 
@@ -130,6 +136,56 @@ export async function GET(req: NextRequest) {
   const acctByRun = new Map<string, any>();
   for (const a of (accts ?? []) as any[]) acctByRun.set(a.run_id, a);
 
+  // ── Research annotation — a DISPLAY JOIN. It does not, and must not, touch risk ──
+  //
+  // Nothing below is read by `computeHoldingRisk` or `sba-v1`: those already ran
+  // when the cron wrote the snapshot, and their output is replayed verbatim from
+  // the table. This only ATTACHES a nullable block to rows that are already final.
+  // Invariant R1 (features/risk-research-visibility/FEATURE_ARCHITECTURE.md §2);
+  // T1 pins it. See also: the age is the feature, not the score — on 2026-07-16
+  // AVGO was 6 days unscored while this very table said "trim".
+  //
+  // FAIL-SOFT: risk is the product, research is the annotation. If agent_signals
+  // errors, the risk table STILL renders and the column says so explicitly —
+  // never a silent blank, never a fake score. T8 pins it.
+  //
+  // RLS CAVEAT — the one failure this cannot see. This uses the AUTHENTICATED
+  // user's client, and `agent_signals` carries an `authenticated_only` policy
+  // (auth.role() = 'authenticated'), verified in prod 2026-07-17, so the owner
+  // reads it fine. But an RLS denial is NOT an error: it returns zero rows. If
+  // that policy is ever tightened, this join would silently report every holding
+  // as `never` scored — which is precisely the class of confident-looking lie
+  // this feature exists to remove. If you change RLS on agent_signals, revisit
+  // this: a `never` for the WHOLE book is a symptom, not a fact.
+  const latestSymbols = Array.from(new Set(
+    (snapsByRun.get(latest.id) ?? []).map((s: any) => s.symbol).filter((s: any): s is string => typeof s === "string"),
+  ));
+
+  let researchByKey = new Map<string, ResearchSignalRow>();
+  let researchAvailable = true;
+  let researchUnavailableReason: string | null = null;
+
+  if (latestSymbols.length > 0) {
+    // Join on (symbol, market) — NEVER symbol alone. `market` is the validated
+    // query param, so an India `.NS` book can only ever resolve against
+    // market='india' rows. T6 pins no US/India cross-join.
+    const { data: sigs, error: sigErr } = await supabase
+      .from("agent_signals")
+      .select("symbol,market,analyst_score,direction,created_at,is_holding")
+      .eq("market", market)
+      .in("symbol", latestSymbols)
+      .order("created_at", { ascending: false });
+
+    if (sigErr) {
+      researchAvailable = false;
+      researchUnavailableReason = sigErr.message;
+    } else {
+      researchByKey = indexLatestSignals((sigs ?? []) as ResearchSignalRow[]);
+    }
+  }
+
+  const now = new Date();
+
   const pack = (r: RunRow | null) => r == null ? null : {
     runId: r.id,
     capturedOn: r.captured_on,
@@ -142,8 +198,24 @@ export async function GET(req: NextRequest) {
     dataConfidence: r.data_confidence,
     missingInputs: r.missing_inputs ?? [],
     account: acctByRun.get(r.id) ?? null,
-    holdings: (snapsByRun.get(r.id) ?? []).sort((a, b) =>
-      (b.holding_risk_score ?? -1) - (a.holding_risk_score ?? -1)),
+    holdings: (snapsByRun.get(r.id) ?? [])
+      .sort((a, b) => (b.holding_risk_score ?? -1) - (a.holding_risk_score ?? -1))
+      // Annotate the LATEST run only. `previous` exists solely to compute the
+      // Δ-vs-yesterday risk score; annotating it would imply a research history
+      // this join does not model.
+      .map((s: any) => r.id !== latest.id ? s : {
+        ...s,
+        // Additive and nullable. `null` = the research read failed (fail-soft);
+        // a block with state 'never' = the read succeeded and found nothing.
+        // Those are different facts and the UI renders them differently.
+        research: researchAvailable
+          ? buildResearchBlock(researchByKey.get(researchKey(s.symbol, market)), now, market)
+          : null,
+      }),
+    // Run-level honesty flag: distinguishes "research read failed" from "research
+    // read fine, this symbol has no signal". Never let absence look like a score.
+    researchAvailable,
+    researchUnavailableReason,
   };
 
   return NextResponse.json({

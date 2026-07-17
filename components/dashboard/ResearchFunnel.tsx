@@ -41,7 +41,16 @@ function MiniMetric({ label, value, color }: { label: string; value: string; col
   </div>;
 }
 
-export default function ResearchFunnel() {
+/**
+ * `focusSymbol` is the deep-link target (`/dashboard/research-journal?symbol=…`),
+ * used by the Risk Analytics research annotation to jump straight to the entry
+ * behind a score. It auto-expands that symbol once its data arrives.
+ *
+ * The market half of the deep link is applied by the page, not here — this
+ * component reads the market from context and must keep doing so, or the URL and
+ * the header's market switcher would disagree about which book is on screen.
+ */
+export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string | null } = {}) {
   const [date, setDate] = useState(today());
   const { market } = useMarket();
   const [data, setData] = useState<any>(null);
@@ -63,6 +72,18 @@ export default function ResearchFunnel() {
       .catch(e => { if (live) setError(e?.message ?? String(e)); });
     return () => { live = false; };
   }, [date, market]);
+
+  // Deep-link focus: expand the requested symbol once its row exists. The fetch
+  // effect above clears `expanded` on every date/market change, so this must run
+  // after the data lands rather than at mount. Only expands a symbol the payload
+  // actually contains — a deep link to a symbol with no entry for this market
+  // silently expands nothing rather than inventing a row.
+  useEffect(() => {
+    if (!focusSymbol || !data?.symbols) return;
+    const match = data.symbols.find((s: any) => s?.symbol === focusSymbol);
+    if (!match) return;
+    setExpanded(current => current.has(focusSymbol) ? current : new Set(current).add(focusSymbol));
+  }, [focusSymbol, data]);
 
   function toggle(symbol: string) {
     setExpanded(current => {

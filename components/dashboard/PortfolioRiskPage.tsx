@@ -5,6 +5,7 @@ import RhReconnectBanner from "@/components/dashboard/RhReconnectBanner";
 import { useMarket } from "@/lib/market-context";
 import { fmtMoney } from "@/lib/format-money";
 import type { RiskMetrics, HoldingWithRisk, SectorBreakdown } from "@/lib/portfolio-risk";
+import { researchStateSentence, STALE_AFTER_SESSIONS, type ResearchBlock, type ResearchState } from "@/lib/research/risk-annotation";
 
 // The `cur` symbol in this file is always "$" or "₹"; map it to the market so ₹
 // book values group lakh/crore-style (₹12,34,567) while $ stays en-US thousands.
@@ -261,6 +262,10 @@ type DailyHolding = {
   risk_drivers: any; risk_posture: string | null; action_reason: string | null;
   add_capacity: boolean | null; data_confidence: number | null;
   missing_inputs: string[] | null; strategy_note: string | null;
+  // Research annotation — DISPLAY ONLY. Never read by any risk decision (R1).
+  // null = the research read failed; a block with state 'never' = read succeeded,
+  // no signal exists. Different facts, rendered differently.
+  research?: ResearchBlock | null;
 };
 
 type DailyRun = {
@@ -269,6 +274,10 @@ type DailyRun = {
   formulaVersion: string; dataConfidence: number | null; missingInputs: string[];
   account: { metrics?: any; total_value?: number | null } | null;
   holdings: DailyHolding[];
+  // Fail-soft: false means the agent_signals read failed. The risk table still
+  // renders — research absence must never blank the product.
+  researchAvailable?: boolean;
+  researchUnavailableReason?: string | null;
 };
 
 const CUR_SYMBOL: Record<string, string> = { USD: "$", INR: "₹" };
@@ -316,7 +325,164 @@ function PosturePill({ posture }: { posture: string | null }) {
   );
 }
 
-function DailyHoldingRow({ h, prevScore, cur }: { h: DailyHolding; prevScore: number | null; cur: string }) {
+// ── Research annotation cell ────────────────────────────────────────────────
+// DISPLAY ONLY. This annotates the SCORE, never the risk action or verdict —
+// dimming a posture because research is stale would edge toward the coupling
+// this feature deliberately refuses (owner decision Q2, 2026-07-17).
+//
+// The age is the point. On 2026-07-16 AVGO showed a confident-looking 91 that was
+// six days old while the Action column said "trim", and the screen gave the owner
+// no way to know. Staleness is computed in market-local SESSIONS server-side and
+// shown in DAYS here, because "3 days" reads plainly and "1 session" does not.
+
+const RESEARCH_STATE_COLOR: Record<ResearchState, string> = {
+  fresh: T.sub,
+  stale: T.amber,      // a warning, not an error — the score may still be right
+  never: T.muted,
+  unavailable: T.muted,
+};
+
+function researchJournalHref(symbol: string, market: string): string {
+  return `/dashboard/research-journal?symbol=${encodeURIComponent(symbol)}&market=${encodeURIComponent(market)}`;
+}
+
+function directionLabel(d: string | null): string {
+  return d === "long" ? "Long" : d === "short" ? "Short" : d === "neutral" ? "Neutral" : "—";
+}
+
+/** Compact cell for the table: score + age badge. Everything else lives in the expander (mobile-first, Q4). */
+function ResearchCell({ research, available, symbol, market }: {
+  research: ResearchBlock | null | undefined;
+  available: boolean;
+  symbol: string;
+  market: string;
+}) {
+  // Fail-soft: the read failed. Say so — never a blank, never a fake score.
+  if (!available) {
+    return <span title="The research signal store could not be read. The risk figures on this row are unaffected — they are computed without research by design." style={{ fontSize: "11px", color: T.muted }}>research unavailable</span>;
+  }
+  if (!research || research.state === "never") {
+    // NOT a link — a link to nothing is a lie.
+    return <span title="Research has no signal on record for this symbol in this market. This is different from a stale score: there is nothing, not something old." style={{ fontSize: "11px", color: T.muted }}>never scored</span>;
+  }
+  if (research.state === "unavailable") {
+    // Never render an abstain as a number.
+    return <span title="Research ran but abstained on thin evidence — there is no score to show. An abstain is not a zero and not a 50." style={{ fontSize: "11px", color: T.muted }}>abstained</span>;
+  }
+
+  const stale = research.state === "stale";
+  const c = RESEARCH_STATE_COLOR[research.state];
+  const d = research.days_since;
+  const age = d == null ? "age unknown" : d === 0 ? "today" : `${d}d ago`;
+
+  return (
+    <a
+      href={researchJournalHref(symbol, market)}
+      onClick={e => e.stopPropagation()}
+      title={researchStateSentence(research)}
+      style={{ display: "inline-flex", alignItems: "center", gap: "6px", textDecoration: "none" }}
+    >
+      <span style={{ fontWeight: 700, fontSize: "12px", color: T.text, fontVariantNumeric: "tabular-nums" }}>{research.score}</span>
+      <span style={{
+        fontSize: "9px", fontWeight: 700, padding: "1px 5px", borderRadius: "4px",
+        background: `${c}22`, border: `1px solid ${c}55`, color: c, whiteSpace: "nowrap",
+      }}>
+        {stale ? `⚠ ${age}` : age}
+      </span>
+    </a>
+  );
+}
+
+/**
+ * Expander detail: direction + how the score was produced. Per Q4 (mobile-first)
+ * the table cell carries only score + age badge; this is where the rest lives.
+ */
+function ResearchDetail({ research, available, reason, symbol, market }: {
+  research: ResearchBlock | null | undefined;
+  available: boolean;
+  reason: string | null;
+  symbol: string;
+  market: string;
+}) {
+  const Wrap = ({ children }: { children: React.ReactNode }) => (
+    <div style={{ marginTop: "10px", background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 12px" }}>
+      <div style={{ fontSize: "9px", color: T.sub, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "4px" }}>
+        Research (advisory context — does not affect the score or action above)
+      </div>
+      {children}
+    </div>
+  );
+
+  if (!available) {
+    return (
+      <Wrap>
+        <div style={{ fontSize: "12px", color: T.amber, lineHeight: 1.5 }}>
+          Research unavailable — the signal store could not be read{reason ? `: ${reason.slice(0, 120)}` : ""}. The risk score and action on this
+          row are unaffected: they are computed without research by design.
+        </div>
+      </Wrap>
+    );
+  }
+  if (!research || research.state === "never") {
+    return (
+      <Wrap>
+        <div style={{ fontSize: "12px", color: T.muted, lineHeight: 1.5 }}>
+          Never scored — research has no signal on record for {symbol} in this market. That is not the same as a stale score: there is nothing here, not
+          something old. No research-journal entry exists to link to.
+        </div>
+      </Wrap>
+    );
+  }
+  if (research.state === "unavailable") {
+    return (
+      <Wrap>
+        <div style={{ fontSize: "12px", color: T.muted, lineHeight: 1.5 }}>
+          Research ran but abstained on thin evidence — there is no score to show. An abstain is not a zero and not a neutral 50.
+        </div>
+      </Wrap>
+    );
+  }
+
+  const stale = research.state === "stale";
+  // The trap: `is_holding` changes what the score MEANS. Every agent_signals row
+  // in prod is is_holding:false — scored as a screener CANDIDATE, not as a
+  // holding. The direction gate can only emit `short` (a deterministic exit) when
+  // the symbol was scored as held, so a `neutral` from the screener path does NOT
+  // mean "no exit signal" — it means the exit question was never asked.
+  const asHolding = research.scored_as_holding === true;
+
+  return (
+    <Wrap>
+      <div style={{ display: "flex", gap: "14px", flexWrap: "wrap", alignItems: "center", marginBottom: "6px" }}>
+        <span style={{ fontSize: "12px", color: T.text }}>
+          Score <b style={{ fontVariantNumeric: "tabular-nums" }}>{research.score}</b>
+        </span>
+        <span style={{ fontSize: "12px", color: T.sub }}>Direction <b style={{ color: T.text }}>{directionLabel(research.direction)}</b></span>
+        <span style={{ fontSize: "12px", color: stale ? T.amber : T.sub }}>{researchStateSentence(research)}</span>
+      </div>
+      <div style={{ fontSize: "11px", color: T.muted, lineHeight: 1.5 }}>
+        {asHolding
+          ? "Scored as a HOLDING — the exit question was asked of this position."
+          : `Scored as a screener CANDIDATE, not as a holding${research.direction === "neutral" ? " — so \"Neutral\" here does not mean \"no exit signal\"; the exit question was never asked of this position" : ""}.`}
+      </div>
+      {stale && (
+        <div style={{ fontSize: "11px", color: T.amber, marginTop: "6px", lineHeight: 1.5 }}>
+          This score predates the last {STALE_AFTER_SESSIONS} trading sessions in this market. Staleness is counted in market-local sessions, not
+          calendar days, so weekends and holidays do not inflate it.
+        </div>
+      )}
+      <a href={researchJournalHref(symbol, market)} onClick={e => e.stopPropagation()}
+        style={{ display: "inline-block", marginTop: "8px", fontSize: "11px", color: T.accent, textDecoration: "none" }}>
+        View research journal entry for {symbol} →
+      </a>
+    </Wrap>
+  );
+}
+
+function DailyHoldingRow({ h, prevScore, cur, market, researchAvailable, researchReason }: {
+  h: DailyHolding; prevScore: number | null; cur: string; market: string;
+  researchAvailable: boolean; researchReason: string | null;
+}) {
   const [open, setOpen] = useState(false);
   const insufficient = h.risk_posture === "insufficient_data" || h.holding_risk_score == null;
   const delta = (h.holding_risk_score != null && prevScore != null) ? h.holding_risk_score - prevScore : null;
@@ -332,22 +498,25 @@ function DailyHoldingRow({ h, prevScore, cur }: { h: DailyHolding; prevScore: nu
         <td style={{ padding: "8px 10px", fontWeight: 700, color: T.text }}>
           <span style={{ color: T.muted, marginRight: "6px", fontSize: "10px" }}>{open ? "▾" : "▸"}</span>{h.symbol}
         </td>
-        <td style={{ padding: "8px 10px", color: T.sub }}>{h.sector ?? "—"}</td>
-        <td style={{ padding: "8px 10px", color: T.text, fontVariantNumeric: "tabular-nums" }}>
+        <td className="hide-narrow" style={{ padding: "8px 10px", color: T.sub }}>{h.sector ?? "—"}</td>
+        <td className="hide-narrow" style={{ padding: "8px 10px", color: T.text, fontVariantNumeric: "tabular-nums" }}>
           {h.market_value != null ? fmtMoney(h.market_value, mktOf(cur), 0) : "—"}
         </td>
-        <td style={{ padding: "8px 10px", color: T.text, fontVariantNumeric: "tabular-nums" }}>
+        <td className="hide-narrow" style={{ padding: "8px 10px", color: T.text, fontVariantNumeric: "tabular-nums" }}>
           {h.weight_pct != null ? `${(h.weight_pct * 100).toFixed(1)}%` : "—"}
         </td>
         <td style={{ padding: "8px 10px" }}><ScoreChip score={h.holding_risk_score} /></td>
         <td style={{ padding: "8px 10px" }}><PosturePill posture={h.risk_posture} /></td>
-        <td style={{ padding: "8px 10px", color: deltaColor, fontVariantNumeric: "tabular-nums", fontSize: "11px" }}>
+        <td className="hide-narrow" style={{ padding: "8px 10px", color: deltaColor, fontVariantNumeric: "tabular-nums", fontSize: "11px" }}>
           {delta == null ? "—" : `${delta > 0 ? "+" : ""}${delta}`}
+        </td>
+        <td style={{ padding: "8px 10px" }}>
+          <ResearchCell research={h.research} available={researchAvailable} symbol={h.symbol} market={market} />
         </td>
       </tr>
       {open && (
         <tr style={{ background: T.surface }}>
-          <td colSpan={7} style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}` }}>
+          <td colSpan={8} style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}` }}>
             {insufficient && (
               <div style={{ fontSize: "12px", color: T.muted, marginBottom: "8px" }}>
                 Insufficient data to score this holding{h.missing_inputs?.length ? ` — missing: ${h.missing_inputs.join(", ")}` : ""}.
@@ -378,6 +547,9 @@ function DailyHoldingRow({ h, prevScore, cur }: { h: DailyHolding; prevScore: nu
                 <div style={{ fontSize: "12px", color: T.text, lineHeight: 1.5 }}>{h.strategy_note}</div>
               </div>
             )}
+
+            <ResearchDetail research={h.research} available={researchAvailable}
+              reason={researchReason} symbol={h.symbol} market={market} />
             <div style={{ fontSize: "10px", color: T.muted, marginTop: "8px", display: "flex", gap: "14px", flexWrap: "wrap", fontVariantNumeric: "tabular-nums" }}>
               {h.beta != null && <span>β {h.beta.toFixed(2)}</span>}
               {h.realized_vol_pct != null && <span>vol {h.realized_vol_pct.toFixed(1)}%</span>}
@@ -488,6 +660,12 @@ function DailyHoldingRiskPanel({ market }: { market: string }) {
             </div>
           )}
 
+          {/* Mobile-first (owner decision Q4, 2026-07-17): at 375px the table keeps
+              Symbol / Risk / Action / Research (score + age badge). Sector, Value,
+              Weight and Δ1d drop out; direction and how-it-was-scored live in the
+              row expander, which every column already relies on. */}
+          <style>{`@media (max-width: 560px) { .hide-narrow { display: none; } }`}</style>
+
           {latest.holdings.length === 0 ? (
             <div style={{ padding: "20px", color: T.muted, fontSize: "13px" }}>No holdings in this account's snapshot.</div>
           ) : (
@@ -495,14 +673,24 @@ function DailyHoldingRiskPanel({ market }: { market: string }) {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
                 <thead>
                   <tr style={{ color: T.muted, borderBottom: `1px solid ${T.border}` }}>
-                    {["Symbol", "Sector", "Value", "Weight", "Risk", "Action", "Δ 1d"].map(h => (
-                      <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600 }}>{h}</th>
+                    {[
+                      { k: "Symbol" }, { k: "Sector", hideOnMobile: true }, { k: "Value", hideOnMobile: true },
+                      { k: "Weight", hideOnMobile: true }, { k: "Risk" }, { k: "Action" },
+                      { k: "Δ 1d", hideOnMobile: true },
+                      // Research is DISPLAY ONLY and sits after the risk verdict on
+                      // purpose: the verdict does not depend on it.
+                      { k: "Research", title: "Latest research score and how old it is. Advisory context only — it does not affect the Risk score or the Action, which are computed without research by design." },
+                    ].map(h => (
+                      <th key={h.k} title={h.title} className={h.hideOnMobile ? "hide-narrow" : undefined}
+                        style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600 }}>{h.k}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {latest.holdings.map((h, i) => (
-                    <DailyHoldingRow key={`${h.symbol}-${i}`} h={h} prevScore={prevBySymbol.get(h.symbol) ?? null} cur={cur} />
+                    <DailyHoldingRow key={`${h.symbol}-${i}`} h={h} prevScore={prevBySymbol.get(h.symbol) ?? null} cur={cur}
+                      market={market} researchAvailable={latest.researchAvailable !== false}
+                      researchReason={latest.researchUnavailableReason ?? null} />
                   ))}
                 </tbody>
               </table>

@@ -4,7 +4,7 @@ import PageHeader from "@/components/dashboard/PageHeader";
 import ResearchFunnel from "@/components/dashboard/ResearchFunnel";
 import ScoreTrackerPanel from "@/components/dashboard/ScoreTrackerPanel";
 import DecisionReviewPanel from "@/components/dashboard/DecisionReviewPanel";
-import { useMarket } from "@/lib/market-context";
+import { useMarket, type Market } from "@/lib/market-context";
 import { useSearchParams } from "next/navigation";
 
 const T = {
@@ -14,110 +14,12 @@ const T = {
   green: "#34D399", red: "#F87171", amber: "#FBBF24", blue: "#60A5FA",
 };
 
-function todayStr() { return new Date().toISOString().slice(0, 10); }
-
-function terminalBadge(terminal: string) {
-  if (terminal === "filled") return { label: "FILLED", color: T.green };
-  if (terminal.startsWith("rejected_research")) return { label: "REJECTED · Research", color: T.red };
-  if (terminal.startsWith("rejected_portfolio_constructor")) return { label: "REJECTED · Portfolio Constructor", color: T.red };
-  if (terminal.startsWith("rejected_execution")) return { label: "REJECTED · Execution", color: T.red };
-  if (terminal.startsWith("pending_")) return { label: `PENDING · ${terminal.replace("pending_", "")}`, color: T.amber };
-  if (terminal === "passed_research_no_downstream_data") return { label: "PASSED research (no downstream data yet)", color: T.blue };
-  return { label: terminal, color: T.muted };
-}
-
-function FunnelTab() {
-  const [date, setDate] = useState(todayStr());
-  const { market } = useMarket();
-  const [data, setData] = useState<any>(null);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    fetch(`/api/agents/research-journal?date=${date}&market=${market}`).then(r => r.json()).then(setData).catch(() => {});
-  }, [date, market]);
-
-  function toggle(symbol: string) {
-    const next = new Set(expanded);
-    if (next.has(symbol)) next.delete(symbol); else next.add(symbol);
-    setExpanded(next);
-  }
-
-  return (
-    <div>
-      <div style={{ display: "flex", gap: "10px", marginBottom: "16px", alignItems: "center" }}>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", color: T.text, padding: "8px 10px", fontSize: "13px" }} />
-        {data && <span style={{ fontSize: "12px", color: T.muted }}>{data.count} symbol{data.count === 1 ? "" : "s"} scored</span>}
-      </div>
-
-      {!data ? (
-        <div style={{ fontSize: "13px", color: T.muted }}>Loading…</div>
-      ) : data.count === 0 ? (
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "24px", fontSize: "13px", color: T.muted, textAlign: "center" as const }}>
-          No candidates scored yet — research runs at 9 AM ET.
-        </div>
-      ) : (
-        <div style={{ display: "grid", gap: "8px" }}>
-          {data.symbols.map((s: any) => {
-            const badge = terminalBadge(s.terminal);
-            const isOpen = expanded.has(s.symbol);
-            return (
-              <div key={s.symbol} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "10px", overflow: "hidden" }}>
-                <div onClick={() => toggle(s.symbol)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", cursor: "pointer" }}>
-                  <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                    <span style={{ fontSize: "14px", fontWeight: 700, color: T.text }}>{s.symbol}</span>
-                    {s.run_count > 1 && <span title="Research ran more than once today (manual re-trigger or scheduled + test) — showing the latest scoring" style={{ fontSize: "11px", color: T.muted, cursor: "help" }}>×{s.run_count} runs</span>}
-                    <span style={{ fontSize: "12px", color: T.textSub }}>score {s.analyst_score} (thresh {s.score_threshold})</span>
-                    {s.screener && <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "4px", background: T.accentBg, color: T.accent }}>{s.screener.bucket}</span>}
-                  </div>
-                  <span style={{ fontSize: "11px", fontWeight: 700, padding: "3px 10px", borderRadius: "5px", background: `${badge.color}22`, color: badge.color, border: `1px solid ${badge.color}44` }}>{badge.label}</span>
-                </div>
-                {isOpen && (
-                  <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${T.border}` }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "8px", margin: "12px 0", fontSize: "11px" }}>
-                      {Object.entries(s.scores).map(([dim, val]: [string, any]) => {
-                        const w = s.weighting?.applied_weights?.[dim];
-                        const excluded = s.weighting?.renormalized && !s.weighting.included_dims.includes(dim);
-                        return (
-                          <div key={dim} style={{ opacity: excluded ? 0.4 : 1 }}>
-                            <div style={{ color: T.muted, textTransform: "uppercase" as const }}>{dim}{w != null ? ` (${Math.round(w * 100)}%)` : ""}</div>
-                            <div style={{ color: T.text, fontWeight: 700 }}>{val ?? "—"}</div>
-                            {s.notes[dim] && <div style={{ color: T.muted, marginTop: "2px" }}>{s.notes[dim]}{excluded ? " — excluded from score" : ""}</div>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {s.weighting?.renormalized && (
-                      <div style={{ fontSize: "11px", color: T.blue, marginBottom: "10px" }}>
-                        Reweighted: {s.weighting.included_dims.join(", ")} only ({5 - s.weighting.included_dims.length} dimension{5 - s.weighting.included_dims.length === 1 ? "" : "s"} excluded as inapplicable/unavailable, not counted as neutral).
-                      </div>
-                    )}
-                    {s.screener && (
-                      <div style={{ fontSize: "12px", color: T.textSub, marginBottom: "10px" }}>
-                        Screener: <b>{s.screener.bucket}</b> — {s.screener.criteria_matched?.join(", ")}
-                      </div>
-                    )}
-                    <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px", textTransform: "uppercase" as const, letterSpacing: "0.06em" }}>Pipeline stages</div>
-                    {s.stages.length === 0 ? (
-                      <div style={{ fontSize: "12px", color: T.muted }}>No downstream stage data (pre-instrumentation or not yet processed).</div>
-                    ) : (
-                      <div style={{ display: "grid", gap: "4px" }}>
-                        {s.stages.map((st: any, i: number) => (
-                          <div key={i} style={{ fontSize: "12px", color: st.outcome === "rejected" ? T.red : st.outcome === "filled" ? T.green : T.textSub }}>
-                            <b>{st.stage}</b> → {st.outcome}{st.reason ? `: ${st.reason}` : ""}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
+// NOTE: a local `FunnelTab` used to live here — a full second copy of the
+// funnel UI that was never rendered (the page has always used the shared
+// <ResearchFunnel/> below). It was dead the day it was written, and it is
+// removed rather than deep-linked: it drifted from the real component and
+// was the reason this feature's spec described an expander that production
+// never ran. Deep-link support lives in ResearchFunnel.tsx.
 
 function EvolutionTab() {
   const { market } = useMarket();
@@ -246,6 +148,40 @@ export default function ResearchJournalPage() {
     requestedTab === "evolution" || requestedTab === "scores" || requestedTab === "review" ? requestedTab : "funnel"
   );
 
+  // ── Deep link: /dashboard/research-journal?symbol=<SYM>&market=<us|india> ────
+  // Entry point from the Risk Analytics research annotation — "this score is 4
+  // days old" is only actionable if the owner can reach the entry behind it.
+  //
+  // The market half is load-bearing: US and India books must never cross-link,
+  // so a deep link that names a market switches to it rather than rendering the
+  // symbol against whichever book happened to be selected.
+  const focusSymbol = searchParams.get("symbol");
+  const rawMarket = searchParams.get("market");
+  const deepLinkMarket: Market | null = rawMarket === "us" || rawMarket === "india" ? rawMarket : null;
+
+  const { market, setMarket } = useMarket();
+  const [marketSynced, setMarketSynced] = useState(false);
+
+  // Converge on the deep-linked market, then stop.
+  //
+  // Ordering matters and is the reason this is not a one-shot mount effect:
+  // MarketProvider restores the persisted market in its OWN mount effect, and
+  // React fires child effects BEFORE parent effects — so a mount-only sync here
+  // would be silently clobbered by localStorage a moment later. Depending on
+  // `market` lets this re-assert once the provider has settled. `marketSynced`
+  // then latches it off, so the owner's manual switch afterwards is never fought.
+  //
+  // setMarket ignores "india" when India is disabled; that guard stays authoritative.
+  useEffect(() => {
+    if (!deepLinkMarket || marketSynced) return;
+    if (market !== deepLinkMarket) { setMarket(deepLinkMarket); return; }
+    setMarketSynced(true);
+  }, [deepLinkMarket, market, marketSynced, setMarket]);
+
+  // A symbol deep link is a request to see that entry — the funnel is the only
+  // tab that renders one, so honor it over a stale `tab` param.
+  useEffect(() => { if (focusSymbol) setTab("funnel"); }, [focusSymbol]);
+
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
       <PageHeader
@@ -271,7 +207,7 @@ export default function ResearchJournalPage() {
             </button>
           ))}
         </div>
-        {tab === "funnel" ? <ResearchFunnel /> : tab === "evolution" ? <EvolutionTab /> : tab === "scores" ? <ScoreTrackerPanel embedded /> : <DecisionReviewPanel />}
+        {tab === "funnel" ? <ResearchFunnel focusSymbol={focusSymbol} /> : tab === "evolution" ? <EvolutionTab /> : tab === "scores" ? <ScoreTrackerPanel embedded /> : <DecisionReviewPanel />}
       </div>
     </div>
   );
