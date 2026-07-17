@@ -126,12 +126,26 @@ describe("computeAllocation — macro market scoping", () => {
     expect(await computeAllocation(svc, "india")).toBeNull();
   });
 
-  it("US with a fresh, indicator-backed regime is UNCHANGED (still allocates)", async () => {
+  it("US with a fresh, indicator-backed regime still allocates — and now TILTS on it", async () => {
+    // This asserted equity === 70 (the untilted base target) when it was written.
+    // That expectation was only reachable because normalizeRegime matched
+    // risk_on/risk_off/bull/bear while MacroSentinel writes a danger ladder
+    // (green|yellow|orange|red|unknown) — so "orange" fell through to neutral and
+    // the tilt was DEAD. The 70 encoded that bug as expected behaviour.
+    //
+    // With the vocabulary fixed, orange => risk_off => equity 70 - 15 = 55
+    // (defensive +9, cash +6, sum back to 100). That is the allocator's documented
+    // job ("risk_off shifts weight OUT of equity") and matches MacroSentinel's own
+    // wording for orange: "Warning. Multiple signals. Consider reducing exposure."
+    //
+    // The test's ORIGINAL purpose is unchanged and still asserted below: the India
+    // market-scoping fix must not stop US from allocating. "UNCHANGED" meant
+    // unchanged BY THAT FIX — never "never tilts".
     const { svc } = makeSvc({ macroRows: [FRESH_US_ROW], sleeves: US_SLEEVES });
     const r = await computeAllocationDetailed(svc, "us", NOW);
     expect(r.targets).not.toBeNull();
     expect(sumPct(r.targets!)).toBe(100);
-    expect(r.targets!.find(x => x.sleeve === "equity")!.targetPct).toBe(70);
+    expect(r.targets!.find(x => x.sleeve === "equity")!.targetPct).toBe(55);
     expect(r.targets!.find(x => x.sleeve === "leveraged")).toBeUndefined();
     expect(r.macro).toMatchObject({ available: true, rawRegime: "orange", indicators: 7 });
   });

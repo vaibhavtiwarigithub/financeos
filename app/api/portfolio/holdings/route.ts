@@ -48,7 +48,19 @@ export async function GET(req: NextRequest) {
   // book when a broker fetch fails: that produced plausible-looking risk numbers
   // under a "live" heading while the account pills showed a broker error.
   const liveHoldings = liveAccounts.flatMap(a => a.holdings);
-  const risk = await computeRiskMetrics(liveHoldings, pendingProposals as any, { market, currency });
+  // Sum NAV only over the accounts whose holdings are actually in this roll-up, so
+  // the sector weights share the denominator the owner's cap is enforced on
+  // (value/NAV — live-portfolio-gate.ts:68). An errored account contributes neither
+  // holdings nor NAV; counting its NAV would silently deflate every sector weight.
+  const rollupNav = liveAccounts.reduce(
+    (s, a) => s + (Number.isFinite(a.totalValue as number) ? (a.totalValue as number) : 0),
+    0,
+  );
+  const risk = await computeRiskMetrics(liveHoldings, pendingProposals as any, {
+    market,
+    currency,
+    ...(rollupNav > 0 ? { navValue: rollupNav } : {}),
+  });
 
   // Per-account risk: compute independently for each live account.
   // Skips error-only accounts and accounts with zero holdings.

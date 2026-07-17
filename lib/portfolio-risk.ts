@@ -120,6 +120,14 @@ export interface SectorBreakdown {
   sp500WeightPct: number;
   overweightPct: number; // positive = overweight vs S&P
   holdingCount: number;
+  /**
+   * Which denominator `weightPct` is measured against. "nav" matches the basis the
+   * owner's sector cap is enforced on; "invested" is a fallback used only when NAV
+   * was not supplied, and reads HIGHER than the cap's own basis on a cash-heavy
+   * account. The UI must say which — a percentage whose denominator is unstated is
+   * the same class of lie this codebase keeps removing.
+   */
+  basis: "nav" | "invested";
 }
 
 export interface CorrelatedPair {
@@ -287,6 +295,17 @@ async function computeIndiaPortfolioBeta(
 export interface RiskOptions {
   market?: "us" | "india";
   currency?: string; // "$" | "₹"
+  /**
+   * Cash-INCLUSIVE account value (NAV). Optional, but pass it whenever you have it.
+   *
+   * Sector weights are only comparable to the owner's sector cap when they use the
+   * SAME denominator the cap is enforced on, and the live gate enforces value/NAV
+   * (`lib/risk/live-portfolio-gate.ts:68`). Without NAV this file falls back to
+   * invested-relative (sum of marketValue), which on a cash-heavy account reads
+   * HIGHER than the number the engine actually breached on — the display and the
+   * engine then disagree about the same cap. Passing NAV removes the discrepancy.
+   */
+  navValue?: number;
 }
 
 // ── Core computation ─────────────────────────────────────────────────────────
@@ -355,11 +374,29 @@ export async function computeRiskMetrics(
     ? (indiaBetaWired ? Math.min(0.60, portfolioBeta * NIFTY_MAX_DRAWDOWN) : NIFTY_MAX_DRAWDOWN)
     : Math.min(0.60, portfolioBeta * 0.34);
 
-  // Sector breakdown
-  const sectorTotals: Record<string, number> = {};
+  // Sector breakdown.
+  //
+  // DENOMINATOR: the owner's sector cap is enforced on NAV (value/NAV — see
+  // lib/risk/live-portfolio-gate.ts:68), and lib/risk/holding-risk.ts scores the
+  // name cap the same way. This roll-up used to be INVESTED-relative (h.weightPct
+  // is marketValue/sum(marketValue)), so on a cash-heavy account the sector bar
+  // read HIGHER than the number the risk engine actually breached on — two
+  // denominators for one cap the owner set once. When NAV is supplied we rescale
+  // onto it; when it is not, we keep the invested basis and SAY SO via `basis`
+  // rather than silently implying the cap's denominator.
+  const navValue = opts.navValue;
+  const navUsable = typeof navValue === "number" && Number.isFinite(navValue) && navValue > 0;
+  const basis: "nav" | "invested" = navUsable ? "nav" : "invested";
+  // invested/NAV: 1 when fully invested, <1 with cash. Scales invested-relative
+  // weights onto the NAV basis without recomputing per-holding values.
+  const navScale = navUsable ? totalValue / (navValue as number) : 1;
+
+  const sectorTotals: Record<string, number> = {};       // on `basis` — comparable to the cap
+  const sectorInvestedTotals: Record<string, number> = {}; // always invested — comparable to the index
   const sectorCounts: Record<string, number> = {};
   for (const h of enriched) {
-    sectorTotals[h.sector] = (sectorTotals[h.sector] ?? 0) + h.weightPct;
+    sectorTotals[h.sector] = (sectorTotals[h.sector] ?? 0) + h.weightPct * navScale;
+    sectorInvestedTotals[h.sector] = (sectorInvestedTotals[h.sector] ?? 0) + h.weightPct;
     sectorCounts[h.sector] = (sectorCounts[h.sector] ?? 0) + 1;
   }
   // India has no free NIFTY sector-weight reference wired, so benchmark weight is
@@ -370,13 +407,22 @@ export async function computeRiskMetrics(
       const benchWeight = isIndia ? 0 : (SP500_SECTOR_WEIGHTS[sector] ?? 0);
       return {
         sector,
-        weightPct,
+        weightPct,   // on `basis` — the number to compare against the owner's sector cap
         sp500WeightPct: benchWeight,
         // Non-sector asset classes (Treasuries, gold, broad ETFs, bitcoin) do
         // not have an S&P sector benchmark. Do not call their entire weight an
         // "overweight" against a nonexistent 0% reference.
-        overweightPct: isIndia || benchWeight === 0 ? 0 : weightPct - benchWeight,
+        //
+        // DELIBERATELY INVESTED-relative even when weightPct is NAV-relative: the
+        // S&P is 100% invested, so comparing a cash-diluted weight to an index
+        // weight conflates ASSET ALLOCATION with SECTOR SELECTION. At 50% cash a
+        // NAV-basis Tech weight reads "at benchmark" while you in fact hold twice
+        // the index's Tech among your equities. Sector selection is a like-for-like
+        // question and stays on the invested basis; the cap question uses NAV above.
+        overweightPct:
+          isIndia || benchWeight === 0 ? 0 : sectorInvestedTotals[sector]! - benchWeight,
         holdingCount: sectorCounts[sector],
+        basis,
       };
     });
 

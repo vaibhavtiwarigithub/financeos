@@ -167,7 +167,10 @@ async function processAccount(
   const accountTotal = account.totalValue;
 
   // Account roll-up (sector/beta enrichment + persisted RiskMetrics).
-  const metrics = await computeRiskMetrics(account.holdings, undefined, { market });
+  // navValue: the sector roll-up must use the SAME denominator the owner's sector
+  // cap is enforced on (value/NAV — live-portfolio-gate.ts:68), or the displayed
+  // sector bar disagrees with the breach the engine just computed from accountTotal.
+  const metrics = await computeRiskMetrics(account.holdings, undefined, { market, navValue: accountTotal });
   const enriched = new Map<string, { sector: string; beta: number }>();
   for (const h of metrics.holdings) enriched.set(h.symbol, { sector: h.sector, beta: h.beta });
 

@@ -46,9 +46,35 @@ function finiteOr(v: unknown, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-/** Normalize a raw macro-regime label to the allocator's 3-state enum. */
+/**
+ * Normalize a raw macro-regime label to the allocator's 3-state enum.
+ *
+ * VOCABULARY: MacroSentinel is the only writer of `macro_regime.regime`, and it
+ * emits `green | yellow | orange | red | unknown` (a danger ladder), NOT the
+ * risk_on/risk_off/bull/bear words this used to match. Every real prod label fell
+ * through to `neutral`, so the regime tilt was DEAD — allocation ran as if macro
+ * never had an opinion. Masked in prod only by `allocation_enabled=false`.
+ *
+ * Mapping (danger ladder → allocator intent):
+ *   green            → risk_on   (no recession signals)
+ *   yellow           → neutral   (monitor; not yet a de-risk instruction)
+ *   orange | red     → risk_off  (warning / danger — shift out of equity)
+ *   unknown | absent → neutral   (NO verdict is not a calm verdict; never tilt on
+ *                                 an absence — the fossil rule from scores.ts)
+ *
+ * The legacy risk_on/risk_off/bull/bear words are still accepted so a future
+ * writer using that vocabulary is not silently swallowed — but nothing emits them
+ * today. `yellow` deliberately maps to neutral rather than risk_off: MacroSentinel
+ * calls it "Monitor closely", and treating monitor as de-risk would bias the book
+ * bearish on the most common non-green state.
+ */
 export function normalizeRegime(raw: unknown): Regime {
-  const s = String(raw ?? "").toLowerCase();
+  const s = String(raw ?? "").toLowerCase().trim();
+  // MacroSentinel's own vocabulary first — this is what prod actually writes.
+  if (s === "red" || s === "orange") return "risk_off";
+  if (s === "green") return "risk_on";
+  if (s === "yellow" || s === "unknown" || s === "") return "neutral";
+  // Legacy/foreign vocabularies — accepted, not emitted by anything today.
   if (s.includes("risk_off") || s.includes("risk-off") || s.includes("bear") || s.includes("defensive")) return "risk_off";
   if (s.includes("risk_on") || s.includes("risk-on") || s.includes("bull") || s.includes("aggressive")) return "risk_on";
   return "neutral";

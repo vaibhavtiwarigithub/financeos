@@ -115,8 +115,12 @@ function SectorSection({ breakdown, isIndia, cur }: { breakdown: SectorBreakdown
   if (!breakdown.length) return null;
   return (
     <div style={{ marginTop: "16px" }}>
+      {/* The denominator is NOT decorative: the owner's sector cap is enforced on
+          NAV, so a bar labelled "% of invested" is not the number the cap acts on.
+          The label follows `basis` — never hardcode it. */}
       <div style={{ fontSize: "9px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "10px" }}>
-        {isIndia ? "Sector Allocation (% of invested holdings)" : "Sector Allocation vs S&P 500 (% of invested holdings)"}
+        {isIndia ? "Sector Allocation" : "Sector Allocation vs S&P 500"}
+        {breakdown[0]?.basis === "nav" ? " (% of NAV · matches sector cap)" : " (% of invested holdings · NAV unavailable)"}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
         {breakdown.map(s => {
