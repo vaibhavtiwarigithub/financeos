@@ -1,5 +1,5 @@
 # Kairos — Tech Stack
-> Last updated: 2026-07-12 (per-flow LLM selection from Settings; default off Claude → DeepSeek reasoner; Gemini + Grok providers added; claude-exec.ts / PowerShell path deleted)
+> Last updated: 2026-07-16 (House Stock Watcher congressional feed retired — upstream bucket went private; no licence-clean free replacement qualified)
 > Update this file when: a new library is added, a provider changes, a new adapter is added, the framework is upgraded, or any layer in the table below changes.
 
 ---
@@ -112,7 +112,7 @@ registry.
 | Yahoo Finance | India `.NS` price+candles (free, no auth) + fundamentals (cookie+crumb) | None |
 | NSE public JSON | Full equity list (`EQUITY_L.csv`), insider trades (`corporates-pit`), option chain, **daily FII/DII net cash flows** (`fiidiiTradeReact`, `lib/india-macro.ts` — India macro input, verified reachable from Vercel 2026-07-12) | Cookie handshake via `lib/nse-data.ts` / `lib/india-macro.ts` |
 | GDELT DOC 2.0 | **India news tone → sentiment** (`lib/india-news.ts`); uses `mode=tonechart` (count-weighted mean tone over a 14d tone histogram) — the `artlist` mode carries NO per-article tone, which had left every India name's sentiment unavailable | None (public API) |
-| House Stock Watcher | Congressional stock trade disclosures | None (public S3) |
+| ~~House Stock Watcher~~ | **DEAD — REMOVED 2026-07-16.** Was congressional stock trade disclosures. Bucket taken private: `us-east-2` → HTTP 301 PermanentRedirect, `us-west-2` → HTTP 403 AccessDenied; project unmaintained (sibling Senate Stock Watcher is 403 too). `/api/markets/insider-trades` no longer fetches — it returns an explicit `discontinued` state + a System Health alert (`markets-congress-source:discontinued`), and the Markets panel renders a permanent "Discontinued" note with no retry. **No free replacement qualified:** Lambda Finance (`lambdafin.com/api/congressional/recent`) serves live data on HTTP 200 but its ToS forbid automated access ("any data mining, robots, or similar data gathering and extraction tools"; "personal, non-commercial use ... only") and it re-serves FMP data; Finnhub/FMP gate it behind a paid tier (violates free-cloud-only); the official House clerk feed publishes filing **metadata only** (no ticker/amount/side — trades are per-filing scanned PDFs needing OCR, explicitly out of scope). Restore only if a licence-clean free source appears. | — (retired) |
 | SEC EDGAR | Form 4 CIK lookup + XML → `evidence_records` | None (public) |
 | StockTwits | Social sentiment for US tickers | (check vault) |
 | WandB | Experiment tracking (optional) | `WANDB_API_KEY` in `.env.local` |
