@@ -151,7 +151,9 @@ Fri 9:45 PM UTC — validation-sweep (pg_cron; recovers never-validated challeng
 
 **Research capacity note (2026-07-17):** the US and India jobs both prioritize
 stale holdings, but held rows no longer spend an LLM narrative call because the
-decision is deterministic. Candidate overflow retains its original defer time and
+decision is deterministic. One existing worker is reserved for candidates while
+the others prioritize holdings, so discovery always advances without raising
+concurrency. Candidate overflow retains its original defer time and
 is bounded to six deferrals/seven days. Theme Scout's seven-day owner-scoped rows
 and `watchlist.research_enabled` prevent disabled or month-old machine discoveries
 from silently expanding the daily universe. Prewarm and evidence-shadow are Canonical

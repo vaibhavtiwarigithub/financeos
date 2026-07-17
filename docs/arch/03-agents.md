@@ -748,6 +748,9 @@ Health info alert when ≥ 20 accumulate.
   scoring, availability mask, and market-local weights as candidates. They skip
   optional LLM narrative and RAG retrieval because those outputs cannot alter an
   action; this preserves wall-clock capacity for exit coverage and candidates.
+- One worker from the existing concurrency pool is reserved for candidates while
+  the remaining workers prioritize staleness-ordered holdings. Concurrency and
+  provider quotas do not increase, but a large book cannot starve all discovery.
 - Candidate overflow is carried forward with a stable original defer time and is
   pruned after six unsuccessful deferrals or seven days. Theme Scout rows expire
   after seven days, require an owner id, deduplicate per run, and cannot overwrite

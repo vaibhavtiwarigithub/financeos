@@ -40,6 +40,13 @@ describe("research holding and market contracts", () => {
     expect(monitor).toContain('sc.score < exitThreshold');
     expect(monitor).not.toContain('sc.direction !== "long"');
   });
+
+  it("reserves existing worker capacity for candidates without raising concurrency", () => {
+    const cron = readFileSync("app/api/agents/research/cron/route.ts", "utf8");
+    expect(cron).toContain('i === 0 && candidateIndexes.length > 0 ? "candidate" : "holding"');
+    expect(cron).toContain("const workerCount = Math.min(concurrency, entries.length)");
+    expect(cron).toContain("workerPreferences.map(worker)");
+  });
 });
 
 describe("Webull MCP remains read-only", () => {

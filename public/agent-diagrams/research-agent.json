@@ -27,7 +27,7 @@
     },
     "ROTATE": {
       "label": "Staleness-ordered rotation",
-      "description": "Holdings are ordered by how long ago each was last scored (never-scored first) and worked through under a wall-clock budget (RESEARCH_BUDGET_MS, default ~105s). Held rows receive full deterministic data scoring but skip optional LLM narrative and RAG retrieval, reducing latency without changing decisions. Names that fall off the end raise a deferred-holdings alert. Holdings are exempt from the candidate cap.",
+      "description": "Holdings are ordered by how long ago each was last scored (never-scored first) and worked through under a wall-clock budget. Held rows receive full deterministic scoring but skip optional LLM narrative and RAG retrieval. One existing worker is reserved for candidates while the others prioritize holdings, so discovery advances without raising concurrency. Deferred holdings raise an alert.",
       "addedAt": "2026-07-17",
       "addReason": "A fixed-order holdings loop under a timeout always starves the tail of the list; staleness ordering makes the truncation fair and the alert makes it honest.",
       "status": "new",

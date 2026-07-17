@@ -190,10 +190,21 @@ export async function POST(req: NextRequest) {
     : 105_000;
   const processingDeadline = routeStartedAt + BUDGET_MS;
   const results: any[] = new Array(entries.length);
-  let idx = 0;
-  async function worker() {
-    while (idx < entries.length && Date.now() < processingDeadline) {
-      const i = idx++;
+  const holdingIndexes = entries.map((entry, i) => entry.isHeld ? i : -1).filter(i => i >= 0);
+  const candidateIndexes = entries.map((entry, i) => !entry.isHeld ? i : -1).filter(i => i >= 0);
+  let holdingCursor = 0;
+  let candidateCursor = 0;
+  const takeIndex = (preferred: "holding" | "candidate"): number | null => {
+    if (preferred === "candidate" && candidateCursor < candidateIndexes.length) return candidateIndexes[candidateCursor++];
+    if (preferred === "holding" && holdingCursor < holdingIndexes.length) return holdingIndexes[holdingCursor++];
+    if (holdingCursor < holdingIndexes.length) return holdingIndexes[holdingCursor++];
+    if (candidateCursor < candidateIndexes.length) return candidateIndexes[candidateCursor++];
+    return null;
+  };
+  async function worker(preferred: "holding" | "candidate") {
+    while (Date.now() < processingDeadline) {
+      const i = takeIndex(preferred);
+      if (i == null) break;
       const entry = entries[i];
       try {
         results[i] = await processSymbol(entry, supabase, universeSnapshotId, runId ? String(runId) : null);
@@ -202,7 +213,15 @@ export async function POST(req: NextRequest) {
       }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(concurrency, entries.length) }, worker));
+  const workerCount = Math.min(concurrency, entries.length);
+  // Reserve one existing worker for candidates so a large live+paper book cannot
+  // consume every wall-clock slot. This does not raise concurrency or provider
+  // quota; remaining workers still prioritize the staleness-ordered holdings.
+  const workerPreferences: Array<"holding" | "candidate"> = Array.from(
+    { length: workerCount },
+    (_, i) => i === 0 && candidateIndexes.length > 0 ? "candidate" : "holding",
+  );
+  await Promise.all(workerPreferences.map(worker));
 
   // Re-defer anything the budget didn't reach (results[i] still empty) so it
   // rotates to the FRONT of next run's queue instead of silently waiting.
