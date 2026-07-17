@@ -671,36 +671,84 @@ function fmtValue(v: number) {
   return "—";
 }
 
+// Per-tab load outcome. `ok` still covers "loaded fine and there genuinely are no
+// rows" — which is NOT the same thing as a source that could not be read at all.
+// Keeping them apart is the whole point: an empty box means "nobody traded", a
+// note means "we could not see whether anybody traded".
+type FeedState =
+  | { kind: "ok" }
+  | { kind: "failed"; detail: string }
+  | { kind: "discontinued"; reason: string; detail: string };
+
 function SmartMoneyTrades() {
   const [trades, setTrades] = useState<InsiderTrade[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"insider" | "congress">("insider");
   const [showAll, setShowAll] = useState(false);
+  const [insiderState, setInsiderState] = useState<FeedState>({ kind: "ok" });
+  const [congressState, setCongressState] = useState<FeedState>({ kind: "ok" });
 
   useEffect(() => {
-    Promise.all([
+    // allSettled, not all: the two feeds are independent sources. A failure of one
+    // must not blank the other, and must not collapse into a shared silent catch.
+    Promise.allSettled([
       fetch("/api/markets/edgar-insiders").then((r) => r.json()),
       fetch("/api/markets/insider-trades").then((r) => r.json()),
     ])
-      .then(([edgar, congress]) => {
-        const insiders: InsiderTrade[] = (edgar.transactions ?? [])
-          .filter((t: any) => t.transactionType === "buy" || t.transactionType === "sell")
-          .map((t: any) => ({
-            symbol: t.symbol,
-            name: t.name,
-            type: t.transactionType,
-            value: Number(t.value) || 0,
-            shares: Number(t.shares) || 0,
-            date: t.date,
-            filer: t.name,
-            role: "insider" as const,
-            title: t.role,
-          }));
-        setTrades([...insiders, ...(congress.trades ?? [])]);
+      .then(([edgarRes, congressRes]) => {
+        let rows: InsiderTrade[] = [];
+
+        if (edgarRes.status === "fulfilled") {
+          rows = rows.concat(
+            (edgarRes.value?.transactions ?? [])
+              .filter((t: any) => t.transactionType === "buy" || t.transactionType === "sell")
+              .map((t: any) => ({
+                symbol: t.symbol,
+                name: t.name,
+                type: t.transactionType,
+                value: Number(t.value) || 0,
+                shares: Number(t.shares) || 0,
+                date: t.date,
+                filer: t.name,
+                role: "insider" as const,
+                title: t.role,
+              })),
+          );
+          setInsiderState({ kind: "ok" });
+        } else {
+          setInsiderState({
+            kind: "failed",
+            detail: `the SEC Form 4 feed could not be read (${String(edgarRes.reason).slice(0, 120)})`,
+          });
+        }
+
+        if (congressRes.status === "fulfilled") {
+          const c = congressRes.value ?? {};
+          // The route reports a permanent `discontinued` state rather than an
+          // empty list, so the panel can say WHY instead of rendering a bare box.
+          if (c.status === "discontinued") {
+            setCongressState({
+              kind: "discontinued",
+              reason: c.reason ?? "upstream discontinued",
+              detail: c.detail ?? "the congressional data source is no longer available",
+            });
+          } else {
+            rows = rows.concat(c.trades ?? []);
+            setCongressState({ kind: "ok" });
+          }
+        } else {
+          setCongressState({
+            kind: "failed",
+            detail: `the congressional feed could not be read (${String(congressRes.reason).slice(0, 120)})`,
+          });
+        }
+
+        setTrades(rows);
       })
-      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const tabState = tab === "insider" ? insiderState : congressState;
 
   const filtered = trades.filter((t) => t.role === tab);
   const visible = showAll ? filtered : filtered.slice(0, 10);
@@ -791,8 +839,22 @@ function SmartMoneyTrades() {
         </div>
       )}
 
-      {/* Trade rows */}
-      {!loading && visible.length === 0 && (
+      {/* Source is gone for good — say so, and do NOT offer a retry. */}
+      {!loading && tabState.kind === "discontinued" && (
+        <DiscontinuedNote label="Congressional trade disclosures" reason={tabState.reason} detail={tabState.detail} />
+      )}
+
+      {/* Source exists but this fetch failed — transient, retry is honest here. */}
+      {!loading && tabState.kind === "failed" && (
+        <TempUnavailableNote
+          label={tab === "insider" ? "Insider trades" : "Congressional trades"}
+          detail={tabState.detail}
+          onRetry={() => window.location.reload()}
+        />
+      )}
+
+      {/* Genuinely empty: the feed was read and reported nothing. */}
+      {!loading && tabState.kind === "ok" && visible.length === 0 && (
         <div style={{ fontSize: "13px", color: T.muted, textAlign: "center", padding: "24px 0" }}>
           No recent {tab === "insider" ? "insider" : "congressional"} trades found.
         </div>
@@ -1294,6 +1356,8 @@ function LoadingSkeleton() {
 //   complete/partial → available rows + explicit coverage (never a fake total)
 //   temporarily_unavailable → capability exists but failed/staled
 //   not_supported → no India equivalent (structural gap; never synthesized)
+//   discontinued → capability retired: the upstream is permanently gone and no
+//                  licence-clean replacement exists. Never offers a retry.
 
 // A capability that exists for India but currently failed or staled out. Distinct
 // from `NotSupportedNote` (a structural absence) — different meaning, different UI.
@@ -1316,6 +1380,23 @@ function NotSupportedNote({ label }: { label: string }) {
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px", color: T.muted, fontSize: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
       <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", padding: "2px 8px", borderRadius: "5px", background: T.surface, border: `1px solid ${T.border}`, color: T.textSub }}>Not supported</span>
       {label} has no approved India equivalent — US only.
+    </div>
+  );
+}
+
+// A capability that has been RETIRED: its upstream is permanently gone and no
+// licence-clean replacement qualified. Distinct from `TempUnavailableNote` (which
+// implies "try again") and from `NotSupportedNote` (which is about a market that
+// never had the data). Deliberately has no retry button — a retry against a dead
+// source would be a lie. Carries what/why/next so the panel is never a bare box.
+function DiscontinuedNote({ label, reason, detail }: { label: string; reason: string; detail: string }) {
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px", fontSize: "12px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "8px" }}>
+        <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", padding: "2px 8px", borderRadius: "5px", background: T.surface, border: `1px solid ${T.border}`, color: T.textSub }}>Discontinued</span>
+        <span style={{ color: T.text, fontWeight: 500 }}>{label} — {reason}</span>
+      </div>
+      <div style={{ color: T.muted, lineHeight: 1.6 }}>{detail}</div>
     </div>
   );
 }
@@ -1594,8 +1675,21 @@ export default function MarketsPage() {
               </div>
 
               {/* Structural gaps — no approved India equivalent (never synthesized) */}
-              <div style={{ marginBottom: "16px" }}>
+              <div style={{ marginBottom: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
                 <NotSupportedNote label="TradingView sector overview, macro sentinel & leveraged-pair sentiment" />
+                {/* Congressional disclosures are US-only by STRUCTURE, not by
+                    outage: India has no politician-trade disclosure regime (see
+                    lib/nse-data.ts), so there is nothing to fetch and a retry
+                    would be a lie. Rendered as an explicit note rather than by
+                    omitting the panel, so the India view never silently drops a
+                    US surface.
+                    Scoped deliberately to CONGRESSIONAL data only: India *does*
+                    have an insider-disclosure analog (SEBI PIT via
+                    `fetchNseInsider`) and an institutional-flow analog (FII/DII
+                    via /api/india/smart-money). Those are unwired, not absent —
+                    calling them "not supported" here would be the same dishonesty
+                    this note exists to prevent. */}
+                <NotSupportedNote label="Congressional (US House) trade disclosures" />
               </div>
 
               {/* Provenance / freshness footer */}
