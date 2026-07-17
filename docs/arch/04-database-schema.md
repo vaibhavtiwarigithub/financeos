@@ -892,6 +892,15 @@ Append-only per-account roll-up — one row per run (UNIQUE `(run_id)`; FK → `
 
 ## Migration history summary
 
+### Return-observation evidence (2026-07-16)
+
+| Table | Purpose | Mutation / access rule |
+|---|---|---|
+| `symbol_return_observations` | Per-symbol window summary: volatility, measured market beta, overlap, provenance | Append-only; owner-read RLS; service-role write |
+| `symbol_daily_returns` | Frozen per-session close pair and simple return for future point-in-time pair correlation | Append-only; owner-read RLS; service-role write |
+
+`symbol_daily_returns` is strictly market-local (`us` or `india`) and records the price basis as `adjusted_close` or `raw_close`. Corporate-action/provider revisions append with a new fingerprint; they never overwrite earlier evidence. No scoring, sizing, eligibility, order, or exit path reads either table in the measurement phase.
+
 | Migration range | Key tables / changes |
 |---|---|
 | 001–020 | Core: profiles, auth, strategy_config, agent_signals, paper_portfolio, paper_positions, paper_trades, watchlist |

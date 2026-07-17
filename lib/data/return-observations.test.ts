@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildReturnObservation,
+  buildDailyReturnRows,
   captureReturnObservation,
   fingerprint,
   measureBeta,
@@ -312,13 +313,38 @@ describe("build + capture", () => {
 
   it("appends exactly one row via the injected client", async () => {
     const inserted: Record<string, unknown>[] = [];
-    const fake = { from: () => ({ insert: async (row: Record<string, unknown>) => { inserted.push(row); return {}; } }) };
+    const daily: Record<string, unknown>[] = [];
+    const fake = { from: (table: string) => ({
+      insert: async (row: Record<string, unknown>) => { inserted.push(row); return {}; },
+      upsert: async (rows: Record<string, unknown>[]) => { daily.push(...rows); return {}; },
+    }) };
     const row = await captureReturnObservation(fake, {
       symbol: "X", market: "us", candles: candlesFrom([10, 11, 12]), source: "massive", now: NOW,
     });
     expect(row).not.toBeNull();
     expect(inserted).toHaveLength(1);
     expect(inserted[0]).toMatchObject({ symbol: "X", market: "us" });
+    expect(daily).toHaveLength(2);
+    expect(daily[0]).toMatchObject({ symbol: "X", market: "us", price_basis: "adjusted_close" });
+  });
+
+  it("freezes one point-in-time row per session and preserves raw-vs-adjusted basis", () => {
+    const rows = buildDailyReturnRows({
+      symbol: "infy.ns",
+      market: "india",
+      candles: candlesFrom([100, 110, 121]),
+      source: "upstox",
+      now: NOW,
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      symbol: "INFY.NS",
+      previous_session_date: "2026-01-01",
+      session_date: "2026-01-02",
+      simple_return: 0.1,
+      price_basis: "raw_close",
+    });
+    expect(rows[0].input_fingerprint).not.toBe(rows[1].input_fingerprint);
   });
 
   it("is FAIL-OPEN — a write error or a throwing client never propagates", async () => {

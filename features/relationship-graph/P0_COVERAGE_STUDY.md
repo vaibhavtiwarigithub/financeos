@@ -1,6 +1,6 @@
 # P0 Coverage / Identity Feasibility Study — Disclosed Customer Links (US)
 
-> Status: **complete. Verdict: KILL for the current universe.**
+> Status: **provisional KILL; do not build. Reproducibility rerun required for final sign-off.**
 > Run date: 2026-07-16. Probe: `scripts/sec-customer-coverage-probe.mjs` (read-only, no DB writes, no money path).
 > Scope: exactly the study authorized by `FEATURE_ARCHITECTURE.md` §11 (P0) and §17. No graph, no table,
 > no scoring, no candidate emission, no migration was built.
@@ -35,11 +35,23 @@ thematic-fund tickers present in the universe but absent from that list.
 customer-concentration spans. **167 requests total** (1 ticker map + 87 submissions + 79 documents) at
 ~0.9 req/s with a declared User-Agent — an order of magnitude under SEC's 10 req/s fair-access ceiling.
 
-**Adjudication:** the span regex is a **recall net, not a classifier**. Every named-customer hit was read
-by hand. Two independent recall nets were run across all 79 filers (a legal-suffix pattern and a
-mega-cap gazetteer) to guard against missing a named case. This mattered: the first AMT span looked like
+**Adjudication:** candidates are a **recall net, not a classifier**. The reviewed run used customer-
+concentration, legal-suffix, and mega-cap-gazetteer nets to guard against missing a named case. This mattered: the first AMT span looked like
 an aggregate-only disclosure, but reading the filing revealed a per-customer table. Regex-only
 classification would have gotten AMT wrong in one direction and CELH wrong in the other.
+
+**Audit correction (Codex, 2026-07-16):** the original committed script did not preserve the claimed
+independent-net tags, source-document hashes, or the human adjudication manifest. The script now emits
+all three recall-net tags, the exact sample frame + hash, accession metadata, and a SHA-256 hash of each
+filing. The 5/79 result remains the operative product decision (do not build), but is **provisional** until
+the enhanced probe output and per-candidate labels are committed as a bounded evidence artifact.
+
+**Enhanced rerun:** 92/92 sample symbols processed in 202.6 seconds; sample-frame SHA-256
+`b50dbd47e2161698b84c02dabb1c40c0f77eb9d6f146ca32aa887d5ab57b528e`; 79 domestic 10-Ks, 7 foreign
+private issuers, 5 ticker-map misses, and 1 no-10-K case. The deliberately broad nets emitted 682
+candidates (508 customer-concentration, 133 legal-suffix, 71 mega-cap-gazetteer hits; candidates may
+carry multiple tags). Final sign-off requires preserving one bounded disposition per candidate hash;
+raw filing text should not be committed.
 
 ## 2. Coverage — of 79 filers, who discloses a NAMED customer with a revenue share?
 
@@ -188,7 +200,7 @@ here the link's own weight is a year out of date — noise stacked on a 5-link s
 Cost is **not** the reason to stop. Storing only source-span hashes (§12) would be a few KB. This is cheap.
 It is simply cheap and empty — 169 MB fetched to obtain 5 links.
 
-## 7. Verdict — KILL for the current universe
+## 7. Verdict — PROVISIONAL KILL for the current universe
 
 **Do not build P1. Do not build the ledger, the tables, or the extraction pipeline.**
 
@@ -246,9 +258,9 @@ SEC_UA="Your Project (you@example.com)" \
   node scripts/sec-customer-coverage-probe.mjs --out sec-probe-results.json
 ```
 
-Emits one record per issuer: CIK, company, form, accession, `filingDate`, **`acceptanceDateTime`**,
-`reportDate`, document URL, and candidate spans. Spans are a recall net for human adjudication — the
-coverage numbers above come from reading them, not from the script's guesses.
+Emits one record per issuer: exact sample-frame hash, CIK, company, form, accession, `filingDate`,
+**`acceptanceDateTime`**, `reportDate`, document URL, filing SHA-256, and candidate spans tagged by recall
+net. Candidates still require a separate human label; the script never promotes regex output to truth.
 
 **Artifacts:** no database table was created (none was needed). No migration. No provider spend.
 No money-path surface was touched.

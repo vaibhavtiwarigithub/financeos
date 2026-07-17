@@ -33,20 +33,20 @@ Item 1 (the per-symbol return-observation contract) is built. **It activates not
 |---|---|
 | Observation builder + capture (pure, deterministic, no LLM) | `lib/data/return-observations.ts` |
 | Shared run-level benchmark series | `lib/data/benchmark-series.ts` |
-| Capture hook (fire-and-forget) | `lib/research-agent.ts` → `processSymbol`, immediately after the existing candle `Promise.all` |
-| Table (append-only, RLS-on) | `supabase/migrations/20260716210000_symbol_return_observations.sql` |
+| Capture hook (concurrent, fail-soft, joined before return) | `lib/research-agent.ts` → `processSymbol`, immediately after the existing candle `Promise.all` |
+| Tables (append-only, owner-read RLS) | `symbol_return_observations` summaries + `symbol_daily_returns` frozen per-session series |
 | Coverage report (owner-gated) | `GET /api/analytics/return-observation-coverage?minShared=60` |
-| Unit tests (25) | `lib/data/return-observations.test.ts` |
+| Unit tests | `lib/data/return-observations.test.ts` |
 
 **Hook point.** The capture piggybacks on the candles `processSymbol` already fetches for scoring — it makes **no provider call of its own**. The candle *source* (previously discarded by `.then(r => r.candles)`) is now carried alongside the bars so the observation records its provenance. The benchmark series was **hoisted, not added**: `getRegimeFeatures` previously fetched SPY/`^NSEI` inline; both it and the capture now share one promise-deduped 30-min cache, so the run still makes exactly one benchmark load per market. US benchmark closes come from `price_cache` (a DB read, not a provider call).
 
-**Added per-run cost.** Provider calls: **+0**. CPU: **0.197 ms/symbol** measured over a 160-bar window vs a 260-bar benchmark → ~6 ms for a 30-symbol scored run, ~20 ms if all 102 were scored. DB: one fire-and-forget INSERT per symbol, never awaited. The research cron's wall-clock budget is unaffected.
+**Added per-run cost.** Provider calls: **+0**. The same already-fetched candles produce one summary row plus idempotent per-session rows. Unchanged sessions deduplicate by symbol/market/date/source/basis/input fingerprint; provider revisions append instead of rewriting history.
 
 **PIT enforcement is doubled up.** The builder drops any bar dated after `available_at` before computing anything (symbol *and* benchmark series), and the table carries `check (as_of <= (available_at at time zone 'utc')::date)` so a lookahead row is not storable even if the builder were bypassed.
 
 **Beta honesty.** `benchmark_beta` is written **only** when genuinely measured vs the market's own benchmark (us→SPY, india→`^NSEI`) over ≥ 60 shared sessions with non-zero benchmark variance. Otherwise it is `null` and `beta_unmeasurable_reason` records why. A DB check constraint makes beta and the reason mutually exclusive, so **a sector proxy cannot be written into the beta column** — the failure mode §0 called out.
 
-**Known gap the coverage report is honest about.** Rows store window bounds + a session *count*, not the session *dates*. Per-symbol shared sessions vs the benchmark (`benchmark_overlap_sessions`) is therefore **exact**, but per-*pair* overlap is only an **upper bound** (calendar-window overlap × the sparser series' session density). Item 2's estimator must re-derive exact pair overlap from candles; a pair below the floor in the report is definitively not viable, one above it is a candidate only. Store per-session returns if item 2 needs exactness cheaply.
+**Per-session series (Option A).** `symbol_daily_returns` stores each frozen simple return with both session dates, source, `available_at`, explicit `adjusted_close`/`raw_close` basis, closes, and an immutable input fingerprint. Item 2 can align exact shared sessions point-in-time without refetching candles. Revisions remain separately auditable; an estimator must select the latest row available at its decision cutoff and must not compare incompatible price bases silently.
 
 ## 1. Verified current state (not assumed — read from code)
 

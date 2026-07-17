@@ -18,7 +18,7 @@
 // Nothing here is read by lib/portfolio/constructor.ts, scoring, sizing, eligibility,
 // order, or exit. The constructor stays on its current conservative volatility/
 // sector-proxy behavior. Faking candidate correlations from held-name cluster
-// averages is prohibited. The ONLY live-path change is a fire-and-forget capture hook
+// averages is prohibited. The ONLY live-path change is a concurrent fail-soft capture hook
 // in lib/research-agent.ts, piggybacked on candles that were ALREADY fetched for
 // scoring — this module makes no provider call of its own.
 //
@@ -40,6 +40,7 @@ import { benchmarkFor } from "@/lib/data/benchmark-series";
 export type Market = "us" | "india";
 
 export const TABLE = "symbol_return_observations";
+export const DAILY_RETURNS_TABLE = "symbol_daily_returns";
 
 /** Minimum daily returns required before a volatility number is honest. */
 export const MIN_VOL_OBSERVATIONS = 20;
@@ -74,6 +75,22 @@ export interface ReturnObservationRow {
   benchmark_beta: number | null; // ONLY when genuinely measurable; never a proxy
   benchmark_overlap_sessions: number; // shared return sessions with the benchmark
   beta_unmeasurable_reason: BetaUnmeasurableReason;
+  input_fingerprint: string;
+}
+
+export type PriceBasis = "adjusted_close" | "raw_close";
+
+export interface DailyReturnRow {
+  symbol: string;
+  market: Market;
+  session_date: string;
+  previous_session_date: string;
+  available_at: string;
+  source: string;
+  price_basis: PriceBasis;
+  close: number;
+  previous_close: number;
+  simple_return: number;
   input_fingerprint: string;
 }
 
@@ -126,6 +143,54 @@ export function dailyReturns(bars: { date: string; close: number }[]): DailyRetu
     out.push({ date: bars[i].date, ret });
   }
   return out;
+}
+
+export function priceBasisForSource(source: string | null | undefined): PriceBasis {
+  return source === "massive" || source === "eodhd" || source === "alpha_vantage"
+    ? "adjusted_close"
+    : "raw_close";
+}
+
+function pairFingerprint(input: Omit<DailyReturnRow, "input_fingerprint" | "available_at">): string {
+  const basis = [
+    input.market, input.symbol.toUpperCase(), input.source, input.price_basis,
+    input.previous_session_date, input.session_date,
+    round(input.previous_close, 8), round(input.close, 8), round(input.simple_return, 10),
+  ].join("|");
+  let h1 = 5381;
+  let h2 = 52711;
+  for (let i = 0; i < basis.length; i++) h1 = ((h1 << 5) + h1 + basis.charCodeAt(i)) | 0;
+  for (let i = basis.length - 1; i >= 0; i--) h2 = ((h2 << 5) + h2 + basis.charCodeAt(i)) | 0;
+  return `r${(h1 >>> 0).toString(16)}${(h2 >>> 0).toString(16)}`;
+}
+
+/** Frozen, date-aligned return rows. Revisions append; they never rewrite history. */
+export function buildDailyReturnRows(input: BuildInput): DailyReturnRow[] {
+  const now = input.now ?? new Date();
+  const bars = pitFilter(input.candles ?? [], now);
+  const source = input.source?.trim() || "unknown";
+  const priceBasis = priceBasisForSource(source);
+  const rows: DailyReturnRow[] = [];
+  for (let i = 1; i < bars.length; i++) {
+    const previous = bars[i - 1];
+    const current = bars[i];
+    const simpleReturn = current.close / previous.close - 1;
+    if (!Number.isFinite(simpleReturn)) continue;
+    const core = {
+      symbol: input.symbol.toUpperCase(),
+      market: input.market,
+      session_date: current.date.slice(0, 10),
+      previous_session_date: previous.date.slice(0, 10),
+      available_at: now.toISOString(),
+      source,
+      price_basis: priceBasis,
+      close: round(current.close, 8),
+      previous_close: round(previous.close, 8),
+      simple_return: round(simpleReturn, 10),
+    };
+    rows.push({ ...core, input_fingerprint: pairFingerprint(core) });
+  }
+  return rows;
 }
 
 function mean(xs: number[]): number {
@@ -294,14 +359,17 @@ export function buildReturnObservation(input: BuildInput): ReturnObservationRow 
 export interface ObsDbClient {
   from(table: string): {
     insert: (row: Record<string, unknown>) => Promise<{ error?: unknown }>;
+    upsert?: (
+      rows: Record<string, unknown>[],
+      options: { onConflict: string; ignoreDuplicates: boolean },
+    ) => Promise<{ error?: unknown }>;
   };
 }
 
 /**
- * Capture-on-fetch: append one return observation. Additive, NON-BLOCKING and
- * FAIL-OPEN on every path — a missing table or a failed write can never break
- * scoring. Called fire-and-forget (`void`) from lib/research-agent.ts on candles
- * that were already in hand; costs no provider call and nothing awaits it.
+ * Capture-on-fetch: append summary and frozen daily-return evidence. Additive and
+ * FAIL-OPEN on every path: a missing table or failed write can never break scoring.
+ * ResearchAgent starts it concurrently with later work and joins before returning.
  *
  * Duplicate fingerprints are rejected by the table's unique index; that conflict is
  * swallowed here (a re-run that learned nothing new should append nothing).
@@ -313,8 +381,21 @@ export async function captureReturnObservation(
   try {
     const row = buildReturnObservation(input);
     if (!row) return null;
-    const res = await supabase.from(TABLE).insert(row as unknown as Record<string, unknown>);
-    if (res?.error) return null;
+    const dailyRows = buildDailyReturnRows(input);
+    const dailyTable = supabase.from(DAILY_RETURNS_TABLE);
+    const dailyWrite: Promise<{ error?: unknown }> = dailyRows.length === 0
+      ? Promise.resolve({})
+      : dailyTable.upsert
+        ? dailyTable.upsert(
+            dailyRows as unknown as Record<string, unknown>[],
+            { onConflict: "symbol,market,session_date,source,price_basis,input_fingerprint", ignoreDuplicates: true },
+          )
+        : Promise.resolve({ error: new Error("daily-return upsert unavailable") });
+    const [summaryRes, dailyRes] = await Promise.all([
+      supabase.from(TABLE).insert(row as unknown as Record<string, unknown>),
+      dailyWrite,
+    ]);
+    if (summaryRes?.error || dailyRes?.error) return null;
     return row;
   } catch {
     return null; // fail-open: research must survive any capture error

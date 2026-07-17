@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
-import { MIN_BETA_OVERLAP, TABLE } from "@/lib/data/return-observations";
+import { DAILY_RETURNS_TABLE, MIN_BETA_OVERLAP, TABLE } from "@/lib/data/return-observations";
 
 export const dynamic = "force-dynamic";
 
@@ -49,19 +49,17 @@ interface ObsRow {
   beta_unmeasurable_reason: string | null;
 }
 
-/** Calendar-day overlap of two [start, end] date windows. */
-function windowOverlapDays(a: ObsRow, b: ObsRow): number {
-  const start = Math.max(Date.parse(a.window_start), Date.parse(b.window_start));
-  const end = Math.min(Date.parse(a.window_end), Date.parse(b.window_end));
-  if (!(end >= start)) return 0;
-  return Math.floor((end - start) / 86400000) + 1;
-}
+const PAGE_SIZE = 1000;
 
-/** Sessions per calendar day implied by an observation's own window. */
-function density(o: ObsRow): number {
-  const span = Math.floor((Date.parse(o.window_end) - Date.parse(o.window_start)) / 86400000) + 1;
-  if (span <= 0) return 0;
-  return o.observation_count / span;
+async function loadAllRows<T>(fetchPage: (from: number, to: number) => Promise<{ data: T[] | null; error: any }>): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await fetchPage(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message ?? "coverage query failed");
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) return rows;
+  }
 }
 
 export async function GET(req: Request) {
@@ -73,19 +71,16 @@ export async function GET(req: Request) {
     const minShared = Math.max(1, parseInt(url.searchParams.get("minShared") ?? String(MIN_BETA_OVERLAP), 10) || MIN_BETA_OVERLAP);
 
     const svc = createServiceClient();
-    const { data, error } = await svc
-      .from(TABLE)
-      .select("symbol, market, as_of, available_at, source, window_start, window_end, observation_count, daily_vol, benchmark_beta, benchmark_overlap_sessions, beta_unmeasurable_reason")
-      .order("as_of", { ascending: true });
-
-    if (error) {
-      return NextResponse.json(
-        { error: "Coverage read failed", detail: error.message, hint: `Has migration 20260716210000_symbol_return_observations been applied?` },
-        { status: 500 },
-      );
-    }
-
-    const rows: ObsRow[] = (data ?? []) as ObsRow[];
+    const [rows, dailyData] = await Promise.all([
+      loadAllRows<ObsRow>((from, to) => svc.from(TABLE)
+        .select("symbol, market, as_of, available_at, source, window_start, window_end, observation_count, daily_vol, benchmark_beta, benchmark_overlap_sessions, beta_unmeasurable_reason")
+        .order("as_of", { ascending: true })
+        .range(from, to)),
+      loadAllRows<{ symbol: string; market: string; session_date: string }>((from, to) => svc
+        .from(DAILY_RETURNS_TABLE)
+        .select("symbol, market, session_date")
+        .range(from, to)),
+    ]);
 
     // Per market — NEVER cross-summed. Each market's pool stands alone.
     const markets: Record<string, any> = {};
@@ -117,19 +112,27 @@ export async function GET(req: Request) {
         if (r.beta_unmeasurable_reason) reasons[r.beta_unmeasurable_reason] = (reasons[r.beta_unmeasurable_reason] ?? 0) + 1;
       }
 
-      // PAIR VIABILITY — the §0 item-2 gate (>= 60 shared sessions per pair).
-      // HONESTY: the table stores window bounds + a session COUNT, not the session
-      // dates, so an exact per-pair intersection is NOT derivable from it. This is an
-      // UPPER BOUND: the calendar-window overlap scaled by the sparser series'
-      // session density. A pair below the floor here is definitively not viable; a
-      // pair above it still needs the exact overlap re-derived from the candles when
-      // an estimator is actually built. Labeled as such in the payload.
+      // Exact pair viability from frozen per-session dates. Provider revisions
+      // collapse to one symbol/date for coverage; the estimator will resolve the
+      // point-in-time revision and enforce compatible price bases.
+      const sessionsBySymbol = new Map<string, Set<string>>();
+      for (const r of (dailyData ?? []) as Array<{ symbol: string; market: string; session_date: string }>) {
+        if (r.market !== market) continue;
+        if (!sessionsBySymbol.has(r.symbol)) sessionsBySymbol.set(r.symbol, new Set());
+        sessionsBySymbol.get(r.symbol)!.add(r.session_date);
+      }
+      const pairSymbols = [...sessionsBySymbol.keys()].sort();
       let pairsAtFloor = 0;
       let pairsTotal = 0;
-      for (let i = 0; i < latestRows.length; i++) {
-        for (let j = i + 1; j < latestRows.length; j++) {
+      for (let i = 0; i < pairSymbols.length; i++) {
+        for (let j = i + 1; j < pairSymbols.length; j++) {
           pairsTotal++;
-          const shared = windowOverlapDays(latestRows[i], latestRows[j]) * Math.min(density(latestRows[i]), density(latestRows[j]));
+          const a = sessionsBySymbol.get(pairSymbols[i])!;
+          const b = sessionsBySymbol.get(pairSymbols[j])!;
+          const smaller = a.size <= b.size ? a : b;
+          const larger = a.size <= b.size ? b : a;
+          let shared = 0;
+          for (const date of smaller) if (larger.has(date)) shared++;
           if (shared >= minShared) pairsAtFloor++;
         }
       }
@@ -148,8 +151,8 @@ export async function GET(req: Request) {
         beta_unmeasurable_reasons: reasons,
         sources: [...new Set(mine.map((r) => r.source).filter(Boolean))],
         pair_viability: {
-          basis: "upper_bound_window_overlap",
-          note: "Window bounds + session counts are stored, not session dates — exact per-pair overlap must be re-derived from candles before any estimator uses it. Below the floor = definitively not viable.",
+          basis: "exact_frozen_session_intersection",
+          note: "Exact date overlap from immutable per-session rows. An estimator must still select point-in-time revisions and compatible price bases.",
           pairs_total: pairsTotal,
           pairs_at_or_above_floor: pairsAtFloor,
         },

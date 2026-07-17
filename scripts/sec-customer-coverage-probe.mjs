@@ -25,6 +25,7 @@
 // surface in lib/research-agent.ts.
 
 import { writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 // SEC fair access requires a declared contact. Supply your own via SEC_UA; no
 // contact address is hardcoded here so this file stays free of personal data.
@@ -75,6 +76,8 @@ const SAMPLE = [...new Set(RAW_UNIVERSE.map(s => s.toUpperCase()))].filter(s => 
 const CUSTOMER_RE = /\b(customer|client|distributor|reseller|end.customer|purchaser)s?\b/i;
 const PCT_RE = /\b\d{1,3}(\.\d+)?\s?%|\bten percent\b|\b10 percent\b/i;
 const CONCENTRATION_RE = /(accounted for|represented|comprised|constituted|derived|attributable to|concentration of credit risk|majority of (our|its) (net )?(revenue|sales))/i;
+const LEGAL_NAME_RE = /\b[A-Z][A-Za-z&.'-]*(?:\s+[A-Z][A-Za-z&.'-]*){0,5}\s+(?:Inc\.?|Corp\.?|Corporation|LLC|Ltd\.?|Limited|plc)\b/;
+const MEGACAP_RE = /\b(?:Walmart|Home Depot|Lowe'?s|Costco|Pepsi(?:Co)?|Microsoft|Apple|Samsung|Xiaomi|Amazon|Google|Alphabet|Meta|T-Mobile|AT&T|Verizon|Telef[oó]nica)\b/i;
 
 function stripHtml(html) {
   return html
@@ -96,15 +99,25 @@ function findSpans(text) {
   for (let i = 0; i < sentences.length; i++) {
     const s = sentences[i];
     if (s.length > 2000) continue; // table sludge
-    const hasCustomer = CUSTOMER_RE.test(s);
-    if (!hasCustomer) continue;
+    const nets = [];
+    if (CUSTOMER_RE.test(s)) nets.push("customer_concentration");
+    if (LEGAL_NAME_RE.test(s)) nets.push("legal_suffix");
+    if (MEGACAP_RE.test(s)) nets.push("mega_cap_gazetteer");
+    if (nets.length === 0) continue;
     if (!PCT_RE.test(s) && !CONCENTRATION_RE.test(s)) continue;
     // include one neighbour each side: the customer name is often in the next sentence
     const span = [sentences[i - 1], s, sentences[i + 1]].filter(Boolean).join(" ").slice(0, 1200);
-    hits.push(span);
+    hits.push({ span, nets });
     if (hits.length >= 12) break; // bound output per issuer
   }
-  return [...new Set(hits)];
+  const unique = new Map();
+  for (const hit of hits) {
+    const prior = unique.get(hit.span);
+    unique.set(hit.span, prior
+      ? { span: hit.span, nets: [...new Set([...prior.nets, ...hit.nets])].sort() }
+      : hit);
+  }
+  return [...unique.values()];
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -132,7 +145,8 @@ async function main() {
   const results = [];
   for (const symbol of SAMPLE.slice(0, limit)) {
     const rec = { symbol, status: null, cik: null, company: null, form: null, accession: null,
-                  filingDate: null, acceptanceDateTime: null, reportDate: null, docUrl: null, spans: [] };
+                  filingDate: null, acceptanceDateTime: null, reportDate: null, docUrl: null,
+                  documentSha256: null, candidates: [] };
     try {
       const hit = byTicker.get(symbol);
       if (!hit) { rec.status = "no_cik_in_sec_ticker_map"; results.push(rec); console.error(`  ${symbol}: ${rec.status}`); continue; }
@@ -156,9 +170,10 @@ async function main() {
       const accNo = rec.accession.replace(/-/g, "");
       rec.docUrl = `https://www.sec.gov/Archives/edgar/data/${Number(hit.cik)}/${accNo}/${f.primaryDocument[idx]}`;
       const html = await get(rec.docUrl, false);
-      rec.spans = findSpans(stripHtml(html));
-      rec.status = rec.spans.length ? "spans_found" : "no_candidate_span";
-      console.error(`  ${symbol}: ${rec.status} (${rec.spans.length} spans, 10-K ${rec.filingDate})`);
+      rec.documentSha256 = createHash("sha256").update(html).digest("hex");
+      rec.candidates = findSpans(stripHtml(html));
+      rec.status = rec.candidates.length ? "spans_found" : "no_candidate_span";
+      console.error(`  ${symbol}: ${rec.status} (${rec.candidates.length} spans, 10-K ${rec.filingDate})`);
     } catch (e) {
       rec.status = `error: ${e.message}`;
       console.error(`  ${symbol}: ${rec.status}`);
@@ -169,8 +184,11 @@ async function main() {
   writeFileSync(out, JSON.stringify({
     probedAt: new Date().toISOString(),
     sampleFrameSize: SAMPLE.length,
+    sampleFrame: SAMPLE,
+    sampleFrameSha256: createHash("sha256").update(SAMPLE.join("\n")).digest("hex"),
     probed: results.length,
-    note: "spans are a RECALL net for human adjudication, not a classifier verdict",
+    recallNets: ["customer_concentration", "legal_suffix", "mega_cap_gazetteer"],
+    note: "candidates are recall-net output for human adjudication, not classifier verdicts",
     results,
   }, null, 2));
   console.error(`[probe] wrote ${out}`);

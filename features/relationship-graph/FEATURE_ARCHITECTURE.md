@@ -1,7 +1,7 @@
 # Relationship Graph and Cross-Company Propagation - Feature Architecture
 
 > Status: **P0 feasibility study RUN AND FAILED. Recommendation: do not build. Design retained for the record.**
-> Last updated: 2026-07-16 — P0 coverage study completed; see [`P0_COVERAGE_STUDY.md`](./P0_COVERAGE_STUDY.md).
+> Last updated: 2026-07-16 — P0 produced a provisional KILL; enhanced reproducibility rerun is required before final sign-off. See [`P0_COVERAGE_STUDY.md`](./P0_COVERAGE_STUDY.md).
 > Previous revision: 2026-07-15 by Codex after primary-source and Kairos architecture review.
 > Scope: design only. No migration, provider activation, scoring change, candidate insertion, or order path is authorized.
 > Update this file when: source contracts, identity resolution, relationship schema, EdgeScout integration, validation gates, or money-path boundaries change.

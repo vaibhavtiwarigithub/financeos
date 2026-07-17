@@ -1312,11 +1312,11 @@ export async function processSymbol(
   // ONLY when genuinely measurable vs the market's own benchmark) from the candles
   // ALREADY fetched above — no additional provider call. The benchmark series is the
   // shared run-level one the regime path already loads, so this adds no fetch either.
-  // Fire-and-forget: never awaited, never throws into scoring. NOTHING on the money
-  // path (constructor/scoring/sizing/eligibility/order/exit) reads these rows — this
-  // only starts the clock so correlation can eventually be measured.
-  if (candles.length >= 2) {
-    void getBenchmarkSeries(india ? "india" : "us", supabase)
+  // Starts concurrently with scoring/LLM work and joins before processSymbol
+  // returns. It stays fail-soft but cannot be abandoned by serverless teardown.
+  // NOTHING on the money path reads these rows.
+  const returnCapturePromise = candles.length >= 2
+    ? getBenchmarkSeries(india ? "india" : "us", supabase)
       .then(benchmark => captureReturnObservation(supabase, {
         symbol,
         market: india ? "india" : "us",
@@ -1324,8 +1324,8 @@ export async function processSymbol(
         source: candleResult.source,
         benchmark,
       }))
-      .catch(() => null);
-  }
+      .catch(() => null)
+    : Promise.resolve(null);
 
   // For India, synthesize a SocialSentiment-shaped object from the GDELT news
   // tone so it flows through the EXACT same scoreSentiment / dataQuality path US
@@ -1958,6 +1958,8 @@ export async function processSymbol(
       } catch (e) { console.error("[research-agent] archetype shadow write threw:", e); }
     }
   } catch (e) { console.error("[research-agent] observation write threw:", e); }
+
+  await returnCapturePromise;
 
   return {
     symbol,
