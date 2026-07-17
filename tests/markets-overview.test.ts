@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 // Real Massive grouped values, pulled live 2026-07-16/17 for the 07-16, 07-15
 // and 07-14 sessions. `o` is retained ONLY so the tests can assert that the
@@ -188,6 +190,118 @@ describe("/api/markets/overview — daily change is close vs PRIOR close", () =>
   });
 });
 
+// ---------------------------------------------------------------------------
+// THE FRESHNESS CONTRACT (decision recorded in docs/arch/05, 2026-07-17)
+// ---------------------------------------------------------------------------
+// arch-05 used to claim this route should read the warm `price_cache`. Verified
+// against prod: QQQ/DIA/VIXY hold 2 bars each, the cache head is ragged (SPY and
+// XLV a session ahead of the other 13), and its newest ALIGNED session is a full
+// session staler than what grouped serves. Reading it would be staler AND would
+// re-open the cross-session mix. The doc was corrected; the route stands.
+//
+// These tests pin the contract so a future "optimisation" back to a cache read
+// cannot land silently.
+// ---------------------------------------------------------------------------
+describe("/api/markets/overview — freshness is never overstated", () => {
+  it("labels a prior session with ITS OWN date — never today's", async () => {
+    // Monday 10:00 ET. Today's session has not published. The freshest real
+    // session is Friday 07-17. Reporting sessionDate as the Monday — or
+    // rendering the tile as "today" — would be the stale-as-current bug.
+    freezeAt("2026-07-20T14:00:00Z");
+    installFetch((date) => {
+      if (date === "2026-07-20") return res(403, { error: "before end of day" });
+      if (date === "2026-07-17") return res(200, groupedOk(S0716));
+      if (date === "2026-07-16") return res(200, groupedOk(S0715));
+      return res(200, NO_SESSION);
+    });
+    const { GET } = await loadRoute();
+    const body = await (await GET()).json();
+
+    expect(body.sessionDate).toBe("2026-07-17");
+    expect(body.sessionDate).not.toBe("2026-07-20"); // today — the exact lie
+    expect(body.priorCloseDate).toBe("2026-07-16");
+    // The payload must always state which session it is showing, so the UI can
+    // never imply "now".
+    expect(body.sessionDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("puts EVERY resolved symbol on one session — no cross-session mixing", async () => {
+    // The shape of the prod price_cache today: SPY and XLV one session ahead of
+    // the rest. A per-symbol "latest bar" read would happily serve this mix.
+    // The route must resolve one session for all 15 or mark the gap explicitly.
+    installFetch(happyPath);
+    const { GET } = await loadRoute();
+    const body = await (await GET()).json();
+
+    const all = [...body.indices, ...body.sectors];
+    expect(all).toHaveLength(15);
+    for (const q of all) expect(q.status).toBe("ok");
+    // Every price must come from the ONE declared session's fixture.
+    expect(body.sessionDate).toBe("2026-07-16");
+    for (const q of all) {
+      expect(q.price).toBe(Number(S0716[q.symbol].c.toFixed(2)));
+    }
+  });
+
+  it("reaches ONLY the grouped endpoint — never price_cache, never a broker", async () => {
+    // Pins the decision not to make this a cache reader. installFetch throws on
+    // any non-grouped URL; this asserts the intent explicitly rather than
+    // relying on that side effect.
+    installFetch(happyPath);
+    const { GET } = await loadRoute();
+    await GET();
+
+    expect(calls.length).toBeGreaterThan(0);
+    for (const url of calls) {
+      expect(url).toContain("/v2/aggs/grouped/locale/us/market/stocks/");
+      expect(url).not.toMatch(/supabase|price_cache|robinhood/i);
+    }
+    // And it stays inside the ~5 req/min provider ceiling.
+    expect(calls.length).toBeLessThanOrEqual(5);
+  });
+
+  it("states the data's own age via fetchedAt — not the moment the client asked", async () => {
+    installFetch(happyPath);
+    const { GET } = await loadRoute();
+
+    const first = await (await GET()).json();
+    expect(first.fetchedAt).toBe(new Date().toISOString());
+
+    // 4 minutes later the memo still serves the ORIGINAL payload. fetchedAt must
+    // still report the original upstream fetch, so the UI shows the real age
+    // rather than re-stamping itself fresh on every request.
+    vi.advanceTimersByTime(4 * 60 * 1000);
+    const second = await (await GET()).json();
+    expect(second.fetchedAt).toBe(first.fetchedAt);
+    expect(calls.length).toBe(3); // served from the memo — no new provider calls
+  });
+});
+
+describe("MarketsPage — the UI must not claim a source or freshness it lacks", () => {
+  const source = readFileSync(
+    resolve(__dirname, "../components/dashboard/MarketsPage.tsx"),
+    "utf8"
+  );
+  // The US markets tile is fed by Massive grouped-daily end-of-day closes. The
+  // slow-fetch note claimed "Fetching live quotes from Robinhood via AI
+  // subprocess" — wrong provider, no subprocess, and "live" asserts an intraday
+  // freshness the end-of-day data does not have.
+  it("does not advertise the US overview fetch as live quotes from a broker", () => {
+    expect(source).not.toMatch(/Fetching live quotes from Robinhood/i);
+    expect(source).not.toMatch(/live quotes.*AI subprocess/i);
+  });
+
+  it("describes the US overview fetch as end-of-day closes from Massive", () => {
+    expect(source).toMatch(/Fetching end-of-day closes from Massive/i);
+  });
+
+  it("renders the session and the data's fetch time, not just a client clock", () => {
+    expect(source).toMatch(/session \{data\.sessionDate\}|data\.sessionDate/);
+    expect(source).toMatch(/new Date\(data\.fetchedAt\)/);
+    expect(source).toMatch(/json\.fetchedAt/); // chip stamps the DATA's age
+  });
+});
+
 describe("/api/markets/overview — unavailable must never render as flat", () => {
   it("surfaces a rate limit as degraded instead of a wall of +0.00%", async () => {
     // The provider signals this as HTTP 200 with an ERROR body.
@@ -273,6 +387,22 @@ describe("/api/markets/overview — unavailable must never render as flat", () =
       expect(q.status).toBe("unavailable");
     }
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("never reports a flat 0.00% for a symbol whose prior close equals its close by accident of missing data", async () => {
+    // Guards the distinction between "genuinely unchanged" and "we don't know".
+    const priorPartial = { ...S0715 };
+    delete priorPartial.XLU;
+    installFetch((date) => {
+      if (date === "2026-07-16") return res(200, groupedOk(S0716));
+      if (date === "2026-07-15") return res(200, groupedOk(priorPartial));
+      return res(200, NO_SESSION);
+    });
+    const { GET } = await loadRoute();
+    const body = await (await GET()).json();
+    const xlu = body.sectors.find((s: any) => s.symbol === "XLU");
+    expect(xlu.status).toBe("unavailable");
+    expect(xlu.changePct).toBeNull();
   });
 
   it("does not cache a degraded payload — it clears as soon as the provider recovers", async () => {
