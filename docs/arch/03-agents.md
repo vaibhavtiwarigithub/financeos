@@ -1,5 +1,5 @@
 # Kairos — Agents
-> Last updated: 2026-07-17 (the asset allocator is now market-scoped too — India no longer inherits the US FRED regime for sleeve weights, and macro UNAVAILABLE means NO allocation rather than an untilted config echo; macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
+> Last updated: 2026-07-17 (the asset allocator is now market-scoped too — India no longer inherits the US FRED regime for sleeve weights, and macro UNAVAILABLE means NO allocation rather than an untilted config echo; macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted; India SEBI PIT evaluated as the India insider analog and REJECTED on live evidence — 0/34 India symbols clear the US open-market bar at 90d, ~70% of PIT rows are non-open-market (ESOP allotments marked "Buy"); India insider stays honestly UNAVAILABLE, pinned by tests/india-insider-not-wired.test.ts; macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
 > Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
 
 **Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file (prose/registry only) + update `public/agent-diagrams/system-map.json` (the node, its edges, and a `history` entry — this is where the topology change lands) + add or update the per-agent diagram `public/agent-diagrams/<agent>.json` (same `agentId`/`agentLabel`/`diagram`/`nodes`/`history` contract; `nodes` is an object keyed by node id, never an array).
@@ -172,7 +172,7 @@ returns the same result plus a `reason` naming the specific rejected row(s).
 | `technical_score` | AV RSI + EMA + SMA (US) / Yahoo candles (India) | RSI(14) **continuous curve** (interpolated anchors, no bucket cliffs), price vs EMA20/50, 20d trend, **volume confirmation** (elevated volume ±8 in the prevailing direction) |
 | `sentiment_score` | AV NEWS_SENTIMENT + StockTwits (US) / **GDELT India news tone** (India, `lib/india-news.ts`) | Weighted news bullishness. India: aggregate tone of recent GDELT articles → 0-100; dimension stays *unavailable* (not faked) when GDELT returns < 3 articles (2026-07-12). |
 | `macro_score` | `macro_regime.danger_score` — **US ONLY** | Macro backdrop from MacroSentinel. **India: dimension is UNAVAILABLE and excluded — weights renormalize onto the remaining dimensions** (2026-07-16). MacroSentinel is US-only by construction (8 US FRED series) and `macro_regime` has no `market` column, so scoring an India symbol from it stamped the US Fed's verdict onto Indian equities. India research still injects a factual **FII/DII net-flow line** (`lib/india-macro.ts`, live NSE) into the thesis prompt — narrative grounding only, deliberately NOT wired into `macro_score`; a real India regime is a separate build. FII/DII is null (line omitted) when NSE geo-throttles Vercel. (2026-07-12) |
-| `insider_score` | **US:** Massive Form 4 → SEC EDGAR Form 4 → AV INSIDER_TRANSACTIONS (cascade, `resolveInsider`, first `available:true` wins). **India: none wired** — the dimension is excluded, not scored. | 90-day open-market (P/S only) buy/sell **value** ratio. India has no EDGAR equivalent; its `agent_signals.insider_score` default-fills `50`, but `decision_observations.availability_mask.insider` is `false`, which is the honest record — do not read the 50 as neutral evidence. (2026-07-16) |
+| `insider_score` | **US:** Massive Form 4 → SEC EDGAR Form 4 → AV INSIDER_TRANSACTIONS (cascade, `resolveInsider`, first `available:true` wins). **India: none wired** — the dimension is excluded, not scored. | 90-day open-market (P/S only) buy/sell **value** ratio. India's SEBI PIT feed (`fetchNseInsider`) was evaluated as the analog on 2026-07-17 and **rejected**: 0/34 live India symbols clear the US ≥3-open-market-txn bar at 90d, and only ~30% of PIT rows are open-market at all (ESOP allotments are marked "Buy"). See the India insider block below. Its `agent_signals.insider_score` default-fills `50`, but `decision_observations.availability_mask.insider` is `false`, which is the honest record — do not read the 50 as neutral evidence. (2026-07-17) |
 
 Sub-score formulas are deterministic and **fixed** (hand-tuned priors in `lib/data/scores.ts` + `lib/data/technicals.ts`) — they are NOT agent/genome-mutable. Only the dimension **weights** evolve (champion loop). New candidate features flow through the IC-gated Feature Registry, not by editing these formulas. (2026-07-10: scored the previously-dead volume + analyst-target signals, made RSI continuous, made P/E sector-relative.)
 
@@ -229,6 +229,39 @@ Each dimension outputs 0–100, clamped. Source of truth: `lib/data/scores.ts`, 
 **Insider** (`resolveInsider` → Massive / EDGAR / AV) — `10 + buyRatio×80` where `buyRatio = buyValue/(buyValue+sellValue)` over 90 days, counting only open-market P/S codes (awards `A`, exercises `M`, gifts `G`, tax-withholding `F` are `other` and excluded — they are not conviction trades). Requires ≥3 transactions; <3, no data, ADRs, or fetch-fail → `available:false` (excluded).
 
 > **Insider is expected to be sparse, and that is correct** (`EXPECTED_SPARSE_DIMS` holds `us:insider`). Most Form 4 activity is compensation-related, not open-market buying, so an empty insider result is usually a real finding rather than a fault. That is exactly why a *failure* must never render as one — see below.
+
+**India insider (SEBI PIT): evaluated 2026-07-17 → DO NOT WIRE.** India *does* have an insider
+analog — `fetchNseInsider` (`lib/nse-data.ts`) reads SEBI PIT (Prohibition of Insider Trading)
+disclosures from NSE `/api/corporates-pit`. It is built but deliberately **not** connected to
+`insider_score`. It failed the data-qualification bar on live evidence measured against the 34 real
+India symbols in the book:
+
+| Test | Result | Bar |
+|---|---|---|
+| Coverage: any PIT row in 90d (the US window) | **2/34 = 6%** | — |
+| Coverage: ≥3 open-market txns in 90d (the US bar, `MIN_INSIDER_TRANSACTIONS=3`) | **0/34 = 0%** | fails |
+| Widening to 365d | 1/10 large caps scorable | fails |
+| Semantics vs US Form 4 (90d open-market P/S buy/sell **value** ratio) | only ~30% of PIT rows are open-market (Market Purchase 9.7% + Market Sale 19.5%); the rest are ESOP allotments 29.2%, Off Market 22.1%, Gift 5.3%, pledges, amalgamations | fails |
+| Freshness / PIT lag (`intimDt` − `acqfromDt`) | p50 2d, p90 34d, max 71d; 83% disclosed after the transaction | usable in principle |
+
+A dimension available for **0%** of the universe is not a usable dimension. Worse, PIT's
+`tdpTransactionType` marks an **ESOP allotment as "Buy"** — so a naive wiring would read routine
+equity compensation as insider conviction. A same-named field carrying different meaning across
+markets is worse than an absent one, and `insider_score` is a genome dimension that reaches paper
+buys. India's insider dimension therefore stays **honestly unavailable**: `applicableDimensions()`
+omits it for India, the availability mask excludes it, and the weights renormalize onto the
+remaining dimensions. Pinned by `tests/india-insider-not-wired.test.ts`. Revisit only if SEBI PIT
+open-market density rises materially — the 0%-at-90d measurement is the gate.
+
+> **Two live defects found in the PIT read path while qualifying it (display-only, NOT on the money
+> path, not fixed here — no caller feeds scoring):** (1) `fetchNseInsider()` with **no symbol**
+> returns `{"data":[]}` unconditionally — NSE's market-wide PIT feed requires `from_date`/`to_date`,
+> which the function never sends. `SmartMoneyPage.tsx` calls `/api/india/insider` with no symbol, so
+> the India insider tab has **never** shown a row (same class as the 2026-07-16 EDGAR Form 4 404).
+> (2) The per-symbol call sends no date window either, so NSE returns the latest ~20 disclosures
+> **regardless of age** — RELIANCE's default response spans back to **24-Sep-2021** — while the
+> route reports `available: trades.length > 0`, which would present 5-year-old disclosures as
+> current. Both are cosmetic today precisely because nothing consumes them.
 
 **Form 4 URL contract (bug fixed 2026-07-16 — US insider data had never worked):** the Form 4 XML
 must be resolved from `filings.recent.primaryDocument` in the submissions JSON, with the
