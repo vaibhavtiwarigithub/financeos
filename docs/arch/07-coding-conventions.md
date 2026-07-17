@@ -1,5 +1,5 @@
 # Kairos — Coding Conventions
-> Last updated: 2026-07-10
+> Last updated: 2026-07-17
 > Update this file when: a project-wide convention changes, a new pattern is adopted across all files, or an existing pattern is deprecated. This chapter changes rarely.
 
 Codified in `PRD.md` §2. All agents must follow; apply consistently to every file.
@@ -43,6 +43,57 @@ Never import the service-role client in client components. The service role key 
 - Cron auth: `verifyCronSecret(req)` from `@/lib/auth/cron` (timing-safe comparison).
 - Return `NextResponse.json({ error })` with correct HTTP status on errors.
 - Cron routes: accept `x-cron-secret` header (bypasses owner session check) OR require owner session.
+
+### Unavailable ≠ zero (display-data contract)
+
+**A data route must never express "I could not get this" as a number.** A zero
+fallback renders as a confident, colour-coded value (a green `+0.00%` pill is
+indistinguishable from a genuinely flat sector), which is a silent lie.
+
+Convention for display quotes (`/api/markets/overview` is the reference
+implementation; see `lib/markets/daily-change.ts`):
+
+- Nullable values: `price`, `change`, `changePct` are `number | null`. There is
+  no zero for a failure to hide behind.
+- Explicit per-item state: `status: "ok" | "unavailable"` plus a human-readable
+  `reason` when unavailable (per the "Detail Over Cryptic" rule — say what
+  failed and why, never a bare status).
+- Payload-level state: `stale`, `unavailableCount`, and `degraded` (a sentence,
+  present only when the whole route is degraded, e.g. missing credentials or a
+  provider rate limit).
+- **Any client field the route emits must actually be read.** A `stale` flag the
+  consumer's interface omits is the same outage, silently.
+- Degraded payloads are **not cached** — they must clear the moment the provider
+  or credential recovers.
+- Provenance must be truthful: name the real provider, the real endpoint
+  semantics (end-of-day vs intraday), and the data's own age (`fetchedAt` from
+  the server), never the browser clock at response time.
+
+### Daily change means close vs PRIOR close
+
+A daily change is the latest session's close against the **prior session's
+close**. A single session's `(close - open) / open` is the *intraday* move — a
+different, usually smaller number whose **sign can invert**. Verified on the
+2026-07-15 session: XLRE's intraday was −0.11% (red) while its true daily change
+was +0.18% (green). Never source a "today" figure from one session's OHLC alone.
+
+### Massive free tier: ~5 requests/minute (hard)
+
+`MASSIVE_API_KEY` is rate limited at ~5 req/min, shared by the whole app. A
+per-symbol fan-out silently blows it — 15 parallel `/prev` calls leave ~10
+failing, which is exactly how zero-fallbacks become a wall of `+0.00%`.
+
+- Prefer **grouped daily**
+  (`/v2/aggs/grouped/locale/us/market/stocks/{date}`): every US ticker's OHLC for
+  one session in ONE request. Two calls (latest session + prior session) serve an
+  entire tile universe and keep every symbol on the same session.
+- Grouped for the **current calendar date** is refused until after midnight ET
+  ("Attempted to request today's data before end of day"), and holidays return
+  `200` with no `results` — so walk back from today, skipping weekends, and take
+  the first dates that return bars.
+- Past sessions are immutable → cache grouped responses hard (by date).
+- A single grouped call needs no pacing lease. Per-symbol fallbacks DO —
+  `try_acquire_provider_slot` (12.5s = 5/min); see `price-cache-fill`.
 
 ### Auth gate matrix
 
