@@ -56,7 +56,8 @@ export async function GET(req: NextRequest) {
     selectScoped<any[]>(market, (applyMarket) => {
       let q = svc
         .from("agent_signals")
-        .select("symbol,analyst_score,insider_score,direction,created_at,asset_class")
+        // `id` is required to recover the availability flag — see below.
+        .select("id,symbol,analyst_score,insider_score,direction,created_at,asset_class")
         .gte("created_at", since7)
         .gte("insider_score", 55);
       if (applyMarket) q = q.eq("market", market);
@@ -64,10 +65,62 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
+  // ---------------------------------------------------------------------
+  // Insider availability
+  //
+  // `agent_signals.insider_score` is lossy: the scorers return
+  // { score, available }, but only `score` is persisted, so an unavailable
+  // neutral 50 (fetch failed / too few filings / India, which has no EDGAR at
+  // all) is indistinguishable from a genuinely balanced 50. Reading a 50 as
+  // "insiders aren't buying" when it means "we never got insider data" is the
+  // opposite conclusion for a trading decision.
+  //
+  // It does NOT need a new column: `decision_observations.availability_mask`
+  // already records this per decision and links back via `signal_id`. Verified
+  // in prod (2026-07-16) — every one of the 436 observation rows carries an
+  // insider flag, including 18 us rows that are genuinely available AND exactly
+  // 50. Those 18 are why the "treat any 50 as unavailable" heuristic was
+  // rejected: it would misreport real balanced data as missing.
+  //
+  // A signal we cannot prove is excluded rather than assumed good — an
+  // unprovable claim must not reach a trading surface as a finding.
+  const insiderCandidates = highInsider ?? [];
+  let verifiedInsider: any[] = [];
+  let unverifiedCount = 0;
+
+  if (insiderCandidates.length > 0) {
+    const ids = insiderCandidates.map((s: any) => s.id).filter(Boolean);
+    const { data: obs, error: obsError } = await svc
+      .from("decision_observations")
+      .select("signal_id,availability_mask")
+      .in("signal_id", ids);
+
+    if (obsError) {
+      // Cannot verify => cannot claim. Fail closed, and say so.
+      unverifiedCount = insiderCandidates.length;
+    } else {
+      const availableSignalIds = new Set(
+        (obs ?? [])
+          .filter((o: any) => String(o?.availability_mask?.insider) === "true")
+          .map((o: any) => o.signal_id)
+      );
+      verifiedInsider = insiderCandidates.filter((s: any) => availableSignalIds.has(s.id));
+      unverifiedCount = insiderCandidates.length - verifiedInsider.length;
+    }
+  }
+
   return NextResponse.json({
     signals: signals ?? [],
     tradeQueue: tradeQueue ?? [],
-    highInsider: highInsider ?? [],
+    highInsider: verifiedInsider,
+    // Lets the UI distinguish "insiders aren't buying" from "insider data is
+    // unavailable for this market" (India has no EDGAR equivalent wired up, so
+    // its insider dimension is honestly unavailable — not neutral).
+    insiderCoverage: {
+      candidates: insiderCandidates.length,
+      verifiedAvailable: verifiedInsider.length,
+      excludedUnavailable: unverifiedCount,
+    },
     market,
   });
 }

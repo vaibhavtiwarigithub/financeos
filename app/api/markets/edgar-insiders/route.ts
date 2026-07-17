@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { buildForm4XmlUrl } from "@/lib/data/edgar-insider";
+import { symbolsFromLatestLiveSnapshots } from "@/lib/research/holding-symbols";
 
 export const runtime = "nodejs";
+// This route makes up to ~56 sequential SEC calls plus a 797KB CIK map and
+// paces itself with fair-use sleeps. With no maxDuration it inherited the
+// platform default and could be killed mid-scan, which surfaced as a partial
+// result indistinguishable from a complete one.
+export const maxDuration = 60;
 
 const SEC_UA = "Kairos vterminater@gmail.com";
 const LOOKBACK_DAYS = 90;
@@ -18,7 +25,30 @@ interface EdgarTransaction {
   value: number;
   date: string;
   filingDate: string;
+  // Days between the trade and the day it became public. Form 4s are due within
+  // 2 business days, but the lag varies — a trade dated 8 days ago that only
+  // filed yesterday is new information; one that filed 8 days ago is already
+  // priced in. Showing only `date` makes those two look identical.
+  filingLagDays: number;
   accessionNumber: string;
+}
+
+// Per-symbol scan outcome. Keeping failures alongside rows is what lets the
+// response distinguish "this issuer had no open-market trades" from "we could
+// not read this issuer's filings" — previously both were `[]`.
+interface SymbolScan {
+  symbol: string;
+  transactions: EdgarTransaction[];
+  filingsScanned: number;
+  fetchFailures: number;
+  ok: boolean;
+}
+
+function daysBetween(fromIso: string, toIso: string): number {
+  const from = Date.parse(fromIso);
+  const to = Date.parse(toIso);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return 0;
+  return Math.max(0, Math.round((to - from) / 86400_000));
 }
 
 let tickerCikCache: Map<string, string> | null = null;
@@ -45,16 +75,11 @@ async function getTickerCikMap(): Promise<Map<string, string>> {
   return map;
 }
 
-function extractXmlValue(xml: string, tag: string): string {
-  const m = xml.match(new RegExp(`<${tag}>[\\s\\S]*?<value>([^<]*)<\\/value>`, "i"));
-  return m?.[1]?.trim() ?? "";
-}
-
-function extractText(xml: string, tag: string): string {
-  const m = xml.match(new RegExp(`<${tag}>([^<]*)<\\/tag>`.replace("tag", tag), "i"));
-  return m?.[1]?.trim() ?? "";
-}
-
+// Removed `extractXmlValue`/`extractText` (2026-07-16): both were dead — defined,
+// never called (parseForm4Xml inlines its own matches). `extractText` was also
+// broken: `.replace("tag", tag)` rewrote the FIRST literal "tag" in the pattern,
+// producing a regex that could never match its own closing tag. Deleting it so
+// it can't be picked up later as if it worked.
 function parseForm4Xml(xml: string, symbol: string, filingDate: string, accNo: string): EdgarTransaction[] {
   const results: EdgarTransaction[] = [];
 
@@ -96,6 +121,7 @@ function parseForm4Xml(xml: string, symbol: string, filingDate: string, accNo: s
       value: shares * price,
       date,
       filingDate,
+      filingLagDays: daysBetween(date, filingDate),
       accessionNumber: accNo,
     });
   }
@@ -106,20 +132,23 @@ function parseForm4Xml(xml: string, symbol: string, filingDate: string, accNo: s
 async function fetchForm4sForSymbol(
   symbol: string,
   cikPadded: string
-): Promise<EdgarTransaction[]> {
-  const cikNum = parseInt(cikPadded, 10);
-
+): Promise<SymbolScan> {
   const subRes = await fetch(
     `https://data.sec.gov/submissions/CIK${cikPadded}.json`,
     { headers: { "User-Agent": SEC_UA }, next: { revalidate: 3600 } }
   );
-  if (!subRes.ok) return [];
+  // Index fetch failed — we know nothing about this issuer. Do not let that
+  // return an empty array that the UI renders as "no insider trades".
+  if (!subRes.ok) {
+    return { symbol, transactions: [], filingsScanned: 0, fetchFailures: 1, ok: false };
+  }
 
   const sub = await subRes.json();
   const recent = sub.filings?.recent ?? {};
   const forms: string[] = recent.form ?? [];
   const dates: string[] = recent.filingDate ?? [];
   const accNos: string[] = recent.accessionNumber ?? [];
+  const primaryDocs: string[] = recent.primaryDocument ?? [];
 
   const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86400_000)
     .toISOString()
@@ -132,21 +161,28 @@ async function fetchForm4sForSymbol(
     .map(({ i }: { i: number }) => i);
 
   const results: EdgarTransaction[] = [];
+  let filingsScanned = 0;
+  let fetchFailures = 0;
 
   for (const idx of indices) {
     const accDash = accNos[idx];
-    const accFlat = accDash.replace(/-/g, "");
     const filingDate = dates[idx];
+    // Resolve the real machine-readable XML from primaryDocument. See
+    // lib/data/edgar-insider.ts for why `<accession>.xml` never existed and why
+    // the xsl-prefixed path must not be used (it serves HTML).
+    const xmlUrl = buildForm4XmlUrl(cikPadded, accDash, primaryDocs[idx]);
+    if (!xmlUrl) continue; // no XML primary document — nothing to parse
 
+    filingsScanned++;
     try {
-      const xmlUrl = `https://www.sec.gov/Archives/edgar/data/${cikNum}/${accFlat}/${accDash}.xml`;
       const xmlRes = await fetch(xmlUrl, {
         headers: { "User-Agent": SEC_UA },
       });
-      if (!xmlRes.ok) continue;
+      if (!xmlRes.ok) { fetchFailures++; continue; }
       const xml = await xmlRes.text();
       results.push(...parseForm4Xml(xml, symbol, filingDate, accDash));
     } catch {
+      fetchFailures++;
       continue;
     }
 
@@ -154,7 +190,13 @@ async function fetchForm4sForSymbol(
     await new Promise((r) => setTimeout(r, 120));
   }
 
-  return results;
+  return {
+    symbol,
+    transactions: results,
+    filingsScanned,
+    fetchFailures,
+    ok: fetchFailures === 0,
+  };
 }
 
 export async function GET(req: NextRequest) {
@@ -162,35 +204,46 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     let symbolsParam = url.searchParams.get("symbols") ?? "";
 
-    // If no symbols provided, pull from held positions + recent watchlist
+    // If no symbols provided, pull from held positions + active watchlist.
+    //
+    // BUGS (fixed 2026-07-16), both of which silently shrank this universe:
+    //  1. `agent_watchlist` DOES NOT EXIST — the table is `watchlist`. supabase-js
+    //     returns that in `error`, not by throwing, so `(watchlist ?? [])` made
+    //     half the universe vanish without a trace. `watchlist` also has no
+    //     `is_active` column (it uses `expires_at`), so a bare rename would have
+    //     kept it broken — the filter now mirrors lib/research-agent.ts.
+    //  2. `.limit(1).single()` ordered by captured_at took ONE of seven broker
+    //     accounts. All seven are captured in the same batch, so the winner came
+    //     down to a ~294ms tiebreak (Webull), and the Agentic/Trading accounts
+    //     contributed nothing. Union every account's latest snapshot instead,
+    //     matching fetchHoldings() in lib/research-agent.ts.
     if (!symbolsParam) {
       const svc = createServiceClient();
-      const [{ data: snapshot }, { data: watchlist }] = await Promise.all([
+      const nowIso = new Date().toISOString();
+      const [snapshots, watchlist] = await Promise.all([
         svc
           .from("live_account_snapshots")
-          .select("positions_json")
+          .select("account_id, broker, positions_json, captured_at")
           .order("captured_at", { ascending: false })
-          .limit(1)
-          .single(),
+          .limit(100),
         svc
-          .from("agent_watchlist")
+          .from("watchlist")
           .select("symbol")
-          .eq("is_active", true)
+          .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
           .limit(12),
       ]);
 
-      const heldSymbols: string[] = [];
-      if (snapshot?.positions_json) {
-        const positions = Array.isArray(snapshot.positions_json)
-          ? snapshot.positions_json
-          : Object.values(snapshot.positions_json);
-        for (const p of positions as any[]) {
-          const s = (p.symbol ?? p.ticker ?? "").toUpperCase();
-          if (s) heldSymbols.push(s);
-        }
+      // PostgREST reports failure in `error`. Surfacing it is the whole point:
+      // a dead universe query must not look like an empty market.
+      if (snapshots.error) {
+        throw new Error(`live_account_snapshots read failed: ${snapshots.error.message ?? snapshots.error}`);
+      }
+      if (watchlist.error) {
+        throw new Error(`watchlist read failed: ${watchlist.error.message ?? watchlist.error}`);
       }
 
-      const watchSymbols = (watchlist ?? []).map((w: any) =>
+      const heldSymbols = symbolsFromLatestLiveSnapshots(snapshots.data ?? []);
+      const watchSymbols = (watchlist.data ?? []).map((w: any) =>
         String(w.symbol).toUpperCase()
       );
       const allSymbols = [
@@ -213,16 +266,35 @@ export async function GET(req: NextRequest) {
     const cikMap = await getTickerCikMap();
 
     const allTx: EdgarTransaction[] = [];
+    const scanned: string[] = [];
+    const unresolved: string[] = []; // no SEC CIK (non-US/ADR) — not a failure
+    const failed: string[] = [];     // filings existed but could not be read
+    let filingsScanned = 0;
+
     for (const symbol of symbols) {
       const cik = cikMap.get(symbol);
-      if (!cik) continue;
-      const txns = await fetchForm4sForSymbol(symbol, cik);
-      allTx.push(...txns);
+      if (!cik) { unresolved.push(symbol); continue; }
+      const scan = await fetchForm4sForSymbol(symbol, cik);
+      allTx.push(...scan.transactions);
+      filingsScanned += scan.filingsScanned;
+      scanned.push(symbol);
+      if (!scan.ok) failed.push(symbol);
       // pace between symbols
       await new Promise((r) => setTimeout(r, 200));
     }
 
     allTx.sort((a, b) => b.date.localeCompare(a.date));
+
+    // Why the list may be empty — the UI must be able to say which of these it
+    // is instead of asserting "no recent insider trades found" over a failure.
+    // `complete`: we read every filing we meant to read; an empty list is a real
+    // finding ("no open-market P/S trades in the last N filings"), because most
+    // Form 4 activity is awards/exercises/withholding (A/M/F/G), not P/S.
+    const status = failed.length === 0
+      ? "complete"
+      : failed.length === scanned.length && scanned.length > 0
+        ? "failed"
+        : "partial";
 
     return NextResponse.json({
       transactions: allTx,
@@ -230,6 +302,17 @@ export async function GET(req: NextRequest) {
       count: allTx.length,
       buys: allTx.filter((t) => t.transactionType === "buy").length,
       sells: allTx.filter((t) => t.transactionType === "sell").length,
+      // Coverage//honesty contract for the empty state (see MarketsPage handoff).
+      status,
+      coverage: {
+        requested: symbols.length,
+        scanned: scanned.length,
+        unresolved,
+        failed,
+        filingsScanned,
+        maxFilingsPerSymbol: MAX_FILINGS_PER_SYMBOL,
+        lookbackDays: LOOKBACK_DAYS,
+      },
       fetchedAt: new Date().toISOString(),
     });
   } catch (err: any) {

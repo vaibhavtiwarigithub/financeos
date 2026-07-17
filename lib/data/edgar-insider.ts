@@ -32,6 +32,59 @@ async function getTickerCikMap(): Promise<Map<string, string>> {
 
 interface Tx { type: "buy" | "sell" | "other"; value: number }
 
+// ---------------------------------------------------------------------------
+// Form 4 primary-document URL resolution
+//
+// BUG (fixed 2026-07-16): both this file and app/api/markets/edgar-insiders
+// built `<accession>.xml` (e.g. .../0001403161-26-000090.xml). That artifact
+// does not exist in an EDGAR accession directory — it 404s for EVERY filing, so
+// US insider data has never once been read. Verified live against V, AAPL,
+// TSLA, COST, MA, PG.
+//
+// The real document is named by `filings.recent.primaryDocument` in the
+// submissions JSON. Two traps:
+//
+//  1. For Form 4 the primaryDocument ALWAYS points at the XSL *rendering*
+//     ("xslF345X06/form4.xml"). SEC serves that path as text/html — it returns
+//     200 but contains NONE of the machine tags (<rptOwnerName>,
+//     <nonDerivativeTransaction>). Parsing it yields zero transactions: a
+//     silent, plausible-looking empty result rather than an error. The
+//     machine-readable XML lives at the same accession directory with the
+//     xsl prefix REMOVED.
+//  2. The filename is NOT always "form4.xml" — filer agents vary it
+//     (TSLA: "tm2618092-2_4seq1.xml", MA: "wk-form4_1784149645.xml"). So the
+//     prefix must be stripped from primaryDocument, never hardcoded.
+//
+// The CIK in the path must be unpadded — the zero-padded form 301-redirects.
+// ---------------------------------------------------------------------------
+export function stripXslRenderPrefix(primaryDocument: string): string {
+  return primaryDocument.replace(/^xslF345X\d+\//i, "");
+}
+
+export function buildForm4XmlUrl(
+  cikPadded: string,
+  accessionNumber: string,
+  primaryDocument: string | null | undefined,
+): string | null {
+  const doc = stripXslRenderPrefix(String(primaryDocument ?? "").trim());
+  // A Form 4 with no XML primary document (paper/legacy filing) is not
+  // machine-readable. Return null so the caller SKIPS it rather than counting
+  // it as a fetch failure — those are different facts.
+  if (!doc || !doc.toLowerCase().endsWith(".xml")) return null;
+  const cikNum = parseInt(cikPadded, 10);
+  if (!Number.isFinite(cikNum)) return null;
+  const accFlat = accessionNumber.replace(/-/g, "");
+  return `https://www.sec.gov/Archives/edgar/data/${cikNum}/${accFlat}/${doc}`;
+}
+
+// A fetch outcome, not just rows. `attempted`/`failed` let callers tell
+// "this issuer had no open-market trades" from "we could not read the filings".
+export interface Form4FetchResult {
+  txns: Tx[];
+  attempted: number;
+  failed: number;
+}
+
 function parseForm4Xml(xml: string): Tx[] {
   const out: Tx[] = [];
   const blocks = [...xml.matchAll(/<nonDerivativeTransaction>([\s\S]*?)<\/nonDerivativeTransaction>/gi)];
@@ -53,17 +106,19 @@ function parseForm4Xml(xml: string): Tx[] {
   return out;
 }
 
-async function fetchForm4sForSymbol(cikPadded: string): Promise<Tx[]> {
-  const cikNum = parseInt(cikPadded, 10);
+async function fetchForm4sForSymbol(cikPadded: string): Promise<Form4FetchResult> {
   const subRes = await fetch(`https://data.sec.gov/submissions/CIK${cikPadded}.json`, {
     headers: { "User-Agent": SEC_UA }, next: { revalidate: 3600 },
   });
-  if (!subRes.ok) return [];
+  // The submissions index itself failing is a read failure, not "no filings".
+  // Report it as one attempt that failed so the caller cannot read it as data.
+  if (!subRes.ok) return { txns: [], attempted: 1, failed: 1 };
   const sub = await subRes.json();
   const recent = sub.filings?.recent ?? {};
   const forms: string[] = recent.form ?? [];
   const dates: string[] = recent.filingDate ?? [];
   const accNos: string[] = recent.accessionNumber ?? [];
+  const primaryDocs: string[] = recent.primaryDocument ?? [];
   const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86400_000).toISOString().slice(0, 10);
 
   const indices = forms
@@ -73,17 +128,20 @@ async function fetchForm4sForSymbol(cikPadded: string): Promise<Tx[]> {
     .map(({ i }) => i);
 
   const txns: Tx[] = [];
+  let attempted = 0;
+  let failed = 0;
   for (const idx of indices) {
-    const accDash = accNos[idx];
-    const accFlat = accDash.replace(/-/g, "");
+    const xmlUrl = buildForm4XmlUrl(cikPadded, accNos[idx], primaryDocs[idx]);
+    if (!xmlUrl) continue; // no XML primary doc — skipped, not failed
+    attempted++;
     try {
-      const xmlRes = await fetch(`https://www.sec.gov/Archives/edgar/data/${cikNum}/${accFlat}/${accDash}.xml`, { headers: { "User-Agent": SEC_UA } });
-      if (!xmlRes.ok) continue;
+      const xmlRes = await fetch(xmlUrl, { headers: { "User-Agent": SEC_UA } });
+      if (!xmlRes.ok) { failed++; continue; }
       txns.push(...parseForm4Xml(await xmlRes.text()));
-    } catch { continue; }
+    } catch { failed++; continue; }
     await new Promise((r) => setTimeout(r, 120)); // SEC ~10 req/s fair use
   }
-  return txns;
+  return { txns, attempted, failed };
 }
 
 // Score a symbol's insider activity from SEC Form 4s. Returns the same shape as
@@ -96,7 +154,20 @@ export async function scoreEdgarInsider(symbol: string): Promise<{ score: number
     const cik = cikMap.get(symbol.toUpperCase());
     if (!cik) return { score: 50, summary: "No SEC CIK for symbol (non-US or not found).", available: false };
 
-    const txns = await fetchForm4sForSymbol(cik);
+    const { txns, attempted, failed } = await fetchForm4sForSymbol(cik);
+
+    // A failed read is NOT evidence of balanced insider activity. Before the URL
+    // fix every filing 404'd and this path still reported "too few transactions
+    // to score" — indistinguishable from a genuinely quiet issuer. Name the
+    // failure explicitly so a broken fetch can never again read as a finding.
+    if (attempted > 0 && failed === attempted) {
+      return {
+        score: 50,
+        summary: `SEC Form 4 fetch failed for all ${attempted} filing(s) in the past ${LOOKBACK_DAYS} days — insider data unavailable, not neutral.`,
+        available: false,
+      };
+    }
+
     let buyValue = 0, sellValue = 0, buyCount = 0, sellCount = 0;
     for (const t of txns) {
       if (t.type === "buy") { buyValue += t.value; buyCount++; }
@@ -104,7 +175,15 @@ export async function scoreEdgarInsider(symbol: string): Promise<{ score: number
     }
     const total = buyValue + sellValue;
     if (buyCount + sellCount < MIN_INSIDER_TRANSACTIONS || total === 0) {
-      return { score: 50, summary: `Only ${buyCount + sellCount} SEC Form 4 transaction(s) in past 90 days — too few to score.`, available: false };
+      // Partial failure caveat: some filings were unreadable, so the observed
+      // count is a floor, not the truth. Say so rather than implying we looked
+      // at everything and found little.
+      const caveat = failed > 0 ? ` (${failed} of ${attempted} filings could not be read, so this count is a floor)` : "";
+      return {
+        score: 50,
+        summary: `Only ${buyCount + sellCount} open-market SEC Form 4 transaction(s) in past ${LOOKBACK_DAYS} days — too few to score${caveat}.`,
+        available: false,
+      };
     }
     const buyRatio = buyValue / total;
     const score = Math.round(10 + buyRatio * 80); // 100% buying = 90, balanced = 50
