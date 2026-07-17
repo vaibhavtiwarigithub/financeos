@@ -1,5 +1,5 @@
 # Kairos — Agents
-> Last updated: 2026-07-17 (macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
+> Last updated: 2026-07-17 (Macro read (Agent Mind Phase 3) documented for the first time and scoped **US-only** — the India read is killed, not faked: BOTH its macro inputs (`macro_regime` AND the `category='macro'` `learning_priors`) are US-only and unmarket-tagged, and the priors were the live leak in prod row id=6, so gating only the regime would not have fixed it; the route now refuses `market=india` on both verbs before any LLM call or DB write, and `MacroReadCard` states the gap instead of vanishing. Also fixed the 4-day silent outage of that agent — `deepseek-reasoner` burned the whole `maxTokens: 600` budget on chain-of-thought and returned empty content (`finish_reason=length`) from 2026-07-13 onward, so nothing was written while both crons reported success; 600 → 1500. Corrected the stale "looks back up to 3 weeks" macro line that contradicted this chapter's own 10-day consumer contract; macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
 > Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
 
 **Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file + update `public/agent-diagrams/system-map.json`.
@@ -14,7 +14,9 @@ handlers directly.
 
 ```mermaid
 flowchart LR
-  MACRO[MacroSentinel] --> |macro_signals| RESEARCH[ResearchAgent]
+  MACRO[MacroSentinel] --> |macro_regime · US only| RESEARCH[ResearchAgent]
+  MACRO --> |macro_regime · US only| MACROREAD[Macro read · narrative only]
+  MACROREAD --> |macro_interpretations| MARKETS[/dashboard/markets/]
   UNIVERSE[PIT Universe + Providers] --> RESEARCH
   RESEARCH --> |agent_signals + decision_observations| PAPER[PaperTrader]
   RESEARCH --> |eligible proposal| TRADER[TraderAgent]
@@ -42,7 +44,8 @@ flowchart LR
 
 | Table | Written by | Read by |
 |---|---|---|
-| `macro_regime`, `macro_signals` | MacroSentinel | ResearchAgent, Dashboard |
+| `macro_regime`, `macro_signals` | MacroSentinel | ResearchAgent (**US only**), Macro read (**US only**), Dashboard |
+| `macro_interpretations` | Macro read (**US only**) | Macro read's own GET → `MacroReadCard` on `/dashboard/markets`. **Nothing else** — no scoring/sizing/gate/order/exit path reads it |
 | `agent_signals` | ResearchAgent, DeepSeekAgent | PaperTrader, TraderAgent, Dashboard |
 | `signal_score_history` | ResearchAgent | ResearchAgent (trend), Dashboard charts |
 | `decision_observations` | ResearchAgent | LearnerAgent, Validation Engine, PerformanceTruth |
@@ -120,6 +123,65 @@ weighted score, weights renormalize. It never falls back to a calm/green default
 `signals_triggered = 0` is **NOT** treated as suspect on its own — a genuinely calm week really does
 trip zero signals, and rejecting those would bias the book bearish. The honest discriminator is the
 indicator count.
+
+---
+
+### Macro read (Agent Mind Phase 3) — the narrator
+
+**File:** `app/api/agent-mind/macro-read/route.ts` (+ pure logic in `lib/macro-read.ts`)
+**Schedule:** weekdays — `kairos-macro-read-us` (13:30 UTC). **Cadence: US only.**
+**Writes:** `macro_interpretations` (one cached row/day/market)
+**Read by:** its own GET → `MacroReadCard` on `/dashboard/markets`. **Nothing else.**
+
+Turns the US macro regime + the US book + the system's US macro priors into a plain-English
+"what this means for your book" narrative.
+
+**NARRATIVE ONLY.** This is the LLM sibling of `macro_score`, and it is on **no** money path:
+`macro_interpretations` is written here and read back by this route's own GET alone. The
+deterministic rule stands — no LLM on any scoring/sizing/gate/order/exit path — and this route must
+never widen its reach.
+
+**Scope: US ONLY. The India read is killed, not faked.** (2026-07-17)
+
+Both of this read's macro inputs are US-only and **neither is market-tagged**:
+
+| Input | Why it is US-only | Market column? |
+|---|---|---|
+| `macro_regime` | MacroSentinel = 8 US FRED series (see above) | **No** |
+| `learning_priors WHERE category='macro'` | US beliefs: Fed funds, DXY, 2Y/10Y curve, ISM/PMI, VIX | **No** |
+
+> **The priors were the live leak, not just the regime.** Prod `macro_interpretations` id=6
+> (2026-07-13, `market=india`) reads: *"…no regime-based bias can be assigned to this India book.
+> The system's high-conviction belief (80%) that rising **Fed funds** rates comp[resses]…"* — against
+> a 13-position India book, while the regime was **already `unknown`**. So market-gating only
+> `macro_regime` would **not** have prevented that sentence. Prior id=8 ("Rising Fed funds rate
+> environment…", confidence 0.80) did it.
+
+**Why killed rather than "honestly scoped":** once both US-only inputs are withheld, an India read has
+**zero** macro evidence left — only the held symbols. An LLM asked for a macro read with no macro
+input either restates a constant ("we know nothing" — which does not need a `deepseek-reasoner` call
+every weekday) or reaches into training knowledge for RBI/rupee/FII colour, inventing exactly what the
+prompt forbids. So:
+
+- The route **refuses `market=india` on both GET and POST** before any LLM call or DB write — zero
+  spend, zero rows, and the legacy India rows (ids 2/4/6) stay unreachable.
+- `MacroReadCard` renders a **deterministic not-supported note** for India instead of vanishing.
+- This also resolves a self-contradiction: the India Markets view already renders a `NotSupportedNote`
+  for *"…macro sentinel…"* while a cron wrote an India read derived from that same US-only sentinel.
+
+**Parity** means both markets get an *honest* answer, not that both get an LLM call. `lib/india-macro.ts`
+(NSE FII/DII) is deliberately **not** wired in as a substitute regime — that is a separate build.
+
+**US path** reuses the same discipline as `lib/data/scores.ts` (unknown-guard, 10-day age bound,
+`raw_indicators >= 3` floor, fail-safe to UNAVAILABLE). When no row qualifies the prompt states the
+regime is **UNAVAILABLE** and interpolates **no** regime, danger score, summary or indicators — an
+absent verdict is never described as calm. `MAX_MACRO_AGE_DAYS` is imported from `scores.ts`; the
+indicator floor is restated in `lib/macro-read.ts` (it is module-private in `scores.ts`) and **must be
+kept in sync**.
+
+**Known-open:** the `kairos-macro-read-india` cron (jobid 47, `30 4 * * 1-5`) is **still active** and
+should be dropped — a prod DB mutation, so it is flagged rather than done. The route-level refusal
+makes it a harmless no-op meanwhile.
 
 ---
 
@@ -202,7 +264,7 @@ Each dimension outputs 0–100, clamped. Source of truth: `lib/data/scores.ts`, 
 
 **Sentiment** (`scoreSentiment`) — bullish fraction Bayesian-shrunk toward neutral by real `stocktwits_message_count` (prior K=10): `(bullFrac·N + 0.5·K)/(N + K)`, so 1 bullish message → 55 not 100, 500 msgs @90% → 89. Falls back to AV news `(sent+1)×50`; else label (bull 65 / bear 35); else 50. Excluded from weighting unless `has_data`.
 
-**Macro** (`fetchMacroScore`) — `100 − danger_score` from latest non-`unknown` `macro_regime` row (looks back up to 3 weeks). `unknown` regime → excluded.
+**Macro** (`fetchMacroScore`) — **US symbols only** (India → UNAVAILABLE, excluded, weights renormalize). `100 − danger_score` from the newest `macro_regime` row that satisfies the full consumer contract above: real verdict (`regime != 'unknown'`) **and** `week_of` within `MAX_MACRO_AGE_DAYS` = 10 **and** `raw_indicators` length >= 3. Nothing qualifies → UNAVAILABLE, never a calm default. (Corrected 2026-07-17: this line previously said "looks back up to 3 weeks", contradicting the 10-day bound documented in the consumer-contract table in this same chapter — the unbounded reach-back was the 2026-07-13 prod bug, not the intended behavior.)
 
 **Insider** (`resolveInsider` → Massive / EDGAR / AV) — `10 + buyRatio×80` where `buyRatio = buyValue/(buyValue+sellValue)` over 90 days, counting only open-market P/S codes (awards `A`, exercises `M`, gifts `G`, tax-withholding `F` are `other` and excluded — they are not conviction trades). Requires ≥3 transactions; <3, no data, ADRs, or fetch-fail → `available:false` (excluded).
 
