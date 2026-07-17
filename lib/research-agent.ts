@@ -24,7 +24,7 @@ import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { isEtfSymbol as canonicalIsEtfSymbol } from "@/lib/asset-classification";
 import { applyStrategyTilt, loadTradingMandate } from "@/lib/trading-mandate";
-import { symbolsFromLatestLiveSnapshots, symbolsFromPaperPositions, unionHoldingSymbols } from "@/lib/research/holding-symbols";
+import { symbolsFromLatestLiveSnapshots, symbolsFromPaperPositions, unionHoldingSymbols, orderHoldingsByStaleness } from "@/lib/research/holding-symbols";
 
 // Module-level cache: market → default investment_mandates.id.
 // Populated once per process; safe because seed mandates never change name.
@@ -233,6 +233,13 @@ export function extractParsed(claudeRaw: string): any {
 }
 
 // Holdings-first: latest live snapshot per account plus the US paper alpha book.
+//
+// FAILS LOUD, NEVER EMPTY-ON-ERROR. This used to end in `catch { return []; }`,
+// which meant a broken holdings query degraded silently into "the owner holds
+// nothing" — research would then happily score NEW buy candidates while blind to
+// every position it might need to SELL. That is the most dangerous possible
+// degradation on this path, so a holdings-fetch failure now raises a System
+// Health alert and throws: no holdings visibility => no research run at all.
 export async function fetchHoldings(supabase: any): Promise<string[]> {
   try {
     const [live, paper] = await Promise.all([
@@ -242,12 +249,52 @@ export async function fetchHoldings(supabase: any): Promise<string[]> {
       supabase.from("paper_positions")
         .select("symbol, qty").eq("market", "us").eq("position_role", "alpha"),
     ]);
+    // PostgREST reports failure in `error`, not by throwing — an unchecked
+    // `.data ?? []` here was itself a silent path to "no holdings".
+    if (live.error) throw new Error(`live_account_snapshots read failed: ${live.error.message ?? live.error}`);
+    if (paper.error) throw new Error(`paper_positions (us) read failed: ${paper.error.message ?? paper.error}`);
     return unionHoldingSymbols(
       symbolsFromLatestLiveSnapshots(live.data ?? []),
       symbolsFromPaperPositions(paper.data ?? [], "us"),
     );
-  } catch {
-    return [];
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    await reportIssue({
+      issueKey: "research-holdings-fetch:us",
+      severity: "critical",
+      category: "data",
+      title: "US holdings fetch FAILED — research run aborted (cannot see owned positions)",
+      detail: `fetchHoldings() could not read the owner's US positions: ${detail}. The run was aborted rather than proceeding, because scoring new BUY candidates while blind to existing holdings means no SELL/exit signal can be produced on a position that may need one. Fix the read, then re-run research.`,
+    }, supabase).catch(() => {});
+    throw new Error(`fetchHoldings (us) failed: ${detail}`);
+  }
+}
+
+// Least-recently-scored-first ordering for holdings. Reads this market's own
+// agent_signals (our own rows — never an external fetch) to find each holding's
+// last score time, so the wall-clock budget's cut ROTATES across the book
+// instead of decapitating the same stable tail every run. Fail-soft: if the
+// lookup breaks we keep the caller's order rather than lose holdings entirely.
+async function orderHoldingsByLastScored(supabase: any, symbols: string[], market: Market): Promise<string[]> {
+  if (symbols.length === 0) return symbols;
+  try {
+    const { data, error } = await supabase
+      .from("agent_signals")
+      .select("symbol, created_at")
+      .eq("market", market)
+      .in("symbol", symbols)
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message ?? String(error));
+    const lastScoredAt = new Map<string, string>();
+    for (const row of (data ?? []) as Array<{ symbol?: string; created_at?: string }>) {
+      const sym = String(row?.symbol ?? "").toUpperCase();
+      // Rows arrive newest-first, so the first hit per symbol is its latest score.
+      if (sym && !lastScoredAt.has(sym)) lastScoredAt.set(sym, String(row?.created_at ?? ""));
+    }
+    return orderHoldingsByStaleness(symbols, lastScoredAt);
+  } catch (e) {
+    console.error(`[research] holdings staleness ordering failed (${market}) — falling back to unordered:`, e instanceof Error ? e.message : e);
+    return symbols;
   }
 }
 
@@ -452,9 +499,14 @@ export async function gatherSymbols(
   // Holdings scored unconditionally — already owned, SELL/monitor signals possible.
   // They do NOT consume the new-buy candidate cap: a 10-ETF portfolio must not
   // evict all individual stock candidates from the research universe.
+  // Least-recently-scored FIRST. Holdings are cap-exempt but not budget-exempt:
+  // when the book is larger than one run's throughput the wall-clock budget cuts
+  // the tail, and with a stable order that tail was the SAME symbols every day
+  // (prod run a4530e8f: slots 31-56, all holdings, 0 signals — AVGO unscored
+  // since 07-13). Staleness ordering makes that cut rotate.
   const holdingEntries: SymbolEntry[] = [];
   const holdingSet = new Set<string>();
-  for (const sym of holdings) {
+  for (const sym of await orderHoldingsByLastScored(supabase, holdings, "us")) {
     const isMetal = METAL_ETF_SYMBOLS.has(sym);
     holdingEntries.push({ symbol: sym, isHeld: true, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: "holding" });
     holdingSet.add(sym);
@@ -552,7 +604,9 @@ export async function gatherSymbols(
   const indiaSymbols: SymbolEntry[] = [];
   // Holdings are an obligation, not a discovery preference. Include them even
   // when the profile later changes; only new India candidates follow focus.
-  const indiaHeld = await fetchIndiaHoldings(supabase);
+  // Staleness-ordered for the same reason as US (parity): the India book must
+  // rotate under the budget rather than starve a fixed tail.
+  const indiaHeld = await orderHoldingsByLastScored(supabase, await fetchIndiaHoldings(supabase), "india");
   for (const sym of indiaHeld) {
     if (seenAll.has(sym)) continue;
     seenAll.add(sym);
@@ -597,6 +651,41 @@ async function fetchIndiaHoldings(svc: any): Promise<string[]> {
     getKiteHoldings(svc),
     svc.from("paper_positions").select("symbol, qty").eq("market", "india").eq("position_role", "alpha"),
   ]);
+  // PARITY with the US path: a rejected Kite call used to collapse to [] in
+  // silence, so "Kite token expired" and "the owner genuinely holds nothing"
+  // were indistinguishable — India could go blind to its own positions with no
+  // alert. Kite is a live broker call (token lapse / NSE closed are expected and
+  // recoverable), so unlike the US DB read this warns and continues on the paper
+  // book rather than aborting the whole India run; the paper read failing is a
+  // DB fault and aborts, exactly like US.
+  if (kiteResult.status === "rejected") {
+    const detail = kiteResult.reason instanceof Error ? kiteResult.reason.message : String(kiteResult.reason);
+    await reportIssue({
+      issueKey: "research-holdings-fetch:india-kite",
+      severity: "warn",
+      category: "data",
+      title: "India Kite holdings fetch failed — live India positions not re-scored this run",
+      detail: `getKiteHoldings() failed: ${detail}. Live Kite positions are NOT in this run's research batch, so no SELL/exit signal can be produced on them until the read recovers. India paper positions are unaffected. Usual cause: expired Kite token — re-auth in Settings.`,
+      autoExpireAt: new Date(new Date().setUTCHours(24, 0, 0, 0)).toISOString(),
+    }, svc).catch(() => {});
+  } else {
+    await resolveIssue("research-holdings-fetch:india-kite", svc).catch(() => {});
+  }
+  if (paperResult.status === "rejected") {
+    const detail = paperResult.reason instanceof Error ? paperResult.reason.message : String(paperResult.reason);
+    await reportIssue({
+      issueKey: "research-holdings-fetch:india",
+      severity: "critical",
+      category: "data",
+      title: "India holdings fetch FAILED — research run aborted (cannot see owned positions)",
+      detail: `paper_positions (india) read failed: ${detail}. The run was aborted rather than scoring new India candidates while blind to existing India positions.`,
+    }, svc).catch(() => {});
+    throw new Error(`fetchIndiaHoldings (india) failed: ${detail}`);
+  }
+  if ((paperResult.value as any)?.error) {
+    const err = (paperResult.value as any).error;
+    throw new Error(`fetchIndiaHoldings (india) paper_positions read failed: ${err.message ?? err}`);
+  }
   const kiteRows: any[] = kiteResult.status === "fulfilled"
     ? (kiteResult.value?.data ?? kiteResult.value ?? [])
     : [];

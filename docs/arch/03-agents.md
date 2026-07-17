@@ -1,5 +1,5 @@
 # Kairos — Agents
-> Last updated: 2026-07-12 (per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
+> Last updated: 2026-07-16 (ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
 > Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
 
 **Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file + update `public/agent-diagrams/system-map.json`.
@@ -139,6 +139,17 @@ analyst_score = Σ (dimension_score × effective_weight[dimension])
 Missing/inapplicable dimensions are EXCLUDED and the remaining weights renormalized to sum to 1.0 (`lib/scoring/weighted-score.ts`); `< 2` usable dimensions → abstain (thin evidence), never a low score. Base weights: champion `weights_snapshot` → risk-profile static → `learning_priors`/`signal_weights` → default F.30/T.25/S.20/M.15/I.10.
 
 **Low-confidence output (2026-07-12):** ResearchAgent aggregates per-market evidence availability across a run; when ≥ 50% of scored symbols (min 2) were scored on `< 2` of 5 dimensions, it raises a `low-confidence-research:<market>` System Health alert (warn/data) naming the commonly-missing dimensions, and resolves it when a run recovers. Surfaces *quality* gaps (thin data) alongside the existing *quota* alerts (provider budget).
+
+**Holdings ordering + fail-loud (2026-07-16, bug fix — both markets):**
+
+Holdings lead the batch and are exempt from the candidate cap, but they are **not** exempt from the cron's wall-clock budget (`RESEARCH_BUDGET_MS`, ≤105s). Throughput is ~30 symbols/run; the US book was 56. Because holdings order was *stable* (broker capture order, later alphabetical), the budget decapitated the **same tail every run, permanently** — prod run `a4530e8f` (07-16) wrote signals for batch slots 1-30 and **zero** for slots 31-56, all holdings. AVGO (slot 55) went unscored 07-13 → 07-16 while Risk Analytics advised trimming it. `enqueueDeferred` could not rescue them: `gatherSymbols` rebuilds holdings from the broker snapshot each run and `addCandidate` drops any symbol already in `holdingSet`, so a deferred holding re-entered at the same starved index forever.
+
+- **Holdings are staleness-ordered** — least-recently-scored first (`orderHoldingsByStaleness`, `lib/research/holding-symbols.ts`), from this market's own `agent_signals`. The budget's cut now **rotates**, bounding worst-case staleness at `ceil(nHoldings / throughput)` runs instead of never. Applies to US and India identically.
+- **`fetchHoldings` fails loud** — the old `catch { return []; }` made a broken holdings read indistinguishable from "owns nothing", so research would score new BUYs while blind to every position it might need to SELL. It now raises a `research-holdings-fetch:us` critical System Health issue and **throws** (no holdings visibility → no run). PostgREST `error` is checked, not just `data`.
+- **India parity** — a rejected Kite call raises `research-holdings-fetch:india-kite` (warn, auto-resolves) and continues on the paper book, since a token lapse is expected/recoverable; an India `paper_positions` DB fault aborts like US.
+- **Deferred holdings alert** — any held symbol the budget misses emits a warn `cron` alert naming the symbols. This is the only signal that the book exceeds one run's throughput, since the deferral queue can't carry holdings.
+
+> **Known capacity limit (not fixed by ordering):** with 56 holdings and ~30/run, *every holding every session* does not fit in one 150s `maxDuration` invocation. Rotation bounds staleness at ~2 runs; closing it fully needs a capacity decision (raise `RESEARCH_PARALLEL`, or split holdings into their own cron) — a design change, deliberately not taken here.
 
 #### Sub-score formula reference (`deterministic_v1`, exact values)
 

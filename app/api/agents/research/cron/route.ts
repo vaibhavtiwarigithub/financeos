@@ -215,6 +215,27 @@ export async function POST(req: NextRequest) {
     if (inDef.length) await enqueueDeferred(supabase, "india", inDef);
   }
 
+  // A deferred HOLDING is categorically worse than a deferred candidate: the
+  // owner holds it, so a missed re-score means no SELL/exit signal can fire on a
+  // position that may need one. This was previously invisible — the budget cut
+  // holdings silently and the run still reported "done" (prod run a4530e8f:
+  // 26 holdings unscored, status done, no alert). Holdings are staleness-ordered
+  // so the same names can't starve forever, but the capacity shortfall itself
+  // must be visible: enqueueDeferred canNOT rescue a holding (gatherSymbols
+  // rebuilds holdings from the broker snapshot, and addCandidate drops any
+  // symbol already in holdingSet), so this alert is the only signal that the
+  // book is bigger than one run can score.
+  const deferredHoldings = entries.filter((e, i) => results[i] == null && e.isHeld).map((e) => e.symbol);
+  if (deferredHoldings.length > 0) {
+    await emitAlert({
+      severity: "warn",
+      category: "cron",
+      title: `Research: ${deferredHoldings.length} held position${deferredHoldings.length > 1 ? "s" : ""} not re-scored (budget)`,
+      detail: `The wall-clock budget (${BUDGET_MS}ms) ran out before these HELD symbols were scored, so no exit/SELL signal was evaluated on them this run: ${deferredHoldings.join(", ")}. They are ordered least-recently-scored-first, so they lead the next run. If this fires every day the book (${entries.filter(e => e.isHeld).length} holdings) is larger than one run's throughput — raise RESEARCH_PARALLEL or split holdings into their own run.`,
+      auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+    });
+  }
+
   // results may now contain empty slots (symbols deferred by the wall-clock
   // budget) — guard every filter against null so they don't count as errors.
   const ok = results.filter(r => r && !r.error).length;
