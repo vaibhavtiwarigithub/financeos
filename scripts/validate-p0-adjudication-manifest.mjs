@@ -1,4 +1,6 @@
-#!/usr/bin/env node
+// Run with: node scripts/validate-p0-adjudication-manifest.mjs
+// (no shebang: this module is imported by tests/p0-adjudication-manifest.test.ts,
+//  and esbuild/vitest cannot parse "#!" when loading it as a module.)
 /**
  * Deterministic validator for features/relationship-graph/P0_ADJUDICATION_MANIFEST.json.
  *

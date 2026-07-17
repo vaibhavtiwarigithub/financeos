@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-// @ts-expect-error - plain .mjs validator, no types
 import { loadManifest, loadIndex, runChecks, computeCounts, flattenLinks, dedupeRelationships } from '../scripts/validate-p0-adjudication-manifest.mjs';
 
 /**
@@ -150,6 +149,7 @@ describe('the validator itself has teeth', () => {
     ['a tampered spanSha256', (m) => { m.records[9].spanSha256 = '0'.repeat(64); }],
     ['an ambiguous link handed a tradable symbol', (m) => {
       const l = flattenLinks(m).find((x: { identity_resolution: string }) => x.identity_resolution === 'ambiguous');
+      if (!l) throw new Error('fixture precondition: manifest has no ambiguous link to tamper with');
       m.records.find((r: { id: string }) => r.id === l.id).links.find(
         (x: { identity_resolution: string }) => x.identity_resolution === 'ambiguous',
       ).resolved_symbol = 'TEF';
