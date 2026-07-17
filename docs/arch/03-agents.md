@@ -1,5 +1,5 @@
 # Kairos — Agents
-> Last updated: 2026-07-16 (macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
+> Last updated: 2026-07-17 (macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
 > Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
 
 **Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file + update `public/agent-diagrams/system-map.json`.
@@ -149,8 +149,13 @@ indicator count.
 | `fundamental_score` | AV OVERVIEW (US) / Yahoo quoteSummary (India) | **P/E vs sector norm** (`SECTOR_PE_NORM`, not an absolute band), profit margin, ROE, EPS sign, rev-growth YoY, **analyst target upside** (target vs live close / 200-DMA proxy) |
 | `technical_score` | AV RSI + EMA + SMA (US) / Yahoo candles (India) | RSI(14) **continuous curve** (interpolated anchors, no bucket cliffs), price vs EMA20/50, 20d trend, **volume confirmation** (elevated volume ±8 in the prevailing direction) |
 | `sentiment_score` | AV NEWS_SENTIMENT + StockTwits (US) / **GDELT India news tone** (India, `lib/india-news.ts`) | Weighted news bullishness. India: aggregate tone of recent GDELT articles → 0-100; dimension stays *unavailable* (not faked) when GDELT returns < 3 articles (2026-07-12). |
+<<<<<<< HEAD
 | `macro_score` | `macro_regime.danger_score` — **US ONLY** | Macro backdrop from MacroSentinel. **India: dimension is UNAVAILABLE and excluded — weights renormalize onto the remaining dimensions** (2026-07-16). MacroSentinel is US-only by construction (8 US FRED series) and `macro_regime` has no `market` column, so scoring an India symbol from it stamped the US Fed's verdict onto Indian equities. India research still injects a factual **FII/DII net-flow line** (`lib/india-macro.ts`, live NSE) into the thesis prompt — narrative grounding only, deliberately NOT wired into `macro_score`; a real India regime is a separate build. FII/DII is null (line omitted) when NSE geo-throttles Vercel. (2026-07-12) |
 | `insider_score` | AV INSIDER_TRANSACTIONS (US) / NSE insider (India) | 90-day buy/sell ratio; congressional trades |
+=======
+| `macro_score` | `macro_regime.danger_score` + `macro_signals` (US/global) | Macro backdrop from MacroSentinel. India research additionally injects a factual **FII/DII net-flow line** (`lib/india-macro.ts`, live NSE) into the thesis prompt — narrative grounding only; the deterministic `macro_score` still uses the US/global regime. FII/DII is null (line omitted) when NSE geo-throttles Vercel. (2026-07-12) |
+| `insider_score` | **US:** Massive Form 4 → SEC EDGAR Form 4 → AV INSIDER_TRANSACTIONS (cascade, `resolveInsider`, first `available:true` wins). **India: none wired** — the dimension is excluded, not scored. | 90-day open-market (P/S only) buy/sell **value** ratio. India has no EDGAR equivalent; its `agent_signals.insider_score` default-fills `50`, but `decision_observations.availability_mask.insider` is `false`, which is the honest record — do not read the 50 as neutral evidence. (2026-07-16) |
+>>>>>>> worktree-agent-adc78d18c56456349
 
 Sub-score formulas are deterministic and **fixed** (hand-tuned priors in `lib/data/scores.ts` + `lib/data/technicals.ts`) — they are NOT agent/genome-mutable. Only the dimension **weights** evolve (champion loop). New candidate features flow through the IC-gated Feature Registry, not by editing these formulas. (2026-07-10: scored the previously-dead volume + analyst-target signals, made RSI continuous, made P/E sector-relative.)
 
@@ -204,7 +209,26 @@ Each dimension outputs 0–100, clamped. Source of truth: `lib/data/scores.ts`, 
 
 **Macro** (`fetchMacroScore`) — `100 − danger_score` from latest non-`unknown` `macro_regime` row (looks back up to 3 weeks). `unknown` regime → excluded.
 
-**Insider** (`scoreInsider`/EDGAR) — `10 + buyRatio×80` where `buyRatio = buyValue/(buyValue+sellValue)` over 90 days. Requires ≥3 transactions; <3, no data, ADRs, or fetch-fail → `available:false` (excluded).
+**Insider** (`resolveInsider` → Massive / EDGAR / AV) — `10 + buyRatio×80` where `buyRatio = buyValue/(buyValue+sellValue)` over 90 days, counting only open-market P/S codes (awards `A`, exercises `M`, gifts `G`, tax-withholding `F` are `other` and excluded — they are not conviction trades). Requires ≥3 transactions; <3, no data, ADRs, or fetch-fail → `available:false` (excluded).
+
+> **Insider is expected to be sparse, and that is correct** (`EXPECTED_SPARSE_DIMS` holds `us:insider`). Most Form 4 activity is compensation-related, not open-market buying, so an empty insider result is usually a real finding rather than a fault. That is exactly why a *failure* must never render as one — see below.
+
+**Form 4 URL contract (bug fixed 2026-07-16 — US insider data had never worked):** the Form 4 XML
+must be resolved from `filings.recent.primaryDocument` in the submissions JSON, with the
+`xslF345X0N/` prefix **stripped** (`buildForm4XmlUrl`, `lib/data/edgar-insider.ts`). Two traps:
+`<accession>.xml` is not a real EDGAR artifact and 404s for every filing; and `primaryDocument`
+itself points at the XSL *rendering*, which SEC serves as `text/html` — it returns **200** but
+contains no `<rptOwnerName>`/`<nonDerivativeTransaction>` tags, so it parses to zero transactions
+(a silent empty, worse than an error). The filename also varies by filer agent
+(`form4.xml`, `tm2618092-2_4seq1.xml`, `wk-form4_1784149645.xml`), so it must never be hardcoded.
+The archive path needs the **unpadded** CIK; the zero-padded form 301-redirects.
+
+**Availability is recoverable without a schema change.** `agent_signals` stores only the score, so
+an unavailable `50` and a genuinely balanced `50` are identical there. The `available` flag is
+already persisted in `decision_observations.availability_mask` (linked by `signal_id`), which is
+what `/api/markets/smart-money` joins to filter `highInsider`. Note prod holds rows that are
+`available:true` **and** exactly `50` — so "treat any 50 as unavailable" is *not* a valid shortcut;
+it would misreport real balanced data as missing.
 
 Known gaps (deliberately not yet added — see the hype-catch discussion / IC-gate path): relative-strength vs index, MACD/ATR, 52w-high proximity, EMA200; debt/leverage, FCF yield, EV/EBITDA, revenue *acceleration*, sector-relative margins; per-symbol macro beta; insider role/cluster weighting.
 
