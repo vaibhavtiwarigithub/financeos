@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { shouldSkipFill } from "@/lib/markets/price-cache-universe";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -279,26 +280,34 @@ async function run(force: boolean) {
 
   const expected = mostRecentWeekday();
 
-  // Idempotency: if the most-recent session is already cached for our marker
-  // symbol, skip (a second daily tick or a manual re-run is a no-op). `force`
-  // bypasses this.
+  // Idempotency: skip only when the ENTIRE universe already has the most-recent
+  // session. `force` bypasses this.
+  //
+  // This used to probe SPY ALONE as a marker symbol. But the grouped fill writes
+  // the whole universe in one shot, so one fresh marker does not imply the rest
+  // are fresh — and it silently didn't. An off-schedule run advanced SPY to the
+  // latest session; every scheduled tick afterward saw "SPY >= expected", skipped
+  // the grouped fill, and left XLK/QQQ/DIA frozen a session behind (prod: SPY at
+  // 07-16, XLK/QQQ stuck at 07-15). One bellwether masked 30 stale symbols. The
+  // grouped call is a single request, so re-running it when even one symbol lags
+  // is cheap; freezing the universe to save that call is not a trade worth making.
   if (!force) {
-    const { data: probe } = await svc
+    const { data: freshRows } = await svc
       .from("price_cache")
-      .select("date")
-      .eq("symbol", "SPY")
-      .order("date", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (probe && (probe as { date: string }).date >= expected) {
+      .select("symbol")
+      .in("symbol", UNIVERSE)
+      .gte("date", expected);
+    const freshSymbols = (freshRows ?? []).map((r: { symbol: string }) => r.symbol);
+    const freshCount = new Set(freshSymbols).size;
+    if (shouldSkipFill(freshSymbols, UNIVERSE)) {
       // The daily session is already cached, but sector HISTORY may still be
       // draining — spend this tick's budget on the backfill rather than no-op.
       const backfill = await backfillSectorHistory(svc, apiKey, started);
       return {
         ok: true,
         skipped: true,
-        reason: "already filled for most recent session",
-        date: (probe as { date: string }).date,
+        reason: `already filled for most recent session (${freshCount}/${UNIVERSE.length})`,
+        date: expected,
         filled: 0,
         backfill,
         elapsedMs: Date.now() - started,
