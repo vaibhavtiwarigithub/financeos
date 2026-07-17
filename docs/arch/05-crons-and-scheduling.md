@@ -1,5 +1,6 @@
 # Kairos — Crons & Scheduling
-> Last updated: 2026-07-17 (`kairos-price-cache-fill` now also backfills ~400d of sector-XL daily history — one paced, resumable provider call per symbol on the existing schedule. No new cron, no schema change.)
+> Last updated: 2026-07-17 (Documented the two `macro-read` crons, which were missing from this table entirely. `macro-read-india` is now a **no-op** — the route refuses `market=india` — and is flagged for removal (not dropped here: a prod DB mutation). Also worth knowing for every cron on this page: **pg_cron `status='succeeded'` does NOT mean the agent ran** — it only means `net.http_post` was enqueued. `macro-read` failed silently for 4 days (2026-07-13 → 07-17) returning HTTP 200 `{ok:false}` while both crons logged "succeeded" and wrote nothing. Check `net._http_response` / the agent's own table, not `cron.job_run_details`, to prove a cron did work.)
+> Previously: 2026-07-17 (`kairos-price-cache-fill` now also backfills ~400d of sector-XL daily history — one paced, resumable provider call per symbol on the existing schedule. No new cron, no schema change.)
 > Previously: 2026-07-15 (Codex audit: added the missing daily `kairos-earnings-pit-capture` at 02:10 UTC; moved `kairos-india-markets-fill-retry` from a colliding 10:45 slot to 10:35 UTC. India primary remains 10:15; symbol-profile backfill remains 11:40.)
 > Update this file when: a new cron is added or removed, a schedule changes, or a new endpoint is wired to a cron.
 
@@ -44,6 +45,8 @@ All triggered by `scripts/run-agents.ps1 -Agent <name>`. PC must be on for these
 | `nav-snapshot` | Weekdays 5:00 PM | `/api/agents/performance` | Daily NAV + alpha snapshot |
 | `learner` | Fridays 5:00 PM | `/api/agents/learner` | Weekly weight learning; route skips non-Fridays |
 | `macro-sentinel` | Mondays 8:00 AM | `/api/agents/macro-sentinel` | Weekly macro regime computation |
+| `macro-read-us` | Weekdays 9:30 AM ET (13:30 UTC) | `/api/agent-mind/macro-read?market=us` | Agent Mind Phase 3: cached daily plain-English "what the macro backdrop means for your book" (US). Advisory/narrative only — never trades or sizes |
+| `macro-read-india` | Weekdays 10:00 AM IST (04:30 UTC) | `/api/agent-mind/macro-read?market=india` | **NO-OP — should be dropped.** The route refuses `market=india` before any LLM call or DB write (2026-07-17): both macro inputs (`macro_regime`, `category='macro'` `learning_priors`) are US-only and unmarket-tagged, so there is no honest India read to generate. Left active pending owner removal (dropping the `cron.job` row is a prod DB mutation); the route-level refusal makes it harmless — zero LLM spend, zero rows |
 | `theme-scout` | Sundays 8:00 PM | `/api/agents/theme-scout` | Weekly watchlist theme additions |
 | `stale-check` | Every 4h | `/api/alerts/stale-check` | Alert if agent runs are stale |
 | `live-snapshot` | Weekdays (manual / Task Scheduler) | `scripts/sync_robin.py` | Python script — pulls Robinhood positions into `live_account_snapshots` |

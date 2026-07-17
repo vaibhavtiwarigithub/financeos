@@ -1024,6 +1024,22 @@ const SIGNAL_COLORS: Record<string, string> = {
 
 // Agent Mind Phase 3 — plain-English read of what the current macro backdrop
 // means for the current book. Advisory only; generated at most once/day.
+// "What this means for your book" — the Agent Mind macro read.
+//
+// US: an LLM narrative over the macro regime + the book + the macro priors.
+// India: NO read exists and none is invented — see lib/macro-read.ts for the
+// full reasoning. Both of this read's inputs (MacroSentinel's 8-US-FRED-series
+// regime, and the `category='macro'` learning_priors, which are US beliefs
+// about Fed funds / DXY / the 2Y-10Y curve) are US-only and neither is
+// market-tagged. Withhold both honestly and an India read has zero macro
+// evidence left, so there is nothing for an LLM to read — only room to invent.
+//
+// The `market` prop is now genuinely live: this card renders for BOTH markets
+// (US at the call site below, India inside the India block). Previously it sat
+// inside `{!isIndia && (`, so the prop was always "us" — which meant the India
+// rows the cron wrote were unreachable AND the card silently vanished for India
+// with no note at all. Both are fixed: India now gets an explicit statement of
+// the gap instead of a blank space.
 function MacroReadCard({ market }: { market: "us" | "india" }) {
   const [read, setRead] = useState<{ content: string; created_at: string } | null>(null);
   const [stale, setStale] = useState(false);
@@ -1032,6 +1048,7 @@ function MacroReadCard({ market }: { market: "us" | "india" }) {
   // Guards the one-shot self-heal so a persistently-stale read (e.g. no macro
   // regime data yet) doesn't POST on every re-render. Reset when the market flips.
   const autoTried = useRef(false);
+  const isIndiaRead = market === "india";
 
   async function load() {
     setLoading(true);
@@ -1057,7 +1074,36 @@ function MacroReadCard({ market }: { market: "us" | "india" }) {
     } catch {}
     setRunning(false);
   }
-  useEffect(() => { autoTried.current = false; load(); }, [market]);
+  // India never fetches and never POSTs: there is no read to load and no read
+  // to generate. The API refuses `market=india` on both verbs anyway; skipping
+  // the call here keeps the card from flashing a spinner on its way to a
+  // permanent, already-known answer.
+  useEffect(() => { if (isIndiaRead) { setLoading(false); return; } autoTried.current = false; load(); }, [market]);
+
+  // A structural gap, stated plainly — not a spinner, not a blank space, and
+  // not a Generate button that would lie about being able to produce one.
+  if (isIndiaRead) {
+    return (
+      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px", flexWrap: "wrap" }}>
+          <div style={{ fontSize: "14px", fontWeight: 700, color: T.text }}>What this means for your book</div>
+          <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", padding: "2px 8px", borderRadius: "5px", background: T.surface, border: `1px solid ${T.border}`, color: T.textSub }}>Not supported</span>
+        </div>
+        <div style={{ fontSize: "13px", color: T.textSub, lineHeight: 1.7 }}>
+          No India macro read — and none is invented. Both inputs to this read are US-only:
+          the macro regime comes from 8 US FRED series (yield curve, Sahm rule, US GDP, nonfarm
+          payrolls, US CPI, US retail sales, fed funds, US durables), and the system's macro
+          principles are US beliefs (Fed funds, the dollar, the 2Y/10Y curve, ISM/PMI, VIX).
+          Neither is market-tagged, so applying them to your India book would be a US verdict
+          wearing an India label rather than a read of India.
+        </div>
+        <div style={{ fontSize: "11px", color: T.muted, marginTop: "10px", lineHeight: 1.6 }}>
+          India FII/DII flows (NSE) are fetched and already inform India research theses, but they are
+          not a macro regime and are deliberately not substituted for one here.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
@@ -1674,6 +1720,15 @@ export default function MarketsPage() {
                 )}
               </div>
 
+              {/* What the macro backdrop means for your book — India.
+                  Renders the structural gap explicitly rather than omitting the
+                  card, matching how every other US-only surface is handled here.
+                  Consistent with the "macro sentinel" NotSupportedNote below:
+                  this read is downstream of that same US-only sentinel. */}
+              <div style={{ marginBottom: "16px" }}>
+                <MacroReadCard market="india" />
+              </div>
+
               {/* Structural gaps — no approved India equivalent (never synthesized) */}
               <div style={{ marginBottom: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
                 <NotSupportedNote label="TradingView sector overview, macro sentinel & leveraged-pair sentiment" />
@@ -1839,9 +1894,12 @@ export default function MarketsPage() {
         <MacroSentinelCard />
       </div>
 
-      {/* What the macro backdrop means for your book (Agent Mind, Phase 3) */}
+      {/* What the macro backdrop means for your book (Agent Mind, Phase 3).
+          Explicitly "us": this call site is inside the `{!isIndia && (` block, so
+          passing {market} only ever passed "us" while looking market-aware. The
+          India instance lives in the India block above. */}
       <div style={{ marginBottom: "16px" }}>
-        <MacroReadCard market={market} />
+        <MacroReadCard market="us" />
       </div>
 
       {/* Smart Money Trades */}

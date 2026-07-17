@@ -32,7 +32,12 @@ export type MarketSupport = {
 const REGISTRY: Record<string, MarketSupport> = {
   "/dashboard/live-portfolio": { level: "full",       note: "Live holdings for both markets via the header switcher — Robinhood (US, $) or Zerodha Kite (India, ₹). The old separate India page now redirects here." },
   "/dashboard/india":          { level: "india-only", note: "Redirects to Live Portfolio (India view) — kept for old bookmarks." },
-  "/dashboard/markets":        { level: "full",       note: "Both markets: indices, sector heatmap, breadth. US-only: TradingView/macro-sentinel tiles." },
+  // Verified 2026-07-17 against the code path + prod: the macro read ("What this
+  // means for your book") is US-only BY CONSTRUCTION, not a gap to close — both
+  // its inputs (macro_regime = 8 US FRED series; learning_priors category='macro'
+  // = US beliefs) are US-only and neither is market-tagged. India renders an
+  // explicit not-supported note; no India read is generated or substituted.
+  "/dashboard/markets":        { level: "full",       note: "Both markets: indices, sector heatmap, breadth. US-only: TradingView/macro-sentinel tiles and the macro-to-book read (India has no macro regime — stated, not faked)." },
   "/dashboard/scanner":        { level: "full",       note: "US full screen; India screens the full NSE market via a nightly cache (falls back to NIFTY-100 if NSE is blocked)." },
   "/dashboard/backtest":       { level: "full",       note: "US replays on price_cache; India on Yahoo .NS candles, alpha vs NIFTY." },
   "/dashboard/strategies":     { level: "full",       note: "Both markets: fit scores (India scored from its signals' dimensions). Algo Library is market-agnostic — strategy theory (regime tags, edge rationale, failure modes), not market data; its CTAs hand off to Scanner/Backtest, which do follow the switcher." },
