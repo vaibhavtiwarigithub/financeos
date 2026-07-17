@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
-import { fredSeries, FRED_SERIES } from "@/lib/data/fred-macro";
+import { fredSeries, fredSeriesDated, observationMonthsBefore, FRED_SERIES } from "@/lib/data/fred-macro";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -115,12 +115,27 @@ async function fetchIndicators(): Promise<Indicator[]> {
     }
   } catch {}
 
-  // 5. CPI Inflation trend — FRED CPIAUCSL (monthly, level). Year-over-year is
-  // the standard read; 13 readings give a true YoY (v0 vs 12 months ago).
+  // 5. CPI Inflation trend — FRED CPIAUCSL (monthly, level). Year-over-year read.
+  //
+  // This indicator had NEVER loaded — the card advertised "8 indicators" and shipped
+  // 7 on every run since the FRED cutover. Cause: it fetched exactly 13 readings and
+  // required 13, while FRED writes "." for a missing month (one sits at 2025-10) and
+  // the adapter drops non-finite values. 13 requested, 12 usable, guard fails, CPI
+  // silently absent — and the absent weight moved the displayed Danger Score, because
+  // computeRegime divides by the weight of the indicators that RETURNED.
+  //
+  // Two fixes, both needed:
+  //   1. SLACK — ask for 18 so a missing month can't starve a 12-month lookback.
+  //   2. DATE ALIGNMENT — index arithmetic on a gap-collapsed array is wrong, not
+  //      just short: dropping 2025-10 makes vals[12] 13 months back, so the naive
+  //      version would have printed a WRONG YoY had it ever passed. Match on the
+  //      actual month instead, and abstain when that month is genuinely missing.
   try {
-    const vals = await fredSeries(FRED_SERIES.cpi, 13);
-    if (vals.length >= 13) {
-      const yoyPct = ((vals[0] - vals[12]) / vals[12]) * 100;
+    const obs = await fredSeriesDated(FRED_SERIES.cpi, 18);
+    const latest = obs[0] ?? null;
+    const yearAgo = latest ? observationMonthsBefore(obs, latest.date, 12) : null;
+    if (latest && yearAgo && yearAgo.value !== 0) {
+      const yoyPct = ((latest.value - yearAgo.value) / yearAgo.value) * 100;
       let signal: "green" | "yellow" | "orange" | "red" = "green";
       // High inflation + slowing growth = stagflation = bad
       if (yoyPct > 5) signal = "orange";
@@ -129,10 +144,12 @@ async function fetchIndicators(): Promise<Indicator[]> {
         name: "CPI Inflation",
         value: parseFloat(yoyPct.toFixed(2)),
         signal,
-        description: `YoY: ${yoyPct.toFixed(2)}%. High inflation + weak growth = stagflation risk.`,
+        description: `YoY: ${yoyPct.toFixed(2)}% (${yearAgo.date.slice(0, 7)} → ${latest.date.slice(0, 7)}). High inflation + weak growth = stagflation risk.`,
         weight: 1,
       });
     }
+    // else: the paired month is missing → CPI is honestly absent this run, never a
+    // guessed comparison against whatever reading happens to sit at index 12.
   } catch {}
 
   // 6. Retail Sales — FRED RSAFS (monthly, level)
