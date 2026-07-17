@@ -18,13 +18,24 @@ interface SectorRow {
   symbol: string;
   name: string;
   returnPct: number | null;
+  reason: { code: string; message: string } | null;
   latestClose?: number;
   candles: number;
+  spanDays: number | null;
+  oldestDate: string | null;
+  latestDate: string | null;
+}
+
+interface Coverage {
+  withReturn: number;
+  total: number;
+  note: string | null;
 }
 
 export default function SectorPerformanceChart() {
   const [period, setPeriod] = useState(PERIOD_OPTIONS[2]);
   const [sectors, setSectors] = useState<SectorRow[]>([]);
+  const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [loading, setLoading] = useState(true);
   const [stale, setStale] = useState(false);
 
@@ -34,9 +45,10 @@ export default function SectorPerformanceChart() {
       .then(r => r.json())
       .then(d => {
         setSectors(d.sectors ?? []);
+        setCoverage(d.coverage ?? null);
         setStale(d.stale ?? false);
       })
-      .catch(() => setSectors([]))
+      .catch(() => { setSectors([]); setCoverage(null); })
       .finally(() => setLoading(false));
   }, [period.days]);
 
@@ -81,9 +93,30 @@ export default function SectorPerformanceChart() {
         </div>
       )}
 
-      {!loading && !stale && sorted.length === 0 && (
+      {/* Insufficient history — say what is missing, why, and what to do next.
+          NEVER fall back to a shorter-span return relabelled as this period. */}
+      {!loading && !stale && sorted.length === 0 && coverage?.note && (
+        <div style={{ padding: "24px", background: T.surface, borderRadius: "8px", border: `1px solid ${T.border}` }}>
+          <div style={{ fontSize: "13px", fontWeight: 700, color: T.text, marginBottom: "6px" }}>
+            Insufficient history for {period.label}
+          </div>
+          <div style={{ fontSize: "12px", color: T.textSub, lineHeight: 1.6 }}>
+            {coverage.note}
+          </div>
+        </div>
+      )}
+
+      {!loading && !stale && sorted.length === 0 && !coverage?.note && (
         <div style={{ padding: "32px", textAlign: "center", color: T.muted, fontSize: "13px" }}>
           No sector data for this period
+        </div>
+      )}
+
+      {/* Partial coverage — show the sectors that CAN report, and name the ones
+          that cannot rather than silently omitting them from the ranking. */}
+      {!loading && sorted.length > 0 && coverage?.note && (
+        <div style={{ padding: "10px 12px", marginBottom: "10px", background: T.surface, borderRadius: "8px", border: `1px solid ${T.border}`, fontSize: "11px", color: T.textSub, lineHeight: 1.5 }}>
+          {coverage.note}
         </div>
       )}
 

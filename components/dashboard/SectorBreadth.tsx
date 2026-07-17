@@ -296,6 +296,9 @@ export default function SectorBreadth() {
   const [data, setData] = useState<BreadthData | null>(null);
   const [loading, setLoading] = useState(false);
   const [periodReturn, setPeriodReturn] = useState<number | null>(null);
+  // Why the period return is unavailable, when it is. Rendered instead of a
+  // bare "—" so the user learns the window lacks history rather than guessing.
+  const [returnReason, setReturnReason] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -320,22 +323,31 @@ export default function SectorBreadth() {
   }, [activeSector]);
 
   // Period-scoped ETF return (from the sector-returns price cache). The A/D
-  // holdings breakdown below is always the latest daily session; this figure
-  // gives period context matching the selected window.
+  // holdings breakdown below is always the latest daily session; ONLY this
+  // figure is period-scoped. The header states each scope separately — do not
+  // collapse them back into one clause (it reads as though the period scopes
+  // the A/D too, which it does not).
   useEffect(() => {
     let cancelled = false;
     setPeriodReturn(null);
+    setReturnReason(null);
     fetch(`/api/charts/sector-returns?days=${period.days}`)
       .then((r) => r.json())
       .then((d) => {
         if (cancelled) return;
         const row = (d.sectors ?? []).find(
           (s: { symbol: string; returnPct: number | null }) => s.symbol === activeSector
-        );
+        ) as
+          | { returnPct: number | null; reason: { message: string } | null }
+          | undefined;
         setPeriodReturn(row?.returnPct ?? null);
+        setReturnReason(row?.returnPct == null ? row?.reason?.message ?? null : null);
       })
       .catch(() => {
-        if (!cancelled) setPeriodReturn(null);
+        if (!cancelled) {
+          setPeriodReturn(null);
+          setReturnReason("Could not reach the sector-returns cache for this window. Retry, or check System Health if it persists.");
+        }
       });
     return () => {
       cancelled = true;
@@ -390,22 +402,41 @@ export default function SectorBreadth() {
           >
             Sector Breadth Analysis
           </div>
-          <div style={{ fontSize: "12px", color: T.textSub }}>
-            Holdings advancing vs declining within {sectorName} · {period.label}{" "}
-            {activeSector} return{" "}
-            {periodReturn !== null ? (
-              <span
-                style={{
-                  color: periodReturn >= 0 ? T.green : T.red,
-                  fontWeight: 700,
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              >
-                {periodReturn >= 0 ? "+" : ""}
-                {fmt(periodReturn, 2)}%
-              </span>
-            ) : (
-              <span style={{ color: T.muted }}>—</span>
+          {/* Two independently-scoped statements. The A/D breakdown is ALWAYS
+              the latest session; only the ETF return honours the period
+              selector. Keep the scope words ("latest session" / period label)
+              attached to their own clause — the previous single-clause form
+              put "· {period.label} ·" between them and read as though the
+              period scoped the A/D as well. */}
+          <div style={{ fontSize: "12px", color: T.textSub, lineHeight: 1.6 }}>
+            <div>
+              Holdings advancing vs declining within {sectorName}
+              <span style={{ color: T.muted }}> · latest session only</span>
+            </div>
+            <div>
+              {activeSector} ETF return over {period.label}
+              <span style={{ color: T.muted }}> · period-scoped</span>:{" "}
+              {periodReturn !== null ? (
+                <span
+                  style={{
+                    color: periodReturn >= 0 ? T.green : T.red,
+                    fontWeight: 700,
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  {periodReturn >= 0 ? "+" : ""}
+                  {fmt(periodReturn, 2)}%
+                </span>
+              ) : (
+                <span style={{ color: T.amber, fontWeight: 600 }}>
+                  unavailable
+                </span>
+              )}
+            </div>
+            {periodReturn === null && returnReason && (
+              <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px", maxWidth: "560px", lineHeight: 1.5 }}>
+                {returnReason}
+              </div>
             )}
           </div>
         </div>

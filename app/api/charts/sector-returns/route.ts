@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { computeSectorReturns, summariseCoverage, type Candle } from "@/lib/markets/sector-returns";
 
 export const dynamic = "force-dynamic";
 
@@ -55,22 +56,18 @@ async function fetchMassiveSymbol(
   return { symbol: sym, rows };
 }
 
-function computeReturns(
-  bySymbol: Record<string, { date: string; close: number }[]>
+// Span-aware return computation lives in `@/lib/markets/sector-returns` — it
+// checks that the cached bars actually SPAN the requested window rather than
+// merely counting >= 2 of them. See that module for the tolerance rationale.
+function buildPayload(
+  bySymbol: Record<string, Candle[]>,
+  days: number,
+  today: string,
+  cutoff: string,
 ) {
-  return SECTORS.map(s => {
-    const candles = bySymbol[s.symbol] ?? [];
-    if (candles.length < 2) return { symbol: s.symbol, name: s.name, returnPct: null, candles: 0 };
-    const first = candles[0].close;
-    const last = candles[candles.length - 1].close;
-    return {
-      symbol: s.symbol,
-      name: s.name,
-      returnPct: ((last - first) / first) * 100,
-      latestClose: last,
-      candles: candles.length,
-    };
-  });
+  const sectors = computeSectorReturns(SECTORS, bySymbol, { days, today });
+  const coverage = summariseCoverage(sectors);
+  return { sectors, coverage, stale: false, days, cutoff };
 }
 
 export async function GET(req: NextRequest) {
@@ -80,23 +77,44 @@ export async function GET(req: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Single batch query for all 11 ETFs
-  const { data: rows, error } = await supabase
-    .from("price_cache")
-    .select("symbol, date, close")
-    .in("symbol", SYMBOLS)
-    .gte("date", cutoff)
-    .order("symbol")
-    .order("date", { ascending: true });
+  // Batch query for all 11 ETFs — PAGINATED.
+  //
+  // PostgREST caps a response at 1000 rows. A full 1Y window is ~273 sessions x
+  // 11 ETFs = ~3000 rows, so an unpaginated read silently returns only the
+  // first 1000 — i.e. the four alphabetically-first sectors (XLB, XLC, XLE,
+  // XLF) complete and the remaining seven with ZERO rows. This was latent while
+  // the cache held only two sessions per symbol (22 rows total) and surfaced the
+  // moment real history landed: the 1Y tab reported no_data for XLI/XLK/XLP/
+  // XLRE/XLU/XLV/XLY purely because of the cap. Page until the source is drained.
+  const PAGE = 1000;
+  const rows: { symbol: string; date: string; close: number }[] = [];
+  let error: unknown = null;
+  for (let offset = 0; ; offset += PAGE) {
+    const { data: page, error: pageErr } = await supabase
+      .from("price_cache")
+      .select("symbol, date, close")
+      .in("symbol", SYMBOLS)
+      .gte("date", cutoff)
+      .order("symbol")
+      .order("date", { ascending: true })
+      .range(offset, offset + PAGE - 1);
+    if (pageErr) { error = pageErr; break; }
+    rows.push(...((page ?? []) as { symbol: string; date: string; close: number }[]));
+    if (!page || page.length < PAGE) break;
+    // Hard stop — the sector universe cannot legitimately exceed this.
+    if (offset > 50_000) break;
+  }
 
-  // Cache has data — use it even if sparse (bar chart: prefer speed over completeness)
+  // Cache has data — serve it. Sparse coverage is NOT silently averaged over:
+  // any window the cached span cannot support reports null + an explicit reason
+  // instead of a shorter move mislabelled as the requested period.
   if (!error && rows && rows.length > 0) {
-    const bySymbol: Record<string, { date: string; close: number }[]> = {};
+    const bySymbol: Record<string, Candle[]> = {};
     for (const row of rows) {
       if (!bySymbol[row.symbol]) bySymbol[row.symbol] = [];
       bySymbol[row.symbol].push({ date: row.date, close: Number(row.close) });
     }
-    return NextResponse.json({ sectors: computeReturns(bySymbol), stale: false, days, cutoff });
+    return NextResponse.json(buildPayload(bySymbol, days, today, cutoff));
   }
 
   // Cache is empty — fetch from Massive
@@ -118,7 +136,7 @@ export async function GET(req: NextRequest) {
   );
 
   const allRows: { symbol: string; date: string; open: number; high: number; low: number; close: number; volume: number }[] = [];
-  const bySymbol: Record<string, { date: string; close: number }[]> = {};
+  const bySymbol: Record<string, Candle[]> = {};
 
   for (const result of results) {
     if (result.status === "fulfilled") {
@@ -145,5 +163,5 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ sectors: computeReturns(bySymbol), stale: false, days, cutoff });
+  return NextResponse.json(buildPayload(bySymbol, days, today, cutoff));
 }
