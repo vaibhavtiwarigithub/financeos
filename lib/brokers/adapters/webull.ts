@@ -10,7 +10,7 @@ import { getValidAccessToken, hasToken, mcpRpc, mcpToolJson } from "@/lib/broker
 // This is money-path code that CANNOT be exercised from the build environment.
 // It is deliberately gated OFF at four independent layers (see isConfigured):
 //   1. cfg.orderCapable must be true       — config marker, FALSE today.
-//   2. cfg.orderTools must be present       — present, but inert without (1).
+//   2. cfg.orderTools must be present       — absent: published Cloud MCP is read-only.
 //   3. a Webull access token must exist     — connected read-only today, but the
 //      token was minted with READ-ONLY scopes (no order:write), so a place would
 //      be rejected server-side even if (1)/(4) were flipped.
@@ -25,7 +25,7 @@ import { getValidAccessToken, hasToken, mcpRpc, mcpToolJson } from "@/lib/broker
 //   (b) add a strategy_config.webull_orders_enabled boolean column and set it true.
 //   (c) allowlist exactly ONE Webull account: insert a broker_accounts row with
 //       broker='webull', market='us', role='trading', account_number=<acct>.
-//   (d) set cfg.orderCapable = true in lib/brokers/mcp-registry.ts.
+//   (d) ship a separately reviewed Trading API adapter; never flip the MCP config.
 //   (e) run a single $1 manual order and reconcile it end-to-end.
 // Every existing gate above BrokerAdapter (isTradingEnabled, per-market controls,
 // kill switch, notional caps, human confirm) still applies — this adapter never

@@ -5,7 +5,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { guardOrderRequest } from "@/lib/request-guards";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
-import { reportIssue } from "@/lib/system-health";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { checkLivePortfolioLimits } from "@/lib/risk/live-portfolio-gate";
 import { liveOrdersAllowed } from "@/lib/autonomy";
 import { isTradingEnabled } from "@/lib/market-controls";
@@ -123,6 +123,7 @@ export async function POST(req: NextRequest) {
   const dailyNotionalCap = (capCfg as any)?.max_daily_notional_inr ?? null;
 
   // Long-only gate: SELL requires confirmed current holding >= requested qty.
+  let verifiedHeldQty: number | null = null;
   if (transaction_type === "SELL") {
     const holdings = await getKiteHoldings(svc);
     if (!holdings.ok) {
@@ -134,6 +135,7 @@ export async function POST(req: NextRequest) {
       return ts === sym || ts === symbol.toUpperCase();
     });
     const heldQty = Number(pos?.quantity ?? pos?.qty ?? 0);
+    verifiedHeldQty = heldQty;
     if (heldQty < (quantity as number)) {
       return NextResponse.json({ error: `Refusing SELL of ${quantity} ${symbol}: only ${heldQty} held on Kite` }, { status: 403 });
     }
@@ -236,6 +238,61 @@ export async function POST(req: NextRequest) {
   }
   const ledgerId: number = reservedId as unknown as number;
 
+  // An explicit SELL must remove any broker-resting OCO first. Selling first and
+  // cancelling best-effort can leave an untracked live trigger that later submits
+  // a second SELL. Fail closed before touching the broker order path.
+  const cancelledGttIds: string[] = [];
+  if (transaction_type === "SELL") {
+    const { data: restingRows, error: restingErr } = await svc.from("broker_orders")
+      .select("id, kite_gtt_id").eq("market", "india").eq("symbol", symbol.toUpperCase())
+      .eq("side", "buy").not("kite_gtt_id", "is", null)
+      .order("created_at", { ascending: false });
+    if (restingErr) {
+      await svc.from("broker_orders").update({ status: "failed", error: `Could not verify resting GTT before SELL: ${restingErr.message}` }).eq("id", ledgerId);
+      return NextResponse.json({ error: "Could not verify resting Kite GTT before SELL; order not submitted" }, { status: 500 });
+    }
+    if ((restingRows ?? []).length > 0 && verifiedHeldQty != null && quantity !== verifiedHeldQty) {
+      await svc.from("broker_orders").update({
+        status: "failed",
+        error: `Partial SELL blocked while resting GTT exists (${quantity}/${verifiedHeldQty})`,
+      }).eq("id", ledgerId);
+      return NextResponse.json({
+        error: `Partial SELL blocked: GTT protects ${verifiedHeldQty} shares. Use a full exit or reconcile replacement protection first.`,
+      }, { status: 409 });
+    }
+    const uniqueResting = [...new Map(
+      (restingRows ?? []).map((row: any) => [String(row.kite_gtt_id), row]),
+    ).values()] as any[];
+    for (const resting of uniqueResting) {
+      const cancel = await cancelKiteGtt(Number(resting.kite_gtt_id), svc)
+        .catch((e) => ({ ok: false, error: String(e) }));
+      if (!cancel.ok) {
+        await svc.from("broker_orders").update({ status: "failed", error: `Resting GTT cancellation failed: ${cancel.error ?? "unknown"}` }).eq("id", ledgerId);
+        await reportIssue({
+          issueKey: `kite-gtt-cancel-blocked-sell:${symbol.toUpperCase()}`,
+          severity: "critical", category: "trading",
+          title: `Kite SELL blocked: resting GTT could not be cancelled for ${symbol}`,
+          detail: `The explicit SELL was NOT submitted because GTT ${resting.kite_gtt_id} could not be confirmed cancelled: ${cancel.error ?? "unknown"}. Resolve the broker trigger before retrying.`,
+        }, svc);
+        return NextResponse.json({ error: "Resting Kite GTT cancellation failed; SELL not submitted" }, { status: 502 });
+      }
+      const { error: clearErr } = await svc.from("broker_orders").update({ kite_gtt_id: null })
+        .eq("market", "india").eq("symbol", symbol.toUpperCase())
+        .eq("kite_gtt_id", String(resting.kite_gtt_id));
+      if (clearErr) {
+        await svc.from("broker_orders").update({ status: "failed", error: `GTT cancelled but ledger clear failed: ${clearErr.message}` }).eq("id", ledgerId);
+        await reportIssue({
+          issueKey: `kite-gtt-ledger-reconcile:${symbol.toUpperCase()}`,
+          severity: "critical", category: "trading",
+          title: `Kite GTT cancelled but ledger is stale for ${symbol}`,
+          detail: `GTT ${resting.kite_gtt_id} was cancelled, but broker_orders row ${resting.id} could not be cleared: ${clearErr.message}. SELL was not submitted; reconcile before retrying.`,
+        }, svc);
+        return NextResponse.json({ error: "GTT cancelled but ledger reconciliation failed; SELL not submitted" }, { status: 500 });
+      }
+      cancelledGttIds.push(String(resting.kite_gtt_id));
+    }
+  }
+
   const res = await placeEquityOrder({
     tradingsymbol: symbol,
     transaction_type,
@@ -244,6 +301,15 @@ export async function POST(req: NextRequest) {
     price,
     product: "CNC",
   });
+
+  if (!res.ok && cancelledGttIds.length > 0) {
+    await reportIssue({
+      issueKey: `kite-sell-failed-after-gtt-cancel:${symbol.toUpperCase()}`,
+      severity: "critical", category: "trading",
+      title: `Kite SELL failed after protection was cancelled for ${symbol}`,
+      detail: `GTT(s) ${cancelledGttIds.join(", ")} were confirmed cancelled, but the explicit SELL failed: ${res.error ?? "unknown"}. The position may still be held without broker-side protection; verify Kite before retrying.`,
+    }, svc);
+  }
 
   // Kite's success response should always include an order_id — if the call
   // reports success but the id is missing, the order state is ambiguous (may
@@ -299,7 +365,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Server-side stop/target via Kite GTT (BUY only, best-effort — a GTT failure does
-  // NOT reverse the already-confirmed order, it's logged and the BUY still reports success).
+  // NOT reverse the already-confirmed order; it creates a critical protection gap.
   if (transaction_type === "BUY") {
     const stopPct = Number((capCfg as any)?.stop_loss_pct);
     const targetPct = Number((capCfg as any)?.target_pct);
@@ -309,28 +375,34 @@ export async function POST(req: NextRequest) {
       const gttResult = await placeKiteGtt({ tradingsymbol: symbol, qty: quantity as number, lastPrice: refPrice, stopPrice, targetPrice }, svc)
         .catch(() => ({ ok: false, error: "exception" } as const));
       if (gttResult.ok && gttResult.triggerId) {
-        await svc.from("broker_orders").update({ kite_gtt_id: String(gttResult.triggerId) }).eq("id", ledgerId).catch(() => {});
+        const { error: gttPersistErr } = await svc.from("broker_orders").update({ kite_gtt_id: String(gttResult.triggerId) }).eq("id", ledgerId);
+        if (gttPersistErr) {
+          await reportIssue({
+            issueKey: `kite-gtt-ledger-reconcile:${symbol.toUpperCase()}`,
+            severity: "critical", category: "trading",
+            title: `Kite GTT placed but not recorded for ${symbol}`,
+            detail: `GTT ${gttResult.triggerId} is live at Kite, but broker_orders #${ledgerId} could not store its id: ${gttPersistErr.message}. Reconcile before another exit or protective-order action.`,
+          }, svc);
+        } else {
+          await resolveIssue(`kite-gtt-unprotected:${symbol.toUpperCase()}`, svc);
+          await resolveIssue(`kite-gtt-ledger-reconcile:${symbol.toUpperCase()}`, svc);
+        }
+      } else {
+        await reportIssue({
+          issueKey: `kite-gtt-unprotected:${symbol.toUpperCase()}`,
+          severity: "critical", category: "trading",
+          title: `Kite BUY confirmed without broker-side protection for ${symbol}`,
+          detail: `The BUY was already confirmed, but its stop/target GTT failed: ${gttResult.error ?? "unknown"}. The position is unprotected at Kite until the GTT is placed and reconciled.`,
+        }, svc);
       }
       await svc.from("decision_journal").insert({
         entry_type: "kite_gtt", symbol, market: "india",
         summary: gttResult.ok
           ? `GTT placed (trigger ${gttResult.triggerId}): stop ₹${stopPrice.toFixed(2)}, target ₹${targetPrice.toFixed(2)}`
-          : `GTT placement failed (best-effort, BUY already confirmed): ${gttResult.error}`,
+          : `GTT placement failed (BUY already confirmed; critical protection gap): ${gttResult.error}`,
         calculations: { stop_pct: stopPct, target_pct: targetPct, ref_price: refPrice, broker_order_ledger_id: ledgerId },
         has_verified_facts: true, resolved: gttResult.ok,
       }).catch(() => {});
-    }
-  }
-
-  // On SELL success: cancel the most recent resting GTT for this symbol (best-effort).
-  if (transaction_type === "SELL") {
-    const { data: resting } = await svc.from("broker_orders")
-      .select("id, kite_gtt_id").eq("market", "india").eq("symbol", symbol.toUpperCase())
-      .eq("side", "buy").not("kite_gtt_id", "is", null)
-      .order("created_at", { ascending: false }).limit(1).maybeSingle();
-    if (resting?.kite_gtt_id) {
-      await cancelKiteGtt(Number(resting.kite_gtt_id), svc).catch(() => {});
-      await svc.from("broker_orders").update({ kite_gtt_id: null }).eq("id", resting.id).catch(() => {});
     }
   }
 

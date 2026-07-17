@@ -14,7 +14,7 @@ import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolveP
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
-// Also honors exit_reason="llm_exit" flags set by LearnerAgent — closes those on next run.
+// Legacy exit_reason="llm_exit" rows are revalidated deterministically before draining.
 //
 // MULTI-MARKET (Phase 4): positions carry a `market` (us | india). US prices come
 // from Massive (USD); India prices from free Yahoo .NS (INR). Each position is
@@ -156,14 +156,14 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
 
   const { data: strategyCfg } = await svc.from("strategy_config").select("exit_hysteresis").maybeSingle();
   const hysteresis = Number((strategyCfg as any)?.exit_hysteresis) || 15; // profile-scaled (Part A2); resilient default
-  const latestScore: Record<string, { score: number | null; direction: string | null; createdAt: string | null }> = {};
+  const latestScore: Record<string, { score: number | null; direction: string | null; createdAt: string | null; isHolding: boolean }> = {};
   for (const pos of positions) {
     if (pos.position_role === "hedge") continue;
     const sym = String(pos.symbol);
     const scoreMarket = marketOf(pos, hasMarketCol) as "us" | "india";
     const scoreKey = `${scoreMarket}:${sym}`;
     if (latestScore[scoreKey]) continue;
-    let q = svc.from("agent_signals").select("analyst_score, direction, created_at")
+    let q = svc.from("agent_signals").select("analyst_score, direction, created_at, is_holding")
       .eq("symbol", sym).eq("score_source", "deterministic_v1");
     if (hasMarketCol) q = q.eq("market", scoreMarket); // don't read a US score for an India position
     const { data: sig } = await q.order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -171,6 +171,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       score: (sig as any)?.analyst_score != null ? Number((sig as any).analyst_score) : null,
       direction: (sig as any)?.direction ?? null,
       createdAt: (sig as any)?.created_at ?? null,
+      isHolding: (sig as any)?.is_holding === true,
     };
   }
 
@@ -295,7 +296,12 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     // flip (held long, fresh signal now points away) is NOT a score comparison —
     // emitting "68 < 37" for a flip is nonsense. Direction flip takes precedence.
     const scoreBelowExit = scoreFresh && sc?.score != null && sc.score < exitThreshold;
-    const directionFlipped = scoreFresh && !!(sc?.direction && sc.direction !== "long");
+    // Only a holding-path short is an exit direction. A candidate-path neutral
+    // means "no entry", not "sell an existing position".
+    // A held signal becomes `short` below the entry threshold. It is not an
+    // independent exit input and must not bypass the lower hysteresis threshold.
+    const directionFlipped = scoreFresh && sc?.isHolding === true
+      && sc.direction === "short" && sc.score != null && sc.score < exitThreshold;
     if (pos.position_role !== "hedge" && sc?.score != null && !scoreFresh
         && pos.exit_reason !== "score_reassess_exit" && pos.exit_reason !== "llm_exit") {
       staleScoresHeld.push(`${pos.symbol} (${marketSessionsSince(sc.createdAt ?? "", new Date(), market)} sessions old; max ${maxScoreAge})`);

@@ -5,10 +5,47 @@ type LiveSnapshotRow = {
   positions_json?: unknown;
 };
 
+export type WatchlistMarketRow = {
+  symbol?: unknown;
+  source?: unknown;
+  market?: unknown;
+  created_at?: unknown;
+};
+
+export type PartitionedWatchlist = {
+  usManual: string[];
+  usOther: string[];
+  indiaManual: string[];
+  indiaOther: string[];
+};
+
 function normalizeSymbol(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const symbol = value.trim().toUpperCase();
   return symbol || null;
+}
+
+/** Keep watchlist candidates in their authoritative market pool. */
+export function partitionWatchlistByMarket(rows: WatchlistMarketRow[]): PartitionedWatchlist {
+  const result: PartitionedWatchlist = { usManual: [], usOther: [], indiaManual: [], indiaOther: [] };
+  const seen = new Set<string>();
+  const ordered = [...rows].sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+
+  for (const row of ordered) {
+    const symbol = normalizeSymbol(row.symbol);
+    if (!symbol) continue;
+    const rawMarket = typeof row.market === "string" ? row.market.trim().toLowerCase() : "";
+    const market = rawMarket === "india" || rawMarket === "us"
+      ? rawMarket
+      : symbol.endsWith(".NS") || symbol.endsWith(".BO") ? "india" : "us";
+    const key = `${market}:${symbol}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const manual = row.source === "manual";
+    if (market === "india") (manual ? result.indiaManual : result.indiaOther).push(symbol);
+    else (manual ? result.usManual : result.usOther).push(symbol);
+  }
+  return result;
 }
 
 export function symbolsFromLatestLiveSnapshots(rows: LiveSnapshotRow[]): string[] {

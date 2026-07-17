@@ -122,23 +122,12 @@ export const MCP_BROKERS: Record<string, McpBrokerConfig> = {
       quoteSymbolKeys: ["symbols", "symbol", "tickers"],
     },
     // ── Phase-2 ORDER surface — SHIPPED INERT (orders OFF) ────────────────────
-    // orderCapable is FALSE: even the config marker keeps Webull order-inert. The
+    // Published Webull Cloud MCP is query-only. No order scopes or order tools
+    // are configured here. Trading requires a separately reviewed signed API.
     // read-only `scopes` above are UNCHANGED — order:write is requested ONLY if
-    // the owner reconnects Webull with orders explicitly enabled (using
-    // orderScopes below). The webull order adapter additionally requires a
-    // strategy_config kill switch + a per-account allowlist row, neither of which
-    // exists today, so no order can be routed here. Order tool names verified live
-    // against the Webull MCP server, but the end-to-end order PATH is UNTESTED
+    // Do not invent MCP write tools from the separate Trading API documentation.
     // against a live account — the owner must reconnect with order scopes,
-    // allowlist ONE account, and run a $1 manual test before any real use.
     orderCapable: false,
-    orderScopes: "account:read order:read order:write market:read instrument:read",
-    orderTools: {
-      preview: "preview_stock_order",
-      place: "place_stock_order",
-      status: "get_order_detail",
-      cancel: "cancel_order",
-    },
   },
 };
 

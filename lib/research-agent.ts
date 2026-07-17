@@ -2,7 +2,7 @@ import { callLLM } from "@/lib/llm-router";
 import { getConfiguredModel } from "@/lib/agent-model-config";
 import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 import { retrieveSimilarTrades, summarizeMemories } from "@/lib/rag/trade-memory";
-import { fetchSocialSentiment, SocialSentiment } from "@/lib/social-sentiment";
+import { fetchSocialSentiment, shrinkSentimentScore, SocialSentiment } from "@/lib/social-sentiment";
 import { fetchOptionsSignal, OptionsSignal } from "@/lib/options-signal";
 import { computeScores, type ComputedScores } from "@/lib/data/scores";
 import type { Candle } from "@/lib/data/technicals";
@@ -24,7 +24,7 @@ import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { isEtfSymbol as canonicalIsEtfSymbol } from "@/lib/asset-classification";
 import { applyStrategyTilt, loadTradingMandate } from "@/lib/trading-mandate";
-import { symbolsFromLatestLiveSnapshots, symbolsFromPaperPositions, unionHoldingSymbols, orderHoldingsByStaleness } from "@/lib/research/holding-symbols";
+import { symbolsFromLatestLiveSnapshots, symbolsFromPaperPositions, unionHoldingSymbols, orderHoldingsByStaleness, partitionWatchlistByMarket } from "@/lib/research/holding-symbols";
 
 // Module-level cache: market → default investment_mandates.id.
 // Populated once per process; safe because seed mandates never change name.
@@ -474,12 +474,14 @@ export async function gatherSymbols(
   // localhost) independent of where research itself runs (cloud).
   //
   // expires_at filter mirrors app/api/watchlist/route.ts's GET — without this,
-  // an expired Theme Scout pick (30-day default) kept getting re-researched
+  // an expired Theme Scout pick kept getting re-researched
   // forever instead of retiring, since only the Watchlist UI page enforced it.
   const nowIso = new Date().toISOString();
   const [holdings, watchlistResult, screenerSymbols, profileResult] = await Promise.all([
     fetchHoldings(supabase),
-    supabase.from("watchlist").select("symbol, source, created_at").or(`expires_at.is.null,expires_at.gt.${nowIso}`),
+    supabase.from("watchlist").select("symbol, source, market, created_at")
+      .eq("research_enabled", true)
+      .or(`expires_at.is.null,expires_at.gt.${nowIso}`),
     runScreener(supabase),
     supabase.from("profiles").select("market_focus").limit(1).single(),
   ]);
@@ -488,10 +490,7 @@ export async function gatherSymbols(
   // intent and must beat the machine-generated screener carry-forward backlog —
   // otherwise a hand-picked ticker starves behind dozens of queued screener names.
   // Newest manual adds first (most recent intent).
-  const watchlistRows = ((watchlistResult.data ?? []) as any[])
-    .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
-  const manualWatchlist: string[] = watchlistRows.filter(r => r.source === "manual").map(r => String(r.symbol).toUpperCase());
-  const otherWatchlist: string[] = watchlistRows.filter(r => r.source !== "manual").map(r => String(r.symbol).toUpperCase());
+  const watchlist = partitionWatchlistByMarket((watchlistResult.data ?? []) as any[]);
 
   const rawFocus: string = (profileResult.data as any)?.market_focus ?? "US";
   const focusRegions = rawFocus.split(",").map((s: string) => s.trim()).filter(Boolean);
@@ -525,7 +524,7 @@ export async function gatherSymbols(
   // PRIORITY 1 — owner MANUAL watchlist adds. Explicit "research this now" intent
   // beats everything except holdings, so a hand-picked ticker (e.g. SK Hynix)
   // never starves behind the screener carry-forward backlog.
-  for (const sym of manualWatchlist) addCandidate(sym, "watchlist");
+  for (const sym of watchlist.usManual) addCandidate(sym, "watchlist");
 
   // PRIORITY 2 — carry-forward (migration 172): candidates that missed a prior
   // run's cap come back with raised priority so the pool rotates fairly.
@@ -533,7 +532,7 @@ export async function gatherSymbols(
   for (const sym of deferredUs) addCandidate(sym, "watchlist");
 
   // PRIORITY 3 — the rest of the watchlist (Theme Scout / non-manual).
-  for (const sym of otherWatchlist) addCandidate(sym, "watchlist");
+  for (const sym of watchlist.usOther) addCandidate(sym, "watchlist");
 
   const screenerMax = parseInt(process.env.RESEARCH_SCREENER_MAX ?? "6");
   let screenerAdded = 0;
@@ -626,7 +625,7 @@ export async function gatherSymbols(
     const rawList = cacheCandidates.length > 0 ? cacheCandidates : niftyCandidates(indiaCap);
     const orderedIndia: string[] = [];
     const seenInd = new Set<string>();
-    for (const sym of [...deferredIndia, ...rawList]) {
+    for (const sym of [...watchlist.indiaManual, ...deferredIndia, ...watchlist.indiaOther, ...rawList]) {
       const u = String(sym).toUpperCase();
       if (seenAll.has(u) || seenInd.has(u)) continue;
       seenInd.add(u);
@@ -1267,18 +1266,20 @@ function indiaNewsToSocial(symbol: string, news: IndiaNewsSentiment | null): Soc
   // toneToScore uses. StockTwits fields are null (India has no StockTwits), so the
   // AV-news branch is the one taken.
   const avScaled = Math.max(-1, Math.min(1, news.avgTone / 10));
+  const shrunkScore = shrinkSentimentScore(news.score, news.articleCount, 5);
   return {
     symbol,
     stocktwits_bullish_pct: null,
     stocktwits_bearish_pct: null,
     stocktwits_message_count: null,
+    stocktwits_sample_size: null,
     av_news_sentiment: avScaled,
     av_news_articles: news.articleCount,
     gdelt_score: news.score,
     gdelt_articles: news.articleCount,
     // scoreSentiment reads sentiment_score first — feed the GDELT 0-100 directly.
-    sentiment_score: news.score,
-    overall_sentiment: news.score > 60 ? "Bullish" : news.score < 40 ? "Bearish" : "Neutral",
+    sentiment_score: shrunkScore,
+    overall_sentiment: shrunkScore > 60 ? "Bullish" : shrunkScore < 40 ? "Bearish" : "Neutral",
     fetched_at: new Date().toISOString(),
     has_data: true,
   };
@@ -1477,7 +1478,7 @@ export async function processSymbol(
     supabase.from("profiles").select("market_focus").limit(1).single(),
     // Recent score history for THIS symbol so the thesis prompt can reference the
     // trend (rising/falling conviction) rather than judging the symbol in isolation.
-    supabase.from("signal_score_history").select("analyst_score, created_at").eq("symbol", symbol).order("created_at", { ascending: false }).limit(5),
+    supabase.from("signal_score_history").select("analyst_score, created_at").eq("symbol", symbol).eq("market", market).order("created_at", { ascending: false }).limit(5),
   ]);
   const marketFocus: string = (profileData as any)?.market_focus ?? "US";
 
@@ -1595,7 +1596,7 @@ export async function processSymbol(
   // here is what happened." No-op (empty note) when embeddings are disabled or the
   // memory corpus is empty; never blocks a research run.
   let memoryNote = "";
-  try {
+  if (!isHeld) try {
     const memories = await retrieveSimilarTrades({
       setup: {
         symbol,
@@ -1622,8 +1623,17 @@ export async function processSymbol(
   // LLM only writes thesis + direction — no score generation.
   // US-only Webull analyst grounding line (null when not connected/India → omitted).
   const webullLine = !india ? webullAnalystLine(webullAnalyst) : null;
-  const thesisPrompt = buildThesisOnlyPrompt(symbol, isHeld, scores, analystScore, scoreThreshold, marketFocus, india ? indiaNews : null, indiaMacroLine, webullLine) + trendNote + memoryNote;
-  const llmResult = await callLLM({
+  const thesisPrompt = isHeld ? "" : buildThesisOnlyPrompt(symbol, false, scores, analystScore, scoreThreshold, marketFocus, india ? indiaNews : null, indiaMacroLine, webullLine) + trendNote + memoryNote;
+  const llmResult = isHeld ? {
+    text: JSON.stringify({
+      direction: analystScore < scoreThreshold ? "short" : "long",
+      summary: `Deterministic holding reassessment: score ${analystScore}/100 from ${includedDims.join(", ") || "no usable dimensions"}.`,
+      key_risks: [],
+      catalysts: [],
+    }),
+    tokensIn: 0,
+    tokensOut: 0,
+  } : await callLLM({
     task: "screen",
     model: await getConfiguredModel(supabase, "research", "deepseek-reasoner"),
     prompt: thesisPrompt,
@@ -1755,6 +1765,7 @@ export async function processSymbol(
     research_packet_id: packet?.id ?? null,
     status: "pending",
     source,
+    is_holding: isHeld,
     rationale: (thesis.summary ?? `Score: ${analystScore}/100`) + directionNote,
     // NOTE: no price_target / stop_loss here — those columns don't exist on
     // agent_signals (only stop_loss_pct / take_profit_pct do). Including them made

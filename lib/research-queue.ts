@@ -6,17 +6,30 @@
 // All ops are best-effort: a queue error must never break a research run.
 
 type Svc = any;
+const MAX_DEFER_ATTEMPTS = 6;
+const MAX_DEFER_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Symbols carried forward for this market, highest-priority (longest-waiting) first. */
 export async function readDeferredCandidates(svc: Svc, market: "us" | "india"): Promise<string[]> {
   try {
     const { data } = await svc
       .from("research_queue")
-      .select("symbol")
+      .select("symbol, attempts, deferred_at")
       .eq("market", market)
       .order("priority", { ascending: false })
       .order("deferred_at", { ascending: true });
-    return (data ?? []).map((r: any) => String(r.symbol).toUpperCase());
+    const now = Date.now();
+    const eligible: string[] = [];
+    const stale: string[] = [];
+    for (const row of data ?? []) {
+      const symbol = String((row as any).symbol).toUpperCase();
+      const attempts = Number((row as any).attempts ?? 0);
+      const deferredAt = Date.parse(String((row as any).deferred_at ?? ""));
+      if (attempts >= MAX_DEFER_ATTEMPTS || !Number.isFinite(deferredAt) || now - deferredAt > MAX_DEFER_AGE_MS) stale.push(symbol);
+      else eligible.push(symbol);
+    }
+    if (stale.length) await svc.from("research_queue").delete().eq("market", market).in("symbol", stale);
+    return eligible;
   } catch {
     return [];
   }
@@ -41,19 +54,19 @@ export async function enqueueDeferred(svc: Svc, market: "us" | "india", symbols:
   try {
     const { data: existing } = await svc
       .from("research_queue")
-      .select("symbol, priority, attempts")
+      .select("symbol, priority, attempts, deferred_at")
       .eq("market", market)
       .in("symbol", list);
-    const prev = new Map<string, { priority: number; attempts: number }>(
+    const prev = new Map<string, { priority: number; attempts: number; deferredAt: string }>(
       (existing ?? []).map((r: any) => [
         String(r.symbol).toUpperCase(),
-        { priority: Number(r.priority ?? 0), attempts: Number(r.attempts ?? 0) },
-      ] as [string, { priority: number; attempts: number }]),
+        { priority: Number(r.priority ?? 0), attempts: Number(r.attempts ?? 0), deferredAt: String(r.deferred_at ?? "") },
+      ] as [string, { priority: number; attempts: number; deferredAt: string }]),
     );
     const now = new Date().toISOString();
     const rows = list.map((symbol) => {
       const p = prev.get(symbol);
-      return { market, symbol, priority: (p?.priority ?? 0) + 1, attempts: (p?.attempts ?? 0) + 1, deferred_at: now };
+      return { market, symbol, priority: (p?.priority ?? 0) + 1, attempts: (p?.attempts ?? 0) + 1, deferred_at: p?.deferredAt || now };
     });
     const { error } = await svc.from("research_queue").upsert(rows, { onConflict: "market,symbol" });
     if (error) console.error("[research-queue] failed to re-defer budget tail:", error.message);
@@ -77,14 +90,14 @@ export async function applyCandidateCarryForward(
     if (overflow.length > 0) {
       const { data: existing } = await svc
         .from("research_queue")
-        .select("symbol, priority, attempts")
+        .select("symbol, priority, attempts, deferred_at")
         .eq("market", market)
         .in("symbol", overflow);
-      const prev = new Map<string, { priority: number; attempts: number }>(
+      const prev = new Map<string, { priority: number; attempts: number; deferredAt: string }>(
         (existing ?? []).map((r: any) => [
           String(r.symbol).toUpperCase(),
-          { priority: Number(r.priority ?? 0), attempts: Number(r.attempts ?? 0) },
-        ] as [string, { priority: number; attempts: number }]),
+          { priority: Number(r.priority ?? 0), attempts: Number(r.attempts ?? 0), deferredAt: String(r.deferred_at ?? "") },
+        ] as [string, { priority: number; attempts: number; deferredAt: string }]),
       );
       const now = new Date().toISOString();
       const rows = overflow.map((symbol) => {
@@ -94,7 +107,7 @@ export async function applyCandidateCarryForward(
           symbol,
           priority: (p?.priority ?? 0) + 1,
           attempts: (p?.attempts ?? 0) + 1,
-          deferred_at: now,
+          deferred_at: p?.deferredAt || now,
         };
       });
       await svc.from("research_queue").upsert(rows, { onConflict: "market,symbol" });

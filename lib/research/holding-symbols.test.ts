@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { symbolsFromLatestLiveSnapshots, symbolsFromPaperPositions, unionHoldingSymbols, orderHoldingsByStaleness } from "./holding-symbols";
+import { symbolsFromLatestLiveSnapshots, symbolsFromPaperPositions, unionHoldingSymbols, orderHoldingsByStaleness, partitionWatchlistByMarket } from "./holding-symbols";
 
 describe("holding research symbols", () => {
+  it("partitions watchlist candidates by market before either research queue", () => {
+    expect(partitionWatchlistByMarket([
+      { symbol: "AAPL", market: "us", source: "manual", created_at: "2026-07-16" },
+      { symbol: "RELIANCE.NS", market: "india", source: "manual", created_at: "2026-07-17" },
+      { symbol: "TCS.NS", market: "india", source: "theme", created_at: "2026-07-15" },
+      { symbol: "LEGACY.NS", source: "theme", created_at: "2026-07-14" },
+    ])).toEqual({
+      usManual: ["AAPL"],
+      usOther: [],
+      indiaManual: ["RELIANCE.NS"],
+      indiaOther: ["TCS.NS", "LEGACY.NS"],
+    });
+  });
+
   it("uses only the latest snapshot for each live account", () => {
     expect(symbolsFromLatestLiveSnapshots([
       { broker: "robinhood", account_id: "a", captured_at: "2026-07-15", positions_json: [{ symbol: "OLD", qty: 1 }] },

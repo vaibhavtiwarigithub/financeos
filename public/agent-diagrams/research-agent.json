@@ -5,7 +5,7 @@
   "nodes": {
     "SCHED": {
       "label": "pg_cron · US + India",
-      "description": "Two separate per-market jobs on Supabase pg_cron, calling the Vercel route over HTTP — NOT Windows Task Scheduler. US 'kairos-research' 0 13 * * 1-5 (9:00 ET); India 'kairos-research-india' 0 4 * * 1-5 (09:30 IST, realigned by migration 082 from its original 11:00 UTC). The LLM is per-flow from Settings (agent_config where agent_name='research'), defaulting to deepseek-reasoner — and it only writes the thesis narrative; every number is computed deterministically before the model is called.",
+      "description": "Two separate per-market jobs on Supabase pg_cron, calling the Vercel route over HTTP — NOT Windows Task Scheduler. US 'kairos-research' 0 13 * * 1-5 (9:00 ET); India 'kairos-research-india' 0 4 * * 1-5 (09:30 IST). Scores and directions are deterministic. The configured LLM writes optional narrative for NEW candidates only; held-position reassessments skip the LLM because it cannot change their action.",
       "addedAt": "2026-06-25",
       "addReason": "Pre-market timing so signals are ready before open.",
       "status": "changed",
@@ -27,7 +27,7 @@
     },
     "ROTATE": {
       "label": "Staleness-ordered rotation",
-      "description": "Holdings are ordered by how long ago each was last scored (never-scored first) and worked through under a wall-clock budget (RESEARCH_BUDGET_MS, default ~105s) so a slow provider day degrades into 'the stalest names got scored' rather than 'the same first N names got scored forever'. Names that fall off the end raise a deferred-holdings alert naming the count, so a budget-truncated run is visible instead of silent. Holdings are exempt from the candidate cap.",
+      "description": "Holdings are ordered by how long ago each was last scored (never-scored first) and worked through under a wall-clock budget (RESEARCH_BUDGET_MS, default ~105s). Held rows receive full deterministic data scoring but skip optional LLM narrative and RAG retrieval, reducing latency without changing decisions. Names that fall off the end raise a deferred-holdings alert. Holdings are exempt from the candidate cap.",
       "addedAt": "2026-07-17",
       "addReason": "A fixed-order holdings loop under a timeout always starves the tail of the list; staleness ordering makes the truncation fair and the alert makes it honest.",
       "status": "new",
@@ -49,7 +49,7 @@
     },
     "SCORE": {
       "label": "Score 5 dimensions",
-      "description": "Exactly 5 dimensions are scored and weighted: fundamental, technical, sentiment, macro, insider — all computed deterministically before the LLM runs. Insider resolves through a cascade (Massive Form 4 → SEC EDGAR → Alpha Vantage), first available:true wins; ADRs skip it entirely. India macro is honestly UNAVAILABLE and excluded: MacroSentinel is US-only by construction and macro_regime carries no market column, so an India name renormalizes over its remaining dimensions rather than being handed a fabricated 50. US macro also fails closed on staleness (>10 days) or fewer than 3 indicators. India sentiment comes from GDELT tonechart; an FII/DII flow line is fed to the thesis prompt as narrative only and is deliberately NOT part of macro_score. Two further dimensions exist in the type (options, analyst) but are logged evidence only and are never weighted.",
+      "description": "Exactly 5 dimensions are scored and weighted: fundamental, technical, sentiment, macro, insider. Sentiment sources are sample-shrunk before blending so thin 100% reads cannot receive full confidence. Analyst targets remain observational evidence and do not change fundamentals. India macro is honestly UNAVAILABLE and excluded; US macro fails closed on staleness or insufficient indicators. Options and analyst evidence are logged only and never weighted.",
       "addedAt": "2026-06-25",
       "addReason": "Multi-dimensional scoring is the core of the strategy.",
       "status": "changed",
@@ -148,6 +148,7 @@
     }
   },
   "history": [
+    { "date": "2026-07-17", "event": "modify", "nodeId": "SCORE", "label": "Cross-market scoring and capacity audit", "reason": "Held positions now persist is_holding=true, India and US watchlists are partitioned by authoritative market, research_enabled is honored, held rows skip optional LLM narrative, sentiment is sample-shrunk, and analyst targets are observation-only." },
     {
       "date": "2026-06-25",
       "event": "add",

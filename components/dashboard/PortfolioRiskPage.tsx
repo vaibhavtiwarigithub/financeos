@@ -116,7 +116,7 @@ function SectorSection({ breakdown, isIndia, cur }: { breakdown: SectorBreakdown
   return (
     <div style={{ marginTop: "16px" }}>
       <div style={{ fontSize: "9px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "10px" }}>
-        {isIndia ? "Sector Exposure" : "Sector Exposure vs S&P 500"}
+        {isIndia ? "Sector Allocation (% of invested holdings)" : "Sector Allocation vs S&P 500 (% of invested holdings)"}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
         {breakdown.map(s => {

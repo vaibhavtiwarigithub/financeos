@@ -733,3 +733,34 @@ It ships fully OFF.
 
 **P1 gate:** Weekly Vercel cron counts closed evaluable trades per market. Fires a System
 Health info alert when ≥ 20 accumulate.
+
+---
+
+## 2026-07-17 Research and Exit Contract Audit
+
+- The watchlist input is filtered by `research_enabled=true`, unexpired rows, and
+  authoritative `market`; suffix inference is only a legacy fallback. US and India
+  watchlist rows cannot enter each other's scoring pool.
+- Holdings from paper and live snapshots are staleness-ordered and persist
+  `agent_signals.is_holding=true`. PositionMonitor may only treat a holding-path
+  signal as a reassessment input.
+- Held positions receive the same deterministic evidence fetch, five-dimension
+  scoring, availability mask, and market-local weights as candidates. They skip
+  optional LLM narrative and RAG retrieval because those outputs cannot alter an
+  action; this preserves wall-clock capacity for exit coverage and candidates.
+- Candidate overflow is carried forward with a stable original defer time and is
+  pruned after six unsuccessful deferrals or seven days. Theme Scout rows expire
+  after seven days, require an owner id, deduplicate per run, and cannot overwrite
+  a durable manual row.
+- Sentiment inputs are shrunk toward 50 using source sample size before blending.
+  A five-message 100% bullish split therefore scores 67, not 100.
+- Analyst targets are retained as observational evidence only. They do not alter
+  fundamental or composite scores until a validation/promotion decision says so.
+- India macro remains unavailable and excluded. It never queries or inherits the
+  US-only `macro_regime`; effective weights renormalize over genuine India inputs.
+- A stored held `short` below the entry threshold is not an independent exit gate.
+  PositionMonitor still requires the lower `entry threshold - hysteresis` bound,
+  a fresh score, and holding provenance. Stops and targets remain independent.
+- Risk Analytics remains deliberately research-free in its risk formula. The UI
+  may show the latest holding score and age beside the independent risk verdict;
+  research cannot veto a concentration, drawdown, liquidity, or volatility risk.

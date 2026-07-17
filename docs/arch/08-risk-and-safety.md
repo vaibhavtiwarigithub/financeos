@@ -565,3 +565,30 @@ the token; this proactive 6h check + honest badge close that gap. The only human
 reconnects OAuth via the localhost loopback) is triggered solely on a **failed refresh** — the check is
 advisory + performs the same CAS refresh the order path uses, but reaches no credential-write beyond token
 renewal and no order path.
+
+## Kite GTT and Explicit SELL Safety (2026-07-17)
+
+Kite GTT child orders are `LIMIT`, including the stop-side child. A trigger is not
+a guaranteed fill: a gap through the limit can leave protection unfilled. Kairos
+must report that semantics honestly and may not label the child `SL-M`.
+
+For the standalone human-confirmed Kite route, an explicit SELL now:
+
+1. reads every recorded non-null GTT id for the India symbol;
+2. cancels each at Kite and requires positive confirmation;
+3. clears each id in `broker_orders`;
+4. only then submits the explicit SELL.
+
+When a resting GTT exists, the standalone route permits only a full-quantity
+exit. A partial SELL would cancel protection for the unsold remainder and is
+therefore rejected until a reviewed residual-protection workflow exists.
+
+Any read, cancel, or ledger-clear uncertainty fails closed before SELL. If the
+SELL fails after confirmed cancellation, a critical issue states that the still-
+held position may now lack broker-side protection. GTT placement/persistence
+failure after a confirmed BUY is also critical. The broader hybrid protective-stop
+feature remains a draft and is not enabled by this correction.
+
+Webull Cloud MCP remains query-only and advertises no order scopes or tools. A
+future Webull Trading API adapter is a separate, signed, sandbox-first money-path
+feature and is currently unapproved and disabled.

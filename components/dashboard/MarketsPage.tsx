@@ -1836,7 +1836,7 @@ export default function MarketsPage() {
           {/* Provenance / freshness footer — states the real provider, the real
               endpoint semantics, and the real age of the data. */}
           <div style={{ marginTop: "16px", fontSize: "11px", color: T.muted, textAlign: "right", lineHeight: 1.6 }}>
-            Daily close via Massive (previous-day aggregate, end-of-day — not intraday)
+            Grouped daily close via Massive (end-of-day — not intraday)
             {data.sessionDate && <> · session {data.sessionDate}</>}
             {data.priorCloseDate && <> vs prior close {data.priorCloseDate}</>}
             <br />

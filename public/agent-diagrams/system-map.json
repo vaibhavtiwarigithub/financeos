@@ -16,7 +16,7 @@
     },
     "RESEARCH": {
       "label": "ResearchAgent",
-      "description": "Daily (Mon-Fri, 9:00 ET). Scores each tracked symbol across 5 dimensions (fundamental/technical/sentiment/macro/insider) into an analyst_score, using the promoted CHAMPION weights when one exists (the closed learning loop) and each symbol's recent score TREND as context. Writes agent_signals + appends signal_score_history. Research Journal: agent_signals inserts now capture the returned row id (signal_id was previously always null downstream), decision_observations.features.screener records which dual-bucket screener criteria flagged a candidate, and a pipeline_stage_events row is written per candidate (stage='research', passed/rejected + reason) — the first link in a full pipeline trail (research -> portfolio constructor -> execution). [2026-07-12] LLM now per-flow from Settings->AI Models (agent_config, default deepseek-reasoner), not hardcoded. India inputs added: GDELT news tone -> sentiment_score (lib/india-news.ts), and live NSE FII/DII net flows injected into the India thesis prompt (lib/india-macro.ts). Emits a low-confidence-research:<market> System Health alert when >=50% of a run's symbols score on <2 of 5 dimensions (quality gap, not just quota).",
+      "description": "Daily per market. Scores each tracked symbol deterministically across fundamental, technical, sentiment, macro, and insider evidence using market-local champion weights. Watchlists are partitioned by market and research_enabled; holdings persist is_holding=true and are staleness-ordered. Held rows skip optional LLM narrative to protect coverage; new candidates may receive narrative that cannot alter scores or directions. Sentiment is sample-shrunk, analyst targets are observational only, and India never inherits the US macro regime. Writes agent_signals, signal_score_history, and decision observations.",
       "addedAt": "2026-06-25",
       "addReason": "Central scoring engine — everything downstream keys off its analyst_score.",
       "status": "changed",
@@ -236,7 +236,7 @@
     },
     "KITE": {
       "label": "Zerodha Kite (India execution)",
-      "description": "Real NSE/BSE orders via Kite Connect (Personal tier). Human-in-the-loop: user-initiated from /dashboard/india with an explicit confirm — never cron/agent-fired. Kite's token expires daily (SEBI requirement), so a one-click login each trading morning re-arms it; reads/orders degrade to a 'reconnect' state when stale. Every Kite submit passes one choke point, placeEquityOrder(), which runs verifyKiteTradingIdentity(): it fetches Kite /user/profile and requires the connected token's user_id to match strategy_config.active_account_india AND an allowlisted broker_accounts{broker=kite,role=trading} row — a wrong/rotated token or unset account fails closed (403/500/502).",
+      "description": "Real NSE/BSE orders via Kite Connect. Human-confirmed standalone orders pass identity, market-control, kill-switch, risk, budget, and account gates. Kite GTT children are LIMIT orders, so protection has stop-limit gap risk. An explicit SELL cancels and confirms every recorded resting GTT before submission; cancellation uncertainty fails closed and raises a critical health issue.",
       "addedAt": "2026-07-05",
       "addReason": "The one thing free India data can't do — real execution.",
       "status": "changed",
@@ -423,6 +423,8 @@
     }
   },
   "history": [
+    { "date": "2026-07-17", "event": "changed", "nodeId": "RESEARCH", "label": "US and India scoring/backlog audit", "reason": "Market-partitioned watchlists, research_enabled filtering, holding provenance, bounded theme rows, sample-shrunk sentiment, observation-only analyst targets, and no-LLM holding reassessment were made explicit. PositionMonitor separately enforces score freshness and exit hysteresis." },
+    { "date": "2026-07-17", "event": "changed", "nodeId": "KITE", "label": "GTT semantics and cancel-before-sell corrected", "reason": "Official Kite GTT children are LIMIT orders, not SL-M. Explicit India sells now cancel and confirm every recorded resting GTT before submitting, preventing an orphan trigger from later double-selling." },
     {
       "date": "2026-07-05",
       "event": "added",

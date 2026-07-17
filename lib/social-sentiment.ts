@@ -6,6 +6,7 @@ export interface SocialSentiment {
   stocktwits_bullish_pct: number | null;   // 0-100
   stocktwits_bearish_pct: number | null;
   stocktwits_message_count: number | null;
+  stocktwits_sample_size?: number | null;
   av_news_sentiment: number | null;         // -1 to 1 (Alpha Vantage)
   av_news_articles: number | null;
   gdelt_score: number | null;               // 0-100 GDELT news-tone (uncapped, free)
@@ -31,6 +32,17 @@ interface StockTwitsResult {
 // e.g. 1 tagged message reads as "100% bullish" with full apparent confidence.
 // Require a real sample before treating the split as directional evidence.
 const MIN_SENTIMENT_SAMPLE = 5;
+
+// A directional percentage is not equally reliable at N=5 and N=500. Apply a
+// neutral pseudo-count before sources are blended so a direct sentiment_score
+// cannot bypass the shrinkage in scoreSentiment().
+export function shrinkSentimentScore(score: number, sampleSize: number, priorStrength = 10): number {
+  const boundedScore = Math.max(0, Math.min(100, score));
+  const n = Math.max(0, Math.floor(sampleSize));
+  const k = Math.max(0, priorStrength);
+  if (n + k === 0) return 50;
+  return Math.round((boundedScore * n + 50 * k) / (n + k));
+}
 
 interface AVNewsResult {
   sentiment: number;
@@ -88,10 +100,17 @@ export async function fetchSocialSentiment(symbol: string): Promise<SocialSentim
   // Combine into a single 0-100 sentiment_score (what scoreSentiment reads first).
   // StockTwits directional % (40%) blended with the news-tone component (60%);
   // news component = GDELT score when present, else AV (-1..1 → 0..100).
-  const newsComponent = gd ? gd.score : av ? (av.sentiment + 1) / 2 * 100 : null;
+  const stockTwitsComponent = st
+    ? shrinkSentimentScore(st.bullish_pct, st.sentiment_sample_size, 10)
+    : null;
+  const newsRaw = gd ? gd.score : av ? (av.sentiment + 1) / 2 * 100 : null;
+  const newsSample = gd ? gd.articleCount : av?.article_count ?? 0;
+  const newsComponent = newsRaw != null
+    ? shrinkSentimentScore(newsRaw, newsSample, 5)
+    : null;
   let sentimentScore: number | null = null;
-  if (st && newsComponent != null) sentimentScore = st.bullish_pct * 0.4 + newsComponent * 0.6;
-  else if (st) sentimentScore = st.bullish_pct;
+  if (stockTwitsComponent != null && newsComponent != null) sentimentScore = stockTwitsComponent * 0.4 + newsComponent * 0.6;
+  else if (stockTwitsComponent != null) sentimentScore = stockTwitsComponent;
   else if (newsComponent != null) sentimentScore = newsComponent;
   const bullishScore = sentimentScore ?? 50;
 
@@ -100,6 +119,7 @@ export async function fetchSocialSentiment(symbol: string): Promise<SocialSentim
     stocktwits_bullish_pct: st?.bullish_pct ?? null,
     stocktwits_bearish_pct: st?.bearish_pct ?? null,
     stocktwits_message_count: stRaw?.message_count ?? null,
+    stocktwits_sample_size: stRaw?.sentiment_sample_size ?? null,
     av_news_sentiment: av?.sentiment ?? null,
     av_news_articles: av?.article_count ?? null,
     gdelt_score: gd?.score ?? null,

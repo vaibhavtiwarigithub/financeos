@@ -90,21 +90,20 @@ export async function POST(req: NextRequest) {
 
   // Idempotency guard — a duplicate/manual re-trigger within 30 min shouldn't
   // re-run the pass. But it must be PER MARKET: a US run at 9 AM must not suppress
-  // the India run, and vice-versa. agent_runs has no market column, so infer each
+  // the India run, and vice-versa. Filter the persisted market explicitly so each
   // recent run's market from its symbols (any .NS/.BO → India) and only block when
   // a run for THIS market is in the window.
   const guardWindow = new Date(Date.now() - 30 * 60_000).toISOString();
   const { data: recentRuns } = await supabase
     .from("agent_runs")
-    .select("id, status, started_at, symbols")
+    .select("id, status, started_at, symbols, market")
     .eq("agent_type", "research")
+    .eq("market", marketScope ?? "us")
     .gte("started_at", guardWindow)
     .order("started_at", { ascending: false })
     .limit(5);
-  const runMarket = (r: any): string =>
-    (Array.isArray(r?.symbols) && r.symbols.some((s: string) => /\.(NS|BO)$/i.test(String(s)))) ? "india" : "us";
   const guardMarket = marketScope ?? "us";
-  const recentRun = (recentRuns ?? []).find((r: any) => runMarket(r) === guardMarket);
+  const recentRun = (recentRuns ?? [])[0];
   if (recentRun) {
     return NextResponse.json({
       skipped: true,

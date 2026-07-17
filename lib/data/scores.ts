@@ -73,7 +73,7 @@ function sectorPeNorm(sector: string | undefined): number {
   return SECTOR_PE_NORM[sector.trim().toLowerCase()] ?? 20;
 }
 
-function scoreFundamentals(overview: Record<string, string>, isEtf: boolean, currentPrice?: number): { score: number; evidence: Record<string, unknown> } {
+export function scoreFundamentals(overview: Record<string, string>, isEtf: boolean, currentPrice?: number): { score: number; evidence: Record<string, unknown> } {
   if (isEtf) {
     // ETFs have no P/E/earnings — use a neutral baseline (momentum drives the score elsewhere).
     return { score: 55, evidence: { note: "ETF — no company fundamentals; neutral 55 baseline" } };
@@ -148,9 +148,7 @@ function scoreFundamentals(overview: Record<string, string>, isEtf: boolean, cur
     const upside = (target - refPrice) / refPrice;
     evidence.analyst_target = target;
     evidence.analyst_upside_pct = parseFloat((upside * 100).toFixed(1));
-    if (upside > 0.25) score += 12;
-    else if (upside > 0.10) score += 6;
-    else if (upside < -0.10) score -= 8;
+    evidence.analyst_target_mode = "observational_only";
   }
 
   evidence.symbol = overview.Symbol;
@@ -172,7 +170,8 @@ export function scoreSentiment(socialResult: any): { score: number; evidence: Re
 
   if (!socialResult) return { score: 50, evidence: { note: "no sentiment data" } };
 
-  // socialResult may have: bullish_pct, bearish_pct, sentiment_score (0-100), bull_bear_ratio
+  // fetchSocialSentiment returns a source-shrunk direct score. Legacy callers
+  // without one continue through the fallback shrinkage below.
   const sentScore = socialResult.sentiment_score;
   if (typeof sentScore === "number" && sentScore >= 0 && sentScore <= 100) {
     return { score: Math.round(sentScore), evidence: { source: "social", raw: socialResult } };
@@ -196,7 +195,7 @@ export function scoreSentiment(socialResult: any): { score: number; evidence: Re
       return { score: 50, evidence: { bullish_pct: bull, bearish_pct: bear, note: "no directional sentiment" } };
     }
     const bullFraction = bull / directional;
-    const msgCount = socialResult.stocktwits_message_count ?? 0;
+    const msgCount = socialResult.stocktwits_sample_size ?? socialResult.stocktwits_message_count ?? 0;
     const shrunkFraction =
       (bullFraction * msgCount + 0.5 * SENTIMENT_PRIOR_STRENGTH) / (msgCount + SENTIMENT_PRIOR_STRENGTH);
     const score = Math.round(shrunkFraction * 100);

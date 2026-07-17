@@ -20,12 +20,11 @@ const ADAPTERS: Record<string, () => BrokerAdapter> = {
   // strategy_config.active_broker_us='robinhood' to route live US orders here.
   robinhood: robinhoodAdapter,
   // US live via Webull MCP (Phase 2) — SHIPPED INERT. isConfigured() is FALSE
-  // until the owner reconnects Webull with order scopes, adds+sets
-  // strategy_config.webull_orders_enabled, allowlists a broker_accounts
-  // (broker='webull', role='trading') row, and flips cfg.orderCapable=true. The
+  // permanently because published Cloud MCP has no write tools. A future
+  // A signed Trading API adapter needs a separate registry id, reviewed
+  // credentials and gates, and sandbox proof. The
   // order path is UNTESTED against a live account — see lib/brokers/adapters/
-  // webull.ts. Registered here only so the Gateway can find it once enabled; it
-  // is NOT set as any active_broker and is in NO cron/automated flow.
+  // webull.ts. Cloud MCP is not active in any order flow.
   webull: webullAdapter,
 };
 

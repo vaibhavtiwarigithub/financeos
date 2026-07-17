@@ -14,7 +14,7 @@ export const maxDuration = 60;
 const AV_KEY = process.env.ALPHA_VANTAGE_API_KEY ?? "";
 const MAX_THEME_STOCKS = 2;  // per theme
 const MAX_THEMES = 3;
-const EXPIRE_DAYS = 30;
+const EXPIRE_DAYS = 7;
 
 // NOTE: Theme Scout is deliberately a PLAIN news-driven scout — it surfaces the
 // day's news-implied themes only. It is NOT the alpha source and does NOT hardcode
@@ -176,13 +176,23 @@ Rules:
   // instead of relying on incidental NULL-tolerant columns.
   const { data: ownerProfile } = await supabase.from("profiles").select("id").limit(1).maybeSingle();
   const ownerId = (ownerProfile as any)?.id ?? null;
+  if (!ownerId) {
+    await supabase.from("agent_alerts").insert({
+      severity: "error",
+      category: "watchlist",
+      title: "Theme Scout: owner profile unavailable",
+      detail: "No owner profile could be resolved, so Theme Scout refused to create unowned watchlist rows.",
+      auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+    });
+    return NextResponse.json({ error: "Owner profile unavailable; no watchlist rows written" }, { status: 500 });
+  }
 
   const expiry = new Date(Date.now() + EXPIRE_DAYS * 24 * 3600 * 1000).toISOString();
-  const rows: any[] = [];
+  const rowsBySymbol = new Map<string, any>();
 
   for (const t of enriched) {
     for (const clean of t.candidates) {
-      rows.push({
+      rowsBySymbol.set(clean, {
         user_id: ownerId,
         symbol: clean,
         source: "llm_theme",
@@ -202,6 +212,24 @@ Rules:
       });
     }
   }
+  const candidateRows = [...rowsBySymbol.values()];
+  const candidateSymbols = candidateRows.map((row) => row.symbol);
+  const { data: existingRows } = candidateSymbols.length
+    ? await supabase.from("watchlist").select("symbol, source").eq("user_id", ownerId).in("symbol", candidateSymbols)
+    : { data: [] as any[] };
+  const protectedSymbols = new Set(
+    (existingRows ?? [])
+      .filter((row: any) => row.source !== "llm_theme")
+      .map((row: any) => String(row.symbol).toUpperCase()),
+  );
+  const rows = candidateRows.filter((row) => !protectedSymbols.has(row.symbol));
+
+  // Keep historical invalid writes for audit, but expire them so nullable-owner
+  // duplicates cannot keep expanding the active research universe.
+  const cleanupAt = new Date().toISOString();
+  await supabase.from("watchlist").update({ expires_at: cleanupAt })
+    .eq("source", "llm_theme").is("user_id", null)
+    .or(`expires_at.is.null,expires_at.gt.${cleanupAt}`);
 
   if (rows.length) {
     const { error: upsertErr } = await supabase.from("watchlist").upsert(rows, {
