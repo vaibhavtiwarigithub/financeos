@@ -1,5 +1,5 @@
 # Kairos — Agents
-> Last updated: 2026-07-16 (ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
+> Last updated: 2026-07-16 (macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
 > Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
 
 **Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file + update `public/agent-diagrams/system-map.json`.
@@ -99,6 +99,28 @@ Each indicator has a hardcoded `direction_sign` (+1 bad, -1 good) and weight sum
 **Key behavior:** Advisory-only. MacroSentinel never auto-throttles agents or halts trading.
 User sees the regime first and decides whether to act.
 
+**Scope: US ONLY.** Every indicator is a US series (yield curve, Sahm rule, US GDP, nonfarm
+payrolls, US CPI, US retail sales, fed funds, US durables). `macro_regime` has **no `market`
+column**, so its verdict is US-only regardless of which symbol reads it. **It must never score a
+non-US symbol.** Consumers are responsible for market-gating their own reads — `lib/data/scores.ts`
+does this for the money path (India → macro UNAVAILABLE). A real India regime would be a separate
+agent + a `market` column; `lib/india-macro.ts` (FII/DII) is thesis evidence, NOT a regime.
+
+**Consumer contract for `macro_regime` (money path — `lib/data/scores.ts`):**
+A row may score a symbol only if **all** hold. Otherwise macro is UNAVAILABLE → excluded from the
+weighted score, weights renormalize. It never falls back to a calm/green default.
+
+| Check | Rule | Why |
+|---|---|---|
+| Market | symbol is US | agent is US-only; table has no `market` column |
+| Verdict | `regime != 'unknown'` | an unknown row's `danger_score` is a placeholder 0, not a calm read |
+| Freshness | `week_of` within `MAX_MACRO_AGE_DAYS` = **10** | weekly cadence (7d) + 3d cron slack, and strictly < 14 so a fully missed run can never be masked by riding the prior week |
+| Evidence | `raw_indicators` length >= 3 | mirrors MacroSentinel's own classification floor; rejects pre-guard legacy rows that stamped `green`/danger-0 off **zero** indicators |
+
+`signals_triggered = 0` is **NOT** treated as suspect on its own — a genuinely calm week really does
+trip zero signals, and rejecting those would bias the book bearish. The honest discriminator is the
+indicator count.
+
 ---
 
 ### ResearchAgent — the analyst (the brain)
@@ -115,7 +137,7 @@ User sees the regime first and decides whether to act.
    - *Value*: P/E < sector median, high FCF yield, insider buying, recent analyst upgrades
 4. Score trend from `signal_score_history` (last 5 rows per symbol)
 5. Champion weights from `strategy_versions WHERE is_champion = true AND market = ?`
-6. Macro regime from most recent `macro_regime` row
+6. Macro regime from the most recent **usable** `macro_regime` row — **US symbols only**. A row is usable only if it has a real verdict (`regime != 'unknown'`), is within `MAX_MACRO_AGE_DAYS` (10) of `week_of`, and rests on >= 3 real indicators. Otherwise macro is UNAVAILABLE (excluded, never defaulted to calm). India never reads this table. (`lib/data/scores.ts`, 2026-07-16)
 7. RAG memory via `retrieveSimilarTrades()` (if Jina embeddings are configured — Voyage was replaced by Jina free tier 2026-07)
 8. India news sentiment — GDELT DOC 2.0 article tone (`lib/india-news.ts`), free/no-key (2026-07-12)
 9. India FII/DII net cash flows — live NSE (`lib/india-macro.ts`), injected into the India thesis prompt (2026-07-12)
@@ -127,7 +149,7 @@ User sees the regime first and decides whether to act.
 | `fundamental_score` | AV OVERVIEW (US) / Yahoo quoteSummary (India) | **P/E vs sector norm** (`SECTOR_PE_NORM`, not an absolute band), profit margin, ROE, EPS sign, rev-growth YoY, **analyst target upside** (target vs live close / 200-DMA proxy) |
 | `technical_score` | AV RSI + EMA + SMA (US) / Yahoo candles (India) | RSI(14) **continuous curve** (interpolated anchors, no bucket cliffs), price vs EMA20/50, 20d trend, **volume confirmation** (elevated volume ±8 in the prevailing direction) |
 | `sentiment_score` | AV NEWS_SENTIMENT + StockTwits (US) / **GDELT India news tone** (India, `lib/india-news.ts`) | Weighted news bullishness. India: aggregate tone of recent GDELT articles → 0-100; dimension stays *unavailable* (not faked) when GDELT returns < 3 articles (2026-07-12). |
-| `macro_score` | `macro_regime.danger_score` + `macro_signals` (US/global) | Macro backdrop from MacroSentinel. India research additionally injects a factual **FII/DII net-flow line** (`lib/india-macro.ts`, live NSE) into the thesis prompt — narrative grounding only; the deterministic `macro_score` still uses the US/global regime. FII/DII is null (line omitted) when NSE geo-throttles Vercel. (2026-07-12) |
+| `macro_score` | `macro_regime.danger_score` — **US ONLY** | Macro backdrop from MacroSentinel. **India: dimension is UNAVAILABLE and excluded — weights renormalize onto the remaining dimensions** (2026-07-16). MacroSentinel is US-only by construction (8 US FRED series) and `macro_regime` has no `market` column, so scoring an India symbol from it stamped the US Fed's verdict onto Indian equities. India research still injects a factual **FII/DII net-flow line** (`lib/india-macro.ts`, live NSE) into the thesis prompt — narrative grounding only, deliberately NOT wired into `macro_score`; a real India regime is a separate build. FII/DII is null (line omitted) when NSE geo-throttles Vercel. (2026-07-12) |
 | `insider_score` | AV INSIDER_TRANSACTIONS (US) / NSE insider (India) | 90-day buy/sell ratio; congressional trades |
 
 Sub-score formulas are deterministic and **fixed** (hand-tuned priors in `lib/data/scores.ts` + `lib/data/technicals.ts`) — they are NOT agent/genome-mutable. Only the dimension **weights** evolve (champion loop). New candidate features flow through the IC-gated Feature Registry, not by editing these formulas. (2026-07-10: scored the previously-dead volume + analyst-target signals, made RSI continuous, made P/E sector-relative.)

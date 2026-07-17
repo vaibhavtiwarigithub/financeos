@@ -1,5 +1,5 @@
 # Kairos — Learning Loop
-> Last updated: 2026-07-13 (automated strategy validation + auto-shadow routing, migration 170; cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
+> Last updated: 2026-07-16 (OPEN ITEM: India macro contamination in the historical trade set — 4 closed + 13 open India trades entered on a US/stale macro score; taint proposal pending owner decision, no rows mutated. Prior: automated strategy validation + auto-shadow routing, migration 170; cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
 > Update this file when: the learning flow changes, new guardrails are added to weight mutation, genome parameters change, Phase 1 unlocks, the RAG pipeline changes, or Performance Truth Layer evaluation logic changes.
 
 ---
@@ -91,6 +91,37 @@ Weight mutation is **blocked entirely** until 10+ closed trades per market exist
 LearnerAgent runs but only writes a "mutation blocked: insufficient trades" note to
 `learning_log`. Phase 1 (mutation unlocked) requires the owner to verify the trade set and
 acknowledge the gate has been cleared.
+
+### OPEN ITEM (2026-07-16): India macro contamination in the historical trade set — NOT yet remediated
+
+Until 2026-07-16, India signals were scored with the **US** macro regime (`macro_regime` has no
+`market` column) and, on 2026-07-13, with a **fortnight-stale** `green` verdict that was really a
+failed MacroSentinel run (`raw_indicators = []`). `lib/data/scores.ts` now excludes macro for India
+and age-bounds the row — but **the historical rows already written are still contaminated.**
+
+Measured in prod on 2026-07-16 (entry signal joined to `signal_score_history`):
+
+| India paper_trades | Count |
+|---|---|
+| Closed, entered on a macro-contaminated score | **4** (2 via stale-green `macro_score=100`, 2 via US-orange `macro_score=60`) |
+| Closed, clean (macro already excluded) | 3 |
+| Open, entered on a macro-contaminated score | **13** (3 stale-green, 10 US-orange) |
+| Open, clean | 2 |
+
+**Why this is not yet urgent:** the mutation gate is 10+ closed trades **per market**; India has 7
+closed. The learner is still Phase 0 for India, so no contaminated trade has driven a weight
+mutation yet. The 13 contaminated **open** positions will close into this set, though — so the
+record should be corrected *before* India reaches 10.
+
+**Proposal (owner decision — deliberately NOT applied, no rows were mutated):** flag rather than
+delete. The taint vehicle already exists (`paper_trades.tainted`, `taint_reason`,
+`excluded_from_learning`; filter in `lib/learning/taint-filter.ts`), so no migration is needed —
+set `tainted = true`, `taint_reason = 'macro_regime_market_leak'` on the affected rows.
+`applyLearningTaintFilter` then drops them from learning and from the RAG memory corpus, while
+`run-evaluation.ts` still **counts** them in P&L (the book really moved — see "Tainted trades" under
+Performance Truth). Note the flag is coarse: it removes the whole trade from learning, not just its
+macro dimension. Given India's small n, the honest alternative — accept a smaller-but-clean India
+trade set — is preferable to learning from a US-Fed-scored Indian book.
 
 ### Tool-use loop (9 tools)
 
