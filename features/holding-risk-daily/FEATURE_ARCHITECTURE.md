@@ -1,10 +1,21 @@
 # Feature: Daily Per-Holding Risk Analytics
 
 **Status:** DRAFT — awaiting owner approval
-**Last updated:** 2026-07-11 — reviewed/updated by ChatGPT
+**Last updated:** 2026-07-16
 **Owner:** Vaibhav
 **Update this file when:** the per-holding risk score formula, the strategy-decision
 rules, the daily cron cadence, or the snapshot schema changes.
+
+> **Sector-cap breach allocation (`hr-v1` → `hr-v2`, 2026-07-16):** the posture rule
+> below ("hard concentration/cluster breach → `trim`") was wrong for the SECTOR cap.
+> A sector breach is a property of the sector, not of any name in it, so it gave
+> every holding in the sector the identical `trim` with no size. The per-name
+> allocator — which names absorb the breach, how much each gives up, and why a name
+> was NOT selected — is specified in
+> **`features/risk-sector-breach-allocation/FEATURE_ARCHITECTURE.md`**, which is the
+> authority for that rule, its NAV denominator, and the read-only advisory labelling.
+> This file remains the authority for the score, the cron, the snapshot schema, and
+> the LLM prose boundary. No migration; `formula_version` carries the change.
 
 ## Intent (owner, verbatim)
 
