@@ -22,8 +22,21 @@
 // Missing structural fields → `insufficient_data` with NO numeric score. Missing
 // optional dimensions lower `data_confidence` and are excluded from the numerator
 // (the score is NOT renormalized to look fully confident on partial data).
+//
+// hr-v2 (2026-07-16) — SECTOR BREACH IS NO LONGER A BLANKET PER-NAME VERDICT.
+// A sector-cap breach is a property of the SECTOR: `sectorUtil >= 1` is the same
+// number for every holding in it, so hr-v1 gave EVERY name in the sector the
+// identical `trim` without ever deciding which names absorb the breach or how
+// much each gives up. hr-v2 consults the deterministic, risk-internal allocator
+// (`lib/risk/sector-breach.ts`): the sector breach makes THIS name a trim only
+// when the allocator selected it to absorb. See
+// features/risk-sector-breach-allocation/FEATURE_ARCHITECTURE.md.
+// The score, the six components, their caps, the confidence weights, and
+// `add_capacity` are UNCHANGED — only the sector→posture step moved.
 
-export const HOLDING_RISK_FORMULA_VERSION = "hr-v1";
+import type { SectorBreachAllocation } from "@/lib/risk/sector-breach";
+
+export const HOLDING_RISK_FORMULA_VERSION = "hr-v2";
 
 // Component caps (sum = 100).
 const CAP_NAME = 30;
@@ -77,8 +90,22 @@ export interface HoldingRiskContext {
   limits: HoldingRiskLimits;
   quoteFresh?: boolean;             // false => stale => insufficient_data
 
-  sectorWeightPct?: number | null;  // fraction [0,1] of this holding's SECTOR total; null => missing
+  // Fraction [0,1] of NAV held in this holding's SECTOR; null => missing. MUST be
+  // NAV-relative (same basis as accountTotalValue and as the owner's cap in
+  // lib/risk/live-portfolio-gate.ts), or it will disagree with the allocation below.
+  sectorWeightPct?: number | null;
   grossExposurePct?: number | null; // fraction [0,1] invested (gross); null => unknown
+
+  // Deterministic sector-cap breach allocation for THIS holding, from
+  // `allocateSectorBreach()`. Absent/null => not computed: a sector breach then
+  // yields `review` (we cannot say whether THIS name should absorb it), never a
+  // blanket `trim`. Defaulting to the old blanket-trim would be defaulting to the bug.
+  sectorBreachAllocation?: SectorBreachAllocation | null;
+
+  // True when Kairos has NO order path for this account (read-only). Only
+  // `605420660` may ever place an order, so every other account is read-only.
+  // Absent => assumed read-only (the honest default).
+  readOnlyAccount?: boolean;
 
   // Correlation evidence — COMPUTED aligned-return correlations, never KNOWN_CORR alone.
   clusterAvgCorr?: number | null;   // 0–1 avg corr of this holding to its co-held cluster; null => no computed corr
@@ -189,12 +216,21 @@ export function computeHoldingRisk(h: HoldingRiskInput, ctx: HoldingRiskContext)
     const sectorPct = (ctx.sectorWeightPct as number) * 100;
     sectorUtil = sectorPct / sectorLimit;
     confidence += CONF_W.sector;
+    // The sector NUMBER is shared by every name in the sector; the ALLOCATION is
+    // what makes it a per-name fact. Record both in the driver evidence trail.
+    const a = ctx.sectorBreachAllocation ?? null;
+    const allocDetail =
+      a?.role === "absorb"
+        ? `; selected to absorb ${a.trimPct.toFixed(2)}pp (#${a.rank} of ${a.absorberCount}) → target ${a.targetWeightPct?.toFixed(2)}% of NAV`
+        : a?.role === "not_selected"
+          ? `; NOT selected to absorb the breach (${a.absorberCount} larger name(s) are)`
+          : "";
     drivers.push({
       component: "sector_concentration",
       points: clamp01(sectorUtil) * CAP_SECTOR,
       cap: CAP_SECTOR,
       utilization: sectorUtil,
-      detail: `${h.sector} sector ${sectorPct.toFixed(1)}% vs ${sectorLimit}% cap (${(sectorUtil * 100).toFixed(0)}% of limit)`,
+      detail: `${h.sector} sector ${sectorPct.toFixed(1)}% of NAV vs ${sectorLimit}% cap (${(sectorUtil * 100).toFixed(0)}% of limit)${allocDetail}`,
     });
   } else {
     missingInputs.push("sector_exposure");
@@ -306,32 +342,71 @@ export function computeHoldingRisk(h: HoldingRiskInput, ctx: HoldingRiskContext)
 
   // ── Posture precedence (deterministic) ──────────────────────────────────────
   // 1. verified protective-stop/thesis-break → exit_review (drawdown alone NEVER)
-  // 2. hard concentration/cluster breach → trim
-  // 3. incomplete / low-confidence evidence → review
-  // 4. otherwise hold
+  // 2. hard name/cluster breach, OR a sector breach THIS name was SELECTED to
+  //    absorb → trim
+  // 3. sector breached but no usable allocation → review (honest: we cannot say
+  //    whether THIS name should absorb it)
+  // 4. incomplete / low-confidence evidence → review
+  // 5. otherwise hold (naming WHY, when the sector is over cap and this name was
+  //    not selected)
   const nameBreach = nameUtil >= 1;
   const sectorBreach = sectorUtil !== null && sectorUtil >= 1;
+
+  // A sector-cap breach is a SECTOR property with no per-name allocation of its
+  // own. It can only make THIS name a trim when the deterministic allocator
+  // selected this name to absorb part of it.
+  const alloc = ctx.sectorBreachAllocation ?? null;
+  const allocUsable = alloc !== null && (alloc.role === "absorb" || alloc.role === "not_selected");
+  const sectorSelected = sectorBreach && allocUsable && alloc!.role === "absorb";
+  const sectorNotSelected = sectorBreach && allocUsable && alloc!.role === "not_selected";
+  // No allocation, or one that contradicts the sector driver (e.g. `no_breach` /
+  // `sector_unknown` while sectorUtil >= 1 — a denominator mismatch between the
+  // caller's sectorWeightPct and the allocator's NAV basis).
+  const sectorUnallocated = sectorBreach && !allocUsable;
+  if (sectorUnallocated) missingInputs.push("sector_breach_allocation");
+
+  // The whole feature is advisory. This says whether an order path exists at all,
+  // rather than implying one does. Absent flag => assume read-only.
+  const advisory = ctx.readOnlyAccount === false
+    ? "Advisory only — this feature places no order; any action requires owner approval in the Execution Gateway."
+    : "Advisory only — this account is read-only in Kairos; the app cannot trade it.";
 
   let riskPosture: RiskPosture;
   let actionReason: string;
   if (ctx.protectiveStopHit === true || ctx.thesisBreak === true) {
+    // FIRST and unconditional. No allocation, and no absence of one, can reach
+    // this branch — a risk-driven exit is never delayed or suppressed by the
+    // sector-breach allocator.
     riskPosture = "exit_review";
     const why = [
       ctx.protectiveStopHit ? "protective stop breached" : null,
       ctx.thesisBreak ? "thesis break confirmed" : null,
     ].filter(Boolean).join(" + ");
-    actionReason = `Exit review: ${why}. Advisory only — no order is placed by this feature.`;
-  } else if (nameBreach || sectorBreach || clusterBreach) {
+    actionReason = `Exit review: ${why}. ${advisory}`;
+  } else if (nameBreach || sectorSelected || clusterBreach) {
     riskPosture = "trim";
     const breaches = [
       nameBreach ? `name ${weightPct.toFixed(1)}% > ${nameLimit}% cap` : null,
-      sectorBreach ? `sector ${((ctx.sectorWeightPct as number) * 100).toFixed(1)}% > ${limits.maxSectorExposurePct}% cap` : null,
+      sectorSelected ? alloc!.reason : null,
       clusterBreach ? `correlated cluster over ${limits.maxAvgPairwiseCorr} corr cap with material weight` : null,
-    ].filter(Boolean).join("; ");
-    actionReason = `Trim: ${breaches}.`;
+    ].filter(Boolean).join(" ");
+    actionReason = `Trim: ${breaches} ${advisory}`;
+  } else if (sectorUnallocated) {
+    riskPosture = "review";
+    actionReason =
+      `Review: ${h.sector ?? "this holding's sector"} is over its ${limits.maxSectorExposurePct}% cap ` +
+      `(${((ctx.sectorWeightPct as number) * 100).toFixed(1)}% of NAV), but the per-name breach allocation ` +
+      `was not computed — so this engine cannot say whether ${h.symbol} is one of the names that should ` +
+      `absorb the reduction. A sector breach alone is not a per-name verdict. ` +
+      `Next: recompute with allocateSectorBreach() wired.`;
   } else if (dataConfidence < CONF_REVIEW_FLOOR) {
     riskPosture = "review";
     actionReason = `Review: partial data (confidence ${(dataConfidence * 100).toFixed(0)}%; missing ${missingInputs.join(", ") || "none"}).`;
+  } else if (sectorNotSelected) {
+    // A plain "within owner-approved risk limits" would be a LIE while the sector
+    // is over its cap. Say what, why, and what would change it.
+    riskPosture = "hold";
+    actionReason = `Hold (score ${score}/100): ${alloc!.reason}`;
   } else {
     riskPosture = "hold";
     actionReason = `Hold: within owner-approved risk limits (score ${score}/100).`;

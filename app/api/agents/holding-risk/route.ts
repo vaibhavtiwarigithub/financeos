@@ -48,14 +48,21 @@ import {
   type HoldingRiskLimits,
   type HoldingRiskInput,
   type HoldingRiskContext,
-  type HoldingRiskResult,
 } from "@/lib/risk/holding-risk";
+import { allocateSectorBreach } from "@/lib/risk/sector-breach";
+import { strategyNotes } from "@/lib/risk/strategy-notes";
 import { DEFAULT_LIMITS } from "@/lib/portfolio/constructor";
-import { callLLM } from "@/lib/llm-router";
 import type { Candle } from "@/lib/data/technicals";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
+
+// The ONLY account permitted to place an order (CLAUDE.md / docs/arch/08 account
+// allowlist). Every other account — including `965848641`, where the AVGO advice
+// that motivated the breach allocator was shown — is read-only: its postures are
+// informational, and the action reason says so. This feature calls no order path
+// for ANY account; this flag only tells the owner whether one exists.
+const ORDER_PATH_ACCOUNTS = new Set(["605420660"]);
 
 // Market-local completed-session date (YYYY-MM-DD). en-CA gives ISO ordering; the
 // timeZone anchors "which trading day" to the market, not the server's UTC clock.
@@ -106,49 +113,6 @@ async function loadLimits(svc: any, market: "us" | "india"): Promise<HoldingRisk
     maxPortfolioVolPct: Number((cfg as any)?.max_portfolio_vol_pct) || DEFAULT_LIMITS.maxPortfolioVolPct,
     maxAvgPairwiseCorr: Number((cfg as any)?.max_avg_pairwise_corr) || DEFAULT_LIMITS.maxAvgPairwiseCorr,
   };
-}
-
-// Batched, best-effort LLM prose. Writes ONLY human-readable notes keyed by symbol;
-// the deterministic score/posture/action are already fixed and are passed in as
-// read-only context the model explains but can never change. Never throws.
-async function strategyNotes(
-  market: "us" | "india",
-  accountLabel: string,
-  items: Array<{ symbol: string; result: HoldingRiskResult; weightPct: number; sector: string | null }>,
-): Promise<Map<string, string>> {
-  const notes = new Map<string, string>();
-  if (!items.length) return notes;
-  const lines = items.map(it =>
-    `- ${it.symbol} (${it.sector ?? "sector?"}, ${(it.weightPct * 100).toFixed(1)}% of account): ` +
-    `score=${it.result.score ?? "n/a"} posture=${it.result.riskPosture} reason="${it.result.actionReason}"`,
-  ).join("\n");
-  const prompt =
-    `Account: ${accountLabel} (${market.toUpperCase()}). Below is the DETERMINISTIC risk verdict for each holding — ` +
-    `these numbers, postures, and actions are FINAL and you must NOT change, override, or contradict them.\n\n` +
-    `${lines}\n\n` +
-    `For each symbol write ONE or TWO plain-English sentences a non-expert owner can act on: what the risk driver is, ` +
-    `and what to watch next. Do not invent new numbers or recommend buying/selling beyond the stated posture. ` +
-    `Respond ONLY as a JSON object mapping each symbol to its note string, e.g. {"AAPL":"...","MSFT":"..."}.`;
-  try {
-    const res = await callLLM({
-      task: "summarize",
-      prompt,
-      systemPrompt: "You explain pre-computed risk verdicts in plain English. You never alter the numbers or the action.",
-      agentLabel: "holding-risk",
-      maxTokens: 1200,
-    });
-    const m = res.text.match(/\{[\s\S]*\}/);
-    if (m) {
-      const parsed = JSON.parse(m[0]);
-      for (const it of items) {
-        const v = parsed?.[it.symbol];
-        if (typeof v === "string" && v.trim()) notes.set(it.symbol, v.trim().slice(0, 600));
-      }
-    }
-  } catch {
-    // best-effort: prose is optional and must never block or fail the run
-  }
-  return notes;
 }
 
 interface AccountOutcome {
@@ -202,12 +166,37 @@ async function processAccount(
   const sourceCapturedAt = account.fetchedAt;
   const accountTotal = account.totalValue;
 
-  // Account roll-up (sector/beta/weight enrichment + persisted RiskMetrics).
+  // Account roll-up (sector/beta enrichment + persisted RiskMetrics).
   const metrics = await computeRiskMetrics(account.holdings, undefined, { market });
-  const sectorWeight = new Map<string, number>(); // sector -> fraction of account
-  for (const s of metrics.sectorBreakdown) sectorWeight.set(s.sector, s.weightPct);
-  const enriched = new Map<string, { sector: string; beta: number; weightPct: number }>();
-  for (const h of metrics.holdings) enriched.set(h.symbol, { sector: h.sector, beta: h.beta, weightPct: h.weightPct });
+  const enriched = new Map<string, { sector: string; beta: number }>();
+  for (const h of metrics.holdings) enriched.set(h.symbol, { sector: h.sector, beta: h.beta });
+
+  // ── Deterministic sector-cap breach allocation (risk-internal; no LLM, no
+  // research score). A sector breach is a SECTOR property — this decides WHICH
+  // names absorb it and HOW MUCH each gives up, so no name gets a blanket "trim".
+  //
+  // NAV basis: `account.totalValue` is cash-inclusive, matching how the owner's
+  // sector cap is enforced on the live money path (lib/risk/live-portfolio-gate.ts
+  // builds the book as value/NAV) and how the name cap is scored in holding-risk.
+  // NOTE: metrics.sectorBreakdown[].weightPct is INVESTED-relative and is left
+  // alone for the roll-up display — the risk engine must not mix the two bases.
+  const breach = allocateSectorBreach({
+    positions: account.holdings.map(h => ({
+      symbol: h.symbol,
+      sector: enriched.get(h.symbol)?.sector ?? null,
+      marketValue: h.marketValue,
+    })),
+    navValue: accountTotal,
+    maxSectorExposurePct: limits.maxSectorExposurePct,
+    currency,
+    market,
+  });
+  const sectorNavWeight = new Map<string, number>(); // sector -> fraction of NAV
+  for (const s of breach.sectors) sectorNavWeight.set(s.sector, s.sectorWeightPct / 100);
+
+  // Read-only unless this is the one order-permitted account. This feature places
+  // no order either way; the flag only labels whether an order path exists.
+  const readOnlyAccount = !ORDER_PATH_ACCOUNTS.has(accountId);
 
   // Fetch candles for every held symbol (bounded: one account's holdings).
   const candlesBySymbol = new Map<string, Candle[]>();
@@ -257,7 +246,9 @@ async function processAccount(
       currency,
       limits,
       quoteFresh: true, // just-fetched broker snapshot
-      sectorWeightPct: sector && sector !== "Other" ? (sectorWeight.get(sector) ?? null) : null,
+      sectorWeightPct: sector && sector !== "Other" ? (sectorNavWeight.get(sector) ?? null) : null,
+      sectorBreachAllocation: breach.bySymbol.get(h.symbol) ?? null,
+      readOnlyAccount,
       grossExposurePct,
       clusterAvgCorr: cluster?.avgCorr ?? null,
       clusterPeers: cluster?.peers ?? [],
@@ -268,11 +259,13 @@ async function processAccount(
     return { holding: h, sector, enr, vol, result: computeHoldingRisk(input, hctx) };
   });
 
-  // 4. Best-effort LLM prose (cannot alter numbers).
+  // 4. Best-effort LLM prose. Handed the FIXED verdict as read-only context; it
+  //    writes only `strategy_note` and can never alter a number, score, posture,
+  //    action, or allocation (lib/risk/strategy-notes.ts).
   const notes = await strategyNotes(market, label, computed.map(c => ({
     symbol: c.holding.symbol,
     result: c.result,
-    weightPct: c.enr?.weightPct ?? 0,
+    weightPct: weightBySymbol.get(c.holding.symbol) ?? 0,
     sector: c.sector,
   })));
 
@@ -287,7 +280,8 @@ async function processAccount(
       current_price: h.currentPrice,
       average_cost: h.costBasis != null && h.qty > 0 ? h.costBasis / h.qty : null,
       market_value: h.marketValue,
-      weight_pct: c.enr?.weightPct ?? (accountTotal > 0 ? h.marketValue / accountTotal : null),
+      // NAV basis — same denominator as the name cap and the breach allocation.
+      weight_pct: weightBySymbol.get(h.symbol) ?? (accountTotal > 0 ? h.marketValue / accountTotal : null),
       beta: c.enr?.beta ?? null,
       realized_vol_pct: c.vol,
       unrealized_pnl_pct: h.unrealizedPnlPct ?? null,

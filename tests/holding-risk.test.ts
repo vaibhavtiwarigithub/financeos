@@ -6,6 +6,30 @@ import {
   type HoldingRiskContext,
   type HoldingRiskLimits,
 } from "@/lib/risk/holding-risk";
+import {
+  allocateSectorBreach,
+  SECTOR_BREACH_ALLOCATOR_VERSION,
+  type SectorBreachAllocation,
+  type BreachRole,
+} from "@/lib/risk/sector-breach";
+
+// A hand-built allocation for a given role. The allocator's own arithmetic is
+// proven in tests/sector-breach.test.ts; here we only prove how the POSTURE
+// consumes a role.
+const allocOf = (role: BreachRole, over: Partial<SectorBreachAllocation> = {}): SectorBreachAllocation => ({
+  symbol: "AAA", sector: "Technology", role,
+  sectorWeightPct: 65.6, capPct: 30,
+  currentWeightPct: 10, targetWeightPct: role === "absorb" ? 5.35 : 10,
+  trimPct: role === "absorb" ? 4.65 : 0,
+  trimValue: role === "absorb" ? 465 : 0,
+  rank: role === "absorb" ? 1 : null,
+  absorberCount: role === "absorb" ? 4 : 4,
+  reason: role === "absorb"
+    ? "Trim AAA by 4.65pp of NAV — from 10.00% to 5.35% of NAV (≈ 465 USD). Why: Technology is 65.6% of NAV against the 30% cap, so 35.6pp must come out of the sector; AAA is #1 of the 4 largest Technology positions. Next: re-check after the reduction."
+    : "Hold AAA. Why: Technology IS over its 30% cap (65.6% of NAV) and 35.6pp must come out of the sector — but AAA is not among the names selected to absorb it. Next: AAA only becomes a candidate if those larger positions are not reduced.",
+  version: SECTOR_BREACH_ALLOCATOR_VERSION,
+  ...over,
+});
 
 // Owner-approved reference limits (percent units, corr 0–1).
 const LIMITS: HoldingRiskLimits = {
@@ -107,10 +131,219 @@ describe("computeHoldingRisk — sector concentration (20 cap), missing-dim conf
     expect(r.drivers.find(d => d.component === "sector_concentration")!.points).toBeCloseTo(20, 5);
   });
 
-  it("sector breach contributes a trim posture", () => {
-    const r = computeHoldingRisk(holding(), fullCtx({ sectorWeightPct: 0.31 }));
+  it("sector breach contributes a trim posture WHEN this name was selected to absorb it", () => {
+    const r = computeHoldingRisk(holding(), fullCtx({
+      sectorWeightPct: 0.31,
+      sectorBreachAllocation: allocOf("absorb"),
+    }));
     expect(r.riskPosture).toBe("trim");
     expect(r.actionReason).toMatch(/sector/i);
+  });
+});
+
+// ── The defect: a sector-cap breach is a SECTOR property with no per-name
+// allocation, so hr-v1 gave EVERY holding in the sector the identical "trim".
+// hr-v2 makes it a per-name verdict via the deterministic allocator.
+// Spec: features/risk-sector-breach-allocation/FEATURE_ARCHITECTURE.md §6, §9.
+describe("computeHoldingRisk — sector breach is allocated, not blanket (hr-v2)", () => {
+  const breachedCtx = (over: Partial<HoldingRiskContext> = {}) =>
+    fullCtx({ sectorWeightPct: 0.656, ...over });
+
+  it("selected to absorb → trim, and the reason carries the pp figure (§9.10)", () => {
+    const r = computeHoldingRisk(holding(), breachedCtx({ sectorBreachAllocation: allocOf("absorb") }));
+    expect(r.riskPosture).toBe("trim");
+    expect(r.actionReason).toMatch(/4\.65pp of NAV/);
+    expect(r.actionReason).toMatch(/from 10\.00% to 5\.35%/);
+    expect(r.actionReason).toMatch(/#1 of the 4 largest/);
+  });
+
+  it("NOT selected → hold, and the hold says WHY (§9.11)", () => {
+    const r = computeHoldingRisk(holding(), breachedCtx({ sectorBreachAllocation: allocOf("not_selected") }));
+    expect(r.riskPosture).toBe("hold");
+    // The generic hold string would be a LIE while the sector is over its cap.
+    expect(r.actionReason).not.toMatch(/within owner-approved risk limits/);
+    expect(r.actionReason).toMatch(/Technology IS over its 30% cap/);
+    expect(r.actionReason).toMatch(/not among the names selected to absorb it/);
+    expect(r.actionReason).toMatch(/Next:/);
+  });
+
+  it("the SAME sector breach yields DIFFERENT verdicts for different names (§9.6)", () => {
+    const absorb = computeHoldingRisk(holding({ symbol: "AVGO" }), breachedCtx({
+      sectorBreachAllocation: allocOf("absorb", { symbol: "AVGO" }),
+    }));
+    const held = computeHoldingRisk(holding({ symbol: "INTC" }), breachedCtx({
+      sectorBreachAllocation: allocOf("not_selected", { symbol: "INTC" }),
+    }));
+    // hr-v1 returned "trim" for both off the identical sector number.
+    expect(absorb.riskPosture).toBe("trim");
+    expect(held.riskPosture).toBe("hold");
+    expect(absorb.actionReason).not.toEqual(held.actionReason);
+  });
+
+  it("sector breached with NO allocation → review, never a blanket trim (§9.9)", () => {
+    const r = computeHoldingRisk(holding(), breachedCtx({ sectorBreachAllocation: null }));
+    expect(r.riskPosture).toBe("review");
+    expect(r.riskPosture).not.toBe("trim");
+    expect(r.missingInputs).toContain("sector_breach_allocation");
+    expect(r.actionReason).toMatch(/cannot say whether AAA is one of the names/);
+  });
+
+  it("an allocation contradicting the sector driver is not trusted → review", () => {
+    // `no_breach` / `sector_unknown` while sectorUtil >= 1 means the caller's
+    // sectorWeightPct and the allocator disagree (e.g. a denominator mismatch).
+    for (const role of ["no_breach", "sector_unknown"] as const) {
+      const r = computeHoldingRisk(holding(), breachedCtx({ sectorBreachAllocation: allocOf(role) }));
+      expect(r.riskPosture).toBe("review");
+      expect(r.missingInputs).toContain("sector_breach_allocation");
+    }
+  });
+
+  it("records the allocation in the sector driver's evidence trail", () => {
+    const absorb = computeHoldingRisk(holding(), breachedCtx({ sectorBreachAllocation: allocOf("absorb") }));
+    expect(absorb.drivers.find(d => d.component === "sector_concentration")!.detail)
+      .toMatch(/selected to absorb 4\.65pp \(#1 of 4\)/);
+    const held = computeHoldingRisk(holding(), breachedCtx({ sectorBreachAllocation: allocOf("not_selected") }));
+    expect(held.drivers.find(d => d.component === "sector_concentration")!.detail)
+      .toMatch(/NOT selected to absorb the breach/);
+  });
+
+  it("the allocation never suppresses a different limit's breach (§9.12–13)", () => {
+    // Name cap breached (13% > 12%) while the sector allocator says not_selected.
+    const name = computeHoldingRisk(holding({ marketValue: 1300 }), breachedCtx({
+      accountTotalValue: 10000, sectorBreachAllocation: allocOf("not_selected"),
+    }));
+    expect(name.riskPosture).toBe("trim");
+    expect(name.actionReason).toMatch(/name 13\.0% > 12% cap/);
+
+    // Correlated-cluster breach while the sector allocator says not_selected.
+    const cluster = computeHoldingRisk(holding(), breachedCtx({
+      clusterAvgCorr: 0.9, clusterWeightPct: 0.30, clusterPeers: ["BBB"],
+      sectorBreachAllocation: allocOf("not_selected"),
+    }));
+    expect(cluster.riskPosture).toBe("trim");
+    expect(cluster.actionReason).toMatch(/correlated cluster/i);
+  });
+
+  it("stays pure — the allocation does not make the result order-dependent", () => {
+    const ctx = () => breachedCtx({ sectorBreachAllocation: allocOf("absorb") });
+    expect(computeHoldingRisk(holding(), ctx())).toEqual(computeHoldingRisk(holding(), ctx()));
+  });
+});
+
+// The one property the allocator must never touch: a risk-driven exit.
+// Same invariant as lib/evidence/degradation-guard.ts (§6.5 there).
+describe("computeHoldingRisk — an exit is NEVER suppressed by an allocation (§9.7–8)", () => {
+  for (const role of ["absorb", "not_selected", "no_breach", "sector_unknown"] as const) {
+    it(`protective stop + role '${role}' → still exit_review`, () => {
+      const r = computeHoldingRisk(holding(), fullCtx({
+        sectorWeightPct: 0.656, protectiveStopHit: true, sectorBreachAllocation: allocOf(role),
+      }));
+      expect(r.riskPosture).toBe("exit_review");
+      expect(r.actionReason).toMatch(/protective stop breached/);
+    });
+
+    it(`thesis break + role '${role}' → still exit_review`, () => {
+      const r = computeHoldingRisk(holding(), fullCtx({
+        sectorWeightPct: 0.656, thesisBreak: true, sectorBreachAllocation: allocOf(role),
+      }));
+      expect(r.riskPosture).toBe("exit_review");
+    });
+  }
+
+  it("no allocation at all cannot delay an exit either", () => {
+    const r = computeHoldingRisk(holding(), fullCtx({
+      sectorWeightPct: 0.656, protectiveStopHit: true, sectorBreachAllocation: null,
+    }));
+    expect(r.riskPosture).toBe("exit_review");
+  });
+
+  it("unrealized loss ALONE still never triggers exit_review, allocation or not", () => {
+    const r = computeHoldingRisk(holding({ unrealizedPnlPct: -0.40 }), fullCtx({
+      sectorWeightPct: 0.656, sectorBreachAllocation: allocOf("absorb"),
+    }));
+    expect(r.riskPosture).not.toBe("exit_review");
+  });
+});
+
+describe("computeHoldingRisk — advisory labelling (§9.20)", () => {
+  it("a read-only account says the app cannot trade it", () => {
+    const trim = computeHoldingRisk(holding(), fullCtx({
+      sectorWeightPct: 0.656, readOnlyAccount: true, sectorBreachAllocation: allocOf("absorb"),
+    }));
+    expect(trim.actionReason).toMatch(/Advisory only — this account is read-only in Kairos; the app cannot trade it\./);
+
+    const exit = computeHoldingRisk(holding(), fullCtx({ readOnlyAccount: true, protectiveStopHit: true }));
+    expect(exit.actionReason).toMatch(/read-only in Kairos/);
+  });
+
+  it("the order-permitted account still says no order is placed by this feature", () => {
+    const r = computeHoldingRisk(holding(), fullCtx({
+      sectorWeightPct: 0.656, readOnlyAccount: false, sectorBreachAllocation: allocOf("absorb"),
+    }));
+    expect(r.actionReason).toMatch(/this feature places no order/);
+    expect(r.actionReason).toMatch(/requires owner approval in the Execution Gateway/);
+  });
+
+  it("an absent flag defaults to the read-only wording (honest default)", () => {
+    const r = computeHoldingRisk(holding(), fullCtx({ protectiveStopHit: true }));
+    expect(r.actionReason).toMatch(/read-only in Kairos/);
+  });
+});
+
+// End-to-end over the REAL allocator: the exact book from the prod defect.
+describe("computeHoldingRisk × allocateSectorBreach — the AVGO defect (end to end)", () => {
+  const NAV = 100_000;
+  const BOOK = [
+    { symbol: "AVGO", sector: "Technology", marketValue: 20_000 },
+    { symbol: "MSFT", sector: "Technology", marketValue: 15_000 },
+    { symbol: "NVDA", sector: "Technology", marketValue: 12_000 },
+    { symbol: "AAPL", sector: "Technology", marketValue: 10_000 },
+    { symbol: "AMD",  sector: "Technology", marketValue:  5_000 },
+    { symbol: "INTC", sector: "Technology", marketValue:  3_600 },
+  ];
+
+  const verdicts = () => {
+    const breach = allocateSectorBreach({
+      positions: BOOK, navValue: NAV, maxSectorExposurePct: 30, currency: "USD", market: "us",
+    });
+    return new Map(BOOK.map(p => [p.symbol, computeHoldingRisk(
+      { symbol: p.symbol, qty: 1, currentPrice: p.marketValue, marketValue: p.marketValue,
+        sector: p.sector, beta: 1, realizedVolPct: 2, unrealizedPnlPct: 0 },
+      { accountTotalValue: NAV, currency: "USD", limits: LIMITS, quoteFresh: true,
+        sectorWeightPct: 0.656, grossExposurePct: 0.656,
+        clusterAvgCorr: 0.2, clusterPeers: [], clusterWeightPct: 0.1,
+        stopDistancePct: 0.2, protectiveStopHit: false, thesisBreak: false,
+        hasFreshEventData: true, eventFlag: null, liquidityFlag: null,
+        readOnlyAccount: true, // account 965848641
+        sectorBreachAllocation: breach.bySymbol.get(p.symbol)!,
+      },
+    )]));
+  };
+
+  it("no longer gives every Technology name the identical Trim verdict", () => {
+    const v = verdicts();
+    const reasons = new Set([...v.values()].map(r => r.actionReason));
+    expect(reasons.size).toBe(BOOK.length); // hr-v1: all six identical
+    expect([...v.values()].every(r => r.riskPosture === "trim")).toBe(false);
+  });
+
+  it("AVGO (the largest) absorbs the most and is told how much", () => {
+    const r = verdicts().get("AVGO")!;
+    expect(r.riskPosture).toBe("trim");
+    expect(r.actionReason).toMatch(/Trim AVGO by 14\.65pp of NAV/);
+    expect(r.actionReason).toMatch(/≈ 14650 USD/);
+    expect(r.actionReason).toMatch(/read-only in Kairos/);
+  });
+
+  it("INTC holds — and is told exactly why it was not selected", () => {
+    const r = verdicts().get("INTC")!;
+    expect(r.riskPosture).toBe("hold");
+    expect(r.actionReason).toMatch(/Technology IS over its 30% cap \(65\.6% of NAV\)/);
+    expect(r.actionReason).toMatch(/INTC is not among the names selected to absorb it/);
+  });
+
+  it("is reproducible end to end", () => {
+    expect([...verdicts().entries()]).toEqual([...verdicts().entries()]);
   });
 });
 
