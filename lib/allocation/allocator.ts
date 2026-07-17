@@ -4,10 +4,20 @@
 // testable. SHIPPED OFF: computeAllocation returns null unless
 // strategy_config.allocation_enabled is true, so nothing acts on it today.
 //
+// MACRO IS US-ONLY (2026-07-17). `macro_regime` has no `market` column and
+// MacroSentinel is US-only by construction, so this file previously applied the
+// US FRED verdict to India's sleeves. It now resolves the regime through
+// ./regime, which scopes by market and enforces the same usability contract as
+// lib/data/scores.ts (age bound + indicator floor, fail-safe to UNAVAILABLE
+// never to calm). Macro UNAVAILABLE → NO allocation (null), never an untilted
+// config echo — see computeAllocationDetailed for the full justification.
+//
 // Follow-up (money path, separate + validated): wire the equity sleeve target
 // into paper-trade sizing, a slow rebalancer for the ETF/cash sleeves (weekly,
 // 5% deadband), and evolve the regime→target mapping via the genome + validation
 // gate. This file is the deterministic core only.
+
+import { loadAllocationRegime, type AllocationRegime } from "./regime";
 
 export type Regime = "risk_on" | "neutral" | "risk_off";
 
@@ -84,27 +94,83 @@ export function allocate(sleeves: SleeveRow[], regime: Regime): SleeveTarget[] {
   }));
 }
 
+export interface AllocationResult {
+  targets: SleeveTarget[] | null;
+  /** Why there is (or isn't) an allocation. Always populated — never a silent default. */
+  reason: string;
+  macro: AllocationRegime | null;
+}
+
 /**
- * Load sleeves + current regime and compute targets. OFF-aware: returns null
- * when allocation_enabled is false (the default) so no caller acts on it.
+ * Load sleeves + current regime and compute targets, reporting WHY.
+ *
+ * REQUIRED-INPUT DECISION (macro unavailable → NO allocation, not a hole):
+ * this function's entire contract is "macro regime → sleeve target weights".
+ * The regime is not a garnish on the targets; it is the only input that turns
+ * owner-configured `strategy_sleeves` rows into an allocation. With no
+ * trustworthy regime there is nothing to compute — returning the base
+ * `target_pct` values with tilt=0 would emit a config ECHO that is byte-for-byte
+ * indistinguishable from a real "macro says neutral" verdict. That is exactly
+ * the neutral-50-and-included fake that lib/data/scores.ts rejects for
+ * macro_score, wearing a different hat. So: UNAVAILABLE → targets null.
+ *
+ * For India this is permanent until a real India regime is built. Deciding that
+ * India should instead run STATIC (untilted) sleeve targets is a product call
+ * nobody has approved; returning null defers it to the owner rather than
+ * silently making it.
+ *
+ * HONEST TENSION (stated, not hidden): the one consumer today
+ * (app/api/agents/paper-trade) only ever uses the equity target to SHRINK that
+ * market's gross-equity cap. So "no allocation" leaves the owner's configured
+ * `max_gross_exposure_pct` in force — LOOSER than any regime outcome would be,
+ * including risk_off. This is accepted: falling back to the owner's own
+ * approved limit is the documented default state (identical to
+ * allocation_enabled=false, the live setting today), not a fabricated one. The
+ * fail-safe rule this honors is "never assert calm we cannot evidence" — not
+ * "always tighten". Tightening on absent evidence would be an unapproved
+ * position change justified by nothing.
  */
-export async function computeAllocation(svc: any, market: "us" | "india"): Promise<SleeveTarget[] | null> {
+export async function computeAllocationDetailed(
+  svc: any,
+  market: "us" | "india",
+  now: Date = new Date(),
+): Promise<AllocationResult> {
   try {
     const { data: cfg } = await svc.from("strategy_config").select("allocation_enabled").limit(1).maybeSingle();
-    if (!(cfg as any)?.allocation_enabled) return null;
+    if (!(cfg as any)?.allocation_enabled) {
+      return { targets: null, reason: "allocation disabled (strategy_config.allocation_enabled=false)", macro: null };
+    }
+
+    // Resolve the regime BEFORE loading sleeves: for India this returns
+    // unavailable without ever touching macro_regime, so the US verdict cannot
+    // reach an India allocation by any path.
+    const macro = await loadAllocationRegime(svc, market, now);
+    if (!macro.available) {
+      return { targets: null, reason: `no allocation for ${market}: ${macro.reason}`, macro };
+    }
 
     const { data: sleeves } = await svc.from("strategy_sleeves").select("*").eq("market", market);
-    if (!sleeves || sleeves.length === 0) return null;
+    if (!sleeves || sleeves.length === 0) {
+      return { targets: null, reason: `no strategy_sleeves rows for market=${market}`, macro };
+    }
 
-    const { data: regimeRow } = await svc
-      .from("macro_regime")
-      .select("regime")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    return allocate(sleeves as SleeveRow[], normalizeRegime((regimeRow as any)?.regime));
+    return {
+      targets: allocate(sleeves as SleeveRow[], normalizeRegime(macro.rawRegime)),
+      reason: `allocated from ${macro.rawRegime} regime (week_of ${macro.asOf}, ${macro.indicators} indicators)`,
+      macro,
+    };
   } catch {
-    return null; // fail-soft — allocation is advisory; never break a caller
+    // fail-soft — allocation is advisory; never break a caller
+    return { targets: null, reason: "allocation failed (query error)", macro: null };
   }
+}
+
+/**
+ * Load sleeves + current regime and compute targets. OFF-aware: returns null
+ * when allocation_enabled is false (the default) so no caller acts on it, and
+ * whenever macro is UNAVAILABLE (see computeAllocationDetailed). Thin wrapper —
+ * use computeAllocationDetailed when you need the reason.
+ */
+export async function computeAllocation(svc: any, market: "us" | "india"): Promise<SleeveTarget[] | null> {
+  return (await computeAllocationDetailed(svc, market)).targets;
 }

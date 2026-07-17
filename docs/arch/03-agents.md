@@ -1,5 +1,5 @@
 # Kairos — Agents
-> Last updated: 2026-07-17 (macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
+> Last updated: 2026-07-17 (the asset allocator is now market-scoped too — India no longer inherits the US FRED regime for sleeve weights, and macro UNAVAILABLE means NO allocation rather than an untilted config echo; macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
 > Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
 
 **Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file + update `public/agent-diagrams/system-map.json`.
@@ -120,6 +120,43 @@ weighted score, weights renormalize. It never falls back to a calm/green default
 `signals_triggered = 0` is **NOT** treated as suspect on its own — a genuinely calm week really does
 trip zero signals, and rejecting those would bias the book bearish. The honest discriminator is the
 indicator count.
+
+**Second consumer — the asset allocator (`lib/allocation/allocator.ts` + `lib/allocation/regime.ts`,
+2026-07-17).** `computeAllocation(svc, market)` maps the regime → sleeve target weights; its equity
+target may only ever **shrink** that market's gross-equity cap in PaperTrader sizing. It applies the
+**same four checks as the table above** and imports `MAX_MACRO_AGE_DAYS` from `lib/data/scores.ts`
+rather than re-declaring the bound, so the two money-path consumers cannot drift on what "too old to
+act on" means.
+
+It previously filtered `strategy_sleeves` by market but read `macro_regime` **unscoped**, so the US
+FRED verdict tilted India's sleeves — the same contamination class as the `macro_score` defect, and
+latent only because `allocation_enabled` defaults off (verified `false` in prod). India sleeves *do*
+exist in prod (equity 70 / defensive 20 / cash 10), so this was live-capable, not theoretical. India
+now returns UNAVAILABLE **without querying `macro_regime` at all**.
+
+**Macro UNAVAILABLE → NO allocation (`null`), not an untilted allocation.** The regime is the only
+input that turns owner-configured sleeve rows into an allocation; emitting the base `target_pct`
+with tilt=0 would be byte-identical to a real "macro says neutral" verdict — the
+neutral-50-and-included fake in a different hat. For India this is permanent until a real India
+regime is built; whether India should instead run *static* sleeve targets is a product call that is
+deliberately left to the owner rather than silently made. **Accepted tension, stated not hidden:**
+because the equity target only ever shrinks the gross cap, `null` leaves the owner's configured
+`max_gross_exposure_pct` in force — *looser* than any regime outcome, including `risk_off`. That is
+the documented default (identical to `allocation_enabled=false`, today's live state), not a
+fabricated one; tightening on absent evidence would be an unapproved position change justified by
+nothing. Callers already handle `null` (it is the shipped-off path). `computeAllocationDetailed()`
+returns the same result plus a `reason` naming the specific rejected row(s).
+
+> **Known gap (not a regression — pre-existing, reported 2026-07-17):** `normalizeRegime` matches
+> `bull`/`bear`/`risk_on`/`risk_off`/`aggressive`/`defensive`, but MacroSentinel writes
+> `green`/`orange`/`red`/`unknown`. **Every real label therefore normalizes to `neutral`, so the
+> regime tilt is dead in prod today.** Fixing the vocabulary would *activate* tilting — a real
+> behaviour change requiring its own approval — so it was deliberately left alone.
+
+> **Proposal (not applied — schema change):** give `macro_regime` a `market` column so the table can
+> express what it actually is, instead of every consumer having to remember to market-gate its own
+> read. Until then, "US-only" is a convention enforced consumer-by-consumer, and each new consumer
+> is a fresh chance to reintroduce this exact bug.
 
 ---
 
