@@ -1637,9 +1637,15 @@ export default function MarketsPage() {
       {!isIndia && loading && !data && (
         <>
           <LoadingSkeleton />
+          {/* Must describe the fetch that is ACTUALLY running. This previously
+              named the broker and an AI subprocess as the source and called the
+              result intraday: all three were false. The route calls Massive's
+              grouped-daily endpoint, no broker and no subprocess are involved,
+              and the closes are end-of-day — so this must never say "live".
+              Pinned by tests/markets-overview.test.ts. */}
           {slowFetch && (
             <div style={{ textAlign: "center", marginTop: "16px", fontSize: "12px", color: T.muted }}>
-              Fetching live quotes from Robinhood via AI subprocess — may take up to 90s on first load…
+              Fetching end-of-day closes from Massive — resolving the latest published session…
             </div>
           )}
         </>
