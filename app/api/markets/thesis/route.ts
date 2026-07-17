@@ -147,14 +147,26 @@ export async function GET(req: NextRequest) {
     const sections: string[] = [];
 
     if (overview) {
-      const indexLines = overview.indices.map(
-        (i) => `${i.symbol} (${i.name}): $${i.price.toFixed(2)} (${i.changePct >= 0 ? "+" : ""}${i.changePct.toFixed(2)}%)`
-      );
-      const sectorLines = [...overview.sectors]
-        .sort((a, b) => b.changePct - a.changePct)
-        .map((s) => `${s.symbol} (${s.name}): ${s.changePct >= 0 ? "+" : ""}${s.changePct.toFixed(2)}%`);
-      sections.push("REAL-TIME INDICES (today's session):", ...indexLines);
-      sections.push("", "SECTOR PERFORMANCE (today's session, best to worst):", ...sectorLines);
+      // Unresolved symbols are OMITTED, never coerced to 0 — an "unavailable"
+      // sector must not reach the model as a flat one. The label states what the
+      // number actually is: last completed session's close vs the prior close
+      // (end-of-day), not a real-time intraday quote.
+      const session = overview.sessionDate ?? "latest session";
+      const indexLines = overview.indices
+        .filter((i) => i.price != null && i.changePct != null)
+        .map(
+          (i) => `${i.symbol} (${i.name}): $${i.price!.toFixed(2)} (${i.changePct! >= 0 ? "+" : ""}${i.changePct!.toFixed(2)}%)`
+        );
+      const sectorLines = overview.sectors
+        .filter((s) => s.changePct != null)
+        .sort((a, b) => b.changePct! - a.changePct!)
+        .map((s) => `${s.symbol} (${s.name}): ${s.changePct! >= 0 ? "+" : ""}${s.changePct!.toFixed(2)}%`);
+      const omitted = overview.unavailableCount ?? 0;
+      sections.push(`INDICES (close ${session} vs prior close, end-of-day):`, ...indexLines);
+      sections.push("", `SECTOR PERFORMANCE (close ${session} vs prior close, best to worst):`, ...sectorLines);
+      if (omitted > 0) {
+        sections.push("", `NOTE: ${omitted} symbol(s) were unavailable this fetch and are omitted above — do not treat them as flat.`);
+      }
     }
 
     const pairLines = pairResults.map(p => {

@@ -4,6 +4,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ReferenceLine, ReferenceArea,
 } from "recharts";
+import { actualSpanDays, isShortHistory } from "@/lib/data/history-span";
 
 // Hard-coded major US recessions (NBER-dated)
 const RECESSIONS = [
@@ -71,8 +72,19 @@ export default function PriceChart({
   const firstClose = visible[0]?.close ?? 0;
   const lastClose = visible[visible.length - 1]?.close ?? 0;
   const isUp = lastClose >= firstClose;
-  const changePct = firstClose ? (((lastClose - firstClose) / firstClose) * 100).toFixed(2) : "0.00";
   const lineColor = isUp ? T.green : T.red;
+
+  // A return needs two bars and must be labelled with the span it ACTUALLY
+  // covers. Providers legitimately return short history (recent listing, thin
+  // coverage) — when they do, "+0.00% (6M)" computed over one bar is a lie, so
+  // the return is either withheld or labelled with its real span.
+  const spanDays = actualSpanDays(visible);
+  const canComputeReturn = visible.length >= 2 && firstClose > 0;
+  const shortHistory = canComputeReturn && isShortHistory(visible, period.days);
+  const changePct = canComputeReturn
+    ? (((lastClose - firstClose) / firstClose) * 100).toFixed(2)
+    : null;
+  const returnLabel = shortHistory ? `${spanDays}d actual` : period.label;
 
   const formatDate = (d: string) => {
     const dt = new Date(d + "T00:00:00");
@@ -87,10 +99,21 @@ export default function PriceChart({
           {lastClose > 0 && (
             <>
               <span style={{ fontSize: "20px", fontWeight: 700, marginLeft: "12px" }}>${lastClose.toFixed(2)}</span>
-              <span style={{ fontSize: "13px", marginLeft: "8px", color: isUp ? T.green : T.red, fontWeight: 600 }}>
-                {isUp ? "+" : ""}{changePct}% ({period.label})
-              </span>
+              {changePct !== null ? (
+                <span style={{ fontSize: "13px", marginLeft: "8px", color: isUp ? T.green : T.red, fontWeight: 600 }}>
+                  {isUp ? "+" : ""}{changePct}% ({returnLabel})
+                </span>
+              ) : (
+                <span style={{ fontSize: "13px", marginLeft: "8px", color: T.muted, fontWeight: 600 }}>
+                  return unavailable — only {visible.length} bar{visible.length === 1 ? "" : "s"} of history
+                </span>
+              )}
             </>
+          )}
+          {shortHistory && (
+            <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>
+              Only {spanDays}d of history available — shorter than the {period.label} window requested.
+            </div>
           )}
         </div>
         <div style={{ display: "flex", gap: "4px" }}>

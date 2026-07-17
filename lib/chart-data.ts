@@ -1,6 +1,7 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { avCachedFetch } from "@/lib/av-cache";
+import { spansRequestedWindow } from "@/lib/data/history-span";
 
 export interface Candle {
   date: string;
@@ -44,7 +45,16 @@ export async function fetchPriceHistory(symbol: string, days = 90): Promise<Cand
       .gte("date", cutoff)
       .order("date", { ascending: true });
 
-    if (rows && rows.length > 0 && isFresh(rows[rows.length - 1].date)) {
+    // The cache is usable only if it is BOTH current AND actually spans the
+    // requested window. `rows.length > 0` checked count, not span: a `days=180`
+    // request for a symbol holding 2 bars passed, short-circuited the backfill
+    // below, and let PriceChart label a one-day move as a 6M return.
+    if (
+      rows &&
+      rows.length > 0 &&
+      isFresh(rows[rows.length - 1].date) &&
+      spansRequestedWindow(rows, days)
+    ) {
       const candles: Candle[] = rows.map((r: any) => ({
         date: r.date,
         open: Number(r.open),

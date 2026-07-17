@@ -30,26 +30,41 @@ const T = {
   amber: "#FBBF24",
 };
 
+// Mirrors the contract in app/api/markets/overview/route.ts. `price`/`change`/
+// `changePct` are nullable BY DESIGN: an unresolved symbol must be impossible to
+// render as a real number, so there is no 0 for it to masquerade as.
 interface IndexQuote {
   symbol: string;
   name: string;
-  price: number;
-  change: number;
-  changePct: number;
+  price: number | null;
+  change: number | null;
+  changePct: number | null;
+  status?: "ok" | "unavailable";
+  reason?: string;
 }
 
 interface SectorQuote {
   symbol: string;
   name: string;
-  price: number;
-  change: number;
-  changePct: number;
+  price: number | null;
+  change: number | null;
+  changePct: number | null;
+  status?: "ok" | "unavailable";
+  reason?: string;
 }
 
 interface MarketOverview {
   indices: IndexQuote[];
   sectors: SectorQuote[];
+  /** ET date of the session these closes belong to. */
+  sessionDate: string | null;
+  /** ET date of the session the change is measured against. */
+  priorCloseDate: string | null;
+  /** When the server fetched upstream — the real age of the data. */
   fetchedAt: string;
+  stale: boolean;
+  unavailableCount: number;
+  degraded?: string;
 }
 
 function fmt(n: number, decimals = 2) {
@@ -69,7 +84,27 @@ function pctBg(pct: number): string {
   return pct >= 0 ? `#34D399${alpha}` : `#F87171${alpha}`;
 }
 
-function PctPill({ value }: { value: number }) {
+// A null value renders as a neutral "n/a" chip — never a green +0.00%, which is
+// indistinguishable from a genuinely flat sector.
+function PctPill({ value }: { value: number | null }) {
+  if (value == null) {
+    return (
+      <span
+        style={{
+          fontSize: "12px",
+          fontWeight: 700,
+          fontFamily: "'JetBrains Mono', monospace",
+          padding: "2px 7px",
+          borderRadius: "5px",
+          background: T.surface,
+          border: `1px dashed ${T.border}`,
+          color: T.muted,
+        }}
+      >
+        n/a
+      </span>
+    );
+  }
   const color = pctColor(value);
   return (
     <span
@@ -90,9 +125,12 @@ function PctPill({ value }: { value: number }) {
 
 function IndexCard({ q, currency = "" }: { q: IndexQuote; currency?: string }) {
   const isVIX = q.symbol === "VIX" || q.symbol === "^INDIAVIX" || /vix/i.test(q.name);
-  const color = isVIX
-    ? q.changePct >= 0 ? T.red : T.green   // VIX up = bad
-    : pctColor(q.changePct);
+  const unavailable = q.status === "unavailable" || q.changePct == null;
+  const color = unavailable
+    ? T.border
+    : isVIX
+      ? q.changePct! >= 0 ? T.red : T.green   // VIX up = bad
+      : pctColor(q.changePct!);
 
   return (
     <div
@@ -113,18 +151,34 @@ function IndexCard({ q, currency = "" }: { q: IndexQuote; currency?: string }) {
         </div>
         <PctPill value={q.changePct} />
       </div>
-      <div style={{ fontSize: "26px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "-0.02em", color: T.text }}>
-        {q.price > 0 ? `${isVIX ? "" : currency}${fmt(q.price)}` : "—"}
+      <div style={{ fontSize: "26px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "-0.02em", color: unavailable ? T.muted : T.text }}>
+        {q.price != null && q.price > 0 ? `${isVIX ? "" : currency}${fmt(q.price)}` : "—"}
       </div>
-      <div style={{ fontSize: "12px", color: pctColor(q.change), fontFamily: "'JetBrains Mono', monospace", marginTop: "4px" }}>
-        {q.change >= 0 ? "+" : ""}{fmt(q.change)} today
-      </div>
+      {q.change == null ? (
+        <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px" }}>
+          {q.reason ?? "unavailable"}
+        </div>
+      ) : (
+        <div style={{ fontSize: "12px", color: pctColor(q.change), fontFamily: "'JetBrains Mono', monospace", marginTop: "4px" }}>
+          {q.change >= 0 ? "+" : ""}{fmt(q.change)} vs prior close
+        </div>
+      )}
     </div>
   );
 }
 
-function SectorHeatmap({ sectors, onSymbol }: { sectors: SectorQuote[]; onSymbol: (sym: string) => void }) {
-  const sorted = [...sectors].sort((a, b) => b.changePct - a.changePct);
+// `onSymbol` is OPTIONAL and the "click to view chart" affordance appears only
+// when it is supplied. India passes nothing: /api/charts/price-history resolves
+// through fetchUsCandles, which cannot price NSE index symbols (^CNXIT, ^NSEBANK
+// …), so a wired click there would open a permanently empty chart — trading one
+// silent lie for another. See docs/arch/07-coding-conventions.md.
+function SectorHeatmap({ sectors, onSymbol }: { sectors: SectorQuote[]; onSymbol?: (sym: string) => void }) {
+  // Unresolved sectors sort last rather than being treated as 0% (flat).
+  const sorted = [...sectors].sort((a, b) => {
+    if (a.changePct == null) return 1;
+    if (b.changePct == null) return -1;
+    return b.changePct - a.changePct;
+  });
 
   return (
     <div
@@ -136,40 +190,51 @@ function SectorHeatmap({ sectors, onSymbol }: { sectors: SectorQuote[]; onSymbol
       }}
     >
       <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>
-        Sector Performance · click to view chart
+        Sector Performance{onSymbol ? " · click to view chart" : ""}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "8px" }}>
-        {sorted.map(s => (
+        {sorted.map(s => {
+          const unavailable = s.status === "unavailable" || s.changePct == null;
+          return (
           <div
             key={s.symbol}
-            onClick={() => onSymbol(s.symbol)}
+            onClick={onSymbol && !unavailable ? () => onSymbol(s.symbol) : undefined}
             style={{
-              background: pctBg(s.changePct),
-              border: `1px solid ${s.changePct >= 0 ? T.green : T.red}30`,
+              background: unavailable ? T.surface : pctBg(s.changePct!),
+              border: unavailable
+                ? `1px dashed ${T.border}`
+                : `1px solid ${s.changePct! >= 0 ? T.green : T.red}30`,
               borderRadius: "8px",
               padding: "12px 14px",
-              cursor: "pointer",
+              cursor: onSymbol && !unavailable ? "pointer" : "default",
               transition: "opacity 0.15s",
             }}
-            onMouseEnter={e => (e.currentTarget.style.opacity = "0.8")}
+            onMouseEnter={e => { if (onSymbol && !unavailable) e.currentTarget.style.opacity = "0.8"; }}
             onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
           >
             <div style={{ fontSize: "11px", color: T.textSub, marginBottom: "4px" }}>{s.name}</div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "12px", fontWeight: 700, color: T.accent }}>{s.symbol} ↗</span>
-              <span
-                style={{
-                  fontSize: "13px",
-                  fontWeight: 700,
-                  fontFamily: "'JetBrains Mono', monospace",
-                  color: pctColor(s.changePct),
-                }}
-              >
-                {s.changePct >= 0 ? "+" : ""}{fmt(s.changePct, 2)}%
+              <span style={{ fontSize: "12px", fontWeight: 700, color: unavailable ? T.muted : T.accent }}>
+                {s.symbol}{onSymbol && !unavailable ? " ↗" : ""}
               </span>
+              {unavailable ? (
+                <span style={{ fontSize: "11px", fontWeight: 600, color: T.muted }}>n/a</span>
+              ) : (
+                <span
+                  style={{
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    color: pctColor(s.changePct!),
+                  }}
+                >
+                  {s.changePct! >= 0 ? "+" : ""}{fmt(s.changePct!, 2)}%
+                </span>
+              )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -1342,7 +1407,10 @@ export default function MarketsPage() {
       }
       const json: MarketOverview = await res.json();
       setData(json);
-      setLastFetch(new Date().toLocaleTimeString());
+      // The server's own fetch time, NOT the browser clock — a 5-min cached
+      // payload previously always read "fresh" because this stamped the moment
+      // the response arrived rather than the age of the data inside it.
+      setLastFetch(json.fetchedAt ? new Date(json.fetchedAt).toLocaleTimeString() : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1375,11 +1443,11 @@ export default function MarketsPage() {
         title={isIndia ? "Markets · India" : "Markets"}
         subtitle={isIndia
           ? "NIFTY 50, SENSEX, BANK NIFTY, India VIX, NSE sector indices & breadth (₹)"
-          : "Live indices, sector rotation, and VIX proxy"}
+          : "End-of-day indices, sector rotation, and VIX proxy"}
         cadence="daily"
         whatItDoes={isIndia
           ? "Shows NIFTY 50, SENSEX, BANK NIFTY and India VIX plus 10 NSE sector indices and NIFTY-50 market breadth. India data comes from a server-side snapshot (Yahoo .NS, unofficial) refreshed on a schedule — advisory display only."
-          : "Shows S&P 500, Nasdaq, Dow, and VIX proxy (VIXY) plus all 11 S&P sector ETF performances. Data refreshes every 5 minutes during market hours."}
+          : "Shows S&P 500, Nasdaq, Dow, and VIX proxy (VIXY) plus all 11 S&P sector ETF performances. Each move is the latest completed session's close against the prior session's close — an end-of-day figure from Massive, not an intraday quote, so it does not move during the trading day."}
         whatToLookFor={isIndia ? [
           "Red sectors = risk-off rotation. Green sectors = risk-on. Note which NSE sectors lead.",
           "India VIX rising = elevated volatility / fear — consider sizing down new entries.",
@@ -1398,8 +1466,8 @@ export default function MarketsPage() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
           <div />
           <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-            {lastFetch && (
-              <span style={{ fontSize: "12px", color: T.muted }}>Updated {lastFetch}</span>
+            {!isIndia && lastFetch && (
+              <span style={{ fontSize: "12px", color: T.muted }}>Data fetched {lastFetch}</span>
             )}
             <button
               onClick={fetchMarkets}
@@ -1509,8 +1577,7 @@ export default function MarketsPage() {
               <div style={{ marginBottom: "16px" }}>
                 {indiaSnap.sectors.length > 0 ? (
                   <SectorHeatmap
-                    sectors={indiaSnap.sectors.map((r) => ({ symbol: r.symbol, name: r.label, price: r.price, change: (r.price * r.changePct) / 100, changePct: r.changePct }))}
-                    onSymbol={setSelectedSymbol}
+                    sectors={indiaSnap.sectors.map((r) => ({ symbol: r.symbol, name: r.label, price: r.price, change: (r.price * r.changePct) / 100, changePct: r.changePct, status: "ok" as const }))}
                   />
                 ) : (
                   <TempUnavailableNote label="India sector rotation" detail="no NSE sector rows resolved this fetch" onRetry={loadIndia} />
@@ -1543,6 +1610,24 @@ export default function MarketsPage() {
       {/* Data loaded (US) */}
       {!isIndia && data && (
         <>
+          {/* Degradation banner — a provider/credential outage previously rendered
+              as every index and sector exactly flat with no indication at all. */}
+          {data.degraded && (
+            <div style={{ marginBottom: "16px", background: "#2D2000", border: `1px solid ${T.amber}40`, borderRadius: "12px", padding: "14px 18px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", padding: "2px 8px", borderRadius: "5px", background: T.surface, border: `1px solid ${T.amber}40`, color: T.amber }}>
+                Data unavailable
+              </span>
+              <span style={{ fontSize: "12px", color: T.text }}>{data.degraded}</span>
+              <button onClick={fetchMarkets} style={{ marginLeft: "auto", padding: "5px 12px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "7px", color: T.text, fontSize: "12px", fontWeight: 500, cursor: "pointer" }}>Retry</button>
+            </div>
+          )}
+          {!data.degraded && data.stale && data.unavailableCount > 0 && (
+            <div style={{ marginBottom: "16px", background: "#2D2000", border: `1px solid ${T.amber}40`, borderRadius: "12px", padding: "12px 18px", fontSize: "12px", color: T.text }}>
+              <span style={{ color: T.amber, fontWeight: 700 }}>Partial data</span>
+              {" — "}{data.unavailableCount} of {data.indices.length + data.sectors.length} symbols could not be resolved this fetch. Unresolved tiles show “n/a”, never 0.00%.
+            </div>
+          )}
+
           {/* Index bar */}
           <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
             {data.indices.map(q => (
@@ -1588,12 +1673,22 @@ export default function MarketsPage() {
             </div>
           )}
 
-          {/* Sector treemap */}
-          <SectorTreemap sectors={data.sectors} />
+          {/* Sector treemap — clicking a sector opens the chart above. This is
+              the ONLY writer of selectedSymbol on US; the sector ETFs are US
+              symbols that /api/charts/price-history can genuinely resolve. */}
+          <SectorTreemap sectors={data.sectors} onSymbol={setSelectedSymbol} />
 
-          {/* Footer note */}
-          <div style={{ marginTop: "16px", fontSize: "11px", color: T.muted, textAlign: "right" }}>
-            Data via FinancialDatasets · 15-min delay · Cached 5 min
+          {/* Provenance / freshness footer — states the real provider, the real
+              endpoint semantics, and the real age of the data. */}
+          <div style={{ marginTop: "16px", fontSize: "11px", color: T.muted, textAlign: "right", lineHeight: 1.6 }}>
+            Daily close via Massive (previous-day aggregate, end-of-day — not intraday)
+            {data.sessionDate && <> · session {data.sessionDate}</>}
+            {data.priorCloseDate && <> vs prior close {data.priorCloseDate}</>}
+            <br />
+            Fetched {new Date(data.fetchedAt).toLocaleString()} · server-cached 5 min
+            {data.unavailableCount > 0 && (
+              <> · <span style={{ color: T.amber }}>{data.unavailableCount} symbol{data.unavailableCount === 1 ? "" : "s"} unavailable</span></>
+            )}
           </div>
         </>
       )}
