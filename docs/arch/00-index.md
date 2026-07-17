@@ -1,5 +1,5 @@
 # Kairos Architecture — Chapter Index
-> Last updated: 2026-07-10
+> Last updated: 2026-07-17
 
 This directory contains the definitive architecture documentation split into narrow chapters.
 Each chapter is independently updateable — a change to brokers doesn't touch the agents chapter.
@@ -35,6 +35,32 @@ When a change lands, update ONLY the relevant chapter(s). Do not touch other cha
 | LearnerAgent / mutation / genome change | `09-learning-loop.md` |
 | Product direction or feature area change | `01-what-is-kairos.md` |
 | Coding convention change | `07-coding-conventions.md` |
+
+## Diagrams — one source per fact
+
+**Agent-to-agent topology lives ONLY in `public/agent-diagrams/system-map.json`** (rendered at
+`/dashboard/agents` → "System Map"; carries a `history` audit trail). A chapter must never restate
+the map's edges — link to it instead. Two copies of one fact do not double-check each other; they
+rot apart and give the stale one somewhere to hide. That is not hypothetical: `03-agents.md` and
+the map both asserted `MACRO --> RESEARCH` unqualified after `macro_score` had become US-only.
+
+A chapter diagram is **legitimate** when it shows something the map does not — a decision sequence,
+a gate ladder, a narrower altitude, a worked example. Kept on purpose:
+
+| Chapter | Diagram | Why it is not duplication |
+|---|---|---|
+| `08-risk-and-safety.md` | Gate ladder (intent → actor → … → preview echo → submit) | An ordered decision sequence. The map shows no gate order. |
+| `09-learning-loop.md` | learner → challenger → shadow → validate → promote → champion → outcomes | The loop's own story at its own altitude — the chapter's subject. |
+| `09-learning-loop.md` | RAG trade-memory pipeline | Inside one subsystem; no agent-to-agent edges. |
+| `01-what-is-kairos.md` | "Big picture" wheel + a trade's life | Onboarding abstractions over nodes the map doesn't have. |
+
+**Enforced by `tests/arch-diagram-drift.test.ts`** (plain vitest, no CI config, no new deps). It
+fails when a chapter re-declares an edge the map already declares, and also checks every
+`public/agent-diagrams/*.json` parses and holds `agentId` / `agentLabel` / `diagram` / `nodes`
+(an object keyed by node id, **not** an array) / non-empty `history` — a malformed file breaks
+`/dashboard/agents`. Legitimate overlap (08/09/01 above) is allowed only as an explicit,
+reason-bearing entry in that test's `DECLARED_OVERLAPS`, so an exemption is a conscious choice
+rather than an accident. Stale entries fail too.
 
 ## What lives elsewhere
 

@@ -2,7 +2,7 @@
 > Last updated: 2026-07-17 (macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted)
 > Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
 
-**Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file + update `public/agent-diagrams/system-map.json`.
+**Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file (prose/registry only) + update `public/agent-diagrams/system-map.json` (the node, its edges, and a `history` entry — this is where the topology change lands) + add or update the per-agent diagram `public/agent-diagrams/<agent>.json` (same `agentId`/`agentLabel`/`diagram`/`nodes`/`history` contract; `nodes` is an object keyed by node id, never an array).
 
 ---
 
@@ -12,31 +12,16 @@
 tables. Agents write and read a common set of tables; they never invoke each other's HTTP
 handlers directly.
 
-```mermaid
-flowchart LR
-  MACRO[MacroSentinel] --> |macro_signals| RESEARCH[ResearchAgent]
-  UNIVERSE[PIT Universe + Providers] --> RESEARCH
-  RESEARCH --> |agent_signals + decision_observations| PAPER[PaperTrader]
-  RESEARCH --> |eligible proposal| TRADER[TraderAgent]
-  RESEARCH --> |qualifying signal| SHADOW[AutonomousShadow]
-  SHADOW --> |shadow proposal queued_auto / manual_review_required| PROPOSALS[(trade_proposals)]
-  RESEARCH --> |qualifying signal autonomous markets| LIVE[AutonomousLive]
-  LIVE --> |reserve_live_order_budget_v2| BUDGET[(broker_orders atomic)]
-  LIVE --> |live order| BROKER2[Robinhood REST or Kite REST]
-  LIVE --> |live proposal + events| LIVEAUDIT[(trade_proposals broker_order_events)]
-  TRADER --> GATEWAY[Shared Execution Gateway]
-  GATEWAY --> BROKER[Robinhood or Kite Adapter]
-  RESEARCH --> |signal_score_history| RESEARCH
-  PAPER --> |paper_positions paper_trades| MONITOR[PositionMonitor]
-  MONITOR --> |closed paper_trades| LEARNER[LearnerAgent]
-  LEARNER --> |challenger proposal| VALIDATE[Validation Engine]
-  VALIDATE --> |evidence| USER((You))
-  USER --> |promote champion| RESEARCH
-  MONITOR --> |closed paper_trades| MENTOR[MentorAgent]
-  MENTOR --> |mentor_insights| USER
-  HEALTH[Health-Triage] --> |agent_alerts structured_issues| USER
-  LEARNER --> |trade_memories via RAG| RESEARCH
-```
+**The topology diagram lives in exactly one place:** `public/agent-diagrams/system-map.json`,
+rendered at `/dashboard/agents` → **"System Map"** (the default diagram view). It is the single
+source of truth for which agent hands what to which, and it carries a `history` audit trail of
+every edge change. This chapter deliberately does **not** redraw it — a second copy of the same
+edges does not add safety, it just gives a stale claim a second place to hide. (It already did:
+both copies asserted `MACRO --> RESEARCH` unqualified long after `macro_score` became US-only.)
+`tests/arch-diagram-drift.test.ts` enforces this.
+
+The table below is the chapter's own altitude: **which tables** carry the coordination, not which
+arrows exist.
 
 ### Table-to-agent matrix
 
