@@ -384,7 +384,6 @@ export function assembleCohort(input: AssembleInput): FrozenCohort {
 // ── impure orchestration (load → resolve once → assemble → evaluate → persist) ─
 
 const DEFAULT_LIMIT = 25;
-const DEFAULT_THRESHOLD = 60;
 const DEFAULT_COVERAGE_MARGIN = 0.05;
 const DEFAULT_MAX_RANK_DISPLACEMENT = 5;
 
@@ -434,21 +433,34 @@ export async function loadRecentDecisions(
     for (const p of (packets ?? []) as any[]) packetById.set(p.id, p);
   }
   const decisions: LegacyDecision[] = [];
-  const weightVectors: DimensionRecord<number>[] = [];
-  let strategyVersion = "unknown";
+  const seenSymbols = new Set<string>();
+  let weights: DimensionRecord<number> | null = null;
+  let strategyVersion: string | null = null;
+  let selectedFingerprint: string | null = null;
 
   for (const r of rows) {
     const raw = packetById.get(r.research_packet_id)?.raw_data;
     const pw = raw?._profile_weights;
     const dq = raw?._data_quality;
     if (!pw || !dq) continue; // not reproducible without both — skip honestly
-    weightVectors.push({
+    const rowWeights: DimensionRecord<number> = {
       fundamental: Number(pw.fw), technical: Number(pw.tw), sentiment: Number(pw.sw),
       macro: Number(pw.mw), insider: Number(pw.iw),
-    });
-    strategyVersion = r.genome_hash || r.scoring_version || strategyVersion;
+    };
+    if (!Object.values(rowWeights).every(Number.isFinite)) continue;
+    const rowStrategyVersion = String(r.genome_hash || r.scoring_version || "unknown");
+    const rowFingerprint = strategyFingerprint(rowWeights, rowStrategyVersion);
+    if (selectedFingerprint == null) {
+      selectedFingerprint = rowFingerprint;
+      weights = rowWeights;
+      strategyVersion = rowStrategyVersion;
+    }
+    if (rowFingerprint !== selectedFingerprint) continue;
+    const symbol = String(r.symbol).toUpperCase();
+    if (seenSymbols.has(symbol)) continue;
+    seenSymbols.add(symbol);
     decisions.push({
-      symbol: String(r.symbol).toUpperCase(),
+      symbol,
       shape: shapeOf(r.asset_class, r.symbol),
       isHeld: r.is_holding === true,
       scores: {
@@ -465,11 +477,9 @@ export async function loadRecentDecisions(
     });
   }
 
-  // Freeze ONE weight vector. All rows from one run share it; if they diverge we
-  // take the newest (rows are created_at desc) and note it rather than averaging.
-  const weights = weightVectors[0] ?? {
-    fundamental: 0.3, technical: 0.25, sentiment: 0.2, macro: 0.15, insider: 0.1,
-  };
+  // Freeze one coherent strategy/weight cohort and exclude duplicates or rows
+  // created under a different strategy snapshot.
+  if (!weights || !strategyVersion) throw new Error(`no coherent reproducible ${market} strategy cohort found`);
   return { decisions, weights, strategyVersion };
 }
 
@@ -598,6 +608,7 @@ export async function buildAndPersistCohort(opts: {
   const reuse = verifyReverseShadowReuse(snapshot, symbolIntents);
 
   const activeVersionId = await loadActivePolicyVersion(svc, opts.market);
+  const scoreThreshold = await loadScoreThreshold(svc, opts.market);
 
   const cohort = assembleCohort({
     evaluationId: `${stamp}`,
@@ -611,7 +622,7 @@ export async function buildAndPersistCohort(opts: {
     candidatePolicyVersionId: activeVersionId,
     strategyVersion,
     weights,
-    scoreThreshold: DEFAULT_THRESHOLD,
+    scoreThreshold,
     priceBasis: "eod_adjusted",
     coverageNonInferiorityMargin: DEFAULT_COVERAGE_MARGIN,
     maxAdverseRankDisplacement: DEFAULT_MAX_RANK_DISPLACEMENT,
@@ -646,14 +657,23 @@ export async function buildAndPersistCohort(opts: {
     // and (b) wrote ZERO provider_call_ledger rows.
     holds:
       reuse.missing.length === 0 &&
-      (ledger ? ledger.reverse.bursts === 0 && ledger.reverse.total === 0 : true),
+      ledger !== null && ledger.reverse.bursts === 0 && ledger.reverse.total === 0,
   };
+
+  const reproductionFailures = legacyReproduction.filter((row) => !row.matches);
+  const proofFailures = [
+    ...(ledgerProof.holds ? [] : [{ code: "ledger_proof_missing" as const, symbol: null, detail: "provider_call_ledger proof missing, unreadable, or reverse run was not empty" }]),
+    ...reproductionFailures.map((row) => ({ code: "legacy_reproduction_failed" as const, symbol: row.symbol, detail: `recorded=${row.recorded}, replayed=${row.replayed}` })),
+  ];
+  const auditedEvaluation: CohortEvaluation = proofFailures.length === 0
+    ? evaluation
+    : { ...evaluation, passed: false, failures: [...evaluation.failures, ...proofFailures] };
 
   let evaluationId: string | null = null;
   if (!opts.dryRun) {
     evaluationId = await persistEvaluation({
       cohort,
-      evaluation,
+      evaluation: auditedEvaluation,
       strategyFingerprint: strategyFingerprint(weights, strategyVersion),
       callUsage: {
         builder_version: COHORT_BUILDER_VERSION,
@@ -675,10 +695,10 @@ export async function buildAndPersistCohort(opts: {
     asOf,
     snapshotId: snapshot.snapshotId,
     symbols: decisions.length,
-    passed: evaluation.passed,
-    counts: evaluation.counts,
-    failures: evaluation.failures,
-    requiresOwnerReview: evaluation.requiresOwnerReview.length,
+    passed: auditedEvaluation.passed,
+    counts: auditedEvaluation.counts,
+    failures: auditedEvaluation.failures,
+    requiresOwnerReview: auditedEvaluation.requiresOwnerReview.length,
     ledgerProof,
     cohortFingerprint: cohortFingerprint(cohort),
     legacyReproduction,
@@ -708,6 +728,19 @@ async function loadActivePolicyVersion(svc: any, market: Market): Promise<string
     throw new Error(`no active evidence policy for ${market}: ${error?.message ?? "missing pointer"}`);
   }
   return data.policy_version_id as string;
+}
+
+async function loadScoreThreshold(svc: any, market: Market): Promise<number> {
+  const { data, error } = await svc
+    .from("trading_mandates")
+    .select("score_threshold")
+    .eq("market", market)
+    .maybeSingle();
+  const threshold = Number(data?.score_threshold);
+  if (error || !Number.isFinite(threshold) || threshold < 0 || threshold > 100) {
+    throw new Error(`valid trading mandate score_threshold missing for ${market}: ${error?.message ?? "invalid value"}`);
+  }
+  return threshold;
 }
 
 async function readLedgerProof(

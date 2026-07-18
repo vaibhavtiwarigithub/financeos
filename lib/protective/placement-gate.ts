@@ -80,6 +80,9 @@ export function planProtectivePlacement(input: PlanProtectivePlacementInput): Pr
   if (!input.eligibility.protectedByBroker) {
     blockedBy.push(`unprotected-by-broker: ${input.eligibility.reason}`);
   }
+  if (!input.symbol.trim() || !input.brokerAccountId.trim()) blockedBy.push("symbol and broker account are required");
+  if (input.eligibility.request.market !== input.market) blockedBy.push("eligibility market does not match placement market");
+  if (input.action === "none") blockedBy.push("no placement action requested");
 
   // 3) Floor must be valid.
   if (!input.floor.ok || input.floor.floor == null) {
@@ -88,9 +91,11 @@ export function planProtectivePlacement(input: PlanProtectivePlacementInput): Pr
 
   // 4) Long-only: protected qty can never exceed reconciled held qty, and a
   //    replace requires a CONFIRMED cancellation of the resting order first.
-  const qty = Math.max(0, Math.floor(input.desiredProtectQty));
-  if (qty <= 0) {
-    blockedBy.push("desired protect qty rounds to zero");
+  const qty = Number.isInteger(input.desiredProtectQty) && input.desiredProtectQty > 0 ? input.desiredProtectQty : 0;
+  if (!Number.isInteger(input.desiredProtectQty) || input.desiredProtectQty <= 0) {
+    blockedBy.push("desired protect qty must be a positive integer");
+  } else if (!Number.isFinite(input.reconciledHeldQty) || input.reconciledHeldQty < 0) {
+    blockedBy.push("reconciled held qty must be a non-negative finite number");
   } else if (qty > input.reconciledHeldQty) {
     blockedBy.push(`protect qty ${qty} exceeds reconciled held qty ${input.reconciledHeldQty} (long-only)`);
   }

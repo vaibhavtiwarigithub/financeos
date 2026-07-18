@@ -128,6 +128,8 @@ export interface WebullTokenRecord {
   lastAuthenticatedCallAt: string | null;
   // ISO timestamp the token was first minted (drives the 5-minute verify window).
   mintedAt?: string | null;
+  expiresAt?: string | null;
+  serverStatusCheckedAt?: string | null;
 }
 
 export type TokenCheckResult =

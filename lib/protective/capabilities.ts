@@ -74,6 +74,8 @@ export type ProtectionStrength = "stop_market" | "weaker_limit";
 export type ProtectionEligibility =
   | {
       protectedByBroker: true;
+      broker: string;
+      request: ProtectionRequest;
       kind: ProtectiveOrderKind;
       strength: ProtectionStrength;
       capability: ProtectiveOrderCapability;
@@ -84,6 +86,8 @@ export type ProtectionEligibility =
     }
   | {
       protectedByBroker: false;
+      broker: string;
+      request: ProtectionRequest;
       unprotectedByBroker: true;
       /** Why NO declared kind qualified — this is a first-class reported state. */
       reason: string;
@@ -140,7 +144,7 @@ export function evaluateProtection(
             ? `account mode ${req.accountMode} not in broker scope`
             : null;
   if (scopeFail) {
-    return { protectedByBroker: false, unprotectedByBroker: true, reason: `out of broker scope: ${scopeFail}`, rejected };
+    return { protectedByBroker: false, broker: caps.broker, request: req, unprotectedByBroker: true, reason: `out of broker scope: ${scopeFail}`, rejected };
   }
 
   for (const kind of PREFERENCE_ORDER) {
@@ -160,6 +164,8 @@ export function evaluateProtection(
     }
     return {
       protectedByBroker: true,
+      broker: caps.broker,
+      request: req,
       kind,
       strength: strengthOf(kind),
       capability: cap,
@@ -170,6 +176,8 @@ export function evaluateProtection(
 
   return {
     protectedByBroker: false,
+    broker: caps.broker,
+    request: req,
     unprotectedByBroker: true,
     reason:
       rejected.length > 0

@@ -36,19 +36,17 @@ function fixtureBroker() {
       calls.push(req);
       if (req.path.endsWith("/place")) {
         const body = JSON.parse(req.body ?? "{}");
-        const cid = body.client_order_id;
+        const cid = body.new_orders?.[0]?.client_order_id;
         // Idempotent: a repeated client_order_id returns the SAME broker order id.
         let bid = byClientId.get(cid);
         if (!bid) { bid = `WB-ORD-${seq++}`; byClientId.set(cid, bid); }
         return { ok: true, status: 200, json: { data: { order_id: bid, client_order_id: cid } } };
       }
-      if (req.path.endsWith("/query")) {
-        const cid = req.query?.client_order_id as string | undefined;
-        if (cid) {
-          const bid = byClientId.get(cid);
-          if (!bid) return { ok: true, status: 200, json: { data: {} } };
-          return { ok: true, status: 200, json: { data: { order_id: bid, status: "Filled" } } };
-        }
+      if (req.path.endsWith("/open")) {
+        const data = [...byClientId].map(([client_order_id, order_id]) => ({ client_order_id, combo_type: "NORMAL", orders: [{ client_order_id, order_id, status: "Filled" }] }));
+        return { ok: true, status: 200, json: { data } };
+      }
+      if (req.path.endsWith("/detail")) {
         return { ok: true, status: 200, json: { data: { order_id: req.query?.order_id, status: "PartiallyFilled", cumulative_quantity: 1, average_price: 190.25 } } };
       }
       if (req.path.endsWith("/cancel")) return { ok: true, status: 200, json: { data: { ok: true } } };
@@ -69,8 +67,10 @@ describe("webull_trade lifecycle — place/query/cancel/reconcile", () => {
 
   it("serializeOrderBody carries client_order_id and no dollar-notional field for qty", () => {
     const body = JSON.parse(serializeOrderBody(ORDER));
-    expect(body.quantity).toBe(2);
-    expect(body.client_order_id).toBe("kai0abc");
+    expect(body.account_id).toBe(ORDER.accountId);
+    expect(body.new_orders).toHaveLength(1);
+    expect(body.new_orders[0].quantity).toBe("2");
+    expect(body.new_orders[0].client_order_id).toBe("kai0abc");
     expect(body).not.toHaveProperty("amount");
     expect(body).not.toHaveProperty("notional");
   });
@@ -114,13 +114,13 @@ describe("webull_trade lifecycle — place/query/cancel/reconcile", () => {
 
   it("query maps a partial fill with exact cumulative qty and avg price (Test 10)", async () => {
     const { transport } = fixtureBroker();
-    const s = await queryOrder(transport, "WB-ORD-9", "sandbox");
+    const s = await queryOrder(transport, ORDER.accountId, "WB-ORD-9", "sandbox");
     expect(s).toMatchObject({ ok: true, status: "partially_filled", filledQty: 1, avgFillPrice: 190.25 });
   });
 
   it("query failure → needs_reconcile, never a fabricated terminal state", async () => {
     const transport: WebullTransport = { async send() { return { ok: false, timeout: true, error: "timeout" }; } };
-    const s = await queryOrder(transport, "WB-ORD-1", "sandbox");
+    const s = await queryOrder(transport, ORDER.accountId, "WB-ORD-1", "sandbox");
     expect(s.ok).toBe(false);
     expect(s.status).toBe("needs_reconcile");
   });
@@ -128,23 +128,24 @@ describe("webull_trade lifecycle — place/query/cancel/reconcile", () => {
   it("reconcileByClientOrderId FINDS a landed order (proves the ambiguous submit did land → never resubmit)", async () => {
     const { transport } = fixtureBroker();
     await placeOrder(transport, ORDER, "sandbox"); // lands under kai0abc
-    const r = await reconcileByClientOrderId(transport, "kai0abc", "sandbox");
+    const r = await reconcileByClientOrderId(transport, ORDER.accountId, "kai0abc", "sandbox");
     expect(r.found).toBe(true);
     expect(r.brokerOrderId).toMatch(/^WB-ORD-/);
   });
 
-  it("reconcileByClientOrderId reports NOT-found when the submit never landed", async () => {
+  it("reconcileByClientOrderId keeps open-order absence ambiguous", async () => {
     const { transport } = fixtureBroker();
-    const r = await reconcileByClientOrderId(transport, "kai-never", "sandbox");
-    expect(r.ok).toBe(true);
+    const r = await reconcileByClientOrderId(transport, ORDER.accountId, "kai-never", "sandbox");
+    expect(r.ok).toBe(false);
     expect(r.found).toBe(false);
+    expect(r.status).toBe("needs_reconcile");
   });
 
   it("cancel reports success and failure honestly", async () => {
     const { transport } = fixtureBroker();
-    expect(await cancelOrder(transport, "WB-ORD-1", "sandbox")).toEqual({ ok: true });
+    expect(await cancelOrder(transport, ORDER.accountId, ORDER.clientOrderId, "sandbox")).toEqual({ ok: true });
     const failing: WebullTransport = { async send() { return { ok: false, timeout: false, error: "409 cannot cancel" }; } };
-    const r = await cancelOrder(failing, "WB-ORD-1", "sandbox");
+    const r = await cancelOrder(failing, ORDER.accountId, ORDER.clientOrderId, "sandbox");
     expect(r.ok).toBe(false);
   });
 

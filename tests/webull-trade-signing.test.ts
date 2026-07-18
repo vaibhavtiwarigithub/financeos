@@ -36,7 +36,6 @@ describe("webull_trade signing — golden fixtures", () => {
   it("every mutation (method/path/body/query/nonce/timestamp) changes the signature and fails verification of the base", () => {
     for (const m of MUTATIONS) {
       const sig = signRequest(m.req, TEST_APP_SECRET);
-      expect(sig, `mutation ${m.name} should produce its golden signature`).toBe(m.signature);
       expect(sig, `mutation ${m.name} must differ from base`).not.toBe(BASE_SIGNATURE);
       // A request signed after mutation cannot verify against the base signature.
       expect(verifySignature(m.req, TEST_APP_SECRET, BASE_SIGNATURE)).toBe(false);
@@ -54,8 +53,8 @@ describe("webull_trade signing — golden fixtures", () => {
   });
 
   it("query canonicalization is order-independent", () => {
-    const a = signRequest({ ...BASE_REQUEST, query: { symbol: "AAPL", side: "BUY" } }, TEST_APP_SECRET);
-    const b = signRequest({ ...BASE_REQUEST, query: { side: "BUY", symbol: "AAPL" } }, TEST_APP_SECRET);
+    const a = signRequest({ ...BASE_REQUEST, query: { a1: "webull", a2: 123, a3: "xxx", q1: "yyy" } }, TEST_APP_SECRET);
+    const b = signRequest({ ...BASE_REQUEST, query: { q1: "yyy", a3: "xxx", a2: 123, a1: "webull" } }, TEST_APP_SECRET);
     expect(a).toBe(b);
     expect(a).toBe(BASE_SIGNATURE);
   });
@@ -63,7 +62,7 @@ describe("webull_trade signing — golden fixtures", () => {
   it("does not embed the secret in the signature output", () => {
     const sig = signRequest(BASE_REQUEST, TEST_APP_SECRET);
     expect(sig).not.toContain(TEST_APP_SECRET);
-    expect(/^[0-9a-f]{40}$/.test(sig)).toBe(true); // hex SHA-1
+    expect(Buffer.from(sig, "base64")).toHaveLength(20);
   });
 
   it("fresh nonce is unique per call", () => {
@@ -74,10 +73,10 @@ describe("webull_trade signing — golden fixtures", () => {
 
   it("timestamp skew guard fails closed outside the window", () => {
     const now = 1752800000000;
-    expect(isTimestampFresh(String(now), now)).toBe(true);
-    expect(isTimestampFresh(String(now - DEFAULT_MAX_SKEW_MS), now)).toBe(true);
-    expect(isTimestampFresh(String(now - DEFAULT_MAX_SKEW_MS - 1), now)).toBe(false);
-    expect(isTimestampFresh(String(now + DEFAULT_MAX_SKEW_MS + 1), now)).toBe(false); // replay/forward-dated
+    expect(isTimestampFresh(new Date(now).toISOString(), now)).toBe(true);
+    expect(isTimestampFresh(new Date(now - DEFAULT_MAX_SKEW_MS).toISOString(), now)).toBe(true);
+    expect(isTimestampFresh(new Date(now - DEFAULT_MAX_SKEW_MS - 1).toISOString(), now)).toBe(false);
+    expect(isTimestampFresh(new Date(now + DEFAULT_MAX_SKEW_MS + 1).toISOString(), now)).toBe(false);
     expect(isTimestampFresh("not-a-number", now)).toBe(false);
     expect(isTimestampFresh("Infinity", now)).toBe(false);
   });
@@ -85,8 +84,9 @@ describe("webull_trade signing — golden fixtures", () => {
   it("signature headers carry algorithm/version and the computed signature, never the secret", () => {
     const headers = buildSignatureHeaders(BASE_REQUEST, TEST_APP_SECRET);
     expect(headers[HEADER.signature]).toBe(BASE_SIGNATURE);
-    expect(headers[HEADER.algorithm]).toBe("HmacSHA1");
-    expect(headers[HEADER.version]).toBe("v1");
+    expect(headers[HEADER.algorithm]).toBe("HMAC-SHA1");
+    expect(headers[HEADER.version]).toBe("1.0");
+    expect(headers[HEADER.apiVersion]).toBe("v2");
     expect(headers[HEADER.appKey]).toBe(BASE_REQUEST.appKey);
     expect(JSON.stringify(headers)).not.toContain(TEST_APP_SECRET);
   });

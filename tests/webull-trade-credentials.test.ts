@@ -66,16 +66,13 @@ describe("webull_trade credentials", () => {
     }
   });
 
-  it("the live transport refuses to send a sandbox credential to a prod-env request", async () => {
+  it("the shipped code cannot construct a network-capable transport", async () => {
     const { reader } = fakeReader(STORE);
     const sb = await getWebullTradeCredential(reader, "sandbox");
     if (!sb.ok) throw new Error("expected sandbox creds");
     // Construct with enabled:true ONLY to exercise the env-mismatch guard (no network
     // is reached — the guard returns before fetch).
-    const transport = liveWebullTransport({ enabled: true, credential: sb.credential });
-    const res = await transport.send({ method: "POST", path: "/trade/v1/order/place", body: "{}", env: "prod" });
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.error).toMatch(/env\/host mismatch/);
+    expect(() => liveWebullTransport({ enabled: true, credential: sb.credential })).toThrow(/not implemented|disabled/);
   });
 
   it("fails closed when a credential is missing, WITHOUT leaking any secret", async () => {

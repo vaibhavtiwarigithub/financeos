@@ -16,7 +16,6 @@
 import { BrokerAdapter, BrokerOrderResult, BrokerOrderState } from "@/lib/brokers/adapter-types";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
-  countWebullUsTradingAccounts,
   resolveWebullTradingAccount,
   webullTradeOrdersEnabled,
 } from "./config";
@@ -37,15 +36,7 @@ export function webullTradeAdapter(): BrokerAdapter {
     // All three are false today, so this is permanently false until the owner
     // provisions them after entitlement + sandbox proof.
     async isConfigured() {
-      try {
-        const svc = createServiceClient();
-        if (!(await webullTradeOrdersEnabled(svc))) return false;
-        if ((await countWebullUsTradingAccounts(svc)) !== 1) return false;
-        const cred = await getWebullTradeCredential(supabaseVaultReader(svc), "prod");
-        return cred.ok;
-      } catch {
-        return false;
-      }
+      return false;
     },
 
     async submitOrder(o): Promise<BrokerOrderResult> {

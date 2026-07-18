@@ -100,6 +100,26 @@ export function reconcileProtectiveOrder(input: ReconcileInput): ReconcileResult
     issues: [],
   };
 
+  if (!Number.isFinite(priorProtectedQty) || priorProtectedQty < 0) {
+    return {
+      ...base,
+      status: "needs_reconcile",
+      unresolved: true,
+      issues: [issue(`protective-invalid-prior:${symbol}`, "critical", `Invalid prior protection for ${symbol}`, "Prior protected quantity is invalid; no broker state may be inferred.")],
+      reason: "invalid prior protected quantity",
+    };
+  }
+  if (s.heldQty != null && (!Number.isFinite(s.heldQty) || s.heldQty < 0)) {
+    return {
+      ...base,
+      status: "needs_reconcile",
+      unresolved: true,
+      residualProtectedQty: priorProtectedQty,
+      issues: [issue(`protective-invalid-held:${symbol}`, "critical", `Invalid broker holding for ${symbol}`, "Broker held quantity is invalid; refusing to infer a fill, cancellation, or safe residual.")],
+      reason: "invalid broker held quantity",
+    };
+  }
+
   // 1) Read failure → never assume. needs_reconcile.
   if (s.snapshotError) {
     return {
@@ -145,12 +165,21 @@ export function reconcileProtectiveOrder(input: ReconcileInput): ReconcileResult
 
   switch (s.status) {
     case "filled": {
-      const qty = filled > 0 ? filled : priorProtectedQty;
+      if (!Number.isFinite(filled) || filled <= 0 || filled > priorProtectedQty) {
+        return {
+          ...base,
+          status: "needs_reconcile",
+          unresolved: true,
+          residualProtectedQty: priorProtectedQty,
+          issues: [issue(`protective-unconfirmed-fill:${symbol}`, "critical", `Fill quantity unconfirmed for ${symbol}`, "Broker reported filled without a valid positive filled quantity. The position remains open until quantity is confirmed.")],
+          reason: "filled status without confirmed quantity",
+        };
+      }
       return {
         ...base,
         status: "filled",
         positionClosed: true,
-        closeQty: qty,
+        closeQty: filled,
         closeExitReason: PROTECTIVE_EXIT_REASON,
         learningScope: LEARNING_SCOPE_RISK_POLICY_ONLY,
         residualProtectedQty: 0,
@@ -159,6 +188,16 @@ export function reconcileProtectiveOrder(input: ReconcileInput): ReconcileResult
     }
 
     case "partially_filled": {
+      if (!Number.isFinite(filled) || filled <= 0 || filled >= priorProtectedQty) {
+        return {
+          ...base,
+          status: "needs_reconcile",
+          unresolved: true,
+          residualProtectedQty: priorProtectedQty,
+          issues: [issue(`protective-invalid-partial:${symbol}`, "critical", `Partial fill quantity invalid for ${symbol}`, "A partial fill must be positive and smaller than the prior protected quantity.")],
+          reason: "invalid partial fill quantity",
+        };
+      }
       // Part of the position closed; the residual needs continued protection and
       // can never exceed the reconciled held qty.
       const residual = clampResidual(priorProtectedQty - filled, s.heldQty);

@@ -121,6 +121,7 @@ export function totalExecutableSellExceedsHeld(opts: {
   restingProtectiveQty: number;
   competingSellQty: number;
 }): boolean {
+  if (![opts.reconciledHeldQty, opts.restingProtectiveQty, opts.competingSellQty].every((v) => Number.isFinite(v) && v >= 0)) return true;
   return opts.restingProtectiveQty + opts.competingSellQty > opts.reconciledHeldQty;
 }
 
@@ -137,6 +138,12 @@ export function canSubmitCompetingSell(opts: {
 }): { ok: true } | { ok: false; reason: string } {
   if (!Number.isFinite(opts.requestedSellQty) || opts.requestedSellQty <= 0) {
     return { ok: false, reason: "requested SELL qty must be a positive finite number" };
+  }
+  if (!Number.isFinite(opts.reconciledHeldQty) || opts.reconciledHeldQty < 0) {
+    return { ok: false, reason: "reconciled held qty must be a non-negative finite number" };
+  }
+  if (!Number.isFinite(opts.restingProtectiveQty) || opts.restingProtectiveQty < 0) {
+    return { ok: false, reason: "resting protective qty must be a non-negative finite number" };
   }
   if (opts.restingProtectiveQty > 0 && !opts.restingCancellationConfirmed) {
     return {

@@ -134,9 +134,9 @@ describe("hybrid-stop disaster-floor calculator", () => {
       distance: { kind: "fixed_offset", offset: 5 },
       currentFloor: 95,
     });
-    expect(second.floor).toBe(95);
-    expect(second.changed).toBe(false);
-    expect(second.reason).toMatch(/never lowered/i);
+    expect(second.ok).toBe(false);
+    expect(second.floor).toBeNull();
+    expect(second.reason).toMatch(/no longer wider/i);
   });
 
   it("ratchets UP when the analytical stop rises", () => {
@@ -173,6 +173,12 @@ describe("hybrid-stop disaster-floor calculator", () => {
     expect(r.floor).toBe(95);
     expect(r.reason).toMatch(/outage \+ catastrophic-loss mitigation/i);
   });
+
+  it("rejects a legacy DB/JSON mode and a hard bound at the analytical stop", () => {
+    const base = { analyticalStop: 100, highWaterMark: 120, distance: { kind: "fixed_offset" as const, offset: 5 } };
+    expect(computeDisasterFloor({ ...base, mode: "touch_at_analytical_stop" as any }).ok).toBe(false);
+    expect(computeDisasterFloor({ ...base, mode: "wider_disaster_floor", hardMaxLossFloor: 100 }).ok).toBe(false);
+  });
 });
 
 describe("hybrid-stop reconciliation loop", () => {
@@ -200,6 +206,15 @@ describe("hybrid-stop reconciliation loop", () => {
     expect(r.closeQty).toBe(10);
     expect(r.closeExitReason).toBe(PROTECTIVE_EXIT_REASON);
     expect(r.learningScope).toBe("risk_policy_only");
+  });
+
+  it("a filled status without confirmed positive quantity never closes the book", () => {
+    for (const filledQty of [undefined, 0, Number.NaN, 11]) {
+      const r = reconcileProtectiveOrder({ ...baseInput, snapshot: { found: true, status: "filled", filledQty } });
+      expect(r.positionClosed).toBe(false);
+      expect(r.status).toBe("needs_reconcile");
+      expect(r.unresolved).toBe(true);
+    }
   });
 
   // Acceptance 6 — partial fills leave the correct residual protection.
@@ -292,6 +307,11 @@ describe("hybrid-stop long-only + cancel-before-replace", () => {
       requestedSellQty: 11,
     });
     expect(r.ok).toBe(false);
+  });
+
+  it("invalid numeric holdings/resting quantities fail closed", () => {
+    expect(totalExecutableSellExceedsHeld({ reconciledHeldQty: Number.NaN, restingProtectiveQty: 0, competingSellQty: 1 })).toBe(true);
+    expect(canSubmitCompetingSell({ reconciledHeldQty: 10, restingProtectiveQty: Number.NaN, restingCancellationConfirmed: true, requestedSellQty: 1 }).ok).toBe(false);
   });
 });
 
@@ -401,5 +421,20 @@ describe("hybrid-stop placement gate (THE MONEY LINE — stays inert)", () => {
     });
     expect(plan.allowed).toBe(false);
     expect(plan.blockedBy.some((b) => /exceeds reconciled held/.test(b))).toBe(true);
+  });
+
+  it("even hypothetically enabled, NaN/fractional quantities and cross-market eligibility are blocked", () => {
+    for (const desiredProtectQty of [Number.NaN, 1.5]) {
+      const plan = planProtectivePlacement({
+        flag: { protective_orders_enabled: true }, symbol: "RELIANCE", market: "india", brokerAccountId: "kite-acct",
+        eligibility: eligible, floor, action: "place_floor", reconciledHeldQty: 10, desiredProtectQty,
+      });
+      expect(plan.allowed).toBe(false);
+    }
+    const cross = planProtectivePlacement({
+      flag: { protective_orders_enabled: true }, symbol: "RELIANCE", market: "us", brokerAccountId: "kite-acct",
+      eligibility: eligible, floor, action: "place_floor", reconciledHeldQty: 10, desiredProtectQty: 10,
+    });
+    expect(cross.allowed).toBe(false);
   });
 });

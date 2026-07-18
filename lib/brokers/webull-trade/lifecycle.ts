@@ -21,18 +21,25 @@ import type {
 // Serialize a normalized order to the request body. This is the single mapping to
 // wire field names; reconcile against current docs during the entitlement step.
 export function serializeOrderBody(o: WebullNormalizedOrder): string {
-  const body: Record<string, unknown> = {
-    account_id: o.accountId,
+  const child: Record<string, unknown> = {
+    client_order_id: o.clientOrderId,
+    combo_type: "NORMAL",
+    instrument_type: "EQUITY",
+    entrust_type: "QTY",
+    support_trading_session: o.session,
     symbol: o.symbol,
+    market: "US",
     side: o.side,
     order_type: o.orderType,
-    quantity: o.qty,
     time_in_force: o.timeInForce,
-    session: o.session,
-    client_order_id: o.clientOrderId,
+    quantity: String(o.qty),
   };
-  if (o.orderType === "LIMIT") body.limit_price = o.limitPrice;
-  if (o.orderType === "STOP_LOSS") body.stop_price = o.stopPrice;
+  if (o.orderType === "LIMIT") child.limit_price = String(o.limitPrice);
+  if (o.orderType === "STOP_LOSS") child.stop_price = String(o.stopPrice);
+  const body: Record<string, unknown> = {
+    account_id: o.accountId,
+    new_orders: [child],
+  };
   return JSON.stringify(body);
 }
 
@@ -53,6 +60,25 @@ export function extractBrokerOrderId(json: unknown): string | undefined {
   return undefined;
 }
 
+function findOrderByClientId(json: unknown, clientOrderId: string): unknown | undefined {
+  const queue: Array<{ value: unknown; depth: number }> = [{ value: json, depth: 0 }];
+  let visited = 0;
+  while (queue.length > 0 && visited++ < 500) {
+    const { value, depth } = queue.shift()!;
+    if (!value || typeof value !== "object" || depth > 4) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) queue.push({ value: item, depth: depth + 1 });
+      continue;
+    }
+    const obj = value as Record<string, unknown>;
+    if (String(obj.client_order_id ?? obj.clientOrderId ?? "") === clientOrderId && extractBrokerOrderId(obj)) return obj;
+    for (const key of ["data", "orders", "items"]) {
+      if (obj[key] != null) queue.push({ value: obj[key], depth: depth + 1 });
+    }
+  }
+  return undefined;
+}
+
 export async function placeOrder(
   transport: WebullTransport,
   order: WebullNormalizedOrder,
@@ -64,7 +90,7 @@ export async function placeOrder(
     res = await transport.send({ method: "POST", path: paths.place, body, env });
   } catch (e) {
     // Threw AFTER possibly sending → ambiguous, force reconcile.
-    return { ok: false, needsReconcile: true, clientOrderId: order.clientOrderId, error: `place threw (possible send): ${String(e)}` };
+    return { ok: false, needsReconcile: true, clientOrderId: order.clientOrderId, error: "place transport failed after a possible send - reconcile before retry" };
   }
 
   if (!res.ok) {
@@ -98,14 +124,15 @@ export function mapWebullStatus(raw: string): WebullOrderStatus {
 
 export async function queryOrder(
   transport: WebullTransport,
+  accountId: string,
   brokerOrderId: string,
   env: WebullTradeEnv,
 ): Promise<WebullOrderState> {
   let res: TransportResult;
   try {
-    res = await transport.send({ method: "GET", path: paths.status, query: { order_id: brokerOrderId }, env });
+    res = await transport.send({ method: "GET", path: paths.detail, query: { account_id: accountId, order_id: brokerOrderId }, env });
   } catch (e) {
-    return { ok: false, status: "needs_reconcile", error: `query threw: ${String(e)}` };
+    return { ok: false, status: "needs_reconcile", error: "order detail transport failed" };
   }
   if (!res.ok) {
     return { ok: false, status: "needs_reconcile", error: res.timeout ? "query timed out" : res.error };
@@ -124,14 +151,15 @@ export async function queryOrder(
 
 export async function cancelOrder(
   transport: WebullTransport,
-  brokerOrderId: string,
+  accountId: string,
+  clientOrderId: string,
   env: WebullTradeEnv,
 ): Promise<{ ok: boolean; error?: string; needsReconcile?: boolean }> {
   let res: TransportResult;
   try {
-    res = await transport.send({ method: "POST", path: paths.cancel, body: JSON.stringify({ order_id: brokerOrderId }), env });
+    res = await transport.send({ method: "POST", path: paths.cancel, body: JSON.stringify({ account_id: accountId, client_order_id: clientOrderId }), env });
   } catch (e) {
-    return { ok: false, needsReconcile: true, error: `cancel threw: ${String(e)}` };
+    return { ok: false, needsReconcile: true, error: "cancel transport failed after a possible send" };
   }
   if (!res.ok) {
     return { ok: false, needsReconcile: res.timeout, error: res.timeout ? "cancel timed out" : res.error };
@@ -143,24 +171,26 @@ export async function cancelOrder(
 // idempotency key). Presence proves the earlier submit DID land — never resubmit.
 export async function reconcileByClientOrderId(
   transport: WebullTransport,
+  accountId: string,
   clientOrderId: string,
   env: WebullTradeEnv,
 ): Promise<WebullOrderState & { brokerOrderId?: string; found: boolean }> {
   let res: TransportResult;
   try {
-    res = await transport.send({ method: "GET", path: paths.status, query: { client_order_id: clientOrderId }, env });
+    res = await transport.send({ method: "GET", path: paths.open, query: { account_id: accountId, page_size: 100 }, env });
   } catch (e) {
-    return { ok: false, found: false, status: "needs_reconcile", error: `reconcile threw: ${String(e)}` };
+    return { ok: false, found: false, status: "needs_reconcile", error: "open-order reconciliation transport failed" };
   }
   if (!res.ok) {
     return { ok: false, found: false, status: "needs_reconcile", error: res.timeout ? "reconcile timed out" : res.error };
   }
-  const brokerOrderId = extractBrokerOrderId(res.json);
+  const matched = findOrderByClientId(res.json, clientOrderId);
+  const brokerOrderId = extractBrokerOrderId(matched);
   if (!brokerOrderId) {
-    // No order with this client id → the earlier submit did NOT land; safe to
-    // re-propose upstream (the caller decides, not this module).
-    return { ok: true, found: false, status: "needs_reconcile", raw: res.json };
+    // Absence from open orders is not proof of absence: it may already be
+    // filled/canceled/failed. Keep the submit ambiguous until history/detail proves it.
+    return { ok: false, found: false, status: "needs_reconcile", error: "client order not found in open orders; history/detail reconciliation required", raw: res.json };
   }
-  const rawStatus = pick(res.json, ["status", "order_status", "orderStatus", "state"]);
+  const rawStatus = pick(matched, ["status", "order_status", "orderStatus", "state"]);
   return { ok: true, found: true, brokerOrderId, status: mapWebullStatus(String(rawStatus ?? "")), raw: res.json };
 }

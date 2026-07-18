@@ -12,7 +12,12 @@ import {
 import type { WebullOrderRequest, WebullTokenRecord } from "@/lib/brokers/webull-trade/types";
 
 const NOW = Date.parse("2026-07-18T12:00:00Z");
-const freshToken: WebullTokenRecord = { status: "NORMAL", lastAuthenticatedCallAt: "2026-07-18T00:00:00Z" };
+const freshToken: WebullTokenRecord = {
+  status: "NORMAL",
+  lastAuthenticatedCallAt: "2026-07-18T00:00:00Z",
+  serverStatusCheckedAt: "2026-07-18T11:55:00Z",
+  expiresAt: "2026-08-18T00:00:00Z",
+};
 
 // A fully-passing snapshot; each test flips exactly one field to prove that gate
 // fails closed and blocks BEFORE any network access.
@@ -23,9 +28,11 @@ function passingSnapshot(): GateSnapshot {
     usMarketEnabled: true,
     usKillSwitchTripped: false,
     circuitBreakerTrippedForBuy: false,
-    isExit: false,
+    side: "BUY",
     autonomySatisfied: true,
     allowlistedWebullUsTradingAccounts: 1,
+    orderAccountId: "605420660",
+    allowlistedAccountId: "605420660",
     webullTradeOrdersEnabled: true,
     credentialPresent: true,
     token: freshToken,
@@ -34,6 +41,8 @@ function passingSnapshot(): GateSnapshot {
     riskChecksPassed: true,
     qty: 5,
     mandateMaxQty: 10,
+    reconciledHeldQty: 10,
+    restingExecutableSellQty: 0,
   };
 }
 
@@ -81,8 +90,23 @@ describe("webull_trade gate ladder", () => {
   });
 
   it("a verified EXIT is not blocked by a circuit breaker that only halts new risk", () => {
-    const snap = { ...passingSnapshot(), circuitBreakerTrippedForBuy: true, isExit: true };
+    const snap = { ...passingSnapshot(), circuitBreakerTrippedForBuy: true, side: "SELL" as const };
     expect(evaluateGateLadder(snap, NOW)).toEqual({ ok: true });
+  });
+
+  it("unknown pause, kill-switch, and BUY breaker states fail closed", () => {
+    for (const field of ["appPaused", "usKillSwitchTripped", "circuitBreakerTrippedForBuy"] as const) {
+      expect(evaluateGateLadder({ ...passingSnapshot(), [field]: undefined }, NOW).ok).toBe(false);
+    }
+  });
+
+  it("SELL cannot exceed holdings after accounting for resting executable sells", () => {
+    const snap = { ...passingSnapshot(), side: "SELL" as const, qty: 6, restingExecutableSellQty: 5, reconciledHeldQty: 10 };
+    expect(evaluateGateLadder(snap, NOW).ok).toBe(false);
+  });
+
+  it("order account must exactly match the single resolved allowlist account", () => {
+    expect(evaluateGateLadder({ ...passingSnapshot(), orderAccountId: "OTHER" }, NOW).ok).toBe(false);
   });
 
   it("an INVALID/EXPIRED/UNKNOWN/idle token fails the credential gate (Test 13)", () => {

@@ -98,6 +98,7 @@ describe("Test 7 — secret capture: logs, errors, traces never carry sensitive 
     const lines = captureConsole();
     const req = {
       method: "POST", path: "/trade/v1/order/place",
+      host: "api.webull.com",
       body: JSON.stringify({ account_id: ACCOUNT }),
       appKey: "k", nonce: "n", timestamp: "1752800000000",
     };
@@ -114,11 +115,12 @@ describe("Test 7 — secret capture: logs, errors, traces never carry sensitive 
     const lines = captureConsole();
     const canonical = buildCanonicalRequest({
       method: "POST", path: "/p", body: JSON.stringify({ account_id: ACCOUNT }),
+      host: "api.webull.com",
       appKey: "k", nonce: "n", timestamp: "1",
     });
     // The canonical request legitimately contains the account id — which is exactly
     // why it must never be logged or crossed to telemetry.
-    expect(canonical).toContain(ACCOUNT);
+    expect(canonical).not.toContain(ACCOUNT);
     expect(lines.join("\n")).not.toContain(ACCOUNT);
   });
 
@@ -157,7 +159,8 @@ describe("Test 7 — secret capture: logs, errors, traces never carry sensitive 
     // URL, headers, signature, or body.
     const src = await import("fs").then(fs =>
       fs.readFileSync("lib/brokers/webull-trade/transport.ts", "utf8"));
-    expect(src).toContain('error: timeout ? "request timed out" : "transport error"');
+    expect(src).not.toMatch(/\bfetch\s*\(/);
+    expect(src).toContain("Webull network calls are disabled");
     // No console.* call anywhere in the signed transport/signing/credentials path.
     for (const f of ["transport.ts", "signing.ts", "credentials.ts", "lifecycle.ts"]) {
       const s = await import("fs").then(fs => fs.readFileSync(`lib/brokers/webull-trade/${f}`, "utf8"));

@@ -3,7 +3,8 @@
 // Webull Trading API docs during the entitlement/sandbox step. They are path
 // CONSTANTS only — no request is made against them in this module or any test.
 export const paths = {
-  place: "/trade/v1/order/place",
-  status: "/trade/v1/order/query",
-  cancel: "/trade/v1/order/cancel",
+  place: "/openapi/trade/order/place",
+  detail: "/openapi/trade/order/detail",
+  open: "/openapi/trade/order/open",
+  cancel: "/openapi/trade/order/cancel",
 } as const;

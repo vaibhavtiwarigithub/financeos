@@ -19,11 +19,11 @@ export const maxDuration = 60;
 // reverse-shadow leg, and reports the provider_call_ledger proof that the
 // reverse leg made no new provider burst (§4.2).
 //
-// GET/POST /api/agents/evidence-cohort?market=us|india&limit=25[&dryRun=1]
-//   (owner- or cron-gated)
+// GET is cron-only; POST is owner- or cron-gated.
 
-export async function GET(req: NextRequest) {
+async function runCohort(req: NextRequest, ownerAllowed: boolean) {
   if (!verifyCronSecret(req)) {
+    if (!ownerAllowed) return NextResponse.json({ error: "cron authentication required for GET" }, { status: 401 });
     const gate = await requireOwner();
     if (gate) return gate;
   }
@@ -53,4 +53,10 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export const POST = GET;
+export async function GET(req: NextRequest) {
+  return runCohort(req, false);
+}
+
+export async function POST(req: NextRequest) {
+  return runCohort(req, true);
+}

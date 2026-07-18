@@ -260,7 +260,9 @@ export type GateFailureCode =
   | "artifact_created_eligibility"
   | "adverse_rank_displacement_from_missingness"
   | "coverage_below_non_inferiority_margin"
-  | "hard_semantic_failure";
+  | "hard_semantic_failure"
+  | "ledger_proof_missing"
+  | "legacy_reproduction_failed";
 
 export interface CoverageStat {
   fieldId: string;

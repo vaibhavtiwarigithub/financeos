@@ -1,60 +1,24 @@
-// ============================================================================
-// GOLDEN signing fixtures for webull_trade (frozen constants).
-// ----------------------------------------------------------------------------
-// These are frozen expected HMAC-SHA1 hex signatures for a fixed input vector.
-// The signing test proves:
-//   (a) signRequest() reproduces BASE_SIGNATURE exactly (deterministic);
-//   (b) mutating method / path / body / query / nonce / timestamp yields a
-//       DIFFERENT signature (mutation-sensitive), so verifySignature() fails.
-// The secret below is a throwaway TEST value — NOT a real Webull credential.
-//
-// RECONCILIATION NOTE: these vectors freeze THIS repo's canonical layout
-// (buildCanonicalRequest). Before the first live/sandbox call, reconcile the
-// layout against the current official Webull signing docs; if it differs, update
-// buildCanonicalRequest and regenerate these constants in the same change.
-// ============================================================================
-
 import type { SignableRequest } from "@/lib/brokers/webull-trade/signing";
 
-export const TEST_APP_SECRET = "test-app-secret-DO-NOT-USE";
-
+// Webull's published worked example. These are not Kairos credentials.
+export const TEST_APP_SECRET = "0f50a2e853334a9aae1a783bee120c1f";
 export const BASE_REQUEST: SignableRequest = {
   method: "POST",
-  path: "/trade/v1/order/place",
-  query: { symbol: "AAPL", side: "BUY" },
-  body: JSON.stringify({
-    account_id: "WBACCT1",
-    symbol: "AAPL",
-    side: "BUY",
-    order_type: "MARKET",
-    quantity: 2,
-    time_in_force: "DAY",
-    session: "CORE",
-    client_order_id: "kai0abc",
-  }),
-  appKey: "test-app-key",
-  nonce: "11111111-1111-1111-1111-111111111111",
-  timestamp: "1752800000000",
+  path: "/trade/place_order",
+  host: "api.webull.com",
+  query: { a1: "webull", a2: 123, a3: "xxx", q1: "yyy" },
+  body: '{"k1":123,"k2":"this is the api request body","k3":true,"k4":{"foo":[1,2]}}',
+  appKey: "776da210ab4a452795d74e726ebd74b6",
+  nonce: "48ef5afed43d4d91ae514aaeafbc29ba",
+  timestamp: "2022-01-04T03:55:31Z",
 };
-
-export const BASE_SIGNATURE = "bb8c955756bb3114c6e51b70a4aad8615efb3053";
-
-// Expected canonical request string for BASE_REQUEST (newline-joined).
-export const BASE_CANONICAL =
-  "POST\n" +
-  "/trade/v1/order/place\n" +
-  "side=BUY&symbol=AAPL\n" +
-  '{"account_id":"WBACCT1","symbol":"AAPL","side":"BUY","order_type":"MARKET","quantity":2,"time_in_force":"DAY","session":"CORE","client_order_id":"kai0abc"}\n' +
-  "test-app-key\n" +
-  "11111111-1111-1111-1111-111111111111\n" +
-  "1752800000000";
-
-// Each mutation and its (different) expected signature.
-export const MUTATIONS: { name: string; req: SignableRequest; signature: string }[] = [
-  { name: "method", req: { ...BASE_REQUEST, method: "GET" }, signature: "2c68021fb029f6bed10d5760b80f9657b721045f" },
-  { name: "path", req: { ...BASE_REQUEST, path: "/trade/v1/order/cancel" }, signature: "e73e3e80e4cceff691646c8d1e9114624a144291" },
-  { name: "body", req: { ...BASE_REQUEST, body: BASE_REQUEST.body!.replace('"quantity":2', '"quantity":20') }, signature: "8f38d414a0432d7d17b8c8eb50a9b0c08a824789" },
-  { name: "query", req: { ...BASE_REQUEST, query: { symbol: "AAPL", side: "SELL" } }, signature: "6674a6d37df40ec53f35539a2c1335948817fd35" },
-  { name: "nonce", req: { ...BASE_REQUEST, nonce: "22222222-2222-2222-2222-222222222222" }, signature: "7c7d7b787b247276f356d7422e3598fc12d5fcf9" },
-  { name: "timestamp", req: { ...BASE_REQUEST, timestamp: "1752800000001" }, signature: "024c019e51d4db3e558fe124c3657560ad2132a1" },
+export const BASE_SIGNATURE = "kvlS6opdZDhEBo5jq40nHYXaLvM=";
+export const BASE_CANONICAL = "%2Ftrade%2Fplace_order%26a1%3Dwebull%26a2%3D123%26a3%3Dxxx%26host%3Dapi.webull.com%26q1%3Dyyy%26x-app-key%3D776da210ab4a452795d74e726ebd74b6%26x-signature-algorithm%3DHMAC-SHA1%26x-signature-nonce%3D48ef5afed43d4d91ae514aaeafbc29ba%26x-signature-version%3D1.0%26x-timestamp%3D2022-01-04T03%3A55%3A31Z%26E296C96787E1A309691CEF3692F5EEDD";
+export const MUTATIONS: { name: string; req: SignableRequest }[] = [
+  { name: "path", req: { ...BASE_REQUEST, path: "/trade/cancel_order" } },
+  { name: "host", req: { ...BASE_REQUEST, host: "api.sandbox.webull.com" } },
+  { name: "body", req: { ...BASE_REQUEST, body: BASE_REQUEST.body!.replace("123", "124") } },
+  { name: "query", req: { ...BASE_REQUEST, query: { ...BASE_REQUEST.query, q1: "changed" } } },
+  { name: "nonce", req: { ...BASE_REQUEST, nonce: "58ef5afed43d4d91ae514aaeafbc29ba" } },
+  { name: "timestamp", req: { ...BASE_REQUEST, timestamp: "2022-01-04T03:55:32Z" } },
 ];

@@ -23,7 +23,7 @@ const ADAPTERS: Record<string, () => BrokerAdapter> = {
   // This is the ONLY Webull signed-execution surface; the read-only Cloud MCP
   // (`webull` in lib/brokers/mcp-registry.ts) stays query-only and is NOT in this
   // order registry. Disabled at every layer: isConfigured() is false until the
-  // owner provisions the webull_trade_orders_enabled flag (migration unapplied),
+  // owner explicitly enables webull_trade_orders_enabled after all later gates,
   // an allowlisted webull_trade account, and a webull_trade vault credential —
   // AND runs a manually-approved sandbox test. No live/sandbox call is possible
   // from the build environment. See lib/brokers/webull-trade/.

@@ -1,7 +1,7 @@
 // webull_trade — runtime enable flag + allowlist reads. All fail CLOSED.
-// The flag column `strategy_config.webull_trade_orders_enabled` does NOT exist in
-// prod (migration 20260718120000 is written but UNAPPLIED), so ordersEnabled()
-// reads an error and returns false today. This is the primary inert switch.
+// The false-by-default flag exists in production and remains false. Read errors
+// also resolve to false. The network transport is not implemented, so this flag
+// cannot independently make the adapter reachable.
 
 // Read the false-by-default order flag. Any error (column absent, read failure)
 // → false. Never throws.
