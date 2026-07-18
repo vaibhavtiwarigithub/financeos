@@ -423,8 +423,20 @@
     }
   },
   "history": [
-    { "date": "2026-07-17", "event": "changed", "nodeId": "RESEARCH", "label": "US and India scoring/backlog audit", "reason": "Market-partitioned watchlists, research_enabled filtering, holding provenance, bounded theme rows, sample-shrunk sentiment, observation-only analyst targets, and no-LLM holding reassessment were made explicit. PositionMonitor separately enforces score freshness and exit hysteresis." },
-    { "date": "2026-07-17", "event": "changed", "nodeId": "KITE", "label": "GTT semantics and cancel-before-sell corrected", "reason": "Official Kite GTT children are LIMIT orders, not SL-M. Explicit India sells now cancel and confirm every recorded resting GTT before submitting, preventing an orphan trigger from later double-selling." },
+    {
+      "date": "2026-07-17",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "US and India scoring/backlog audit",
+      "reason": "Market-partitioned watchlists, research_enabled filtering, holding provenance, bounded theme rows, sample-shrunk sentiment, observation-only analyst targets, and no-LLM holding reassessment were made explicit. PositionMonitor separately enforces score freshness and exit hysteresis."
+    },
+    {
+      "date": "2026-07-17",
+      "event": "changed",
+      "nodeId": "KITE",
+      "label": "GTT semantics and cancel-before-sell corrected",
+      "reason": "Official Kite GTT children are LIMIT orders, not SL-M. Explicit India sells now cancel and confirm every recorded resting GTT before submitting, preventing an orphan trigger from later double-selling."
+    },
     {
       "date": "2026-07-05",
       "event": "added",
@@ -939,6 +951,13 @@
       "nodeId": "ROTATION",
       "label": "Drew 4 nodes that existed in `nodes` but were absent from the diagram: ROTATION, BENCHALPHA, EARNPIT, INDIAFILL",
       "reason": "AgentDiagram.tsx builds `class <id> <status>` from EVERY nodes key (:103-105) and appends it to the mermaid source, so a key with no node in the diagram emits `class X` against an unknown id. All four described real, shipped flows — CapitalRotation shadow (lib/trading/capital-rotation.ts, imported by paper-trade/route.ts:18, writes rotation_events), BenchmarkAlpha (app/api/agents/benchmark-scorecard/route.ts), Earnings PIT capture (lib/data/earnings-pit.ts via calendar/earnings/refresh/route.ts:53, scheduled in lib/schedule.ts:47), and the India Markets fill (app/api/markets/india/route.ts POST, writes india_market_snapshot). They were documented but never drawn, so the map silently under-described the system. Edges added from the code, not inferred. Pre-existing on main — NOT introduced by the 2026-07-17 batch; found while merging it."
+    },
+    {
+      "date": "2026-07-18",
+      "event": "changed",
+      "nodeId": "EXITS",
+      "label": "Hybrid protective-stop SHADOW SCAFFOLD landed — built UP TO the placement line, NO node/edge added because it places nothing.",
+      "reason": "New pure module set lib/protective/ (capabilities matrix, Kite capability declaration, disaster-floor calculator, reconciliation loop, protective_order state model, placement gate) plus an UNAPPLIED migration proposal (20260718000000_protective_orders_shadow.sql). It is DELIBERATELY not drawn as a node/edge: the map shows live agent-to-agent flows, and this scaffold is inert — a false-by-default strategy_config.protective_orders_enabled flag gates ALL placement and stays false, and planProtectivePlacement() returns a plain-object plan that NEVER calls a broker. Drawing a node would imply an active protective flow that does not exist. When the owner approves Q1 (touch semantics), the floor distance, and the post-fill policy, and the migration is applied and the plan is wired to a reviewed live path, THAT change adds the real EXITS->KITE / EXITS->REALORDER protective edge and its own history entry. Recorded here so the scaffold's existence is auditable. Exit provenance: a disaster-floor fill records exit_reason=protective_disaster_floor and learning_scope=risk_policy_only — the loss stays in P&L/NAV/drawdown/mandate/risk evaluation (real money) and is excluded ONLY from the LEARNER signal-weight attribution + genome promotion, so broker capability cannot contaminate weight learning. Long-only invariant: total executable SELL never exceeds reconciled held qty; a competing SELL is blocked until a resting protective cancellation is CONFIRMED (fail-closed, no accidental short). Deterministic — NO LLM on the money path. US/India never cross (per-market capability scope). See docs/arch/08 + features/hybrid-stop/FEATURE_ARCHITECTURE.md."
     }
   ]
 }
