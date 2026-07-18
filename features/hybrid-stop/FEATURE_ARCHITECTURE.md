@@ -3,6 +3,43 @@
 > Status: DRAFT, design only. Not approved for implementation. Money path.
 > Scope: US and India live positions. Paper remains unchanged unless separately approved.
 
+## Shadow scaffold status (2026-07-18)
+
+The owner approved BUILDING the shadow scaffold — everything UP TO the placement
+line, and it STOPS there. **No live broker order is placed. Not a $1 test. Ever.**
+The spec below remains authoritative for the eventual live design; this section
+records what shipped as inert scaffolding.
+
+**Built (all shadow / no placement), under `lib/protective/`:**
+
+- `capabilities.ts` — the broker-neutral `BrokerProtectiveCapabilities` matrix +
+  `evaluateProtection()` (capability-driven; no flat broker boolean; no eligible
+  multi-day order → `unprotected-by-broker`; GTC ≠ every-session triggering).
+- `kite-capabilities.ts` — Kite's capability declared from the PROVEN GTT code
+  (`gtt_limit` weaker protection; DAY-only SL-M rejected as a multi-day floor).
+- `disaster-floor.ts` — pure `computeDisasterFloor({mode, distance, …})`. Default
+  `mode = wider_disaster_floor` (Q1 unanswered); distance is a config input, no
+  hardcoded value; monotonic ratchet (a falling high-water mark can't lower it).
+- `reconcile.ts` — pure `reconcileProtectiveOrder()` (out-of-band triggers,
+  partial fills, cancels, expiry, broker edits, corp-action drift; unknown →
+  `needs_reconcile`; trigger-without-fill never closes the book).
+- `state.ts` — the `protective_order` record shape + status machine + exit
+  provenance (`protective_disaster_floor` / `learning_scope = risk_policy_only`)
+  + long-only / cancel-before-replace invariants.
+- `placement-gate.ts` — **THE MONEY LINE.** False-by-default
+  `protective_orders_enabled` flag gates ALL placement and stays false;
+  `planProtectivePlacement()` never calls a broker.
+
+**Migration (PROPOSAL — not applied):**
+`supabase/migrations/20260718000000_protective_orders_shadow.sql`.
+
+**Tests:** `tests/protective-hybrid-stop.test.ts` — all 14 spec acceptance tests,
+each falsifiable (mutation-verified).
+
+**Still gated behind owner approval before anything goes live:** Q1 (touch
+semantics), floor distance, ratchet step/cadence, and the Kite-first vs
+Webull-first build sequence — see "Open Owner Decisions" below.
+
 ## Decision
 
 Kairos currently owns close-based stop, target, trailing, thesis, and time exits. A
