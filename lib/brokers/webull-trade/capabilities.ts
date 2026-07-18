@@ -13,12 +13,10 @@
 // margin / cnc / delivery) — NOT a session. Webull's "CORE" is its regular-session
 // name and is declared under `sessions` below, where it belongs.
 //
-// `accountModes` is deliberately EMPTY: the Webull API entitlement for the
-// intended account is UNCONFIRMED (open owner decision — see
-// features/webull-trading-api §Open Owner Decisions #3). An empty list means
-// evaluateProtection() returns unprotectedByBroker for every request, which is
-// the correct fail-closed answer. Populate it ONLY once the real entitlement is
-// verified — never guess, or the matrix asserts protection that was never proved.
+// `accountModes`: owner confirmed 2026-07-18 that the intended Webull account
+// is a CASH account. "cash" is therefore the only declared entitlement.
+// evaluateProtection() will return unprotectedByBroker for any margin/cnc/delivery
+// request, which is correct — the adapter only supports cash accounts.
 // ============================================================================
 
 import type { BrokerProtectiveCapabilities } from "./types";
@@ -29,7 +27,7 @@ export const WEBULL_TRADE_PROTECTIVE_CAPABILITIES: BrokerProtectiveCapabilities 
     market: "us",
     instrumentTypes: ["equity"],
     sides: ["sell_long"], // protection is a risk-reducing SELL of a long; never a short
-    accountModes: [],
+    accountModes: ["cash"],
   },
   orders: {
     // Modeled as a stop-market disaster floor: GTC, regular session only.
