@@ -331,10 +331,106 @@ all four; anon has no grants; writes are service-role only; the RPC is
   expiry, and rollback SLO are owner decisions (§13.2) to be set from observed
   traffic. `DEFAULT_EVALUATION_TTL_HOURS=72` and the comparator tolerances in
   `DEFAULT_COMPARATORS` are placeholders pending that approval.
-- The cohort **builder** (resolving real frozen observations from both paths into a
-  `FrozenCohort`) and the outage drills. `evaluateCohort` is the decision engine;
-  nothing yet feeds it live data, deliberately — a builder that fetches is the step
-  that risks provider bursts, and reverse-shadow cache reuse (§4.2) must be designed
-  with it.
+- The outage drills (§7) — forced timeout, quota exhaustion, schema drift, provider
+  disagreement, and complete-primary-provider outage remain unbuilt.
 - §9 rollback drill + circuit-breaker triggers.
 - No API route or UI surface for evaluations/activation.
+
+---
+
+## 15. Implementation Notes — Cohort Builder Built (2026-07-18)
+
+> **STILL NOT A CUTOVER.** Verified in production immediately before and after this
+> change: both markets' active policy is v1 with `router_enabled=false`, and no
+> scorer consumes `EvidenceEnvelope`. This step only makes the FIRST parity
+> evaluations exist. It never activates anything.
+
+### What was built
+
+`lib/evidence/evaluation/cohort-builder.ts` — the piece §14 deliberately deferred
+because "a builder that fetches is the step that risks provider bursts."
+Exposed as `GET/POST /api/agents/evidence-cohort?market=us|india&limit=N[&dryRun=1]`
+(owner- or cron-gated, mirroring `evidence-shadow`).
+
+### §4.2 — ONE frozen observation set, and why the reuse is structural
+
+The governing constraint is that a dual-run must not double provider calls. The
+build resolves **one** market-local frozen observation set via the EXISTING
+`resolveEvidence` (`allowDisabledPolicy: true`), which shares `evidence_cache_v2`
+with the `evidence-shadow` harness — so a warm cache short-circuits at zero cost.
+
+`assembleCohort` is **pure and takes the snapshot as an argument**. It has no
+resolver and no network. The reverse-shadow leg therefore *cannot* re-fetch: its
+only path to evidence is the frozen `Map`. The reuse is a structural property, not
+a caching optimisation that a later refactor could quietly undo.
+
+An earlier draft resolved twice (primary + reverse) and was **caught by its own
+ledger proof** — the reverse pass made 12 real bursts. That is precisely the defect
+the constraint exists to prevent, and it is why `verifyReverseShadowReuse` now
+confirms every `(symbol,intent)` is served from the frozen set rather than
+re-resolved.
+
+### The two legs — and what v1 honestly compares
+
+- **legacy** = a real recorded production decision. `agent_signals` joined to its
+  `research_packets.raw_data` supplies the exact persisted availability mask
+  (`_data_quality`) and the weights that actually drove the score
+  (`_profile_weights`). The mask is rebuilt with research-agent's own rule, so the
+  leg **reproduces the recorded `analyst_score` exactly** — asserted per symbol and
+  reported as `legacyReproduction` (27/27 matched across the first two runs). A
+  reconstruction that did not reproduce production would be a guess, not a baseline.
+- **candidate** = the SAME frozen dimension scores, with availability decided by the
+  router snapshot.
+
+**v1 scope is AVAILABILITY + eligibility-flip parity, and says so.** Legacy never
+persisted raw field values or per-field provenance, so a value/basis/period
+comparison against it would be fabricated. Both legs therefore carry the field's
+canonical contract semantics, `value`/`periodEnd` are left null (not compared), and
+the real serving provider is recorded for audit. Note the consequence, stated plainly:
+because both values are null, `compareField` short-circuits at the nullability axis,
+so basis/period/currency/unit are **not exercised on the production path** in v1 —
+they are exercised in tests, and become live when the legacy path is itself routed.
+This mirrors the honesty already shipped in the degradation guard (`ageSeconds: null`).
+
+Dimension scores are **not re-derived** from router evidence — no scorer consumes
+`EvidenceEnvelope` yet, and inventing one here would mean the evaluation stopped
+predicting the thing it claims to predict. The production scorer and production
+direction gate are reused unchanged, via `evaluateCohort`.
+
+### First evaluations (real, persisted)
+
+| Market | Symbols | Passed | Flips | Finding |
+|---|---|---|---|---|
+| US | 15 | **yes** | 0 new-eligible / 0 new-ineligible | Required fields at parity: `technical.daily_bars` and `fundamental.reported_core` both 15/15 vs 15/15. Router **gained** insider coverage (7→10, +20%) — recorded as `availability_gain`, measured not approved. Lost `macro.regime` (−100%) and `sentiment.news_tone` (−86.7%): neither intent has a registered adapter yet, and neither is a required field. |
+| India | 12 | **no** | 0 new-eligible / 10 new-ineligible | `coverage_below_non_inferiority_margin` on `technical.daily_bars`: candidate 0.0% vs legacy 100.0%. Correct — every `price.daily_bars` adapter is `markets: ["us"]`, so the router cannot serve India's required field at all. |
+
+The India failure is the gate working, not a defect: US results provide no evidence
+for India (§7), and the two were evaluated independently. Scores moved materially in
+the US cohort (deltas −28 to +5) without a single threshold crossing — verified per
+symbol rather than inferred from the zero-flip count.
+
+### Ledger proof (§4.2), from `provider_call_ledger`
+
+| Run | Ledger rows | Fresh cache | Real bursts |
+|---|---|---|---|
+| US primary | 50 | 40 | 10 |
+| US reverse-shadow | **0** | 0 | **0** |
+| India primary | 12 | 6 | 6 |
+| India reverse-shadow | **0** | 0 | **0** |
+
+The reverse leg wrote **zero ledger rows** while serving all 75 (US) and 60 (India)
+`(symbol,intent)` pairs from the frozen set. Dual-run provider cost therefore equals
+the single primary pass — the primary's bursts are the explicit cache misses the
+constraint allows. A `denied` lease is deliberately **not** counted as a burst: it is
+the pacing system refusing a call, i.e. the protection working.
+
+### Deliberately NOT done
+
+- No migration. Every column `persistEvaluation` writes already existed.
+- No activation, and no change to `router_enabled` (still false, both markets).
+- §7 numeric floors, tolerances, and evaluation TTL remain owner decisions (§13.2).
+  The builder's `coverageNonInferiorityMargin` (0.05) and `maxAdverseRankDisplacement`
+  (5) are **placeholders pending that approval**, not approved thresholds.
+- ADR shaping: `shapeOf` maps every non-ETF/non-metal symbol to `equity`, so a US ADR
+  over-includes the insider field. That is conservative (a coverage miss, never a
+  fabricated eligibility) but it is an approximation, not a modelled distinction.
