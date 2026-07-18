@@ -335,12 +335,14 @@ Factor/edge lab signal rows.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | uuid PK | |
-| `factor_key` | text | e.g. `momentum_12_1`, `quality_roe` |
+| `id` | bigint identity PK | |
+| `edge_id` | text | FK to `edge_catalog.edge_id` |
 | `symbol` | text | |
 | `market` | text | |
-| `value` | numeric | Raw factor value |
-| `z_score` | numeric | Cross-sectional z-score |
+| `date` | date | Signal as-of session |
+| `raw_value` | numeric | Raw factor value |
+| `z_value` | numeric | Cross-sectional z-score |
+| `universe_id` | text | Exact sampled universe reference |
 | `created_at` | timestamptz | Pruned >180d by DB cleanup |
 
 ### `edge_ic_history`
@@ -348,13 +350,29 @@ Information Coefficient (IC) history per factor.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | uuid PK | |
-| `factor_key` | text | |
+| `id` | bigint identity PK | |
+| `edge_id` | text | |
 | `market` | text | |
-| `ic` | numeric | Rank correlation: predicted score vs 1-month return |
-| `n` | int | Number of names in the cohort |
-| `period_end` | date | |
+| `window_end` / `horizon` | date / int | Independent market window and forward-return horizon |
+| `ic` / `ic_ir` / `t_stat` | numeric | Rank IC diagnostics |
+| `n_obs` / `universe_size` / `as_of_dates` | int | Confidence and breadth; never inferred from row count |
+| `step_days` / `history_days` | int | Reproducible run configuration |
+| `net_of_fee_ic` / `turnover` | numeric | Null until cost phase; null blocks capital promotion |
+| `evidence_quality` / `provider_report` | text / jsonb | Retrospective/PIT quality and provider coverage |
+| `status_after` | text | Advisory horizon status only |
 | `created_at` | timestamptz | Pruned >365d by DB cleanup |
+
+### `edge_market_status`
+
+Latest advisory lifecycle state per (`edge_id`,`market`), introduced by
+`20260718140000`. It prevents India and US evaluations from overwriting one
+global catalog label. Includes `latest_window_end`, `n_obs_min`,
+`evidence_quality`, and per-horizon JSON diagnostics. Service-role write;
+authenticated/anon have no table grant. No money-path reader exists.
+
+`edge_signal_inputs` records actual `observed_at`, `provenance_mode`, and an
+input fingerprint. Original synthetic next-session rows are retained but marked
+`legacy_unverified`; they cannot prove point-in-time availability.
 
 ### `macro_regime`
 Current macro risk regime.

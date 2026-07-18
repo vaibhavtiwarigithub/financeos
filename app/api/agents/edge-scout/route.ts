@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { createClient } from "@/lib/supabase/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { requireOwner } from "@/lib/auth/require-owner";
 import { EDGES } from "@/lib/edges/registry";
 import { computeEdges } from "@/lib/edges/compute";
 import { liquidUniverse } from "@/lib/edges/universe";
 import type { Market } from "@/lib/edges/types";
+import { edgeHealthKey, inputFingerprint, provenanceMode, universeFingerprint } from "@/lib/edges/evidence";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -30,7 +32,12 @@ async function seedCatalog(svc: any) {
     expected_sign: e.expectedSign, horizon_days: e.horizonDays,
     data_source: e.dataSource, reference_urls: e.references, status: "candidate",
   }));
-  await svc.from("edge_catalog").upsert(rows, { onConflict: "edge_id" });
+  // Insert missing definitions only. A daily scout must never reset lifecycle
+  // state written by the evidence evaluator.
+  const { error } = await svc.from("edge_catalog").upsert(rows, {
+    onConflict: "edge_id", ignoreDuplicates: true,
+  });
+  if (error) throw new Error(`edge_catalog seed failed: ${error.message}`);
 }
 
 async function buildUniverse(svc: any, market: Market, maxSymbols: number, mode: string, offset: number): Promise<{ symbols: string[]; source: string }> {
@@ -79,12 +86,12 @@ function weekdaysBetween(from: string, to: string, cap: number): string[] {
 export async function POST(req: NextRequest) {
   const svc = createServiceClient();
   let runId: string | null = null;
+  let markets: Market[] = [];
   try {
     const isCron = verifyCronSecret(req);
     if (!isCron) {
-      const userClient = await createClient();
-      const { data: { user } } = await userClient.auth.getUser();
-      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      const gate = await requireOwner();
+      if (gate) return gate;
     }
 
     const url = new URL(req.url);
@@ -96,11 +103,12 @@ export async function POST(req: NextRequest) {
     const universeMode = url.searchParams.get("universe") === "liquid" ? "liquid" : "watchlist";
     const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
     const historyDays = url.searchParams.get("historyDays") ? Math.max(120, Math.min(1600, Number(url.searchParams.get("historyDays")))) : undefined;
-    const markets: Market[] = marketParam === "us" ? ["us"] : marketParam === "india" ? ["india"] : ["us", "india"];
+    markets = marketParam === "us" ? ["us"] : marketParam === "india" ? ["india"] : ["us", "india"];
 
     const { data: runRow } = await svc.from("agent_runs").insert({
       agent_type: "edge_scout", status: "running",
       trigger_source: isCron ? "scheduled" : "manual",
+      market: markets.length === 1 ? markets[0] : null,
     } as any).select().single();
     runId = (runRow as any)?.id ?? null;
 
@@ -110,7 +118,7 @@ export async function POST(req: NextRequest) {
     for (const market of markets) {
       const { symbols, source } = await buildUniverse(svc, market, maxSymbols, universeMode, offset);
       const runDate = new Date().toISOString().slice(0, 10);
-      const universeId = `${market}:${universeMode}:${runDate}`;
+      const universeId = `${market}:${universeMode}:${runDate}:${universeFingerprint(market, symbols)}`;
 
       if (symbols.length) {
         const memberRows = symbols.map(s => ({
@@ -121,38 +129,69 @@ export async function POST(req: NextRequest) {
       }
 
       const asOfDates = (from && to) ? weekdaysBetween(from, to, maxDays) : undefined;
+      const observedAt = new Date().toISOString();
+      const provenance = provenanceMode(Boolean(asOfDates?.length));
       const { rows, report } = symbols.length
         ? await computeEdges({ market, symbols, asOfDates, maxDays, candleDays: historyDays })
         : { rows: [], report: { market, symbolsRequested: 0, symbolsResolved: 0, unavailable: [], sources: {}, benchmarkSource: "n/a", dates: [], rows: 0 } };
 
       let signalsWritten = 0, inputsWritten = 0;
       if (rows.length) {
-        const sigRows = rows.map(r => ({
-          symbol: r.symbol, date: r.date, edge_id: r.edgeId, market: r.market,
-          raw_value: r.raw, z_value: r.z, universe_id: universeId,
-        }));
-        const { data: upserted } = await svc.from("edge_signals")
-          .upsert(sigRows, { onConflict: "symbol,date,edge_id,market" })
-          .select("id,symbol,date,edge_id,market");
+        const sigRows = rows.map(r => {
+          const fingerprint = inputFingerprint({
+            market, symbol: r.symbol, date: r.date, edgeId: r.edgeId,
+            source: `${r.source}|${universeId}|z=${r.z == null ? "null" : r.z.toPrecision(12)}`,
+            rawValue: r.raw,
+          });
+          return {
+            symbol: r.symbol, date: r.date, edge_id: r.edgeId, market: r.market,
+            raw_value: r.raw, z_value: r.z, universe_id: universeId,
+            observed_at: observedAt, provenance_mode: provenance,
+            input_fingerprint: fingerprint,
+          };
+        });
+        const { data: upserted, error: signalError } = await svc.from("edge_signals")
+          .upsert(sigRows, {
+            onConflict: "symbol,date,edge_id,market,input_fingerprint", ignoreDuplicates: true,
+          }).select("id,symbol,date,edge_id,market,raw_value,input_fingerprint");
+        if (signalError) throw new Error(`edge_signals write failed (${market}): ${signalError.message}`);
         signalsWritten = upserted?.length ?? 0;
 
         const srcByKey = new Map(rows.map(r => [`${r.symbol}|${r.date}|${r.edgeId}|${r.market}`, r.source]));
         const inputRows = (upserted ?? []).map((u: any) => {
           const src = srcByKey.get(`${u.symbol}|${u.date}|${u.edge_id}|${u.market}`) ?? "unknown";
-          const availableAt = new Date(new Date(u.date + "T00:00:00Z").getTime() + 86400_000).toISOString(); // next session
           return {
-            edge_signal_id: u.id, input_name: "adjusted_close_candles", source: src,
-            as_of_date: u.date, available_at: availableAt, revised_at: null,
-            adjustment_policy: "provider split/div-adjusted close where supported", raw_ref: src,
+            edge_signal_id: u.id, input_name: "daily_candles", source: src,
+            as_of_date: u.date, available_at: observedAt, observed_at: observedAt,
+            provenance_mode: provenance,
+            input_fingerprint: inputFingerprint({
+              market, symbol: u.symbol, date: u.date, edgeId: u.edge_id,
+              source: src, rawValue: u.raw_value == null ? null : Number(u.raw_value),
+            }),
+            revised_at: null,
+            adjustment_policy: "provider-reported basis; not independently verified",
+            raw_ref: `${src}:${u.input_fingerprint}`,
           };
         });
         if (inputRows.length) {
-          await svc.from("edge_signal_inputs").upsert(inputRows, { onConflict: "edge_signal_id,input_name,source,as_of_date" });
+          const { error: inputError } = await svc.from("edge_signal_inputs").upsert(inputRows, {
+            onConflict: "edge_signal_id,input_name,source,as_of_date", ignoreDuplicates: true,
+          });
+          if (inputError) throw new Error(`edge input audit failed (${market}): ${inputError.message}`);
           inputsWritten = inputRows.length;
         }
       }
 
       results[market] = { universeId, universeSize: symbols.length, universeSource: source, signalsWritten, inputsWritten, providerReport: report };
+      if (report.rows === 0) {
+        await reportIssue({
+          issueKey: edgeHealthKey("scout", market), severity: "warn", category: "data",
+          title: `EdgeScout produced no ${market.toUpperCase()} evidence`,
+          detail: `Universe=${symbols.length}; resolved=${report.symbolsResolved}; unavailable=${report.unavailable.length}. Measure-only collection is stale until a clean run.`,
+        }, svc);
+      } else {
+        await resolveIssue(edgeHealthKey("scout", market), svc);
+      }
     }
 
     if (runId) {
@@ -170,6 +209,12 @@ export async function POST(req: NextRequest) {
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    for (const market of markets) {
+      await reportIssue({
+        issueKey: edgeHealthKey("scout", market), severity: "warn", category: "cron",
+        title: `EdgeScout ${market.toUpperCase()} failed`, detail: msg.slice(0, 500),
+      }, svc);
+    }
     if (runId) {
       try { await svc.from("agent_runs").update({ status: "error", result_summary: msg.slice(0, 500), completed_at: new Date().toISOString() } as any).eq("id", runId); } catch {}
     }

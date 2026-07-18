@@ -1,6 +1,6 @@
 # Edge/Factor Discovery + Signal Validation + Regime Filter
 
-**Status: DRAFT PROPOSAL for external LLM review. No code written.**
+**Status: P0/P1 MEASURE-ONLY BUILT. P2+ NOT APPROVED OR WIRED.**
 Author: Claude (Kairos). Date: 2026-07-08. Reviewed/updated by ChatGPT (Codex), 2026-07-08 — source-backed methodology review through 2026.
 Intended reviewers: other LLMs / quant-literate readers. This doc is written to be
 self-contained enough to critique without the codebase in hand.
@@ -360,6 +360,14 @@ All read-heavy analytics; no changes to money tables.
 
 ## 12. Rollout phases (each independently shippable + measurable)
 
+**Current reality (2026-07-18):** P0 and P1 exist, but the first broad run
+correctly collapsed the initial watchlist-only IC results to approximately zero.
+No edge is shadow-eligible in production. Migration
+`20260718140000_edge_evidence_collection_hardening` restarts bounded prospective
+US/India collection, stores sample/provenance metadata, and moves lifecycle state
+from the misleading global `edge_catalog.status` to `edge_market_status`. Historical
+IC remains labeled `retrospective_current_universe`; it cannot authorize P2.
+
 - **P0 — Edge library + signal store (measure-only).** Implement 6–8
   price/volume technical edges only, compute daily, store `edge_signals`, and
   record the exact `edge_universe_members` snapshot. No effect on trading.
@@ -386,6 +394,22 @@ All read-heavy analytics; no changes to money tables.
 
 Each phase reuses existing infra (shadow, validation, calibration, genome), so
 risk is incremental and reversible.
+
+### P1 evidence-hardening gate before P2
+
+P2 stays blocked until all of the following are true per market:
+
+- prospective daily captures have real `observed_at` timestamps and immutable
+  input fingerprints; legacy synthetic next-session timestamps are labeled
+  `legacy_unverified`;
+- `n_obs`, universe size, sampled dates, provider coverage, and evidence quality
+  are persisted and visible;
+- lifecycle status is market-scoped; US and India cannot overwrite each other;
+- at least 60 prospective trading sessions exist (120 preferred for 20-day
+  horizons), and historical results are not represented as point-in-time proof;
+- turnover and cost-adjusted long-only bucket alpha are populated before any
+  paper-capital phase;
+- Fibonacci, if added, is measure-only and must beat non-Fibonacci placebo levels.
 
 ---
 

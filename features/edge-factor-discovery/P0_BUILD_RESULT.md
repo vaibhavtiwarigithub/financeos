@@ -34,7 +34,7 @@ low realized volatility (expected_sign −1).
 | Measure-only (no trading tables touched) | ✅ | Before run AND after 2 runs: agent_signals=**98→98**, paper_trades=**6→6**, paper_order_events=**11→11**, broker_orders=**2→2** | Route writes only `edge_*` |
 | `edge_universe_members` written | ✅ | 25 rows, universe_id=`us:p0:2026-07-09`, source=`watchlist` | current-liquid snapshot, labeled |
 | `edge_signals` written | ✅ | 154 rows across **8 distinct edges** (25 symbols; fewer than 8×25 because long-lookback edges skip short-history names) | — |
-| `edge_signal_inputs` written | ✅ | 154 PIT-audit rows (input=`adjusted_close_candles`, source, as_of, available_at=next session) | — |
+| `edge_signal_inputs` written | corrected 2026-07-18 | 154 legacy audit rows recorded source/as_of but used a synthetic next-session `available_at` | Migration `20260718140000` labels these `legacy_unverified`; they are not PIT proof. New captures store actual observation time, provenance mode, and fingerprint. |
 | Rerun is idempotent (no dup rows) | ✅ | 2 identical runs → totals stayed **154 / 154 / 25** (not 308) | unique-constraint upserts |
 | Provider usage bounded + reported | ✅ | providerReport: 25/25 resolved, sources `{massive:9, eodhd:16}`, benchmark massive, 0 unavailable, dates `[2026-07-08]` | maxSymbols cap; cached/budgeted fetchers |
 
@@ -61,7 +61,9 @@ Date: 2026-07-08. Commits: `f2cc41a` (code). Still MEASURE-ONLY.
   classifier (`shadow_eligible` iff IC≥0.02 & |t|≥2, priored-factor hurdle; else
   `measure_only`; `benched_negative` on significant negative IC). Advisory only.
 - `app/api/agents/edge-ic`: owner-or-cron, measure-only, bounded (maxSymbols/maxDates),
-  idempotent upserts to `edge_ic_history`, advisory `edge_catalog.status` update.
+  idempotent upserts to `edge_ic_history`. Corrected 2026-07-18: advisory status
+  is stored per (`edge_id`,`market`) in `edge_market_status`; the original global
+  `edge_catalog.status` allowed whichever market ran last to overwrite the other.
 - `/dashboard/edges`: IC Scorecard (IC + t per horizon + status per edge).
 
 ## Verification (live run: `edge-ic?market=us&maxSymbols=30&maxDates=50`)
@@ -127,5 +129,20 @@ re-measure. (Owner decision.)
 
 ## Not done (by design)
 P2 shadow composite; P3 exploratory paper; P4 regime scaler; P5 active paper; P6 live;
-any wiring into analyst_score / paper fills / sizing / live orders; scheduled crons
+any wiring into analyst_score / paper fills / sizing / live orders.
+
+## 2026-07-18 evidence-collection hardening
+
+- Production evidence had stopped: all 747 signals were US-only and dated
+  2026-07-08; 24 IC rows represented one US window; no active cron existed.
+- Added bounded post-close EdgeScout schedules for US and India and weekly,
+  off-cycle historical diagnostics. Routes remain measure-only and use the
+  existing cached/budgeted candle resolvers.
+- Raised minimum sampled IC dates from 12 to 36 and corrected the Newey-West lag
+  from raw horizon to `ceil(horizon / sample_step)`.
+- Persisted `n_obs`, universe/date counts, history/step configuration, provider
+  report, and evidence-quality label. Net-of-fee IC and turnover remain null and
+  therefore block paper/live promotion.
+- Added market-specific System Health reporting and stale-run checks. No score,
+  signal, fill, size, position, or order table is a consumer.
 (edge-scout + edge-ic stay owner-triggered until they prove out).

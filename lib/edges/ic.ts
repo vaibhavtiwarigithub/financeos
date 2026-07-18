@@ -12,6 +12,7 @@
 // it writes edge_ic_history and an ADVISORY edge lifecycle status.
 import { EDGES } from "@/lib/edges/registry";
 import { resolveCandles, resolveBenchmark } from "@/lib/edges/data";
+import { neweyWestLag } from "@/lib/edges/evidence";
 import type { Candle } from "@/lib/data/technicals";
 import type { Market } from "@/lib/edges/types";
 
@@ -87,8 +88,10 @@ export interface IcRunReport {
 const T_HURDLE_PRIOR = 2.0;
 const IC_MIN = 0.02;
 
-function classify(meanIC: number, tStat: number, nObs: number): string {
-  if (!Number.isFinite(meanIC) || !Number.isFinite(tStat) || nObs < 12) return "measure_only";
+export const MIN_IC_OBSERVATIONS = 36;
+
+export function classifyEdgeIC(meanIC: number, tStat: number, nObs: number): string {
+  if (!Number.isFinite(meanIC) || !Number.isFinite(tStat) || nObs < MIN_IC_OBSERVATIONS) return "measure_only";
   if (meanIC >= IC_MIN && Math.abs(tStat) >= T_HURDLE_PRIOR && meanIC > 0) return "shadow_eligible";
   if (meanIC <= -IC_MIN && Math.abs(tStat) >= T_HURDLE_PRIOR) return "benched_negative";
   return "measure_only";
@@ -156,11 +159,14 @@ export async function computeEdgeIC(opts: {
       }
       const nObs = ics.length;
       const meanIC = nObs ? ics.reduce((s, v) => s + v, 0) / nObs : NaN;
-      const se = neweyWestSEofMean(ics, h); // lag ~ horizon (overlap length)
+      // `ics` is sampled every `step` sessions, so its autocorrelation lag is
+      // horizon/step rather than the raw horizon. Using the raw horizon here
+      // discarded far more degrees of freedom than the sampled series has.
+      const se = neweyWestSEofMean(ics, neweyWestLag(h, step));
       const std = nObs > 1 ? Math.sqrt(ics.reduce((s, v) => s + (v - meanIC) ** 2, 0) / nObs) : NaN;
       const icIR = std > 0 ? meanIC / std : NaN;
       const tStat = se > 0 ? meanIC / se : NaN;
-      const statusAfter = classify(meanIC, tStat, nObs);
+      const statusAfter = classifyEdgeIC(meanIC, tStat, nObs);
       rows.push({ edgeId: edge.id, market, horizon: h, windowEnd, meanIC, icIR, tStat, nObs, statusAfter });
     }
     // Advisory edge status = best across horizons (shadow_eligible if any horizon clears).

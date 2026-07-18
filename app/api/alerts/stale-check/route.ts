@@ -45,6 +45,8 @@ const EXPECTED_JOBS: ExpectedJob[] = [
     recoveryCmd: 'POST /api/agents/learner with {"market":"us"}' },
   { agentType: "validation_sweep", label: "Validation sweep (weekly)", expectedHour: 21, graceHours: 2, fridayOnly: true,
     recoveryCmd: 'POST /api/validation/sweep' },
+  { agentType: "edge_scout", label: "EdgeScout (US evidence)", expectedHour: 22, graceHours: 2,
+    recoveryCmd: 'POST /api/agents/edge-scout?market=us&maxSymbols=50' },
   { agentType: "research", label: "Research (India)", expectedHour: 4, graceHours: 1, requiresIndia: true,
     recoveryCmd: 'POST /api/agents/research/cron?market=india' },
   { agentType: "paper_trader", label: "PaperTrader (India)", expectedHour: 11, graceHours: 2, requiresIndia: true,
@@ -53,6 +55,8 @@ const EXPECTED_JOBS: ExpectedJob[] = [
     recoveryCmd: 'POST /api/agents/position-monitor?market=india' },
   { agentType: "learner", label: "LearnerAgent (India weekly)", expectedHour: 20, graceHours: 2, fridayOnly: true, requiresIndia: true,
     recoveryCmd: 'POST /api/agents/learner with {"market":"india"}' },
+  { agentType: "edge_scout", label: "EdgeScout (India evidence)", expectedHour: 11, graceHours: 2, requiresIndia: true,
+    recoveryCmd: 'POST /api/agents/edge-scout?market=india&maxSymbols=50' },
 ];
 
 // Convert a UTC Date to ET (America/New_York) wall-clock parts for schedule comparisons.
@@ -94,12 +98,7 @@ async function runCheck() {
   const now = new Date();
   // Compare against the actual pg_cron schedule, which is expressed in UTC.
   // This avoids DST approximations and false alerts around transition weeks.
-  const dayOfWeek = now.getUTCDay();
-  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
-  const isFriday = dayOfWeek === 5;
   const hour = now.getUTCHours();
-
-  if (!isWeekday) return NextResponse.json({ checked: false, reason: "weekend" });
 
   // India gate — resilient: any error/missing profile just skips India jobs.
   let indiaEnabled = false;
@@ -110,13 +109,23 @@ async function runCheck() {
 
   const todayStart = new Date(now);
   todayStart.setUTCHours(0, 0, 0, 0);
-  const dateStr = todayStart.toISOString().slice(0, 10);
   const results: any[] = [];
 
   for (const job of EXPECTED_JOBS) {
-    if (job.fridayOnly && !isFriday) continue;
+    const deadlineTotalHour = job.expectedHour + job.graceHours;
+    const deadlineDayOffset = Math.floor(deadlineTotalHour / 24);
+    const deadlineHour = deadlineTotalHour % 24;
+    if (hour < deadlineHour) continue;
+
+    // Late UTC jobs whose grace crosses midnight belong to the previous
+    // session. Query that date rather than today's empty date.
+    const expectedDayStart = new Date(todayStart.getTime() - deadlineDayOffset * 86400_000);
+    const expectedDayOfWeek = expectedDayStart.getUTCDay();
+    if (expectedDayOfWeek < 1 || expectedDayOfWeek > 5) continue;
+    if (job.fridayOnly && expectedDayOfWeek !== 5) continue;
     if (job.requiresIndia && !indiaEnabled) continue;
-    if (hour < job.expectedHour + job.graceHours) continue; // too early to judge yet
+    const expectedDayEnd = new Date(expectedDayStart.getTime() + 86400_000);
+    const dateStr = expectedDayStart.toISOString().slice(0, 10);
 
     // Distinguish US vs India research/monitor runs (agent_runs has no `market`
     // column pre-067 — infer from symbols like the research-cron idempotency
@@ -125,7 +134,8 @@ async function runCheck() {
       .from("agent_runs")
       .select("id, started_at, status, symbols, market, result_summary")
       .eq("agent_type", job.agentType)
-      .gte("started_at", todayStart.toISOString())
+      .gte("started_at", expectedDayStart.toISOString())
+      .lt("started_at", expectedDayEnd.toISOString())
       .order("started_at", { ascending: false })
       .limit(10);
 
@@ -171,7 +181,7 @@ async function runCheck() {
 
     const detail = [
       `Detected: ${fmtDateTime(now)}`,
-      `Expected: ~${job.expectedHour}:00 UTC${job.fridayOnly ? " (Fridays)" : " weekdays"}`,
+      `Expected: ~${job.expectedHour}:00 UTC on ${dateStr}${job.fridayOnly ? " (Fridays)" : " weekdays"}`,
       `Likely cause: the Supabase pg_cron job did not fire, or the endpoint errored/timed out. These run in the cloud (pg_cron -> Vercel) and do NOT need your PC on.`,
       `Recovery: ${job.recoveryCmd}`,
     ].join(" · ");
