@@ -1,5 +1,6 @@
 # Kairos — Tech Stack
-> Last updated: 2026-07-16 (House Stock Watcher congressional feed retired — upstream bucket went private; no licence-clean free replacement qualified)
+> Last updated: 2026-07-18 (`webull_trade` signed Webull Trading API adapter built against golden fixtures and shipped DISABLED; the inert MCP-based `webull` order scaffold deleted so no second Webull order adapter exists; read-only Cloud MCP unchanged and still query-only)
+> Prior: 2026-07-16 (House Stock Watcher congressional feed retired — upstream bucket went private; no licence-clean free replacement qualified)
 > Update this file when: a new library is added, a provider changes, a new adapter is added, the framework is upgraded, or any layer in the table below changes.
 
 ---
@@ -85,12 +86,50 @@ All broker interactions go through a `BrokerAdapter` interface. Current adapters
 | Adapter | File | Market |
 |---|---|---|
 | `robinhood-mcp` | `lib/brokers/adapters/robinhood-mcp.ts` | US |
+| `robinhood` | `lib/brokers/adapters/robinhood.ts` | US (direct REST, serverless-capable) |
 | `kite` | `lib/brokers/adapters/kite.ts` | India |
 | `alpaca` | `lib/brokers/adapters/alpaca.ts` | US (future) |
+| `webull_trade` | `lib/brokers/webull-trade/` | US — **built, DISABLED, fixtures-only** |
 
 The adapter registry (`lib/brokers/registry.ts`) resolves which adapter to use per market and
 account role. The order placement code never calls a broker API directly — it goes through the
 registry.
+
+#### `webull_trade` — signed Webull Trading API (2026-07-18, disabled)
+
+Webull exposes **two unrelated products** and they must never be combined:
+
+| Surface | Registry | Role |
+|---|---|---|
+| Cloud MCP (`webull`) | `lib/brokers/mcp-registry.ts` | **Read-only.** Accounts/positions/balances/quotes. No order tools, no write scopes, `orderCapable:false`. Not in the order registry. |
+| Trading API (`webull_trade`) | `lib/brokers/registry.ts` | **Signed REST money path.** The only Webull order surface. |
+
+The inert MCP-based order scaffold (`lib/brokers/adapters/webull.ts`) was **deleted** along with
+its `webull` order-registry entry — there is no second Webull order adapter.
+
+**Module layout** (`lib/brokers/webull-trade/`):
+
+| File | Purpose |
+|---|---|
+| `signing.ts` | HMAC-SHA1 request signing, implemented directly (no vendor SDK). One auditable canonical request; fresh nonce per request; timestamp-skew guard; constant-time verify. |
+| `credentials.ts` | Vault-only accessor, provider tag `webull_trade`, bounded cache. **Sandbox and prod are SEPARATE vault records bound to SEPARATE hosts derived from the same `env`, so a sandbox credential can never resolve a prod host.** |
+| `gates.ts` | All 9 gates of the Mandatory Gate Ladder, pure and ordered. Every gate fails closed; unknown/undefined is never "satisfied". |
+| `token.ts` | Token lifecycle `NORMAL` / `INVALID` (15 idle days) / `EXPIRED` (5-min verify window). Fails closed on invalid/expired/unknown/idle; alerts before the 15-day boundary; no keepalive traffic. |
+| `order.ts` | Normalization + boundary rejects. Scope locked to **market + limit + GTC `STOP_LOSS` in `CORE`**. `SHORT` is rejected even though the API accepts it — a capability is not a permission. Options, trailing, OCO/OTOCO, algos, extended/overnight sessions rejected. |
+| `lifecycle.ts` | place/query/cancel/reconcile on a stable `client_order_id` (≤32). A timeout, a throw after send, or a 200 with no parseable order id → `needs_reconcile`: never success, never a blind resubmit. |
+| `capabilities.ts` | `BrokerProtectiveCapabilities` declaration (shape per `features/hybrid-stop`; that shared type is not yet on `main`, so it is declared locally). Claims only US equity `sell_long` via GTC stop-market in the **regular** session. |
+| `transport.ts` | The only place a request is made. **Throws unless explicitly enabled**, so no live/sandbox call is reachable from the build or test environment. |
+
+**It places no order today** and fails closed on all three of: absent
+`strategy_config.webull_trade_orders_enabled` (migration `20260718120000_...` written but
+**NOT applied**), no allowlisted `broker_accounts{broker='webull_trade',market='us',role='trading'}`
+row, and no `api_key_vault` `provider='webull_trade'` credential. Everything is verified against
+**golden fixtures only** — no live or sandbox Webull call exists in the codebase.
+
+**Before any live dollar** the owner must: confirm the Webull API entitlement; reconcile the
+canonical signing layout, request paths, and hosts against the current official docs; provision the
+vault records and the allowlist row; apply the migration; and run a manually-approved sandbox test.
+Design + open decisions: `features/webull-trading-api/FEATURE_ARCHITECTURE.md`.
 
 ---
 

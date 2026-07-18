@@ -8,7 +8,7 @@ import { alpacaAdapter } from "@/lib/brokers/adapters/alpaca";
 import { kiteAdapter } from "@/lib/brokers/adapters/kite";
 import { robinhoodMcpAdapter } from "@/lib/brokers/adapters/robinhood-mcp";
 import { robinhoodAdapter } from "@/lib/brokers/adapters/robinhood";
-import { webullAdapter } from "@/lib/brokers/adapters/webull";
+import { webullTradeAdapter } from "@/lib/brokers/webull-trade/adapter";
 
 const ADAPTERS: Record<string, () => BrokerAdapter> = {
   alpaca: alpacaAdapter,
@@ -19,13 +19,15 @@ const ADAPTERS: Record<string, () => BrokerAdapter> = {
   // US live via direct Robinhood REST — SERVERLESS-CAPABLE. Set
   // strategy_config.active_broker_us='robinhood' to route live US orders here.
   robinhood: robinhoodAdapter,
-  // US live via Webull MCP (Phase 2) — SHIPPED INERT. isConfigured() is FALSE
-  // permanently because published Cloud MCP has no write tools. A future
-  // A signed Trading API adapter needs a separate registry id, reviewed
-  // credentials and gates, and sandbox proof. The
-  // order path is UNTESTED against a live account — see lib/brokers/adapters/
-  // webull.ts. Cloud MCP is not active in any order flow.
-  webull: webullAdapter,
+  // US live via the SIGNED Webull Trading API (HMAC-SHA1 REST) — id `webull_trade`.
+  // This is the ONLY Webull signed-execution surface; the read-only Cloud MCP
+  // (`webull` in lib/brokers/mcp-registry.ts) stays query-only and is NOT in this
+  // order registry. Disabled at every layer: isConfigured() is false until the
+  // owner provisions the webull_trade_orders_enabled flag (migration unapplied),
+  // an allowlisted webull_trade account, and a webull_trade vault credential —
+  // AND runs a manually-approved sandbox test. No live/sandbox call is possible
+  // from the build environment. See lib/brokers/webull-trade/.
+  webull_trade: webullTradeAdapter,
 };
 
 export function getBroker(id: string): BrokerAdapter | null {
