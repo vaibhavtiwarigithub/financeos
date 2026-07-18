@@ -1,5 +1,24 @@
 ﻿# Kairos â€” Claude Operating Rules
 
+## GitHub Account Routing — Parallel-Safe
+
+- FinanceOS/Kairos pushes only to
+  `https://github.com/vaibhavtiwarigithub/financeos.git` using the
+  `vaibhavtiwarigithub` credential. FinNudge belongs to `sharveeshrotriya` and is
+  read-only from this workspace.
+- Do **not** run `gh auth switch` to repair a FinanceOS Git push. GitHub CLI's
+  active account is global and switching it races with concurrent FinNudge work.
+- This machine uses conditional Git config plus Git Credential Manager to select
+  the account by repository directory. Use normal `git fetch`, `git pull`, and
+  `git push origin <branch>`; do not change the remote or embed credentials in it.
+- Before a side effect, verify `git remote -v` and
+  `git config credential.https://github.com.username`. FinanceOS must resolve to
+  `vaibhavtiwarigithub`. Never print `git credential fill` output because it
+  contains a token.
+- `gh` API commands (for example `gh pr create`) still use the globally active
+  CLI account. They are not parallel-safe across these two owners; avoid them in
+  concurrent work unless a process-scoped credential is explicitly provided.
+
 ## Parallelize splittable work across agents
 
 If a task decomposes into independent sub-tasks touching non-overlapping files,
