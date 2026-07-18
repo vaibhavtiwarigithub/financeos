@@ -22,12 +22,13 @@ a distinct id such as `webull_trade`.
 - Access tokens are reusable; 2FA (when enabled) is verified via the Webull app
   ONCE at token acquisition, NOT a secret pasted into each order — so autonomous
   cron execution is technically feasible (owner Q1 RESOLVED).
-- **Token expiry / inactivity window is NOT documented** on the authentication
-  page (verified 2026-07-17). A token that silently expires mid-cron is a
-  live-order failure mode — the exact window and revocation behaviour must be
-  measured in sandbox and pinned before autonomous placement, and a
-  near-expiry/expired token must fail closed with a health alert, never a
-  half-placed order.
+- The official token lifecycle documents `INVALID` after **15 consecutive days
+  without an API call**, `EXPIRED` when initial verification is not completed
+  within 5 minutes, and reusable `NORMAL` tokens. Kairos tracks the last confirmed
+  authenticated call, checks token status before order activity after an idle
+  interval, and alerts before the 15-day boundary. It must not generate meaningless
+  keepalive traffic merely to hide an unused credential. Invalid, expired, or
+  unknown status fails closed before submission.
 - Requests use Webull's documented signed authentication protocol, including its
   canonical request and HMAC-SHA1 signature. Do not substitute generic OAuth or
   a vendor SDK assumption.
@@ -38,7 +39,7 @@ a distinct id such as `webull_trade`.
   algos. **Documented ≠ in scope.** These are pinned to fixtures only if/when a
   later phase needs them; the initial adapter must NOT expose them.
 - **Initial order-type scope (locked small):** market + limit for manual-approved
-  entries, and **GTC `STOP_LOSS` as the disaster floor only** (the hybrid-stop
+  entries, and **GTC `STOP_LOSS` in `CORE` as the disaster floor only** (the hybrid-stop
   feature). OCO/OTOCO come only after the basic place/query/cancel/reconcile
   lifecycle is proven. Trailing stops, shorts, options, algos, and automatic venue
   routing are excluded outright.
@@ -46,10 +47,10 @@ a distinct id such as `webull_trade`.
   cannot rest multi-day, so they are NOT a substitute for Kairos's exit policy and
   stay out (adopting broker-native trailing would also make exits vary by venue and
   contaminate the Learner — see `features/hybrid-stop`).
-- Webull fills the shared `BrokerProtectiveCapabilities` flags
-  (`supportsStopMarket`, `supportsGtcStop`, `supportsModifyInPlace`,
-  `supportsOco`, `supportedSessions`) from `features/hybrid-stop` — the protective
-  state machine is broker-neutral; this adapter only declares what it supports.
+- Webull fills the conditional `BrokerProtectiveCapabilities` matrix from
+  `features/hybrid-stop`. Initial fixtures declare only US equity `SELL` protection
+  using GTC `STOP_LOSS` in `CORE`. The generic presence of `ALL`/`NIGHT` sessions
+  elsewhere in the API does not prove a stop order can trigger there.
 - Sandbox and production are separate environments and credentials.
 
 Exact fields and limits must be pinned from the current official documentation in
@@ -76,7 +77,9 @@ decision loops, router cutover, and protective-order policy are stable. When bui
 - Pin endpoint environment to the credential record. A sandbox credential can
   never resolve a production host.
 - Implement the official signing algorithm directly with golden fixtures from the
-  documentation. Redact before any telemetry boundary.
+  documentation. Enforce TLS, timestamp skew, and a fresh nonce per request;
+  redact the canonical request before any telemetry boundary because it can contain
+  account and order data even when the secret itself is absent.
 - Use a bounded timeout and retry only requests proven idempotent.
 
 ## Adapter Contract
@@ -93,6 +96,11 @@ Create a distinct `webull_trade` adapter implementing:
 It writes only through the existing execution kernel and execution ledger. It may
 not create a parallel trade, cash, position, or P&L store.
 
+The current `lib/brokers/adapters/webull.ts` is an inert scaffold for MCP-derived
+order tools that do not exist. During implementation it must be deleted or replaced,
+not enabled and not left as a second Webull order adapter. The read-only Cloud MCP
+registry may remain under `webull`; signed execution uses only `webull_trade`.
+
 ## Mandatory Gate Ladder
 
 Every order requires all gates in this order:
@@ -103,7 +111,8 @@ Every order requires all gates in this order:
 4. Live autonomy/approval mode satisfied.
 5. Exactly one enabled Webull trading account allowlisted for US.
 6. Explicit `webull_trade_orders_enabled` false-by-default feature flag.
-7. Valid non-expired production credential and expected endpoint.
+7. Valid `NORMAL` production token when 2FA is enabled, valid signing credential,
+   expected endpoint, and acceptable timestamp skew.
 8. Existing buying-power, notional, name, sector, gross, turnover, and duplicate
    order checks.
 9. Deterministic quantity no greater than the reconciled mandate allowance.
@@ -135,6 +144,10 @@ Missing schema, config, account, credential, or broker response fails closed.
 10. Partial fills and external cancellations preserve correct held quantity.
 11. US pause, kill, drawdown, approval, and notional gates are regression-tested.
 12. India state is unreachable from the adapter.
+13. A token idle for 15 days, unknown token status, timestamp replay, or nonce reuse
+    blocks before order submission.
+14. GTC `STOP_LOSS` is rejected outside the exact session/product combinations
+    proven by current contract fixtures.
 
 ## Open Owner Decisions
 
@@ -153,3 +166,10 @@ Missing schema, config, account, credential, or broker response fails closed.
 5. Run fault injection and full money-path regression tests.
 6. Owner reviews sandbox ledger and explicitly approves one minimal live test.
 7. Keep autonomous Webull routing disabled until a separate production sign-off.
+
+## Primary Sources
+
+- Authentication and reusable 2FA token overview: https://developer.webull.com/apis/docs/authentication/overview/
+- Token lifecycle and 15-day inactivity rule: https://developer.webull.com/apis/docs/authentication/token/
+- Stock order lifecycle, types, TIF, and sessions: https://developer.webull.com/apis/docs/trade-api/stock/
+- Cloud MCP query-only tool inventory: https://developer.webull.com/apis/docs/AI-friendly-Resources/mcp/
