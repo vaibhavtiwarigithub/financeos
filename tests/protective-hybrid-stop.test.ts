@@ -163,15 +163,15 @@ describe("hybrid-stop disaster-floor calculator", () => {
     expect(r.floor).toBe(90);
   });
 
-  it("touch_at_analytical_stop is NON-DEFAULT and flags it requires approval", () => {
+  it("wider_disaster_floor reason string confirms outage+catastrophic-loss intent", () => {
     const r = computeDisasterFloor({
-      mode: "touch_at_analytical_stop",
+      mode: "wider_disaster_floor",
       analyticalStop: 100,
       highWaterMark: 120,
       distance: { kind: "fixed_offset", offset: 5 },
     });
-    expect(r.floor).toBe(100);
-    expect(r.reason).toMatch(/requires owner approval/i);
+    expect(r.floor).toBe(95);
+    expect(r.reason).toMatch(/outage \+ catastrophic-loss mitigation/i);
   });
 });
 

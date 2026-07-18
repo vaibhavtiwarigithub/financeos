@@ -2,14 +2,9 @@
 //
 // PURE function, deterministic, NO LLM, NO broker calls, NOT wired to placement.
 //
-// Q1 (approve broker-hosted TOUCH execution at all?) is NOT answered, so the
-// DEFAULT mode is `wider_disaster_floor` — the SAFEST reading: the broker holds a
-// wider, static floor for app/scheduler OUTAGE + catastrophic-loss mitigation,
-// NOT a touch-at-the-analytical-stop execution rule. `touch_at_analytical_stop`
-// exists as a pure branch but must be explicitly requested and is gated behind
-// owner approval of touch semantics elsewhere; it is never the default.
-//
-// The distance is a CONFIG INPUT and is NEVER hardcoded here. The recommended
+// Owner decision 2026-07-18: WIDER_DISASTER_FLOOR ONLY. Touch-at-analytical-stop
+// is NOT supported — the broker holds a wider, static floor for app/scheduler
+// OUTAGE + catastrophic-loss mitigation only. The distance is a CONFIG INPUT.
 // mandate-specific ATR rule with a hard maximum-loss bound (spec Open Decision 2)
 // is supported via `hardMaxLossFloor`, but the module ships with no default
 // distance value of its own.
@@ -20,7 +15,7 @@
 //     high-water mark (hence a non-rising analytical stop) can NEVER lower it.
 //   - `max(currentFloor, candidate)` — an existing broker floor is never lowered.
 
-export type DisasterFloorMode = "wider_disaster_floor" | "touch_at_analytical_stop";
+export type DisasterFloorMode = "wider_disaster_floor";
 
 // Distance is supplied by config, never hardcoded. Three shapes; a mandate-ATR
 // rule uses `atr_multiple`.
@@ -86,27 +81,20 @@ export function computeDisasterFloor(input: DisasterFloorInput): DisasterFloorRe
     return invalid(mode, "analyticalStop must be a positive finite number");
   }
 
-  // The raw candidate floor for this evaluation.
-  let candidate: number | null;
-  if (mode === "touch_at_analytical_stop") {
-    // Non-default. Touch semantics are NOT approved (Q1); this branch is inert
-    // until an owner approves it. The floor equals the analytical stop.
-    candidate = analyticalStop;
-  } else {
-    // Default: wider floor sitting BELOW the analytical stop by the config distance.
-    candidate = candidateFromDistance(analyticalStop, distance);
-    if (candidate == null) return invalid(mode, "invalid or non-finite distance for wider_disaster_floor");
-    if (candidate >= analyticalStop) {
-      return invalid(mode, "wider floor must be strictly below the analytical stop — distance too small");
-    }
-    if (candidate <= 0) return invalid(mode, "computed floor is non-positive");
+  // Wider floor: sits BELOW the analytical stop by the config distance.
+  const rawCandidate = candidateFromDistance(analyticalStop, distance);
+  if (rawCandidate == null) return invalid(mode, "invalid or non-finite distance for wider_disaster_floor");
+  if (rawCandidate >= analyticalStop) {
+    return invalid(mode, "wider floor must be strictly below the analytical stop — distance too small");
   }
+  if (rawCandidate <= 0) return invalid(mode, "computed floor is non-positive");
 
   // Hard maximum-loss bound: never place the floor below the owner's max-loss
   // price. Raising the floor to the bound REDUCES risk, so it is always allowed.
-  if (input.hardMaxLossFloor != null && Number.isFinite(input.hardMaxLossFloor) && input.hardMaxLossFloor > 0) {
-    candidate = Math.max(candidate, input.hardMaxLossFloor);
-  }
+  const candidate =
+    input.hardMaxLossFloor != null && Number.isFinite(input.hardMaxLossFloor) && input.hardMaxLossFloor > 0
+      ? Math.max(rawCandidate, input.hardMaxLossFloor)
+      : rawCandidate;
 
   // Monotonic ratchet: never lower an existing floor. A falling high-water mark
   // (→ a non-rising analytical stop → a non-rising candidate) therefore can never
@@ -123,10 +111,8 @@ export function computeDisasterFloor(input: DisasterFloorInput): DisasterFloorRe
     changed,
     belowAnalyticalStop: finalFloor < analyticalStop,
     reason:
-      mode === "touch_at_analytical_stop"
-        ? "touch-at-analytical-stop (NON-DEFAULT, requires owner approval of touch semantics)"
-        : current != null && !changed
-          ? "wider disaster floor held at prior level (ratchet: never lowered)"
-          : "wider disaster floor (outage + catastrophic-loss mitigation)",
+      current != null && !changed
+        ? "wider disaster floor held at prior level (ratchet: never lowered)"
+        : "wider disaster floor (outage + catastrophic-loss mitigation)",
   };
 }
