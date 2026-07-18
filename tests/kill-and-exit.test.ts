@@ -251,6 +251,24 @@ describe("Test 9c — real checkKillSwitches live path: book/account semantics (
   const HOUR = 60 * 60 * 1000;
   const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
 
+  // PIN THE CLOCK — these fixtures are relative to now, and the live path splits
+  // "today" from "yesterday" by MARKET-LOCAL date (America/New_York for us,
+  // kill-switches.ts getLiveSeries). A snapshot at now-3h lands on the PREVIOUS
+  // NY date whenever the suite runs between 00:00 and 03:00 NY, which turns the
+  // peak snapshot into a prior-day baseline and makes daily_loss (checked first)
+  // trip instead of drawdown. Same breach either way — safe=false regardless —
+  // but the assertion on WHICH switch fired flipped with wall-clock time.
+  // 17:00Z = 12:00 EST, so every offset below stays on one NY trading date.
+  // toFake:["Date"] only: real timers stay intact so async/await is unaffected.
+  const FIXED_NOW = new Date("2026-01-15T17:00:00.000Z");
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FIXED_NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   // snaps: newest-first (the code orders captured_at desc — the resolver ignores
   // filters, so we supply the already-sorted series the query would return).
   function liveResolver(opts: {
