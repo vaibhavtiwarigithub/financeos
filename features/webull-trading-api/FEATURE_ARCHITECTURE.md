@@ -19,16 +19,37 @@ a distinct id such as `webull_trade`.
 ## Verified Trading API Facts
 
 - Individual applications require Webull approval and API credentials.
-- Access tokens are reusable and expire after the documented inactivity window;
-  authentication may require 2FA during token acquisition, not a guessed secret
-  pasted into each order.
+- Access tokens are reusable; 2FA (when enabled) is verified via the Webull app
+  ONCE at token acquisition, NOT a secret pasted into each order — so autonomous
+  cron execution is technically feasible (owner Q1 RESOLVED).
+- **Token expiry / inactivity window is NOT documented** on the authentication
+  page (verified 2026-07-17). A token that silently expires mid-cron is a
+  live-order failure mode — the exact window and revocation behaviour must be
+  measured in sandbox and pinned before autonomous placement, and a
+  near-expiry/expired token must fail closed with a health alert, never a
+  half-placed order.
 - Requests use Webull's documented signed authentication protocol, including its
   canonical request and HMAC-SHA1 signature. Do not substitute generic OAuth or
   a vendor SDK assumption.
 - Stock order endpoints support market/limit/stop variants, client order ids,
-  order query/cancel/replace, and documented rate limits.
-- Trailing-stop stock orders are documented with DAY time-in-force only. They are
-  not a uniform multi-day replacement for Kairos's cross-broker exit policy.
+  order query/cancel/replace, and documented rate limits. The Trading API also
+  documents richer types — GTC stop-market/stop-limit, OTO/OCO/OTOCO, attached
+  take-profit/stop-loss, fractional, extended/overnight sessions, and TWAP/VWAP/POV
+  algos. **Documented ≠ in scope.** These are pinned to fixtures only if/when a
+  later phase needs them; the initial adapter must NOT expose them.
+- **Initial order-type scope (locked small):** market + limit for manual-approved
+  entries, and **GTC `STOP_LOSS` as the disaster floor only** (the hybrid-stop
+  feature). OCO/OTOCO come only after the basic place/query/cancel/reconcile
+  lifecycle is proven. Trailing stops, shorts, options, algos, and automatic venue
+  routing are excluded outright.
+- Trailing-stop stock orders are documented with DAY time-in-force only — they
+  cannot rest multi-day, so they are NOT a substitute for Kairos's exit policy and
+  stay out (adopting broker-native trailing would also make exits vary by venue and
+  contaminate the Learner — see `features/hybrid-stop`).
+- Webull fills the shared `BrokerProtectiveCapabilities` flags
+  (`supportsStopMarket`, `supportsGtcStop`, `supportsModifyInPlace`,
+  `supportsOco`, `supportedSessions`) from `features/hybrid-stop` — the protective
+  state machine is broker-neutral; this adapter only declares what it supports.
 - Sandbox and production are separate environments and credentials.
 
 Exact fields and limits must be pinned from the current official documentation in

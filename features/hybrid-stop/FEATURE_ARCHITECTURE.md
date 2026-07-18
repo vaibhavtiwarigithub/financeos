@@ -29,6 +29,50 @@ and post-fill protection policy.
 | Robinhood agent API | Existing captured tool schema is insufficient proof for a new stop integration | Public support pages do not define Kairos's current MCP order arguments. | Require a fresh live `tools/list` schema capture before implementation. |
 | Webull | Trading API documents stop orders; Cloud MCP is query-only | Trading API is a different signed integration. Trailing-stop orders are DAY-only in the documented stock API. | Out of scope; never infer MCP writes. |
 
+## Broker-Neutral Capability Flags
+
+Protection is driven by a **broker-neutral state machine** that reads a declared
+capability set per adapter — never by per-broker `if` branches in the protocol.
+This is the correct level for "connect any broker": the credential store
+(`api_key_vault`) is already generic; broker *behaviour* is not, so each adapter
+DECLARES what it can do and the shared protocol adapts.
+
+```
+BrokerProtectiveCapabilities {
+  supportsStopMarket:    boolean   // guaranteed trigger, not guaranteed fill price
+  supportsStopLimit:     boolean   // price-controlled, MAY NEVER FILL on a gap
+  supportsGtcStop:       boolean   // rests across sessions (Kite GTT, RH gtc)
+  supportsModifyInPlace: boolean   // ratchet without cancel/replace (Kite GTT PUT)
+  supportsOco:           boolean   // one-cancels-other; OUT of initial scope
+  supportedSessions:     Session[] // regular | extended | overnight
+}
+```
+
+- An adapter that returns `supportsGtcStop:false` for a market is declared
+  **synthetic-only** — the position is flagged unprotected-by-broker, never
+  silently treated as protected.
+- Preference order for the disaster floor: `stop-market` where supported (trigger
+  guaranteed) → GTT/`stop-limit` treated as **weaker** protection with
+  unfilled-trigger risk surfaced in the UI, never as equivalent.
+- When Robinhood or any broker later adds a verified capability, its adapter sets
+  the flag after a fresh live schema capture; the protocol is unchanged.
+
+## Protection Is Mitigation, Not a Guarantee
+
+State this honestly in code comments and the UI — do not let it read as "loss
+protection":
+
+- A **stop-market** guarantees the order TRIGGERS, not the fill price. A floor at
+  $90 can gap-fill at $75. This is catastrophic-loss *mitigation*, not a floor on
+  the loss.
+- A **stop-limit / GTT limit child** controls price but may **never fill** on a gap
+  → the position stays unprotected, which must be reported, not called filled.
+- Stops generally **cannot execute while the session is closed**. A resting floor
+  does not cover the gap between close and the next open.
+
+The honest label is **outage + catastrophic-loss mitigation**, not guaranteed
+loss protection.
+
 ## Required State Model
 
 One authoritative `protective_order` record per live position and broker:
@@ -43,6 +87,16 @@ One authoritative `protective_order` record per live position and broker:
 
 The record references the existing position and execution ledger. It must not
 create a parallel position, cash, or P&L truth layer.
+
+**Exit provenance.** A disaster-floor fill closes the position with
+`exit_reason = protective_disaster_floor`, DISTINCT from every strategy exit
+(stop, target, trailing, thesis, time). This is not cosmetic: the Learner MUST
+exclude or separately analyze these outcomes. A disaster floor fires on broker
+capability + an outage, not on strategy signal — folding it into strategy
+learning would let *which broker held the floor* contaminate the weight loop
+(e.g. a Kite GTT that gapped through vs an RH stop-market that triggered clean are
+different broker outcomes for the same strategy state). Tag it, keep it out of
+the correlation ledger.
 
 ## Execution Protocol
 
@@ -110,6 +164,10 @@ using actual fills and appends execution evidence. Unknown state is
 8. Every pause/kill/account/approval gate blocks entry and protection writes.
 9. US and India fixtures cannot read or mutate the other market.
 10. Paper results remain on their existing close-based semantics.
+11. A disaster-floor fill records `exit_reason = protective_disaster_floor` and is
+    excluded from the Learner correlation ledger; a strategy exit is not.
+12. An adapter declaring `supportsGtcStop:false` yields an unprotected-by-broker
+    position, never a silently-protected one.
 
 ## Open Owner Decisions
 
@@ -121,6 +179,17 @@ using actual fills and appends execution evidence. Unknown state is
    Recommendation: yes, while existing exits remain enabled.
 4. Minimum ratchet step and update cadence.
 5. Whether paper receives a separately versioned touch-fill simulation before live.
+6. **Build sequence — genuine tension, owner call:**
+   - *Kite-first* (this spec's build order): lifts already-written, proven GTT code
+     into the shared path — ships a real disaster floor to India in ~1–2 days.
+   - *Webull-first* (Codex's recommendation): build the signed `webull_trade`
+     adapter as the REFERENCE against the richest capability set + a sandbox, so
+     the capability-flag state machine is designed against the hardest case first
+     — but ~10–16 days before ANY floor is live.
+   The tradeoff is ship-protection-soonest vs build-the-abstraction-right-first.
+   My lean: adopt the capability-flag interface up front (from Codex) but
+   implement **Kite first** against it, since its code is proven and it delivers
+   protection before the Webull entitlement/sandbox path is even confirmed.
 
 ## Build Order After Approval
 
