@@ -951,3 +951,25 @@ Append-only per-account roll-up — one row per run (UNIQUE `(run_id)`; FK → `
 | 20260715130000 | **Evidence Router ACL + provenance repair**: explicitly removes `PUBLIC`/`anon`/`authenticated` execution from policy, refresh-claim, and pacing RPCs; makes `provider_pacing` service-role-only; adds the canonical `evidence_cache_v2.provenance` array used to preserve adapter field/source attribution through cache hits |
 | 20260715131000 | **Evidence Router table ACL hardening**: removes all `anon` grants and all authenticated write grants from policy, runtime, capability, evaluation, cache, call-ledger, and refresh-queue tables; authenticated remains owner-read through RLS, while `service_role` retains server-side access |
 | 20260715160000 | **Downside hedge (US PAPER only, OFF)**: config, state, append-only ledger, paper position/trade role provenance, transactional evaluation/fill/exit RPCs, owner-read RLS and service-only writes. No live order path. |
+| 20260716210000 | **Router cutover prerequisites** (shadow-only, `router_enabled` still false): `evidence_field_baselines` (mutable — a moving reference point, not evidence), append-only `evidence_degradation_events`, `evidence_evaluation_details`, `evidence_evaluation_reviews`, plus frozen-cohort + activation-binding columns on `evidence_policy_evaluations`, and the `activate_evidence_policy_bound()` RPC. RLS on with owner-read on all four; anon has no grants; writes service-role only; RPC is `security definer` with fixed `search_path`, executable by `service_role` only. *(Row was missing from this table; the migration is confirmed APPLIED in production — verified via `information_schema.columns` on 2026-07-18.)* |
+
+### Evidence evaluation tables — who writes them
+
+`evidence_policy_evaluations` and `evidence_evaluation_details` sat at **0 rows** from the
+20260716210000 migration until 2026-07-18: the comparator, degradation guard, and bound
+activation RPC all shipped, but nothing fed them. Their first and only writer is the
+**cohort builder** (`lib/evidence/evaluation/cohort-builder.ts`, exposed as
+`GET/POST /api/agents/evidence-cohort?market=us|india`), which resolves real recent research
+decisions into a frozen dual-run cohort and persists one evaluation row plus one detail row
+per cohort symbol — including rows where either path abstained or failed, which the spec
+requires to be retained rather than filtered out.
+
+**No migration was needed for this writer**: every column `persistEvaluation` writes already
+existed. Rows are append-only, owner-read, service-role-write, and carry an `expires_at`
+(default 72h) so a stale evaluation cannot authorize an activation.
+
+**These rows are measurement, not authority.** `router_enabled` remains `false` for both
+markets, so an evaluation changes no score, signal, size, position, or order. Persisting one
+cannot activate anything — activation is the separate owner-gated `activate_evidence_policy_bound()`
+RPC, which additionally requires the evaluation's baseline to still be the active policy and
+every flagged divergence to carry an approving review row.
