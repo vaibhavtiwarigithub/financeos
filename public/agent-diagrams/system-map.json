@@ -180,13 +180,13 @@
       "removeReason": null
     },
     "GATEWAY": {
-      "label": "Execution Gateway (broker registry: Alpaca/Kite)",
-      "description": "Typed broker order lifecycle for approved trade_proposals, routed through lib/brokers/registry.ts (getActiveBroker per market, strategy_config.active_broker_us/india) instead of a direct Alpaca import: submit -> pending_submit/submitted/partially_filled/filled/canceled/rejected, polled + reconciled every 30 min (app/api/broker/orders/sync — now iterates DISTINCT brokers present in open orders, so Alpaca and Kite orders can be in-flight simultaneously). A 'Send to Alpaca (paper)' button on Smart Money's Trade Queue (status='approved' only) fires this — human click required, never cron-fired. Adding a future broker (E*TRADE etc.) is one adapter file + one registry line, zero route changes. Fixed a discovered pre-existing bug in the original build: the Trade Queue UI read a separate, never-populated `trade_queue` table while Approve/Reject/the Gateway all operate on `trade_proposals` — repointed. Live-env orders require strategy_config.trading_enabled=true (global master switch, off by default) AND the market-specific trading_enabled_us/trading_enabled_india flag (both default true, independently toggleable in Settings → Agents — turning one off blocks only new live orders for that market, holdings/balances stay fully viewable); only the PAPER path is verified live.",
+      "label": "Execution Gateway (broker registry: Alpaca/Kite/Robinhood/webull_trade)",
+      "description": "Typed broker order lifecycle for approved trade_proposals, routed through lib/brokers/registry.ts (getActiveBroker per market, strategy_config.active_broker_us/india) instead of a direct Alpaca import: submit -> pending_submit/submitted/partially_filled/filled/canceled/rejected, polled + reconciled every 30 min (app/api/broker/orders/sync — now iterates DISTINCT brokers present in open orders, so Alpaca and Kite orders can be in-flight simultaneously). A 'Send to Alpaca (paper)' button on Smart Money's Trade Queue (status='approved' only) fires this — human click required, never cron-fired. Adding a future broker (E*TRADE etc.) is one adapter file + one registry line, zero route changes. Fixed a discovered pre-existing bug in the original build: the Trade Queue UI read a separate, never-populated `trade_queue` table while Approve/Reject/the Gateway all operate on `trade_proposals` — repointed. Live-env orders require strategy_config.trading_enabled=true (global master switch, off by default) AND the market-specific trading_enabled_us/trading_enabled_india flag (both default true, independently toggleable in Settings → Agents — turning one off blocks only new live orders for that market, holdings/balances stay fully viewable); only the PAPER path is verified live. 2026-07-18: the broker registry gained `webull_trade` — the SIGNED Webull Trading API adapter (HMAC-SHA1 REST, lib/brokers/webull-trade/) — and LOST the inert MCP-based `webull` order adapter, which was deleted so there is no second Webull order path. The read-only Webull Cloud MCP (lib/brokers/mcp-registry.ts) is unchanged and stays query-only/order-inert. webull_trade places NO order today: it fails closed on an absent strategy_config.webull_trade_orders_enabled column (migration written, NOT applied), no allowlisted broker_accounts{broker='webull_trade',market='us',role='trading'} row, and no api_key_vault provider='webull_trade' credential. Every gate, the signing, the token lifecycle, and the place/query/cancel/reconcile lifecycle are verified against golden fixtures only — no live or sandbox Webull call exists in the codebase.",
       "addedAt": "2026-07-06",
       "addReason": "First typed (non-manual) execution path — the honest gap flagged when auditing risk-reward/execution architecture earlier this session. Broker-swappable by design (see lib/brokers registry pattern already used for Alpaca/Kite reads).",
       "status": "changed",
-      "changedAt": "2026-07-06",
-      "changeReason": "Ops spec Part 2: routes now go through a typed broker adapter registry instead of a direct Alpaca import — multi-broker (Alpaca US / Kite India) support with zero-route-change swapping. Later same day: added independent per-market trading_enabled_us/trading_enabled_india view-only-vs-auto-trading toggle, separate from the Kite disconnect kill-switch.",
+      "changedAt": "2026-07-18",
+      "changeReason": "Ops spec Part 2: routes now go through a typed broker adapter registry instead of a direct Alpaca import — multi-broker (Alpaca US / Kite India) support with zero-route-change swapping. Later same day: added independent per-market trading_enabled_us/trading_enabled_india view-only-vs-auto-trading toggle, separate from the Kite disconnect kill-switch. 2026-07-18: registry entry `webull` (inert MCP order scaffold) deleted and replaced by `webull_trade` (signed Trading API adapter), disabled at every layer pending owner entitlement + a manually-approved sandbox test.",
       "removedAt": null,
       "removeReason": null
     },
@@ -423,8 +423,20 @@
     }
   },
   "history": [
-    { "date": "2026-07-17", "event": "changed", "nodeId": "RESEARCH", "label": "US and India scoring/backlog audit", "reason": "Market-partitioned watchlists, research_enabled filtering, holding provenance, bounded theme rows, sample-shrunk sentiment, observation-only analyst targets, and no-LLM holding reassessment were made explicit. PositionMonitor separately enforces score freshness and exit hysteresis." },
-    { "date": "2026-07-17", "event": "changed", "nodeId": "KITE", "label": "GTT semantics and cancel-before-sell corrected", "reason": "Official Kite GTT children are LIMIT orders, not SL-M. Explicit India sells now cancel and confirm every recorded resting GTT before submitting, preventing an orphan trigger from later double-selling." },
+    {
+      "date": "2026-07-17",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "US and India scoring/backlog audit",
+      "reason": "Market-partitioned watchlists, research_enabled filtering, holding provenance, bounded theme rows, sample-shrunk sentiment, observation-only analyst targets, and no-LLM holding reassessment were made explicit. PositionMonitor separately enforces score freshness and exit hysteresis."
+    },
+    {
+      "date": "2026-07-17",
+      "event": "changed",
+      "nodeId": "KITE",
+      "label": "GTT semantics and cancel-before-sell corrected",
+      "reason": "Official Kite GTT children are LIMIT orders, not SL-M. Explicit India sells now cancel and confirm every recorded resting GTT before submitting, preventing an orphan trigger from later double-selling."
+    },
     {
       "date": "2026-07-05",
       "event": "added",
@@ -939,6 +951,13 @@
       "nodeId": "ROTATION",
       "label": "Drew 4 nodes that existed in `nodes` but were absent from the diagram: ROTATION, BENCHALPHA, EARNPIT, INDIAFILL",
       "reason": "AgentDiagram.tsx builds `class <id> <status>` from EVERY nodes key (:103-105) and appends it to the mermaid source, so a key with no node in the diagram emits `class X` against an unknown id. All four described real, shipped flows — CapitalRotation shadow (lib/trading/capital-rotation.ts, imported by paper-trade/route.ts:18, writes rotation_events), BenchmarkAlpha (app/api/agents/benchmark-scorecard/route.ts), Earnings PIT capture (lib/data/earnings-pit.ts via calendar/earnings/refresh/route.ts:53, scheduled in lib/schedule.ts:47), and the India Markets fill (app/api/markets/india/route.ts POST, writes india_market_snapshot). They were documented but never drawn, so the map silently under-described the system. Edges added from the code, not inferred. Pre-existing on main — NOT introduced by the 2026-07-17 batch; found while merging it."
+    },
+    {
+      "date": "2026-07-18",
+      "event": "changed",
+      "nodeId": "GATEWAY",
+      "label": "Broker registry: inert MCP `webull` order adapter deleted; signed `webull_trade` adapter added (disabled, fixtures-only)",
+      "reason": "Built the signed Webull Trading API money path per features/webull-trading-api/FEATURE_ARCHITECTURE.md, entirely against golden fixtures — NO live order and NO live/sandbox network call. New module lib/brokers/webull-trade/: HMAC-SHA1 signing implemented directly (no vendor SDK) with one auditable canonical request, fresh nonce per request and a timestamp-skew guard, pinned by golden fixtures that fail on any mutation of method/path/body/query/nonce/timestamp; vault-only credentials on provider tag 'webull_trade' with a bounded cache, where sandbox and prod are SEPARATE records bound to SEPARATE hosts derived from the same env so a sandbox credential can never resolve a prod host; the full 9-gate Mandatory Gate Ladder as a pure ordered function where every gate fails closed and unknown is never treated as satisfied; the token lifecycle NORMAL/INVALID(15 idle days)/EXPIRED(5-min verify window) failing closed on invalid/expired/unknown/idle; an order-type scope locked small to market + limit + GTC STOP_LOSS in CORE, with SHORT rejected at the adapter boundary even though the API accepts it (a capability is not a permission) plus options/trailing/OCO/OTOCO/algos/extended sessions rejected; a place/query/cancel/reconcile lifecycle on a stable client_order_id (<=32) where a timeout, a throw after send, or a 200 with no parseable order id becomes needs_reconcile — never success, never a blind resubmit; and a BrokerProtectiveCapabilities declaration against the features/hybrid-stop spec shape (that shared type is not yet on main, so the shape is declared locally and the dependency noted) claiming only US equity sell_long via GTC stop-market in the regular session. The inert MCP-based lib/brokers/adapters/webull.ts order scaffold was deleted with its registry entry so no second Webull order adapter exists; the read-only Cloud MCP registry stays query-only and a test asserts no MCP broker declares order tools or write scopes. Migration 20260718120000_webull_trade_orders_enabled.sql adds the false-by-default flag but is deliberately NOT applied — the column is absent in prod, so the adapter is inert today. No agent-to-agent edge changed, so the diagram is unchanged. Remaining before any live dollar: owner confirms the Webull API entitlement, reconciles the canonical signing layout/paths/hosts against current official docs, provisions the vault + allowlist rows, applies the migration, and runs a manually-approved sandbox test."
     }
   ]
 }
