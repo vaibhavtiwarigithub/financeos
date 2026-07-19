@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveDisplayWeights } from "@/lib/champion-weights";
 import AgentsPage from "@/components/dashboard/AgentsPage";
+import { loadAgentCapacity } from "@/lib/agents/capacity";
 
 export const revalidate = 30;
 
@@ -25,6 +26,7 @@ export default async function Page() {
     { data: paperTrades },
     { data: paperPerf },
     { data: agentRuns },
+    agentCapacity,
   ] = await Promise.all([
     supabase.from("agent_signals").select("*").eq("market", market).order("created_at", { ascending: false }).limit(20),
     // Per-market champion weights (NOT the vestigial global signal_weights row) so
@@ -43,6 +45,7 @@ export default async function Page() {
     market === "india"
       ? supabase.from("agent_runs").select("*").eq("market", "india").order("started_at", { ascending: false }).limit(40)
       : supabase.from("agent_runs").select("*").or("market.eq.us,market.is.null").order("started_at", { ascending: false }).limit(40),
+    loadAgentCapacity(supabase, market),
   ]);
 
   const strategy = strategyArr?.[0] ?? null;
@@ -66,6 +69,7 @@ export default async function Page() {
       paperTrades={paperTrades ?? []}
       paperPerf={paperPerf ?? []}
       agentRuns={runsByAgent}
+      agentCapacity={agentCapacity}
       market={market}
     />
   );

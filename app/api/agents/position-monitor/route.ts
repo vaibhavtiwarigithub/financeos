@@ -164,7 +164,10 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     const scoreKey = `${scoreMarket}:${sym}`;
     if (latestScore[scoreKey]) continue;
     let q = svc.from("agent_signals").select("analyst_score, direction, created_at, is_holding")
-      .eq("symbol", sym).eq("score_source", "deterministic_v1");
+      .eq("symbol", sym).eq("score_source", "deterministic_v1")
+      // Weekend-staged scores cannot force a conviction exit. Mechanical
+      // stop/target/time exits below remain independent and continue normally.
+      .eq("session_validated", true);
     if (hasMarketCol) q = q.eq("market", scoreMarket); // don't read a US score for an India position
     const { data: sig } = await q.order("created_at", { ascending: false }).limit(1).maybeSingle();
     latestScore[scoreKey] = {

@@ -3,11 +3,12 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { gatherSymbols, processSymbol } from "@/lib/research-agent";
 import { computeComparableRank, isRankRejected, type RankCandidate } from "@/lib/scoring/rank";
 import { isIndia } from "@/lib/india-data";
-import { enqueueDeferred } from "@/lib/research-queue";
+import { enqueueDeferred, readDeferredCandidates } from "@/lib/research-queue";
 import { prewarmPriceCache } from "@/lib/chart-data";
 import { RISK_PROFILES } from "@/lib/risk-profiles";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { emitAlert } from "@/lib/alerts/emit";
+import { isMarketWeekend, lastCompletedMarketSession } from "@/lib/trading/market-calendar";
 
 export const dynamic = "force-dynamic";
 // Bumped from 60 -> 150s: Theme Scout is now awaited inline (before
@@ -26,20 +27,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const mktParam = new URL(req.url).searchParams.get("market");
+  const url = new URL(req.url);
+  const mktParam = url.searchParams.get("market");
   const marketScope = mktParam === "india" ? "india" : mktParam === "us" ? "us" : null;
+  const weekendCatchup = url.searchParams.get("mode") === "weekend_catchup";
+  if (weekendCatchup && !marketScope) {
+    return NextResponse.json({ error: "Weekend catch-up requires market=us|india" }, { status: 400 });
+  }
 
   const supabase = createServiceClient();
 
-  // Skip on weekends (both markets closed Sat/Sun).
+  // Normal research remains session-oriented. Weekend catch-up is explicit,
+  // non-executable, and rejected on weekdays so it cannot become a second live
+  // research/trading cycle.
   const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-  const dayOfWeek = nowET.getDay(); // 0=Sun, 6=Sat
-  if (dayOfWeek === 0 || dayOfWeek === 6) {
+  const marketWeekend = isMarketWeekend(marketScope ?? "us");
+  if (marketWeekend && !weekendCatchup) {
     return NextResponse.json({ skipped: true, reason: "Weekend — market closed" });
+  }
+  if (!marketWeekend && weekendCatchup) {
+    return NextResponse.json({ skipped: true, reason: "Weekend catch-up is Saturday/Sunday only" });
   }
   // US holiday calendar only gates US runs — an India run must not be skipped on
   // a US holiday (and vice versa).
-  if (marketScope !== "india") {
+  if (!weekendCatchup && marketScope !== "india") {
     const mmdd = `${String(nowET.getMonth() + 1).padStart(2, "0")}-${String(nowET.getDate()).padStart(2, "0")}`;
     const US_HOLIDAYS = ["01-01","01-20","02-17","04-18","05-26","06-19","07-04","09-01","11-27","12-25"]; // 2026 approx
     if (US_HOLIDAYS.includes(mmdd)) {
@@ -52,7 +63,7 @@ export async function POST(req: NextRequest) {
   // than not gating at all. On an unmodeled NSE holiday this still fires and
   // produces stale/no data; a proper fix needs a verified annual NSE holiday
   // calendar (API or manually-updated list), not a guess.
-  if (marketScope === "india") {
+  if (!weekendCatchup && marketScope === "india") {
     const nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     const mmddIST = `${String(nowIST.getMonth() + 1).padStart(2, "0")}-${String(nowIST.getDate()).padStart(2, "0")}`;
     const NSE_FIXED_HOLIDAYS = ["01-26", "08-15", "10-02"]; // Republic Day, Independence Day, Gandhi Jayanti
@@ -93,11 +104,12 @@ export async function POST(req: NextRequest) {
   // the India run, and vice-versa. Filter the persisted market explicitly so each
   // recent run's market from its symbols (any .NS/.BO → India) and only block when
   // a run for THIS market is in the window.
+  const runAgentType = weekendCatchup ? "research_weekend" : "research";
   const guardWindow = new Date(Date.now() - 30 * 60_000).toISOString();
   const { data: recentRuns } = await supabase
     .from("agent_runs")
     .select("id, status, started_at, symbols, market")
-    .eq("agent_type", "research")
+    .eq("agent_type", runAgentType)
     .eq("market", marketScope ?? "us")
     .gte("started_at", guardWindow)
     .order("started_at", { ascending: false })
@@ -115,7 +127,7 @@ export async function POST(req: NextRequest) {
   // discovered theme tickers land in the watchlist in time to be researched
   // THIS run, not tomorrow's. US-only (theme-scout has no India logic) — skip
   // on an India-scoped run so it doesn't fire twice a day.
-  if (marketScope !== "india") {
+  if (!weekendCatchup && marketScope !== "india") {
     const appUrlEarly = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     try {
       const tsRes = await fetch(`${appUrlEarly}/api/agents/theme-scout`, {
@@ -132,7 +144,27 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const allEntries = await gatherSymbols(supabase);
+  let queueDepthAtStart: number | null = null;
+  let allEntries;
+  if (weekendCatchup && marketScope) {
+    const queued = await readDeferredCandidates(supabase, marketScope);
+    queueDepthAtStart = queued.length;
+    const asOfSession = lastCompletedMarketSession(marketScope);
+    const { data: alreadyStaged } = await supabase.from("agent_signals")
+      .select("symbol")
+      .eq("market", marketScope)
+      .eq("status", "weekend_staged")
+      .eq("as_of_session", asOfSession);
+    const staged = new Set((alreadyStaged ?? []).map((row: any) => String(row.symbol).toUpperCase()));
+    const configuredCap = marketScope === "india"
+      ? Number.parseInt(process.env.RESEARCH_INDIA_CANDIDATE_CAP ?? "8", 10)
+      : Number.parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "40", 10);
+    const cap = Number.isFinite(configuredCap) ? Math.max(1, configuredCap) : 8;
+    const catchupSymbols = queued.filter((symbol) => !staged.has(symbol)).slice(0, cap);
+    allEntries = catchupSymbols.length > 0 ? await gatherSymbols(supabase, catchupSymbols) : [];
+  } else {
+    allEntries = await gatherSymbols(supabase);
+  }
   // Scope to the requested market: India run researches only .NS/.BO names; US run
   // only non-India. No param → everything (legacy).
   const entries = marketScope === "india" ? allEntries.filter(e => isIndia(e.symbol))
@@ -145,7 +177,7 @@ export async function POST(req: NextRequest) {
   }
 
   const { data: runRow } = await supabase.from("agent_runs").insert({
-    agent_type: "research",
+    agent_type: runAgentType,
     status: "running",
     market: marketScope ?? "us",
     symbols: batch,
@@ -207,7 +239,17 @@ export async function POST(req: NextRequest) {
       if (i == null) break;
       const entry = entries[i];
       try {
-        results[i] = await processSymbol(entry, supabase, universeSnapshotId, runId ? String(runId) : null);
+        results[i] = await processSymbol(
+          entry,
+          supabase,
+          universeSnapshotId,
+          runId ? String(runId) : null,
+          weekendCatchup && marketScope ? {
+            status: "weekend_staged",
+            sessionValidated: false,
+            asOfSession: lastCompletedMarketSession(marketScope),
+          } : undefined,
+        );
       } catch (e) {
         results[i] = { symbol: entry.symbol, error: e instanceof Error ? e.message : String(e) };
       }
@@ -269,7 +311,7 @@ export async function POST(req: NextRequest) {
   // to agent_signals — but ONLY when the champion genome carries
   // entry.rank_pct_min > 0. Default 0.0 ⇒ zero agent_signals writes ⇒ selection
   // is byte-identical to pre-feature behavior. Fail-soft throughout.
-  if (universeSnapshotId) {
+  if (universeSnapshotId && !weekendCatchup) {
     try {
       // Pair each non-error result with its source entry (same index) so we have
       // isHeld / asset-type / market alongside the score + observation id.
@@ -391,10 +433,19 @@ export async function POST(req: NextRequest) {
   }
 
   if (runId) {
+    const holdingProcessed = entries.filter((entry, i) => entry.isHeld && results[i] && !results[i].error).length;
+    const candidateProcessed = entries.filter((entry, i) => !entry.isHeld && results[i] && !results[i].error).length;
     await supabase.from("agent_runs").update({
       status: "done",
       signals_written: ok,
       result_summary: `cron: ${ok} signals, ${errs} failed${deferred.length ? `, ${deferred.length} deferred (budget)` : ""} | ${batch.join(",")}`,
+      workload_metrics: {
+        mode: weekendCatchup ? "weekend_catchup" : "session",
+        queue_depth_start: queueDepthAtStart,
+        holding_processed: holdingProcessed,
+        candidate_processed: candidateProcessed,
+        deferred: deferred.length,
+      },
       completed_at: new Date().toISOString(),
     } as any).eq("id", runId);
   }
@@ -420,22 +471,25 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Chain PaperTrader automatically after research completes — same market scope
+  // Chain PaperTrader only after session research — weekend scores are staged
+  // evidence and must never enter any execution path.
   // so an India research run fills the ₹ pool, a US run the $ pool.
   let paperTradeResult: any = null;
-  try {
-    const ptUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/agents/paper-trade${marketScope ? `?market=${marketScope}` : ""}`;
-    const ptRes = await fetch(ptUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        // Service-to-service: pass cron secret so paper-trade can skip user auth if needed
-        "x-cron-secret": process.env.CRON_SECRET ?? "",
-      },
-    });
-    paperTradeResult = await ptRes.json();
-  } catch (e) {
-    paperTradeResult = { error: e instanceof Error ? e.message : String(e) };
+  if (!weekendCatchup) {
+    try {
+      const ptUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/agents/paper-trade${marketScope ? `?market=${marketScope}` : ""}`;
+      const ptRes = await fetch(ptUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          // Service-to-service: pass cron secret so paper-trade can skip user auth if needed
+          "x-cron-secret": process.env.CRON_SECRET ?? "",
+        },
+      });
+      paperTradeResult = await ptRes.json();
+    } catch (e) {
+      paperTradeResult = { error: e instanceof Error ? e.message : String(e) };
+    }
   }
 
   // Pre-warm price_cache for researched symbols + benchmark ETFs (fire async, don't block response)
@@ -444,7 +498,8 @@ export async function POST(req: NextRequest) {
   prewarmPriceCache(prewarmSymbols, supabase).catch(() => {});
 
   return NextResponse.json({
-    success: true, processed: results.length, ok, errors: errs, symbols: batch,
+    success: true, mode: weekendCatchup ? "weekend_catchup" : "session",
+    processed: results.length, ok, errors: errs, symbols: batch,
     paperTrade: paperTradeResult,
   });
 }

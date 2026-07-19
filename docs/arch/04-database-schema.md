@@ -266,11 +266,21 @@ One row per symbol per research run. The "today's score" table.
 | `data_confidence` | numeric | 0–1; below 0.5 → tainted |
 | `discovery_source` | text | How symbol entered the batch |
 | `mandate_id` | uuid | FK → `investment_mandates` |
-| `status` | text | `pending` \| `filled` \| `expired` \| `claimed` \| `rank_rejected` |
+| `status` | text | Includes `pending`, `paper_traded`, `expired`, `claiming`, `rank_rejected`, and non-executable weekend lifecycle states `weekend_staged`, `superseded`, `revalidated` |
+| `session_validated` | boolean | Positive entry/conviction-exit eligibility proof. Weekend catch-up writes false; a weekday re-score writes a new true row. |
+| `as_of_session` | date | Market-local completed session underlying the score. |
+| `staged_at` | timestamptz | Set only for non-executable weekend catch-up rows. |
 | `claim_run_id` | uuid | FK → `agent_runs`; prevents double-fill |
 | `rank_pct` | numeric | Within-comparable-group percentile (migration 151); null until Pass-2 rank runs. Check `[0,1]`. |
 | `rank_rejected` | bool | True when candidate cleared the absolute floor but failed the cross-sectional rank gate (migration 151); default false. |
 | `created_at` | timestamptz | |
+
+`weekend_staged` rows are evidence, not orders. PaperTrader and TraderAgent
+require `status='pending' AND session_validated=true`; PositionMonitor applies
+the same positive validation requirement to score/direction exits while its
+mechanical stop, target, trailing, and time exits remain independent. A weekday
+re-score writes a fresh row and moves the old staged row to `revalidated`; the
+staged row is never mutated into an executable decision.
 
 ### `signal_score_history`
 Append-only per-symbol score history. Never mutated after insert.
@@ -970,6 +980,7 @@ Append-only per-account roll-up — one row per run (UNIQUE `(run_id)`; FK → `
 | 20260715131000 | **Evidence Router table ACL hardening**: removes all `anon` grants and all authenticated write grants from policy, runtime, capability, evaluation, cache, call-ledger, and refresh-queue tables; authenticated remains owner-read through RLS, while `service_role` retains server-side access |
 | 20260715160000 | **Downside hedge (US PAPER only, OFF)**: config, state, append-only ledger, paper position/trade role provenance, transactional evaluation/fill/exit RPCs, owner-read RLS and service-only writes. No live order path. |
 | 20260716210000 | **Router cutover prerequisites** (shadow-only, `router_enabled` still false): `evidence_field_baselines` (mutable — a moving reference point, not evidence), append-only `evidence_degradation_events`, `evidence_evaluation_details`, `evidence_evaluation_reviews`, plus frozen-cohort + activation-binding columns on `evidence_policy_evaluations`, and the `activate_evidence_policy_bound()` RPC. RLS on with owner-read on all four; anon has no grants; writes service-role only; RPC is `security definer` with fixed `search_path`, executable by `service_role` only. *(Row was missing from this table; the migration is confirmed APPLIED in production — verified via `information_schema.columns` on 2026-07-18.)* |
+| 20260719090000 | **Weekend research catch-up**: adds `agent_signals.session_validated/as_of_session/staged_at`, the staged-row invariant + one-active-stage partial unique index, structured `agent_runs.workload_metrics`, and per-market Saturday/Sunday catch-up crons. Weekend rows are non-executable until a fresh session re-score. |
 
 ### Evidence evaluation tables — who writes them
 

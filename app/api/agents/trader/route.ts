@@ -178,6 +178,7 @@ async function buildProposals(supabase: any, isCron: boolean) {
       .eq("market", "us")
       .eq("direction", "long")
       .eq("status", "pending")
+      .eq("session_validated", true)
       .gte("analyst_score", scoreThreshold)
       // Positive allowlist: ONLY the versioned deterministic source is trade-eligible.
       // The prior negative filter admitted null/unknown score_source (fail-open).

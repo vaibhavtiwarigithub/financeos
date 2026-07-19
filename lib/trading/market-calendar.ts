@@ -23,6 +23,31 @@ export function isMarketHoliday(market: string, localYmd: string): boolean {
   return (market === "india" ? INDIA_HOLIDAYS : US_HOLIDAYS).has(localYmd);
 }
 
+function marketDateParts(market: string, now: Date): { ymd: string; weekday: string } {
+  const tz = market === "india" ? "Asia/Kolkata" : "America/New_York";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return { ymd: `${get("year")}-${get("month")}-${get("day")}`, weekday: get("weekday") };
+}
+
+export function isMarketWeekend(market: string, now: Date = new Date()): boolean {
+  return ["Sat", "Sun"].includes(marketDateParts(market, now).weekday);
+}
+
+/** Last completed regular session, used to label non-executable weekend research. */
+export function lastCompletedMarketSession(market: string, now: Date = new Date()): string {
+  const local = marketDateParts(market, now);
+  const cursor = new Date(`${local.ymd}T12:00:00Z`);
+  do {
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+    const ymd = cursor.toISOString().slice(0, 10);
+    const day = cursor.getUTCDay();
+    if (day !== 0 && day !== 6 && !isMarketHoliday(market, ymd)) return ymd;
+  } while (true);
+}
+
 // ── Cheap local session check ────────────────────────────────────────────────
 export function isMarketSessionOpen(market: string, now: Date = new Date()): boolean {
   const tz = market === "india" ? "Asia/Kolkata" : "America/New_York";

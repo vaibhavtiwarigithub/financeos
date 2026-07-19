@@ -207,6 +207,12 @@ export type SymbolEntry = {
   discovery_source?: DiscoverySource;    // how this symbol entered the research batch
 };
 
+export type ResearchSignalWriteContext = {
+  sessionValidated: boolean;
+  asOfSession: string;
+  status: "pending" | "weekend_staged";
+};
+
 const BUCKET_CRITERIA: Record<"momentum" | "value", string[]> = {
   momentum: ["revenue_growth>15%", "earnings_growth>10%", "gross_margin>25%", "ROE>15%", "market_cap>$2B"],
   value: ["0<P/E<18", "FCF_yield>4%", "debt_to_equity<1.0", "market_cap>$1B"],
@@ -1323,6 +1329,7 @@ export async function processSymbol(
   supabase: any,
   universeSnapshotId?: number | null,
   evidenceRunId?: string | null,
+  writeContext?: ResearchSignalWriteContext,
 ): Promise<{ symbol: string; analystScore: number; direction: string; conviction: number; source: string; tokensIn: number; tokensOut: number; currentPrice: number | null; priceTarget: number | null; stopLoss: number | null; scoreThreshold: number; obsId: number | null }> {
   const { symbol, isHeld, isEtf, assetClass = "us_equity" } = entry;
   const source: string = isHeld ? "holding" : "screener";
@@ -1747,6 +1754,8 @@ export async function processSymbol(
     .select()
     .single();
 
+  const signalStatus = writeContext?.status ?? "pending";
+  const sessionValidated = writeContext?.sessionValidated ?? true;
   const signalRow: Record<string, any> = {
     symbol,
     direction: signalDirection,
@@ -1763,7 +1772,10 @@ export async function processSymbol(
     insider_score: scores.insider_score,
     agent_type: "research",
     research_packet_id: packet?.id ?? null,
-    status: "pending",
+    status: signalStatus,
+    session_validated: sessionValidated,
+    as_of_session: writeContext?.asOfSession ?? new Date().toISOString().slice(0, 10),
+    staged_at: sessionValidated ? null : new Date().toISOString(),
     source,
     is_holding: isHeld,
     rationale: (thesis.summary ?? `Score: ${analystScore}/100`) + directionNote,
@@ -1786,7 +1798,14 @@ export async function processSymbol(
   // decision_observations -> pipeline_stage_events -> trade_proposals ->
   // paper_trades by a shared signal_id, instead of null throughout).
   let insertedSignalId: string | null = null;
+  let signalInsertError: string | null = null;
   {
+    // Only one active staged decision per market/symbol. Superseding preserves
+    // history while satisfying the partial unique index under normal retries.
+    if (!sessionValidated) {
+      await supabase.from("agent_signals").update({ status: "superseded" })
+        .eq("market", market).eq("symbol", symbol).eq("status", "weekend_staged");
+    }
     const { data, error } = await supabase.from("agent_signals").insert(signalRow).select("id").maybeSingle();
     // Strip `market` ONLY when the column is genuinely undefined (pre-057) — never
     // on a transient/constraint error, which would silently drop the market tag.
@@ -1796,12 +1815,26 @@ export async function processSymbol(
       delete signalRow.market;
       delete signalRow.score_source;   // strip P0 cols on pre-136 schema
       delete signalRow.scoring_version;
+      delete signalRow.session_validated;
+      delete signalRow.as_of_session;
+      delete signalRow.staged_at;
       const retry = await supabase.from("agent_signals").insert(signalRow).select("id").maybeSingle();
       insertedSignalId = retry.data?.id ?? null;
+      signalInsertError = retry.error?.message ?? null;
     } else if (error) {
       console.error("[research-agent] agent_signals insert failed:", error.message);
+      signalInsertError = error.message;
     } else {
       insertedSignalId = data?.id ?? null;
+    }
+    if (!insertedSignalId) {
+      throw new Error(`agent_signals insert failed for ${symbol}: ${signalInsertError ?? "insert returned no row"}`);
+    }
+    // Revalidation never mutates a staged score into an executable score. The
+    // fresh row above is the decision; the older stage becomes audit history.
+    if (insertedSignalId && sessionValidated) {
+      await supabase.from("agent_signals").update({ status: "revalidated" })
+        .eq("market", market).eq("symbol", symbol).eq("status", "weekend_staged");
     }
   }
 

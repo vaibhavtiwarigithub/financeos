@@ -180,6 +180,9 @@ export async function POST(req: NextRequest) {
       let selQ = supabase.from("agent_signals").select("*")
         .eq("status", "pending").eq("direction", "long")
         .gte("analyst_score", entryThreshold).gte("created_at", cutoff)
+        // Positive session proof: weekend catch-up scores are useful research
+        // evidence but are never fill candidates until a fresh session run.
+        .eq("session_validated", true)
         // Positive allowlist: ONLY the versioned deterministic source is fill-eligible.
         // A negative filter (is.null OR neq llm_advisory) failed OPEN — it admitted
         // null/unknown score_source, so any untagged signal could be traded.

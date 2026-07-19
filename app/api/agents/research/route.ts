@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { gatherSymbols, processSymbol } from "@/lib/research-agent";
+import { isIndia } from "@/lib/india-data";
+import { isMarketWeekend, lastCompletedMarketSession } from "@/lib/trading/market-calendar";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +56,19 @@ export async function POST(req: NextRequest) {
       for (const entry of entries) {
         send({ type: "progress", symbol: entry.symbol, status: "analyzing", isHeld: entry.isHeld, isEtf: entry.isEtf });
         try {
-          const result = await processSymbol(entry, supabase, null, runId ? String(runId) : null);
+          const market = isIndia(entry.symbol) ? "india" : "us";
+          const weekend = isMarketWeekend(market);
+          const result = await processSymbol(
+            entry,
+            supabase,
+            null,
+            runId ? String(runId) : null,
+            weekend ? {
+              status: "weekend_staged",
+              sessionValidated: false,
+              asOfSession: lastCompletedMarketSession(market),
+            } : undefined,
+          );
           totalTokensIn += result.tokensIn ?? 0;
           totalTokensOut += result.tokensOut ?? 0;
           claudeCalls++;

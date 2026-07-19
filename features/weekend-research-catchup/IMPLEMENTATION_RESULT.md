@@ -1,0 +1,42 @@
+# Weekend Research Catch-up — Implementation Result
+
+Completed: 2026-07-19
+
+## Shipped behavior
+
+- US and India weekend catch-up crons run Saturday and Sunday after prewarm.
+- Catch-up reads only each market's carry-forward `research_queue`.
+- Scores are written `weekend_staged` with `session_validated=false` and the
+  last completed market session.
+- Successfully staged candidates remain queued for weekday revalidation.
+- A weekday success writes a new validated row and retires the staged row.
+- PaperTrader and TraderAgent require positive session validation.
+- PositionMonitor ignores staged scores for conviction exits; mechanical exits
+  remain active and unchanged.
+- Agents → Capacity reports queue/workload type, pending preparation, staged
+  work, recent median throughput, configured ceiling, oldest age, and estimated
+  clearing days separately for US and India.
+
+## Production proof
+
+Supabase project `dionkikgdmlaotvtbnfr`:
+
+- `agent_signals.session_validated boolean not null default true`
+- `agent_signals.as_of_session date`
+- `agent_signals.staged_at timestamptz`
+- `agent_runs.workload_metrics jsonb`
+- validated `agent_signals_weekend_stage_unvalidated` CHECK
+- partial unique `agent_signals_one_weekend_stage_per_symbol`
+- active `kairos-weekend-research-us` at `10 15 * * 0,6`
+- active `kairos-weekend-research-india` at `10 5 * * 0,6`
+- all 538 pre-existing signals remained `session_validated=true`
+
+## Verification
+
+- `npx tsc --noEmit`: pass
+- `npx vitest run`: 1,101 pass, 6 skip
+- `npm run build`: pass, 52/52 static pages generated
+- `ggshield secret scan pre-commit`: no secrets
+
+No live order, paper fill, position mutation, Router activation, provider-policy
+change, or cross-market aggregation was performed by this implementation.

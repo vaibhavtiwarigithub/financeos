@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isMarketSessionOpen, isMarketHoliday } from "@/lib/trading/market-calendar";
+import { isMarketSessionOpen, isMarketHoliday, isMarketWeekend, lastCompletedMarketSession } from "@/lib/trading/market-calendar";
 
 // Fixed UTC instants → market-local via IANA tz. July = EDT (UTC-4), IST = UTC+5:30.
 describe("market-calendar: isMarketSessionOpen", () => {
@@ -40,5 +40,22 @@ describe("market-calendar: isMarketHoliday", () => {
   it("flags India NSE holidays independently of US", () => {
     expect(isMarketHoliday("india", "2026-01-26")).toBe(true);
     expect(isMarketHoliday("india", "2026-07-03")).toBe(false); // US-only holiday
+  });
+});
+
+describe("market-calendar: weekend research sessions", () => {
+  it("uses Friday for both Saturday and Sunday catch-up", () => {
+    expect(lastCompletedMarketSession("us", new Date("2026-07-18T15:00:00Z"))).toBe("2026-07-17");
+    expect(lastCompletedMarketSession("us", new Date("2026-07-19T15:00:00Z"))).toBe("2026-07-17");
+    expect(lastCompletedMarketSession("india", new Date("2026-07-19T05:00:00Z"))).toBe("2026-07-17");
+  });
+
+  it("skips a Friday holiday when labeling the completed session", () => {
+    expect(lastCompletedMarketSession("us", new Date("2026-07-04T15:00:00Z"))).toBe("2026-07-02");
+  });
+
+  it("evaluates weekends in each market's local timezone", () => {
+    expect(isMarketWeekend("us", new Date("2026-07-18T03:30:00Z"))).toBe(false); // Fri 23:30 ET
+    expect(isMarketWeekend("india", new Date("2026-07-18T03:30:00Z"))).toBe(true); // Sat 09:00 IST
   });
 });

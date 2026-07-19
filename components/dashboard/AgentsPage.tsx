@@ -9,6 +9,7 @@ import AgentHistoryPanel from "@/components/dashboard/AgentHistoryPanel";
 import InfoTooltip from "@/components/dashboard/InfoTooltip";
 import { fmtMoney } from "@/lib/format-money";
 import { paperStartNav } from "@/lib/paper-nav";
+import type { AgentCapacityRow } from "@/lib/agents/capacity";
 const SignalCharts = lazy(() => import("@/components/charts/SignalChartsWrapper"));
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 const MermaidChart = lazy(() => import("@/components/dashboard/MermaidChart"));
@@ -49,10 +50,11 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export default function AgentsPage({ signals, weights, strategy, learningLog, paperPortfolio, paperPositions, paperTrades, paperPerf, agentRuns, market = "us" }: {
+export default function AgentsPage({ signals, weights, strategy, learningLog, paperPortfolio, paperPositions, paperTrades, paperPerf, agentRuns, agentCapacity, market = "us" }: {
   signals: any[]; weights: any; strategy: any; learningLog: any[];
   paperPortfolio: any; paperPositions: any[]; paperTrades: any[]; paperPerf: any[];
   agentRuns?: Record<string, any[]>;
+  agentCapacity?: AgentCapacityRow[];
   market?: "us" | "india";
 }) {
   const currency = market === "india" ? "₹" : "$";
@@ -66,10 +68,10 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const searchParams = useSearchParams();
   const initialTab = (() => {
     const t = searchParams.get("tab");
-    const valid = ["signals", "paper", "weights", "log", "architecture", "backtest", "brain", "learner-ctrl", "weight-history", "experiments", "proposals", "history"];
+    const valid = ["signals", "paper", "capacity", "weights", "log", "architecture", "backtest", "brain", "learner-ctrl", "weight-history", "experiments", "proposals", "history"];
     return t && valid.includes(t) ? t : "paper";
   })();
-  const [tab, setTab] = useState<"signals" | "paper" | "weights" | "log" | "architecture" | "backtest" | "brain" | "learner-ctrl" | "weight-history" | "experiments" | "proposals" | "history">(initialTab as any);
+  const [tab, setTab] = useState<"signals" | "paper" | "capacity" | "weights" | "log" | "architecture" | "backtest" | "brain" | "learner-ctrl" | "weight-history" | "experiments" | "proposals" | "history">(initialTab as any);
   const [minScore, setMinScore] = useState<number>(strategy?.min_analyst_score ?? 70);
   const [maxPos, setMaxPos] = useState<number>(strategy?.max_position_pct ?? 5);
   const [maxTrades, setMaxTrades] = useState<number>(strategy?.max_daily_trades ?? 3);
@@ -257,12 +259,13 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         title="AI Agents"
         subtitle="Agent control center · research, trade, learn"
         cadence="daily"
-        whatItDoes="Command center for all agents — run them, watch run health and the paper portfolio, and dig into learning across many tabs (Paper Trades, Signals, Weights, Learning Log, History, Backtest, Architecture, Learner Brain, Learner Controls, Weight History, Experiments, Proposals)."
+        whatItDoes="Command center for all agents — run them, inspect backlog and capacity, watch run health and the paper portfolio, and review governed learning."
         whatToLookFor={[
           "Paper Trades / Signals: open + closed paper positions and the pending signal queue; PaperTrader needs an entry-eligible LONG plus the evidence gates — score alone never authorizes a trade.",
           "Weights / Weight History / Learner Controls: the current scoring weights, how they've changed, and the knobs governing how the LearnerAgent adapts them.",
           "Learning Log / Learner Brain: per-trade outcome notes and the agent's reasoning behind weight proposals.",
           "History: the agent-run history — when each agent last ran, its status, and result summary; use it to spot failed or skipped runs.",
+          "Capacity: market-scoped pending work, staged weekend research, observed throughput, and estimated clearing time.",
           "Backtest / Experiments / Proposals / Architecture: replay strategies, view champion/challenger experiments, approve governed proposals, and see how the agents connect.",
           "Kill Switch (top-right) disables live trading immediately — use if agent behavior looks wrong.",
         ]}
@@ -377,6 +380,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         {([
           { key: "paper", label: "Paper Trades" },
           { key: "signals", label: `Signals (${signals.length})` },
+          { key: "capacity", label: "Capacity" },
           { key: "weights", label: "Weights" },
           { key: "log", label: "Learning Log" },
           { key: "history", label: "History" },
@@ -394,6 +398,45 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           </button>
         ))}
       </div>
+
+      {/* Agent capacity tab */}
+      {tab === "capacity" && (
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "20px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "12px", marginBottom: "14px", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: "14px" }}>Agent Workload · {market === "india" ? "India" : "US"}</div>
+              <div style={{ color: T.muted, fontSize: "12px", marginTop: "4px" }}>Observed capacity is a recent median. Configured ceilings are limits, not completion promises.</div>
+            </div>
+          </div>
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", minWidth: "860px" }}>
+              <thead>
+                <tr style={{ color: T.muted, borderBottom: `1px solid ${T.border}` }}>
+                  {["Agent", "Work type", "Pending", "Staged", "Observed/day", "Ceiling", "Est. clear", "Oldest", "Next action"].map((heading) => (
+                    <th key={heading} style={{ textAlign: "left", padding: "8px 12px 10px 0", fontWeight: 500 }}>{heading}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(agentCapacity ?? []).map((row) => (
+                  <tr key={row.agent} style={{ borderBottom: `1px solid ${T.border}` }} title={row.estimateBasis}>
+                    <td style={{ padding: "12px 12px 12px 0", fontWeight: 600 }}>{row.agent}</td>
+                    <td style={{ padding: "12px 12px 12px 0", color: T.textSub }}>{row.workloadType.replaceAll("_", " ")}</td>
+                    <td style={{ padding: "12px 12px 12px 0", color: (row.pending ?? 0) > 0 ? T.amber : T.textSub }}>{row.pending ?? "—"}</td>
+                    <td style={{ padding: "12px 12px 12px 0", color: (row.staged ?? 0) > 0 ? T.accent : T.textSub }}>{row.staged ?? "—"}</td>
+                    <td style={{ padding: "12px 12px 12px 0" }}>{row.observedPerDay ?? "—"}</td>
+                    <td style={{ padding: "12px 12px 12px 0" }}>{row.configuredCeiling ?? "—"}</td>
+                    <td style={{ padding: "12px 12px 12px 0" }}>{row.estimatedClearDays == null ? "—" : row.estimatedClearDays === 0 ? "clear" : `${row.estimatedClearDays}d`}</td>
+                    <td style={{ padding: "12px 12px 12px 0" }}>{row.oldestHours == null ? "—" : row.oldestHours < 24 ? `${Math.round(row.oldestHours)}h` : `${Math.round(row.oldestHours / 24)}d`}</td>
+                    <td style={{ padding: "12px 0", color: T.textSub, lineHeight: 1.45, maxWidth: "320px" }}>{row.nextAction}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {(agentCapacity ?? []).length === 0 && <div style={{ color: T.muted, padding: "18px 0" }}>Capacity data unavailable.</div>}
+        </div>
+      )}
 
       {/* Paper trades tab */}
       {tab === "paper" && (
