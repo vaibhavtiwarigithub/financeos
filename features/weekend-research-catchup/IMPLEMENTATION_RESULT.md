@@ -31,8 +31,12 @@ Supabase project `dionkikgdmlaotvtbnfr`:
 - `agent_runs.workload_metrics jsonb`
 - validated `agent_signals_weekend_stage_unvalidated` CHECK
 - partial unique `agent_signals_one_weekend_stage_per_symbol`
-- active `kairos-weekend-research-us` at `10 15 * * 0,6`
-- active `kairos-weekend-research-india` at `10 5 * * 0,6`
+- active `kairos-closed-day-research-us` at `10 15 * * *`
+- active `kairos-closed-day-research-india` at `10 5 * * *`
+- old `kairos-weekend-research-*` jobs absent
+- migration tracker contains `market_holiday_research_catchup`
+- 2026 calendar sources: NYSE trading calendar; NSE Capital Market circular
+  CMTR71775 plus amendment CMTR72260
 - all 538 pre-existing signals remained `session_validated=true`
 
 Live Sunday run after deployment:
@@ -48,9 +52,10 @@ Live Sunday run after deployment:
 ## Verification
 
 - `npx tsc --noEmit`: pass
-- `npx vitest run`: 1,101 pass, 6 skip
-- `npm run build`: pass, 52/52 static pages generated
+- `npx vitest run`: 1,106 pass, 6 skip
+- `npm run build`: pass; fresh `.next/BUILD_ID` generated
 - `ggshield secret scan pre-commit`: no secrets
+- Vercel deployment for `bc4bcb3a`: Ready before cron migration applied
 
 No live order, paper fill, position mutation, Router activation, provider-policy
 change, or cross-market aggregation was performed by this implementation.
