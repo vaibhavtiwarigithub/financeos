@@ -120,7 +120,7 @@ export interface WebullOrderState {
 // order activity after an idle interval, and fails CLOSED on invalid/expired/
 // unknown. It must not generate keepalive traffic merely to hide an unused
 // credential.
-export type WebullTokenStatus = "NORMAL" | "INVALID" | "EXPIRED" | "UNKNOWN";
+export type WebullTokenStatus = "PENDING" | "NORMAL" | "INVALID" | "EXPIRED" | "UNKNOWN";
 
 export interface WebullTokenRecord {
   status: WebullTokenStatus;

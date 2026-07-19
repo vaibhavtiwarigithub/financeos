@@ -25,6 +25,9 @@ export function assertTokenUsableForOrder(record: WebullTokenRecord, now: number
   if (record.status === "EXPIRED") {
     return { usable: false, reason: "token EXPIRED - reconnect required", status: "EXPIRED" };
   }
+  if (record.status === "PENDING") {
+    return { usable: false, reason: "token PENDING - Webull app verification required", status: "PENDING" };
+  }
   if (record.status !== "NORMAL") {
     return { usable: false, reason: `token status ${record.status} - failing closed`, status: "UNKNOWN" };
   }

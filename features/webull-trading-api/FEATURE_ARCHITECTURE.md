@@ -1,6 +1,69 @@
 # Webull Trading API Adapter
 
-> Status: DRAFT, design only. Not approved or enabled. US live money path.
+> Status: transport implementation approved 2026-07-19; disabled and not approved for activation. US live money path.
+
+## 2026-07-19 Transport Restoration Decision
+
+The signed HTTP sender may be implemented now, but remains unreachable from the
+broker registry and must not make a real request during build or test. The
+activation flag stays false and the adapter continues to report unconfigured.
+
+The current `api_key_vault` schema has no environment column. Environment
+isolation therefore uses three distinct key names per environment under
+`provider='webull_trade'`: `WEBULL_TRADE_<ENV>_APP_KEY`,
+`WEBULL_TRADE_<ENV>_APP_SECRET`, and `WEBULL_TRADE_<ENV>_ACCESS_TOKEN`. This is
+the existing vault convention and avoids an unapproved schema migration.
+
+There is one network implementation and two capabilities over it:
+
+- A one-shot **preflight permit** reads and requires the false-by-default database feature flag and
+  can call only the official token-check, account-list, or order-preview paths.
+  It cannot place, query, or cancel an order. This resolves the unavoidable
+  ordering dependency: live token status must be known before gate 7 can pass.
+- A one-shot **order permit** is created only from a full `GateSnapshot` for which
+  all nine gates pass. It permits only the fixed order endpoint allowlist and is
+  consumed by the first request, preventing stale gate clearance from becoming a
+  reusable transport handle.
+
+The current hardcoded account gate names the production account only, so order
+permits are production-only. Sandbox token/account/preview proof is supported,
+but a sandbox place/cancel proof remains blocked until its exact test account has
+a separately approved allowlist gate; production account identity must never be
+reused as a proxy for a sandbox account.
+
+Both capabilities use the same `liveWebullTransport()` sender and the same sole
+`fetch` call. Environment and host are pinned to the credential; signing uses the
+hostname without the URL scheme, as required by Webull. Every request gets a new
+nonce and timestamp, a 10-second default timeout, the exact signed body bytes,
+and `x-access-token`. HTTP and network failures return fixed, redacted
+`TransportResult` errors and never throw credential material.
+
+The official token-status endpoint is `POST /openapi/auth/token/check`, not the
+previously proposed `GET /openapi/trade/token/query`. A successful `NORMAL`
+response produces the fresh `WebullTokenRecord` consumed by gate 7. No keepalive
+schedule is added.
+
+### Sandbox proof sequence (not yet authorized)
+
+1. Provision sandbox-only vault keys and keep the production keys absent.
+2. With the database feature flag enabled only for the supervised proof window,
+   call token-check, then `GET /openapi/account/list`. Pass only if status is
+   `NORMAL`, exactly the expected test account is returned, and no production
+   account identifier appears.
+3. Call `POST /openapi/trade/order/preview` with a one-share US equity limit
+   fixture. Pass only if the broker accepts the account/order shape and returns a
+   non-mutating estimate.
+4. Add a separately approved exact sandbox-account gate before enabling any
+   sandbox place/cancel capability. The production account constant is not valid
+   proof of sandbox identity.
+5. With owner approval, submit one non-marketable one-share limit order that is
+   inside Webull's accepted price bands, query it, cancel it, and query the
+   terminal state. Do not use `$0.01`: a broker price-band rejection proves only
+   rejection handling, not place/query/cancel reconciliation.
+6. Pass only if one client order id maps to one broker order, no fill occurs, the
+   cancel becomes terminal, the audit/reconciliation record is complete, and no
+   secret appears in logs. Any timeout or unknown state stops the sequence for
+   reconciliation; it is never resubmitted.
 
 ## Resolved Boundary
 

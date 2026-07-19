@@ -93,7 +93,11 @@ describe("webull_trade adapter — fail closed today", () => {
   it("submitOrder refuses even fully provisioned (live path pending sandbox proof)", async () => {
     flagError = false; flagValue = true;
     accountRows = [{ account_number: "WBACCT1", role: "trading" }];
-    vaultRows = { WEBULL_TRADE_PROD_APP_KEY: "k", WEBULL_TRADE_PROD_APP_SECRET: "s" };
+    vaultRows = {
+      WEBULL_TRADE_PROD_APP_KEY: "k",
+      WEBULL_TRADE_PROD_APP_SECRET: "s",
+      WEBULL_TRADE_PROD_ACCESS_TOKEN: "t",
+    };
     const r = await webullTradeAdapter().submitOrder({ symbol: "AAPL", side: "buy", qty: 1, env: "live" });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/not enabled|sandbox/);

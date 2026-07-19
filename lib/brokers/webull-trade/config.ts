@@ -1,7 +1,7 @@
 // webull_trade — runtime enable flag + allowlist reads. All fail CLOSED.
 // The false-by-default flag exists in production and remains false. Read errors
-// also resolve to false. The network transport is not implemented, so this flag
-// cannot independently make the adapter reachable.
+// also resolve to false. The signed transport is dormant and additionally needs
+// a capability permit, so this flag cannot independently make orders reachable.
 
 // Read the false-by-default order flag. Any error (column absent, read failure)
 // → false. Never throws.

@@ -7,7 +7,7 @@
 //   SEPARATE hosts. The environment is pinned to the record: a sandbox credential
 //   can NEVER resolve a prod host (and vice versa). This is enforced by keying the
 //   host off the SAME `env` used to select the vault keys, in one place.
-// - The app_key/app_secret are held in a bounded in-memory cache (short TTL) so a
+// - The app_key/app_secret/access_token are held in a bounded in-memory cache (short TTL) so a
 //   burst of orders does not hammer the vault, but a rotated secret is picked up
 //   within the TTL.
 // - Nothing here returns, logs, or embeds the secret in an error string.
@@ -19,10 +19,8 @@ import type { WebullTradeEnv } from "./types";
 // mapping is derived from the SAME `env` that selects the credential record, so
 // the two can never diverge.
 //
-// RECONCILIATION NOTE: confirm these exact hostnames against the current official
-// Webull Trading API docs during the entitlement/sandbox-proof step before any
-// live call. They are host CONSTANTS only — no request is made against them in
-// this module or in any test.
+// Confirmed against the official Webull SDK/environment reference on 2026-07-19.
+// They are host constants only; no request is made in this module.
 const HOSTS: Record<WebullTradeEnv, string> = {
   sandbox: "https://api.sandbox.webull.com",
   prod: "https://api.webull.com",
@@ -30,9 +28,17 @@ const HOSTS: Record<WebullTradeEnv, string> = {
 
 // Vault key names per environment. Separate records → a sandbox secret and a prod
 // secret can never be confused.
-const VAULT_KEYS: Record<WebullTradeEnv, { appKey: string; appSecret: string }> = {
-  sandbox: { appKey: "WEBULL_TRADE_SANDBOX_APP_KEY", appSecret: "WEBULL_TRADE_SANDBOX_APP_SECRET" },
-  prod: { appKey: "WEBULL_TRADE_PROD_APP_KEY", appSecret: "WEBULL_TRADE_PROD_APP_SECRET" },
+const VAULT_KEYS: Record<WebullTradeEnv, { appKey: string; appSecret: string; accessToken: string }> = {
+  sandbox: {
+    appKey: "WEBULL_TRADE_SANDBOX_APP_KEY",
+    appSecret: "WEBULL_TRADE_SANDBOX_APP_SECRET",
+    accessToken: "WEBULL_TRADE_SANDBOX_ACCESS_TOKEN",
+  },
+  prod: {
+    appKey: "WEBULL_TRADE_PROD_APP_KEY",
+    appSecret: "WEBULL_TRADE_PROD_APP_SECRET",
+    accessToken: "WEBULL_TRADE_PROD_ACCESS_TOKEN",
+  },
 };
 
 export const VAULT_PROVIDER_TAG = "webull_trade";
@@ -41,6 +47,7 @@ export interface WebullTradeCredential {
   env: WebullTradeEnv;
   appKey: string;
   appSecret: string;
+  accessToken: string;
   host: string;
 }
 
@@ -86,7 +93,7 @@ export function supabaseVaultReader(svc: any): VaultReader {
         .maybeSingle();
       if (error) return null;
       const v = (data as any)?.key_value;
-      return typeof v === "string" && v.length > 0 ? v : null;
+      return typeof v === "string" && v.trim().length > 0 ? v : null;
     },
   };
 }
@@ -105,13 +112,14 @@ export async function getWebullTradeCredential(
   }
 
   const keys = VAULT_KEYS[env];
-  const [appKey, appSecret] = await Promise.all([
+  const [appKey, appSecret, accessToken] = await Promise.all([
     reader.readKey(keys.appKey, VAULT_PROVIDER_TAG),
     reader.readKey(keys.appSecret, VAULT_PROVIDER_TAG),
+    reader.readKey(keys.accessToken, VAULT_PROVIDER_TAG),
   ]);
 
   // Fail closed WITHOUT echoing any secret material.
-  if (!appKey || !appSecret) {
+  if (!appKey || !appSecret || !accessToken) {
     return {
       ok: false,
       error: `webull_trade ${env} credentials not provisioned in vault (provider='${VAULT_PROVIDER_TAG}')`,
@@ -122,6 +130,7 @@ export async function getWebullTradeCredential(
     env,
     appKey,
     appSecret,
+    accessToken,
     host: HOSTS[env], // host pinned to the SAME env that selected the keys
   };
   CACHE.set(env, { credential, expiresAt: now + ttlMs });

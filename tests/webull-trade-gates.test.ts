@@ -110,7 +110,7 @@ describe("webull_trade gate ladder", () => {
   });
 
   it("an INVALID/EXPIRED/UNKNOWN/idle token fails the credential gate (Test 13)", () => {
-    for (const status of ["INVALID", "EXPIRED", "UNKNOWN"] as const) {
+    for (const status of ["PENDING", "INVALID", "EXPIRED", "UNKNOWN"] as const) {
       const snap = { ...passingSnapshot(), token: { status, lastAuthenticatedCallAt: "2026-07-18T00:00:00Z" } };
       const r = evaluateGateLadder(snap, NOW);
       expect(r.ok).toBe(false);

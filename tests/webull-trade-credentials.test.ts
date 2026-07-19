@@ -8,7 +8,10 @@ import {
   assertHostMatchesEnv,
   VAULT_PROVIDER_TAG,
 } from "@/lib/brokers/webull-trade/credentials";
-import { liveWebullTransport } from "@/lib/brokers/webull-trade/transport";
+import {
+  authorizeWebullPreflightTransport,
+  liveWebullTransport,
+} from "@/lib/brokers/webull-trade/transport";
 
 const SANDBOX_SECRET = "SANDBOX-secret-xyz";
 const PROD_SECRET = "PROD-secret-xyz";
@@ -31,9 +34,20 @@ function fakeReader(store: Record<string, string>) {
 const STORE = {
   WEBULL_TRADE_SANDBOX_APP_KEY: "sandbox-key",
   WEBULL_TRADE_SANDBOX_APP_SECRET: SANDBOX_SECRET,
+  WEBULL_TRADE_SANDBOX_ACCESS_TOKEN: "sandbox-token",
   WEBULL_TRADE_PROD_APP_KEY: "prod-key",
   WEBULL_TRADE_PROD_APP_SECRET: PROD_SECRET,
+  WEBULL_TRADE_PROD_ACCESS_TOKEN: "prod-token",
 };
+
+function flagSvc(enabled: boolean) {
+  const chain: any = {
+    select() { return chain; },
+    limit() { return chain; },
+    async maybeSingle() { return { data: { webull_trade_orders_enabled: enabled }, error: null }; },
+  };
+  return { from() { return chain; } };
+}
 
 describe("webull_trade credentials", () => {
   beforeEach(() => clearCredentialCache());
@@ -46,6 +60,7 @@ describe("webull_trade credentials", () => {
       expect(r.credential.env).toBe("sandbox");
       expect(r.credential.host).toBe(hostForEnv("sandbox"));
       expect(r.credential.appKey).toBe("sandbox-key");
+      expect(r.credential.accessToken).toBe("sandbox-token");
     }
   });
 
@@ -66,17 +81,18 @@ describe("webull_trade credentials", () => {
     }
   });
 
-  it("the shipped code cannot construct a network-capable transport", async () => {
+  it("a sandbox permit cannot construct a prod transport", async () => {
     const { reader } = fakeReader(STORE);
-    const sb = await getWebullTradeCredential(reader, "sandbox");
-    if (!sb.ok) throw new Error("expected sandbox creds");
-    // Construct with enabled:true ONLY to exercise the env-mismatch guard (no network
-    // is reached — the guard returns before fetch).
-    expect(() => liveWebullTransport({ enabled: true, credential: sb.credential })).toThrow(/not implemented|disabled/);
+    const prod = await getWebullTradeCredential(reader, "prod");
+    if (!prod.ok) throw new Error("expected prod creds");
+    // Exercise the env-mismatch guard; no network is reached.
+    const auth = await authorizeWebullPreflightTransport(flagSvc(true), "sandbox");
+    if (!auth.ok) throw new Error("expected permit");
+    expect(() => liveWebullTransport({ credential: prod.credential, permit: auth.permit })).toThrow(/environments do not match/);
   });
 
   it("fails closed when a credential is missing, WITHOUT leaking any secret", async () => {
-    const { reader } = fakeReader({ WEBULL_TRADE_PROD_APP_KEY: "prod-key" }); // no secret
+    const { reader } = fakeReader({ WEBULL_TRADE_PROD_APP_KEY: "prod-key" }); // no secret/token
     const r = await getWebullTradeCredential(reader, "prod");
     expect(r.ok).toBe(false);
     if (!r.ok) {
@@ -118,11 +134,9 @@ describe("webull_trade credentials", () => {
   });
 });
 
-describe("webull_trade live transport is disabled by construction", () => {
-  it("throws unless explicitly enabled — no live/sandbox call is possible from build/test", () => {
-    const credential = { env: "prod" as const, appKey: "k", appSecret: "s", host: hostForEnv("prod") };
-    expect(() => liveWebullTransport({ enabled: false, credential })).toThrow(/disabled/);
-    // The default (no flag) is also disabled.
-    expect(() => liveWebullTransport({ enabled: undefined as any, credential })).toThrow(/disabled/);
+describe("webull_trade live transport permit", () => {
+  it("cannot be minted while the false-by-default database feature flag is off", async () => {
+    expect((await authorizeWebullPreflightTransport(flagSvc(false), "prod")).ok).toBe(false);
+    expect((await authorizeWebullPreflightTransport({ from() { throw new Error("db down"); } }, "prod")).ok).toBe(false);
   });
 });

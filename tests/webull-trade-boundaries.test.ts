@@ -155,12 +155,12 @@ describe("Test 7 — secret capture: logs, errors, traces never carry sensitive 
   });
 
   it("the live transport's generic error text leaks no request internals", async () => {
-    // Proven structurally: the transport's catch returns a fixed string, never the
-    // URL, headers, signature, or body.
+    // The sole Webull fetch is isolated here; errors are fixed strings and never
+    // interpolate the URL, headers, signature, body, or broker response.
     const src = await import("fs").then(fs =>
       fs.readFileSync("lib/brokers/webull-trade/transport.ts", "utf8"));
-    expect(src).not.toMatch(/\bfetch\s*\(/);
-    expect(src).toContain("Webull network calls are disabled");
+    expect(src.match(/await fetchImpl\s*\(/g)).toHaveLength(1);
+    expect(src).toContain("webull_trade network request failed");
     // No console.* call anywhere in the signed transport/signing/credentials path.
     for (const f of ["transport.ts", "signing.ts", "credentials.ts", "lifecycle.ts"]) {
       const s = await import("fs").then(fs => fs.readFileSync(`lib/brokers/webull-trade/${f}`, "utf8"));
