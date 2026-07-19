@@ -983,6 +983,13 @@
       "nodeId": "EVIDCOHORT",
       "label": "Added the Evidence Cohort Builder — the first producer of evidence_policy_evaluations rows",
       "reason": "Prod verified before the change: both markets router_enabled=false, active policy v1, and evidence_policy_evaluations held 0 rows. The router cutover prerequisites (intent classification, degradation guard, parity comparator, bound activation RPC) were all shipped but unfed, so no parity evaluation existed. This node resolves real recent decisions into a frozen cohort and writes the first evaluations. Table dependencies added: reads agent_signals + research_packets + evidence_cache_v2 via the resolver, writes evidence_policy_evaluations + evidence_evaluation_details. No migration — every column already existed. Drawn as a DOTTED edge from RESEARCH and terminating at the evaluation store, never at a scorer: router_enabled stays false, so the flow has zero effect on scoring, signals, sizing, or orders. First runs: US 15 symbols passed all machine gates (0 flips); India 12 symbols correctly FAILED on required-field coverage (no India daily-bars adapter exists), proving the two markets are evaluated independently."
+    },
+    {
+      "date": "2026-07-19",
+      "event": "changed",
+      "nodeId": "GATEWAY",
+      "label": "Webull transport restored: permit-backed live network layer + token preflight wired",
+      "reason": "Codex restored liveWebullTransport() (commit 3e2779c2) after verifying signing spec (CONFIRMED), fixing token.ts to block PENDING status (was missing from the type), and confirming the 9-gate ladder. New files: credentials.ts (vault-backed app_key/app_secret/access_token loader), endpoints.ts (prod: api.webull.com, sandbox: api.sandbox.webull.com), config.ts (webullTradeOrdersEnabled DB flag reader), preflight.ts (POST /openapi/auth/token/check pre-flight), types.ts updated. Transport uses a typed permit system: preflight permit = DB flag check only; order permit = all 9 gates passed + single-use + 30s expiry. x-access-token added alongside HMAC-SHA1 headers. Single fetch locus: liveWebullTransport() is the only function calling fetch() to api.webull.com. 107 Webull-specific tests pass; full suite 1114 passed. All flags remain false: webull_trade_orders_enabled=false, adapter isConfigured()=false. Migration 20260718130000 applied to prod (zero-row protective_orders table) adding 5 check constraints locking mode=wider_disaster_floor, market/currency parity, broker-id exclusivity, floor<stop invariant, order-kind/limit-price parity, learning-provenance. Activation blocked until: sandbox credentials provisioned in vault, sandbox account allowlist gate, supervised 1-share limit proof, owner approval."
     }
   ]
 }
