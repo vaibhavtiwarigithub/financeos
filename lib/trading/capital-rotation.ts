@@ -153,6 +153,7 @@ async function latestScoresBySymbol(supabase: any, market: "us" | "india", symbo
     .from("agent_signals")
     .select("symbol, analyst_score, created_at")
     .eq("market", market)
+    .eq("session_validated", true)
     .in("symbol", symbols)
     .gte("created_at", since)
     .order("created_at", { ascending: false })

@@ -192,6 +192,7 @@ export async function runAutonomousShadow(
     .from("agent_signals")
     .select("id, symbol, market, direction, analyst_score, conviction, score_source, rationale")
     .eq("score_source", "deterministic_v1")
+    .eq("session_validated", true)
     .eq("direction", "long")
     .eq("market", market)
     .gte("analyst_score", scoreThreshold)

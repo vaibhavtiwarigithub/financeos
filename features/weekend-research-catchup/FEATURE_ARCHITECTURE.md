@@ -43,6 +43,9 @@ row is the only entry candidate.
   `deterministic_v1`, and `session_validated=true`. It never fills staged rows.
 - **TraderAgent/live proposals:** same positive allowlist. It never creates a
   proposal from a staged row.
+- **AutonomousShadow / AutonomousLive:** their direct recent-signal queries also
+  require `session_validated=true`; weekday scheduling and the 24-hour lookback
+  are not treated as sufficient proof.
 - **PositionMonitor:** mechanical price stops, targets, trailing stops, and time
   stops remain independent. Score/direction exits may only read
   `session_validated=true` signals; staged scores cannot force a sale.
@@ -51,6 +54,8 @@ row is the only entry candidate.
 - **ResearchAgent weekday run:** holdings remain first-class and cap-exempt. A
   successful re-score produces the fresh decision for that session. A failure
   leaves the staged row informational only.
+- **CapitalRotation:** latest-score lookup requires session validation, so a
+  staged score cannot change weakest-holding selection or a rotation edge.
 
 ## Weekend Scheduling
 

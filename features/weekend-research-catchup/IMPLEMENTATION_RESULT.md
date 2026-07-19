@@ -11,6 +11,8 @@ Completed: 2026-07-19
 - Successfully staged candidates remain queued for weekday revalidation.
 - A weekday success writes a new validated row and retires the staged row.
 - PaperTrader and TraderAgent require positive session validation.
+- AutonomousShadow, AutonomousLive, and CapitalRotation direct signal reads
+  require the same positive validation proof.
 - PositionMonitor ignores staged scores for conviction exits; mechanical exits
   remain active and unchanged.
 - Agents → Capacity reports queue/workload type, pending preparation, staged

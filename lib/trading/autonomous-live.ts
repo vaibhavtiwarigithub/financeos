@@ -252,6 +252,7 @@ export async function runAutonomousLive(
     // PostgREST error, so this path silently processed zero signals every run.
     .select("id, symbol, market, direction, analyst_score, conviction, score_source, rationale")
     .eq("score_source", "deterministic_v1")
+    .eq("session_validated", true)
     .eq("direction", "long")
     .gte("analyst_score", scoreThreshold)
     .gte("created_at", lookbackCutoff)

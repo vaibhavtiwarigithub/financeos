@@ -276,11 +276,13 @@ One row per symbol per research run. The "today's score" table.
 | `created_at` | timestamptz | |
 
 `weekend_staged` rows are evidence, not orders. PaperTrader and TraderAgent
-require `status='pending' AND session_validated=true`; PositionMonitor applies
-the same positive validation requirement to score/direction exits while its
-mechanical stop, target, trailing, and time exits remain independent. A weekday
-re-score writes a fresh row and moves the old staged row to `revalidated`; the
-staged row is never mutated into an executable decision.
+require positive session validation, as do the direct recent-signal queries in
+AutonomousShadow and AutonomousLive. CapitalRotation ignores unvalidated scores.
+PositionMonitor applies the same positive validation requirement to
+score/direction exits while its mechanical stop, target, trailing, and time
+exits remain independent. A weekday re-score writes a fresh row and moves the
+old staged row to `revalidated`; the staged row is never mutated into an
+executable decision.
 
 ### `signal_score_history`
 Append-only per-symbol score history. Never mutated after insert.

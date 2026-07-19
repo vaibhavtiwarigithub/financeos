@@ -7,6 +7,9 @@ describe("weekend research catch-up safety contract", () => {
   const paper = readFileSync("app/api/agents/paper-trade/route.ts", "utf8");
   const trader = readFileSync("app/api/agents/trader/route.ts", "utf8");
   const monitor = readFileSync("app/api/agents/position-monitor/route.ts", "utf8");
+  const autonomousLive = readFileSync("lib/trading/autonomous-live.ts", "utf8");
+  const autonomousShadow = readFileSync("lib/trading/autonomous-shadow.ts", "utf8");
+  const rotation = readFileSync("lib/trading/capital-rotation.ts", "utf8");
   const migration = readFileSync("supabase/migrations/20260719090000_weekend_research_catchup.sql", "utf8");
 
   it("writes weekend scores as unvalidated and does not chain PaperTrader", () => {
@@ -18,10 +21,13 @@ describe("weekend research catch-up safety contract", () => {
   it("requires positive session validation on both entry paths", () => {
     expect(paper).toContain('.eq("session_validated", true)');
     expect(trader).toContain('.eq("session_validated", true)');
+    expect(autonomousLive).toContain('.eq("session_validated", true)');
+    expect(autonomousShadow).toContain('.eq("session_validated", true)');
   });
 
   it("keeps staged scores out of conviction exits", () => {
     expect(monitor).toContain('.eq("session_validated", true)');
+    expect(rotation).toContain('.eq("session_validated", true)');
   });
 
   it("enforces the staged invariant and unique active stage in Postgres", () => {
