@@ -3,7 +3,12 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { gatherSymbols, processSymbol } from "@/lib/research-agent";
 import { isIndia } from "@/lib/india-data";
-import { isMarketWeekend, lastCompletedMarketSession } from "@/lib/trading/market-calendar";
+import {
+  getClosedDayCatchupEligibility,
+  getMarketDayStatus,
+  isMarketWeekend,
+  lastCompletedMarketSession,
+} from "@/lib/trading/market-calendar";
 
 export const dynamic = "force-dynamic";
 
@@ -57,13 +62,18 @@ export async function POST(req: NextRequest) {
         send({ type: "progress", symbol: entry.symbol, status: "analyzing", isHeld: entry.isHeld, isEtf: entry.isEtf });
         try {
           const market = isIndia(entry.symbol) ? "india" : "us";
-          const weekend = isMarketWeekend(market);
+          const dayStatus = getMarketDayStatus(market);
+          const catchupEligibility = getClosedDayCatchupEligibility(market);
+          if (dayStatus.kind === "special_session" ||
+              (dayStatus.kind === "unsupported_year" && isMarketWeekend(market))) {
+            throw new Error(`Research refused: ${dayStatus.kind} (${dayStatus.localYmd})`);
+          }
           const result = await processSymbol(
             entry,
             supabase,
             null,
             runId ? String(runId) : null,
-            weekend ? {
+            catchupEligibility.eligible ? {
               status: "weekend_staged",
               sessionValidated: false,
               asOfSession: lastCompletedMarketSession(market),

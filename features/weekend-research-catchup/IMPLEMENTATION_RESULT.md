@@ -1,15 +1,17 @@
-# Weekend Research Catch-up — Implementation Result
+# Market-Closed-Day Research Catch-up — Implementation Result
 
 Completed: 2026-07-19
 
 ## Shipped behavior
 
-- US and India weekend catch-up crons run Saturday and Sunday after prewarm.
+- US and India catch-up triggers run daily after prewarm and self-skip unless the
+  exchange is closed for a supported weekend or full holiday.
 - Catch-up reads only each market's carry-forward `research_queue`.
-- Scores are written `weekend_staged` with `session_validated=false` and the
+- Scores are written under the legacy `weekend_staged` status with
+  `session_validated=false` and the
   last completed market session.
-- Successfully staged candidates remain queued for weekday revalidation.
-- A weekday success writes a new validated row and retires the staged row.
+- Successfully staged candidates remain queued for next-session revalidation.
+- A session success writes a new validated row and retires the staged row.
 - PaperTrader and TraderAgent require positive session validation.
 - AutonomousShadow, AutonomousLive, and CapitalRotation direct signal reads
   require the same positive validation proof.

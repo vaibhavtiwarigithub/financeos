@@ -1,29 +1,29 @@
-# Weekend Research Catch-up and Agent Capacity
+# Market-Closed-Day Research Catch-up and Agent Capacity
 
-Status: APPROVED by owner on 2026-07-19 ("do it")
+Status: APPROVED by owner on 2026-07-19 ("do it"; holiday extension approved with "ok")
 
 ## Problem
 
-The US and India research queues can contain more symbols than one weekday
-ResearchAgent run can finish. Provider quotas reset on Saturday and Sunday, but
-the current weekend jobs only warm evidence caches. They do not finish scoring,
-write a safely reusable staged result, or reduce the Monday scoring workload.
+The US and India research queues can contain more symbols than one market-session
+ResearchAgent run can finish. Provider quotas reset on weekends and full exchange
+holidays, but warming alone does not finish scoring, write a safely reusable
+staged result, or reduce the next-session scoring workload.
 The app also does not show queue depth, throughput, or estimated time to clear.
 
 ## Decision
 
-Use weekend quota for full deterministic research catch-up, but make every
-weekend result non-executable until the same market completes a weekday/session
-revalidation. Keep paper and live trading weekday-only. Display honest backlog
+Use market-closed-day quota for full deterministic research catch-up, but make
+every result non-executable until the same market completes a fresh session
+revalidation. Keep paper and live trading session-only. Display honest backlog
 and capacity telemetry for queue-backed and workload-backed agents.
 
 ## Signal State Machine
 
 ```mermaid
 stateDiagram-v2
-  [*] --> weekend_staged: Weekend catch-up scores symbol
-  weekend_staged --> superseded: Newer weekend score replaces it
-  weekend_staged --> revalidated: Weekday ResearchAgent successfully re-scores symbol
+  [*] --> weekend_staged: Closed-day catch-up scores symbol
+  weekend_staged --> superseded: Newer closed-day score replaces it
+  weekend_staged --> revalidated: Session ResearchAgent successfully re-scores symbol
   revalidated --> [*]
   [*] --> pending: Normal session-validated research score
   pending --> paper_traded: PaperTrader fills
@@ -31,7 +31,9 @@ stateDiagram-v2
   pending --> rank_rejected: Cross-sectional gate rejects entry
 ```
 
-Every `weekend_staged` row has `session_validated=false` and an
+`weekend_staged` is retained as the legacy database status name. Its semantic
+meaning is now any supported full market-closure day. Every such row has
+`session_validated=false` and an
 `as_of_session` equal to the last completed market session. A normal weekday
 score has `session_validated=true`. A successful weekday score marks older
 staged rows for that market/symbol `revalidated`; the newly inserted `pending`
@@ -57,16 +59,25 @@ row is the only entry candidate.
 - **CapitalRotation:** latest-score lookup requires session validation, so a
   staged score cannot change weakest-holding selection or a rotation edge.
 
-## Weekend Scheduling
+## Closed-Day Scheduling
 
-Add one bounded catch-up run per market on both Saturday and Sunday, after that
-market's prewarm window. The route uses the existing research wall-clock budget,
-provider pacing, candidate cap, per-market scope, and idempotency guard. It does
-not chain PaperTrader or TraderAgent.
+Schedule one bounded catch-up trigger per market every day after that market's
+prewarm window. A shared exchange-local calendar permits work only on weekends
+or verified full equity-market holidays. Normal trading days self-skip. An
+unsupported calendar year and special sessions such as NSE Muhurat Trading both
+abstain. An unsupported year opens one deduplicated System Health warning until
+the annual calendar is installed. The route uses the existing research wall-clock budget, provider pacing,
+candidate cap, per-market scope, and idempotency guard. It does not chain
+PaperTrader or TraderAgent.
 
-Weekend candidate scores are retained in `research_queue` for weekday
+The 2026 US calendar is sourced from NYSE. The 2026 India calendar is sourced
+from NSE Capital Market circular CMTR71775 plus amendment CMTR72260. Settlement,
+currency, debt, and commodity holiday lists are not interchangeable with the
+equity-market calendar. Early-close days are trading days, not catch-up days.
+
+Closed-day candidate scores are retained in `research_queue` for next-session
 revalidation. Held symbols do not need queue retention because holdings are
-always gathered. Repeated weekend runs supersede the prior staged row rather
+always gathered. Repeated closed-day runs supersede the prior staged row rather
 than creating multiple active staged decisions.
 
 ## Data Model
@@ -103,7 +114,7 @@ when no defensible estimate exists.
 
 - Missing migration makes the new positive eligibility query return no entry
   candidates (fail closed).
-- Weekend scoring failure re-defers the symbol and writes the normal run error.
+- Closed-day scoring failure re-defers the symbol and writes the normal run error.
 - Queue telemetry failure shows unavailable; it never blocks any agent.
 - A staged row can never be mutated into `pending`; revalidation writes a fresh
   row, preserving point-in-time history.
@@ -112,18 +123,18 @@ when no defensible estimate exists.
 
 ## Acceptance Criteria
 
-1. Saturday/Sunday catch-up writes `weekend_staged` signals and no trade/proposal.
+1. Weekend and verified full-holiday catch-up writes `weekend_staged` signals and no trade/proposal.
 2. PaperTrader and TraderAgent reject staged/unvalidated signals even at score 100.
 3. PositionMonitor ignores staged scores for score/direction exits.
-4. Weekday success writes a new validated signal and closes prior staged state.
-5. Failed weekday revalidation cannot make the staged result executable.
-6. Weekend candidate remains queued for weekday revalidation without increasing
+4. Next-session success writes a new validated signal and closes prior staged state.
+5. Failed session revalidation cannot make the staged result executable.
+6. Closed-day candidate remains queued for session revalidation without increasing
    its failed-attempt count.
 7. Capacity UI is market-scoped and labels queue versus workload honestly.
 8. Existing weekday research-to-paper flow remains unchanged for validated rows.
 
 ## Disable / Rollback
 
-Unschedule the two weekend catch-up crons. Existing staged rows remain inert and
+Unschedule the two closed-day catch-up crons. Existing staged rows remain inert and
 may be marked `superseded`. The additive columns can stay; their defaults preserve
 the pre-feature weekday behavior.

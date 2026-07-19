@@ -76,7 +76,7 @@ export async function loadAgentCapacity(svc: any, market: "us" | "india"): Promi
       configuredCeiling: cap,
       estimatedClearDays: estimatedClearDays(queueTotal, effectiveCapacity),
       oldestHours,
-      nextAction: "Weekend: stage queued symbols. Next market session: re-score staged symbols and release only fresh validated decisions.",
+      nextAction: "Market closed day: stage queued symbols. Next market session: re-score staged symbols and release only fresh validated decisions.",
       estimateBasis: candidateCounts.length > 0
         ? "Median candidate_processed from the latest 10 completed market runs."
         : "Fallback median total signals from recent runs; includes holdings until structured metrics accumulate.",

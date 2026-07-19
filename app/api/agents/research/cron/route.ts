@@ -8,7 +8,13 @@ import { prewarmPriceCache } from "@/lib/chart-data";
 import { RISK_PROFILES } from "@/lib/risk-profiles";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { emitAlert } from "@/lib/alerts/emit";
-import { isMarketWeekend, lastCompletedMarketSession } from "@/lib/trading/market-calendar";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
+import {
+  getClosedDayCatchupEligibility,
+  getMarketDayStatus,
+  isMarketWeekend,
+  lastCompletedMarketSession,
+} from "@/lib/trading/market-calendar";
 
 export const dynamic = "force-dynamic";
 // Bumped from 60 -> 150s: Theme Scout is now awaited inline (before
@@ -30,46 +36,49 @@ export async function POST(req: NextRequest) {
   const url = new URL(req.url);
   const mktParam = url.searchParams.get("market");
   const marketScope = mktParam === "india" ? "india" : mktParam === "us" ? "us" : null;
-  const weekendCatchup = url.searchParams.get("mode") === "weekend_catchup";
-  if (weekendCatchup && !marketScope) {
-    return NextResponse.json({ error: "Weekend catch-up requires market=us|india" }, { status: 400 });
+  const catchupMode = url.searchParams.get("mode");
+  const closedDayCatchup = catchupMode === "closed_day_catchup" || catchupMode === "weekend_catchup";
+  if (closedDayCatchup && !marketScope) {
+    return NextResponse.json({ error: "Closed-day catch-up requires market=us|india" }, { status: 400 });
   }
 
   const supabase = createServiceClient();
 
-  // Normal research remains session-oriented. Weekend catch-up is explicit,
-  // non-executable, and rejected on weekdays so it cannot become a second live
-  // research/trading cycle.
-  const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-  const marketWeekend = isMarketWeekend(marketScope ?? "us");
-  if (marketWeekend && !weekendCatchup) {
-    return NextResponse.json({ skipped: true, reason: "Weekend — market closed" });
+  // One exchange-specific calendar owns both normal-run closure checks and
+  // catch-up eligibility. The daily catch-up jobs self-skip on trading days,
+  // unsupported calendar years, and special sessions such as Muhurat Trading.
+  const dayMarket = marketScope ?? "us";
+  const dayStatus = getMarketDayStatus(dayMarket);
+  const catchupEligibility = getClosedDayCatchupEligibility(dayMarket);
+  const calendarIssueKey = `market-calendar-unsupported:${dayMarket}`;
+  if (dayStatus.kind === "unsupported_year") {
+    await reportIssue({
+      issueKey: calendarIssueKey,
+      severity: "warn",
+      category: "cron",
+      title: `Research: ${dayMarket.toUpperCase()} market calendar needs annual update`,
+      detail: `No verified equity-market calendar is installed for ${dayStatus.localYmd.slice(0, 4)}. Closed-day catch-up is disabled; normal weekdays remain available.`,
+    }, supabase);
+  } else {
+    await resolveIssue(calendarIssueKey, supabase);
   }
-  if (!marketWeekend && weekendCatchup) {
-    return NextResponse.json({ skipped: true, reason: "Weekend catch-up is Saturday/Sunday only" });
+  if (closedDayCatchup && !catchupEligibility.eligible) {
+    return NextResponse.json({
+      skipped: true,
+      reason: `Closed-day catch-up refused: ${catchupEligibility.reason} (${catchupEligibility.localYmd})`,
+    });
   }
-  // US holiday calendar only gates US runs — an India run must not be skipped on
-  // a US holiday (and vice versa).
-  if (!weekendCatchup && marketScope !== "india") {
-    const mmdd = `${String(nowET.getMonth() + 1).padStart(2, "0")}-${String(nowET.getDate()).padStart(2, "0")}`;
-    const US_HOLIDAYS = ["01-01","01-20","02-17","04-18","05-26","06-19","07-04","09-01","11-27","12-25"]; // 2026 approx
-    if (US_HOLIDAYS.includes(mmdd)) {
-      return NextResponse.json({ skipped: true, reason: `US market holiday (${mmdd})` });
-    }
+  if (!closedDayCatchup && (dayStatus.kind === "weekend" || dayStatus.kind === "holiday")) {
+    return NextResponse.json({ skipped: true, reason: `${dayStatus.kind}: market closed (${dayStatus.localYmd})` });
   }
-  // NSE holiday calendar — FIXED-DATE holidays only (Republic Day, Independence
-  // Day, Gandhi Jayanti). Floating festival holidays (Holi, Diwali, Eid, etc.)
-  // are NOT modeled here — they shift yearly and guessing wrong dates is worse
-  // than not gating at all. On an unmodeled NSE holiday this still fires and
-  // produces stale/no data; a proper fix needs a verified annual NSE holiday
-  // calendar (API or manually-updated list), not a guess.
-  if (!weekendCatchup && marketScope === "india") {
-    const nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-    const mmddIST = `${String(nowIST.getMonth() + 1).padStart(2, "0")}-${String(nowIST.getDate()).padStart(2, "0")}`;
-    const NSE_FIXED_HOLIDAYS = ["01-26", "08-15", "10-02"]; // Republic Day, Independence Day, Gandhi Jayanti
-    if (NSE_FIXED_HOLIDAYS.includes(mmddIST)) {
-      return NextResponse.json({ skipped: true, reason: `NSE fixed-date holiday (${mmddIST})` });
-    }
+  if (!closedDayCatchup && dayStatus.kind === "special_session") {
+    return NextResponse.json({
+      skipped: true,
+      reason: `Special session requires an explicit session schedule (${dayStatus.localYmd})`,
+    });
+  }
+  if (!closedDayCatchup && dayStatus.kind === "unsupported_year" && isMarketWeekend(dayMarket)) {
+    return NextResponse.json({ skipped: true, reason: `Calendar year unsupported (${dayStatus.localYmd})` });
   }
 
   // NOTE: research is deliberately NOT gated by app_paused. app_paused is the
@@ -104,7 +113,7 @@ export async function POST(req: NextRequest) {
   // the India run, and vice-versa. Filter the persisted market explicitly so each
   // recent run's market from its symbols (any .NS/.BO → India) and only block when
   // a run for THIS market is in the window.
-  const runAgentType = weekendCatchup ? "research_weekend" : "research";
+  const runAgentType = closedDayCatchup ? "research_closed_day" : "research";
   const guardWindow = new Date(Date.now() - 30 * 60_000).toISOString();
   const { data: recentRuns } = await supabase
     .from("agent_runs")
@@ -127,7 +136,7 @@ export async function POST(req: NextRequest) {
   // discovered theme tickers land in the watchlist in time to be researched
   // THIS run, not tomorrow's. US-only (theme-scout has no India logic) — skip
   // on an India-scoped run so it doesn't fire twice a day.
-  if (!weekendCatchup && marketScope !== "india") {
+  if (!closedDayCatchup && marketScope !== "india") {
     const appUrlEarly = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     try {
       const tsRes = await fetch(`${appUrlEarly}/api/agents/theme-scout`, {
@@ -146,7 +155,7 @@ export async function POST(req: NextRequest) {
 
   let queueDepthAtStart: number | null = null;
   let allEntries;
-  if (weekendCatchup && marketScope) {
+  if (closedDayCatchup && marketScope) {
     const queued = await readDeferredCandidates(supabase, marketScope);
     queueDepthAtStart = queued.length;
     const asOfSession = lastCompletedMarketSession(marketScope);
@@ -244,7 +253,7 @@ export async function POST(req: NextRequest) {
           supabase,
           universeSnapshotId,
           runId ? String(runId) : null,
-          weekendCatchup && marketScope ? {
+          closedDayCatchup && marketScope ? {
             status: "weekend_staged",
             sessionValidated: false,
             asOfSession: lastCompletedMarketSession(marketScope),
@@ -311,7 +320,7 @@ export async function POST(req: NextRequest) {
   // to agent_signals — but ONLY when the champion genome carries
   // entry.rank_pct_min > 0. Default 0.0 ⇒ zero agent_signals writes ⇒ selection
   // is byte-identical to pre-feature behavior. Fail-soft throughout.
-  if (universeSnapshotId && !weekendCatchup) {
+  if (universeSnapshotId && !closedDayCatchup) {
     try {
       // Pair each non-error result with its source entry (same index) so we have
       // isHeld / asset-type / market alongside the score + observation id.
@@ -440,7 +449,7 @@ export async function POST(req: NextRequest) {
       signals_written: ok,
       result_summary: `cron: ${ok} signals, ${errs} failed${deferred.length ? `, ${deferred.length} deferred (budget)` : ""} | ${batch.join(",")}`,
       workload_metrics: {
-        mode: weekendCatchup ? "weekend_catchup" : "session",
+        mode: closedDayCatchup ? "closed_day_catchup" : "session",
         queue_depth_start: queueDepthAtStart,
         holding_processed: holdingProcessed,
         candidate_processed: candidateProcessed,
@@ -471,11 +480,11 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Chain PaperTrader only after session research — weekend scores are staged
+  // Chain PaperTrader only after session research. Closed-day scores are staged
   // evidence and must never enter any execution path.
   // so an India research run fills the ₹ pool, a US run the $ pool.
   let paperTradeResult: any = null;
-  if (!weekendCatchup) {
+  if (!closedDayCatchup) {
     try {
       const ptUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/agents/paper-trade${marketScope ? `?market=${marketScope}` : ""}`;
       const ptRes = await fetch(ptUrl, {
@@ -498,7 +507,7 @@ export async function POST(req: NextRequest) {
   prewarmPriceCache(prewarmSymbols, supabase).catch(() => {});
 
   return NextResponse.json({
-    success: true, mode: weekendCatchup ? "weekend_catchup" : "session",
+    success: true, mode: closedDayCatchup ? "closed_day_catchup" : "session",
     processed: results.length, ok, errors: errs, symbols: batch,
     paperTrade: paperTradeResult,
   });

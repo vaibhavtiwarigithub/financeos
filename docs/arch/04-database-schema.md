@@ -266,7 +266,7 @@ One row per symbol per research run. The "today's score" table.
 | `data_confidence` | numeric | 0–1; below 0.5 → tainted |
 | `discovery_source` | text | How symbol entered the batch |
 | `mandate_id` | uuid | FK → `investment_mandates` |
-| `status` | text | Includes `pending`, `paper_traded`, `expired`, `claiming`, `rank_rejected`, and non-executable weekend lifecycle states `weekend_staged`, `superseded`, `revalidated` |
+| `status` | text | Includes `pending`, `paper_traded`, `expired`, `claiming`, `rank_rejected`, and non-executable closed-day lifecycle states `weekend_staged` (legacy name), `superseded`, `revalidated` |
 | `session_validated` | boolean | Positive entry/conviction-exit eligibility proof. Weekend catch-up writes false; a weekday re-score writes a new true row. |
 | `as_of_session` | date | Market-local completed session underlying the score. |
 | `staged_at` | timestamptz | Set only for non-executable weekend catch-up rows. |
@@ -275,7 +275,8 @@ One row per symbol per research run. The "today's score" table.
 | `rank_rejected` | bool | True when candidate cleared the absolute floor but failed the cross-sectional rank gate (migration 151); default false. |
 | `created_at` | timestamptz | |
 
-`weekend_staged` rows are evidence, not orders. PaperTrader and TraderAgent
+`weekend_staged` rows (weekend or verified full exchange holiday) are evidence,
+not orders. PaperTrader and TraderAgent
 require positive session validation, as do the direct recent-signal queries in
 AutonomousShadow and AutonomousLive. CapitalRotation ignores unvalidated scores.
 PositionMonitor applies the same positive validation requirement to

@@ -10,17 +10,51 @@
 // ── Static holiday calendars (defense/fallback layer) ────────────────────────
 // A holiday on a weekday would otherwise pass weekday+hours. UPDATE ANNUALLY or
 // rely on the live status source (US) / quote-freshness (India) above it.
-const US_HOLIDAYS = new Set<string>([
-  "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
-  "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
-]);
-const INDIA_HOLIDAYS = new Set<string>([
-  "2026-01-26", "2026-03-06", "2026-03-25", "2026-04-03", "2026-04-14",
-  "2026-05-01", "2026-08-15", "2026-10-02", "2026-11-09", "2026-12-25",
-]);
+// Explicit equity-market calendars. Catch-up refuses unsupported years so a
+// stale calendar cannot silently treat an exchange holiday as a normal weekend.
+// US: https://www.nyse.com/trade/hours-calendars
+// India CM: https://nsearchives.nseindia.com/content/circulars/CMTR71775.pdf
+// India amendment: https://nsearchives.nseindia.com/content/circulars/CMTR72260.pdf
+// India special sessions: https://www.nseindia.com/resources/exchange-communication-holidays
+const MARKET_HOLIDAYS: Record<"us" | "india", Record<string, ReadonlySet<string>>> = {
+  us: {
+    "2026": new Set([
+      "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
+      "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+    ]),
+  },
+  india: {
+    "2026": new Set([
+      "2026-01-15", // NSE/CMTR/72260 amendment: Maharashtra municipal election.
+      "2026-01-26", "2026-03-03", "2026-03-26", "2026-03-31", "2026-04-03",
+      "2026-04-14", "2026-05-01", "2026-05-28", "2026-06-26", "2026-09-14",
+      "2026-10-02", "2026-10-20", "2026-11-10", "2026-11-24", "2026-12-25",
+    ]),
+  },
+};
+
+// A weekend can still contain an official special session. It is neither a full
+// closure nor a regular session, so closed-day catch-up must abstain.
+const MARKET_SPECIAL_SESSIONS: Record<"us" | "india", Record<string, ReadonlySet<string>>> = {
+  us: { "2026": new Set() },
+  india: { "2026": new Set(["2026-11-08"]) }, // Diwali Muhurat Trading.
+};
+
+type MarketDayKind = "trading_day" | "weekend" | "holiday" | "special_session" | "unsupported_year";
+
+export type MarketDayStatus = {
+  localYmd: string;
+  kind: MarketDayKind;
+  calendarSupported: boolean;
+};
+
+function marketKey(market: string): "us" | "india" {
+  return market === "india" ? "india" : "us";
+}
 
 export function isMarketHoliday(market: string, localYmd: string): boolean {
-  return (market === "india" ? INDIA_HOLIDAYS : US_HOLIDAYS).has(localYmd);
+  const year = localYmd.slice(0, 4);
+  return MARKET_HOLIDAYS[marketKey(market)][year]?.has(localYmd) ?? false;
 }
 
 function marketDateParts(market: string, now: Date): { ymd: string; weekday: string } {
@@ -36,7 +70,40 @@ export function isMarketWeekend(market: string, now: Date = new Date()): boolean
   return ["Sat", "Sun"].includes(marketDateParts(market, now).weekday);
 }
 
-/** Last completed regular session, used to label non-executable weekend research. */
+export function getMarketDayStatus(market: string, now: Date = new Date()): MarketDayStatus {
+  const key = marketKey(market);
+  const local = marketDateParts(key, now);
+  const year = local.ymd.slice(0, 4);
+  const holidays = MARKET_HOLIDAYS[key][year];
+  const specialSessions = MARKET_SPECIAL_SESSIONS[key][year];
+  if (!holidays || !specialSessions) {
+    return { localYmd: local.ymd, kind: "unsupported_year", calendarSupported: false };
+  }
+  if (specialSessions.has(local.ymd)) {
+    return { localYmd: local.ymd, kind: "special_session", calendarSupported: true };
+  }
+  if (["Sat", "Sun"].includes(local.weekday)) {
+    return { localYmd: local.ymd, kind: "weekend", calendarSupported: true };
+  }
+  if (holidays.has(local.ymd)) {
+    return { localYmd: local.ymd, kind: "holiday", calendarSupported: true };
+  }
+  return { localYmd: local.ymd, kind: "trading_day", calendarSupported: true };
+}
+
+export function getClosedDayCatchupEligibility(
+  market: string,
+  now: Date = new Date(),
+): { eligible: boolean; reason: MarketDayKind; localYmd: string } {
+  const status = getMarketDayStatus(market, now);
+  return {
+    eligible: status.kind === "weekend" || status.kind === "holiday",
+    reason: status.kind,
+    localYmd: status.localYmd,
+  };
+}
+
+/** Last completed regular session, used to label non-executable closed-day research. */
 export function lastCompletedMarketSession(market: string, now: Date = new Date()): string {
   const local = marketDateParts(market, now);
   const cursor = new Date(`${local.ymd}T12:00:00Z`);
