@@ -31,6 +31,16 @@ Supabase project `dionkikgdmlaotvtbnfr`:
 - active `kairos-weekend-research-india` at `10 5 * * 0,6`
 - all 538 pre-existing signals remained `session_validated=true`
 
+Live Sunday run after deployment:
+
+- US: 26 queued candidates processed, 26 staged, 0 failed
+- India: 4 queued candidates processed, 4 staged, 0 failed
+- every staged row: `as_of_session=2026-07-17`,
+  `session_validated=false`
+- queues remained US 26 / India 4 for the next session revalidation
+- zero PaperTrader runs, zero paper trades, zero trade proposals, and zero
+  `session_validated=false AND status='pending'` rows after the run
+
 ## Verification
 
 - `npx tsc --noEmit`: pass
