@@ -27,6 +27,9 @@ export interface KillSwitchContext {
   /** Resolved live trading account. Optional — falls back to
    *  strategy_config.active_account_{market} when omitted (live book only). */
   accountId?: string;
+  /** A guarded reset performs a dry safe-check and resolves alerts only after
+   *  the latch write and audit record succeed. Normal money-path callers omit. */
+  resolveAlerts?: boolean;
 }
 
 export interface KillSwitchResult {
@@ -55,11 +58,10 @@ const LIVE_SNAPSHOT_MAX_AGE_MS =
 // denominator. Daily-loss/drawdown brakes remain immediate at every sample size.
 export const MIN_ACCURACY_SAMPLE = 20;
 
-// Per-market scope helper for paper tables (pre-057 fallback: no market column → unscoped).
+// Per-market scope helper. The production schema has required market columns;
+// an unscoped retry would mix USD/INR risk truth and is forbidden.
 async function scoped(q: any, market: string): Promise<any> {
-  const r = await q.eq("market", market);
-  if (r.error) return await q;
-  return r;
+  return q.eq("market", market);
 }
 
 // ── Live data helpers ────────────────────────────────────────────────────────
@@ -80,12 +82,14 @@ async function getLiveNavSeries(
   market: string,
 ): Promise<LiveNavSeries | null> {
   const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: snaps } = await supabase
+  const { data: snaps, error } = await supabase
     .from("live_account_snapshots")
     .select("equity, portfolio_value, captured_at")
     .eq("account_id", accountId)
     .gte("captured_at", since)
     .order("captured_at", { ascending: false });
+
+  if (error) throw new Error(`live NAV read failed (${market}/${accountId}): ${error.message}`);
 
   if (!snaps || snaps.length === 0) return null;
 
@@ -126,7 +130,7 @@ async function getLiveAccuracy(
   market: string,
 ): Promise<{ wins: number; total: number } | null> {
   const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: sells } = await supabase
+  const { data: sells, error: sellsError } = await supabase
     .from("broker_orders")
     .select("symbol, avg_fill_price, created_at")
     .eq("market", market)
@@ -135,11 +139,13 @@ async function getLiveAccuracy(
     .eq("status", "filled")
     .gte("created_at", since30);
 
+  if (sellsError) throw new Error(`live sell-history read failed (${market}): ${sellsError.message}`);
+
   if (!sells || (sells as any[]).length < MIN_ACCURACY_SAMPLE) return null;
 
   const symbols = [...new Set((sells as any[]).map((s: any) => s.symbol as string))];
   const since180 = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: buys } = await supabase
+  const { data: buys, error: buysError } = await supabase
     .from("broker_orders")
     .select("symbol, avg_fill_price, created_at")
     .eq("market", market)
@@ -148,6 +154,8 @@ async function getLiveAccuracy(
     .eq("status", "filled")
     .in("symbol", symbols)
     .gte("created_at", since180);
+
+  if (buysError) throw new Error(`live buy-history read failed (${market}): ${buysError.message}`);
 
   const buysBySymbol: Record<string, any[]> = {};
   for (const b of (buys ?? []) as any[]) {
@@ -181,19 +189,27 @@ export async function checkKillSwitches(
 ): Promise<KillSwitchResult> {
   // Back-compat shim: a bare market string is treated as a PAPER check. Every
   // live caller MUST pass the explicit object form with book:"live".
-  const { market, book, accountId }: KillSwitchContext =
+  const { market, book, accountId, resolveAlerts }: KillSwitchContext =
     typeof ctx === "string"
       ? { market: ctx, book: "paper" }
       : ctx;
   const isLive = book === "live";
   const startNav = START_NAV[market] ?? 10000;
 
-  const { data: cfg } = await supabase
+  const { data: cfg, error: cfgError } = await supabase
     .from("strategy_config")
     .select(
       "ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, active_account_us, active_account_india",
     )
     .maybeSingle();
+  if (cfgError || !cfg) {
+    return {
+      safe: false,
+      sellAllowed: isLive,
+      tripped: "no_baseline",
+      reason: `Kill-switch configuration unavailable — BUY fail-closed${cfgError?.message ? `: ${cfgError.message}` : "."}`,
+    };
+  }
 
   const rawDailyLoss = Number(cfg?.ks_daily_loss_pct);
   const rawDrawdown = Number(cfg?.ks_drawdown_pct);
@@ -239,7 +255,17 @@ export async function checkKillSwitches(
         reason: `No live account configured for ${market.toUpperCase()} — BUY fail-closed. Set active_account_${market} before live trading. (SELL still permitted with held-qty verification.)`,
       };
     }
-    const liveSeries = await getLiveNavSeries(supabase, activeAccount, market);
+    let liveSeries: LiveNavSeries | null;
+    try {
+      liveSeries = await getLiveNavSeries(supabase, activeAccount, market);
+    } catch (error) {
+      return {
+        safe: false,
+        sellAllowed: true,
+        tripped: "no_baseline",
+        reason: `${error instanceof Error ? error.message : "Live NAV read failed"} — BUY fail-closed. (SELL still permitted with held-qty verification.)`,
+      };
+    }
     if (!liveSeries) {
       return {
         safe: false,
@@ -261,10 +287,19 @@ export async function checkKillSwitches(
     nav = liveSeries.current;
     yesterday = liveSeries.yesterday;
     peak = liveSeries.peak90;
-    accuracyData = await getLiveAccuracy(supabase, market);
+    try {
+      accuracyData = await getLiveAccuracy(supabase, market);
+    } catch (error) {
+      return {
+        safe: false,
+        sellAllowed: true,
+        tripped: "no_baseline",
+        reason: `${error instanceof Error ? error.message : "Live trade-history read failed"} — BUY fail-closed. (SELL still permitted with held-qty verification.)`,
+      };
+    }
   } else {
     // Paper path (original): paper_portfolio, paper_performance, paper_trades.
-    const [{ data: portfolio }, { data: recentPerf }, { data: closedTrades }] =
+    const [portfolioResult, performanceResult, tradesResult] =
       await Promise.all([
         supabase
           .from("paper_portfolio")
@@ -293,7 +328,28 @@ export async function checkKillSwitches(
         ),
       ]);
 
-    nav = portfolio?.nav ?? startNav;
+    const readError = portfolioResult.error ?? performanceResult.error ?? tradesResult.error;
+    if (readError || !portfolioResult.data) {
+      return {
+        safe: false,
+        sellAllowed: false,
+        tripped: "no_baseline",
+        reason: `Paper risk data unavailable for ${market.toUpperCase()} — trading fail-closed${readError?.message ? `: ${readError.message}` : "."}`,
+      };
+    }
+    const portfolio = portfolioResult.data;
+    const recentPerf = performanceResult.data;
+    const closedTrades = tradesResult.data;
+
+    nav = Number(portfolio.nav);
+    if (!Number.isFinite(nav) || nav <= 0) {
+      return {
+        safe: false,
+        sellAllowed: false,
+        tripped: "no_baseline",
+        reason: `Paper NAV is invalid for ${market.toUpperCase()} — trading fail-closed.`,
+      };
+    }
 
     const today = new Date().toISOString().slice(0, 10);
     const perfArr: any[] = recentPerf ?? [];
@@ -324,6 +380,7 @@ export async function checkKillSwitches(
         supabase,
         market,
         `Daily loss ${dailyLossPct.toFixed(1)}% exceeds ${dailyLossLimit}% threshold`,
+        book,
       );
       return {
         safe: false,
@@ -345,6 +402,7 @@ export async function checkKillSwitches(
         supabase,
         market,
         `30-day accuracy ${accuracy.toFixed(0)}% below ${accuracyLimit}% threshold`,
+        book,
       );
       return {
         safe: false,
@@ -363,6 +421,7 @@ export async function checkKillSwitches(
         supabase,
         market,
         `Drawdown ${drawdownPct.toFixed(1)}% exceeds ${drawdownLimit}% from peak $${peak.toFixed(0)}`,
+        book,
       );
       return {
         safe: false,
@@ -375,7 +434,12 @@ export async function checkKillSwitches(
 
   // All clear — auto-resolve stale health alert (does NOT re-enable trading;
   // a human re-enables in Settings after reviewing the trip).
-  await resolveIssue(`killswitch:${market}`);
+  if (resolveAlerts !== false) {
+    await Promise.all([
+      resolveIssue(`killswitch:${market}:${book}`, supabase),
+      resolveIssue(`killswitch:${market}`, supabase),
+    ]);
+  }
   return { safe: true, sellAllowed: true };
 }
 
@@ -383,19 +447,20 @@ async function disableTrading(
   supabase: any,
   market: string,
   reason: string,
+  book: TradingBook,
 ): Promise<void> {
-  console.error(`[kill-switch] TRADING DISABLED (${market}): ${reason}`);
+  console.error(`[kill-switch] TRADING DISABLED (${market}/${book}): ${reason}`);
   // Per-market disable (migration 171): halt ONLY this market's trading, not the
   // other's. isTradingEnabled(market) also honors the global strategy_config
   // master-kill, so a true "stop everything" still works.
-  await setMarketTrading(supabase, market, false, reason);
+  await setMarketTrading(supabase, market, false, `[${book}] ${reason}`);
   await reportIssue({
-    issueKey: `killswitch:${market}`,
+    issueKey: `killswitch:${market}:${book}`,
     severity: "critical",
     category: "trading",
-    title: `Kill switch tripped (${market.toUpperCase()}) — trading auto-disabled`,
-    detail: `${reason}. Trading is halted for ${market.toUpperCase()} until you review and re-enable it in Settings → Trading.`,
-  });
+    title: `Kill switch tripped (${market.toUpperCase()} ${book.toUpperCase()}) — new exposure disabled`,
+    detail: `${reason}. New exposure is halted for ${market.toUpperCase()} until you review and run the guarded reset in Settings → Trading.`,
+  }, supabase);
 
   // G8: flag resting live orders for human review. No auto-cancel — no LLM
   // or cron may cancel a live order; the owner does it manually at the broker.

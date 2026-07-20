@@ -86,7 +86,7 @@ export async function setMarketPaused(
   reason?: string,
 ): Promise<void> {
   const m = norm(market);
-  await svc.from("market_controls").upsert(
+  const { error } = await svc.from("market_controls").upsert(
     {
       market: m,
       paused,
@@ -96,6 +96,7 @@ export async function setMarketPaused(
     },
     { onConflict: "market" },
   );
+  if (error) throw new Error(`market_controls(${m}) pause write failed: ${error.message}`);
 }
 
 /** Enable / disable TRADING for one market (kill switch, manual re-enable). */
@@ -106,7 +107,7 @@ export async function setMarketTrading(
   reason?: string,
 ): Promise<void> {
   const m = norm(market);
-  await svc.from("market_controls").upsert(
+  const { error } = await svc.from("market_controls").upsert(
     {
       market: m,
       trading_enabled: enabled,
@@ -115,4 +116,5 @@ export async function setMarketTrading(
     },
     { onConflict: "market" },
   );
+  if (error) throw new Error(`market_controls(${m}) trading write failed: ${error.message}`);
 }

@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
+import { currentPaperTradePnl } from "@/lib/paper-current-pnl";
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 import PageHeader from "@/components/dashboard/PageHeader";
 import { fmtMoney, fmtMoneyAbbrev, type Mkt } from "@/lib/format-money";
@@ -343,8 +344,8 @@ function ScoreBar({ score }: { score: number }) {
   );
 }
 
-export default function TradingPage({ pendingSignals, tradeLog, strategy, portfolio, queue, market }: {
-  pendingSignals: any[]; tradeLog: any[]; strategy: any; portfolio: any; queue: any[];
+export default function TradingPage({ pendingSignals, tradeLog, strategy, portfolio, queue, positions, market }: {
+  pendingSignals: any[]; tradeLog: any[]; strategy: any; portfolio: any; queue: any[]; positions: any[];
   // Resolved from the `mkt` cookie by the server component. Every row here is
   // already scoped to this market and every amount renders in its currency —
   // US ($) and India (₹) NAV are never blended.
@@ -655,17 +656,18 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>No paper trades yet.</div>
           ) : (
             <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+            <table style={{ width: "100%", minWidth: "820px", borderCollapse: "collapse", fontSize: "13px" }}>
               <thead>
                 <tr style={{ color: T.muted }}>
-                  {["Symbol", "Side", "Qty", "Fill", "Total", "Score", "Outcome", "Date"].map(h => (
+                  {["Symbol", "Side", "Qty", "Fill", "Total", "Score", "Realized P&L", "Current P&L", "Outcome", "Date"].map(h => (
                     <th key={h} style={{ padding: "5px 12px 10px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {tradeLog.map((t: any) => (
-                  <tr key={t.id} style={{ borderTop: `1px solid ${T.border}` }}>
+                {tradeLog.map((t: any) => {
+                  const currentPnl = currentPaperTradePnl(t, positions, market);
+                  return <tr key={t.id} style={{ borderTop: `1px solid ${T.border}` }}>
                     <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}>{t.symbol}</td>
                     <td style={{ padding: "10px 12px 10px 0" }}>
                       <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 7px", borderRadius: "4px", background: t.order_side === "buy" ? T.greenBg : T.redBg, color: t.order_side === "buy" ? T.green : T.red }}>
@@ -676,14 +678,21 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
                     <td style={{ padding: "10px 12px 10px 0" }}>{t.fill_price != null ? fmtMoney(Number(t.fill_price), market) : "—"}</td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{t.fill_price != null ? fmtMoney(t.qty * t.fill_price, market, 0) : "—"}</td>
                     <td style={{ padding: "10px 12px 10px 0", color: T.accent }}>{t.analyst_score ?? "—"}</td>
+                    <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: t.realized_pnl != null ? pnlColor(Number(t.realized_pnl)) : T.muted }}>
+                      {t.realized_pnl != null ? fmtSigned(Number(t.realized_pnl), market) : "—"}
+                    </td>
+                    <td title={currentPnl?.markedAt ? `Marked ${new Date(currentPnl.markedAt).toLocaleString()} at ${fmtMoney(currentPnl.currentPrice, market)}` : "No current persisted position mark"}
+                      style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: currentPnl ? pnlColor(currentPnl.amount) : T.muted, whiteSpace: "nowrap" }}>
+                      {currentPnl ? <>{fmtSigned(currentPnl.amount, market)} <span style={{ fontSize: "10px" }}>({currentPnl.pct >= 0 ? "+" : ""}{currentPnl.pct.toFixed(2)}%)</span></> : "—"}
+                    </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>
                       {t.outcome
                         ? <span style={{ fontSize: "11px", fontWeight: 600, padding: "2px 7px", borderRadius: "4px", background: t.outcome === "win" ? T.greenBg : T.redBg, color: t.outcome === "win" ? T.green : T.red }}>{t.outcome}</span>
                         : <span style={{ color: T.amber, fontSize: "11px" }}>open</span>}
                     </td>
                     <td style={{ padding: "10px 0", color: T.muted, fontSize: "11px" }}>{new Date(t.executed_at).toLocaleDateString()}</td>
-                  </tr>
-                ))}
+                  </tr>;
+                })}
               </tbody>
             </table>
             </div>

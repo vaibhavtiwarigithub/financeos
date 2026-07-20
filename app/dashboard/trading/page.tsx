@@ -20,6 +20,7 @@ export default async function Page() {
     { data: strategyArr },
     { data: portfolio },
     { data: highScoreSignals },
+    { data: positions },
   ] = await Promise.all([
     supabase.from("agent_signals").select("*, research_packets(*)").eq("market", market).eq("status", "pending").order("created_at", { ascending: false }).limit(20),
     supabase.from("paper_trades").select("*").eq("market", market).order("executed_at", { ascending: false }).limit(30),
@@ -33,6 +34,7 @@ export default async function Page() {
     market === "india"
       ? Promise.resolve({ data: [] as any[] })
       : supabase.from("agent_signals").select("id, symbol, direction, analyst_score, conviction, rationale, created_at, status").eq("market", "us").eq("status", "pending").gte("analyst_score", 60).order("analyst_score", { ascending: false }).limit(20),
+    supabase.from("paper_positions").select("symbol,market,current_price,updated_at").eq("market", market),
   ]);
 
   return (
@@ -42,6 +44,7 @@ export default async function Page() {
       strategy={strategyArr?.[0] ?? null}
       portfolio={portfolio ?? null}
       queue={highScoreSignals ?? []}
+      positions={positions ?? []}
       market={market}
     />
   );

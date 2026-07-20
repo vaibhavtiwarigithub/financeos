@@ -21,6 +21,14 @@ type McpBrokerStatus = {
   has_refresh?: boolean; oauth_ready: boolean; accounts?: any[];
 };
 
+type MarketControlStatus = {
+  market: "us" | "india";
+  paused: boolean;
+  trading_enabled: boolean;
+  paused_reason?: string | null;
+  trip_book?: "paper" | "live" | null;
+};
+
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
   text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280",
@@ -114,6 +122,15 @@ export default function SettingsPage() {
   const [tradingEnabledUs, setTradingEnabledUs] = useState(true);
   const [tradingEnabledIndia, setTradingEnabledIndia] = useState(true);
   const [savingTradingEnabled, setSavingTradingEnabled] = useState(false);
+  const [marketControls, setMarketControls] = useState<MarketControlStatus[]>([]);
+  const [resettingMarket, setResettingMarket] = useState<string | null>(null);
+
+  const loadMarketControls = () => {
+    fetch("/api/settings/kill-switch")
+      .then(r => r.ok ? r.json() : Promise.reject(new Error("control read failed")))
+      .then(d => setMarketControls(Array.isArray(d.markets) ? d.markets : []))
+      .catch(() => {});
+  };
 
   // Robinhood MCP scaffolding (OAuth connect is not yet wired — blocked on
   // Robinhood's real endpoints). Account allowlist + snapshot-source switch.
@@ -302,6 +319,7 @@ export default function SettingsPage() {
       }, () => {});
 
     fetch("/api/brokers").then(r => r.json()).then(setBrokerList).catch(() => {});
+    loadMarketControls();
   }, []);
 
   async function saveBrokerRegistry() {
@@ -337,6 +355,27 @@ export default function SettingsPage() {
       setToast("Failed to save — try again");
       setTimeout(() => setToast(""), 2500);
     } finally { setSavingTradingEnabled(false); }
+  }
+
+  async function resetKillSwitch(market: "us" | "india", book: "paper" | "live") {
+    if (!confirm(`Recheck every ${book} safety brake and reset the ${market.toUpperCase()} latch only if all pass?`)) return;
+    setResettingMarket(`${market}:${book}`);
+    try {
+      const res = await fetch("/api/settings/kill-switch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ market, book, acknowledged: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Reset refused");
+      await loadMarketControls();
+      setToast(`${market.toUpperCase()} ${book} kill switch reset after safety recheck`);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Kill-switch reset failed");
+    } finally {
+      setResettingMarket(null);
+      setTimeout(() => setToast(""), 4000);
+    }
   }
 
   async function patchRisk(payload: Record<string, any>, okMsg: string) {
@@ -842,6 +881,29 @@ export default function SettingsPage() {
                   </div>
                 ))}
               </div>
+              {marketControls.some(control => !control.trading_enabled) && (
+                <div style={{ marginTop: "14px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {marketControls.filter(control => !control.trading_enabled).map(control => {
+                    const books = control.trip_book ? [control.trip_book] : (["paper", "live"] as const);
+                    return (
+                      <div key={control.market} style={{ border: `1px solid ${T.red}55`, background: `${T.red}0D`, borderRadius: "8px", padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                        <div>
+                          <div style={{ color: T.red, fontSize: "12px", fontWeight: 700 }}>{control.market.toUpperCase()} safety latch is OFF</div>
+                          <div style={{ color: T.textSub, fontSize: "11px", marginTop: "3px" }}>{control.paused_reason ?? "Originating book is unknown; choose the book to recheck."}</div>
+                        </div>
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          {books.map(book => (
+                            <button key={book} type="button" onClick={() => resetKillSwitch(control.market, book)} disabled={resettingMarket !== null}
+                              style={{ border: `1px solid ${T.red}`, background: "transparent", color: T.red, borderRadius: "7px", padding: "6px 10px", fontSize: "11px", fontWeight: 700, cursor: resettingMarket ? "not-allowed" : "pointer" }}>
+                              {resettingMarket === `${control.market}:${book}` ? "Rechecking..." : `Recheck ${book} + reset`}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 

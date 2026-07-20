@@ -276,6 +276,40 @@ describe("Test 9a — real checkKillSwitches auto-disables on a breach (blocks n
     expect(result).toMatchObject({ safe: false, tripped: "accuracy" });
     expect(result.reason).toContain("(20 trades)");
   });
+
+  it("fails closed when kill-switch configuration cannot be read", async () => {
+    const resolver: Resolver = (q) => q.table === "strategy_config"
+      ? { data: null, error: { message: "database unavailable" } }
+      : { data: null, error: null };
+    const real = await vi.importActual<typeof import("@/lib/kill-switches")>("@/lib/kill-switches");
+    const result = await real.checkKillSwitches(makeClient(resolver) as any, { market: "us", book: "paper" });
+    expect(result).toMatchObject({ safe: false, sellAllowed: false, tripped: "no_baseline" });
+    expect(result.reason).toContain("configuration unavailable");
+  });
+
+  it("fails closed instead of retrying paper risk reads without market scope", async () => {
+    const resolver: Resolver = (q) => {
+      if (q.table === "strategy_config") return { data: { ks_daily_loss_pct: -5, ks_drawdown_pct: 20, ks_accuracy_pct: 40 }, error: null };
+      if (q.table === "paper_portfolio") return { data: null, error: { message: "market-scoped read failed" } };
+      return { data: [], error: null };
+    };
+    const real = await vi.importActual<typeof import("@/lib/kill-switches")>("@/lib/kill-switches");
+    const result = await real.checkKillSwitches(makeClient(resolver) as any, { market: "india", book: "paper" });
+    expect(result).toMatchObject({ safe: false, sellAllowed: false, tripped: "no_baseline" });
+    expect(result.reason).toContain("Paper risk data unavailable for INDIA");
+  });
+
+  it("blocks live BUY but preserves verified SELL eligibility on a telemetry read error", async () => {
+    const resolver: Resolver = (q) => {
+      if (q.table === "strategy_config") return { data: { active_account_us: "agentic", ks_daily_loss_pct: -5, ks_drawdown_pct: 20, ks_accuracy_pct: 40 }, error: null };
+      if (q.table === "live_account_snapshots") return { data: null, error: { message: "snapshot read failed" } };
+      return { data: [], error: null };
+    };
+    const real = await vi.importActual<typeof import("@/lib/kill-switches")>("@/lib/kill-switches");
+    const result = await real.checkKillSwitches(makeClient(resolver) as any, { market: "us", book: "live", accountId: "agentic" });
+    expect(result).toMatchObject({ safe: false, sellAllowed: true, tripped: "no_baseline" });
+    expect(result.reason).toContain("BUY fail-closed");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

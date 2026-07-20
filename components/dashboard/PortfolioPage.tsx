@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
+import { currentPaperTradePnl } from "@/lib/paper-current-pnl";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket } from "@/lib/market-context";
 import { fmtMoney } from "@/lib/format-money";
@@ -24,7 +25,7 @@ function pnlColor(n: number) { return n >= 0 ? T.green : T.red; }
 // shared helper so India groups lakh/crore-style while US stays en-US thousands.
 function fmt(n: number, cur = "$") {
   const market = cur === "₹" ? "india" : "us";
-  return (n >= 0 ? "+" : "") + fmtMoney(Math.abs(n), market);
+  return (n >= 0 ? "+" : "-") + fmtMoney(Math.abs(n), market);
 }
 function fmtPct(n: number) { return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
 
@@ -817,17 +818,18 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>No paper trades yet.</div>
           ) : (
             <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+            <table style={{ width: "100%", minWidth: "820px", borderCollapse: "collapse", fontSize: "13px" }}>
               <thead>
                 <tr style={{ color: T.muted }}>
-                  {["Symbol", "Side", "Qty", "Fill Price", "Total", "Score", "P&L", "Outcome", "Date"].map(h => (
+                  {["Symbol", "Side", "Qty", "Fill Price", "Total", "Score", "Realized P&L", "Current P&L", "Outcome", "Date"].map(h => (
                     <th key={h} style={{ padding: "5px 12px 10px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {trades.map((t: any) => (
-                  <tr key={t.id} style={{ borderTop: `1px solid ${T.border}` }}>
+                {trades.map((t: any) => {
+                  const currentPnl = currentPaperTradePnl(t, positions, activeMarket);
+                  return <tr key={t.id} style={{ borderTop: `1px solid ${T.border}` }}>
                     <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                         {t.symbol}
@@ -849,6 +851,10 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
                     <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: t.realized_pnl != null ? pnlColor(t.realized_pnl) : T.muted }}>
                       {t.realized_pnl != null ? fmt(t.realized_pnl, cur) : "—"}
                     </td>
+                    <td title={currentPnl?.markedAt ? `Marked ${new Date(currentPnl.markedAt).toLocaleString()} at ${fmtMoney(currentPnl.currentPrice, activeMarket)}` : "No current persisted position mark"}
+                      style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: currentPnl ? pnlColor(currentPnl.amount) : T.muted, whiteSpace: "nowrap" }}>
+                      {currentPnl ? <>{fmt(currentPnl.amount, cur)} <span style={{ fontSize: "10px" }}>({fmtPct(currentPnl.pct)})</span></> : "—"}
+                    </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>
                       {t.outcome ? (
                         <span style={{ fontSize: "11px", fontWeight: 600, padding: "2px 7px", borderRadius: "4px", background: t.outcome === "win" ? T.greenBg : t.outcome === "loss" ? T.redBg : T.amberBg, color: t.outcome === "win" ? T.green : t.outcome === "loss" ? T.red : T.amber }}>
@@ -857,8 +863,8 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
                       ) : <span style={{ color: T.amber, fontSize: "11px" }}>open</span>}
                     </td>
                     <td style={{ padding: "10px 0", color: T.muted, fontSize: "11px" }}>{new Date(t.executed_at).toLocaleDateString()}</td>
-                  </tr>
-                ))}
+                  </tr>;
+                })}
               </tbody>
             </table>
             </div>
