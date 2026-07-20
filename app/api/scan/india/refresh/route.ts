@@ -11,13 +11,13 @@ export const dynamic = "force-dynamic";
 // lower ceiling will truncate this mid-run.
 export const maxDuration = 300;
 
-// Nightly pre-score cache for the FULL NSE market.
+// Rotating pre-score cache for the broader NSE equity universe.
 //
 // The live India scan (app/api/scan/india) is honestly capped at ~NIFTY-100
 // because scoring ~2000 names name-by-name against Yahoo would take minutes and
 // blow past request timeouts. This cron pre-scores the full NSE list into
-// `india_screen_cache` in bounded nightly slices, so the scan can READ the whole
-// market instantly.
+// `india_screen_cache` in bounded slices. The cache API exposes fresh/stale
+// coverage explicitly; it never claims every NSE name is simultaneously fresh.
 //
 // One run is capped at MAX_PER_RUN symbols, processed oldest-scored-first (names
 // never cached come first), so consecutive nightly runs rotate through the whole

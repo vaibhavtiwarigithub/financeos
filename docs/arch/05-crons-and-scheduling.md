@@ -37,7 +37,7 @@ All triggered by `scripts/run-agents.ps1 -Agent <name>`. PC must be on for these
 | `research` | Weekdays 9:00 AM | `/api/agents/research/cron?market=us` | US signal generation (3 candidates/day) |
 | `paper-trade-us` | Weekdays 10:05 AM | `/api/agents/paper-trade?market=us` | US paper fills (standalone, freshness-gated) |
 | `trader` | Weekdays 9:45 AM | `/api/agents/trader` | TraderAgent proposals; `approval_required=true` |
-| `scan-india-refresh` | Weekdays 5:30 AM | `/api/scan/india/refresh` | Cache full NSE equity list in oldest-first slices |
+| `scan-india-refresh` | Weekdays 5:30 AM | `/api/scan/india/refresh` | Refresh up to 600 NSE equities oldest-first; scanner reports fresh/stale rotating coverage |
 | `research-india` | Weekdays 6:15 AM | `/api/agents/research/cron?market=india` | India signal generation post-NSE-close |
 | `paper-trade-india` | Weekdays 4:35 PM IST (≈6:05 AM ET) | `/api/agents/paper-trade?market=india` | India paper fills |
 | `position-monitor` | Weekdays 4:15 PM | `/api/agents/position-monitor?market=us` | US stop/target/time-stop/partial-profit checks |
@@ -48,7 +48,7 @@ All triggered by `scripts/run-agents.ps1 -Agent <name>`. PC must be on for these
 | `macro-sentinel` | Mondays 8:00 AM | `/api/agents/macro-sentinel` | Weekly macro regime computation |
 | `macro-read-us` | Weekdays 9:30 AM ET (13:30 UTC) | `/api/agent-mind/macro-read?market=us` | Agent Mind Phase 3: cached daily plain-English "what the macro backdrop means for your book" (US). Advisory/narrative only — never trades or sizes |
 | `macro-read-india` | Weekdays 10:00 AM IST (04:30 UTC) | `/api/agent-mind/macro-read?market=india` | **NO-OP — should be dropped.** The route refuses `market=india` before any LLM call or DB write (2026-07-17): both macro inputs (`macro_regime`, `category='macro'` `learning_priors`) are US-only and unmarket-tagged, so there is no honest India read to generate. Left active pending owner removal (dropping the `cron.job` row is a prod DB mutation); the route-level refusal makes it harmless — zero LLM spend, zero rows |
-| `theme-scout` | Sundays 8:00 PM | `/api/agents/theme-scout` | Weekly watchlist theme additions |
+| `theme-scout` | Sundays 8:00 PM ET | `/api/agents/theme-scout` | Weekly, discovery-only watchlist additions; independent of ResearchAgent |
 | `stale-check` | Every 4h | `/api/alerts/stale-check` | Alert if agent runs are stale |
 | `live-snapshot` | Weekdays (manual / Task Scheduler) | `scripts/sync_robin.py` | Python script — pulls Robinhood positions into `live_account_snapshots` |
 | `live-account-refresh` | On demand / Task Scheduler (`robinhood_mcp` source) | `POST /api/live-account/refresh-snapshot` | Deterministic MCP capture of all Robinhood accounts → upserts `live_account_snapshots` AND accrues one `live_performance` row/account/day (real equity + VOO close) — the forward-built source for the Live-vs-VOO chart (RH has no account-value history to backfill) |

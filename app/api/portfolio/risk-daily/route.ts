@@ -173,6 +173,11 @@ export async function GET(req: NextRequest) {
       .from("agent_signals")
       .select("symbol,market,analyst_score,direction,created_at,is_holding")
       .eq("market", market)
+      // Match the same canonical cohort every trade consumer trusts. Weekend
+      // staged and LLM-advisory rows may be useful elsewhere, but must not look
+      // like the current validated research verdict beside live holdings.
+      .eq("score_source", "deterministic_v1")
+      .eq("session_validated", true)
       .in("symbol", latestSymbols)
       .order("created_at", { ascending: false });
 

@@ -3,7 +3,7 @@ import { getConfiguredModel } from "@/lib/agent-model-config";
 import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 import { retrieveSimilarTrades, summarizeMemories } from "@/lib/rag/trade-memory";
 import { fetchSocialSentiment, shrinkSentimentScore, SocialSentiment } from "@/lib/social-sentiment";
-import { fetchOptionsSignal, OptionsSignal } from "@/lib/options-signal";
+import type { OptionsSignal } from "@/lib/options-signal";
 import { computeScores, type ComputedScores } from "@/lib/data/scores";
 import type { Candle } from "@/lib/data/technicals";
 import { isIndia, fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
@@ -52,6 +52,7 @@ import { fetchWebullAnalyst, webullAnalystLine, type WebullAnalyst } from "@/lib
 import { fetchDaysToEarnings } from "@/lib/data/earnings";
 import { getBenchmarkSeries } from "@/lib/data/benchmark-series";
 import { captureReturnObservation } from "@/lib/data/return-observations";
+import type { SourceName } from "@/lib/data/evidence";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
 // US, ^NSEI for India) — computed once per market per process, not per symbol.
@@ -135,12 +136,15 @@ async function scoreInsider(symbol: string, avKey: string): Promise<{ score: num
 // returning unavailable in practice (the reason every symbol's insider dimension
 // was stuck at neutral 50), so Massive is now the working primary. Each source
 // only wins when it reports available=true, so a dead source cascades to the next.
-async function resolveInsider(symbol: string, avKey: string): Promise<{ score: number; summary: string; available: boolean }> {
+type ResolvedInsider = { score: number; summary: string; available: boolean; source: SourceName };
+
+async function resolveInsider(symbol: string, avKey: string): Promise<ResolvedInsider> {
   const massive = await scoreMassiveInsider(symbol).catch(() => null);
-  if (massive?.available) return massive;
+  if (massive?.available) return { ...massive, source: "massive" };
   const edgar = await scoreEdgarInsider(symbol).catch(() => null);
-  if (edgar?.available) return edgar;
-  return scoreInsider(symbol, avKey);
+  if (edgar?.available) return { ...edgar, source: "sec_edgar" };
+  const av = await scoreInsider(symbol, avKey);
+  return { ...av, source: av.available ? "alpha_vantage" : "unavailable" };
 }
 
 const LEVERAGED_BEAR_ETFS = new Set([
@@ -459,7 +463,8 @@ const REGION_ETFS: Record<string, string[]> = {
 // Gather full symbol batch: holdings + watchlist + screener candidates + region ETFs from profile
 export async function gatherSymbols(
   supabase: any,
-  manualOverride?: string[]
+  manualOverride?: string[],
+  marketScope?: Market,
 ): Promise<SymbolEntry[]> {
   if (manualOverride && manualOverride.length > 0) {
     return manualOverride.map(s => {
@@ -471,8 +476,13 @@ export async function gatherSymbols(
         assetClass: isIndia(sym) ? "india" : (isEtfSymbol(sym) ? "etf" : "us_equity"),
         discovery_source: "manual" as DiscoverySource,
       };
-    });
+    }).filter(entry => marketScope === "india" ? entry.assetClass === "india"
+      : marketScope === "us" ? entry.assetClass !== "india"
+      : true);
   }
+
+  const includeUs = marketScope !== "india";
+  const includeIndia = marketScope !== "us";
 
   // fetchAndStoreAccountSnapshot() used to fire here automatically, but it
   // shells out to a local Claude Code CLI + Robinhood MCP (lib/claude-exec.ts)
@@ -488,11 +498,11 @@ export async function gatherSymbols(
   // forever instead of retiring, since only the Watchlist UI page enforced it.
   const nowIso = new Date().toISOString();
   const [holdings, watchlistResult, screenerSymbols, profileResult] = await Promise.all([
-    fetchHoldings(supabase),
+    includeUs ? fetchHoldings(supabase) : Promise.resolve([]),
     supabase.from("watchlist").select("symbol, source, market, created_at")
       .eq("research_enabled", true)
       .or(`expires_at.is.null,expires_at.gt.${nowIso}`),
-    runScreener(supabase),
+    includeUs ? runScreener(supabase) : Promise.resolve([]),
     supabase.from("profiles").select("market_focus").limit(1).single(),
   ]);
 
@@ -538,7 +548,7 @@ export async function gatherSymbols(
 
   // PRIORITY 2 — carry-forward (migration 172): candidates that missed a prior
   // run's cap come back with raised priority so the pool rotates fairly.
-  const deferredUs = await readDeferredCandidates(supabase, "us");
+  const deferredUs = includeUs ? await readDeferredCandidates(supabase, "us") : [];
   for (const sym of deferredUs) addCandidate(sym, "watchlist");
 
   // PRIORITY 3 — the rest of the watchlist (Theme Scout / non-manual).
@@ -561,32 +571,36 @@ export async function gatherSymbols(
   const candidateCap = parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "40");
   // Take the top `candidateCap` this run; carry the overflow forward (raised
   // priority, no starvation) instead of the old silent `.slice()` drop.
-  const usBatch = new Set(await applyCandidateCarryForward(supabase, "us", Array.from(candidateMap.keys()), candidateCap));
+  const usBatch = new Set(includeUs
+    ? await applyCandidateCarryForward(supabase, "us", Array.from(candidateMap.keys()), candidateCap)
+    : []);
   // Backlog visibility: carry-forward prevents silent drops, but if the queue
   // grows far past daily throughput the pool takes many days to rotate (effective
   // starvation). Surface it so throughput/cap can be tuned instead of a surprise.
-  try {
-    const { count: qDepth } = await supabase.from("research_queue").select("symbol", { count: "exact", head: true }).eq("market", "us");
-    const backlogDays = Math.ceil((qDepth ?? 0) / Math.max(1, candidateCap));
-    if ((qDepth ?? 0) > candidateCap * 4) {
-      await reportIssue({
-        issueKey: "research-backlog:us",
-        severity: (qDepth ?? 0) > candidateCap * 10 ? "critical" : "warn",
-        category: "data",
-        title: `US research backlog: ${qDepth} queued (~${backlogDays}d to clear at ${candidateCap}/day)`,
-        detail: `The US research carry-forward queue holds ${qDepth} symbols but only ${candidateCap} are researched per run, so a newly-added ticker waits ~${backlogDays} days for its turn. Raise RESEARCH_CANDIDATE_CAP, prune stale screener names, or split runs. Manual watchlist adds are prioritized ahead of this backlog, but screener candidates still rotate slowly.`,
-        autoExpireAt: new Date(new Date().setUTCHours(24, 0, 0, 0)).toISOString(),
-      }, supabase).catch(() => {});
-    } else {
-      await resolveIssue("research-backlog:us", supabase).catch(() => {});
-    }
-  } catch { /* backlog telemetry must never break a research run */ }
+  if (includeUs) {
+    try {
+      const { count: qDepth } = await supabase.from("research_queue").select("symbol", { count: "exact", head: true }).eq("market", "us");
+      const backlogDays = Math.ceil((qDepth ?? 0) / Math.max(1, candidateCap));
+      if ((qDepth ?? 0) > candidateCap * 4) {
+        await reportIssue({
+          issueKey: "research-backlog:us",
+          severity: (qDepth ?? 0) > candidateCap * 10 ? "critical" : "warn",
+          category: "data",
+          title: `US research backlog: ${qDepth} queued (~${backlogDays}d to clear at ${candidateCap}/day)`,
+          detail: `The US research carry-forward queue holds ${qDepth} symbols but only ${candidateCap} are researched per run, so a newly-added ticker waits ~${backlogDays} days for its turn. Raise RESEARCH_CANDIDATE_CAP, prune stale screener names, or split runs. Manual watchlist adds are prioritized ahead of this backlog, but screener candidates still rotate slowly.`,
+          autoExpireAt: new Date(new Date().setUTCHours(24, 0, 0, 0)).toISOString(),
+        }, supabase).catch(() => {});
+      } else {
+        await resolveIssue("research-backlog:us", supabase).catch(() => {});
+      }
+    } catch { /* backlog telemetry must never break a research run */ }
+  }
   const nonMetals = [...holdingEntries, ...Array.from(candidateMap.values()).filter(e => usBatch.has(e.symbol))];
 
   // Metals basket — always appended after candidate cap (4 extra symbols, cheap ETF analysis)
   const metals: SymbolEntry[] = [];
   const allNonMetalSyms = new Set(nonMetals.map(e => e.symbol));
-  for (const sym of METALS_BASKET) {
+  for (const sym of includeUs ? METALS_BASKET : []) {
     if (!allNonMetalSyms.has(sym)) {
       metals.push({ symbol: sym, isHeld: false, isEtf: true, assetClass: "metal", discovery_source: "metals_basket" });
     }
@@ -595,7 +609,7 @@ export async function gatherSymbols(
   // Region ETFs — appended for each non-US focus in profile.market_focus (max 3 per region)
   const regionEtfs: SymbolEntry[] = [];
   const seenAll = new Set([...allNonMetalSyms, ...metals.map(m => m.symbol)]);
-  for (const region of focusRegions) {
+  for (const region of includeUs ? focusRegions : []) {
     if (region === "US") continue;
     const basket = REGION_ETFS[region] ?? [];
     let added = 0;
@@ -615,17 +629,19 @@ export async function gatherSymbols(
   // when the profile later changes; only new India candidates follow focus.
   // Staleness-ordered for the same reason as US (parity): the India book must
   // rotate under the budget rather than starve a fixed tail.
-  const indiaHeld = await orderHoldingsByLastScored(supabase, await fetchIndiaHoldings(supabase), "india");
+  const indiaHeld = includeIndia
+    ? await orderHoldingsByLastScored(supabase, await fetchIndiaHoldings(supabase), "india")
+    : [];
   for (const sym of indiaHeld) {
     if (seenAll.has(sym)) continue;
     seenAll.add(sym);
     indiaSymbols.push({ symbol: sym, isHeld: true, isEtf: false, assetClass: "india", discovery_source: "india_holding" });
   }
-  if (focusRegions.includes("India")) {
+  if (includeIndia && focusRegions.includes("India")) {
     // Holdings-first (parity with US): real Kite holdings enter the batch as
     // isHeld:true so SELL/exit signals are possible on owned India positions —
     // long-only enforcement applies only to NEW positions, not exits.
-    // Candidates from the nightly full-market india_screen_cache (dual-bucket:
+    // Candidates from the rotating fresh india_screen_cache slice (dual-bucket:
     // momentum + value), not the static first-8 NIFTY names. Falls back to the
     // static list only when the cache is empty. Carry-forward first (migration
     // 172), then fresh screener names; overflow beyond the cap rotates next run.
@@ -1350,9 +1366,8 @@ export async function processSymbol(
   const applicable = applicableDimensions(entry);
 
   // Phase 0: fetch all real data in parallel — no LLM-generated numbers
-  const [socialResult, optionsResult, insiderResult, avOverview, candleResult, indiaNews, fiiDii] = await Promise.all([
+  const [socialResult, insiderResult, fundamentalResult, candleResult, indiaNews, fiiDii] = await Promise.all([
     applicable.has("sentiment") && !india ? fetchSocialSentiment(symbol).catch(() => null) : Promise.resolve(null),
-    applicable.has("options") ? fetchOptionsSignal(symbol).catch(() => null) : Promise.resolve(null),
     // Insider: SEC EDGAR Form 4 primary (free, official, unlimited) → Alpha
     // Vantage INSIDER_TRANSACTIONS fallback. Skipped for ETFs/India/ADRs (no
     // Form 4), which saves the fetch entirely.
@@ -1360,18 +1375,18 @@ export async function processSymbol(
     !applicable.has("fundamental")
       // No company fundamentals (ETF) — scoreFundamentals uses the ETF baseline
       // via isEtf; skip the fetch (don't waste an FMP/AV call).
-      ? Promise.resolve({})
+      ? Promise.resolve({ overview: {} as Record<string, string>, source: "unavailable" as SourceName })
       : india
         ? fetchIndiaOverview(symbol)
             // PIT capture-on-fetch (additive, non-blocking, fail-open): archive a
             // fundamental_facts vintage. Never awaited, never throws into scoring.
-            .then(ov => { void captureFundamentalsFact(supabase, { symbol, market: "india", values: ov, source: "yahoo" }); return ov; })
-            .catch(() => ({}))
+            .then(ov => { void captureFundamentalsFact(supabase, { symbol, market: "india", values: ov, source: "yahoo" }); return { overview: ov, source: "yahoo" as SourceName }; })
+            .catch(() => ({ overview: {} as Record<string, string>, source: "unavailable" as SourceName }))
         // US equities: FMP (own 250/day budget) → Alpha Vantage OVERVIEW
         // fallback, mapped to the same OVERVIEW shape scoreFundamentals reads.
         : fetchUsOverview(symbol, () => fetchAVOverview(symbol, avKey))
-            .then(r => { void captureFundamentalsFact(supabase, { symbol, market: "us", values: r.overview, source: r.source }); return r.overview; })
-            .catch(() => ({})),
+            .then(r => { void captureFundamentalsFact(supabase, { symbol, market: "us", values: r.overview, source: r.source }); return { overview: r.overview, source: r.source as SourceName }; })
+            .catch(() => ({ overview: {} as Record<string, string>, source: "unavailable" as SourceName })),
     // The resolved candle SOURCE is carried alongside the bars now (it was
     // previously discarded) so the return-observation contract can record the
     // provider its evidence came from. Same fetches, same fallback order.
@@ -1405,6 +1420,7 @@ export async function processSymbol(
     // the US/global backdrop. NEVER fabricates a flow number.
     india ? fetchFiiDiiFlows().catch(() => null) : Promise.resolve(null),
   ]);
+  const avOverview = fundamentalResult.overview;
   const candles: Candle[] = candleResult.candles;
   const indiaMacroLine = india ? fiiDiiMacroLine(fiiDii) : null;
 
@@ -1436,6 +1452,13 @@ export async function processSymbol(
   const effectiveSocial: SocialSentiment | null = india
     ? indiaNewsToSocial(symbol, indiaNews)
     : socialResult;
+  const sentimentProviders: SourceName[] = [];
+  if (effectiveSocial?.stocktwits_sample_size && effectiveSocial.stocktwits_sample_size >= 5) sentimentProviders.push("stocktwits");
+  if (effectiveSocial?.gdelt_articles && effectiveSocial.gdelt_articles > 0) sentimentProviders.push("gdelt");
+  if (effectiveSocial?.av_news_articles && effectiveSocial.av_news_articles > 0) sentimentProviders.push("alpha_vantage");
+  const sentimentSource: SourceName = sentimentProviders.length > 1
+    ? "social_composite"
+    : sentimentProviders[0] ?? "unavailable";
 
   // Analyst-recommendation dimension (Finnhub, free). Wall-Street consensus is a
   // genuine predictive axis, but per CLAUDE.md's pushback mandate — don't add a
@@ -1473,6 +1496,13 @@ export async function processSymbol(
     socialResult: effectiveSocial,
     insiderResult,
     supabase,
+    market: india ? "india" : "us",
+    provenance: {
+      fundamental: fundamentalResult.source,
+      technical: candleResult.source as SourceName,
+      sentiment: sentimentSource,
+      insider: insiderResult?.source ?? "unavailable",
+    },
   });
 
   const market = india ? "india" : "us"; // Phase 4: per-market champion weights
@@ -1750,7 +1780,9 @@ export async function processSymbol(
         _data_quality: scores.dataQuality,
         _social_sentiment: effectiveSocial ?? null,
         _india_news: india ? (indiaNews ?? null) : null,
-        _options_signal:   optionsResult ?? null,
+        // Options are not a scored dimension. Keep the packet field stable but
+        // do not spend an API call on data that cannot affect this decision.
+        _options_signal: null,
         _using_champion_weights: usingChampion,
         _trading_mandate: tradingMandate,
       },

@@ -30,7 +30,12 @@ interface ScanResult {
 interface ScanResponse {
   strategy: { id: string; name: string } | null;
   source?: string;
+  coverage_mode?: string;
   cache_count?: number;
+  cache_total_rows?: number;
+  fresh_eligible_rows?: number;
+  stale_rows?: number;
+  matched_before_limit?: number;
   cache_oldest_scored_at?: string | null;
   total_scanned: number;
   passing: number;
@@ -146,9 +151,9 @@ export default function ScannerPage() {
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px clamp(14px,4vw,24px)", marginBottom: "20px" }}>
           <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>Scan Configuration {isIndia && <span style={{ color: T.accent }}>· 🇮🇳 India (₹)</span>}</div>
 
-          {isIndia && result?.source === "nse_cache" ? (
+          {isIndia && result?.source === "nse_rotating_cache" ? (
             <div style={{ background: `${T.accent}10`, border: `1px solid ${T.accent}30`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.sub }}>
-              Screening the <strong style={{ color: T.text }}>full NSE market</strong> from the nightly pre-score cache ({result.cache_count ?? result.total_scanned} names, updated {agoLabel(result.cache_oldest_scored_at)}). Enter symbols above (e.g. RELIANCE, TCS) to force a live scan of specific names instead.
+              Screening a <strong style={{ color: T.text }}>fresh rotating NSE slice</strong>: {result.fresh_eligible_rows ?? result.total_scanned} fresh of {result.cache_total_rows ?? result.total_scanned} cached names, {result.stale_rows ?? 0} stale. Oldest eligible score updated {agoLabel(result.cache_oldest_scored_at)}. This is not simultaneous full-NSE coverage. Enter symbols above (e.g. RELIANCE, TCS) to force a live scan.
             </div>
           ) : isIndia && (
             <div style={{ background: `${T.accent}10`, border: `1px solid ${T.accent}30`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.sub }}>
@@ -227,8 +232,8 @@ export default function ScannerPage() {
               {[
                 { label: "Scanned", value: result.total_scanned },
                 { label: "Passing", value: result.passing, color: result.passing > 0 ? T.green : T.muted },
-                { label: "Fundamentals", value: result.data_sources.fundamentals.includes("unavailable") ? "No FD key" : "FinancialDatasets", color: result.data_sources.fundamentals.includes("unavailable") ? T.red : T.green },
-                { label: "Technicals", value: result.data_sources.technicals.includes("unavailable") ? "No AV key" : "Alpha Vantage", color: result.data_sources.technicals.includes("unavailable") ? T.red : T.green },
+                { label: "Fundamentals", value: result.data_sources.fundamentals.includes("unavailable") ? "Unavailable" : isIndia ? "Yahoo India" : "FinancialDatasets", color: result.data_sources.fundamentals.includes("unavailable") ? T.red : T.green },
+                { label: "Technicals", value: result.data_sources.technicals.includes("unavailable") ? "Unavailable" : isIndia ? "Yahoo + local" : "Alpha Vantage", color: result.data_sources.technicals.includes("unavailable") ? T.red : T.green },
               ].map(({ label, value, color }) => (
                 <div key={label} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "12px 16px", minWidth: "120px" }}>
                   <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "4px" }}>{label}</div>

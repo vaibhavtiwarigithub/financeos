@@ -32,8 +32,13 @@ function isMarketHours(): boolean {
 }
 
 function isStale(retrievedAt: string): boolean {
-  if (!isMarketHours()) return false; // outside hours: cached EOD is fine
-  return Date.now() - new Date(retrievedAt).getTime() > STALE_THRESHOLD_MS;
+  const age = Date.now() - new Date(retrievedAt).getTime();
+  if (!Number.isFinite(age) || age < 0) return true;
+  // Outside market hours an EOD close is valid, but not indefinitely. Four
+  // calendar days covers ordinary weekends and one-day exchange holidays while
+  // refusing an abandoned cache row as today's executable paper-exit price.
+  if (!isMarketHours()) return age > 4 * 86_400_000;
+  return age > STALE_THRESHOLD_MS;
 }
 
 /** Fetch a real-time quote from Alpha Vantage GLOBAL_QUOTE (direct HTTP, no MCP).
@@ -141,7 +146,9 @@ async function fetchCachedQuote(symbol: string, supabase: any): Promise<Determin
 
     if (!data || !data.close) return null;
 
-    const retrievedAt = data.cached_at ?? data.date + "T20:00:00Z";
+    // Freshness follows the market date represented by the bar, not when an old
+    // row happened to be re-read or re-cached.
+    const retrievedAt = data.date + "T20:00:00Z";
     return {
       symbol,
       price: Number(data.close),
@@ -182,19 +189,21 @@ export async function getQuote(symbol: string, supabase: any): Promise<Determini
 
   // 2. price_cache (EOD — fine outside market hours, free).
   const cached = await fetchCachedQuote(symbol, supabase);
-  if (cached) return cached;
+  if (cached && !cached.stale) return cached;
 
   // 3. Alpha Vantage — LAST resort only; every hit counts against the 25/day cap.
   const avQuote = await fetchAVQuote(symbol, avKey);
   if (avQuote) return avQuote;
 
-  return unavailable;
+  // A stale close is still useful to read-only callers, but it remains marked
+  // stale so execution and exit paths can fail closed.
+  return cached ?? unavailable;
 }
 
 /**
  * Batch quote fetch.
- * Priority: Massive snapshot (one HTTP call for all symbols) → Alpha Vantage
- * per-symbol (only for whatever Massive didn't cover) → price_cache → unavailable.
+ * Priority: Massive snapshot (one HTTP call for all symbols) → fresh price_cache
+ * → Alpha Vantage reserve → explicitly stale cache → unavailable.
  * Massive is primary because AV's 25 calls/day free tier can't cover a
  * ~26-symbol portfolio refresh — see fetchMassiveBatchQuotes above.
  */
@@ -211,12 +220,25 @@ export async function getBatchQuotes(
 
   const remaining = symbols.filter(s => !results[s]);
   if (remaining.length > 0) {
-    // Fall back to AV per-symbol / price_cache for whatever Massive missed.
-    // Small concurrency limit to avoid AV rate-limiting.
+    // Do not call getQuote() here: it would retry Massive once per missed
+    // symbol, recreating the N-symbol burst this batch path exists to prevent.
+    // Read the durable EOD cache first, then spend scarce AV calls only for the
+    // genuinely unresolved tail.
     const chunks: string[][] = [];
     for (let i = 0; i < remaining.length; i += 5) chunks.push(remaining.slice(i, i + 5));
     for (const chunk of chunks) {
-      await Promise.all(chunk.map(async s => { results[s] = await getQuote(s, supabase); }));
+      await Promise.all(chunk.map(async s => {
+        const cached = await fetchCachedQuote(s, supabase);
+        if (cached && !cached.stale) {
+          results[s] = cached;
+          return;
+        }
+        const av = await fetchAVQuote(s, process.env.ALPHA_VANTAGE_API_KEY ?? "");
+        results[s] = av ?? cached ?? {
+          symbol: s, price: 0, bid: null, ask: null, change: null, changePct: null,
+          source: "unavailable", retrievedAt: new Date().toISOString(), stale: true,
+        };
+      }));
     }
   }
 
@@ -232,4 +254,10 @@ export function computeFillPrice(quote: DeterministicQuote): number {
   const base = quote.ask ?? quote.price;
   const slippage = 0.0005; // 0.05%
   return parseFloat((base * (1 + slippage)).toFixed(4));
+}
+
+/** Conservative paper SELL fill when no executable bid is available. */
+export function computeExitFillPrice(price: number, bid?: number | null): number {
+  const base = bid != null && Number.isFinite(bid) && bid > 0 ? bid : price;
+  return parseFloat((base * (1 - 0.0005)).toFixed(4));
 }

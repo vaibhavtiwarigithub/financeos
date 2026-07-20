@@ -106,7 +106,12 @@ async function scanFromCache(opts: {
 }): Promise<Record<string, any> | null> {
   try {
     const sb = createServiceClient();
-    let q = sb.from("india_screen_cache").select("*");
+    const freshCutoff = new Date(Date.now() - 36 * 3600_000).toISOString();
+    const [{ count: cacheTotal }, { count: freshTotal }] = await Promise.all([
+      sb.from("india_screen_cache").select("symbol", { count: "exact", head: true }),
+      sb.from("india_screen_cache").select("symbol", { count: "exact", head: true }).gte("scored_at", freshCutoff),
+    ]);
+    let q = sb.from("india_screen_cache").select("*").gte("scored_at", freshCutoff);
 
     // Push what we can into SQL (RSI range, MA50). Fundamentals filters are applied
     // in JS below since strategy filters map onto several columns/operators.
@@ -117,7 +122,31 @@ async function scanFromCache(opts: {
 
     const { data, error } = await q;
     if (error) return null;                    // missing table / query error → fall back
-    if (!Array.isArray(data) || data.length === 0) return null; // empty cache → fall back
+    if (!Array.isArray(data)) return null;
+    // A healthy fresh cache with zero rows matching the requested SQL filters is
+    // a truthful zero-result scan, not a reason to spend ~NIFTY-100 live calls.
+    if (data.length === 0 && (freshTotal ?? 0) > 0) {
+      return {
+        strategy: opts.strategy ? { id: opts.strategy.id, name: opts.strategy.name } : null,
+        market: "india",
+        source: "nse_rotating_cache",
+        coverage_mode: "rotating_fresh_slice",
+        cache_total_rows: cacheTotal ?? 0,
+        fresh_eligible_rows: freshTotal ?? 0,
+        stale_rows: Math.max(0, (cacheTotal ?? 0) - (freshTotal ?? 0)),
+        matched_before_limit: 0,
+        cache_count: 0,
+        cache_oldest_scored_at: null,
+        total_scanned: freshTotal ?? 0,
+        passing: 0,
+        results: [],
+        data_sources: {
+          fundamentals: "Yahoo Finance (India, ₹) — rotating fresh cache",
+          technicals: "Yahoo candles → local RSI/EMA — rotating fresh cache",
+        },
+      };
+    }
+    if (data.length === 0) return null; // no fresh cache rows → bounded live fallback
 
     // Map strategy fundamental filters onto cache columns.
     const colFor: Record<string, string> = {
@@ -236,10 +265,15 @@ async function scanFromCache(opts: {
     return {
       strategy: opts.strategy ? { id: opts.strategy.id, name: opts.strategy.name } : null,
       market: "india",
-      source: "nse_cache",
+      source: "nse_rotating_cache",
+      coverage_mode: "rotating_fresh_slice",
+      cache_total_rows: cacheTotal ?? data.length,
+      fresh_eligible_rows: freshTotal ?? data.length,
+      stale_rows: Math.max(0, (cacheTotal ?? data.length) - (freshTotal ?? data.length)),
+      matched_before_limit: data.length,
       cache_count: data.length,
       cache_oldest_scored_at: oldest,
-      total_scanned: data.length,
+      total_scanned: freshTotal ?? data.length,
       passing: scored.filter((r: any) => r.passes_filters).length,
       results: scored.slice(0, opts.limit),
       data_sources: {

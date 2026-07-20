@@ -6,7 +6,7 @@
 
 import { computeTechnicals, scoreTechnicals } from "./technicals";
 import type { DeterministicQuote } from "./quotes";
-import { writeEvidence, writeBatchEvidence } from "./evidence";
+import { writeEvidence, writeBatchEvidence, type SourceName } from "./evidence";
 import { isIndia } from "@/lib/india-data";
 
 export type MarketScope = "us" | "india";
@@ -450,6 +450,7 @@ export async function computeScores(opts: {
   market?: MarketScope;
   /** Injectable clock for deterministic tests of the macro age bound. */
   now?: Date;
+  provenance?: Partial<Record<"fundamental" | "technical" | "sentiment" | "insider", SourceName>>;
 }): Promise<ComputedScores> {
   const { symbol, isEtf, avOverview, candles, socialResult, insiderResult, supabase } = opts;
   const market: MarketScope = opts.market ?? (isIndia(symbol) ? "india" : "us");
@@ -511,30 +512,30 @@ export async function computeScores(opts: {
     {
       symbol,
       evidence_type: "fundamental",
-      source: "alpha_vantage",
+      source: opts.provenance?.fundamental ?? "unavailable",
       payload: fundEvidence,
       quality_state: result.dataQuality.fundamentalDataAvailable ? "ok" : "missing",
     },
     {
       symbol,
       evidence_type: "ohlcv",
-      source: "alpha_vantage",
+      source: opts.provenance?.technical ?? "unavailable",
       payload: { data_points: candles.length, latest_date: candles[candles.length - 1]?.date },
       quality_state: candles.length >= 50 ? "ok" : candles.length >= 14 ? "ok" : "missing",
     },
     ...(socialResult ? [{
       symbol,
       evidence_type: "sentiment" as const,
-      source: "stocktwits" as const,
+      source: opts.provenance?.sentiment ?? "unavailable",
       payload: socialResult,
-      quality_state: "ok" as const,
+      quality_state: (result.dataQuality.sentimentDataAvailable ? "ok" : "missing") as "ok" | "missing",
     }] : []),
     ...(insiderResult ? [{
       symbol,
       evidence_type: "insider" as const,
-      source: "alpha_vantage" as const,
+      source: opts.provenance?.insider ?? "unavailable",
       payload: insiderResult,
-      quality_state: "ok" as const,
+      quality_state: (result.dataQuality.insiderDataAvailable ? "ok" : "missing") as "ok" | "missing",
     }] : []),
     {
       symbol: undefined,

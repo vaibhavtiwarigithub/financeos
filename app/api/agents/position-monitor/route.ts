@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchIndiaQuote } from "@/lib/india-data";
+import { fetchIndiaQuote, fetchIndiaQuotes } from "@/lib/india-data";
 import { classifyOutcome } from "@/lib/trade-outcome";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadChampionGenome } from "@/lib/validation/genome-live";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { setMarketPaused } from "@/lib/market-controls";
-import { getQuote } from "@/lib/data/quotes";
+import { computeExitFillPrice, getBatchQuotes, getQuote } from "@/lib/data/quotes";
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { paperPerformanceTruth } from "@/lib/paper-nav";
@@ -72,6 +72,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     : allPositionsRaw;
 
   if (!positions?.length) {
+    if (marketScope) await resolveIssue(`position-monitor-price-unavailable:${marketScope}`, svc);
     // Still write bookkeeping so stale-check knows PM fired today for this market.
     await svc.from("agent_runs").insert({
       agent_type: "position_monitor",
@@ -98,25 +99,45 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
 
   // 2. Current prices: US via Massive (USD), India via Yahoo .NS (INR).
   const symbols: string[] = Array.from(new Set(positions.map((p: any) => String(p.symbol))));
-  const massiveKey = process.env.MASSIVE_API_KEY;
   const priceMap: Record<string, number> = {};
-  await Promise.allSettled(
-    positions.map(async (pos: any) => {
-      const sym = String(pos.symbol);
-      if (priceMap[sym] != null) return;
-      if (marketOf(pos, hasMarketCol) === "india") {
-        const q = await fetchIndiaQuote(sym);
-        if (q && q.price > 0) priceMap[sym] = q.price;
-        return;
-      }
-      if (!massiveKey) return;
-      try {
-        const res = await fetch(`https://api.massive.com/v2/aggs/ticker/${sym}/prev?adjusted=true&apiKey=${massiveKey}`);
-        const d = await res.json();
-        if (d.results?.[0]?.c) priceMap[sym] = d.results[0].c;
-      } catch { /* silently skip unavailable symbols */ }
-    })
-  );
+  const usSymbols = [...new Set<string>(positions
+    .filter((p: any) => marketOf(p, hasMarketCol) === "us")
+    .map((p: any): string => String(p.symbol)))];
+  const indiaSymbols = [...new Set<string>(positions
+    .filter((p: any) => marketOf(p, hasMarketCol) === "india")
+    .map((p: any): string => String(p.symbol)))];
+  const [usQuotes, indiaQuotes] = await Promise.all([
+    getBatchQuotes(usSymbols, svc),
+    fetchIndiaQuotes(indiaSymbols),
+  ]);
+  for (const sym of usSymbols) {
+    const q = usQuotes[sym];
+    if (q && q.source !== "unavailable" && !q.stale && q.price > 0) priceMap[sym] = q.price;
+  }
+  for (const sym of indiaSymbols) {
+    const q = indiaQuotes[sym.toUpperCase()];
+    if (q && !q.stale && q.price > 0) priceMap[sym] = q.price;
+  }
+  const unpricedByMarket: Record<"us" | "india", string[]> = {
+    us: usSymbols.filter(sym => priceMap[sym] == null),
+    india: indiaSymbols.filter(sym => priceMap[sym] == null),
+  };
+  const monitoredMarkets: Array<"us" | "india"> = marketScope ? [marketScope] : ["us", "india"];
+  for (const market of monitoredMarkets) {
+    const issueKey = `position-monitor-price-unavailable:${market}`;
+    if (unpricedByMarket[market].length > 0) {
+      await reportIssue({
+        issueKey,
+        severity: "warn",
+        category: "data",
+        title: `PositionMonitor could not price ${unpricedByMarket[market].length} ${market.toUpperCase()} holding(s)`,
+        detail: `No stop, target, time-stop, or conviction exit was evaluated for: ${unpricedByMarket[market].join(", ")}. Other positions with valid quotes were still evaluated.`,
+        autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+      }, svc);
+    } else {
+      await resolveIssue(issueKey, svc);
+    }
+  }
 
   // 3b. Daily score-based exit. ResearchAgent re-scores held symbols every
   // trading morning (Mon-Fri); PositionMonitor runs every trading afternoon.
@@ -200,10 +221,11 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
   ) {
     const market = marketOf(pos, hasMarketCol);
     const cur = market === "india" ? "₹" : "$";
+    const exitFillPrice = computeExitFillPrice(currentPrice);
     const requestedQty = exitQty ?? Number(pos.qty);
     const { data, error } = await svc.rpc("execute_paper_exit", {
       p_position_id: pos.id,
-      p_exit_price: currentPrice,
+      p_exit_price: exitFillPrice,
       p_exit_reason: exitReason,
       p_exit_qty: requestedQty,
       p_partial_stop_loss: partialStopLoss ?? null,
@@ -234,7 +256,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     if (Number(result.remaining_qty ?? 0) > 0) {
       updated.push(`${pos.symbol} (partial_target: ${requestedQty}/${pos.qty} closed, stop→breakeven)`);
     } else {
-      closed.push(`${pos.symbol} (${exitReason}: ${cur}${currentPrice.toFixed(2)}, P&L: ${cur}${Number(result.realized_pnl ?? 0).toFixed(2)})`);
+      closed.push(`${pos.symbol} (${exitReason}: ${cur}${exitFillPrice.toFixed(2)}, P&L: ${cur}${Number(result.realized_pnl ?? 0).toFixed(2)})`);
     }
   }
 
@@ -552,7 +574,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       trigger_source: marketScope ? "scheduled" : "manual",
       result_summary: navWriteFailed
         ? `NAV/performance write FAILED: ${navWriteErrors.join("; ")}`.slice(0, 500)
-        : `Checked ${positions.length}, closed ${closed.length}, updated ${updated.length}, stale scores held ${staleScoresHeld.length}.`,
+        : `Checked ${positions.length}, closed ${closed.length}, updated ${updated.length}, unpriced ${unpricedByMarket.us.length + unpricedByMarket.india.length}, stale scores held ${staleScoresHeld.length}.`,
       completed_at: new Date().toISOString(),
     } as any);
   } catch { /* best-effort — never fail the monitor run over bookkeeping */ }
@@ -576,6 +598,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     closedDetails: closed,
     updated: updated.length,
     stale_scores_held: staleScoresHeld,
+    unpriced: unpricedByMarket,
     nav_write_ok: !navWriteFailed,
     nav_write_errors: navWriteErrors,
     nav_invariant_ok: navInvariantOk,

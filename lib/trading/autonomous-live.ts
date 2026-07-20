@@ -13,6 +13,8 @@ import { getKiteMargins, getKiteHoldings } from "@/lib/kite";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { executeApprovedOrder } from "@/lib/trading/execute-order";
 import { isMarketOpenLive } from "@/lib/trading/market-calendar";
+import { fetchIndiaQuote } from "@/lib/india-data";
+import { loadTradingMandate } from "@/lib/trading-mandate";
 
 const SIGNAL_LOOKBACK_HOURS = 24;
 const NAV_ACCOUNT_ID = "605420660";
@@ -149,8 +151,12 @@ export async function runAutonomousLive(
     live_auto_max_open_positions:      cfg.live_auto_max_open_positions ?? null,
     live_auto_max_orders_per_day:      cfg.live_auto_max_orders_per_day ?? null,
   };
-  const scoreThreshold: number = cfg.score_threshold ?? 60;
   const flatSizePct: number = cfg.position_size_pct ?? 10;
+  const mandates = await Promise.all(
+    autonomousMarkets.map(async market => [market, await loadTradingMandate(svc, market as "us" | "india")] as const),
+  );
+  const mandateByMarket = Object.fromEntries(mandates);
+  const minimumScoreThreshold = Math.min(...mandates.map(([, mandate]) => mandate.score_threshold));
 
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
@@ -194,27 +200,33 @@ export async function runAutonomousLive(
     } catch { /* leave india NAV unset → fail closed */ }
   }
 
-  // Kelly calibration from last 100 closed paper_trades
-  const { data: closedTrades } = await svc
-    .from("paper_trades")
-    .select("pnl_pct")
-    .not("closed_at", "is", null)
-    .not("pnl_pct", "is", null)
-    .order("closed_at", { ascending: false })
-    .limit(100);
-
-  let winRate: number | null = null;
-  let payoffRatio: number | null = null;
-  const pnls = (closedTrades ?? []).map((t: any) => parseFloat(t.pnl_pct));
-  if (pnls.length >= 10) {
-    const wins = pnls.filter((p: number) => p > 0);
-    const losses = pnls.filter((p: number) => p <= 0);
-    if (wins.length > 0 && losses.length > 0) {
-      const avgWin = wins.reduce((a, b) => a + b, 0) / wins.length / 100;
-      const avgLoss = Math.abs(losses.reduce((a, b) => a + b, 0) / losses.length) / 100;
-      winRate = wins.length / pnls.length;
-      payoffRatio = avgWin / Math.max(0.001, avgLoss);
+  // Kelly calibration is market-local. USD and INR trade populations have
+  // different liquidity, volatility, and execution outcomes and must never be
+  // pooled into one sizing estimate.
+  const calibrationByMarket: Record<string, { winRate: number | null; payoffRatio: number | null }> = {};
+  for (const market of autonomousMarkets) {
+    const { data: closedTrades } = await svc
+      .from("paper_trades")
+      .select("pnl_pct")
+      .eq("market", market)
+      .not("closed_at", "is", null)
+      .not("pnl_pct", "is", null)
+      .order("closed_at", { ascending: false })
+      .limit(100);
+    const pnls = (closedTrades ?? []).map((t: any) => Number(t.pnl_pct)).filter(Number.isFinite);
+    let winRate: number | null = null;
+    let payoffRatio: number | null = null;
+    if (pnls.length >= 10) {
+      const wins = pnls.filter((p: number) => p > 0);
+      const losses = pnls.filter((p: number) => p <= 0);
+      if (wins.length > 0 && losses.length > 0) {
+        const avgWin = wins.reduce((a, b) => a + b, 0) / wins.length / 100;
+        const avgLoss = Math.abs(losses.reduce((a, b) => a + b, 0) / losses.length) / 100;
+        winRate = wins.length / pnls.length;
+        payoffRatio = avgWin / Math.max(0.001, avgLoss);
+      }
     }
+    calibrationByMarket[market] = { winRate, payoffRatio };
   }
 
   // Per-market NET open positions (filled BUYs − filled SELLs by symbol; count
@@ -254,11 +266,14 @@ export async function runAutonomousLive(
     .eq("score_source", "deterministic_v1")
     .eq("session_validated", true)
     .eq("direction", "long")
-    .gte("analyst_score", scoreThreshold)
+    .gte("analyst_score", minimumScoreThreshold)
     .gte("created_at", lookbackCutoff)
     .in("market", autonomousMarkets)
     .order("analyst_score", { ascending: false })
-    .limit(policy.live_auto_max_orders_per_day ?? 3);
+    // Fetch enough rows to apply each market's own threshold before the global
+    // daily cap. A lower-threshold market must not crowd the result window with
+    // rows that are ineligible under its own mandate.
+    .limit(Math.max(10, (policy.live_auto_max_orders_per_day ?? 3) * autonomousMarkets.length * 4));
 
   // Fail LOUDLY on a query error — never silently no-op the whole autonomous run.
   if (sigErr) {
@@ -273,8 +288,15 @@ export async function runAutonomousLive(
   const results: LiveRunResult["results"] = [];
   let liveOrdersThisRun = 0;
 
-  for (const signal of signals ?? []) {
+  const eligibleSignals = (signals ?? []).filter(signal => {
+    const threshold = mandateByMarket[signal.market ?? "us"]?.score_threshold;
+    return Number.isFinite(threshold) && Number(signal.analyst_score) >= threshold;
+  }).slice(0, policy.live_auto_max_orders_per_day ?? 3);
+
+  for (const signal of eligibleSignals) {
     const market = signal.market ?? "us";
+    const scoreThreshold = mandateByMarket[market]?.score_threshold;
+    if (!Number.isFinite(scoreThreshold) || Number(signal.analyst_score) < scoreThreshold) continue;
     const broker = market === "india" ? "kite" : "robinhood";
     const currency = market === "india" ? "INR" : "USD";
     // Effective daily notional ceiling for the auto path. US: the owner's
@@ -373,9 +395,15 @@ export async function runAutonomousLive(
     let currentPrice = 0;
     let priceStale = true;
     try {
-      const quote = await getQuote(signal.symbol, svc);
-      currentPrice = quote.price ?? 0;
-      priceStale = quote.stale || quote.source === "unavailable" || currentPrice <= 0;
+      if (market === "india") {
+        const quote = await fetchIndiaQuote(signal.symbol);
+        currentPrice = quote?.price ?? 0;
+        priceStale = quote?.stale ?? true;
+      } else {
+        const quote = await getQuote(signal.symbol, svc);
+        currentPrice = quote.price ?? 0;
+        priceStale = quote.stale || quote.source === "unavailable" || currentPrice <= 0;
+      }
     } catch { /* sizing will reject via no_current_price */ }
 
     const sizing = computeAutonomousSizing({
@@ -383,8 +411,8 @@ export async function runAutonomousLive(
       nav_captured_at: navByMarket[market]?.capturedAt ?? new Date(0).toISOString(),
       current_price: currentPrice,
       price_stale: priceStale,
-      win_rate: winRate,
-      payoff_ratio: payoffRatio,
+      win_rate: calibrationByMarket[market]?.winRate ?? null,
+      payoff_ratio: calibrationByMarket[market]?.payoffRatio ?? null,
       flat_size_pct: flatSizePct,
       policy,
       market,

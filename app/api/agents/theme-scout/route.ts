@@ -1,4 +1,4 @@
-// Theme Scout — runs daily after research cron.
+// Theme Scout — weekly discovery job, independent of ResearchAgent.
 // Cheap LLM (Groq Llama 3.3 free) reads market news → extracts 2-3 themes → screens stocks → adds to watchlist with reason.
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -7,6 +7,8 @@ import { getConfiguredModel } from "@/lib/agent-model-config";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { avCachedFetch } from "@/lib/av-cache";
+import { providerCachedFetch } from "@/lib/data/provider-fetch";
+import { fetchUsOverview } from "@/lib/data/fundamentals";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -22,7 +24,7 @@ const EXPIRE_DAYS = 7;
 // durable discovery redesign — factor/edge screening + IC validation + a regime
 // filter — is specced in features/edge-factor-discovery/FEATURE_ARCHITECTURE.md.
 
-async function fetchMarketNews(): Promise<string> {
+async function fetchAvMarketNews(): Promise<string> {
   if (!AV_KEY) return "";
   try {
     // Day-cached + budget-guarded (shared AV budget with research).
@@ -33,6 +35,26 @@ async function fetchMarketNews(): Promise<string> {
     );
     return ((data?.feed ?? []).slice(0, 15).map((a: any) => `${a.title} [${a.source}]`).join("\n")) || "";
   } catch { return ""; }
+}
+
+async function fetchMarketNews(): Promise<string> {
+  try {
+    const query = '("stock market" OR earnings OR acquisition OR regulation) sourcelang:english';
+    const data = await providerCachedFetch(
+      "gdelt",
+      "THEME_SCOUT_MARKET_NEWS",
+      `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=artlist&format=json&maxrecords=30&timespan=2d`,
+      { timeoutMs: 10000, maxAgeDays: 1 },
+    );
+    const headlines = Array.isArray((data as any)?.articles)
+      ? (data as any).articles
+        .map((article: any) => String(article?.title ?? "").replace(/[\r\n]+/g, " ").slice(0, 240))
+        .filter(Boolean)
+        .slice(0, 20)
+      : [];
+    if (headlines.length > 0) return headlines.join("\n");
+  } catch { /* AV is a bounded emergency reserve below */ }
+  return fetchAvMarketNews();
 }
 
 async function fetchTopGainersLosers(): Promise<string> {
@@ -56,20 +78,23 @@ async function fetchTopGainersLosers(): Promise<string> {
 
 // Deterministic existence check — the LLM can hallucinate a plausible-looking
 // ticker (wrong exchange, delisted, wrong company). Confirms the symbol
-// actually resolves to a real, tradeable US equity via Alpha Vantage OVERVIEW
-// before it's allowed into the research universe, independent of whether AV's
-// theme-relevance news search (screenForTheme) happened to also mention it.
+// resolves through the shared US fundamentals chain before it can enter the
+// research universe; Alpha Vantage is only that chain's final reserve.
 async function tickerExists(symbol: string): Promise<boolean> {
-  if (!AV_KEY) return false;
   try {
-    // Same `OVERVIEW:<sym>` cache key research uses — if research already
-    // fetched this symbol's overview today, this costs zero AV calls.
-    const data = await avCachedFetch(
-      `OVERVIEW:${symbol.toUpperCase()}`,
-      `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(symbol)}&apikey=${AV_KEY}`,
-      8000
-    );
-    return typeof data?.Symbol === "string" && data.Symbol.length > 0;
+    // Use the same redundant resolver as research. Its provider caches prevent
+    // duplicate network work when the symbol was already resolved recently.
+    const resolved = await fetchUsOverview(symbol, async () => {
+      if (!AV_KEY) return {};
+      return avCachedFetch(
+        `OVERVIEW:${symbol.toUpperCase()}`,
+        `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(symbol)}&apikey=${AV_KEY}`,
+        8000,
+      );
+    });
+    return resolved.source !== "unavailable"
+      && typeof resolved.overview.Symbol === "string"
+      && resolved.overview.Symbol.length > 0;
   } catch { return false; }
 }
 
@@ -92,7 +117,10 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createServiceClient();
-  const [news, movers] = await Promise.all([fetchMarketNews(), fetchTopGainersLosers()]);
+  const news = await fetchMarketNews();
+  // Movers are a final AV reserve only when neither GDELT nor AV news yielded
+  // usable headlines. A normal scout run spends no AV call here.
+  const movers = news ? "" : await fetchTopGainersLosers();
 
   if (!news && !movers) {
     return NextResponse.json({ skipped: true, reason: "No market data available" });

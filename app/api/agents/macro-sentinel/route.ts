@@ -282,11 +282,15 @@ export async function POST(req: NextRequest) {
   // Check if already ran this week with sufficient data
   const { data: existing } = await svc
     .from("macro_regime")
-    .select("id, signals_triggered")
+    .select("id, regime, raw_indicators")
     .eq("week_of", weekOf)
     .single();
-  // Skip only if we have a good run (3+ indicators fetched)
-  if (existing && existing.signals_triggered > 0) {
+  // A healthy GREEN week legitimately has zero triggered warnings. Completeness
+  // is the number of real indicators, not whether any of them happened to fire.
+  const existingIndicatorCount = Array.isArray((existing as any)?.raw_indicators)
+    ? (existing as any).raw_indicators.length
+    : 0;
+  if (existing && (existing as any).regime !== "unknown" && existingIndicatorCount >= 3) {
     return NextResponse.json({ message: "Already ran this week", cached: true });
   }
   // Delete bad/incomplete run so we can retry

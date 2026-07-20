@@ -1,29 +1,97 @@
 {
   "agentId": "theme-scout",
   "agentLabel": "ThemeScout",
-  "diagram": "flowchart TD\n  TRIG[\"⏰ Chained INSIDE the US research cron\\ncron-secret only — no standalone job\"] --> INPUTS[\"📰 Alpha Vantage\\nNEWS_SENTIMENT top 15 · TOP_GAINERS_LOSERS top 5\"]\n  INPUTS --> THEMES[\"🔥 LLM picks ≤3 themes\\nllama-3.3-70b-versatile (Groq, free)\"]\n  THEMES --> CAND[\"🎯 ≤2 tickers per theme · max 6\"]\n  CAND --> VERIFY{\"tickerExists?\\nAV OVERVIEW\"}\n  VERIFY -->|\"No\"| QUAR[\"🚧 Quarantined\\nhallucinated ticker dropped\"]\n  VERIFY -->|\"Yes\"| ADD[\"➕ Upsert watchlist\\nsource='llm_theme' · market tagged\"]\n  ADD --> EXPIRE[\"⏳ 7-day expiry\"]\n  ADD --> ALERT[\"🔔 agent_alerts\\ninfo on success · warning on upsert failure\"]\n  ADD --> RESEARCH[\"⬆️ Same run: gatherSymbols scores them TODAY\"]",
+  "diagram": "flowchart TD\n  TRIG[\"Independent weekly pg_cron or owner run\"] --> INPUTS[\"GDELT headlines first\\nAlpha Vantage news reserve only\"]\n  INPUTS --> THEMES[\"LLM proposes up to 3 themes\\nConfigured model; Groq default\"]\n  THEMES --> CAND[\"Up to 2 US equities per theme\\n6 names maximum\"]\n  CAND --> VERIFY{\"Shared fundamentals resolver confirms ticker?\"}\n  VERIFY -->|No| QUAR[\"Quarantine invalid candidate\"]\n  VERIFY -->|Yes| ADD[\"Owner-scoped watchlist row\\nsource llm_theme; 7-day expiry\"]\n  ADD --> ALERT[\"Write operational alert\"]\n  ADD -.-> RESEARCH[\"Later normal ResearchAgent run\\nfull deterministic gates\"]",
   "nodes": {
-    "TRIG": { "label": "Chained by the research cron", "description": "Not on-demand and not a standalone cron. The US research cron POSTs this route inline with an x-cron-secret header; there is no pg_cron job of its own. The route accepts ONLY a cron secret and fails closed on a missing header — it has no owner fallback, unlike macro-sentinel. Consequence: the Run button on the Agents page sends no such header and gets a 401. That is a live code bug, reported and NOT fixed here (documentation-only task).", "addedAt": "2026-06-30", "addReason": "Thematic discovery is exploratory — run when you want fresh ideas.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "Claimed 'runs manually from the Agents page (not a scheduled cron)' and named deepseek-chat. It is chained by the US research cron, uses Groq llama-3.3-70b-versatile, and the advertised manual trigger 401s.", "removedAt": null, "removeReason": null },
-    "INPUTS": { "label": "Alpha Vantage inputs", "description": "Two AV calls through the day-cached shared-budget fetcher: NEWS_SENTIMENT (limit 20, sorted LATEST, top 15 headlines) and TOP_GAINERS_LOSERS (top 5). Skips entirely if both come back empty. Plus one OVERVIEW call per candidate for existence checking.", "addedAt": "2026-07-17", "addReason": "The old diagram said themes came from 'market context' — an unfalsifiable phrase that hid a real dependency on the capped Alpha Vantage budget.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "THEMES": { "label": "Scan market themes", "description": "A cheap LLM (Groq llama-3.3-70b-versatile, free tier — per-flow from Settings via agent_config, NOT deepseek-chat) names at most 3 dominant themes from the AV headlines and movers. The prompt demands US-listed tickers.", "addedAt": "2026-06-30", "addReason": "Themes surface names the static watchlist would miss.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "Model was wrong (deepseek-chat → Groq llama-3.3-70b-versatile) and the theme count (max 3) was never stated.", "removedAt": null, "removeReason": null },
-    "CAND": { "label": "≤2 per theme · max 6", "description": "At most 2 tickers per theme across at most 3 themes — a hard ceiling of 6, not '3-5'. Typical yield is lower because each candidate must still survive the existence check.", "addedAt": "2026-06-30", "addReason": "Small, curated additions.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "'Selects 3-5 thematic tickers' was never a rule in the code. The real bound is MAX_THEMES 3 × MAX_THEME_STOCKS 2 = 6.", "removedAt": null, "removeReason": null },
-    "VERIFY": { "label": "tickerExists check", "description": "Every LLM-named ticker is validated against an Alpha Vantage OVERVIEW lookup before it can reach the watchlist. This is the hallucination quarantine: an LLM asked to name tickers will confidently invent them, and without this check an invented symbol would enter the watchlist and be researched as if real.", "addedAt": "2026-07-17", "addReason": "The only thing standing between a generative model and the watchlist, and it was absent from the diagram.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "QUAR": { "label": "Quarantined", "description": "Tickers that fail the existence check are dropped and returned in a 'quarantined' list on the response, so hallucinations are visible rather than silent.", "addedAt": "2026-07-17", "addReason": "Drawn as a real branch so the reject path is auditable.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "ADD": { "label": "Upsert watchlist", "description": "Upserts on (user_id, symbol) with source='llm_theme', theme, reason, notes ('Auto-added by Theme Scout…'), auto_added, expires_at, and an explicit market tag (india for .NS/.BO suffixes, else us). There is no 'AI Scout' tag anywhere in the code. In practice it is US-only: the prompt demands US-listed tickers, existence is checked against AV, and the research cron skips this step entirely on India runs.", "addedAt": "2026-06-30", "addReason": "Auto-populates the watchlist with themed ideas.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "The 'AI Scout' tag is fictional — no such string exists in the route. Real columns and the market tag documented instead.", "removedAt": null, "removeReason": null },
-    "EXPIRE": { "label": "7-day expiry", "description": "Theme additions expire after 7 days so machine-discovered ideas cannot consume research capacity for a month.", "addedAt": "2026-06-30", "addReason": "Themes rotate; stale ones should drop off.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "The backlog audit restored the intended 7-day bound and expires historical unowned theme rows.", "removedAt": null, "removeReason": null },
-    "ALERT": { "label": "agent_alerts", "description": "Writes an info alert on a successful run and a warning alert if the watchlist upsert fails — so a scout run that adds nothing is distinguishable from one that failed to add.", "addedAt": "2026-07-17", "addReason": "An undrawn output. A silently-failing upsert would otherwise look identical to a quiet theme day.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "RESEARCH": { "label": "Same-run research", "description": "This is an UPSTREAM blocking step of the research cron, not a downstream handoff. It is awaited BEFORE gatherSymbols specifically so today's new theme tickers land in the watchlist in time to be scored on THIS run rather than tomorrow's. Once on the watchlist they are scored like any other symbol — no special path.", "addedAt": "2026-06-30", "addReason": "No special path — scored the same way.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "Drawn as a downstream arrow into 'daily ResearchAgent scoring'. The dependency runs the other way: ThemeScout is awaited inside the research cron before symbol gathering.", "removedAt": null, "removeReason": null }
+    "TRIG": {
+      "label": "Independent trigger",
+      "description": "Runs from its own weekly pg_cron job and also accepts an authenticated owner run. It is no longer awaited inside the US research cron.",
+      "addedAt": "2026-06-30",
+      "addReason": "Thematic discovery needs a bounded cadence.",
+      "status": "changed",
+      "changedAt": "2026-07-20",
+      "changeReason": "Decoupled from ResearchAgent so scout latency and quota use cannot suppress the research batch."
+    },
+    "INPUTS": {
+      "label": "Free-first news inputs",
+      "description": "Uses broad GDELT headlines first. Cached Alpha Vantage NEWS_SENTIMENT is fallback; TOP_GAINERS_LOSERS is used only if neither path yields headlines.",
+      "addedAt": "2026-07-17",
+      "addReason": "Theme proposals require current market context.",
+      "status": "changed",
+      "changedAt": "2026-07-20",
+      "changeReason": "Moved the normal path off the shared 25-per-day Alpha Vantage allowance."
+    },
+    "THEMES": {
+      "label": "Propose themes",
+      "description": "The per-flow configured LLM proposes at most three distinct themes. The default is Groq llama-3.3-70b-versatile. This output is discovery, not a score or trade instruction.",
+      "addedAt": "2026-06-30",
+      "addReason": "Themes surface names outside the static watchlist.",
+      "status": "changed",
+      "changedAt": "2026-07-20",
+      "changeReason": "Clarified the configured model and non-money-path role."
+    },
+    "CAND": {
+      "label": "Bound candidates",
+      "description": "Takes at most two proposed US equities per theme, with a hard maximum of six names per run.",
+      "addedAt": "2026-06-30",
+      "addReason": "Bounded additions limit research-universe growth.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null
+    },
+    "VERIFY": {
+      "label": "Verify ticker",
+      "description": "The shared US fundamentals resolver must resolve the symbol before insertion. Finnhub, Yahoo, and FMP precede cached Alpha Vantage reserve data.",
+      "addedAt": "2026-07-17",
+      "addReason": "A deterministic check prevents invented or unavailable tickers from entering research.",
+      "status": "changed",
+      "changedAt": "2026-07-20",
+      "changeReason": "Replaced an Alpha Vantage-only check with the shared redundant fundamentals resolver."
+    },
+    "QUAR": {
+      "label": "Quarantine",
+      "description": "Unverified symbols are returned in the quarantined list and never written to the watchlist.",
+      "addedAt": "2026-07-17",
+      "addReason": "The rejection path must remain auditable.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null
+    },
+    "ADD": {
+      "label": "Write expiring discovery",
+      "description": "Writes owner-scoped watchlist rows with source llm_theme, reason, theme, explicit market, auto_added, and a seven-day expiry. Existing human-managed rows are not overwritten.",
+      "addedAt": "2026-06-30",
+      "addReason": "Discovery needs a bounded, attributable handoff to research.",
+      "status": "changed",
+      "changedAt": "2026-07-20",
+      "changeReason": "Documented owner scope, overwrite protection, and expiry semantics."
+    },
+    "ALERT": {
+      "label": "Operational alert",
+      "description": "Writes an informational alert when names are added and a warning if the watchlist write fails.",
+      "addedAt": "2026-07-17",
+      "addReason": "A quiet run must be distinguishable from a failed write.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null
+    },
+    "RESEARCH": {
+      "label": "Later deterministic research",
+      "description": "A subsequent normal ResearchAgent run may select the names. Theme Scout does not score or trade them, and no candidate bypasses evidence, score, direction, or execution gates.",
+      "addedAt": "2026-07-17",
+      "addReason": "The boundary between generative discovery and deterministic decisions must be explicit.",
+      "status": "changed",
+      "changedAt": "2026-07-20",
+      "changeReason": "The independent job no longer injects names into the same research invocation."
+    }
   },
   "history": [
-    { "date": "2026-07-17", "event": "modify", "nodeId": "EXPIRE", "label": "Seven-day owner-scoped theme universe", "reason": "Theme picks now expire after seven days, duplicate symbols are collapsed per run, durable manual rows cannot be overwritten, missing owner identity fails closed, and historical null-owner theme rows are expired." },
-    { "date": "2026-06-30", "event": "add", "nodeId": "TRIG", "label": "ThemeScout", "reason": "Dynamic watchlist via AI themes" },
-    { "date": "2026-06-30", "event": "add", "nodeId": "EXPIRE", "label": "Expiry", "reason": "7-day freshness" },
-    { "date": "2026-07-17", "event": "modify", "nodeId": "TRIG", "label": "Not on-demand and not deepseek — chained by the US research cron, and the Run button 401s", "reason": "Three errors in one node. (1) Trigger: 'runs manually from the Agents page (not a scheduled cron)' is backwards. The route is cron-secret-ONLY and fails closed on a missing header, with no owner fallback; its real trigger is an inline awaited POST from the US research cron carrying x-cron-secret. It has no pg_cron job of its own. (2) The advertised manual trigger is a LIVE BUG, surfaced by this audit: the Agents-page Run button posts with only a Content-Type header, so the documented way to run this agent returns 401 every time. Reported, not fixed — this task is documentation-only and the fix is a code change with an auth decision behind it (add an owner fallback like macro-sentinel's, or remove the button). (3) Model: 'uses deepseek-chat' is wrong; it is llama-3.3-70b-versatile on Groq's free tier, per-flow from agent_config, and the route comment says so explicitly." },
-    { "date": "2026-07-17", "event": "modify", "nodeId": "EXPIRE", "label": "Expiry is 30 days, not 7", "reason": "EXPIRE_DAYS = 30. The diagram claimed 7 in its node label, its description, AND its 2026-06-30 history entry ('7-day freshness'), so the error was tripled and self-corroborating — a reader checking the history would have found the wrong number confirmed. Not cosmetic: it is the difference between a watchlist that recycles weekly and one that holds a stale theme for a month, and it sets how long a dud idea keeps consuming research budget." },
-    { "date": "2026-07-17", "event": "modify", "nodeId": "CAND", "label": "Ceiling is 3 themes × 2 tickers = 6, not '3-5'", "reason": "MAX_THEMES = 3 and MAX_THEME_STOCKS = 2, so the hard ceiling is 6 and typical yield is lower after the existence check drops candidates. '3-5' was never a rule in the code — it reads like an intention that was never implemented, or was implemented differently and never reconciled. Worth noting against the CLAUDE.md locked rule of 3 screener candidates/day: ThemeScout can add up to 6 watchlist names per run on top of the screener's own candidates, and those two budgets have never been reconciled with each other. Flagged, not resolved — that is a product decision." },
-    { "date": "2026-07-17", "event": "modify", "nodeId": "ADD", "label": "The 'AI Scout' tag does not exist; real columns + market tag documented", "reason": "'Inserts into the watchlist with source=llm_theme, tagged AI Scout and grouped under the theme name' — source='llm_theme' is TRUE and verified, but there is no 'AI Scout' string anywhere in the route. A reader filtering the watchlist for that tag would find nothing. Real columns: user_id, symbol, source, theme, reason, notes ('Auto-added by Theme Scout…'), auto_added, expires_at, updated_at, market. Added the market tag, which the diagram had no concept of: it explicitly stamps india for .NS/.BO suffixes else us, a fix for capitalized 'US' rows the watchlist's lowercase filter could not match — though in practice the agent is US-only, since the prompt demands US-listed tickers and the research cron skips it on India runs." },
-    { "date": "2026-07-17", "event": "add", "nodeId": "VERIFY", "label": "tickerExists hallucination quarantine — the only guard between an LLM and the watchlist", "reason": "Undrawn, and the most important node on the page. Every LLM-named ticker is validated against an Alpha Vantage OVERVIEW lookup before it can be upserted; failures are dropped and returned in a 'quarantined' list on the response. This is what stops a generative model's invented symbol from entering the watchlist and being researched as though it were a real company — the same assert-what-cannot-be-supported defect class this audit exists to delete, except here the code already got it right and only the diagram was silent. Drawn as an explicit branch with QUAR as the reject path so the guard is visible and auditable rather than trusted." },
-    { "date": "2026-07-17", "event": "add", "nodeId": "INPUTS", "label": "Inputs are two Alpha Vantage calls, not 'market context'", "reason": "The old THEMES node sourced themes from 'market context' — unfalsifiable phrasing that concealed a real, capped dependency. Actual inputs: AV NEWS_SENTIMENT (limit 20, LATEST, top 15 headlines) and AV TOP_GAINERS_LOSERS (top 5), both through the day-cached shared-budget fetcher, plus one OVERVIEW per candidate for the existence check. The route skips entirely when both come back empty. This matters because it puts ThemeScout on the same constrained AV budget as other consumers, and because 'no themes today' can mean 'AV returned nothing' rather than 'the market was quiet' — a distinction the old wording made impossible to reason about. ALERT added alongside for the agent_alerts rows (info on success, warning on upsert failure) that make a failed run distinguishable from a quiet one." },
-    { "date": "2026-07-17", "event": "modify", "nodeId": "RESEARCH", "label": "Dependency runs upstream, not downstream — ThemeScout blocks inside the research cron", "reason": "Drawn as a downstream arrow ('enters daily ResearchAgent scoring'), implying discovered names wait for the next day's run. The code does the opposite and says why: ThemeScout is awaited BEFORE gatherSymbols precisely so today's newly discovered tickers land in the watchlist in time to be researched on THIS run. Direction of the arrow is the whole point — it makes ThemeScout a blocking dependency of the research cron's latency budget, so a slow scout eats into the same ~105s wall clock that the holdings rotation is competing for. The 'scored like any other symbol, no special path' claim is verified accurate and unchanged." }
+    {
+      "date": "2026-07-20",
+      "event": "modify",
+      "nodeId": "TRIG",
+      "label": "Decouple Theme Scout from ResearchAgent",
+      "reason": "The scout now runs independently, uses GDELT first, reserves Alpha Vantage for fallback, and hands discoveries to later normal research rather than consuming the active research run."
+    }
   ]
 }

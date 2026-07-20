@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
 
   let universe;
   try {
-    universe = await gatherSymbols(svc);
+    universe = await gatherSymbols(svc, undefined, market);
   } catch (e) {
     return NextResponse.json({ error: `gatherSymbols failed: ${String(e)}` }, { status: 500 });
   }

@@ -10,6 +10,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { applyLearningTaintFilter } from "@/lib/learning/taint-filter";
 import { runAutomatedValidation } from "@/lib/validation/automation";
+import { fetchIndiaQuote } from "@/lib/india-data";
 
 export const dynamic = "force-dynamic";
 // The weekly tool loop can legitimately take several provider round-trips.
@@ -98,50 +99,10 @@ export async function POST(req: NextRequest) {
     } as any).select().single();
     const runId = (runRow as any)?.id ?? null;
 
-    // ── Phase A: Rule-based trade closing ──────────────────────────────────────
-    // paper_positions has no closed_at column (every row is open by
-    // definition — closing means deleting the row, see position-monitor's
-    // closePosition) and no created_at (real column is opened_at). This
-    // query silently errored on the old filter and always returned nothing.
-    // Phase A operates on THIS market's cohort only — otherwise an India position
-    // could be reassessed against a US signal (wrong market) or have its ₹ target
-    // logged as dollars.
-    const cur = (LEARN_MARKET as string) === "india" ? "₹" : "$";
+    // Open-position exits and target evolution belong exclusively to the daily
+    // PositionMonitor. LearnerAgent observes closed outcomes and proposes
+    // challengers; it never mutates an open paper position.
     const positionReassessments: string[] = [];
-    const { data: openPositions } = await scopeMkt(svc.from("paper_positions").select("*"));
-
-    if (openPositions?.length) {
-      for (const pos of openPositions) {
-        const ageMs = Date.now() - new Date(pos.opened_at ?? 0).getTime();
-        if (ageMs < 7 * 86400_000) continue;
-        const daysSince = pos.target_updated_at
-          ? (Date.now() - new Date(pos.target_updated_at).getTime()) / 86400_000 : 999;
-        if (daysSince < 6) continue;
-
-        const { data: sig } = await scopeMkt(svc.from("agent_signals")
-          .select("analyst_score, direction")
-          .eq("symbol", pos.symbol)
-          .order("created_at", { ascending: false })
-          .limit(1)).single();
-
-        if (!sig) continue;
-        // Deterministic reassess-exit: flag only on the evidence-based score (or a
-        // direction that is itself now deterministic — research-agent's mechanical
-        // gate emits "short" only for held names whose score fell below threshold).
-        // Renamed from "llm_exit": no LLM discretion feeds this flag anymore, and
-        // the old name wrongly implied LLM authority over the money path.
-        if (sig.analyst_score < 40 || sig.direction === "short") {
-          await svc.from("paper_positions").update({ exit_reason: "score_reassess_exit", target_updated_at: new Date().toISOString() }).eq("id", pos.id);
-          positionReassessments.push(`${pos.symbol}: flagged score_reassess_exit (score=${sig.analyst_score})`);
-        } else if (sig.analyst_score >= 65 && pos.price_target) {
-          const newTarget = parseFloat((pos.price_target * 1.05).toFixed(2));
-          await svc.from("paper_positions").update({ price_target: newTarget, target_updated_at: new Date().toISOString() }).eq("id", pos.id);
-          positionReassessments.push(`${pos.symbol}: target raised →${cur}${newTarget}`);
-        } else {
-          await svc.from("paper_positions").update({ target_updated_at: new Date().toISOString() }).eq("id", pos.id);
-        }
-      }
-    }
 
     // Reconciliation only — LearnerAgent no longer force-sells live positions on
     // a timer. That old behavior (close any trade >N days old on a crude
@@ -165,12 +126,14 @@ export async function POST(req: NextRequest) {
     for (const trade of openTrades ?? []) {
       // Only reconcile orphans — if a position still exists for this symbol,
       // it's a live holding managed by PositionMonitor; leave it alone.
-      const { data: livePos } = await svc.from("paper_positions")
-        .select("id").eq("symbol", trade.symbol).maybeSingle();
+      const { data: livePos } = await scopeMkt(svc.from("paper_positions")
+        .select("id").eq("symbol", trade.symbol)).maybeSingle();
       if (livePos) continue;
 
-      const quote = await fetchQuote(trade.symbol);
-      if (quote.source === "unavailable" || quote.price <= 0) { priceFailures.push(trade.symbol); continue; }
+      const quote = LEARN_MARKET === "india"
+        ? await fetchIndiaQuote(trade.symbol)
+        : await fetchQuote(trade.symbol);
+      if (!quote || ("source" in quote && quote.source === "unavailable") || quote.price <= 0) { priceFailures.push(trade.symbol); continue; }
 
       const exitPrice = quote.price;
       const pnl = (exitPrice - trade.fill_price) * trade.qty;
@@ -382,6 +345,13 @@ export async function POST(req: NextRequest) {
 
           case "query_macro_context": {
             const days = (call.arguments.days as number) ?? 14;
+            if (LEARN_MARKET === "india") {
+              return JSON.stringify({
+                macroSignals: [], recentMacroNotes: [], days,
+                applicable: false,
+                reason: "MacroSentinel is a US FRED regime and is structurally inapplicable to the India learner cohort.",
+              });
+            }
             const since = new Date(Date.now() - days * 86400_000).toISOString();
             const { data: macroSignals } = await svc.from("macro_signals")
               .select("*").gte("created_at", since).order("created_at", { ascending: false }).limit(20);

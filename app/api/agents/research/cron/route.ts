@@ -17,9 +17,8 @@ import {
 } from "@/lib/trading/market-calendar";
 
 export const dynamic = "force-dynamic";
-// Bumped from 60 -> 150s: Theme Scout is now awaited inline (before
-// gatherSymbols) instead of fired async, so its own AV/LLM round-trip now
-// counts against this run's budget too.
+// Research is independently wall-clock bounded. Discovery jobs such as Theme
+// Scout run on their own schedule and never consume this route's time budget.
 export const maxDuration = 150;
 
 // Called by Windows Task Scheduler. US run ~9 AM ET; India run ~6:15 AM ET (after
@@ -132,26 +131,8 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Theme Scout runs (and is awaited) BEFORE gatherSymbols so today's newly
-  // discovered theme tickers land in the watchlist in time to be researched
-  // THIS run, not tomorrow's. US-only (theme-scout has no India logic) — skip
-  // on an India-scoped run so it doesn't fire twice a day.
-  if (!closedDayCatchup && marketScope !== "india") {
-    const appUrlEarly = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-    try {
-      const tsRes = await fetch(`${appUrlEarly}/api/agents/theme-scout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET ?? "" },
-        signal: AbortSignal.timeout(45000),
-      });
-      if (!tsRes.ok) console.error(`[research-cron] Theme Scout failed inline (${tsRes.status}) — proceeding without today's new theme picks`);
-    } catch (e) {
-      // Fail-soft — a Theme Scout hiccup must never block research — but
-      // silent failure here previously left zero signal that "0 signals
-      // written" or a slow run was actually caused by Theme Scout timing out.
-      console.error("[research-cron] Theme Scout timed out or errored inline — proceeding without today's new theme picks:", e instanceof Error ? e.message : e);
-    }
-  }
+  // Theme Scout is scheduled independently; research consumes the validated
+  // watchlist state available when this run starts.
 
   let queueDepthAtStart: number | null = null;
   let allEntries;
@@ -170,9 +151,9 @@ export async function POST(req: NextRequest) {
       : Number.parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "40", 10);
     const cap = Number.isFinite(configuredCap) ? Math.max(1, configuredCap) : 8;
     const catchupSymbols = queued.filter((symbol) => !staged.has(symbol)).slice(0, cap);
-    allEntries = catchupSymbols.length > 0 ? await gatherSymbols(supabase, catchupSymbols) : [];
+    allEntries = catchupSymbols.length > 0 ? await gatherSymbols(supabase, catchupSymbols, marketScope) : [];
   } else {
-    allEntries = await gatherSymbols(supabase);
+    allEntries = await gatherSymbols(supabase, undefined, marketScope ?? undefined);
   }
   // Scope to the requested market: India run researches only .NS/.BO names; US run
   // only non-India. No param → everything (legacy).

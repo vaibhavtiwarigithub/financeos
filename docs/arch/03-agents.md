@@ -523,16 +523,23 @@ promoted `weights_snapshot` is read by ResearchAgent on its next run.
 ### ThemeScout — the watchlist manager
 
 **File:** `app/api/agents/theme-scout/route.ts`
-**Schedule:** Sundays 8:00 PM ET
-**LLM:** Claude Sonnet 4.6 (`claude-smart`)
+**Schedule:** Independent weekly pg_cron job, Sunday 8:00 PM ET during daylight time
+**LLM:** Per-flow `agent_config`; default Groq `llama-3.3-70b-versatile`
 
-**Inputs:** Alpha Vantage NEWS_SENTIMENT by sector.
+**Inputs:** Broad GDELT market headlines first. Alpha Vantage NEWS_SENTIMENT is
+a cached fallback; TOP_GAINERS_LOSERS is used only when neither news source
+returns usable headlines. Candidate existence is checked through the shared US
+fundamentals resolver (Finnhub/Yahoo/FMP, with Alpha Vantage as reserve).
 
 **Key behavior:** Identifies emerging themes (e.g. `ai_infrastructure`, `clean_energy`). Adds
-relevant symbols to `watchlist` tagged by theme. Prevents the watchlist from going stale and
-introduces thematic discovery alongside the screener buckets.
+at most six verified US symbols to owner-scoped `watchlist` rows tagged by theme,
+with a seven-day expiry. It is discovery-only: additions enter a later normal
+ResearchAgent run and must pass the same deterministic scoring and eligibility
+gates as every other symbol. It is not awaited by ResearchAgent, so a slow scout
+cannot consume a research run's time or provider budget.
 
-**Outputs:** New `watchlist` rows tagged with `theme_tag` and `added_by = 'theme-scout'`
+**Outputs:** New `watchlist` rows with `source = 'llm_theme'`, `theme`, `reason`,
+`auto_added = true`, and `expires_at`; invalid tickers are quarantined.
 
 ---
 

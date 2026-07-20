@@ -10,7 +10,9 @@ export type EvidenceType =
 
 export type SourceName =
   | "alpha_vantage" | "financial_datasets" | "robinhood"
-  | "stocktwits" | "fred" | "price_cache" | "macro_sentinel" | "manual";
+  | "stocktwits" | "fred" | "price_cache" | "macro_sentinel" | "manual"
+  | "finnhub" | "yahoo" | "fmp" | "massive" | "sec_edgar" | "gdelt"
+  | "upstox" | "eodhd" | "twelvedata" | "social_composite" | "unavailable";
 
 export type QualityState = "ok" | "stale" | "conflict" | "missing" | "quarantined";
 
@@ -23,6 +25,17 @@ export const SOURCE_TIERS: Record<SourceName, number> = {
   price_cache:        2,  // EOD from established provider
   macro_sentinel:     3,  // Derived/computed macro signal
   stocktwits:         5,  // Social media
+  gdelt:              4,  // Open news aggregation
+  social_composite:   4,  // Deterministic blend; payload names components
+  finnhub:            2,
+  yahoo:              3,  // Unofficial transport, validated fields
+  fmp:                2,
+  massive:            2,
+  sec_edgar:          1,  // Official SEC filings
+  upstox:             1,  // Broker/exchange transport
+  eodhd:              2,
+  twelvedata:         2,
+  unavailable:        5,
   manual:             3,
 };
 

@@ -60,7 +60,29 @@ export async function fetchIndiaCandles(symbol: string, range = "6mo"): Promise<
   }
 }
 
-export async function fetchIndiaQuote(symbol: string): Promise<{ price: number; changePct: number } | null> {
+export interface IndiaQuote {
+  price: number;
+  changePct: number;
+  retrievedAt: string;
+  stale: boolean;
+}
+
+function isIndiaMarketHours(): boolean {
+  const now = new Date();
+  const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const day = ist.getDay();
+  if (day === 0 || day === 6) return false;
+  const minutes = ist.getHours() * 60 + ist.getMinutes();
+  return minutes >= 9 * 60 + 15 && minutes < 15 * 60 + 30;
+}
+
+function isIndiaQuoteStale(retrievedAt: string): boolean {
+  const age = Date.now() - new Date(retrievedAt).getTime();
+  if (!Number.isFinite(age) || age < 0) return true;
+  return isIndiaMarketHours() ? age > 30 * 60_000 : age > 4 * 86_400_000;
+}
+
+export async function fetchIndiaQuote(symbol: string): Promise<IndiaQuote | null> {
   try {
     const res = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`,
@@ -68,12 +90,41 @@ export async function fetchIndiaQuote(symbol: string): Promise<{ price: number; 
     );
     if (!res.ok) return null;
     const m = (await res.json())?.chart?.result?.[0]?.meta;
-    if (!m?.regularMarketPrice) return null;
+    if (!m?.regularMarketPrice || !m?.regularMarketTime) return null;
     const prev = m.chartPreviousClose ?? m.previousClose ?? m.regularMarketPrice;
-    return { price: m.regularMarketPrice, changePct: prev ? ((m.regularMarketPrice - prev) / prev) * 100 : 0 };
+    const retrievedAt = new Date(Number(m.regularMarketTime) * 1000).toISOString();
+    return {
+      price: m.regularMarketPrice,
+      changePct: prev ? ((m.regularMarketPrice - prev) / prev) * 100 : 0,
+      retrievedAt,
+      stale: isIndiaQuoteStale(retrievedAt),
+    };
   } catch {
     return null;
   }
+}
+
+// Bounded quote fan-out for portfolio paths. Yahoo is unofficial and can
+// throttle datacenter bursts; every requested symbol remains explicit in the
+// output so a missing quote is an unevaluated state, never an implicit hold.
+export async function fetchIndiaQuotes(
+  symbols: string[],
+  batchSize = 4,
+  pauseMs = 250,
+): Promise<Record<string, IndiaQuote | null>> {
+  const unique = [...new Set(symbols.map(s => s.toUpperCase()))];
+  const out: Record<string, IndiaQuote | null> = {};
+  const size = Math.max(1, Math.min(8, Math.floor(batchSize)));
+  for (let i = 0; i < unique.length; i += size) {
+    const batch = unique.slice(i, i + size);
+    await Promise.all(batch.map(async symbol => {
+      out[symbol] = await fetchIndiaQuote(symbol).catch(() => null);
+    }));
+    if (i + size < unique.length && pauseMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, pauseMs));
+    }
+  }
+  return out;
 }
 
 // India market indices (Yahoo symbols). Consumed by the Markets panel so India
