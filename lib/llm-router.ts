@@ -14,20 +14,17 @@ export type LLMTask = "research" | "chat" | "summarize" | "trade" | "evaluate" |
 // callLLM/runAgentLoop resolve a tier alias to its concrete model, so a caller
 // (or an agent_config row) may store either a concrete id OR a tier name.
 export const TIER_MODELS: Record<string, string> = {
-  "fast":         "deepseek-chat",
-  "reasoning":    "deepseek-reasoner",
+  "fast":         "deepseek-v4-flash",
+  "reasoning":    "deepseek-v4-pro",
   "claude-fast":  "claude-haiku-4-5-20251001",
   "claude-smart": "claude-sonnet-4-6",
 }
 
-// Legacy model ids that must resolve to a still-valid concrete model. The
-// "deepseek-v4-flash/pro" ids were never valid DeepSeek API names — they return
-// empty content — so any stored agent_config row or hardcoded ref that still
-// carries them is transparently rewritten to the real API ids here. One place,
-// no data migration required for correctness.
+// Legacy aliases remain accepted by DeepSeek only until 2026-07-24 15:59 UTC.
+// Resolve them before every call so hardcoded fallbacks cannot cross that cliff.
 const LEGACY_ALIASES: Record<string, string> = {
-  "deepseek-v4-flash": "deepseek-chat",
-  "deepseek-v4-pro":   "deepseek-reasoner",
+  "deepseek-chat":     "deepseek-v4-flash",
+  "deepseek-reasoner": "deepseek-v4-pro",
 }
 
 function resolveModel(model: string): string {
@@ -39,23 +36,25 @@ function resolveModel(model: string): string {
 // "latest" — and is loudly, persistently flagged via the System Health funnel so
 // a human reviews the swap. Keeps the flow from hard-breaking on a rename.
 const SAME_TIER_FALLBACK: Record<string, string> = {
-  "deepseek-chat":             "deepseek-reasoner",
-  "deepseek-reasoner":         "deepseek-chat",
+  "deepseek-v4-flash":         "deepseek-v4-pro",
+  "deepseek-v4-pro":           "deepseek-v4-flash",
+  "deepseek-chat":             "deepseek-v4-pro",
+  "deepseek-reasoner":         "deepseek-v4-flash",
   "claude-sonnet-4-6":         "claude-haiku-4-5-20251001",
   "claude-haiku-4-5-20251001": "claude-sonnet-4-6",
   "claude-opus-4-8":           "claude-sonnet-4-6",
   // Gemini / Grok fall back to the DeepSeek reasoner (always-configured tier)
   // rather than hard-failing if their key is missing or the model is renamed.
-  "gemini-2.5-flash":          "deepseek-reasoner",
-  "gemini-2.5-pro":            "deepseek-reasoner",
-  "grok-4":                    "deepseek-reasoner",
-  "grok-4-fast":               "deepseek-chat",
-  "gpt-4o":                    "deepseek-reasoner",
-  "gpt-4.1":                   "deepseek-reasoner",
-  "gpt-4o-mini":               "deepseek-chat",
-  "gpt-4.1-mini":              "deepseek-chat",
-  "glm-4.6":                   "deepseek-reasoner",
-  "glm-4.5-air":               "deepseek-chat",
+  "gemini-2.5-flash":          "deepseek-v4-flash",
+  "gemini-2.5-pro":            "deepseek-v4-pro",
+  "grok-4":                    "deepseek-v4-pro",
+  "grok-4-fast":               "deepseek-v4-flash",
+  "gpt-4o":                    "deepseek-v4-pro",
+  "gpt-4.1":                   "deepseek-v4-pro",
+  "gpt-4o-mini":               "deepseek-v4-flash",
+  "gpt-4.1-mini":              "deepseek-v4-flash",
+  "glm-4.6":                   "deepseek-v4-pro",
+  "glm-4.5-air":               "deepseek-v4-flash",
 }
 
 // Does this error mean "the model doesn't exist / is deprecated" (vs a transient
@@ -69,6 +68,16 @@ function isModelUnavailable(err: unknown): boolean {
 function isAuthMissing(err: unknown): boolean {
   const s = String((err as any)?.message ?? err).toLowerCase()
   return s.includes("resolve authentication") || s.includes("api key") || (err as any)?.status === 401
+}
+
+/** Explicit V4 mode prevents Flash calls from silently defaulting to thinking. */
+export function deepSeekThinkingConfig(model: string): {
+  thinking: { type: "enabled" | "disabled" };
+  reasoning_effort?: "high";
+} {
+  return model === "deepseek-v4-pro"
+    ? { thinking: { type: "enabled" }, reasoning_effort: "high" }
+    : { thinking: { type: "disabled" } };
 }
 
 export interface LLMCallOpts {
@@ -100,17 +109,17 @@ export interface LLMResult {
 // table (Settings → Agents → LLM Config) via getConfiguredModel and is passed as
 // opts.model, which overrides this. These defaults are the fallback when a caller
 // does NOT pass a model. Policy: default OFF Claude — hard-reasoning tasks use the
-// DeepSeek reasoner (the "thinking" tier), cheap tasks use deepseek-chat. Claude
+// DeepSeek V4 Pro is the thinking tier; cheap tasks use V4 Flash non-thinking. Claude
 // is opt-in per flow from Settings, never a silent default.
 const MODEL_ROUTING: Record<LLMTask, string> = {
-  research:  "deepseek-reasoner",
-  trade:     "deepseek-reasoner",
-  evaluate:  "deepseek-reasoner",
-  thesis:    "deepseek-reasoner",
-  optimize:  "deepseek-chat",
-  screen:    "deepseek-chat",
-  chat:      "deepseek-chat",
-  summarize: "deepseek-chat",
+  research:  "reasoning",
+  trade:     "reasoning",
+  evaluate:  "reasoning",
+  thesis:    "reasoning",
+  optimize:  "fast",
+  screen:    "fast",
+  chat:      "fast",
+  summarize: "fast",
 }
 
 // Cost per 1M tokens [input, output] in USD (Groq free tier = $0)
@@ -119,13 +128,13 @@ const PRICING: Record<string, [number, number]> = {
   "claude-haiku-4-5":          [0.25,   1.25],
   "claude-haiku-4-5-20251001": [0.25,   1.25],
   "claude-opus-4-8":           [5.00,  25.00],
-  // DeepSeek deprecated chat(V3)/reasoner(R1) → V4 flash/pro (2026-07). Old
-  // keys kept for historical llm_call_log rows. V4 prices below are estimates
-  // mirroring the tier each replaces — verify against DeepSeek's price page.
+  // Legacy keys stay for historical llm_call_log rows. V4 rates are official
+  // cache-miss input/output prices as of 2026-07-20; cache-hit usage is not
+  // separated by the current logger, so using miss-rate is conservative.
   "deepseek-chat":             [0.07,   0.28],
   "deepseek-reasoner":         [0.55,   2.19],
-  "deepseek-v4-flash":         [0.07,   0.28],
-  "deepseek-v4-pro":           [0.55,   2.19],
+  "deepseek-v4-flash":         [0.14,   0.28],
+  "deepseek-v4-pro":           [0.435,  0.87],
   "gemini-2.5-flash":          [0.075,  0.30],
   "gemini-2.5-pro":            [1.25,  10.00],
   // xAI Grok — verify against x.ai pricing page; estimates below.
@@ -270,7 +279,7 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
       } else if (isAuthMissing(err) && !model.startsWith("deepseek")) {
         // Anthropic API key missing from env — fall back to DeepSeek so the run
         // doesn't hard-fail. Raises a persistent alert so the key gets re-added.
-        const deepseekFb = SAME_TIER_FALLBACK[model] ?? "deepseek-chat"
+        const deepseekFb = SAME_TIER_FALLBACK[model] ?? "deepseek-v4-flash"
         await reportIssue({
           issueKey: `provider-key-missing:${model}`,
           severity: "critical", category: "models",
@@ -404,7 +413,7 @@ async function callDeepSeek(
       "Content-Type": "application/json",
       "Authorization": `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens, ...deepSeekThinkingConfig(model) }),
     signal: AbortSignal.timeout(120_000),
   })
 
@@ -418,7 +427,7 @@ async function callDeepSeek(
   const text = choice?.message?.content ?? ""
   if (!text) {
     // Empty `content` has two very different causes; distinguish them so a VALID
-    // model isn't flagged as dead. deepseek-reasoner (R1) streams chain-of-thought
+    // model isn't flagged as dead. DeepSeek thinking mode streams chain-of-thought
     // into `reasoning_content` and the answer into `content`; if the call is cut at
     // max_tokens mid-reasoning (finish_reason "length"), `content` is empty while
     // the model clearly responded. That is a transient truncation, NOT a bad model.
@@ -653,12 +662,12 @@ export async function runAgentLoop(opts: {
   runId?: string
   symbol?: string
 }): Promise<AgentLoopResult> {
-  let model = resolveModel(opts.model ?? "deepseek-v4-flash")
+  let model = resolveModel(opts.model ?? "fast")
   // Tool loops have typed implementations only for Anthropic and DeepSeek.
   // Do not accidentally send another provider's model id to DeepSeek's API.
   if (!model.startsWith("claude") && !model.startsWith("deepseek")) {
     const requested = model
-    model = SAME_TIER_FALLBACK[requested] ?? "deepseek-chat"
+    model = SAME_TIER_FALLBACK[requested] ?? "deepseek-v4-flash"
     await reportIssue({
       issueKey: `tool-loop-provider-fallback:${requested}`,
       severity: "warn", category: "models",
@@ -696,7 +705,7 @@ export async function runAgentLoop(opts: {
     } catch (err) {
       if (!model.startsWith("claude") || !isAuthMissing(err)) throw err
       const requested = model
-      model = "deepseek-chat"
+      model = "deepseek-v4-flash"
       await reportIssue({
         issueKey: `provider-key-missing:${requested}`,
         severity: "critical", category: "models",
@@ -828,7 +837,7 @@ async function runDeepSeekAgentLoop(
     function: { name: t.name, description: t.description, parameters: t.parameters },
   }))
 
-  const messages: { role: string; content: string | null; tool_call_id?: string; tool_calls?: unknown[] }[] = [
+  const messages: { role: string; content: string | null; reasoning_content?: string; tool_call_id?: string; tool_calls?: unknown[] }[] = [
     { role: "system", content: opts.systemPrompt },
     { role: "user", content: opts.initialMessage },
   ]
@@ -840,7 +849,10 @@ async function runDeepSeekAgentLoop(
     const resp = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, messages, tools: openAITools, tool_choice: "auto", max_tokens: 2048 }),
+      body: JSON.stringify({
+        model, messages, tools: openAITools, tool_choice: "auto", max_tokens: 2048,
+        ...deepSeekThinkingConfig(model),
+      }),
       signal: AbortSignal.timeout(AGENT_LOOP_TIMEOUT_MS),
     })
 
@@ -857,7 +869,14 @@ async function runDeepSeekAgentLoop(
     const choice = data.choices?.[0]
     const msg = choice?.message
 
-    messages.push({ role: "assistant", content: msg?.content ?? null, tool_calls: msg?.tool_calls })
+    // In V4 thinking-mode tool loops, DeepSeek requires the assistant's full
+    // reasoning_content to be replayed on the next tool-result turn.
+    messages.push({
+      role: "assistant",
+      content: msg?.content ?? null,
+      reasoning_content: msg?.reasoning_content,
+      tool_calls: msg?.tool_calls,
+    })
 
     if (!msg?.tool_calls || msg.tool_calls.length === 0 || choice?.finish_reason === "stop") {
       return { text: msg?.content ?? "", steps, tokensIn: totalIn, tokensOut: totalOut, toolCalls: callLog }

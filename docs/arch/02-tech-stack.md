@@ -41,25 +41,26 @@
 `getConfiguredModel(svc, agentName, fallback)` (`lib/agent-model-config.ts`) and pass the
 result to `callLLM({ model })`. `MODEL_ROUTING` in `lib/llm-router.ts` is now only the
 DEFAULT when no model is passed. **Policy: default OFF Claude** — hard-reasoning flows
-(research/trade/evaluate/thesis) default to `deepseek-reasoner` (the thinking tier), cheap
-flows to `deepseek-chat`. Claude is opt-in per flow from Settings, never a silent default.
+(research/trade/evaluate/thesis) default to `deepseek-v4-pro` with thinking explicitly
+enabled; cheap flows use `deepseek-v4-flash` with thinking explicitly disabled. Claude is
+opt-in per flow from Settings, never a silent default.
 
 Providers (each key set in Settings → Provider API Keys, vault-first / env-fallback):
 
 | Provider | Concrete models | Dispatch in llm-router |
 |---|---|---|
-| DeepSeek | `deepseek-chat` (fast), `deepseek-reasoner` (thinking) | `callDeepSeek` |
+| DeepSeek | `deepseek-v4-flash` (fast/non-thinking), `deepseek-v4-pro` (thinking) | `callDeepSeek` |
 | Anthropic | `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-8` | `callClaude` (extended thinking auto-on for research/trade/evaluate/thesis) |
 | Groq | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, … | `callGroq` |
 | Google | `gemini-2.5-flash`, `gemini-2.5-pro` | `callGemini` (added 2026-07-12) |
 | xAI | `grok-4-fast`, `grok-4` | `callGrok` (added 2026-07-12) |
 
-Tier aliases (`TIER_MODELS`): `fast`→`deepseek-chat`, `reasoning`→`deepseek-reasoner`,
+Tier aliases (`TIER_MODELS`): `fast`→`deepseek-v4-flash`, `reasoning`→`deepseek-v4-pro`,
 `claude-fast`→Haiku, `claude-smart`→Sonnet. `LEGACY_ALIASES` transparently rewrites the
-never-valid `deepseek-v4-flash`/`v4-pro` ids to `deepseek-chat`/`deepseek-reasoner`.
+retiring `deepseek-chat`/`deepseek-reasoner` aliases to the concrete V4 IDs.
 `SAME_TIER_FALLBACK` degrades a single unavailable model to a same-tier sibling (Gemini/Grok
-fall back to `deepseek-reasoner`) and raises a System Health alert. A missing Anthropic key
-falls back to `deepseek-chat`, not a crash. **No local Claude-CLI/PowerShell path exists
+fall back to `deepseek-v4-pro`) and raises a System Health alert. A missing Anthropic key
+falls back to `deepseek-v4-flash`, not a crash. **No local Claude-CLI/PowerShell path exists
 anymore** — `lib/claude-exec.ts` was deleted 2026-07-12; all LLM + data fetches are HTTP.
 
 ### Adding / changing models

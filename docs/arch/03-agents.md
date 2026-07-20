@@ -209,7 +209,7 @@ makes it a harmless no-op meanwhile.
 
 **File:** `app/api/agents/research/route.ts`, `lib/research-agent.ts`
 **Schedule:** Weekdays 9:00 AM ET (US), Weekdays 6:15 AM ET post-NSE-close (India)
-**LLM:** per-flow from Settings → AI Models (`agent_config` row `research`, read via `getConfiguredModel`), default `deepseek-reasoner`. Writes thesis text only — scores are deterministic. (Was hardcoded Groq Llama pre-2026-07-12.)
+**LLM:** per-flow from Settings → AI Models (`agent_config` row `research`, read via `getConfiguredModel`), default `deepseek-v4-pro` with thinking enabled. Writes thesis text only — scores are deterministic. (Was hardcoded Groq Llama pre-2026-07-12.)
 
 **Inputs:**
 1. Account-scoped holdings snapshots. Research may analyze approved holdings, but only holdings verified on the actual order account can authorize a SELL.
@@ -365,7 +365,7 @@ positions. Daily churn of 5+ creates overtrading.
 
 **File:** `app/api/agents/deepseek/route.ts`
 **Schedule:** Weekdays 9:00 AM ET (parallel with ResearchAgent)
-**LLM:** DeepSeek `deepseek-chat`
+**LLM:** DeepSeek `deepseek-v4-flash` with thinking disabled
 
 **Inputs:** Same watchlist and screener pipeline as ResearchAgent.
 
@@ -550,16 +550,16 @@ only — never touches money, weights, or positions.
 
 **Mentor UI surfaces (all per-flow model from Settings → AI Models; each response carries a
 `meta:{agent,model,agentKind}` for the AI-attribution chip, 2026-07-12):**
-- **AI Coach** (`/api/agents/mentor-coach`, `mentor`→deepseek-reasoner) — a TRUE tool-using
+- **AI Coach** (`/api/agents/mentor-coach`, `mentor`→deepseek-v4-pro) — a TRUE tool-using
   agent loop (`runAgentLoop`, ≤10 steps, tools: query_behavior/learning_progress/market_context
   /read_principles).
-- **Ask the Agent** (`/api/mentor/ask`, `mentor-ask`→deepseek-chat) — UPGRADED from a fixed
+- **Ask the Agent** (`/api/mentor/ask`, `mentor-ask`→deepseek-v4-flash) — UPGRADED from a fixed
   recent-rows snapshot to a tool-using retrieval agent (`runAgentLoop`, ≤8 steps): tools
   lookup_symbol / recent_activity / list_open_positions / worst_and_best_trades → answers on
   the EXACT data the question needs (targeted, not a generic LLM guess). SSE-streams the final
   answer word-by-word after the loop; emits meta as the first + last stream event.
-- **Judgment Coach** (`/api/mentor/evaluate`, `mentor-evaluate`→deepseek-reasoner) and **Market
-  Thesis** (`/api/mentor/thesis`, `mentor-thesis`→deepseek-reasoner) — single grounded
+- **Judgment Coach** (`/api/mentor/evaluate`, `mentor-evaluate`→deepseek-v4-pro) and **Market
+  Thesis** (`/api/mentor/thesis`, `mentor-thesis`→deepseek-v4-pro) — single grounded
   `callLLM` (no tool loop); evaluate injects the symbol's real research_packet + signal.
 
 **Outputs:** `mentor_insights` rows
