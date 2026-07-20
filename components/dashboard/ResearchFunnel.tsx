@@ -201,6 +201,52 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
                     : "No reliable point-in-time price was recorded, so no levels are shown."}
                 </div>
                 <div style={{ color: T.amber, fontSize: "10px", marginTop: "5px" }}>Not an order or guaranteed execution · {s.trade_plan.reference_source} · as of {formatDate(s.trade_plan.reference_as_of)}</div>
+                <div style={{ color: s.learning_readiness.ready ? T.green : T.muted, fontSize: "10px", marginTop: "5px" }}>
+                  {s.learning_readiness.available
+                    ? <>Exit-policy learning: {s.learning_readiness.n}/{s.learning_readiness.required} eligible {market.toUpperCase()} outcomes at this horizon · {s.learning_readiness.ready ? "validated percentile policy available" : "mandate levels remain authoritative"}</>
+                    : <>Exit-policy learning readiness unavailable · mandate levels remain authoritative</>}
+                </div>
+              </section>
+
+              <section style={{ borderBottom: `1px solid ${T.border}`, paddingBottom: "14px", marginBottom: "14px" }}>
+                <div style={{ color: T.muted, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: "8px" }}>Current position and realized outcome</div>
+                {!s.current_position.paper && !s.current_position.live && !s.realized_outcome
+                  ? <div style={{ color: T.muted, fontSize: "11px" }}>No current paper/live position or exact-signal paper outcome is linked to this decision.</div>
+                  : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: "12px" }}>
+                    {s.current_position.paper && <div>
+                      <div style={{ color: T.blue, fontSize: "10px", textTransform: "uppercase", marginBottom: "6px" }}>Paper position · PositionMonitor owned</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "7px" }}>
+                        <MiniMetric label="Actual average cost" value={formatMoney(s.current_position.paper.avg_cost, s.trade_plan.currency)} />
+                        <MiniMetric label="Current price" value={formatMoney(s.current_position.paper.current_price, s.trade_plan.currency)} />
+                        <MiniMetric label="Current stop" value={formatMoney(s.current_position.paper.current_stop_loss, s.trade_plan.currency)} color={T.red} />
+                        <MiniMetric label="Current target" value={formatMoney(s.current_position.paper.price_target, s.trade_plan.currency)} color={T.green} />
+                      </div>
+                      <div style={{ color: T.muted, fontSize: "10px", marginTop: "6px" }}>Qty {pretty(s.current_position.paper.qty)} · updated {formatDate(s.current_position.paper.updated_at)}</div>
+                    </div>}
+                    {s.current_position.live && <div>
+                      <div style={{ color: s.current_position.live.status === "managed" ? T.green : T.amber, fontSize: "10px", textTransform: "uppercase", marginBottom: "6px" }}>Live holding · {titleCase(s.current_position.live.status)}</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "7px" }}>
+                        <MiniMetric label="Broker average cost" value={formatMoney(s.current_position.live.avg_cost, s.trade_plan.currency)} />
+                        <MiniMetric label="Snapshot price" value={formatMoney(s.current_position.live.current_price, s.trade_plan.currency)} />
+                        {s.current_position.live.status === "managed" && <>
+                          <MiniMetric label="Recorded stop" value={formatMoney(s.current_position.live.stop_loss, s.trade_plan.currency)} color={T.red} />
+                          <MiniMetric label="Recorded target" value={formatMoney(s.current_position.live.price_target, s.trade_plan.currency)} color={T.green} />
+                          <MiniMetric label="Time-stop horizon" value={`${s.current_position.live.horizon_days} market days`} />
+                        </>}
+                      </div>
+                      <div style={{ color: T.muted, fontSize: "10px", marginTop: "6px" }}>Qty {pretty(s.current_position.live.qty)} · snapshot {formatDate(s.current_position.live.snapshot?.captured_at)}</div>
+                      {s.current_position.live.status !== "managed" && <div style={{ color: T.amber, fontSize: "10px", lineHeight: 1.45, marginTop: "5px" }}>No exact active-account Kairos fill policy matches this broker holding. The Journal will not invent live protection.</div>}
+                    </div>}
+                    {s.realized_outcome && <div>
+                      <div style={{ color: T.muted, fontSize: "10px", textTransform: "uppercase", marginBottom: "6px" }}>Exact-signal paper outcome</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "7px" }}>
+                        <MiniMetric label="Fill" value={formatMoney(s.realized_outcome.fill_price, s.trade_plan.currency)} />
+                        <MiniMetric label="Exit" value={formatMoney(s.realized_outcome.exit_price, s.trade_plan.currency)} />
+                        <MiniMetric label="P&L" value={s.realized_outcome.pnl_pct == null ? "Open / not recorded" : `${s.realized_outcome.pnl_pct >= 0 ? "+" : ""}${s.realized_outcome.pnl_pct.toFixed(2)}%`} color={s.realized_outcome.pnl_pct == null ? T.muted : s.realized_outcome.pnl_pct >= 0 ? T.green : T.red} />
+                      </div>
+                      <div style={{ color: T.muted, fontSize: "10px", marginTop: "6px" }}>{s.realized_outcome.exit_reason ? `Exit: ${titleCase(s.realized_outcome.exit_reason)}` : "No exit recorded"} · {formatDate(s.realized_outcome.closed_at ?? s.realized_outcome.executed_at)}</div>
+                    </div>}
+                  </div>}
               </section>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "10px", marginBottom: "14px" }}>

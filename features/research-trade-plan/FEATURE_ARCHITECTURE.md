@@ -115,3 +115,52 @@ Remove the Journal rendering and stop writing `features.trade_plan`. Existing
 JSONB observations remain harmless audit history. The fill-time resolver can be
 returned to mandate-only behavior independently; no position or order migration
 is required.
+
+## V2: Position And Outcome Truth (Approved 2026-07-20)
+
+The Journal must not make the research-time scenario look like the currently
+managed trade. It adds three independent, explicitly labelled overlays:
+
+1. **Current paper position:** read from `paper_positions` for the same market
+   and symbol. Show actual average cost, current price, stored initial/current
+   stop, target, quantity, and update time. These stored fields remain owned by
+   PaperTrader and PositionMonitor.
+2. **Current live holding:** read only from the latest
+   `live_account_snapshots` row for the configured active account. Never make a
+   broker request from the Journal and never merge accounts or markets. A live
+   holding is `managed` only when a filled Kairos BUY proposal for that exact
+   active account carries a valid deterministic execution policy; otherwise it
+   is truthfully labelled `unmanaged_by_kairos` and no stop/target is invented.
+3. **Realized paper outcome:** join `paper_trades` by the exact `signal_id` and
+   show fill, exit, P&L, close time, and exit reason. Symbol-only matching is
+   forbidden because it can attach a later trade to an older decision.
+
+The API also reports exit-policy learning readiness as eligible same-market,
+same-horizon long labels `n / 60`. Thin data continues to use the mandate. This
+is observability only and cannot lower the 60-sample gate.
+
+### Dormant Live-Exit Contract
+
+Before live autonomy can ever be enabled, every autonomous BUY proposal records
+the deterministic fill-time percentage policy, horizon, mandate version, and
+policy source in `trade_proposals.policy_snapshot`. Absolute levels are rebound
+to the broker's actual average fill.
+
+The dormant live exit monitor must:
+
+- include only filled orders whose `proposal_id` resolves to the configured
+  active account; missing proposal/account lineage fails closed;
+- reconstruct remaining lots FIFO so partial sells remove quantity and cost
+  basis together;
+- use the remaining lots' recorded policies, with the current per-market
+  mandate only as a clearly marked fallback for legacy Kairos lots;
+- use the fill-recorded resolved horizon and count market sessions exactly as
+  Paper PositionMonitor does; legacy Kairos lots fall back to the mandate;
+- never auto-manage broker holdings that predate Kairos order lineage;
+- surface database read failures rather than silently treating them as no
+  positions.
+
+These changes do not activate `AUTONOMOUS_LIVE_ENABLED`, `live_auto_enabled`,
+broker-hosted protection, Webull trading, or any order canary. Owner approval,
+account capability proof, and a small manually approved canary remain separate
+deployment gates.

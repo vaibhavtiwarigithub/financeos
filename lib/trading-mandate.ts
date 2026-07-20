@@ -96,6 +96,13 @@ export async function loadTradingMandate(supabase: any, market: TradingMarket): 
   }
 }
 
+export async function loadTradingMandateStrict(supabase: any, market: TradingMarket): Promise<TradingMandate> {
+  const { data, error } = await supabase.from("trading_mandates").select("*").eq("market", market).maybeSingle();
+  if (error) throw new Error(`trading mandate read failed for ${market}: ${error.message}`);
+  if (!data) throw new Error(`trading mandate missing for ${market}`);
+  return hydrateMandate(market, data);
+}
+
 export function resolveHorizonDays(mandate: TradingMandate, championDays?: number | null): { days: number; source: "user" | "champion" } {
   if (mandate.horizon_governance === "agent" && Number.isFinite(championDays)) {
     const days = Math.max(mandate.min_hold_days, Math.min(mandate.max_hold_days, Math.round(Number(championDays))));

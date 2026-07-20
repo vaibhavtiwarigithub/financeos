@@ -14,10 +14,13 @@ import { checkKillSwitches } from "@/lib/kill-switches";
 import { executeApprovedOrder } from "@/lib/trading/execute-order";
 import { isMarketOpenLive } from "@/lib/trading/market-calendar";
 import { fetchIndiaQuote } from "@/lib/india-data";
-import { loadTradingMandate } from "@/lib/trading-mandate";
+import { loadTradingMandateStrict, resolveHorizonDays } from "@/lib/trading-mandate";
+import { loadChampionGenome } from "@/lib/validation/genome-live";
+import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
+import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
+import { reconstructAccountLivePositions } from "@/lib/trading/live-position-ledger";
 
 const SIGNAL_LOOKBACK_HOURS = 24;
-const NAV_ACCOUNT_ID = "605420660";
 
 export interface LiveRunResult {
   run_id: string;
@@ -65,7 +68,8 @@ export async function runAutonomousLive(
       "live_auto_max_open_positions,live_auto_max_orders_per_day,score_threshold,position_size_pct," +
       "live_auto_mode_us,live_auto_mode_india," +
       "max_daily_notional_usd,max_daily_notional_inr,max_daily_trades," +
-      "app_paused,security_locked,trading_enabled,trading_enabled_us,trading_enabled_india"
+      "app_paused,security_locked,trading_enabled,trading_enabled_us,trading_enabled_india," +
+      "active_account_us,active_account_india"
     )
     .limit(1)
     .single();
@@ -104,6 +108,9 @@ export async function runAutonomousLive(
   // other market keeps trading, and exits still run via the live-exit monitor.
   const pausedByMarket = await Promise.all(autonomousMarkets.map((m) => isPaused(svc, m)));
   autonomousMarkets = autonomousMarkets.filter((_, i) => !pausedByMarket[i]);
+  autonomousMarkets = autonomousMarkets.filter(m =>
+    m === "india" ? Boolean(cfg.active_account_india) : Boolean(cfg.active_account_us)
+  );
   if (autonomousMarkets.length === 0) {
     return { ...earlyExit("no_markets_in_autonomous_mode"), run_id: runId };
   }
@@ -153,9 +160,35 @@ export async function runAutonomousLive(
   };
   const flatSizePct: number = cfg.position_size_pct ?? 10;
   const mandates = await Promise.all(
-    autonomousMarkets.map(async market => [market, await loadTradingMandate(svc, market as "us" | "india")] as const),
+    autonomousMarkets.map(async market => [market, await loadTradingMandateStrict(svc, market as "us" | "india")] as const),
   );
   const mandateByMarket = Object.fromEntries(mandates);
+  const exitPlanByMarket: Record<string, {
+    riskReward: ReturnType<typeof resolveExecutionRiskReward>;
+    horizonDays: number;
+  }> = {};
+  for (const [market, mandate] of mandates) {
+    const genome = await loadChampionGenome(svc, market as "us" | "india");
+    const horizonDays = resolveHorizonDays(
+      mandate,
+      genome.source === "champion" ? genome.genome.horizon_days : null,
+    ).days;
+    const learned = await getGlobalMaeMfePercentiles(
+      svc,
+      market as "us" | "india",
+      horizonDays,
+      genome.genome.exit.stop_mae_pctile / 100,
+      genome.genome.exit.target_mfe_pctile / 100,
+    );
+    exitPlanByMarket[market] = {
+      horizonDays,
+      riskReward: resolveExecutionRiskReward({
+        mandateStopLossPct: mandate.stop_loss_pct,
+        mandateTargetPct: mandate.target_pct,
+        learned,
+      }),
+    };
+  }
   const minimumScoreThreshold = Math.min(...mandates.map(([, mandate]) => mandate.score_threshold));
 
   const todayStart = new Date();
@@ -166,19 +199,24 @@ export async function runAutonomousLive(
   // A market with no fresh NAV source is left unset → its signals reject in the
   // sizing kernel (no_live_nav), rather than being sized off the wrong currency.
   const navByMarket: Record<string, { nav: number; capturedAt: string }> = {};
+  const brokerHoldingCountByMarket: Record<string, number> = {};
 
   if (autonomousMarkets.includes("us")) {
-    const { data: navSnap } = await svc
+    const { data: navSnap, error: navError } = await svc
       .from("live_account_snapshots")
-      .select("equity, captured_at")
-      .eq("account_id", NAV_ACCOUNT_ID)
+      .select("equity, captured_at, positions_json")
+      .eq("account_id", cfg.active_account_us)
       .order("captured_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (navError) throw new Error(`US NAV read failed: ${navError.message}`);
     navByMarket.us = {
       nav: Number((navSnap as any)?.equity) || 0,
       capturedAt: (navSnap as any)?.captured_at ?? new Date(0).toISOString(),
     };
+    brokerHoldingCountByMarket.us = Array.isArray((navSnap as any)?.positions_json)
+      ? (navSnap as any).positions_json.filter((position: any) => Number(position?.qty ?? position?.quantity) > 0).length
+      : 0;
   }
 
   if (autonomousMarkets.includes("india")) {
@@ -187,6 +225,9 @@ export async function runAutonomousLive(
       let inrNav = 0;
       if (margins.ok && typeof margins.equityNet === "number") inrNav += margins.equityNet;
       const hlist: any[] = (holdings as any)?.data ?? (holdings as any)?.holdings ?? [];
+      brokerHoldingCountByMarket.india = Array.isArray(hlist)
+        ? hlist.filter(h => Number(h.quantity ?? h.qty ?? 0) > 0).length
+        : 0;
       for (const h of Array.isArray(hlist) ? hlist : []) {
         const qty = Number(h.quantity ?? h.qty ?? 0);
         const px = Number(h.last_price ?? h.ltp ?? 0);
@@ -236,21 +277,41 @@ export async function runAutonomousLive(
   const openByMarket: Record<string, number> = {};
   const ordersTodayByMarket: Record<string, number> = {};
   for (const m of autonomousMarkets) {
-    const { data: fills } = await svc.from("broker_orders")
-      .select("symbol, side, qty").eq("market", m).eq("status", "filled");
-    const net: Record<string, number> = {};
-    for (const o of (fills ?? []) as any[]) {
-      const q = Number(o.qty) || 0;
-      net[o.symbol] = (net[o.symbol] ?? 0) + (o.side === "sell" ? -q : q);
-    }
-    openByMarket[m] = Object.values(net).filter((v) => v > 1e-9).length;
-
-    const { count: todayCount } = await svc.from("broker_orders")
-      .select("id", { count: "exact", head: true })
+    const [{ data: fills, error: fillsError }, { data: todayOrders, error: todayError }] = await Promise.all([
+      svc.from("broker_orders")
+        .select("proposal_id,symbol,side,filled_qty,qty,avg_fill_price,created_at")
+        .eq("market", m).eq("broker_env", "live").eq("status", "filled"),
+      svc.from("broker_orders")
+      .select("proposal_id")
       .eq("market", m).eq("broker_env", "live")
       .gte("created_at", todayStart.toISOString())
-      .not("status", "in", "(error,rejected,canceled,cancelled)");
-    ordersTodayByMarket[m] = todayCount ?? 0;
+      .not("status", "in", "(error,rejected,canceled,cancelled)"),
+    ]);
+    if (fillsError || todayError) throw new Error(`live order state read failed for ${m}: ${fillsError?.message ?? todayError?.message}`);
+    const proposalIds = [...new Set([...(fills ?? []), ...(todayOrders ?? [])]
+      .map((row: any) => row.proposal_id).filter((id: any) => id != null))];
+    let proposals: any[] = [];
+    if (proposalIds.length) {
+      const { data, error } = await svc.from("trade_proposals")
+        .select("id,account_number,policy_snapshot").in("id", proposalIds);
+      if (error) throw new Error(`live order lineage read failed for ${m}: ${error.message}`);
+      proposals = data ?? [];
+    }
+    const account = m === "india" ? cfg.active_account_india : cfg.active_account_us;
+    const proposalById = new Map(proposals.map((proposal: any) => [String(proposal.id), proposal]));
+    const mandate = mandateByMarket[m];
+    const reconstructed = reconstructAccountLivePositions({
+      orders: (fills ?? []) as any[], proposals, activeAccount: account,
+      fallbackPolicy: {
+        stopLossPct: mandate.stop_loss_pct, targetPct: mandate.target_pct,
+        maxHoldDays: mandate.max_hold_days, horizonDays: mandate.target_hold_days,
+        mandateVersion: mandate.version,
+      },
+    });
+    openByMarket[m] = Math.max(reconstructed.length, brokerHoldingCountByMarket[m] ?? 0);
+    ordersTodayByMarket[m] = (todayOrders ?? []).filter((row: any) =>
+      row.proposal_id != null && proposalById.get(String(row.proposal_id))?.account_number === account
+    ).length;
   }
 
   // Query qualifying signals for autonomous markets only
@@ -297,6 +358,16 @@ export async function runAutonomousLive(
     const market = signal.market ?? "us";
     const scoreThreshold = mandateByMarket[market]?.score_threshold;
     if (!Number.isFinite(scoreThreshold) || Number(signal.analyst_score) < scoreThreshold) continue;
+    const accountNumber = market === "india" ? cfg.active_account_india : cfg.active_account_us;
+    if (!accountNumber) {
+      results.push({
+        symbol: signal.symbol, market, signal_id: signal.id,
+        proposal_id: null, broker_order_id: null, broker_order_ref: null,
+        kernel: null, sizing: null, broker_status: "gate_blocked",
+        error: `no active account configured for ${market}`,
+      });
+      continue;
+    }
     const broker = market === "india" ? "kite" : "robinhood";
     const currency = market === "india" ? "INR" : "USD";
     // Effective daily notional ceiling for the auto path. US: the owner's
@@ -325,6 +396,7 @@ export async function runAutonomousLive(
         execution_mode:  "autonomous_live",
         auto_run_id:     runId,
         auto_decided_at: new Date().toISOString(),
+        account_number:  accountNumber,
         policy_snapshot: { policy, score_threshold: scoreThreshold, run_id: runId, run_start: runStart },
       })
       .select("id")
@@ -435,13 +507,52 @@ export async function runAutonomousLive(
     // kill-switch, G1 quality, notional cap, drift, held-SELL, atomic budget +
     // broker submit + durable record) via the shared service with the
     // autonomous_worker actor. No direct broker calls or manual budget RPC here.
-    await svc.from("trade_proposals").update({
+    const mandate = mandateByMarket[market];
+    const exitPlan = exitPlanByMarket[market];
+    const boundPlan = exitPlan ? bindTradePrices(currentPrice, exitPlan.riskReward) : null;
+    if (!mandate || !exitPlan || !boundPlan) {
+      await svc.from("trade_proposals").update({ status: "manual_review_required" }).eq("id", proposalId);
+      results.push({
+        symbol: signal.symbol, market, signal_id: signal.id,
+        proposal_id: proposalId, broker_order_id: null, broker_order_ref: null,
+        kernel, sizing, broker_status: "gate_blocked", error: "invalid deterministic exit policy",
+      });
+      continue;
+    }
+    const executionTradePlan = {
+      version: "v1",
+      stop_loss_pct: exitPlan.riskReward.stopLossPct,
+      target_pct: exitPlan.riskReward.targetPct,
+      stop_loss_at_proposal: boundPlan.stopLoss,
+      target_at_proposal: boundPlan.priceTarget,
+      max_hold_days: mandate.max_hold_days,
+      horizon_days: exitPlan.horizonDays,
+      mandate_version: mandate.version,
+      source: exitPlan.riskReward.source,
+      sample_size: exitPlan.riskReward.sampleSize,
+      rebound_to_broker_fill: true,
+    } as const;
+    const { error: proposalUpdateError } = await svc.from("trade_proposals").update({
       qty:               sizing.proposed_qty,
       estimated_value:   sizing.estimated_notional,
       pct_of_nav:        sizing.pct_of_nav,
       price_at_proposal: currentPrice,
       price_source:      "autonomous_live",
+      policy_snapshot: {
+        policy, score_threshold: scoreThreshold, run_id: runId,
+        run_start: runStart, kernel, sizing,
+        execution_trade_plan: executionTradePlan,
+      },
     }).eq("id", proposalId);
+    if (proposalUpdateError) {
+      results.push({
+        symbol: signal.symbol, market, signal_id: signal.id,
+        proposal_id: proposalId, broker_order_id: null, broker_order_ref: null,
+        kernel, sizing, broker_status: "gate_blocked",
+        error: `proposal policy write failed: ${proposalUpdateError.message}`,
+      });
+      continue;
+    }
 
     const exec = await executeApprovedOrder(
       svc,
@@ -486,6 +597,7 @@ export async function runAutonomousLive(
       policy_snapshot: {
         policy, score_threshold: scoreThreshold, run_id: runId,
         run_start: runStart, kernel, sizing,
+        execution_trade_plan: executionTradePlan,
         broker_status: brokerStatus, broker_order_ref: orderRef, exec_error: brokerError ?? null,
       },
     }).eq("id", proposalId);

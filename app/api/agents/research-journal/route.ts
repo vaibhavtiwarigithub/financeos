@@ -4,11 +4,23 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { classifyJournalAsset } from "@/lib/asset-classification";
 import { resolveJournalTerminal } from "@/lib/research/journal-terminal";
 import { buildIndicativeTradePlan } from "@/lib/trading/trade-plan";
+import { getMaeMfeReadinessByHorizons } from "@/lib/risk/percentiles";
+import { loadTradingMandate } from "@/lib/trading-mandate";
+import {
+  canonicalPositionSymbol,
+  normalizeSnapshotHolding,
+  reconstructAccountLivePositions,
+} from "@/lib/trading/live-position-ledger";
 
 export const dynamic = "force-dynamic";
 
 const DIMS = ["fundamental", "technical", "sentiment", "macro", "insider"] as const;
 function titleCase(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, c => c.toUpperCase()); }
+function finiteOrNull(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
 
 function assetLabel(type: string): string {
   return type === "etf" ? "ETF / fund" : type === "metal_fund" ? "Commodity / metal fund"
@@ -171,6 +183,78 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  const paperBySymbol = new Map<string, any>();
+  const outcomeBySignal = new Map<string, any>();
+  const liveHoldingBySymbol = new Map<string, ReturnType<typeof normalizeSnapshotHolding>>();
+  const livePlanBySymbol = new Map<string, any>();
+  let liveSnapshotMeta: { broker: string | null; captured_at: string } | null = null;
+  const requestedHorizons = [...new Set(observations.map((obs: any) =>
+    Number(obs.features?.trade_plan?.horizon_sessions ?? obs.features?.trading_mandate?.target_hold_days ?? 10)
+  ).filter((day: number) => [2, 5, 10, 20].includes(day)))];
+
+  if (journalSymbols.length) {
+    const [{ data: paperRows, error: paperError }, { data: outcomeRows, error: outcomeError }, configResult, mandate, readiness] = await Promise.all([
+      svc.from("paper_positions")
+        .select("id,symbol,qty,avg_cost,current_price,opened_at,updated_at,price_target,stop_loss,initial_stop_loss,highest_price,target_updated_at,resolved_horizon_days,mandate_version")
+        .eq("market", market).in("symbol", journalSymbols),
+      signalIds.length ? svc.from("paper_trades")
+        .select("id,signal_id,symbol,qty,fill_price,exit_price,realized_pnl,pnl_pct,outcome,executed_at,closed_at,exit_reason")
+        .eq("market", market).in("signal_id", signalIds).order("executed_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+      svc.from("strategy_config").select("active_account_us,active_account_india").limit(1).maybeSingle(),
+      loadTradingMandate(svc, market),
+      getMaeMfeReadinessByHorizons(svc, market, requestedHorizons),
+    ]);
+    if (paperError || outcomeError || configResult.error) {
+      return NextResponse.json({ error: paperError?.message ?? outcomeError?.message ?? configResult.error?.message }, { status: 500 });
+    }
+    for (const row of paperRows ?? []) paperBySymbol.set(canonicalPositionSymbol(row.symbol, market), row);
+    for (const row of outcomeRows ?? []) if (row.signal_id && !outcomeBySignal.has(row.signal_id)) outcomeBySignal.set(row.signal_id, row);
+
+    const readinessByHorizon = readiness;
+    for (const obs of observations as any[]) {
+      const horizon = Number(obs.features?.trade_plan?.horizon_sessions ?? obs.features?.trading_mandate?.target_hold_days ?? 10);
+      obs.learningReadiness = readinessByHorizon[horizon] ?? { n: 0, required: 60, ready: false, available: false };
+    }
+
+    const config = configResult.data as any;
+    const activeAccount = market === "india" ? config?.active_account_india : config?.active_account_us;
+    if (activeAccount) {
+      const { data: snapshot, error: snapshotError } = await svc.from("live_account_snapshots")
+        .select("account_id,broker,positions_json,captured_at")
+        .eq("account_id", activeAccount).order("captured_at", { ascending: false }).limit(1).maybeSingle();
+      if (snapshotError) return NextResponse.json({ error: snapshotError.message }, { status: 500 });
+      if (snapshot) {
+        liveSnapshotMeta = { broker: snapshot.broker ?? null, captured_at: snapshot.captured_at };
+        for (const raw of Array.isArray(snapshot.positions_json) ? snapshot.positions_json : []) {
+          const holding = normalizeSnapshotHolding(raw);
+          if (holding) liveHoldingBySymbol.set(canonicalPositionSymbol(holding.symbol, market), holding);
+        }
+      }
+
+      const { data: fills, error: fillsError } = await svc.from("broker_orders")
+        .select("proposal_id,symbol,side,filled_qty,qty,avg_fill_price,created_at")
+        .eq("broker_env", "live").eq("market", market).eq("status", "filled");
+      if (fillsError) return NextResponse.json({ error: fillsError.message }, { status: 500 });
+      const proposalIds = [...new Set((fills ?? []).map((row: any) => row.proposal_id).filter((id: any) => id != null))];
+      let proposals: any[] = [];
+      if (proposalIds.length) {
+        const { data, error } = await svc.from("trade_proposals")
+          .select("id,account_number,policy_snapshot").in("id", proposalIds);
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        proposals = data ?? [];
+      }
+      for (const position of reconstructAccountLivePositions({
+        orders: (fills ?? []) as any[], proposals, activeAccount,
+        fallbackPolicy: {
+          stopLossPct: mandate.stop_loss_pct, targetPct: mandate.target_pct,
+          maxHoldDays: mandate.max_hold_days, horizonDays: mandate.target_hold_days,
+          mandateVersion: mandate.version,
+        },
+      })) livePlanBySymbol.set(canonicalPositionSymbol(position.symbol, market), position);
+    }
+  }
+
   const symbols = observations.map((obs: any) => {
     const signal = signalById.get(obs.signal_id) as any;
     const packet = packetById.get(signal?.research_packet_id) as any;
@@ -283,11 +367,45 @@ export async function GET(req: NextRequest) {
           direction: obs.direction,
           isHeld: held,
         });
+    const positionKey = canonicalPositionSymbol(obs.symbol, market);
+    const paperPosition = paperBySymbol.get(positionKey) ?? null;
+    const liveHolding = liveHoldingBySymbol.get(positionKey) ?? null;
+    const livePlan = livePlanBySymbol.get(positionKey) ?? null;
+    const liveQtyMatches = liveHolding && livePlan
+      ? Math.abs(liveHolding.qty - livePlan.qty) <= Math.max(0.001, liveHolding.qty * 0.01)
+      : false;
+    const outcome = outcomeBySignal.get(obs.signal_id) ?? null;
     return {
       symbol: obs.symbol, run_count: obs.runCount, analyst_score: obs.analyst_score,
       score_threshold: obs.score_threshold, entry_eligible: obs.entry_eligible, direction: obs.direction,
       evidence_confidence: obs.evidence_confidence, scoring_version: obs.scoring_version,
       trade_plan: tradePlan,
+      current_position: {
+        paper: paperPosition ? {
+          status: "open", qty: finiteOrNull(paperPosition.qty), avg_cost: finiteOrNull(paperPosition.avg_cost),
+          current_price: finiteOrNull(paperPosition.current_price), initial_stop_loss: finiteOrNull(paperPosition.initial_stop_loss),
+          current_stop_loss: finiteOrNull(paperPosition.stop_loss), price_target: finiteOrNull(paperPosition.price_target),
+          highest_price: finiteOrNull(paperPosition.highest_price), opened_at: paperPosition.opened_at,
+          updated_at: paperPosition.updated_at, target_updated_at: paperPosition.target_updated_at,
+          horizon_days: paperPosition.resolved_horizon_days, mandate_version: paperPosition.mandate_version,
+        } : null,
+        live: liveHolding ? {
+          status: livePlan && liveQtyMatches ? "managed" : livePlan ? "lineage_mismatch" : "unmanaged_by_kairos",
+          qty: liveHolding.qty, avg_cost: liveHolding.avgPrice, current_price: liveHolding.currentPrice,
+          stop_loss: livePlan && liveQtyMatches ? livePlan.stopPrice : null,
+          price_target: livePlan && liveQtyMatches ? livePlan.targetPrice : null,
+          horizon_days: livePlan && liveQtyMatches ? livePlan.horizonDays : null,
+          policy_source: livePlan && liveQtyMatches ? livePlan.policySource : null,
+          snapshot: liveSnapshotMeta,
+        } : null,
+      },
+      realized_outcome: outcome ? {
+        trade_id: outcome.id, qty: finiteOrNull(outcome.qty), fill_price: finiteOrNull(outcome.fill_price),
+        exit_price: finiteOrNull(outcome.exit_price), realized_pnl: finiteOrNull(outcome.realized_pnl),
+        pnl_pct: finiteOrNull(outcome.pnl_pct), outcome: outcome.outcome,
+        executed_at: outcome.executed_at, closed_at: outcome.closed_at, exit_reason: outcome.exit_reason,
+      } : null,
+      learning_readiness: obs.learningReadiness ?? { n: 0, required: 60, ready: false, available: false },
       weighting, dimensions, missing_inputs: missingInputs, weak_dimensions: weakDimensions,
       identity: {
         asset_type: assetType, asset_label: assetLabel(assetType), is_fund: isFund,

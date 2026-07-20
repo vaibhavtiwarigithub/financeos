@@ -75,7 +75,7 @@ describe("agent source pipeline remediation", () => {
 
   it("keeps dormant autonomous live market-local", () => {
     const live = read("lib/trading/autonomous-live.ts");
-    expect(live).toContain("loadTradingMandate(svc");
+    expect(live).toContain("loadTradingMandateStrict(svc");
     expect(live).toContain('.eq("market", market)');
     expect(live).toContain("fetchIndiaQuote(signal.symbol)");
     expect(live).toContain("priceStale = quote?.stale ?? true");

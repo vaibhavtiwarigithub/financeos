@@ -12,11 +12,8 @@ import { getQuote } from "@/lib/data/quotes";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { executeApprovedOrder } from "@/lib/trading/execute-order";
 import { isMarketOpenLive } from "@/lib/trading/market-calendar";
-
-// Conservative default protective bands (owner-tunable later via strategy_config).
-const STOP_PCT = 0.08;     // sell if price falls 8% below weighted entry
-const TARGET_PCT = 0.20;   // take profit at +20%
-const MAX_AGE_DAYS = 15;   // time stop
+import { loadTradingMandateStrict, tradingWeekdaysBetween } from "@/lib/trading-mandate";
+import { reconstructAccountLivePositions } from "@/lib/trading/live-position-ledger";
 
 const MARKET_CFG: Record<string, { brokers: string[]; accountCol: string }> = {
   us:    { brokers: ["robinhood", "robinhood_mcp"], accountCol: "active_account_us" },
@@ -43,8 +40,9 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
   const early = (early_exit: string): LiveExitResult => ({ ...base, early_exit });
 
   if (!AUTONOMOUS_LIVE_ENABLED) return early("deployment_flag_inactive");
-  const { data: cfg } = await svc.from("strategy_config")
+  const { data: cfg, error: cfgError } = await svc.from("strategy_config")
     .select("live_auto_enabled, app_paused, security_locked, active_account_us, active_account_india").limit(1).maybeSingle();
+  if (cfgError) throw new Error(`live-exit config read failed: ${cfgError.message}`);
   if (!cfg) return early("no_config");
   if ((cfg as any).app_paused || (cfg as any).security_locked) return early("paused_or_locked");
   if (!(cfg as any).live_auto_enabled) return early("db_toggle_off");
@@ -59,43 +57,50 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
     if (!account) continue;                               // market not set up
     const live = await isMarketOpenLive(market);
     if (!live.open) continue;                             // out of session for this market
+    const mandate = await loadTradingMandateStrict(svc, market);
 
-    const { data: fills } = await svc.from("broker_orders")
-      .select("symbol, side, filled_qty, qty, avg_fill_price, created_at, status")
+    const { data: fills, error: fillsError } = await svc.from("broker_orders")
+      .select("proposal_id, symbol, side, filled_qty, qty, avg_fill_price, created_at, status")
       .eq("broker_env", "live").eq("market", market).eq("status", "filled")
       .in("broker", mc.brokers);
-
-    type Pos = { qty: number; costQty: number; costSum: number; firstBuy: number };
-    const bySymbol: Record<string, Pos> = {};
-    for (const o of (fills ?? []) as any[]) {
-      const q = Number(o.filled_qty ?? o.qty ?? 0);
-      if (!Number.isFinite(q) || q <= 0) continue;
-      const p = (bySymbol[o.symbol] ??= { qty: 0, costQty: 0, costSum: 0, firstBuy: Date.now() });
-      if (o.side === "sell") { p.qty -= q; }
-      else {
-        p.qty += q;
-        const px = Number(o.avg_fill_price);
-        if (Number.isFinite(px) && px > 0) { p.costQty += q; p.costSum += q * px; }
-        const t = o.created_at ? Date.parse(o.created_at) : Date.now();
-        if (Number.isFinite(t)) p.firstBuy = Math.min(p.firstBuy, t);
-      }
+    if (fillsError) throw new Error(`live-exit ${market} fill read failed: ${fillsError.message}`);
+    const proposalIds = [...new Set((fills ?? []).map((row: any) => row.proposal_id).filter((id: any) => id != null))];
+    let proposals: any[] = [];
+    if (proposalIds.length) {
+      const { data, error } = await svc.from("trade_proposals")
+        .select("id,account_number,policy_snapshot").in("id", proposalIds);
+      if (error) throw new Error(`live-exit ${market} lineage read failed: ${error.message}`);
+      proposals = data ?? [];
     }
+    const positions = reconstructAccountLivePositions({
+      orders: (fills ?? []) as any[],
+      proposals,
+      activeAccount: account,
+      fallbackPolicy: {
+        stopLossPct: mandate.stop_loss_pct,
+        targetPct: mandate.target_pct,
+        maxHoldDays: mandate.max_hold_days,
+        horizonDays: mandate.target_hold_days,
+        mandateVersion: mandate.version,
+      },
+    });
 
-    for (const [symbol, p] of Object.entries(bySymbol)) {
+    for (const p of positions) {
+      const symbol = p.symbol;
       if (p.qty < 1) continue;
       checked++;
-      const entry = p.costQty > 0 ? p.costSum / p.costQty : NaN;
-      if (!Number.isFinite(entry) || entry <= 0) continue;
 
       const pr = await priceFor(market, symbol, svc);
       if (!pr.ok) continue;
       const price = pr.price;
 
-      const ageDays = (Date.now() - p.firstBuy) / 86_400_000;
       let reason: string | null = null;
-      if (price <= entry * (1 - STOP_PCT)) reason = `stop: ${price.toFixed(2)} <= ${(entry * (1 - STOP_PCT)).toFixed(2)} (entry ${entry.toFixed(2)})`;
-      else if (price >= entry * (1 + TARGET_PCT)) reason = `target: ${price.toFixed(2)} >= ${(entry * (1 + TARGET_PCT)).toFixed(2)}`;
-      else if (ageDays > MAX_AGE_DAYS) reason = `time stop: age ${ageDays.toFixed(0)}d > ${MAX_AGE_DAYS}d`;
+      if (price <= p.stopPrice) reason = `stop: ${price.toFixed(2)} <= ${p.stopPrice.toFixed(2)} (entry ${p.avgEntry.toFixed(2)})`;
+      else if (price >= p.targetPrice) reason = `target: ${price.toFixed(2)} >= ${p.targetPrice.toFixed(2)}`;
+      else {
+        const ageDays = tradingWeekdaysBetween(new Date(p.firstBuyAt), new Date());
+        if (ageDays > p.horizonDays) reason = `time stop: age ${ageDays} market days > ${p.horizonDays}d`;
+      }
       if (!reason) continue;
 
       const qty = Math.floor(p.qty);
@@ -103,20 +108,29 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       // Idempotency: skip if a pending or queued autonomous SELL already exists
       // for this symbol, or if a live SELL order is already resting at the broker.
       // Without this, two concurrent exit-monitor runs submit duplicate SELLs.
-      const { data: pendingSell } = await svc.from("trade_proposals")
+      const { data: pendingSell, error: pendingSellError } = await svc.from("trade_proposals")
         .select("id").eq("symbol", symbol).eq("market", market).eq("side", "sell")
+        .eq("account_number", account)
         .eq("execution_mode", "autonomous_live")
         .in("status", ["pending_review", "queued_auto"])
         .limit(1).maybeSingle();
+      if (pendingSellError) {
+        results.push({ market, symbol, qty, reason, status: "blocked", error: `sell-proposal check failed: ${pendingSellError.message}` });
+        continue;
+      }
       if (pendingSell) {
         results.push({ market, symbol, qty, reason, status: "skipped_duplicate", error: `existing sell proposal ${(pendingSell as any).id}` });
         continue;
       }
-      const { data: activeSellOrder } = await svc.from("broker_orders")
+      const { data: activeSellOrder, error: activeSellError } = await svc.from("broker_orders")
         .select("id").eq("market", market).eq("broker_env", "live")
         .eq("symbol", symbol).eq("side", "sell")
         .in("status", ["pending_submit", "submitted", "partially_filled"])
         .limit(1).maybeSingle();
+      if (activeSellError) {
+        results.push({ market, symbol, qty, reason, status: "blocked", error: `active-order check failed: ${activeSellError.message}` });
+        continue;
+      }
       if (activeSellOrder) {
         results.push({ market, symbol, qty, reason, status: "skipped_duplicate", error: `active sell order ${(activeSellOrder as any).id}` });
         continue;
@@ -126,8 +140,15 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
         symbol, market, side: "sell", order_type: "market", qty,
         status: "pending_review", execution_mode: "autonomous_live",
         auto_run_id: runId, auto_decided_at: new Date().toISOString(),
+        account_number: account,
         price_at_proposal: price, price_source: "live_exit_monitor",
         thesis: `Protective exit — ${reason}`,
+        policy_snapshot: {
+          version: "v1", source: "live_exit_monitor", account_number: account,
+          position_policy_source: p.policySource, avg_entry: p.avgEntry,
+          stop_price: p.stopPrice, target_price: p.targetPrice,
+          first_buy_at: p.firstBuyAt, horizon_days: p.horizonDays, trigger_reason: reason,
+        },
       }).select("id").single();
       if (propErr) {
         // 23505 = unique_violation from trade_proposals_active_sell_uniq partial index.

@@ -134,7 +134,7 @@ beforeEach(() => {
 describe("Test 8 — exit monitor is idempotent: a partial fill + rerun cannot oversell", () => {
   const RECENT = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const DEFAULT_FILLS = [
-    { symbol: "AAPL", side: "buy", filled_qty: 100, qty: 100, avg_fill_price: 100, created_at: RECENT, status: "filled" },
+    { proposal_id: 101, symbol: "AAPL", side: "buy", filled_qty: 100, qty: 100, avg_fill_price: 100, created_at: RECENT, status: "filled" },
   ];
 
   // A filled BUY of 100 @ 100, current price 50 → a stop trigger fires; whether a
@@ -145,6 +145,9 @@ describe("Test 8 — exit monitor is idempotent: a partial fill + rerun cannot o
       if (q.table === "strategy_config") {
         return { data: { live_auto_enabled: true, app_paused: false, security_locked: false, active_account_us: "ACCT", active_account_india: null }, error: null };
       }
+      if (q.table === "trading_mandates") {
+        return { data: { market: "us", stop_loss_pct: 8, target_pct: 20, target_hold_days: 10, max_hold_days: 15, version: 1 }, error: null };
+      }
       if (q.table === "broker_orders") {
         if (eqOf(q, "status") === "filled") return { data: DEFAULT_FILLS, error: null };      // position reconstruction
         if (eqOf(q, "side") === "sell") return { data: opts.activeSell ?? null, error: null }; // active-SELL-order guard
@@ -153,6 +156,7 @@ describe("Test 8 — exit monitor is idempotent: a partial fill + rerun cannot o
       if (q.table === "trade_proposals") {
         if (q.op === "insert") return { data: opts.insertErr ? null : { id: 1234 }, error: opts.insertErr ?? null };
         if (q.op === "update") return { data: null, error: null };
+        if (inOf(q, "id")) return { data: [{ id: 101, account_number: "ACCT", policy_snapshot: null }], error: null };
         return { data: opts.pendingSell ?? null, error: null };                                // pending-SELL-proposal guard
       }
       return { data: null, error: null };
