@@ -65,6 +65,15 @@ describe("India insider — structurally excluded from scoring", () => {
     // ...and it must actually return early rather than fall through.
     expect(indiaBranch).toMatch(/return dims;/);
   });
+
+  it("treats US-only macro as structurally inapplicable to India", () => {
+    const src = source();
+    const branchStart = src.indexOf("const india = isIndia");
+    const branchEnd = src.indexOf("return dims;", branchStart) + "return dims;".length;
+    const indiaBranch = src.slice(branchStart, branchEnd);
+    expect(indiaBranch).not.toContain('dims.add("macro")');
+    expect(src.indexOf('dims.add("macro")')).toBeGreaterThan(branchEnd);
+  });
 });
 
 describe("normalizeInsiderScore — fails closed on the raw NSE PIT shape", () => {

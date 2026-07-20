@@ -501,7 +501,11 @@ Immutable append-only event log for every paper order state change.
 | `created_at` | timestamptz | Trigger blocks UPDATE/DELETE. |
 
 ### `paper_performance`
-Daily NAV snapshots per market.
+Daily paper-book truth snapshots per market. `PaperTrader` and `PositionMonitor`
+share the same canonical derivation contract; neither may leave derived fields at
+database defaults. Returns are always measured from the fixed seed for that row's
+market (US $10,000; India ₹10,00,000), never from the first observed row or from
+another market.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -509,9 +513,16 @@ Daily NAV snapshots per market.
 | `date` | date | |
 | `market` | text | |
 | `nav` | numeric | |
+| `cash_balance` | numeric | Same-market paper pool cash |
+| `positions_value` | numeric | Same-market marked open positions |
+| `daily_pnl` | numeric | NAV change from the prior same-market row; first row = 0 |
+| `total_pnl` | numeric | `nav - market_seed` |
+| `total_pnl_pct` | numeric | Cumulative return from the same-market seed, percentage points |
+| `win_count` / `loss_count` | integer | Cumulative resolved paper outcomes for this market as of `date` |
+| `win_rate` | numeric | Wins / all resolved outcomes (including breakeven), fraction 0..1 |
 | `bench_nav` | numeric | Benchmark (VOO/^NSEI) NAV on this date |
-| `return_pct` | numeric | |
-| `alpha` | numeric | `return_pct - bench_return_pct` |
+| `bench_return_pct` | numeric | Benchmark return from its first recorded same-market observation |
+| `alpha_pct` | numeric | `total_pnl_pct - bench_return_pct` |
 | UNIQUE | `(date, market)` | One row per day per market |
 
 ### `live_performance` (migration 169, RLS tightened 20260713112754)

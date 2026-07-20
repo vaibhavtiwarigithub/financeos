@@ -269,8 +269,10 @@ would abstain on healthy runs.
 - **Defaults to abstain:** no baseline + unusable required field →
   `no_baseline_required_field` → abstain. A persistent outage keeps abstaining; it
   never normalizes, because only a clean run is promoted to baseline.
-- **One aggregated health event per run** (`evidence-degradation:<market>:<runKey>`),
-  never one per symbol; auto-resolves on a clean run.
+- **One current-condition health event per market** (`evidence-degradation:<market>`),
+  never one per symbol or historical run; the detail names the current run and a
+  clean run resolves the condition. Run-level history belongs in the append-only
+  degradation-event ledger, not System Health.
 - **Known limitation (honest):** the legacy path supplies availability and contract
   satisfaction but *not* observation age, so `ageSeconds` is reported as `null`
   rather than an invented zero. In practice the legacy path therefore exercises

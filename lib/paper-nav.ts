@@ -21,3 +21,34 @@ export function navReturnPct(nav: number, market: Mkt): number {
   const seed = paperStartNav(market);
   return +(((nav - seed) / seed) * 100).toFixed(2);
 }
+
+export interface PaperPerformanceTruthInput {
+  market: Mkt;
+  nav: number;
+  previousNav: number | null;
+  benchReturnPct: number | null;
+  winCount: number;
+  lossCount: number;
+  resolvedTradeCount: number;
+}
+
+/** Canonical derived fields shared by every writer of paper_performance. */
+export function paperPerformanceTruth(input: PaperPerformanceTruthInput) {
+  const seed = paperStartNav(input.market);
+  const totalPnl = input.nav - seed;
+  const totalPnlPct = seed > 0 ? (totalPnl / seed) * 100 : 0;
+  const dailyPnl = input.previousNav == null ? 0 : input.nav - input.previousNav;
+  const winRate = input.resolvedTradeCount > 0
+    ? input.winCount / input.resolvedTradeCount
+    : 0;
+
+  return {
+    daily_pnl: dailyPnl,
+    total_pnl: totalPnl,
+    total_pnl_pct: totalPnlPct,
+    win_count: input.winCount,
+    loss_count: input.lossCount,
+    win_rate: winRate,
+    alpha_pct: input.benchReturnPct == null ? null : totalPnlPct - input.benchReturnPct,
+  };
+}

@@ -46,7 +46,10 @@ Existing tiles untouched.
 ### Tables (confirmed columns from migrations audit)
 - `paper_trades` — closed via `closed_at IS NOT NULL` (no `status` column)
   - Execution quality: `expected_price`, `realized_slip_pct`, `fill_status`, `spread_applied`, `data_confidence`, `tainted`, `taint_reason`, `excluded_from_learning`
-- `paper_performance` — NAV, alpha_pct, bench_return_pct per (date, market); NOT per mandate
+- `paper_performance` — canonical NAV plus seed-based total/daily P&L, cumulative
+  outcome counts/win rate, `alpha_pct`, and `bench_return_pct` per `(date, market)`;
+  NOT per mandate. Both runtime writers use the same derivation helper so a later
+  mark-to-market cannot leave stale/default analytics behind.
 - `decision_observations` — immutable append-only; full feature scores, weights_used, signal_id
 - `observation_labels` — matured forward returns per observation (used by learning dataset)
 - `lib/learning/dataset.ts` — `loadLabeledDataset()` already joins decision_observations × observation_labels

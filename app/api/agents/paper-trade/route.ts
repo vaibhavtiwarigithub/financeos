@@ -17,6 +17,7 @@ import { loadTradingMandate, mandateSnapshot, resolveHorizonDays, type TradingMa
 import { isPaused, isTradingEnabled } from "@/lib/market-controls";
 import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/trading/capital-rotation";
 import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
+import { paperPerformanceTruth } from "@/lib/paper-nav";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -39,8 +40,6 @@ async function logStage(supabase: any, args: { signal_id: string | null; symbol:
 // India pool, this behaves exactly as the old US-only path.
 //
 // Prices are real (never LLM-estimated). Long-only: only direction="long".
-
-const START_NAV: Record<string, number> = { us: 10000, india: 1000000 };
 
 export async function POST(req: NextRequest) {
   // Hoisted so the catch can finalize the agent_runs row (else a throw leaves it
@@ -817,15 +816,25 @@ export async function POST(req: NextRequest) {
       const positionsValue = mktPositions.reduce((s, p) => s + p.qty * (p.current_price ?? p.avg_cost), 0);
       const nav = pool.cash_balance + positionsValue;
       navByMarket[market] = nav;
-      const startNav = START_NAV[market] ?? pool.nav ?? nav;
-      const returnPct = startNav ? ((nav - startNav) / startNav) * 100 : 0;
+
+      const [previousPerfResult, resolvedTradesResult] = await Promise.all([
+        supabase.from("paper_performance").select("nav").eq("market", market)
+          .lt("date", today).order("date", { ascending: false }).limit(1).maybeSingle(),
+        supabase.from("paper_trades").select("outcome").eq("market", market)
+          .not("outcome", "is", null),
+      ]);
+      if (previousPerfResult.error) throw new Error(`Previous NAV read failed (${market}): ${previousPerfResult.error.message}`);
+      if (resolvedTradesResult.error) throw new Error(`Paper outcomes read failed (${market}): ${resolvedTradesResult.error.message}`);
+      const previousPerf = previousPerfResult.data;
+      const resolvedTrades = resolvedTradesResult.data;
+      const outcomes = (resolvedTrades ?? []) as Array<{ outcome: string | null }>;
 
       // Per-market benchmark for alpha + the return-vs-benchmark chart:
       // US = VOO, India = NIFTY 50 (^NSEI). Stored provider-neutral in bench_*.
       // Cumulative bench return is measured vs the FIRST recorded bench_nav for
       // this market. Fail-soft: if the benchmark quote is unavailable this run,
       // leave bench_*/alpha null rather than corrupting the series.
-      let benchNav: number | null = null, benchReturnPct: number | null = null, alphaPct: number | null = null;
+      let benchNav: number | null = null, benchReturnPct: number | null = null;
       try {
         const benchSym = market === "india" ? "^NSEI" : "VOO";
         const q = market === "india" ? await fetchIndiaQuote(benchSym) : await getQuote(benchSym, supabase);
@@ -837,14 +846,23 @@ export async function POST(req: NextRequest) {
             .order("date", { ascending: true }).limit(1).maybeSingle();
           const benchStartNav = (firstPerf as any)?.bench_nav ?? benchNav;
           benchReturnPct = benchStartNav ? ((benchNav - benchStartNav) / benchStartNav) * 100 : null;
-          alphaPct = benchReturnPct != null ? returnPct - benchReturnPct : null;
         }
       } catch { /* benchmark unavailable this run — leave null */ }
 
+      const truth = paperPerformanceTruth({
+        market: market as "us" | "india",
+        nav,
+        previousNav: previousPerf?.nav == null ? null : Number(previousPerf.nav),
+        benchReturnPct,
+        winCount: outcomes.filter((t) => t.outcome === "win").length,
+        lossCount: outcomes.filter((t) => t.outcome === "loss").length,
+        resolvedTradeCount: outcomes.length,
+      });
+
       const perfRow: Record<string, any> = {
         date: today, nav, cash_balance: pool.cash_balance, positions_value: positionsValue,
-        total_pnl: nav - startNav, total_pnl_pct: returnPct,
-        bench_nav: benchNav, bench_return_pct: benchReturnPct, alpha_pct: alphaPct, market,
+        ...truth,
+        bench_nav: benchNav, bench_return_pct: benchReturnPct, market,
         // Back-compat: US readers still keyed on spy_* (VOO tracks the S&P 500 too).
         spy_nav: market === "us" ? benchNav : null,
         spy_return_pct: market === "us" ? benchReturnPct : null,
@@ -852,9 +870,11 @@ export async function POST(req: NextRequest) {
       const { error: perfErr } = await supabase.from("paper_performance").upsert(perfRow, { onConflict: "date,market" });
       if (perfErr) { // pre-057: no market column / composite key
         delete perfRow.market;
-        await supabase.from("paper_performance").upsert(perfRow, { onConflict: "date" });
+        const { error: fallbackErr } = await supabase.from("paper_performance").upsert(perfRow, { onConflict: "date" });
+        if (fallbackErr) throw new Error(`paper_performance write failed (${market}): ${fallbackErr.message}`);
       }
-      await supabase.from("paper_portfolio").update({ nav }).eq("id", pool.id);
+      const { error: navErr } = await supabase.from("paper_portfolio").update({ nav }).eq("id", pool.id);
+      if (navErr) throw new Error(`paper_portfolio NAV write failed (${market}): ${navErr.message}`);
     }
 
     if (runId) {

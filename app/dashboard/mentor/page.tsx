@@ -49,7 +49,7 @@ export default async function Page() {
       .order("created_at", { ascending: false })
       .limit(20),
     // Scoped: NAV is a currency amount — one book per equity curve.
-    supabase.from("paper_performance").select("date, nav, win_rate, total_trades").eq("market", market).order("date", { ascending: true }).limit(90),
+    supabase.from("paper_performance").select("date, nav, win_rate").eq("market", market).order("date", { ascending: true }).limit(90),
     // Per-market champion weights (NOT the vestigial global signal_weights row).
     resolveDisplayWeights(supabase, market),
     // Scoped: win rate must describe one book, not a blend of both.

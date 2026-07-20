@@ -65,7 +65,6 @@ interface PerfRow {
   date: string;
   nav: number;
   win_rate: number | null;
-  total_trades: number;
 }
 
 interface WeightConfig {

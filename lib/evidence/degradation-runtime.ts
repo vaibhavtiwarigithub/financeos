@@ -3,7 +3,8 @@
 // The pure decision lives in degradation-guard.ts. This module is the impure
 // shell: it loads the last accepted market-local baseline, records the decision
 // as append-only evidence, promotes clean masks to the new baseline, and emits
-// ONE AGGREGATED health event per run — never one alert per symbol (§6.6).
+// ONE current-condition health event per market — never one alert per symbol or
+// per historical run (§6.6). The append-only event table retains run history.
 //
 // Fail-soft everywhere: a guard/persistence failure must not break a research
 // run. But note the direction of the failure — if we cannot evaluate, we return
@@ -12,7 +13,7 @@
 // than it already is.
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { reconcileIssues, reportIssue } from "@/lib/system-health";
 import type { Market } from "@/lib/evidence/contracts";
 import type { SymbolShape } from "@/lib/evidence/intent-classification";
 import {
@@ -152,12 +153,13 @@ async function emitAggregatedHealth(
   const key = `${market}:${runKey}`;
   const t = RUN_TALLY.get(key);
   if (!t) return;
-  const issueKey = `evidence-degradation:${market}:${runKey}`;
+  const issueKey = `evidence-degradation:${market}`;
+  const issuePrefix = `evidence-degradation:${market}`;
 
-  // ONE alert for the whole run, refreshed in place as symbols accumulate.
-  // reportIssue is idempotent on issueKey, so this never fans out per symbol.
+  // System Health shows current conditions, not one permanent row per run. The
+  // append-only degradation-event ledger retains historical run-level evidence.
   if (t.abstained === 0) {
-    await resolveIssue(issueKey, client).catch(() => {});
+    await reconcileIssues(issuePrefix, [], client).catch(() => {});
     return;
   }
 
@@ -168,21 +170,22 @@ async function emitAggregatedHealth(
   const sample = [...t.symbols].slice(0, 8).join(", ");
   const modeLabel = mode === "enforce" ? "ENFORCING" : "measure-only (no direction changed)";
 
-  await reportIssue(
-    {
+  await reconcileIssues(
+    issuePrefix,
+    [{
       issueKey,
       // measure-only is informational by construction: nothing was withheld.
       severity: mode === "enforce" ? "warn" : "info",
       category: "data",
       title: `${market.toUpperCase()} evidence degradation: ${t.abstained}/${t.evaluated} symbols would abstain from new longs`,
       detail:
-        `Guard mode: ${modeLabel}. ${t.abstained} of ${t.evaluated} evaluated ${market.toUpperCase()} symbols had a REQUIRED evidence field ` +
+        `Run ${runKey}. Guard mode: ${modeLabel}. ${t.abstained} of ${t.evaluated} evaluated ${market.toUpperCase()} symbols had a REQUIRED evidence field ` +
         `degrade against their last accepted baseline, and their score renormalized around that loss — so a new long there would rest on ` +
         `evidence we no longer have. ${mode === "enforce" ? `${t.enforced} long signal(s) were downgraded to neutral.` : `${t.wouldAbstain} long signal(s) WOULD have been downgraded had the guard been enforcing.`} ` +
         `Reason codes: ${codeSummary}. Symbols: ${sample}${t.symbols.size > 8 ? ` (+${t.symbols.size - 8} more)` : ""}. ` +
         `Existing holdings are unaffected — exits, stops, and PositionMonitor risk logic continue normally. ` +
         `Next: check the named providers for this market's required fields (daily bars, reported fundamentals); the guard clears itself once a clean run re-baselines.`,
-    },
+    }],
     client,
   ).catch(() => {});
 }

@@ -167,7 +167,7 @@ export type Dimension = "fundamental" | "technical" | "sentiment" | "macro" | "i
 
 export function applicableDimensions(entry: SymbolEntry): Set<Dimension> {
   const india = isIndia(entry.symbol);
-  const dims = new Set<Dimension>(["technical", "macro"]); // every tradable symbol has price + macro backdrop
+  const dims = new Set<Dimension>(["technical"]); // every tradable symbol has price evidence
   if (india) {
     dims.add("fundamental"); // Yahoo/Upstox fundamentals; no US-style insider/options/analyst
     // Sentiment: India equities get a real news-tone signal from GDELT (free, no
@@ -177,6 +177,10 @@ export function applicableDimensions(entry: SymbolEntry): Set<Dimension> {
     if (!entry.isEtf) dims.add("sentiment");
     return dims;
   }
+  // MacroSentinel is backed by US-only FRED series and macro_regime has no
+  // market column. India therefore treats macro as structurally inapplicable,
+  // matching fetchMacroScore's honest unavailable result.
+  dims.add("macro");
   if (entry.isEtf) {
     dims.add("sentiment"); // ETFs carry social/news sentiment but no single-company fundamentals/insider/analyst
     return dims;

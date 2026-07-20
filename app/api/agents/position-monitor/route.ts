@@ -11,6 +11,7 @@ import { setMarketPaused } from "@/lib/market-controls";
 import { getQuote } from "@/lib/data/quotes";
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
+import { paperPerformanceTruth } from "@/lib/paper-nav";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -449,7 +450,17 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
     // paper_performance so bench_nav stays current even on no-trade days.
     let benchNav: number | null = null;
     let benchReturnPct: number | null = null;
-    let alphaPct: number | null = null;
+    const [previousPerfResult, resolvedTradesResult] = await Promise.all([
+      svc.from("paper_performance").select("nav").eq("market", market)
+        .lt("date", today).order("date", { ascending: false }).limit(1).maybeSingle(),
+      svc.from("paper_trades").select("outcome").eq("market", market)
+        .not("outcome", "is", null),
+    ]);
+    if (previousPerfResult.error) throw new Error(`Previous NAV read failed (${market}): ${previousPerfResult.error.message}`);
+    if (resolvedTradesResult.error) throw new Error(`Paper outcomes read failed (${market}): ${resolvedTradesResult.error.message}`);
+    const previousPerf = previousPerfResult.data;
+    const resolvedTrades = resolvedTradesResult.data;
+    const outcomes = (resolvedTrades ?? []) as Array<{ outcome: string | null }>;
     try {
       const benchSym = market === "india" ? "^NSEI" : "VOO";
       const q = market === "india"
@@ -461,20 +472,26 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
         const { data: firstPerf } = await svc.from("paper_performance")
           .select("bench_nav").eq("market", market).not("bench_nav", "is", null)
           .order("date", { ascending: true }).limit(1).maybeSingle();
-        const { data: startPerfRow } = await svc.from("paper_performance")
-          .select("nav").eq("market", market).order("date", { ascending: true }).limit(1).maybeSingle();
         const benchStart = (firstPerf as any)?.bench_nav ?? benchNav;
         benchReturnPct = benchStart ? ((benchNav - benchStart) / benchStart) * 100 : null;
-        const startNav = Number((startPerfRow as any)?.nav ?? newNav);
-        const portfolioReturnPct = startNav > 0 ? ((newNav - startNav) / startNav) * 100 : 0;
-        alphaPct = benchReturnPct != null ? portfolioReturnPct - benchReturnPct : null;
       }
     } catch { /* benchmark unavailable this run — leave null */ }
+
+    const truth = paperPerformanceTruth({
+      market: market as "us" | "india",
+      nav: newNav,
+      previousNav: previousPerf?.nav == null ? null : Number(previousPerf.nav),
+      benchReturnPct,
+      winCount: outcomes.filter((t) => t.outcome === "win").length,
+      lossCount: outcomes.filter((t) => t.outcome === "loss").length,
+      resolvedTradeCount: outcomes.length,
+    });
 
     const perfRow: Record<string, any> = {
       date: today, market, nav: newNav,
       cash_balance: cashByMarket[market], positions_value: positionsValue,
-      bench_nav: benchNav, bench_return_pct: benchReturnPct, alpha_pct: alphaPct,
+      ...truth,
+      bench_nav: benchNav, bench_return_pct: benchReturnPct,
       spy_nav: market === "us" ? benchNav : null,
       spy_return_pct: market === "us" ? benchReturnPct : null,
       updated_at: new Date().toISOString(),
