@@ -40,6 +40,12 @@ function formatDate(iso?: string | null) {
   if (!iso) return "Not recorded";
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
+function formatMoney(value: number | null | undefined, currency: "USD" | "INR") {
+  if (value == null || !Number.isFinite(Number(value))) return "Not recorded";
+  return new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", {
+    style: "currency", currency, maximumFractionDigits: Number(value) < 1 ? 4 : 2,
+  }).format(Number(value));
+}
 
 function MiniMetric({ label, value, color }: { label: string; value: string; color?: string }) {
   return <div style={{ minWidth: "112px", padding: "9px 11px", background: T.ink, border: `1px solid ${T.border}`, borderRadius: "8px" }}>
@@ -177,6 +183,25 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
                   <div style={{ marginTop: "8px", fontSize: "10px", fontWeight: 700, color: terminal.color }}>{terminal.label}</div>
                 </section>
               </div>
+
+              <section style={{ borderTop: `1px solid ${T.border}`, borderBottom: `1px solid ${T.border}`, padding: "12px 0", marginBottom: "14px" }}>
+                <div style={{ color: T.muted, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: "8px" }}>Indicative plan at research time</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))", gap: "8px" }}>
+                  <MiniMetric label="Reference" value={formatMoney(s.trade_plan.reference_price, s.trade_plan.currency)} />
+                  {s.trade_plan.status === "candidate" && <>
+                    <MiniMetric label={`Initial risk floor · -${s.trade_plan.stop_loss_pct}%`} value={formatMoney(s.trade_plan.initial_risk_floor, s.trade_plan.currency)} color={T.red} />
+                    <MiniMetric label={`Profit objective · +${s.trade_plan.target_pct}%`} value={formatMoney(s.trade_plan.profit_objective, s.trade_plan.currency)} color={T.green} />
+                    <MiniMetric label="Horizon" value={`${s.trade_plan.horizon_sessions} sessions`} />
+                  </>}
+                </div>
+                <div style={{ color: T.textSub, fontSize: "11px", lineHeight: 1.5, marginTop: "8px" }}>
+                  {s.trade_plan.status === "candidate" ? "Eligible research scenario. PaperTrader re-prices every level from a fresh actual fill."
+                    : s.trade_plan.status === "holding_context" ? "Reference only. PositionMonitor owns this holding's executable stop, target, trailing, and time exits."
+                    : s.trade_plan.status === "no_entry" ? "No entry plan because this research decision was not eligible for a new long position."
+                    : "No reliable point-in-time price was recorded, so no levels are shown."}
+                </div>
+                <div style={{ color: T.amber, fontSize: "10px", marginTop: "5px" }}>Not an order or guaranteed execution · {s.trade_plan.reference_source} · as of {formatDate(s.trade_plan.reference_as_of)}</div>
+              </section>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "10px", marginBottom: "14px" }}>
                 <section><div style={{ color: T.green, fontSize: "10px", textTransform: "uppercase", marginBottom: "6px" }}>Recorded catalysts / hypotheses</div>

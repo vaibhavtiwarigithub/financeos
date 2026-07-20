@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { classifyJournalAsset } from "@/lib/asset-classification";
 import { resolveJournalTerminal } from "@/lib/research/journal-terminal";
+import { buildIndicativeTradePlan } from "@/lib/trading/trade-plan";
 
 export const dynamic = "force-dynamic";
 
@@ -101,7 +102,7 @@ export async function GET(req: NextRequest) {
   envelopeEnd.setUTCDate(envelopeEnd.getUTCDate() + 1);
   const [{ data: rawRows, error: obsError }, { data: latestRows, error: latestError }] = await Promise.all([
     svc.from("decision_observations")
-      .select("id,ts,market,symbol,analyst_score,score_threshold,entry_eligible,direction,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,features,availability_mask,weights_used,signal_id,discovery_source,evidence_confidence,scoring_version")
+      .select("id,ts,market,symbol,analyst_score,score_threshold,entry_eligible,direction,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,features,availability_mask,weights_used,signal_id,discovery_source,evidence_confidence,scoring_version,price_at_decision,currency")
       .eq("market", market).gte("ts", envelopeStart.toISOString()).lte("ts", envelopeEnd.toISOString())
       .order("ts", { ascending: true }).order("id", { ascending: true }),
     svc.from("decision_observations").select("ts").eq("market", market).order("ts", { ascending: false }).limit(1),
@@ -127,7 +128,7 @@ export async function GET(req: NextRequest) {
   if (signalIds.length) {
     const [{ data: stages, error: stageError }, { data: signalRows, error: signalError }] = await Promise.all([
       svc.from("pipeline_stage_events").select("signal_id,stage,outcome,reason,detail,created_at").in("signal_id", signalIds).order("created_at", { ascending: true }),
-      svc.from("agent_signals").select("id,rationale,research_packet_id,source,status,asset_class").in("id", signalIds),
+      svc.from("agent_signals").select("id,rationale,research_packet_id,source,status,asset_class,stop_loss_pct,take_profit_pct,signal_breakdown").in("id", signalIds),
     ]);
     if (stageError || signalError) return NextResponse.json({ error: stageError?.message ?? signalError?.message }, { status: 500 });
     stageEvents = stages ?? [];
@@ -265,10 +266,28 @@ export async function GET(req: NextRequest) {
     const thesisSummary = isFund
       ? `This is a fund, not an operating company. Its available-evidence score was ${obs.analyst_score}/100, driven by ${usableDims.join(" and ") || "no usable dimensions"}; evidence coverage was ${Math.round(evidenceCoverage * 100)}%. ${technicalRead[0] ?? "No technical translation was available."} Confidence is ${confidenceLabel.toLowerCase()} because fund-profile data and/or applicable market context were incomplete in this historical packet.`
       : packet?.summary ?? rationale;
+    const storedPlan = obs.features?.trade_plan;
+    const tradePlan = storedPlan?.version === "v1"
+      ? storedPlan
+      : buildIndicativeTradePlan({
+          referencePrice: obs.price_at_decision,
+          referenceAsOf: obs.ts,
+          referenceSource: "historical_observation",
+          decisionAt: obs.ts,
+          currency: market === "india" ? "INR" : "USD",
+          stopLossPct: signal?.stop_loss_pct ?? obs.features?.trading_mandate?.stop_loss_pct,
+          targetPct: signal?.take_profit_pct ?? obs.features?.trading_mandate?.target_pct,
+          horizonSessions: obs.features?.trading_mandate?.target_hold_days,
+          mandateVersion: obs.features?.trading_mandate?.version,
+          entryEligible: Boolean(obs.entry_eligible),
+          direction: obs.direction,
+          isHeld: held,
+        });
     return {
       symbol: obs.symbol, run_count: obs.runCount, analyst_score: obs.analyst_score,
       score_threshold: obs.score_threshold, entry_eligible: obs.entry_eligible, direction: obs.direction,
       evidence_confidence: obs.evidence_confidence, scoring_version: obs.scoring_version,
+      trade_plan: tradePlan,
       weighting, dimensions, missing_inputs: missingInputs, weak_dimensions: weakDimensions,
       identity: {
         asset_type: assetType, asset_label: assetLabel(assetType), is_fund: isFund,

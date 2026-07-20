@@ -1,0 +1,117 @@
+# Feature: Research-Time Indicative Trade Plan
+
+Status: APPROVED / BUILDING (2026-07-20) · Owner: Vaibhav · Builder: Codex
+
+## Problem
+
+Research Journal explains why a symbol passed or failed, but does not show the
+native-currency price used by research or translate the active mandate into an
+approximate risk/return plan. Downstream execution already creates absolute
+stops and targets at fill time, so adding independent LLM-generated prices would
+create two conflicting truths on the money path.
+
+## Decision
+
+Record a deterministic, point-in-time **indicative plan** from the candle already
+used by ResearchAgent. Show it in Research Journal as:
+
+- research reference price and market date/source;
+- for an eligible new long: approximate initial risk floor, profit objective,
+  percentages, and target horizon;
+- for a rejected/neutral symbol: reference price plus `No entry plan`;
+- for a held symbol: reference price plus `PositionMonitor owns the executable
+  exit plan` so a newly computed scenario cannot overwrite the position's
+  fill-bound stop/target.
+
+This is not a predicted fair value, limit order, broker stop, guaranteed exit, or
+new score dimension. FINRA warns that a stop price is not a guaranteed execution
+price and can execute materially differently in volatile markets; the product
+must not label an indicative level as an execution promise.
+
+## Contracts
+
+### Shared deterministic module
+
+`lib/trading/trade-plan.ts` owns two pure contracts:
+
+1. `buildIndicativeTradePlan`: binds the latest validated research candle to the
+   current per-market mandate. It performs no fetch and no LLM call.
+2. `resolveExecutionRiskReward`: selects fill-time stop/target percentages. A
+   valid ledger MAE/MFE distribution with at least 60 eligible-long outcomes for
+   the same market/horizon uses the approved clamps (maximum 10% MAE stop and
+   40% MFE target); malformed/thin learned data falls back to the current mandate.
+
+Both contracts reject non-finite/non-positive prices and preserve native market
+currency (`USD` for US, `INR` for India).
+
+### Persistence
+
+No migration is required. Use the existing immutable ledger:
+
+- `decision_observations.price_at_decision`: latest candle close used by scoring;
+- `decision_observations.currency`: existing native-currency field;
+- `decision_observations.features.trade_plan`: versioned indicative plan;
+- `agent_signals.stop_loss_pct` / `take_profit_pct`: research-time mandate
+  snapshot for downstream audit/comparison, never an executable absolute price.
+
+Historical null rows remain unchanged. The Journal must report them as
+unavailable rather than backfilling with current prices.
+
+## Agent Ownership
+
+- **ResearchAgent:** records the point-in-time reference and indicative plan.
+- **PaperTrader:** fetches a fresh market-local quote, re-resolves current
+  mandate/validated MAE-MFE policy, anchors absolute levels to the actual fill,
+  and logs planned-versus-bound values. Research prices never authorize a fill.
+- **PositionMonitor:** remains the sole owner of paper stop, target, trailing,
+  score-exit, and time-exit decisions from `paper_positions`. Research cannot
+  loosen or replace those levels.
+- **Live Trader/broker adapters:** unchanged. Existing quote freshness, approval,
+  pause, kill-switch, account, and order gates remain authoritative.
+- **LearnerAgent:** may evaluate eventual MAE/MFE outcomes through the existing
+  observation ledger. It cannot invent or directly mutate plan levels.
+
+## Safety Invariants
+
+1. No LLM-generated number enters the plan or money path.
+2. US and India plans never share prices, currencies, mandates, or learned samples.
+3. A missing/stale/non-positive research price produces `unavailable`, never a
+   fabricated level.
+4. Research levels cannot bypass signal/session freshness, portfolio, cash,
+   pause, kill-switch, approval, broker, or execution-price gates.
+5. Fill-time levels are anchored to the actual fill, not the research close.
+6. Held-position exits always use the stored position plan; the Journal labels
+   research levels as context only.
+7. Stop/target prices are estimates, not guaranteed executions.
+
+## UI
+
+Add an unframed `Indicative plan` row in each Research Journal symbol detail:
+
+- `Reference`, `Initial risk floor`, `Profit objective`, `Horizon`;
+- market-native currency formatting;
+- source/as-of metadata;
+- concise disclosure: `Repriced at fill; not an order or guaranteed execution.`
+
+Do not show red/green prices for rejected/neutral symbols as though a trade is
+planned. Do not add controls that place orders from the Journal.
+
+## Acceptance Criteria
+
+- A new US and India observation stores the actual latest scoring-candle close,
+  native currency, source/date, and a versioned plan without extra provider calls.
+- Eligible new longs show approximate entry/risk/target; rejected and held names
+  show truthful non-entry/position-owned states.
+- PaperTrader uses valid ledger percentiles when available, applies documented
+  bounds, falls back on malformed/thin data, and anchors levels to fill price.
+- Journal API/UI render old null-price rows honestly.
+- Focused unit tests cover invalid values, both currencies, held/rejected states,
+  learned-policy bounds/fallback, and fill anchoring.
+- TypeScript, full unit suite, production build, and diff checks pass.
+
+## Reversal
+
+Remove the Journal rendering and stop writing `features.trade_plan`. Existing
+JSONB observations remain harmless audit history. The fill-time resolver can be
+returned to mandate-only behavior independently; no position or order migration
+is required.

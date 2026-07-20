@@ -23,8 +23,9 @@ import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { isEtfSymbol as canonicalIsEtfSymbol } from "@/lib/asset-classification";
-import { applyStrategyTilt, loadTradingMandate } from "@/lib/trading-mandate";
+import { applyStrategyTilt, loadTradingMandate, resolveHorizonDays } from "@/lib/trading-mandate";
 import { symbolsFromLatestLiveSnapshots, symbolsFromPaperPositions, unionHoldingSymbols, orderHoldingsByStaleness, partitionWatchlistByMarket } from "@/lib/research/holding-symbols";
+import { buildIndicativeTradePlan } from "@/lib/trading/trade-plan";
 
 // Module-level cache: market → default investment_mandates.id.
 // Populated once per process; safe because seed mandates never change name.
@@ -1757,6 +1758,26 @@ export async function processSymbol(
 
   const signalDirection: string = guardRun.direction;
   const directionNote: string = gate.note + guardRun.note;
+  const entryEligible = signalDirection === "long" && analystScore >= (scoreThreshold ?? 60);
+  const latestCandle = candles.length > 0 ? candles[candles.length - 1] : null;
+  const researchHorizonDays = resolveHorizonDays(
+    tradingMandate,
+    (champion as any)?.genome?.horizon_days ?? null,
+  ).days;
+  const tradePlan = buildIndicativeTradePlan({
+    referencePrice: latestCandle?.close,
+    referenceAsOf: latestCandle?.date ?? null,
+    referenceSource: candleResult.source,
+    decisionAt: new Date().toISOString(),
+    currency: india ? "INR" : "USD",
+    stopLossPct,
+    targetPct,
+    horizonSessions: researchHorizonDays,
+    mandateVersion: tradingMandate.version,
+    entryEligible,
+    direction: signalDirection,
+    isHeld,
+  });
 
   const { data: packet } = await supabase
     .from("research_packets")
@@ -1815,6 +1836,9 @@ export async function processSymbol(
     source,
     is_holding: isHeld,
     rationale: (thesis.summary ?? `Score: ${analystScore}/100`) + directionNote,
+    stop_loss_pct: stopLossPct,
+    take_profit_pct: targetPct,
+    signal_breakdown: { trade_plan: tradePlan },
     // NOTE: no price_target / stop_loss here — those columns don't exist on
     // agent_signals (only stop_loss_pct / take_profit_pct do). Including them made
     // every PostgREST insert fail with PGRST204, and the undefined-column recovery
@@ -1933,8 +1957,6 @@ export async function processSymbol(
     const screener = entry.screenerBucket
       ? { bucket: entry.screenerBucket, criteria_matched: BUCKET_CRITERIA[entry.screenerBucket] }
       : undefined;
-    const entryEligible = signalDirection === "long" && analystScore >= (scoreThreshold ?? 60);
-
     // Phase 3: log (never score with) any 'active' feature_registry formula's
     // value for this decision. Building the IC track record that would justify
     // eventually promoting a feature into the real weighting formula is a
@@ -1985,6 +2007,7 @@ export async function processSymbol(
         ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}),
         weighting: { renormalized, included_dims: includedDims, base_weights: weightOf, applied_weights: effWeights },
         trading_mandate: tradingMandate,
+        trade_plan: tradePlan,
         ...(activeFeatureValues ? { active_feature_values: activeFeatureValues } : {}),
         // Analyst consensus (Finnhub) — LOGGED evidence for the learner to grade,
         // not fed into the live weighted score yet (see fetch site).
@@ -2018,7 +2041,7 @@ export async function processSymbol(
       entry_eligible: entryEligible,
       action: "signal_written",             // this code path always writes a signal today
       score_threshold: scoreThreshold ?? 60,
-      price_at_decision: null,              // PaperTrader fetches price at fill time; not known here
+      price_at_decision: tradePlan.reference_price,
       currency: market === "india" ? "INR" : "USD",
       signal_id: insertedSignalId,
       discovery_source: entry.discovery_source ?? null,
@@ -2138,9 +2161,9 @@ export async function processSymbol(
     source,
     tokensIn:  tokenUsage.input,
     tokensOut: tokenUsage.output,
-    currentPrice: null, // PaperTrader fetches price at fill time via lib/data/quotes.ts
-    priceTarget:  null,
-    stopLoss:     null,
+    currentPrice: tradePlan.reference_price,
+    priceTarget:  tradePlan.profit_objective,
+    stopLoss:     tradePlan.initial_risk_floor,
     scoreThreshold,
     obsId: insertedObsId,  // P1: for cron to write universe_snapshot_scores
   };

@@ -742,3 +742,35 @@ Reason: Capacity and freshness are per-market policy, while managing owned names
 Impact: US and India remain capped at 10 by default, with 11/13 existing names preserved to drain naturally. Held names bypass discovery caps and receive deterministic reassessment. Stale scores cannot close positions. Correlation construction remains on its conservative existing behavior pending evidence-safe prerequisites.
 Files/features affected: Trading Mandates API/Settings, ResearchAgent holdings gathering, PaperTrader, PositionMonitor, `features/correlation-aware-construction/FEATURE_ARCHITECTURE.md`, migration `20260716013000_mandate_capacity_and_score_freshness.sql`.
 Reversal cost: Low for policy/UI; no position or trade data migration.
+
+### Decision 50: Research prices are indicative; execution prices remain fill-bound
+
+Date: 2026-07-20
+Status: Approved
+Category: Product / Architecture / Money-path safety / Audit truth
+
+Decision: Record the actual latest scoring-candle close and a deterministic,
+versioned mandate-based indicative entry/risk/target plan in each future decision
+observation. Research Journal displays the plan in native currency with its
+source/date and an explicit non-order disclosure. PaperTrader independently
+re-prices from a fresh actual fill and the current bounded mandate/validated
+MAE-MFE policy; PositionMonitor remains the sole owner of executable paper exits.
+Rejected, neutral, unavailable-price, and held-position states never display a
+new research scenario as an executable instruction.
+
+Reason: The user needs actionable price context, but a fixed predicted price from
+an LLM or a stale research close would create false precision and could conflict
+with existing fill-time and exit controls. The shared deterministic contract adds
+clarity and auditability without broadening trade authority or API usage.
+
+Impact: Future outcome labels gain a real point-in-time entry basis, Journal gains
+approximate native-currency levels, and the previously loaded-but-unused MAE/MFE
+exit policy is applied at fill time within its approved bounds. No schema, broker,
+approval, scoring-weight, threshold, or provider-quota change.
+
+Files/features affected: `features/research-trade-plan/FEATURE_ARCHITECTURE.md`,
+`lib/trading/trade-plan.ts`, ResearchAgent, PaperTrader, Research Journal API/UI,
+learning-loop/agent architecture docs, and focused tests.
+
+Reversal cost: Low; all persistence is additive in existing columns/JSONB and
+research-time rendering is independent of executable position state.

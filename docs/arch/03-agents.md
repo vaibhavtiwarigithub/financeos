@@ -242,6 +242,13 @@ analyst_score = Σ (dimension_score × effective_weight[dimension])
 ```
 Missing/inapplicable dimensions are EXCLUDED and the remaining weights renormalized to sum to 1.0 (`lib/scoring/weighted-score.ts`); `< 2` usable dimensions → abstain (thin evidence), never a low score. Base weights: champion `weights_snapshot` → risk-profile static → `learning_priors`/`signal_weights` → default F.30/T.25/S.20/M.15/I.10.
 
+**Indicative trade plan (2026-07-20):** ResearchAgent now records the latest
+scoring-candle close in `decision_observations.price_at_decision` and a versioned
+native-currency `features.trade_plan`. Eligible new longs get deterministic
+mandate-based approximate risk/target levels; rejected and held names do not.
+This adds no provider call and no LLM number. The plan is audit/presentation
+context only; a close older than seven calendar days is marked unavailable.
+
 **Low-confidence output (2026-07-12):** ResearchAgent aggregates per-market evidence availability across a run; when ≥ 50% of scored symbols (min 2) were scored on `< 2` of 5 dimensions, it raises a `low-confidence-research:<market>` System Health alert (warn/data) naming the commonly-missing dimensions, and resolves it when a run recovers. Surfaces *quality* gaps (thin data) alongside the existing *quota* alerts (provider budget).
 
 **Holdings ordering + fail-loud (2026-07-16, bug fix — both markets):**
@@ -404,6 +411,13 @@ deterministic score and compare explanation/veto quality.
 - `position_size_pct` from champion genome (clamped to `strategy_config.position_size_pct`)
 - Slippage model: 0.05% above mid
 - Records `expected_price` and `realized_slip_pct` on every fill
+
+**Fill-bound risk plan:** PaperTrader ignores research-time absolute levels. It
+binds stop and target to the fresh actual fill using the current market mandate,
+or the same-market/horizon MAE/MFE percentiles only after 60 eligible-long labels
+exist. Learned values are bounded to a 10% maximum stop and 40% maximum target;
+invalid or thin data falls back to the mandate. Planned-versus-bound percentages
+are appended to the Research Journal pipeline trail.
 
 **Risk gates (added 2026-07-09):**
 - **Latched controls:** both pause and trading-enabled controls are checked per market; a recovered kill-switch metric cannot silently re-enable entries

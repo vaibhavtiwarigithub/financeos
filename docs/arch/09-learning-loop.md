@@ -284,6 +284,13 @@ Named strategy contexts. Default mandates:
 Every `agent_signals`, `paper_trades`, and `decision_observations` row gets a `mandate_id`
 stamped at creation time.
 
+Future `decision_observations` also carry the actual scoring-candle close and a
+deterministic indicative trade-plan snapshot. This improves point-in-time label
+truth and lets Research Journal explain approximate entry/risk/target context.
+Execution does not consume stale absolute research prices: PaperTrader resolves
+the current bounded policy and anchors prices to the fill, while PositionMonitor
+continues to own the stored position's exits.
+
 ### Evaluation metrics
 
 | Metric | Notes |

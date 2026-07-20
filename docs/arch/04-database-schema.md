@@ -310,16 +310,28 @@ Immutable ledger of EVERY scored candidate (even ones not traded). The learning 
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | uuid PK | |
+| `id` | bigint PK | |
+| `ts` | timestamptz | Point-in-time decision timestamp. |
 | `symbol` | text | |
 | `market` | text | |
 | `mandate_id` | uuid | |
 | `analyst_score` | numeric | |
-| `data_confidence` | numeric | |
+| `fundamental_score`…`insider_score` | numeric | Deterministic dimension scores. |
+| `weights_used` | jsonb | Effective weights actually applied. |
+| `availability_mask` | jsonb | Point-in-time evidence availability. |
+| `features` | jsonb | Versioned evidence, quality, mandate, regime and indicative `trade_plan` snapshot. |
+| `evidence_confidence` | numeric | Weighted structural coverage. |
 | `discovery_source` | text | |
-| `raw_data` | jsonb | Full scoring inputs; `_using_champion_weights: bool` |
-| `action_taken` | text | `filled` \| `skipped` \| `expired` |
-| `created_at` | timestamptz | Append-only. Never deleted. |
+| `direction` | text | Deterministic entry/exit direction. |
+| `entry_eligible` | boolean | Research eligibility, not execution authority. |
+| `action` | text | Recorded research action. |
+| `score_threshold` | numeric | Threshold used for this decision. |
+| `price_at_decision` | numeric | Latest scoring-candle close in native currency; null on unavailable historical rows. |
+| `currency` | text | `USD` or `INR`; markets are never cross-summed. |
+| `signal_id` | uuid | Links the downstream pipeline audit. |
+
+An update/delete trigger makes the table append-only. Research-time
+`features.trade_plan` is indicative only; PaperTrader re-prices from its fill.
 
 ### `research_packets`
 Full research context per run (for debug + audit).

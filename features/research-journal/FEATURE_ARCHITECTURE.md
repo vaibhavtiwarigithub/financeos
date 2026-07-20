@@ -183,6 +183,9 @@ remain available, but are the audit layer rather than the headline.
   dimension is structurally applicable.
 - The LLM may summarize already-recorded evidence. It cannot invent prices,
   financials, news, peers, confidence, action, targets, or invalidation levels.
+  Future observations may show the deterministic mandate-based indicative plan
+  defined in `features/research-trade-plan/FEATURE_ARCHITECTURE.md`; it is
+  explicitly not LLM-authored and is re-priced from the actual fill downstream.
 - News/theme/social context does not authorize a trade. It may explain, confirm,
   reduce confidence, or veto through a separately validated deterministic rule.
 - No per-card provider fan-out on initial page load. The immutable stored decision

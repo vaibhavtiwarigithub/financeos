@@ -18,6 +18,7 @@ import { isPaused, isTradingEnabled } from "@/lib/market-controls";
 import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/trading/capital-rotation";
 import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
 import { paperPerformanceTruth } from "@/lib/paper-nav";
+import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -352,13 +353,14 @@ export async function POST(req: NextRequest) {
       const g = await loadChampionGenome(supabase, m as "us" | "india");
       genomeByMarket.set(m, g);
       const mandate = mandateByMarket.get(m) ?? await loadTradingMandate(supabase, m as "us" | "india");
-      horizonByMarket.set(m, resolveHorizonDays(mandate, g.source === "champion" ? g.genome.horizon_days : null).days);
+      const resolvedHorizon = resolveHorizonDays(mandate, g.source === "champion" ? g.genome.horizon_days : null).days;
+      horizonByMarket.set(m, resolvedHorizon);
       maeMfeByMarket.set(
         m,
         await getGlobalMaeMfePercentiles(
           supabase,
           m as "us" | "india",
-          g.genome.horizon_days,
+          resolvedHorizon,
           g.genome.exit.stop_mae_pctile / 100,
           g.genome.exit.target_mfe_pctile / 100,
         ),
@@ -438,22 +440,43 @@ export async function POST(req: NextRequest) {
       const resolvedHorizonDays = horizonByMarket.get(market) ?? tradingMandate.target_hold_days;
       const snapshot = mandateSnapshot(tradingMandate, resolvedHorizonDays);
 
-      // Dynamic R:R (Phase 2): stop = entry x (1 + p25 MAE), target = entry x (1
-      // + p75 MFE) from the ledger's actual outcome distribution, replacing the
-      // fixed profile stop/target — but a signal-provided value ALWAYS wins.
+      // Dynamic R:R (Phase 2): resolve a bounded market-local policy from the
+      // eligible-long ledger when valid; otherwise use the current mandate.
+      // Absolute levels are always anchored to the actual fill.
       const maeMfe = maeMfeByMarket.get(market);
-      if (!maeMfe && signal.price_target == null && signal.stop_loss == null) {
-        // getGlobalMaeMfePercentiles() silently returns null on any query
-        // failure/insufficient data and PaperTrader falls back to fixed
-        // profile stop/target — safe, but previously invisible. Record it so
+      const riskReward = resolveExecutionRiskReward({
+        mandateStopLossPct: tradingMandate.stop_loss_pct,
+        mandateTargetPct: tradingMandate.target_pct,
+        learned: maeMfe,
+      });
+      if (riskReward.source === "mandate") {
+        // Invalid/insufficient learned data falls back to the mandate. Record it so
         // the briefing/Research Journal can tell the user whether sizing used
         // learned risk or static defaults for this fill.
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "passed", reason: "dynamic_rr_unavailable — using mandate stop/target", detail: { stopLossPct: tradingMandate.stop_loss_pct, targetPct: tradingMandate.target_pct } });
       }
-      const priceTarget = signal.price_target != null ? signal.price_target
-        : parseFloat((fillPrice * (1 + tradingMandate.target_pct / 100)).toFixed(2));
-      const stopLoss = signal.stop_loss != null ? signal.stop_loss
-        : parseFloat((fillPrice * (1 - tradingMandate.stop_loss_pct / 100)).toFixed(2));
+      const boundPlan = bindTradePrices(fillPrice, riskReward);
+      if (!boundPlan) {
+        await revertClaim(signal.id);
+        skipped.push({ symbol: signal.symbol, reason: "invalid_fill_trade_plan" });
+        continue;
+      }
+      const { priceTarget, stopLoss } = boundPlan;
+      await logStage(supabase, {
+        signal_id: signal.id, symbol: signal.symbol, market,
+        stage: "risk_plan", outcome: "passed",
+        reason: `${riskReward.source} bound to fill`,
+        detail: {
+          research_stop_loss_pct: signal.stop_loss_pct ?? null,
+          research_target_pct: signal.take_profit_pct ?? null,
+          execution_stop_loss_pct: riskReward.stopLossPct,
+          execution_target_pct: riskReward.targetPct,
+          sample_size: riskReward.sampleSize,
+          fill_price: fillPrice,
+          stop_loss: stopLoss,
+          price_target: priceTarget,
+        },
+      });
 
       // Conviction-scaled sizing (Phase 2): when a calibrated P(win) model
       // exists for this market, size via half-Kelly using this signal's own
@@ -475,11 +498,9 @@ export async function POST(req: NextRequest) {
           fundamental_score: signal.fundamental_score, technical_score: signal.technical_score,
           sentiment_score: signal.sentiment_score, macro_score: signal.macro_score, insider_score: signal.insider_score,
         } as any);
-        // Use the ACTUAL priceTarget/stopLoss distances (which already prefer a
-        // signal-provided value per the block above), not the learned MAE/MFE
-        // percentiles directly — those two can disagree whenever the signal
-        // supplies its own stop/target, silently discarding a real 2:1 edge in
-        // favor of a stale/mismatched learned ratio.
+        // Use the actual fill-bound priceTarget/stopLoss distances, not the raw
+        // learned values, so sizing and the position's persisted exit plan share
+        // one payoff ratio after bounds and fallbacks are applied.
         const targetPctActual = (priceTarget - fillPrice) / fillPrice;
         const stopPctActual = (fillPrice - stopLoss) / fillPrice;
         const payoffRatio = Math.abs(targetPctActual) / Math.max(0.001, Math.abs(stopPctActual));

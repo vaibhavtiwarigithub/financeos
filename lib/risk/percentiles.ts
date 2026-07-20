@@ -13,11 +13,16 @@ function percentile(sorted: number[], p: number): number {
 }
 
 export async function getGlobalMaeMfePercentiles(
-  supabase: any, market: "us" | "india", horizonDays: 2 | 5 | 10 | 20 = 10,
+  supabase: any, market: "us" | "india", horizonDays: number = 10,
   stopPctile = 0.25, targetPctile = 0.75
 ): Promise<MaeMfePercentiles | null> {
   try {
-    const { data: obsIds } = await supabase.from("decision_observations").select("id").eq("market", market).limit(5000);
+    if (![2, 5, 10, 20].includes(horizonDays)) return null;
+    // Exit-policy samples must represent trades the long-entry policy could
+    // actually have taken. Mixing rejected/neutral/short observations changes
+    // the path distribution and can manufacture inappropriate stop/target levels.
+    const { data: obsIds } = await supabase.from("decision_observations").select("id")
+      .eq("market", market).eq("entry_eligible", true).eq("direction", "long").limit(5000);
     const ids = (obsIds ?? []).map((r: any) => r.id);
     if (ids.length === 0) return null;
     const { data: labels } = await supabase
@@ -26,11 +31,11 @@ export async function getGlobalMaeMfePercentiles(
       .eq("horizon_days", horizonDays)
       .in("observation_id", ids)
       .limit(5000);
-    if (!labels || labels.length < 30) return null;
+    if (!labels || labels.length < 60) return null;
 
     const maes = labels.map((l: any) => Number(l.max_adverse_excursion)).filter(Number.isFinite).sort((a: number, b: number) => a - b);
     const mfes = labels.map((l: any) => Number(l.max_favorable_excursion)).filter(Number.isFinite).sort((a: number, b: number) => a - b);
-    if (maes.length < 30 || mfes.length < 30) return null;
+    if (maes.length < 60 || mfes.length < 60) return null;
 
     return {
       stopMaePctile: percentile(maes, stopPctile),   // negative number, e.g. -0.06
