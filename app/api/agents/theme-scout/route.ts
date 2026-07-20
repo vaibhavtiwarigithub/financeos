@@ -276,19 +276,6 @@ Rules:
     }
   }
 
-  // Emit info alert
-  const themeNames = enriched.map(t => t.theme).join(", ");
-  const symbolList = rows.map(r => r.symbol).join(", ");
-  if (rows.length) {
-    await supabase.from("agent_alerts").insert({
-      severity: "info",
-      category: "watchlist",
-      title: `Theme Scout: ${rows.length} stocks added`,
-      detail: `Themes: ${themeNames} → ${symbolList}`,
-      auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-    });
-  }
-
   return NextResponse.json({
     ok: true,
     themes: enriched,

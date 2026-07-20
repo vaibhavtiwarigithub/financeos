@@ -719,9 +719,10 @@ No invented events. Ground every claim in the data above.`;
       .from("agent_alerts")
       .select("severity, title, detail")
       .eq("resolved", false)
+      .in("severity", ["critical", "error", "warn", "warning"])
       .or(`auto_expire_at.is.null,auto_expire_at.gt.${nowIso}`)
       .limit(20);
-    const rank: Record<string, number> = { critical: 4, error: 3, warn: 2, info: 1 };
+    const rank: Record<string, number> = { critical: 4, error: 3, warn: 2, warning: 2, info: 1 };
     (briefingData as any).openIssues = (openAlerts ?? [])
       .map((a: any) => ({ severity: String(a.severity ?? "info"), title: a.title, detail: a.detail ?? null }))
       .sort((a: any, b: any) => (rank[b.severity] ?? 0) - (rank[a.severity] ?? 0));

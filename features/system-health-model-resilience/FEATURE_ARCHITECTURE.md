@@ -130,6 +130,24 @@ only reachable by opening a specific card.
 - Severity ordering: CRITICAL/HIGH first; live-trading-affecting issues
   (broker token, kill switch, needs-reconcile) surfaced most prominently.
 
+### Operational taxonomy correction (2026-07-20)
+
+`agent_alerts` remains the transport for both actionable conditions and bounded
+operational telemetry, but the product must not call both "open issues":
+
+- `critical`, `error`, and `warn` are **actions required**, shown expanded and
+  counted in the System Health headline;
+- `info` is an **operational notice**, collapsed by default and counted
+  separately;
+- successful agent activity (for example, Theme Scout adding symbols) belongs
+  in the agent/watchlist history, not System Health, and must not write an alert;
+- expected sparse evidence and free-tier quota exhaustion may remain notices
+  because they explain score coverage, but their wording must not imply a broken
+  provider or more real calls than the enforced budget allowed.
+
+This changes presentation and activity routing only. It does not suppress real
+broker, cron, data-starvation, kill-switch, or reconciliation faults.
+
 ---
 
 ## Phase 3 — Model resilience: tier aliases + graceful fallback

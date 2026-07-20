@@ -1230,7 +1230,9 @@ async function recordRunEvidence(market: string, runKey: string, includedDims: S
           // Known-sparse source → info (expected, not a fault). Dense source low → warn/critical.
           severity: expectedSparse ? "info" : (rate < DIM_AVAIL_CRIT ? "critical" : "warn"),
           category: "data",
-          title: `${d} data ${Math.round(rate * 100)}% available (${market.toUpperCase()})`,
+          title: expectedSparse
+            ? `Expected sparse coverage: ${d} ${Math.round(rate * 100)}% (${market.toUpperCase()})`
+            : `${d} data ${Math.round(rate * 100)}% available (${market.toUpperCase()})`,
           detail: expectedSparse
             ? `${acc.dimAvailable[d]}/${appl} ${market.toUpperCase()} symbols got real ${d} this run. ` +
               `This source (${DIM_PROVIDER[d]}) is sparse by nature for many ${market.toUpperCase()} names, so absence is EXPECTED — ` +

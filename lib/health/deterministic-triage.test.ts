@@ -16,7 +16,7 @@ describe("deterministic health triage", () => {
       { issue_key: "broker-token:kite", severity: "warn", category: "broker", title: "Kite expired", detail: "Reconnect Kite." },
     ], []);
     expect(result.issues[0]).toMatchObject({ issue_key: "broker-token:kite", severity: "warn", suggested_fix: "Reconnect Kite." });
-    expect(result.summary).toContain("1 actionable");
+    expect(result.summary).toContain("1 action required");
   });
 
   it("reports only a latest unresolved run error", () => {

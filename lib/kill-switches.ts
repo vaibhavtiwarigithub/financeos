@@ -49,12 +49,11 @@ const START_NAV: Record<string, number> = { us: 10000, india: 1000000 };
 const LIVE_SNAPSHOT_MAX_AGE_MS =
   Number(process.env.KS_LIVE_SNAPSHOT_MAX_AGE_MS) || 6 * 60 * 60 * 1000;
 
-// Minimum closed-trade sample before the accuracy kill switch may trip. Below
-// this, win-rate is statistical noise (5 trades at 20% = one loss) and halting a
-// market on it is a false alarm — India tripped at exactly 5. Matches the locked
-// "10+ closed trades before Phase 1" rule. Drawdown/daily-loss brakes are
-// unaffected; this ONLY governs the accuracy gate's validity.
-const MIN_ACCURACY_SAMPLE = 10;
+// Accuracy is an outcome metric, not an emergency loss metric. Use the same
+// 20-trade floor as expectancy/profit-factor analytics; smaller cohorts are too
+// noisy to halt a whole market. Breakevens are excluded from both numerator and
+// denominator. Daily-loss/drawdown brakes remain immediate at every sample size.
+export const MIN_ACCURACY_SAMPLE = 20;
 
 // Per-market scope helper for paper tables (pre-057 fallback: no market column → unscoped).
 async function scoped(q: any, market: string): Promise<any> {
@@ -121,7 +120,7 @@ async function getLiveNavSeries(
 
 // Estimate live trade accuracy from broker_orders filled pairs.
 // Approximation: most recent prior BUY avg_fill_price vs SELL avg_fill_price.
-// Returns null when fewer than 5 countable pairs exist.
+// Returns null when fewer than MIN_ACCURACY_SAMPLE directional pairs exist.
 async function getLiveAccuracy(
   supabase: any,
   market: string,
@@ -136,7 +135,7 @@ async function getLiveAccuracy(
     .eq("status", "filled")
     .gte("created_at", since30);
 
-  if (!sells || (sells as any[]).length < 5) return null;
+  if (!sells || (sells as any[]).length < MIN_ACCURACY_SAMPLE) return null;
 
   const symbols = [...new Set((sells as any[]).map((s: any) => s.symbol as string))];
   const since180 = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
@@ -164,8 +163,11 @@ async function getLiveAccuracy(
         (b.created_at as string).localeCompare(a.created_at),
       )[0];
     if (!prior) continue;
+    const sellPrice = Number(sell.avg_fill_price);
+    const buyPrice = Number(prior.avg_fill_price);
+    if (!Number.isFinite(sellPrice) || !Number.isFinite(buyPrice) || sellPrice === buyPrice) continue;
     counted++;
-    if (Number(sell.avg_fill_price) > Number(prior.avg_fill_price)) wins++;
+    if (sellPrice > buyPrice) wins++;
   }
 
   return counted >= MIN_ACCURACY_SAMPLE ? { wins, total: counted } : null;
@@ -301,11 +303,12 @@ export async function checkKillSwitches(
     peak =
       navHistory.length > 0 ? Math.max(...navHistory, startNav) : null;
 
-    if (closedTrades && (closedTrades as any[]).length >= MIN_ACCURACY_SAMPLE) {
-      const wins = (closedTrades as any[]).filter(
-        (t) => t.outcome === "win",
-      ).length;
-      accuracyData = { wins, total: (closedTrades as any[]).length };
+    const directionalOutcomes = (closedTrades ?? []).filter(
+      (trade: any) => trade.outcome === "win" || trade.outcome === "loss",
+    );
+    if (directionalOutcomes.length >= MIN_ACCURACY_SAMPLE) {
+      const wins = directionalOutcomes.filter((trade: any) => trade.outcome === "win").length;
+      accuracyData = { wins, total: directionalOutcomes.length };
     }
   }
 

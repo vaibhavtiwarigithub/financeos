@@ -13,7 +13,7 @@ const T = {
 
 type Alert = {
   id: string;
-  severity: "info" | "warn" | "error" | "critical" | "success";
+  severity: "info" | "warn" | "warning" | "error" | "critical" | "success";
   category: string;
   title: string;
   detail?: string;
@@ -21,12 +21,12 @@ type Alert = {
   created_at: string;
 };
 
-const SEV_RANK: Record<string, number> = { critical: 4, error: 3, warn: 2, info: 1, success: 0 };
+const SEV_RANK: Record<string, number> = { critical: 4, error: 3, warn: 2, warning: 2, info: 1, success: 0 };
 const SEV_COLOR: Record<string, string> = {
-  critical: T.red, error: T.red, warn: T.yellow, info: T.blue, success: T.green,
+  critical: T.red, error: T.red, warn: T.yellow, warning: T.yellow, info: T.blue, success: T.green,
 };
 const SEV_LABEL: Record<string, string> = {
-  critical: "CRITICAL", error: "ERROR", warn: "WARN", info: "INFO", success: "OK",
+  critical: "CRITICAL", error: "ERROR", warn: "WARN", warning: "WARN", info: "INFO", success: "OK",
 };
 
 // A deep link / hint per category so the card is actionable, not just informational.
@@ -74,6 +74,7 @@ export default function SystemHealthCard() {
   const [triage, setTriage] = useState<{ content: string; model?: string; open_alerts?: number; ts?: string } | null>(null);
   const [running, setRunning] = useState(false);
   const [applying, setApplying] = useState<Record<string, "pending" | "ok" | "err">>({});
+  const [showNotices, setShowNotices] = useState(false);
 
   useEffect(() => {
     fetch("/api/alerts")
@@ -137,15 +138,19 @@ export default function SystemHealthCard() {
     );
   }
 
-  const sorted = [...alerts].sort(
+  const actionAlerts = alerts.filter(alert => alert.severity !== "info" && alert.severity !== "success");
+  const notices = alerts.filter(alert => alert.severity === "info" || alert.severity === "success");
+  const sorted = [...actionAlerts].sort(
     (a, b) => (SEV_RANK[b.severity] ?? 0) - (SEV_RANK[a.severity] ?? 0)
       || (a.created_at < b.created_at ? 1 : -1),
   );
   const worst = sorted[0]?.severity;
-  const nCrit = alerts.filter(a => a.severity === "critical").length;
+  const nCrit = actionAlerts.filter(a => a.severity === "critical").length;
   const clean = alerts.length === 0;
+  const noActionRequired = actionAlerts.length === 0;
+  const visibleAlerts = showNotices ? [...sorted, ...notices] : sorted;
 
-  const headColor = clean ? T.green : SEV_COLOR[worst] ?? T.blue;
+  const headColor = noActionRequired ? T.green : SEV_COLOR[worst] ?? T.yellow;
   const newestAlertMs = Math.max(0, ...alerts.map((alert) => Date.parse(alert.created_at) || 0));
   const triageMs = Date.parse(triage?.ts ?? "") || 0;
   const triageStale = !!triage && (triage.open_alerts !== alerts.length || triageMs < newestAlertMs);
@@ -158,13 +163,18 @@ export default function SystemHealthCard() {
           System Health
         </span>
         <span style={{ fontSize: "12px", fontWeight: 600, color: clean ? T.green : headColor, marginLeft: "auto" }}>
-          {clean ? "All systems normal" : `${alerts.length} open issue${alerts.length !== 1 ? "s" : ""}${nCrit ? ` · ${nCrit} critical` : ""}`}
+          {clean ? "All systems normal"
+            : noActionRequired ? `No action required · ${notices.length} notice${notices.length !== 1 ? "s" : ""}`
+            : `${actionAlerts.length} action${actionAlerts.length !== 1 ? "s" : ""} required${nCrit ? ` · ${nCrit} critical` : ""}${notices.length ? ` · ${notices.length} notices` : ""}`}
         </span>
       </div>
 
       {!clean && (
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          {sorted.map(a => {
+          {notices.length > 0 && <button type="button" onClick={() => setShowNotices(current => !current)} style={{ alignSelf: "flex-start", background: "transparent", border: 0, color: T.blue, padding: 0, fontSize: "11px", cursor: "pointer" }}>
+            {showNotices ? "Hide" : "Show"} {notices.length} operational notice{notices.length !== 1 ? "s" : ""}
+          </button>}
+          {visibleAlerts.map(a => {
             const color = SEV_COLOR[a.severity] ?? T.blue;
             const isOpen = expanded === a.id;
             const hint = fixHint(a);

@@ -158,7 +158,7 @@ export async function providerCachedFetch(
           // Not an incident; auto-clears at UTC midnight when the quota resets.
           severity: "info", category: "data",
           title: `${cfg.label} daily budget exhausted`,
-          detail: `Used ${count}/${cfg.dailyBudget} ${cfg.label} calls today. Further fetches serve cached payloads until the quota resets (00:00 UTC). Scoring inputs may be staler than usual.`,
+          detail: `${count} fetch attempts reached the ${cfg.dailyBudget}-call ${cfg.label} free-tier budget today. Real calls remain capped at ${cfg.dailyBudget}; later attempts serve cached payloads until 00:00 UTC. Scoring inputs may be staler than usual.`,
           autoExpireAt: nextUtcMidnight(),
         }, svc);
         await resolveIssue(`provider-budget-pressure:${provider}`, svc);

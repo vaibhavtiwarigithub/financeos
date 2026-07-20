@@ -177,7 +177,7 @@ async function emitAggregatedHealth(
       // measure-only is informational by construction: nothing was withheld.
       severity: mode === "enforce" ? "warn" : "info",
       category: "data",
-      title: `${market.toUpperCase()} evidence degradation: ${t.abstained}/${t.evaluated} symbols would abstain from new longs`,
+      title: `${market.toUpperCase()} shadow guard: ${t.abstained}/${t.evaluated} symbols would abstain from new longs`,
       detail:
         `Run ${runKey}. Guard mode: ${modeLabel}. ${t.abstained} of ${t.evaluated} evaluated ${market.toUpperCase()} symbols had a REQUIRED evidence field ` +
         `degrade against their last accepted baseline, and their score renormalized around that loss — so a new long there would rest on ` +

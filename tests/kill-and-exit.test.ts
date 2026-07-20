@@ -242,6 +242,40 @@ describe("Test 9a — real checkKillSwitches auto-disables on a breach (blocks n
       ),
     ).toBe(true);
   });
+
+  async function runPaperAccuracy(outcomes: string[]) {
+    const writes: any[] = [];
+    const resolver: Resolver = (q) => {
+      if (q.op === "update" || q.op === "upsert") writes.push({ table: q.table, payload: q.payload });
+      if (q.table === "strategy_config") return { data: { ks_daily_loss_pct: -20, ks_drawdown_pct: 25, ks_accuracy_pct: 40 }, error: null };
+      if (q.table === "paper_portfolio") return { data: { nav: 1000000 }, error: null };
+      if (q.table === "paper_performance") return { data: [{ date: "2026-01-01", nav: 1000000, market: "india" }], error: null };
+      if (q.table === "paper_trades") return { data: outcomes.map(outcome => ({ outcome, market: "india" })), error: null };
+      if (q.table === "broker_orders") return { data: [], error: null };
+      return { data: null, error: null };
+    };
+    const real = await vi.importActual<typeof import("@/lib/kill-switches")>("@/lib/kill-switches");
+    const result = await real.checkKillSwitches(makeClient(resolver) as any, { market: "india", book: "paper" });
+    return { result, writes };
+  }
+
+  it("does not halt a market on 10 noisy rows and excludes breakevens from accuracy", async () => {
+    const { result, writes } = await runPaperAccuracy([
+      "win", "win", "win", "loss", "loss", "loss", "loss", "loss", "breakeven", "breakeven",
+    ]);
+    expect(result.safe).toBe(true);
+    expect(writes.some(write => write.table === "market_controls" && write.payload.trading_enabled === false)).toBe(false);
+  });
+
+  it("trips accuracy after 20 directional outcomes below the configured threshold", async () => {
+    const { result } = await runPaperAccuracy([
+      ...Array.from({ length: 7 }, () => "win"),
+      ...Array.from({ length: 13 }, () => "loss"),
+      "breakeven", "breakeven",
+    ]);
+    expect(result).toMatchObject({ safe: false, tripped: "accuracy" });
+    expect(result.reason).toContain("(20 trades)");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

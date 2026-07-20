@@ -174,13 +174,6 @@ Rules: distinct themes, max ${MAX_CANDIDATES} candidates each, real US equity ti
     newRows = rows.filter((r) => !existingSymbols.has(r.symbol));
     if (newRows.length) {
       await supabase.from("watchlist").insert(newRows);
-      await supabase.from("agent_alerts").insert({
-        severity: "info",
-        category: "watchlist",
-        title: `Theme Scout: ${newRows.length} stocks added`,
-        detail: `Themes: ${themes.map((t: any) => t.theme).join(", ")} → ${newRows.map((r: any) => r.symbol).join(", ")}`,
-        auto_expire_at: new Date(Date.now() + 86400000).toISOString(),
-      });
     }
   }
 

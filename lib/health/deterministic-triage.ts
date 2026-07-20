@@ -80,8 +80,11 @@ export function buildDeterministicTriage(
 
   const actionable = issues.filter((issue) => issue.severity !== "info").length;
   const critical = issues.filter((issue) => issue.severity === "critical").length;
+  const notices = issues.length - actionable;
   const summary = issues.length === 0
     ? "All monitored systems are normal."
-    : `${issues.length} current issue${issues.length === 1 ? "" : "s"}: ${actionable} actionable${critical ? `, ${critical} critical` : ""}.`;
+    : actionable === 0
+      ? `No action required. ${notices} operational notice${notices === 1 ? "" : "s"}.`
+      : `${actionable} action${actionable === 1 ? "" : "s"} required${critical ? `, ${critical} critical` : ""}${notices ? `; ${notices} operational notice${notices === 1 ? "" : "s"}` : ""}.`;
   return { summary, issues };
 }

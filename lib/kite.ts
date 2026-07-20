@@ -132,7 +132,7 @@ async function authHeaders(s: any): Promise<{ ok: true; headers: Record<string, 
       issueKey: "broker-token:kite",
       severity: "warn", category: "broker",
       title: "Kite session expired (daily) — re-login required",
-      detail: "Zerodha access tokens expire every morning. India holdings and live orders will fail until you re-login via Settings → Kite.",
+      detail: "Zerodha access tokens expire every morning. India live holdings and orders will fail until you re-login via Settings → Kite. India paper research and trading are unaffected.",
     }, s);
     return { ok: false, error: "Kite token expired (daily) — re-login via /api/kite/login" };
   }
