@@ -19,7 +19,14 @@ function pretty(value: unknown): string {
 }
 function terminalBadge(terminal: string) {
   if (terminal === "filled") return { label: "FILLED", color: T.green };
+  if (terminal === "staged_awaiting_session") return { label: "STAGED · AWAITING MARKET SESSION", color: T.blue };
+  if (terminal === "revalidated_superseded") return { label: "REVALIDATED · SUPERSEDED", color: T.muted };
+  if (terminal === "expired_not_traded") return { label: "EXPIRED · NOT TRADED", color: T.muted };
+  if (terminal === "passed_research_awaiting_paper_gates") return { label: "PASSED RESEARCH · AWAITING PAPER GATES", color: T.blue };
+  if (terminal === "passed_portfolio_awaiting_execution") return { label: "PASSED PORTFOLIO GATES · AWAITING EXECUTION", color: T.blue };
+  if (terminal === "paper_traded_audit_gap") return { label: "PAPER TRADED · AUDIT EVENT MISSING", color: T.amber };
   if (terminal.startsWith("rejected_")) return { label: terminal.replace("rejected_", "REJECTED · ").replaceAll("_", " ").toUpperCase(), color: T.red };
+  if (terminal.startsWith("passed_") && terminal.endsWith("_awaiting_downstream")) return { label: terminal.replace("passed_", "PASSED · ").replace("_awaiting_downstream", " · AWAITING NEXT GATE").replaceAll("_", " ").toUpperCase(), color: T.blue };
   if (terminal.startsWith("pending_")) return { label: terminal.replace("pending_", "PENDING · ").replaceAll("_", " ").toUpperCase(), color: T.amber };
   if (terminal === "passed_research_no_downstream_data") return { label: "PASSED RESEARCH", color: T.blue };
   return { label: terminal.replaceAll("_", " ").toUpperCase(), color: T.muted };

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { classifyJournalAsset } from "@/lib/asset-classification";
+import { resolveJournalTerminal } from "@/lib/research/journal-terminal";
 
 export const dynamic = "force-dynamic";
 
@@ -169,14 +170,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  function terminalState(obs: any, events: any[]): string {
-    if (!events.length) return obs.entry_eligible ? "passed_research_no_downstream_data" : "rejected_research";
-    const last = events[events.length - 1];
-    if (last.stage === "execution" && last.outcome === "filled") return "filled";
-    if (last.outcome === "rejected") return `rejected_${last.stage}`;
-    return `pending_${last.stage}`;
-  }
-
   const symbols = observations.map((obs: any) => {
     const signal = signalById.get(obs.signal_id) as any;
     const packet = packetById.get(signal?.research_packet_id) as any;
@@ -332,7 +325,11 @@ export async function GET(req: NextRequest) {
         detail: e.detail, original_reason: e.stage === "research" ? e.reason : null,
         at: e.created_at,
       })),
-      terminal: terminalState(obs, events),
+      terminal: resolveJournalTerminal({
+        entryEligible: obs.entry_eligible,
+        signalStatus: signal?.status,
+        events,
+      }),
     };
   });
 
