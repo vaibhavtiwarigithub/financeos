@@ -12,6 +12,7 @@ import {
   type SectorBreachAllocation,
   type BreachRole,
 } from "@/lib/risk/sector-breach";
+import { effectiveHoldingRiskPosture } from "@/lib/risk/holding-risk-history";
 
 // A hand-built allocation for a given role. The allocator's own arithmetic is
 // proven in tests/sector-breach.test.ts; here we only prove how the POSTURE
@@ -304,6 +305,23 @@ describe("computeHoldingRisk - concentration remains advisory", () => {
   it("an absent flag defaults to the read-only wording (honest default)", () => {
     const r = computeHoldingRisk(holding(), fullCtx({ readOnlyAccount: undefined, protectiveStopHit: true }));
     expect(r.actionReason).toMatch(/read-only in Kairos/);
+  });
+});
+
+describe("historical holding-risk posture", () => {
+  it("preserves immutable legacy evidence but removes obsolete trim advice", () => {
+    const effective = effectiveHoldingRiskPosture("trim", "Trim 4.65pp", "hr-v2");
+    expect(effective.posture).toBe("review");
+    expect(effective.sourcePosture).toBe("trim");
+    expect(effective.reason).toMatch(/No trim is recommended/i);
+    expect(effective.reason).toMatch(/Historical reason: Trim 4\.65pp/);
+  });
+
+  it("does not rewrite current or protective postures", () => {
+    expect(effectiveHoldingRiskPosture("review", "Review concentration", "hr-v3"))
+      .toEqual({ posture: "review", sourcePosture: "review", reason: "Review concentration" });
+    expect(effectiveHoldingRiskPosture("exit_review", "Stop hit", "hr-v2"))
+      .toEqual({ posture: "exit_review", sourcePosture: "exit_review", reason: "Stop hit" });
   });
 });
 

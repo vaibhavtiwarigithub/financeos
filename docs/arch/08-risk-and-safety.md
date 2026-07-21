@@ -492,6 +492,10 @@ risk-control pressure index and a risk posture. Safety properties:
   specific objective/cap mandate. The deterministic reason states that no trim is recommended. The
   `readOnlyAccount` flag controls advisory transport wording only, not concentration posture. An absent
   flag defaults to the read-only wording.
+- **Legacy snapshots are evidence, not current instructions.** `lib/risk/holding-risk-history.ts` is the
+  shared read-boundary normalizer for Risk Analytics and newsletters. It preserves the original
+  `sourcePosture` but renders `hr-v1`/`hr-v2` `trim` rows as `review` with the historical reason. The
+  append-only rows are never rewritten, and `exit_review` is never downgraded.
 - **Research is SHOWN next to the verdict, and coupled to nothing** (2026-07-17,
   `features/risk-research-visibility`). `GET /api/portfolio/risk-daily` now attaches a nullable
   `research` block per holding — score, direction, `scored_at`, `sessions_since`, `days_since`, `state`,

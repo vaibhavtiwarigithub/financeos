@@ -65,3 +65,6 @@ the 7-day agent recap from agent_runs + learner_runs + rescore flags.
   trading reference is never treated as an account-specific sell mandate.
 - Failed reads and missing complete runs are visible states. A stale or missing
   snapshot must never be described as safe/current.
+- Legacy `hr-v1`/`hr-v2` stored trims are immutable evidence, not current advice.
+  The shared history normalizer preserves `sourcePosture=trim` for audit and
+  displays `REVIEW` in both newsletters and Risk Analytics.

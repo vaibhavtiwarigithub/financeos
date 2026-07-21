@@ -1,4 +1,5 @@
 import { marketSessionsSince } from "@/lib/trading/paper-exit-policy";
+import { effectiveHoldingRiskPosture } from "@/lib/risk/holding-risk-history";
 import {
   buildResearchBlock,
   indexLatestSignals,
@@ -108,8 +109,6 @@ const POSTURE_RANK: Record<BriefingRiskHolding["posture"], number> = {
   hold: 1,
 };
 
-const LEGACY_GENERIC_TRIM_FORMULAS = new Set(["hr-v1", "hr-v2"]);
-
 function finiteNumber(value: unknown): number | null {
   if (value == null || value === "") return null;
   const n = typeof value === "number" ? value : Number(value);
@@ -122,18 +121,6 @@ function promptField(value: unknown, maxLength = 240): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, maxLength);
-}
-
-function normalizePosture(value: string | null): BriefingRiskHolding["posture"] {
-  switch (value) {
-    case "exit_review":
-    case "trim":
-    case "review":
-    case "insufficient_data":
-      return value;
-    default:
-      return "hold";
-  }
 }
 
 function runTimestamp(run: LiveRiskRunRow): number {
@@ -207,9 +194,11 @@ export function buildLiveRiskBriefing(input: {
         && row.currency === run.currency
         && row.account_id === run.account_id)
       .map((row): BriefingRiskHolding => {
-        const sourcePosture = normalizePosture(row.risk_posture);
-        const legacyGenericTrim = sourcePosture === "trim"
-          && LEGACY_GENERIC_TRIM_FORMULAS.has(run.formula_version);
+        const effective = effectiveHoldingRiskPosture(
+          row.risk_posture,
+          row.action_reason,
+          run.formula_version,
+        );
         return {
           symbol: row.symbol,
           currentPrice: finiteNumber(row.current_price),
@@ -218,11 +207,9 @@ export function buildLiveRiskBriefing(input: {
           unrealizedPnlPct: finiteNumber(row.unrealized_pnl_pct),
           score: finiteNumber(row.holding_risk_score),
           label: row.risk_label,
-          posture: legacyGenericTrim ? "review" : sourcePosture,
-          sourcePosture,
-          reason: legacyGenericTrim
-            ? `Legacy ${run.formula_version} concentration alert — review only. No trim is recommended without an account-specific objective/cap mandate. Historical reason: ${row.action_reason ?? "unavailable"}`
-            : row.action_reason,
+          posture: effective.posture,
+          sourcePosture: effective.sourcePosture,
+          reason: effective.reason,
           dataConfidence: finiteNumber(row.data_confidence),
           missingInputs: row.missing_inputs ?? [],
           research: researchAvailable

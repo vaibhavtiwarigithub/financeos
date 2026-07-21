@@ -264,6 +264,7 @@ type DailyHolding = {
   realized_vol_pct: number | null; unrealized_pnl_pct: number | null;
   holding_risk_score: number | null; risk_label: string | null;
   risk_drivers: any; risk_posture: string | null; action_reason: string | null;
+  source_risk_posture?: string | null;
   add_capacity: boolean | null; data_confidence: number | null;
   missing_inputs: string[] | null; strategy_note: string | null;
   // Research annotation — DISPLAY ONLY. Never read by any risk decision (R1).

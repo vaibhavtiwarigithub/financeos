@@ -22,6 +22,7 @@ import {
   researchKey,
   type ResearchSignalRow,
 } from "@/lib/research/risk-annotation";
+import { effectiveHoldingRiskPosture } from "@/lib/risk/holding-risk-history";
 
 export const dynamic = "force-dynamic";
 
@@ -208,14 +209,23 @@ export async function GET(req: NextRequest) {
       // Annotate the LATEST run only. `previous` exists solely to compute the
       // Δ-vs-yesterday risk score; annotating it would imply a research history
       // this join does not model.
-      .map((s: any) => r.id !== latest.id ? s : {
-        ...s,
+      .map((s: any) => {
+        const effective = effectiveHoldingRiskPosture(s.risk_posture, s.action_reason, r.formula_version);
+        const stored = {
+          ...s,
+          risk_posture: effective.posture,
+          source_risk_posture: effective.sourcePosture,
+          action_reason: effective.reason,
+        };
+        return r.id !== latest.id ? stored : {
+        ...stored,
         // Additive and nullable. `null` = the research read failed (fail-soft);
         // a block with state 'never' = the read succeeded and found nothing.
         // Those are different facts and the UI renders them differently.
         research: researchAvailable
           ? buildResearchBlock(researchByKey.get(researchKey(s.symbol, market)), now, market)
           : null,
+      };
       }),
     // Run-level honesty flag: distinguishes "research read failed" from "research
     // read fine, this symbol has no signal". Never let absence look like a score.

@@ -28,6 +28,9 @@ rules, the daily cron cadence, or the snapshot schema changes.
 > A future `trim` requires both that mandate and a deterministic executable share-
 > quantity plan. Protective-stop/thesis `exit_review` precedence is unchanged. No
 > schema or order-path change.
+> Stored `hr-v1`/`hr-v2` rows remain immutable audit evidence, but current Risk
+> Analytics and newsletter read surfaces expose their original posture separately
+> and render legacy `trim` as `review` with an explicit historical-reason label.
 
 ## Intent (owner, verbatim)
 
