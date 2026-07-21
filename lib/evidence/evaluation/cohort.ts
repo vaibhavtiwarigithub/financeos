@@ -78,7 +78,7 @@ export interface FrozenCohort {
   market: Market;
   /** Knowledge cutoff — BOTH paths are constructed from this same as-of. */
   asOf: string;
-  /** Trading session represented by the frozen daily bars (YYYY-MM-DD). */
+  /** Validated completed market session represented by the decisions (YYYY-MM-DD). */
   marketSessionDate: string;
   universeSnapshotId: string;
   baselinePolicyVersionId: string;

@@ -486,8 +486,9 @@ the pacing system refusing a call, i.e. the protection working.
    bound activation RPC requires ten distinct market-session evaluations for the
    same market/candidate/baseline/evaluation-code/strategy tuple, all safety- and
    quality-passing within the selected session's prior 45 calendar days, with
-   the selected evaluation still unexpired. The session date comes from frozen
-   daily bars, so weekends/holidays cannot inflate the count. US and India
+   the selected evaluation still unexpired. The session date comes from
+   executable ResearchAgent rows (`session_validated=true`, `as_of_session`), so
+   weekend/holiday staged rows cannot inflate the count. US and India
    histories never satisfy one another.
 7. **Schedule only after hardening.** Run one cohort after each market's final daily
    shadow tick. The route remains shadow-only and both active policy versions keep
@@ -516,7 +517,8 @@ the pacing system refusing a call, i.e. the protection working.
 ### Data changes
 
 Add immutable evaluation columns `safety_pass boolean not null`,
-`quality_pass boolean not null`, and nullable `market_session_date date` (old rows
+`quality_pass boolean not null`, and nullable `market_session_date date` sourced
+from validated ResearchAgent sessions (old rows
 have no valid session proof). Existing evaluations default both verdicts false, so
 an old availability-only run can never authorize cutover. Harden
 `activate_evidence_policy_bound()` to require the selected row and the rolling

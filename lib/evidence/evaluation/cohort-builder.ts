@@ -113,6 +113,8 @@ export interface LegacyDecision {
   recordedAnalystScore: number;
   recordedDirection: string;
   asOf: string;
+  /** Validated completed market session that made this decision executable. */
+  asOfSession: string;
 }
 
 /**
@@ -467,11 +469,13 @@ export async function loadRecentDecisions(
     .from("agent_signals")
     .select(
       "symbol, market, analyst_score, direction, is_holding, asset_class, scoring_version, genome_hash, created_at, " +
-        "research_packet_id, fundamental_score, technical_score, sentiment_score, macro_score, insider_score",
+      "research_packet_id, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, session_validated, as_of_session",
     )
     .eq("market", market)
     .eq("score_source", "deterministic_v1")
+    .eq("session_validated", true)
     .not("research_packet_id", "is", null)
+    .not("as_of_session", "is", null)
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw new Error(`recent decisions load failed: ${error.message}`);
@@ -517,6 +521,8 @@ export async function loadRecentDecisions(
     if (rowFingerprint !== selectedFingerprint) continue;
     const symbol = String(r.symbol).toUpperCase();
     if (seenSymbols.has(symbol)) continue;
+    const asOfSession = String(r.as_of_session ?? "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfSession)) continue;
     seenSymbols.add(symbol);
     decisions.push({
       symbol,
@@ -533,6 +539,7 @@ export async function loadRecentDecisions(
       recordedAnalystScore: Number(r.analyst_score),
       recordedDirection: String(r.direction ?? ""),
       asOf: r.created_at,
+      asOfSession,
     });
   }
 
@@ -593,15 +600,9 @@ export interface LedgerProof {
   holds: boolean;
 }
 
-function sessionDateFromBars(snapshot: FrozenObservationSet): string {
-  const dates: string[] = [];
-  for (const [key, env] of snapshot.observations) {
-    if (!key.endsWith("|price.daily_bars") || !env.payload || typeof env.payload !== "object") continue;
-    const bars = (env.payload as any).bars;
-    const date = Array.isArray(bars) ? String(bars[bars.length - 1]?.date ?? "") : "";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) dates.push(date);
-  }
-  if (dates.length === 0) throw new Error("cohort has no cached daily-bar session date");
+function sessionDateFromDecisions(decisions: LegacyDecision[]): string {
+  const dates = decisions.map((decision) => decision.asOfSession).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date));
+  if (dates.length === 0) throw new Error("cohort has no validated market-session date");
   return dates.sort().at(-1)!;
 }
 
@@ -672,7 +673,7 @@ export async function buildAndPersistCohort(opts: {
     market: opts.market, symbolIntents, asOf, runId: primaryRunId,
     policyVersionId: candidateVersionId, resolve: opts.resolve,
   });
-  const marketSessionDate = sessionDateFromBars(snapshot);
+  const marketSessionDate = sessionDateFromDecisions(decisions);
 
   // ── REVERSE-SHADOW — REUSE the SAME frozen set. It issues NO resolve, so it
   //    can make no provider call by construction. This is the §4.2 property made

@@ -75,6 +75,7 @@ function decision(overrides: Partial<LegacyDecision> = {}): LegacyDecision {
     recordedAnalystScore: 0,
     recordedDirection: "long",
     asOf: "2026-07-17T13:00:00Z",
+    asOfSession: "2026-07-16",
     ...overrides,
   };
 }
