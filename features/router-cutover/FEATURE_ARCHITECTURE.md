@@ -453,7 +453,7 @@ the pacing system refusing a call, i.e. the protection working.
 - **ROI:** make cutover evidence repeatable and quota-neutral while preventing a
   technically conservative but materially blinder candidate from being described
   as full parity.
-- **Shipped at:** pending implementation and production verification.
+- **Shipped at:** `866548b3` + `cac4cffa`; production verified 2026-07-21.
 
 ### Scope and invariants
 
@@ -540,3 +540,18 @@ the existing Router cache and immutable decision detail remains in
 - The activation RPC refuses old evaluations, fewer than ten passing sessions,
   wrong-market history, or any safety/quality failure.
 - Both production policies remain `router_enabled=false` after deployment.
+
+### Production verification (2026-07-21)
+
+- Applied migrations `router_evidence_hardening` and
+  `router_cohort_session_source` in the FinanceOS Supabase project.
+- Vercel production deployments for both implementation commits reached Ready.
+- US evaluation `a2226bb7-e114-464d-96b8-01ff3684a85a` bound candidate v2 to
+  baseline v1 for session 2026-07-20. India evaluation
+  `78770c01-4583-49ac-b605-2e82f1730458` did the same for session 2026-07-21.
+- Both evaluations recorded zero primary and reverse provider calls with ledger
+  proof holding. Both failed safety and quality on current cache coverage, which
+  is the required fail-closed startup behavior rather than permission to cut over.
+- Active US and India policies remain v1 with `router_enabled=false`. The bound
+  activation RPC is executable by `service_role` only.
+- Gates: TypeScript clean; 1,162 tests passed / 6 skipped; production build clean.
