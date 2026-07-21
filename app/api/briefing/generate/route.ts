@@ -5,6 +5,13 @@ import { createClient } from "@/lib/supabase/server";
 import { callLLM } from "@/lib/llm-router";
 import { fetchIndiaIndices } from "@/lib/india-data";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import {
+  buildLiveRiskBriefing,
+  latestCompleteRiskRuns,
+  liveRiskContextLines,
+  type LiveRiskBriefing,
+  type LiveRiskRunRow,
+} from "@/lib/briefing/live-risk";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "vterminater@gmail.com";
 
@@ -51,6 +58,7 @@ interface BriefingData {
   mentor?: { grade: number | null; focus: string[]; lesson: string | null; milestone: string | null } | null;
   outlook?: { market: string | null; positions: string | null; future: string | null } | null;
   openIssues?: { severity: string; title: string; detail: string | null }[];
+  liveRisk: LiveRiskBriefing;
 }
 
 function regimeTone(regime: string): string {
@@ -69,6 +77,66 @@ function chip(text: string, color: string): string {
 }
 function bandHeader(label: string): string {
   return `<div style="font-size:11px;font-weight:800;letter-spacing:0.1em;color:${E.muted};text-transform:uppercase;margin:22px 0 10px;padding-bottom:6px;border-bottom:1px solid ${E.border}">${label}</div>`;
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildLiveRiskHtml(risk: LiveRiskBriefing, baseUrl: string): string {
+  if (risk.state === "unavailable") {
+    return `<div style="font-size:13px;color:${E.red};padding:8px 0">Live holding risk is unavailable. No safe posture is inferred; use Risk Analytics before acting.</div>`;
+  }
+  if (risk.state === "no_complete_runs") {
+    return `<div style="font-size:13px;color:${E.amber};padding:8px 0">No completed live holding-risk snapshot exists for this market yet.</div>`;
+  }
+
+  return risk.accounts.map(account => {
+    const cur = account.currency === "INR" ? "₹" : "$";
+    const last4 = account.accountId.slice(-4);
+    const maskedRef = `••••${last4}`;
+    const accountRef = account.accountLabel.includes(maskedRef) ? "" : ` · ${maskedRef}`;
+    const freshnessColor = account.stale ? E.red : E.green;
+    const freshness = account.stale
+      ? `STALE · ${account.sessionsOld == null ? "age unavailable" : `${account.sessionsOld} sessions old`}`
+      : `CURRENT · ${account.sessionsOld} sessions old`;
+    const confidence = account.dataConfidence == null ? "unavailable" : `${Math.round(account.dataConfidence * 100)}%`;
+    const accountScore = account.accountRiskScore == null
+      ? "Account score unavailable"
+      : `Account risk ${account.accountRiskScore}/100${account.accountRiskLabel ? ` · ${escapeHtml(account.accountRiskLabel)}` : ""}`;
+    const rows = account.holdingsShown.map(holding => {
+      const postureColor = holding.posture === "exit_review" ? E.red
+        : holding.posture === "trim" || holding.posture === "review" || holding.posture === "insufficient_data" ? E.amber
+        : E.green;
+      const score = holding.score == null ? "n/a" : `${holding.score}/100`;
+      const weight = holding.weightPct == null ? "n/a" : `${(holding.weightPct * 100).toFixed(1)}% NAV`;
+      const pnl = holding.unrealizedPnlPct == null ? "n/a" : `${sign(holding.unrealizedPnlPct)}${holding.unrealizedPnlPct.toFixed(1)}%`;
+      const price = holding.currentPrice == null ? "price n/a" : `${cur}${holding.currentPrice.toFixed(2)}`;
+      const missing = holding.missingInputs.length ? `<div style="color:${E.amber};margin-top:3px">Missing: ${escapeHtml(holding.missingInputs.join(", "))}</div>` : "";
+      return `<tr>
+        <td style="padding:8px 7px;border-bottom:1px solid ${E.border};font-size:12px;font-weight:700;color:${E.text}">${escapeHtml(holding.symbol)}</td>
+        <td style="padding:8px 7px;border-bottom:1px solid ${E.border};font-size:11px;color:${postureColor};font-weight:700">${escapeHtml(holding.posture.replace(/_/g, " ").toUpperCase())}<div style="font-weight:400;color:${E.muted};margin-top:2px">${score}</div></td>
+        <td style="padding:8px 7px;border-bottom:1px solid ${E.border};font-size:11px;color:${E.sub}">${price}<div style="margin-top:2px">${weight}</div><div style="color:${pctColor(holding.unrealizedPnlPct)};margin-top:2px">P&amp;L ${pnl}</div></td>
+        <td style="padding:8px 7px;border-bottom:1px solid ${E.border};font-size:11px;color:${E.sub};line-height:1.45">${escapeHtml(holding.reason ?? "No deterministic action reason available.")}${missing}</td>
+      </tr>`;
+    }).join("");
+    const omitted = account.holdingsOmitted > 0
+      ? `<div style="font-size:11px;color:${E.muted};margin-top:7px">${account.holdingsOmitted} lower-priority hold${account.holdingsOmitted === 1 ? "" : "s"} omitted here; the Risk Analytics page retains every holding.</div>`
+      : "";
+    return `<div style="border:1px solid ${E.border};border-radius:8px;padding:12px 13px;margin-bottom:10px;background:${E.surface}">
+      <div style="font-size:13px;font-weight:700;color:${E.text}">${escapeHtml(account.accountLabel)} <span style="font-size:11px;color:${E.muted};font-weight:500">${escapeHtml(account.broker)}${escapeHtml(accountRef)} · ${account.currency}</span></div>
+      <div style="font-size:11px;color:${E.sub};margin-top:5px">${accountScore} · ${account.holdingsTotal} holdings · ${account.totalValue == null ? "value unavailable" : `${cur}${account.totalValue.toLocaleString("en-US", { maximumFractionDigits: 0 })}`} · confidence ${confidence}</div>
+      <div style="font-size:10.5px;color:${freshnessColor};font-weight:700;margin-top:4px">${freshness} · snapshot ${escapeHtml(account.capturedOn)} · ${escapeHtml(account.formulaVersion)}</div>
+      ${account.missingInputs.length ? `<div style="font-size:10.5px;color:${E.amber};margin-top:3px">Run missing: ${escapeHtml(account.missingInputs.join(", "))}</div>` : ""}
+      ${account.holdingsShown.length ? `<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-top:8px">${rows}</table>` : `<div style="font-size:12px;color:${E.muted};margin-top:8px">No holdings were present in this completed snapshot.</div>`}
+      ${omitted}
+    </div>`;
+  }).join("") + `<div style="font-size:11px;color:${E.muted};margin-top:4px">Deterministic, advisory-only results. The briefing never recalculates or changes a posture. <a href="${baseUrl}/dashboard/risk" style="color:${E.accent};text-decoration:none">Open full Risk Analytics »</a></div>`;
 }
 
 function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string; html: string } {
@@ -115,6 +183,7 @@ function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string;
       <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;font-weight:700;text-align:right;color:${pctColor(p.pnlPct)}">${p.pnlPct != null ? sign(p.pnlPct) + p.pnlPct.toFixed(1) + "%" : "—"}</td>
     </tr>`).join("")}
   </table>` : `<div style="font-size:13px;color:${E.muted};padding:8px 0">No open positions.</div>`;
+  const liveRiskBlock = buildLiveRiskHtml(d.liveRisk, baseUrl);
 
   const earningsBlock = d.earnings.length
     ? d.earnings.map(e => `${e.symbol}${e.isToday ? " <b style='color:" + E.amber + "'>(today)</b>" : " (" + e.date + ")"}${e.eps != null ? " · EPS est $" + e.eps.toFixed(2) : ""}`).join(" &nbsp;·&nbsp; ")
@@ -192,6 +261,10 @@ function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string;
       <!-- Positions -->
       ${bandHeader("Your Positions")}
       ${positionsBlock}
+
+      <!-- Deterministic live holding risk, grouped by account/currency -->
+      ${bandHeader("Live Holdings Risk")}
+      ${liveRiskBlock}
 
       <!-- Earnings -->
       ${bandHeader("Upcoming Earnings")}
@@ -373,6 +446,7 @@ export async function POST(req: NextRequest) {
     { data: learnerRuns },
     { data: mentorRow },
     { data: weekTrades },
+    riskRunsResult,
   ] = await Promise.all([
     svc.from("agent_runs").select("*").eq("agent_type", "research").eq("market", market).order("created_at", { ascending: false }).limit(1).single(),
     svc.from("paper_portfolio").select("*").eq("market", market).limit(1).maybeSingle(),
@@ -402,7 +476,46 @@ export async function POST(req: NextRequest) {
     svc.from("learner_runs").select("run_date, hypotheses").gte("run_date", dateStr.slice(0, 8) + "01").order("run_date", { ascending: false }).limit(4),
     svc.from("mentor_insights").select("grade, focus_areas, lesson, next_milestone").order("created_at", { ascending: false }).limit(1).maybeSingle(),
     svc.from("paper_trades").select("symbol, side, pnl, closed_at").gte("executed_at", since7dISO).not("closed_at", "is", null).order("closed_at", { ascending: false }).limit(20),
+    svc.from("holding_risk_runs")
+      .select("id,market,currency,broker,account_id,account_label,status,captured_on,source_captured_at,completed_at,formula_version,data_confidence,missing_inputs")
+      .eq("market", market)
+      .eq("status", "complete")
+      .order("completed_at", { ascending: false })
+      .limit(200),
   ]);
+
+  // Replay the latest immutable, COMPLETE risk run per live account. This path
+  // makes no provider call, performs no risk calculation, and cannot change a
+  // deterministic posture written by HoldingRisk.
+  let liveRisk: LiveRiskBriefing;
+  if (riskRunsResult.error) {
+    liveRisk = buildLiveRiskBriefing({
+      market, now, runs: [], holdings: [], accounts: [], error: riskRunsResult.error.message,
+    });
+  } else {
+    const riskRuns = (riskRunsResult.data ?? []) as LiveRiskRunRow[];
+    const runIds = latestCompleteRiskRuns(riskRuns, market).map((row) => row.id);
+    if (runIds.length === 0) {
+      liveRisk = buildLiveRiskBriefing({ market, now, runs: riskRuns, holdings: [], accounts: [] });
+    } else {
+      const [holdingRows, accountRows] = await Promise.all([
+        svc.from("holding_risk_snapshots")
+          .select("run_id,market,currency,account_id,symbol,current_price,market_value,weight_pct,unrealized_pnl_pct,holding_risk_score,risk_label,risk_posture,action_reason,data_confidence,missing_inputs")
+          .in("run_id", runIds),
+        svc.from("account_risk_snapshots")
+          .select("run_id,market,currency,account_id,total_value,metrics,data_confidence,missing_inputs")
+          .in("run_id", runIds),
+      ]);
+      liveRisk = buildLiveRiskBriefing({
+        market,
+        now,
+        runs: riskRuns,
+        holdings: holdingRows.data ?? [],
+        accounts: accountRows.data ?? [],
+        error: holdingRows.error?.message ?? accountRows.error?.message ?? null,
+      });
+    }
+  }
 
   // 7-day agent-activity recap (used in context block + weekend prompt + email)
   const recapByAgent: Record<string, { runs: number; signals: number; today: number }> = {};
@@ -550,6 +663,9 @@ ${positionLines.length > 0 ? positionLines.join("\n") : "  • No open positions
 LIVE ROBINHOOD ACCOUNT (••••8641, read-only):
 ${liveBlock}
 
+LIVE HOLDINGS RISK (DETERMINISTIC, ADVISORY ONLY; NEVER CHANGE THESE POSTURES):
+${liveRiskContextLines(liveRisk).join("\n")}
+
 AGENT SIGNALS (pending, score ≥50):
 ${signalLines.length > 0 ? signalLines.join("\n") : "  • No signals yet — research hasn't run today"}
 
@@ -676,6 +792,7 @@ If a category above has no data (e.g. no agent runs, no mentor grade), say so pl
     editorNote,
     paper: { nav, cash, pnl, pnlPct, positionsCount: positions.length },
     live: liveSnap ? { equity: Number(liveSnap.equity), buyingPower: Number(liveSnap.buying_power), positions: liveSnap.position_count ?? 0 } : null,
+    liveRisk,
     healthScore: Number(healthScore.toFixed(1)), healthVerdict,
     market: indexRows, regime, distribution,
     positions: positionsStruct,

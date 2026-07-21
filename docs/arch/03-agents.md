@@ -697,13 +697,19 @@ When false, all proposals land on `manual_review_required`. Shadow accumulates e
 
 **File:** `app/api/briefing/generate/route.ts`
 **Schedule:** Weekdays 8:00 AM (morning) + 4:30 PM (evening) ET
-**LLM:** Claude Haiku 4.5 (`claude-fast`) for editor's note
+**LLM:** Settings-controlled through `getConfiguredModel("briefing")`; default
+`deepseek-v4-flash`, for editor/outlook prose only.
 
-**Inputs:** Latest signals, open positions, NAV, macro regime, open System Health alerts.
+**Inputs:** Latest signals, paper positions, NAV, macro regime, open System Health alerts,
+and the latest complete deterministic Holding Risk snapshots for every live account in
+the edition's market.
 
 **Key behavior:** Generates morning and evening briefing emails. Morning: pre-market outlook.
 Evening: trade recap. Sends via Resend (or configured EMAIL_PROVIDER). Includes "Open Issues"
-band when System Health alerts are present.
+band when System Health alerts are present. Its Live Holdings Risk band replays immutable
+per-account results (actionable/review postures first), exposes freshness/confidence/missing
+inputs, and never recomputes risk or combines accounts/currencies. LLM prose cannot change a
+HoldingRisk score or posture.
 
 **Outputs:** `briefings` row, `newsletters` row (on successful Resend send)
 

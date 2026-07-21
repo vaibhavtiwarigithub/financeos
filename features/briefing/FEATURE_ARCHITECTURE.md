@@ -1,6 +1,6 @@
 # Feature: Daily Briefing
 
-Status: v1 shipped (2026-07-04). v2 requirements captured below (user-requested).
+Status: v1 shipped (2026-07-04). v2 partially shipped; live holding-risk integration shipped 2026-07-21.
 
 ## v1 (done)
 Newsletter-grade email: structured HTML data blocks (accurate, code-built) +
@@ -33,3 +33,25 @@ I like it. Top bullets OK, but explanation and details are MANDATORY."**
 Design note for v2: keep the accurate code-built data blocks, but pair each
 with an LLM-written explanation/outlook (grounded, with confidence), and pull
 the 7-day agent recap from agent_runs + learner_runs + rescore flags.
+
+## Live Holdings Risk addition (approved and shipped 2026-07-21)
+
+- Each US/India edition reads the latest `complete` `holding_risk_runs` row per
+  live broker account for that market, then replays its immutable
+  `holding_risk_snapshots` and `account_risk_snapshots` rows.
+- The briefing never recomputes risk and never calls a broker or market-data
+  provider for this section. The LLM receives the deterministic postures only as
+  grounded advisory context and cannot alter them.
+- Accounts, markets, and currencies remain separate. Every row must match the
+  selected run's `run_id + market + currency + account_id`; mismatches are
+  discarded instead of cross-summed or relabelled. The `internal` paper-book
+  adapter is excluded from this explicitly live section, and account identifiers
+  embedded in labels are masked to their last four characters.
+- The email shows every non-`hold` posture plus the three highest-risk ordinary
+  holds per account. It states how many lower-priority holds were omitted and
+  links to the complete Risk Analytics page.
+- Snapshot date, session age, formula version, confidence, missing inputs,
+  current price, NAV weight, unrealized P&L, score, posture, and deterministic
+  action reason are displayed. Missing values stay unavailable, never zero.
+- Failed reads and missing complete runs are visible states. A stale or missing
+  snapshot must never be described as safe/current.
