@@ -123,7 +123,8 @@ entries, never to a more permissive score.
 
 Calendar days alone are insufficient. For each market and intent family require:
 
-- at least five distinct trading sessions and a representative liquid universe;
+- at least ten distinct trading sessions within the selected session's prior
+  45 calendar days and a representative liquid universe;
 - symbol-intent sample counts and sector/industry coverage declared in the report;
 - coverage non-inferiority with uncertainty, not only a point estimate;
 - organic cache/live/fallback/no-data cases plus forced timeout, quota exhaustion,
@@ -327,20 +328,22 @@ and binding columns on `evidence_policy_evaluations`. RLS on + owner-read policy
 all four; anon has no grants; writes are service-role only; the RPC is
 `security definer` with `search_path=public` and executable by `service_role` only.
 
-### Deferred (not built)
+### Deferred after the 2026-07-21 hardening build
 
-- §7 release evidence floors: the numeric sample floors, tolerances, evaluation
-  expiry, and rollback SLO are owner decisions (§13.2) to be set from observed
-  traffic. `DEFAULT_EVALUATION_TTL_HOURS=72` and the comparator tolerances in
-  `DEFAULT_COMPARATORS` are placeholders pending that approval.
+- Rollback SLO and any future weakening of approved floors remain owner decisions.
+  Section 16 locks the current session, coverage, score, rank, and TTL values.
 - The outage drills (§7) — forced timeout, quota exhaustion, schema drift, provider
   disagreement, and complete-primary-provider outage remain unbuilt.
 - §9 rollback drill + circuit-breaker triggers.
-- No API route or UI surface for evaluations/activation.
+- The owner-only activation API exists, but no general evaluation-management UI
+  is built and both active policies remain disabled.
 
 ---
 
 ## 15. Implementation Notes — Cohort Builder Built (2026-07-18)
+
+> Historical v1 record. Section 16 supersedes its provider-burst allowance,
+> availability-only scoring, placeholder thresholds, and manual-only schedule.
 
 > **STILL NOT A CUTOVER.** Verified in production immediately before and after this
 > change: both markets' active policy is v1 with `router_enabled=false`, and no
@@ -436,3 +439,102 @@ the pacing system refusing a call, i.e. the protection working.
 - ADR shaping: `shapeOf` maps every non-ETF/non-metal symbol to `equity`, so a US ADR
   over-includes the insider field. That is conservative (a coverage miss, never a
   fabricated eligibility) but it is an approximation, not a modelled distinction.
+
+---
+
+## 16. Approved Evidence-Hardening Build (2026-07-21)
+
+### Decision record
+
+- **Why:** the daily Router shadow is fresh, but the cutover cohort ran only once,
+  could spend provider quota on cache misses, and its single `passed` bit did not
+  distinguish entry safety from loss of useful score evidence.
+- **Who:** the single Kairos owner operating separate US/USD and India/INR books.
+- **ROI:** make cutover evidence repeatable and quota-neutral while preventing a
+  technically conservative but materially blinder candidate from being described
+  as full parity.
+- **Shipped at:** pending implementation and production verification.
+
+### Scope and invariants
+
+1. **Cohorts are cache-only.** A cohort may read fresh or policy-allowed stale
+   `evidence_cache_v2` rows. It may not acquire a provider lease, enqueue a refresh,
+   or call an adapter. A cold field remains unavailable and the evaluation records
+   the miss. `primary_provider_calls` must equal zero or the evaluation fails.
+2. **Research-output compatibility bridge.** During the existing ResearchAgent
+   fetch, Kairos writes canonical cache rows from the data already in memory:
+   fundamentals, bars, sentiment, macro, and insider. This is one bounded database
+   upsert, not another provider request. Provenance names the compatibility bridge
+   and retains the actual serving source in the canonical payload. It is a
+   transition adapter, not a new source; future provider-native policies must be
+   evaluated separately before removing legacy acquisition.
+3. **Market-wide evidence is market-wide.** `macro.regime_inputs` uses the reserved
+   `__MARKET__` cache key and is resolved once per market/run. It is never fanned
+   out into one provider/cache operation per symbol. India macro remains
+   unavailable: the US MacroSentinel cannot be relabelled as India evidence.
+4. **Exact score-input replay.** Bridge payloads carry the deterministic dimension
+   score and the score input/evidence that produced it. The candidate leg uses that
+   score rather than reusing the legacy score by assumption. Provider-native
+   canonical payloads must derive the dimension score through the same production
+   scoring functions before they can satisfy this gate.
+5. **Two machine verdicts.** `safety_pass` covers required-field floors, semantic
+   failures, and artifact-created new eligibility. `quality_pass` covers all
+   score-affecting coverage loss, material total-score drift, and adverse rank
+   displacement. `passed = safety_pass AND quality_pass`; activation requires all
+   three fields true.
+6. **Rolling proof.** An enabled policy cannot activate from one snapshot. The
+   bound activation RPC requires ten distinct market-session evaluations for the
+   same market/candidate/baseline/evaluation-code/strategy tuple, all safety- and
+   quality-passing within the selected session's prior 45 calendar days, with
+   the selected evaluation still unexpired. The session date comes from frozen
+   daily bars, so weekends/holidays cannot inflate the count. US and India
+   histories never satisfy one another.
+7. **Schedule only after hardening.** Run one cohort after each market's final daily
+   shadow tick. The route remains shadow-only and both active policy versions keep
+   `router_enabled=false`.
+8. **Evidence binds the real candidate.** Seed one immutable, inactive
+   `router_enabled=true` candidate per market by copying that market's active rules.
+   Cohorts resolve cache order under that exact candidate ID. The active pointer is
+   not changed, so production remains on the disabled baseline until the bound
+   activation RPC eventually clears every gate.
+
+### Approved numeric floors
+
+- Rolling sessions: **10** distinct market-local sessions.
+- Required-field coverage non-inferiority margin: **5 percentage points**.
+- Any loss of an optional score-affecting dimension is a quality failure when the
+  cohort loss exceeds **5 percentage points**; structurally inapplicable fields are
+  excluded from the denominator.
+- Material aggregate score drift: absolute candidate-vs-legacy difference greater
+  than **2 points** for any symbol is a quality failure until owner-reviewed under a
+  future provider-change policy.
+- Missingness-caused adverse rank displacement: **3 or more places** is a quality
+  failure.
+- Evaluation validity remains **72 hours**; this is freshness for the selected
+  evaluation, not a substitute for the ten-session history.
+
+### Data changes
+
+Add immutable evaluation columns `safety_pass boolean not null`,
+`quality_pass boolean not null`, and nullable `market_session_date date` (old rows
+have no valid session proof). Existing evaluations default both verdicts false, so
+an old availability-only run can never authorize cutover. Harden
+`activate_evidence_policy_bound()` to require the selected row and the rolling
+ten-session history. No new provenance table is introduced: bridge payloads live in
+the existing Router cache and immutable decision detail remains in
+`evidence_policy_evaluations` / `evidence_evaluation_details`.
+
+### Acceptance
+
+- A cohort test fails if its resolver attempts a provider on a cache miss.
+- A warm compatibility row reproduces its recorded dimension and aggregate score.
+- Losing macro or sentiment can remain entry-safe but cannot be `quality_pass=true`.
+- Macro produces one market-key lookup regardless of cohort size.
+- India bars become observable from the Upstox/Yahoo candles already fetched by
+  ResearchAgent; no extra Upstox/Yahoo request is made.
+- The recurring jobs persist evaluations but cannot activate a policy.
+- Every evaluation binds the inactive enabled candidate and the currently active
+  disabled baseline; a baseline/candidate change starts a new ten-session series.
+- The activation RPC refuses old evaluations, fewer than ten passing sessions,
+  wrong-market history, or any safety/quality failure.
+- Both production policies remain `router_enabled=false` after deployment.

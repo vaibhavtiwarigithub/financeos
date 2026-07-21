@@ -152,7 +152,7 @@ export const INTENT_CATALOG: Record<EvidenceIntent, IntentSpec> = {
   "insider.transactions":       { intent: "insider.transactions",       markets: ["us", "india"], freshTtlSeconds: DAY,       staleCeilingSeconds: 7 * DAY,   scoreAffecting: true },
   "events.earnings":            { intent: "events.earnings",            markets: ["us", "india"], freshTtlSeconds: DAY,       staleCeilingSeconds: 0,         scoreAffecting: false },
   "events.corporate_actions":   { intent: "events.corporate_actions",   markets: ["us", "india"], freshTtlSeconds: DAY,       staleCeilingSeconds: 0,         scoreAffecting: false },
-  "macro.regime_inputs":        { intent: "macro.regime_inputs",        markets: ["us", "india"], freshTtlSeconds: DAY,       staleCeilingSeconds: 2 * DAY,   scoreAffecting: true },
+  "macro.regime_inputs":        { intent: "macro.regime_inputs",        markets: ["us", "india"], freshTtlSeconds: 7 * DAY,   staleCeilingSeconds: 10 * DAY,  scoreAffecting: true },
 };
 
 // ── Provider spec — code-owned capability/limit registry ──────────────────────
@@ -161,7 +161,7 @@ export const INTENT_CATALOG: Record<EvidenceIntent, IntentSpec> = {
 export interface ProviderSpec {
   id: ProviderId;
   label: string;
-  transport: "http" | "mcp";
+  transport: "http" | "mcp" | "internal";
   markets: readonly Market[];
   capabilities: readonly EvidenceIntent[];
   dailyLimitState: "known" | "none" | "unknown";
@@ -207,6 +207,8 @@ export interface ProviderAdapter {
   readonly providerId: ProviderId;
   readonly intent: EvidenceIntent;
   readonly contractVersion: string;
+  /** Cache bridge only: a miss must never consume a live-attempt slot. */
+  readonly cacheReadOnly?: boolean;
   // Legacy-backed adapters may already acquire this provider's durable lease
   // inside providerCachedFetch. The router must not acquire it a second time.
   readonly pacingOwner?: "router" | "adapter";

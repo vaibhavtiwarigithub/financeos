@@ -43,6 +43,8 @@ import {
   type DimensionRecord,
   type ScoreDimension,
 } from "@/lib/scoring/weighted-score";
+import { scoreFundamentals, scoreSentiment } from "@/lib/data/scores";
+import { computeTechnicals, scoreTechnicals } from "@/lib/data/technicals";
 import type { Currency, EvidenceEnvelope, EvidenceIntent, Market } from "@/lib/evidence/contracts";
 import {
   contractsFor,
@@ -63,7 +65,7 @@ import {
 import { persistEvaluation } from "@/lib/evidence/evaluation/persist";
 import { resolveEvidence } from "@/lib/evidence/resolver";
 
-export const COHORT_BUILDER_VERSION = "cohort-builder-v1";
+export const COHORT_BUILDER_VERSION = "cohort-builder-v2-cache-only";
 
 // Only score-affecting dimensions map to a router intent. Each dimension's
 // availability is decided by whether the router resolved a USABLE observation of
@@ -149,8 +151,10 @@ export interface FrozenObservationSet {
   runId: string;
 }
 
+const MARKET_WIDE_INTENTS = new Set<EvidenceIntent>(["macro.regime_inputs"]);
+
 function obsKey(symbol: string, intent: EvidenceIntent): string {
-  return `${symbol.toUpperCase()}|${intent}`;
+  return `${MARKET_WIDE_INTENTS.has(intent) ? "__MARKET__" : symbol.toUpperCase()}|${intent}`;
 }
 
 /** Injectable so tests never touch the network. */
@@ -169,6 +173,7 @@ export async function resolveFrozenObservations(input: {
   symbolIntents: Array<{ symbol: string; intent: EvidenceIntent }>;
   asOf: string;
   runId: string;
+  policyVersionId?: string;
   resolve?: ResolveFn;
 }): Promise<FrozenObservationSet> {
   const resolve = input.resolve ?? resolveEvidence;
@@ -189,12 +194,14 @@ export async function resolveFrozenObservations(input: {
     const env = await resolve({
       market: input.market,
       intent: si.intent,
-      symbol: si.symbol,
+      symbol: MARKET_WIDE_INTENTS.has(si.intent) ? undefined : si.symbol,
       asOf: input.asOf,
       runId: input.runId,
       // Shadow collection may exercise the inactive policy. This is the ONLY
       // caller class allowed past the router_enabled=false gate.
       allowDisabledPolicy: true,
+      cacheOnly: true,
+      policyVersionId: input.policyVersionId,
     });
     observations.set(obsKey(si.symbol, si.intent), env);
     // A fresh CACHE hit is the zero-burst path; anything else attempted a provider.
@@ -205,7 +212,7 @@ export async function resolveFrozenObservations(input: {
   const snapshotId =
     "snap-" +
     createHash("sha1")
-      .update(`${input.market}|${input.asOf}|${[...seen].sort().join(",")}`)
+      .update(`${input.market}|${input.policyVersionId ?? "active"}|${input.asOf}|${[...seen].sort().join(",")}`)
       .digest("hex")
       .slice(0, 16);
 
@@ -269,6 +276,47 @@ function candidateField(
   };
 }
 
+function candidateDimensionScore(
+  dimension: ScoreDimension,
+  env: EvidenceEnvelope | undefined,
+  symbol: string,
+): number | null {
+  if (!env?.payload || typeof env.payload !== "object") return null;
+  const payload = env.payload as Record<string, any>;
+  const bridged = Number(payload.dimensionScore);
+  if (Number.isFinite(bridged) && bridged >= 0 && bridged <= 100) return bridged;
+
+  if (dimension === "technical" && Array.isArray(payload.bars) && payload.bars.length >= 15) {
+    return scoreTechnicals(computeTechnicals(payload.bars));
+  }
+  if (dimension === "fundamental") {
+    const overview: Record<string, string> = { Symbol: symbol };
+    const fieldMap: Record<string, string> = {
+      peRatio: "PERatio",
+      netMargin: "ProfitMargin",
+      roe: "ReturnOnEquityTTM",
+      eps: "EPS",
+      revenueGrowth: "QuarterlyRevenueGrowthYOY",
+      sector: "Sector",
+      industry: "Industry",
+    };
+    for (const [canonical, legacy] of Object.entries(fieldMap)) {
+      if (payload[canonical] != null) overview[legacy] = String(payload[canonical]);
+    }
+    return scoreFundamentals(overview, false).score;
+  }
+  if (dimension === "sentiment") {
+    const direct = Number(payload.score);
+    if (Number.isFinite(direct)) return Math.max(0, Math.min(100, Math.round(direct)));
+    return scoreSentiment(payload.raw ?? payload).score;
+  }
+  if (dimension === "macro" || dimension === "insider") {
+    const score = Number(payload.score);
+    return Number.isFinite(score) && score >= 0 && score <= 100 ? score : null;
+  }
+  return null;
+}
+
 /**
  * Build the legacy leg from the recorded decision. `status` is always "scored":
  * a recorded decision, by definition, produced a scorable dimension set — the
@@ -304,15 +352,21 @@ export function buildCandidateObservation(
     macro: false,
     insider: false,
   };
+  const candidateScores: DimensionRecord<number> = { ...dec.scores };
   const fields: Record<string, FieldObservationForParity> = {};
 
   for (const contract of contractsFor(market, dec.shape)) {
     const dim = contract.dimension;
     const intent = dim ? DIMENSION_INTENT[dim]?.intent : undefined;
     const env = intent ? snapshot.observations.get(obsKey(dec.symbol, intent)) : undefined;
-    const { obs, usable } = candidateField(contract, env, market);
-    fields[contract.fieldId] = obs;
-    if (dim && usable) included[dim] = true;
+    const { obs, usable: envelopeUsable } = candidateField(contract, env, market);
+    const dimensionScore = dim ? candidateDimensionScore(dim, env, dec.symbol) : null;
+    const usable = envelopeUsable && (!dim || dimensionScore !== null);
+    fields[contract.fieldId] = usable === envelopeUsable ? obs : { ...obs, present: false };
+    if (dim && usable) {
+      included[dim] = true;
+      candidateScores[dim] = dimensionScore!;
+    }
   }
 
   const anyUsable = SCORE_DIMENSIONS.some((d) => included[d]);
@@ -320,7 +374,7 @@ export function buildCandidateObservation(
     // No usable router evidence at all → the candidate honestly abstains rather
     // than scoring on nothing. Retained in the cohort as an abstain row.
     status: anyUsable ? "scored" : "abstained",
-    scores: dec.scores,
+    scores: candidateScores,
     included,
     fields,
   };
@@ -332,6 +386,7 @@ export interface AssembleInput {
   evaluationId: string;
   market: Market;
   asOf: string;
+  marketSessionDate: string;
   universeSnapshotId: string;
   baselinePolicyVersionId: string;
   candidatePolicyVersionId: string;
@@ -341,6 +396,7 @@ export interface AssembleInput {
   priceBasis: string;
   coverageNonInferiorityMargin: number;
   maxAdverseRankDisplacement: number;
+  maxScoreDelta?: number;
   decisions: LegacyDecision[];
   snapshot: FrozenObservationSet;
 }
@@ -367,6 +423,7 @@ export function assembleCohort(input: AssembleInput): FrozenCohort {
     evaluationId: input.evaluationId,
     market: input.market,
     asOf: input.asOf,
+    marketSessionDate: input.marketSessionDate,
     universeSnapshotId: input.universeSnapshotId,
     baselinePolicyVersionId: input.baselinePolicyVersionId,
     candidatePolicyVersionId: input.candidatePolicyVersionId,
@@ -378,6 +435,7 @@ export function assembleCohort(input: AssembleInput): FrozenCohort {
     evaluationCodeVersion: EVALUATION_CODE_VERSION,
     coverageNonInferiorityMargin: input.coverageNonInferiorityMargin,
     maxAdverseRankDisplacement: input.maxAdverseRankDisplacement,
+    maxScoreDelta: input.maxScoreDelta ?? 2,
   };
 }
 
@@ -385,7 +443,8 @@ export function assembleCohort(input: AssembleInput): FrozenCohort {
 
 const DEFAULT_LIMIT = 25;
 const DEFAULT_COVERAGE_MARGIN = 0.05;
-const DEFAULT_MAX_RANK_DISPLACEMENT = 5;
+const DEFAULT_MAX_RANK_DISPLACEMENT = 3;
+const DEFAULT_MAX_SCORE_DELTA = 2;
 
 function strategyFingerprint(weights: DimensionRecord<number>, strategyVersion: string): string {
   const s = SCORE_DIMENSIONS.map((d) => `${d}=${weights[d]}`).join(",") + `|${strategyVersion}`;
@@ -499,9 +558,12 @@ export interface CohortBuildReport {
   market: Market;
   evaluationId: string | null;
   asOf: string;
+  marketSessionDate: string;
   snapshotId: string;
   symbols: number;
   passed: boolean;
+  safetyPass: boolean;
+  qualityPass: boolean;
   counts: CohortEvaluation["counts"];
   failures: CohortEvaluation["failures"];
   requiresOwnerReview: number;
@@ -514,7 +576,7 @@ export interface CohortBuildReport {
 export interface LedgerProof {
   primaryRunId: string;
   reverseRunId: string;
-  /** Real provider bursts on the primary (single-path baseline). */
+  /** Must be zero: the primary is cache-only. */
   primaryProviderCalls: number;
   /** Always 0 — the reverse-shadow leg reuses the frozen set; it cannot resolve. */
   reverseProviderCalls: number;
@@ -529,6 +591,18 @@ export interface LedgerProof {
     reverse: { fresh: number; bursts: number; total: number };
   } | null;
   holds: boolean;
+}
+
+function sessionDateFromBars(snapshot: FrozenObservationSet): string {
+  const dates: string[] = [];
+  for (const [key, env] of snapshot.observations) {
+    if (!key.endsWith("|price.daily_bars") || !env.payload || typeof env.payload !== "object") continue;
+    const bars = (env.payload as any).bars;
+    const date = Array.isArray(bars) ? String(bars[bars.length - 1]?.date ?? "") : "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) dates.push(date);
+  }
+  if (dates.length === 0) throw new Error("cohort has no cached daily-bar session date");
+  return dates.sort().at(-1)!;
 }
 
 /**
@@ -555,14 +629,9 @@ export function verifyReverseShadowReuse(
 }
 
 /**
- * Build, evaluate, and (unless dryRun) persist the FIRST evaluations for a market.
- *
- * The dual-run proof is structural: `resolveFrozenObservations` runs a PRIMARY
- * pass (candidate) and a REVERSE pass (reverse-shadow) over the identical
- * (symbol,intent) set. The primary may make cache-miss bursts — that IS the
- * single-path baseline. The reverse pass, over the now-warm cache, must make
- * ZERO. If it does not, `ledgerProof.holds` is false and the caller should treat
- * the build as suspect.
+ * Build, evaluate, and (unless dryRun) persist one cache-only evaluation.
+ * Both legs are structurally unable to call a provider: the primary resolves
+ * cache-only and the reverse leg reuses the same frozen map.
  */
 export async function buildAndPersistCohort(opts: {
   market: Market;
@@ -595,11 +664,15 @@ export async function buildAndPersistCohort(opts: {
     }
   }
 
-  // ── PRIMARY resolve — the ONE frozen observation set (§4.2). Any bursts here
-  //    are the SINGLE-PATH baseline; the reverse leg must add none. ─────────────
+  // PRIMARY resolve is cache-only. A miss is readiness evidence, not permission
+  // for the evaluator to spend quota repairing its own input.
+  const activeVersionId = await loadActivePolicyVersion(svc, opts.market);
+  const candidateVersionId = await loadCandidatePolicyVersion(svc, opts.market);
   const snapshot = await resolveFrozenObservations({
-    market: opts.market, symbolIntents, asOf, runId: primaryRunId, resolve: opts.resolve,
+    market: opts.market, symbolIntents, asOf, runId: primaryRunId,
+    policyVersionId: candidateVersionId, resolve: opts.resolve,
   });
+  const marketSessionDate = sessionDateFromBars(snapshot);
 
   // ── REVERSE-SHADOW — REUSE the SAME frozen set. It issues NO resolve, so it
   //    can make no provider call by construction. This is the §4.2 property made
@@ -607,25 +680,23 @@ export async function buildAndPersistCohort(opts: {
   //    provider, only to the frozen Map. ────────────────────────────────────────
   const reuse = verifyReverseShadowReuse(snapshot, symbolIntents);
 
-  const activeVersionId = await loadActivePolicyVersion(svc, opts.market);
   const scoreThreshold = await loadScoreThreshold(svc, opts.market);
 
   const cohort = assembleCohort({
     evaluationId: `${stamp}`,
     market: opts.market,
     asOf,
+    marketSessionDate,
     universeSnapshotId: snapshot.snapshotId,
-    // Only one policy version exists; baseline == candidate. This evaluation
-    // measures router-resolved vs legacy-recorded acquisition under it, not a
-    // new candidate policy version (that is a later, owner-created step).
     baselinePolicyVersionId: activeVersionId,
-    candidatePolicyVersionId: activeVersionId,
+    candidatePolicyVersionId: candidateVersionId,
     strategyVersion,
     weights,
     scoreThreshold,
     priceBasis: "eod_adjusted",
     coverageNonInferiorityMargin: DEFAULT_COVERAGE_MARGIN,
     maxAdverseRankDisplacement: DEFAULT_MAX_RANK_DISPLACEMENT,
+    maxScoreDelta: DEFAULT_MAX_SCORE_DELTA,
     decisions,
     snapshot,
   });
@@ -652,26 +723,41 @@ export async function buildAndPersistCohort(opts: {
     reverseServedFromSnapshot: reuse.served,
     reverseMissing: reuse.missing,
     ledger,
-    // The proof: the dual-run's provider cost equals the single primary pass. The
-    // reverse-shadow leg both (a) served every observation from the frozen set
-    // and (b) wrote ZERO provider_call_ledger rows.
+    // Both paths must be provider-call-free.
     holds:
+      snapshot.providerCalls === 0 &&
       reuse.missing.length === 0 &&
-      ledger !== null && ledger.reverse.bursts === 0 && ledger.reverse.total === 0,
+      ledger !== null && ledger.primary.bursts === 0 &&
+      ledger.reverse.bursts === 0 && ledger.reverse.total === 0,
   };
 
   const reproductionFailures = legacyReproduction.filter((row) => !row.matches);
   const proofFailures = [
-    ...(ledgerProof.holds ? [] : [{ code: "ledger_proof_missing" as const, symbol: null, detail: "provider_call_ledger proof missing, unreadable, or reverse run was not empty" }]),
+    ...(ledgerProof.holds ? [] : [{ code: "ledger_proof_missing" as const, symbol: null, detail: "cache-only proof failed: provider burst, unreadable ledger, or reverse run was not empty" }]),
     ...reproductionFailures.map((row) => ({ code: "legacy_reproduction_failed" as const, symbol: row.symbol, detail: `recorded=${row.recorded}, replayed=${row.replayed}` })),
   ];
   const auditedEvaluation: CohortEvaluation = proofFailures.length === 0
     ? evaluation
-    : { ...evaluation, passed: false, failures: [...evaluation.failures, ...proofFailures] };
+    : {
+        ...evaluation,
+        passed: false,
+        safetyPass: false,
+        safetyFailures: [...evaluation.safetyFailures, ...proofFailures],
+        failures: [...evaluation.failures, ...proofFailures],
+      };
 
   let evaluationId: string | null = null;
   if (!opts.dryRun) {
-    evaluationId = await persistEvaluation({
+    const fingerprint = cohortFingerprint(cohort);
+    const { data: existing, error: existingError } = await svc
+      .from("evidence_policy_evaluations")
+      .select("id")
+      .eq("market", opts.market)
+      .eq("cohort_fingerprint", fingerprint)
+      .eq("evaluation_code_version", EVALUATION_CODE_VERSION)
+      .maybeSingle();
+    if (existingError) throw new Error(`existing evaluation lookup failed: ${existingError.message}`);
+    evaluationId = existing?.id ?? await persistEvaluation({
       cohort,
       evaluation: auditedEvaluation,
       strategyFingerprint: strategyFingerprint(weights, strategyVersion),
@@ -693,9 +779,12 @@ export async function buildAndPersistCohort(opts: {
     market: opts.market,
     evaluationId,
     asOf,
+    marketSessionDate,
     snapshotId: snapshot.snapshotId,
     symbols: decisions.length,
     passed: auditedEvaluation.passed,
+    safetyPass: auditedEvaluation.safetyPass,
+    qualityPass: auditedEvaluation.qualityPass,
     counts: auditedEvaluation.counts,
     failures: auditedEvaluation.failures,
     requiresOwnerReview: auditedEvaluation.requiresOwnerReview.length,
@@ -728,6 +817,21 @@ async function loadActivePolicyVersion(svc: any, market: Market): Promise<string
     throw new Error(`no active evidence policy for ${market}: ${error?.message ?? "missing pointer"}`);
   }
   return data.policy_version_id as string;
+}
+
+async function loadCandidatePolicyVersion(svc: any, market: Market): Promise<string> {
+  const { data, error } = await svc
+    .from("evidence_policy_versions")
+    .select("id")
+    .eq("market", market)
+    .eq("router_enabled", true)
+    .order("version", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data?.id) {
+    throw new Error(`no inert router-enabled candidate policy for ${market}: ${error?.message ?? "missing candidate"}`);
+  }
+  return data.id as string;
 }
 
 async function loadScoreThreshold(svc: any, market: Market): Promise<number> {

@@ -1010,6 +1010,7 @@ Append-only per-account roll-up — one row per run (UNIQUE `(run_id)`; FK → `
 | 20260715160000 | **Downside hedge (US PAPER only, OFF)**: config, state, append-only ledger, paper position/trade role provenance, transactional evaluation/fill/exit RPCs, owner-read RLS and service-only writes. No live order path. |
 | 20260716210000 | **Router cutover prerequisites** (shadow-only, `router_enabled` still false): `evidence_field_baselines` (mutable — a moving reference point, not evidence), append-only `evidence_degradation_events`, `evidence_evaluation_details`, `evidence_evaluation_reviews`, plus frozen-cohort + activation-binding columns on `evidence_policy_evaluations`, and the `activate_evidence_policy_bound()` RPC. RLS on with owner-read on all four; anon has no grants; writes service-role only; RPC is `security definer` with fixed `search_path`, executable by `service_role` only. *(Row was missing from this table; the migration is confirmed APPLIED in production — verified via `information_schema.columns` on 2026-07-18.)* |
 | 20260719090000 | **Weekend research catch-up**: adds `agent_signals.session_validated/as_of_session/staged_at`, the staged-row invariant + one-active-stage partial unique index, structured `agent_runs.workload_metrics`, and per-market Saturday/Sunday catch-up crons. Weekend rows are non-executable until a fresh session re-score. |
+| 20260721130000 | **Router evidence hardening** (still shadow-only): `evidence_policy_evaluations` gains immutable `safety_pass`, `quality_pass`, and bar-derived `market_session_date`; one inactive `router_enabled=true` candidate per market copies the current active rule set so evidence binds the exact future candidate without moving the active pointer; the bound activation RPC requires both verdicts plus ten distinct passing market sessions in the prior 45 days and a still-fresh selected evaluation. Adds daily cache-only cohort crons. Production stays on disabled baselines. |
 
 ### Evidence evaluation tables — who writes them
 
@@ -1022,9 +1023,11 @@ decisions into a frozen dual-run cohort and persists one evaluation row plus one
 per cohort symbol — including rows where either path abstained or failed, which the spec
 requires to be retained rather than filtered out.
 
-**No migration was needed for this writer**: every column `persistEvaluation` writes already
-existed. Rows are append-only, owner-read, service-role-write, and carry an `expires_at`
-(default 72h) so a stale evaluation cannot authorize an activation.
+Migration `20260721130000` separates safety from quality and records the trading
+session represented by frozen daily bars. Rows remain append-only, owner-read,
+service-role-write, and carry an `expires_at` (default 72h) so the selected proof
+must be fresh. Historical passing rows can contribute only to the ten-session
+window; old v1 rows have neither verdict nor a session date and cannot qualify.
 
 **These rows are measurement, not authority.** `router_enabled` remains `false` for both
 markets, so an evaluation changes no score, signal, size, position, or order. Persisting one

@@ -54,6 +54,7 @@ export async function persistEvaluation(opts: PersistOptions): Promise<string> {
       cohort_fingerprint: evaluation.cohortFingerprint,
       universe_snapshot_id: cohort.universeSnapshotId,
       as_of: cohort.asOf,
+      market_session_date: cohort.marketSessionDate,
       strategy_version: cohort.strategyVersion,
       strategy_fingerprint: opts.strategyFingerprint,
       evaluation_code_version: cohort.evaluationCodeVersion,
@@ -76,6 +77,8 @@ export async function persistEvaluation(opts: PersistOptions): Promise<string> {
         .map((d) => ({ symbol: d.symbol, codes: d.parity.disagreements.map((x) => x.code) })),
       call_usage: opts.callUsage ?? null,
       outage_drills: opts.outageDrills ?? null,
+      safety_pass: evaluation.safetyPass,
+      quality_pass: evaluation.qualityPass,
       passed: evaluation.passed,
       reason: evaluation.passed
         ? (evaluation.requiresOwnerReview.length > 0

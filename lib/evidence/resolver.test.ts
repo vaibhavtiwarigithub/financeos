@@ -145,4 +145,36 @@ describe("resolveEvidence safety gates", () => {
     expect(result.provenance).toEqual(provenance);
     expect(state.adapter?.fetch).not.toHaveBeenCalled();
   });
+
+  it("treats a cache-only miss as readiness evidence and performs no provider work", async () => {
+    const result = await resolveEvidence({
+      market: "us",
+      symbol: "AAPL",
+      intent: "fundamentals.reported",
+      allowDisabledPolicy: true,
+      cacheOnly: true,
+      runId: "cohort:test",
+    });
+
+    expect(result.quality).toBe("unavailable");
+    expect(result.providersAttempted).toEqual([]);
+    expect(state.adapter?.fetch).not.toHaveBeenCalled();
+    expect(state.upserts).toEqual([]);
+    expect(state.inserts.some(({ table }) => table === "provider_refresh_jobs")).toBe(false);
+  });
+
+  it("does not spend a live-attempt slot on a cache-read-only adapter", async () => {
+    state.adapter = { ...state.adapter!, cacheReadOnly: true };
+
+    const result = await resolveEvidence({
+      market: "us",
+      symbol: "AAPL",
+      intent: "fundamentals.reported",
+      allowDisabledPolicy: true,
+    });
+
+    expect(result.quality).toBe("unavailable");
+    expect(result.providersAttempted).toEqual([]);
+    expect(state.adapter.fetch).not.toHaveBeenCalled();
+  });
 });

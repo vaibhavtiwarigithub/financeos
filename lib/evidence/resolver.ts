@@ -48,6 +48,10 @@ export interface ResolveRequest {
   // Shadow collection may exercise an inactive policy. Every other caller is
   // blocked while router_enabled=false, preventing accidental pre-cutover use.
   allowDisabledPolicy?: boolean;
+  /** Evaluation-only mode: read canonical cache but never lease/call/enqueue. */
+  cacheOnly?: boolean;
+  /** Exact inactive candidate policy; allowed only for cache-only shadow evaluation. */
+  policyVersionId?: string;
 }
 
 interface PolicyRule {
@@ -65,7 +69,7 @@ interface RuntimeConfig {
   min_interval_ms_override: number | null;
 }
 
-function fingerprint(intent: string, market: string, symbol: string, contractVersion: string): string {
+export function evidenceFingerprint(intent: string, market: string, symbol: string, contractVersion: string): string {
   return createHash("sha1").update(`${intent}|${market}|${symbol}|${contractVersion}`).digest("hex").slice(0, 24);
 }
 
@@ -97,23 +101,32 @@ function envelope<T>(
 
 // Missing policy state is unsafe: migrations seed both markets, so a lookup
 // failure must not silently invent an Auto policy.
-async function loadRule(svc: any, market: Market, intent: EvidenceIntent): Promise<PolicyRule | null> {
-  const { data: ptr, error: ptrError } = await svc
-    .from("active_evidence_policy")
-    .select("policy_version_id")
-    .eq("market", market)
-    .maybeSingle();
-  if (ptrError) throw new Error("active policy lookup failed");
-  if (!ptr?.policy_version_id) return null;
+async function loadRule(
+  svc: any,
+  market: Market,
+  intent: EvidenceIntent,
+  requestedVersionId?: string,
+): Promise<PolicyRule | null> {
+  let policyVersionId = requestedVersionId;
+  if (!policyVersionId) {
+    const { data: ptr, error: ptrError } = await svc
+      .from("active_evidence_policy")
+      .select("policy_version_id")
+      .eq("market", market)
+      .maybeSingle();
+    if (ptrError) throw new Error("active policy lookup failed");
+    policyVersionId = ptr?.policy_version_id;
+  }
+  if (!policyVersionId) return null;
   const [{ data: version, error: versionError }, { data: rule, error: ruleError }] = await Promise.all([
     svc.from("evidence_policy_versions")
       .select("router_enabled")
-      .eq("id", ptr.policy_version_id)
+      .eq("id", policyVersionId)
       .eq("market", market)
       .maybeSingle(),
     svc.from("evidence_policy_rules")
       .select("mode, preferred_provider, policy_version_id, max_age_seconds, stale_max_seconds, max_sync_attempts")
-      .eq("policy_version_id", ptr.policy_version_id)
+      .eq("policy_version_id", policyVersionId)
       .eq("intent", intent)
       .maybeSingle(),
   ]);
@@ -162,6 +175,9 @@ export async function resolveEvidence<T = unknown>(req: ResolveRequest): Promise
   if (!isMarket(market) || !isEvidenceIntent(intent)) {
     return envelope<T>(base, "", "unavailable", "miss", null, [], [], "schema_invalid");
   }
+  if (req.policyVersionId && (!req.cacheOnly || !req.allowDisabledPolicy)) {
+    return envelope<T>(base, "", "unavailable", "miss", null, [], [], "disabled_by_policy");
+  }
   const spec = INTENT_CATALOG[intent];
   if (!spec.markets.includes(market)) {
     return envelope<T>(base, "", "not_applicable", "miss", null, [], [], "not_applicable");
@@ -172,7 +188,7 @@ export async function resolveEvidence<T = unknown>(req: ResolveRequest): Promise
   let runtime: Map<string, RuntimeConfig>;
   try {
     [rule, runtime] = await Promise.all([
-      loadRule(svc, market, intent),
+      loadRule(svc, market, intent, req.policyVersionId),
       loadRuntimeConfig(svc),
     ]);
   } catch {
@@ -199,13 +215,16 @@ export async function resolveEvidence<T = unknown>(req: ResolveRequest): Promise
 
   // 5. fresh cache in provider order
   for (const adapter of chain) {
-    const fp = fingerprint(intent, market, symbol, adapter.contractVersion);
-    const { data: cached } = await svc
+    const fp = evidenceFingerprint(intent, market, symbol, adapter.contractVersion);
+    const { data: cached, error: cacheError } = await svc
       .from("evidence_cache_v2")
       .select("payload, provenance, expires_at, stale_until, quality_state")
       .eq("market", market).eq("symbol", symbol).eq("intent", intent)
       .eq("provider_id", adapter.providerId).eq("request_fingerprint", fp)
       .maybeSingle();
+    if (cacheError) {
+      return envelope<T>(base, policyVersionId, "unavailable", "miss", null, [], [], "provider_error");
+    }
     if (cached?.payload != null) {
       const now = Date.now();
       const fresh = cached.expires_at && new Date(cached.expires_at).getTime() > now;
@@ -224,12 +243,22 @@ export async function resolveEvidence<T = unknown>(req: ResolveRequest): Promise
     }
   }
 
+  // Cohort evaluation is quota-neutral by contract. A cache miss is evidence of
+  // missing readiness; it must never be repaired from inside the evaluator.
+  if (req.cacheOnly) {
+    if (staleFallback) {
+      return envelope<T>(base, policyVersionId, "stale", "stale", staleFallback.payload, staleFallback.provenance, []);
+    }
+    return envelope<T>(base, policyVersionId, "unavailable", "miss", null, [], [], "chain_exhausted");
+  }
+
   // 6. live fetch, at most MAX_SYNC_ATTEMPTS real calls
   let attempts = 0;
   let lastReason: UnavailableReason = "chain_exhausted";
   const maxAttempts = Math.min(MAX_SYNC_ATTEMPTS, Math.max(0, rule.max_sync_attempts));
   for (const adapter of chain) {
     if (attempts >= maxAttempts) break;
+    if (adapter.cacheReadOnly) continue;
     const codeInterval = PROVIDER_SPECS[adapter.providerId]?.minIntervalMs ?? 0;
     const overrideInterval = runtime.get(adapter.providerId)?.min_interval_ms_override ?? 0;
     const minIntervalMs = Math.max(codeInterval, overrideInterval);
@@ -275,7 +304,7 @@ export async function resolveEvidence<T = unknown>(req: ResolveRequest): Promise
       continue;
     }
     const canonical = adapter.toCanonical(validated);
-    const fp = fingerprint(intent, market, symbol, adapter.contractVersion);
+    const fp = evidenceFingerprint(intent, market, symbol, adapter.contractVersion);
     const now = Date.now();
     // 7. persist canonical cache (best-effort) BEFORE returning
     try {
@@ -308,7 +337,7 @@ export async function resolveEvidence<T = unknown>(req: ResolveRequest): Promise
 // (market,symbol,intent,provider,fingerprint) WHERE status in queued/leased
 // collapses duplicates). Never throws.
 async function enqueueRefresh(svc: any, market: Market, symbol: string, intent: EvidenceIntent, provider: ProviderId): Promise<void> {
-  const fp = fingerprint(intent, market, symbol, provider);
+  const fp = evidenceFingerprint(intent, market, symbol, provider);
   try {
     await svc.from("provider_refresh_jobs").insert({
       market, symbol, intent, provider_id: provider, request_fingerprint: fp, status: "queued",

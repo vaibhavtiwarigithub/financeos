@@ -32,7 +32,7 @@ function freshEnv(
     symbol,
     intent,
     quality: cacheState === "stale" ? "stale" : "fresh",
-    payload: { ok: true },
+    payload: { ok: true, dimensionScore: 70 },
     provenance: [{ providerId: "massive", providerField: "x", basis, retrievedAt: new Date().toISOString(), unit: "currency" }],
     providersAttempted: cacheState === "fresh" ? [] : ["massive"],
     policyVersionId: "pv1",
@@ -82,7 +82,10 @@ function decision(overrides: Partial<LegacyDecision> = {}): LegacyDecision {
 /** Build a snapshot where every intent for the given symbols is usable/fresh. */
 function fullSnapshot(market: Market, symbols: string[], intents: EvidenceIntent[]): FrozenObservationSet {
   const observations = new Map<string, EvidenceEnvelope>();
-  for (const s of symbols) for (const i of intents) observations.set(`${s.toUpperCase()}|${i}`, freshEnv(market, s, i));
+  for (const s of symbols) for (const i of intents) {
+    const key = i === "macro.regime_inputs" ? `__MARKET__|${i}` : `${s.toUpperCase()}|${i}`;
+    observations.set(key, freshEnv(market, s, i));
+  }
   return { snapshotId: "snap-test", market, asOf: "2026-07-17T13:00:00Z", observations, providerCalls: 0, cacheHits: 0, runId: "test" };
 }
 
@@ -100,14 +103,10 @@ describe("cohort builder — frozen observation reuse (no double burst)", () => 
   it("resolves each (symbol,intent) exactly once and reverse-shadow makes ZERO new bursts", async () => {
     // A resolver that models a warming cache: the first time a key is requested it
     // is a live fetch (miss/attempted); every subsequent request is a fresh hit.
-    const warmed = new Set<string>();
-    let liveFetches = 0;
+    const requests: any[] = [];
     const resolve: ResolveFn = (async (req: any) => {
-      const key = `${req.symbol}|${req.intent}`;
-      if (warmed.has(key)) return freshEnv(req.market, req.symbol, req.intent, "fresh");
-      warmed.add(key);
-      liveFetches += 1;
-      return freshEnv(req.market, req.symbol, req.intent, "miss");
+      requests.push(req);
+      return freshEnv(req.market, req.symbol, req.intent, "fresh");
     }) as unknown as ResolveFn;
 
     // Same symbol appears in TWO decisions → its intents must be resolved once.
@@ -121,12 +120,13 @@ describe("cohort builder — frozen observation reuse (no double burst)", () => 
     const primary = await resolveFrozenObservations({ market: US, symbolIntents, asOf: "t", runId: "r:primary", resolve });
     // 3 unique keys → 3 live fetches, all counted as provider work on the baseline.
     expect(primary.observations.size).toBe(3);
-    expect(liveFetches).toBe(3);
-    expect(primary.providerCalls).toBe(3);
+    expect(primary.providerCalls).toBe(0);
+    expect(primary.cacheHits).toBe(3);
+    expect(requests.every((req) => req.cacheOnly === true)).toBe(true);
 
     // REVERSE-SHADOW over the identical window: the cache is warm → zero bursts.
     const reverse = await resolveFrozenObservations({ market: US, symbolIntents, asOf: "t", runId: "r:reverse", resolve });
-    expect(liveFetches).toBe(3); // unchanged — no new provider call
+    expect(requests).toHaveLength(6);
     expect(reverse.providerCalls).toBe(0);
     expect(reverse.cacheHits).toBe(3);
   });
@@ -137,7 +137,7 @@ describe("cohort builder — frozen observation reuse (no double burst)", () => 
     const snap = fullSnapshot(US, ["AAA"], ALL_INTENTS);
     const decisions = [decision({ symbol: "AAA" })];
     const base = {
-      evaluationId: "e", market: US, asOf: "t", universeSnapshotId: snap.snapshotId,
+      evaluationId: "e", market: US, asOf: "t", marketSessionDate: "2026-07-17", universeSnapshotId: snap.snapshotId,
       baselinePolicyVersionId: "pv1", candidatePolicyVersionId: "pv1", strategyVersion: "v1",
       weights: WEIGHTS, scoreThreshold: 60, priceBasis: "eod_adjusted",
       coverageNonInferiorityMargin: 0.05, maxAdverseRankDisplacement: 5, decisions, snapshot: snap,
@@ -154,7 +154,10 @@ describe("cohort builder — frozen observation reuse (no double burst)", () => 
 
 describe("cohort builder — parity semantics before values", () => {
   it("a cross-family basis mismatch hard-fails the candidate even when scores are identical", () => {
-    const dec = decision({ symbol: "AAA" });
+    const dec = decision({
+      symbol: "AAA",
+      scores: { fundamental: 70, technical: 70, sentiment: 70, macro: 70, insider: 70 },
+    });
     const snap = fullSnapshot(US, ["AAA"], ALL_INTENTS);
     const legacy = buildLegacyObservation(dec, US);
     const candidate = buildCandidateObservation(dec, US, snap);
@@ -175,7 +178,7 @@ describe("cohort builder — parity semantics before values", () => {
     };
 
     const cohort: FrozenCohort = {
-      evaluationId: "e", market: US, asOf: "t", universeSnapshotId: "u",
+      evaluationId: "e", market: US, asOf: "t", marketSessionDate: "2026-07-17", universeSnapshotId: "u",
       baselinePolicyVersionId: "pv1", candidatePolicyVersionId: "pv1", strategyVersion: "v1",
       weights: WEIGHTS, scoreThreshold: 60, priceBasis: "eod_adjusted",
       rows: [{ symbol: "AAA", shape: "equity", isHeld: false, legacy, candidate }],
@@ -203,7 +206,7 @@ describe("cohort builder — abstain/fail rows retained", () => {
     expect(Object.values(candidate.included).every((v) => v === false)).toBe(true);
 
     const cohort = assembleCohort({
-      evaluationId: "e", market: US, asOf: "t", universeSnapshotId: "u",
+      evaluationId: "e", market: US, asOf: "t", marketSessionDate: "2026-07-17", universeSnapshotId: "u",
       baselinePolicyVersionId: "pv1", candidatePolicyVersionId: "pv1", strategyVersion: "v1",
       weights: WEIGHTS, scoreThreshold: 60, priceBasis: "eod_adjusted",
       coverageNonInferiorityMargin: 0.05, maxAdverseRankDisplacement: 5,
@@ -270,7 +273,7 @@ describe("cohort builder — availability-driven eligibility flips are blocked",
     const snap: FrozenObservationSet = { snapshotId: "s", market: US, asOf: "t", observations, providerCalls: 0, cacheHits: 0, runId: "t" };
 
     const cohort = assembleCohort({
-      evaluationId: "e", market: US, asOf: "t", universeSnapshotId: "u",
+      evaluationId: "e", market: US, asOf: "t", marketSessionDate: "2026-07-17", universeSnapshotId: "u",
       baselinePolicyVersionId: "pv1", candidatePolicyVersionId: "pv1", strategyVersion: "v1",
       weights: WEIGHTS, scoreThreshold: 60, priceBasis: "eod_adjusted",
       coverageNonInferiorityMargin: 1, // disable coverage gate so we isolate the flip gate

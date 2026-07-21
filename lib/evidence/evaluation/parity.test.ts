@@ -155,6 +155,7 @@ function cohortOf(rows: CohortRow[], over: Partial<FrozenCohort> = {}): FrozenCo
     evaluationId: "eval-1",
     market: "us",
     asOf: "2026-07-16T00:00:00.000Z",
+    marketSessionDate: "2026-07-16",
     universeSnapshotId: "snap-1",
     baselinePolicyVersionId: "base-1",
     candidatePolicyVersionId: "cand-1",
@@ -282,8 +283,9 @@ describe("cohort — a routing artifact may never create a new long (§5)", () =
     expect(e.deltas[0].blocking).toBe(false);
     // ...but it cannot self-approve: added coverage is measured, not approved.
     expect(e.requiresOwnerReview).toHaveLength(1);
-    expect(e.passed).toBe(true);
-    expect(e.failures).toEqual([]);
+    expect(e.safetyPass).toBe(true);
+    expect(e.qualityPass).toBe(false);
+    expect(e.failures.some((f) => f.code === "score_drift_exceeds_quality_limit")).toBe(true);
   });
 
   it("becoming MORE conservative (eligible → ineligible) never blocks", () => {
@@ -291,7 +293,8 @@ describe("cohort — a routing artifact may never create a new long (§5)", () =
     const candidate = path({ scores: { fundamental: 20, technical: 20, sentiment: 20, macro: 20, insider: 20 }, fields: { [FIELD]: OBS({ value: 90 }) } });
     const e = evaluateCohort(cohortOf([row("AAA", legacy, candidate)]));
     expect(e.deltas[0].flip).toBe("eligible_to_ineligible");
-    expect(e.passed).toBe(true);
+    expect(e.safetyPass).toBe(true);
+    expect(e.qualityPass).toBe(false);
   });
 
   it("an identical cohort passes", () => {

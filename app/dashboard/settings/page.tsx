@@ -1768,7 +1768,7 @@ export default function SettingsPage() {
                     return (
                       <tr key={p.id} style={{ borderTop: `1px solid ${T.border}`, color: T.text }}>
                         <td style={{ padding: "10px 14px", fontWeight: 600 }}>{p.label}</td>
-                        <td style={{ padding: "10px 14px" }}>{p.keyPresent ? <span style={{ color: T.green }}>✓</span> : <span style={{ color: T.red }}>missing</span>}</td>
+                        <td style={{ padding: "10px 14px" }}>{!p.credentialRequired ? <span style={{ color: T.textSub }}>not needed</span> : p.keyPresent ? <span style={{ color: T.green }}>✓</span> : <span style={{ color: T.red }}>missing</span>}</td>
                         <td style={{ padding: "10px 14px", color: T.textSub }}>{p.limit == null ? "no cap (rate-limited)" : p.limit.toLocaleString()}</td>
                         <td style={{ padding: "10px 14px", color: useColor }}>{p.todayCalls}{p.pctUsed != null ? ` (${p.pctUsed}%)` : ""}</td>
                         <td style={{ padding: "10px 14px", color: T.textSub }}>{p.avg7d}</td>

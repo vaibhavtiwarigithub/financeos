@@ -37,7 +37,7 @@ import {
   type SymbolParity,
 } from "@/lib/evidence/evaluation/parity";
 
-export const EVALUATION_CODE_VERSION = "evidence-evaluation-v1";
+export const EVALUATION_CODE_VERSION = "evidence-evaluation-v2";
 
 // ── frozen inputs ────────────────────────────────────────────────────────────
 
@@ -78,6 +78,8 @@ export interface FrozenCohort {
   market: Market;
   /** Knowledge cutoff — BOTH paths are constructed from this same as-of. */
   asOf: string;
+  /** Trading session represented by the frozen daily bars (YYYY-MM-DD). */
+  marketSessionDate: string;
   universeSnapshotId: string;
   baselinePolicyVersionId: string;
   candidatePolicyVersionId: string;
@@ -94,6 +96,8 @@ export interface FrozenCohort {
   coverageNonInferiorityMargin: number;
   /** Ranks are adverse below this displacement; only enforced when missingness-caused. */
   maxAdverseRankDisplacement: number;
+  /** Maximum absolute aggregate score drift allowed for unattended parity. */
+  maxScoreDelta?: number;
 }
 
 // ── scored output ────────────────────────────────────────────────────────────
@@ -260,6 +264,8 @@ export type GateFailureCode =
   | "artifact_created_eligibility"
   | "adverse_rank_displacement_from_missingness"
   | "coverage_below_non_inferiority_margin"
+  | "optional_coverage_below_quality_margin"
+  | "score_drift_exceeds_quality_limit"
   | "hard_semantic_failure"
   | "ledger_proof_missing"
   | "legacy_reproduction_failed";
@@ -303,6 +309,10 @@ export interface CohortEvaluation {
     hardSemanticFailures: number;
   };
   failures: GateFailure[];
+  safetyFailures: GateFailure[];
+  qualityFailures: GateFailure[];
+  safetyPass: boolean;
+  qualityPass: boolean;
   /** Did every deterministic machine gate pass? Human review is separate. */
   passed: boolean;
   /** Genuine changes needing explicit owner sign-off before activation. */
@@ -314,6 +324,7 @@ export function cohortFingerprint(cohort: FrozenCohort): string {
   const identity = {
     market: cohort.market,
     asOf: cohort.asOf,
+    marketSessionDate: cohort.marketSessionDate,
     universeSnapshotId: cohort.universeSnapshotId,
     baseline: cohort.baselinePolicyVersionId,
     candidate: cohort.candidatePolicyVersionId,
@@ -322,6 +333,7 @@ export function cohortFingerprint(cohort: FrozenCohort): string {
     threshold: cohort.scoreThreshold,
     priceBasis: cohort.priceBasis,
     codeVersion: cohort.evaluationCodeVersion,
+    maxScoreDelta: cohort.maxScoreDelta ?? 2,
     symbols: cohort.rows.map((r) => r.symbol).slice().sort().join(","),
   };
   // djb2 — deterministic and dependency-free; this is an identity tag, not a
@@ -377,7 +389,8 @@ export function evaluateCohort(cohort: FrozenCohort): CohortEvaluation {
   const legacyBySymbol = new Map(legacyScored.map((s) => [s.symbol, s]));
   const candidateBySymbol = new Map(candidateScored.map((s) => [s.symbol, s]));
 
-  const failures: GateFailure[] = [];
+  const safetyFailures: GateFailure[] = [];
+  const qualityFailures: GateFailure[] = [];
   const deltas: SymbolDelta[] = [];
   const requiresOwnerReview: SymbolDelta[] = [];
 
@@ -404,17 +417,17 @@ export function evaluateCohort(cohort: FrozenCohort): CohortEvaluation {
     // A hard semantic failure fails the candidate regardless of flips or how
     // close the aggregate score is (§4 closing rule).
     for (const hf of parity.hardFails) {
-      failures.push({ code: "hard_semantic_failure", symbol: row.symbol, detail: `${hf.fieldId}: ${hf.code} — ${hf.detail}` });
+      safetyFailures.push({ code: "hard_semantic_failure", symbol: row.symbol, detail: `${hf.fieldId}: ${hf.code} — ${hf.detail}` });
     }
 
     let blocking = false;
     if (flip === "ineligible_to_eligible") {
       if (cause === "unexplained") {
         blocking = true;
-        failures.push({ code: "unexplained_flip", symbol: row.symbol, detail: note });
+        safetyFailures.push({ code: "unexplained_flip", symbol: row.symbol, detail: note });
       } else if (ARTIFACT_CAUSES.has(cause)) {
         blocking = true;
-        failures.push({
+        safetyFailures.push({
           code: "artifact_created_eligibility",
           symbol: row.symbol,
           detail: `new long created by "${cause}", not by a fact: ${note}`,
@@ -432,7 +445,7 @@ export function evaluateCohort(cohort: FrozenCohort): CohortEvaluation {
       rankDelta >= cohort.maxAdverseRankDisplacement &&
       (cause === "field_omission" || parity.comparisons.some((x) => x.code === "availability_loss"))
     ) {
-      failures.push({
+      qualityFailures.push({
         code: "adverse_rank_displacement_from_missingness",
         symbol: row.symbol,
         detail: `rank ${l.rank} → ${c.rank} (+${rankDelta}) attributable to lost fields, not to a value change`,
@@ -454,24 +467,37 @@ export function evaluateCohort(cohort: FrozenCohort): CohortEvaluation {
     };
     deltas.push(delta);
 
+    if (delta.scoreDelta !== null && Math.abs(delta.scoreDelta) > (cohort.maxScoreDelta ?? 2)) {
+      qualityFailures.push({
+        code: "score_drift_exceeds_quality_limit",
+        symbol: row.symbol,
+        detail: `aggregate score drift ${delta.scoreDelta > 0 ? "+" : ""}${delta.scoreDelta} exceeds ±${cohort.maxScoreDelta ?? 2}`,
+      });
+    }
+
     if (flip === "ineligible_to_eligible" && cause === "genuine_value_change") {
       requiresOwnerReview.push(delta);
     }
   }
 
-  // Coverage non-inferiority on REQUIRED fields, against a pre-approved margin.
+  // Required-field losses are safety failures. Optional score-affecting losses
+  // remain entry-safe but fail the independent product-quality verdict.
   const coverage = coverageStats(cohort);
   for (const stat of coverage) {
-    const isRequired = cohort.rows.some((row) =>
-      contractsFor(cohort.market, row.shape).some((c) => c.fieldId === stat.fieldId && c.required));
-    if (!isRequired) continue;
-    if (stat.delta < -cohort.coverageNonInferiorityMargin) {
-      failures.push({
-        code: "coverage_below_non_inferiority_margin",
-        symbol: null,
-        detail: `${stat.fieldId}: candidate covers ${(stat.candidateRate * 100).toFixed(1)}% vs legacy ${(stat.legacyRate * 100).toFixed(1)}% of ${stat.applicable} applicable symbols (Δ ${(stat.delta * 100).toFixed(1)}%, margin ${(cohort.coverageNonInferiorityMargin * 100).toFixed(1)}%)`,
-      });
-    }
+    const matchingContracts = cohort.rows.flatMap((row) =>
+      contractsFor(cohort.market, row.shape).filter((c) => c.fieldId === stat.fieldId));
+    const isRequired = matchingContracts.some((c) => c.required);
+    const isScoreAffecting = matchingContracts.some((c) => c.requiredClass === "score_affecting");
+    if (stat.delta >= -cohort.coverageNonInferiorityMargin) continue;
+    const failure: GateFailure = {
+      code: isRequired
+        ? "coverage_below_non_inferiority_margin"
+        : "optional_coverage_below_quality_margin",
+      symbol: null,
+      detail: `${stat.fieldId}: candidate covers ${(stat.candidateRate * 100).toFixed(1)}% vs legacy ${(stat.legacyRate * 100).toFixed(1)}% of ${stat.applicable} applicable symbols (Δ ${(stat.delta * 100).toFixed(1)}%, margin ${(cohort.coverageNonInferiorityMargin * 100).toFixed(1)}%)`,
+    };
+    if (isRequired) safetyFailures.push(failure);
+    else if (isScoreAffecting) qualityFailures.push(failure);
   }
 
   const counts = {
@@ -482,8 +508,12 @@ export function evaluateCohort(cohort: FrozenCohort): CohortEvaluation {
     candidateAbstainedOrFailed: candidateScored.filter((s) => s.status !== "scored").length,
     newlyEligible: deltas.filter((d) => d.flip === "ineligible_to_eligible").length,
     newlyIneligible: deltas.filter((d) => d.flip === "eligible_to_ineligible").length,
-    hardSemanticFailures: failures.filter((f) => f.code === "hard_semantic_failure").length,
+    hardSemanticFailures: safetyFailures.filter((f) => f.code === "hard_semantic_failure").length,
   };
+
+  const failures = [...safetyFailures, ...qualityFailures];
+  const safetyPass = safetyFailures.length === 0;
+  const qualityPass = qualityFailures.length === 0;
 
   return {
     evaluationId: cohort.evaluationId,
@@ -498,10 +528,11 @@ export function evaluateCohort(cohort: FrozenCohort): CohortEvaluation {
     coverage,
     counts,
     failures,
-    // Fail-closed: an evaluation passes only with zero failures. There is no
-    // "close enough" branch, and `newlyIneligible` never blocks — the candidate
-    // becoming MORE conservative is always allowed.
-    passed: failures.length === 0,
+    safetyFailures,
+    qualityFailures,
+    safetyPass,
+    qualityPass,
+    passed: safetyPass && qualityPass,
     requiresOwnerReview,
   };
 }

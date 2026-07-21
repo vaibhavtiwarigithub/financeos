@@ -14,6 +14,7 @@ import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
 import { computeWeightedAnalystScore, isThinEvidence, SCORE_DIMENSIONS, type ScoreDimension, type DimensionRecord } from "@/lib/scoring/weighted-score";
 import { observationsFromLegacyMask, runDegradationGuard, symbolShapeOf } from "@/lib/evidence/degradation-runtime";
+import { persistObservedResearchEvidence } from "@/lib/evidence/observed-cache";
 import type { Market } from "@/lib/evidence/contracts";
 import { resolveSignalDirection } from "@/lib/signal-direction";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
@@ -1507,6 +1508,25 @@ export async function processSymbol(
       insider: insiderResult?.source ?? "unavailable",
     },
   });
+
+  // Transitional Router compatibility bridge. It writes the evidence already
+  // fetched above into the canonical cache; it never performs another provider
+  // request and remains observational while router_enabled=false.
+  await persistObservedResearchEvidence(supabase, {
+    market: india ? "india" : "us",
+    symbol,
+    runId: evidenceRunId,
+    isEtf,
+    overview: avOverview as Record<string, string>,
+    candles,
+    scores,
+    sources: {
+      fundamental: fundamentalResult.source,
+      technical: candleResult.source as SourceName,
+      sentiment: sentimentSource,
+      insider: insiderResult?.source ?? "unavailable",
+    },
+  }).catch(() => {});
 
   const market = india ? "india" : "us"; // Phase 4: per-market champion weights
   const tradingMandate = await loadTradingMandate(supabase, market);

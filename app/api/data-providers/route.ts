@@ -30,6 +30,7 @@ export const dynamic = "force-dynamic";
 
 // Which env var holds each provider's credential (for key-present + expiry).
 const KEY_ENV: Record<ProviderId, string | null> = {
+  kairos: null, // internal compatibility cache; reuses evidence already fetched by ResearchAgent
   alpha_vantage: "ALPHA_VANTAGE_API_KEY",
   financialdatasets: "FINANCIAL_DATASETS_API_KEY",
   massive: "MASSIVE_API_KEY",
@@ -254,7 +255,8 @@ export async function GET() {
     const rc = rcByProv.get(id) as any;
     const envName = KEY_ENV[id];
     const keyVal = envName ? process.env[envName] : undefined;
-    const keyPresent = id === "financialdatasets" ? fdKeyPresent : !!keyVal;
+    const credentialRequired = envName !== null || spec?.credentialRef != null;
+    const keyPresent = !credentialRequired || (id === "financialdatasets" ? fdKeyPresent : !!keyVal);
     const expiresAt = jwtExpiryIso(keyVal);
     const daysToExpiry = expiresAt ? Math.round((new Date(expiresAt).getTime() - Date.now()) / 86400000) : null;
     const todayCalls = Number(todayByProv.get(id) ?? 0);
@@ -288,6 +290,7 @@ export async function GET() {
     return {
       id, label: c.label,
       keyPresent,
+      credentialRequired,
       limit,                         // daily cap or null (rate-limited) — LEGACY: null does NOT mean uncapped, read dailyLimitState
       todayCalls,
       avg7d,

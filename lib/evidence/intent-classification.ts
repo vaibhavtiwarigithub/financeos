@@ -308,7 +308,9 @@ export const SCORER_FIELD_CONTRACTS: readonly ScorerFieldContract[] = [
     required: false,
     minFields: ["regime", "score"],
     acceptableQuality: ["fresh", "stale"],
-    maxAgeSeconds: 2 * DAY,
+    // MacroSentinel is weekly; align with the production scorer's bounded
+    // weekly fallback instead of declaring healthy mid-week evidence stale.
+    maxAgeSeconds: 10 * DAY,
     allowedBases: ["spot"],
     unit: "ratio",
     legacy: { module: "lib/data/scores.ts", symbol: "scoreMacro", qualityFlag: "dataQuality.macroDataAvailable" },

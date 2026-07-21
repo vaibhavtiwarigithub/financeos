@@ -16,16 +16,23 @@ import { massiveInsiderAdapter, massiveBarsAdapter } from "@/lib/evidence/adapte
 import { eodhdBarsAdapter } from "@/lib/evidence/adapters/eodhd";
 import { twelvedataBarsAdapter } from "@/lib/evidence/adapters/twelvedata";
 import { edgarInsiderAdapter } from "@/lib/evidence/adapters/edgar";
+import {
+  observedBarsAdapter,
+  observedFundamentalsAdapter,
+  observedInsiderAdapter,
+  observedMacroAdapter,
+  observedSentimentAdapter,
+} from "@/lib/evidence/adapters/kairos-observed";
 
 // Default ordered chains per intent. Order = Auto-mode fallback order. Finnhub
 // leads US fundamentals while Webull shadows (Webull fundamentals are QUARTERLY —
 // must pass shadow-compare before becoming a scoring fallback; see §22 + §13).
 export const ADAPTERS_BY_INTENT: Partial<Record<EvidenceIntent, ProviderAdapter[]>> = {
-  "fundamentals.reported": [finnhubFundamentalsAdapter, webullFundamentalsAdapter, yahooFundamentalsAdapter],
+  "fundamentals.reported": [observedFundamentalsAdapter, finnhubFundamentalsAdapter, webullFundamentalsAdapter, yahooFundamentalsAdapter],
   "analyst.consensus":     [webullAnalystAdapter],
   // EDGAR (free, ~10/s, router-paced) first; Massive (5/min paced, richer detail) backs
   // the tail. Insider is sparse by nature — most names have <3 open-market trades.
-  "insider.transactions":  [edgarInsiderAdapter, massiveInsiderAdapter],
+  "insider.transactions":  [observedInsiderAdapter, edgarInsiderAdapter, massiveInsiderAdapter],
   // US candles: Massive → EODHD → TwelveData as an EXPLICIT router chain (§8).
   // These used to be one "massive" adapter that hid the fallback internally, so
   // provenance recorded a nominal source rather than the serving one and a
@@ -36,8 +43,10 @@ export const ADAPTERS_BY_INTENT: Partial<Record<EvidenceIntent, ProviderAdapter[
   // NOTE: the resolver caps a single resolve at MAX_SYNC_ATTEMPTS=2 live calls,
   // so the third source is reached via the durable refresh queue rather than
   // synchronously — a deliberate Vercel wall-clock bound, not an oversight.
-  "price.daily_bars":      [massiveBarsAdapter, eodhdBarsAdapter, twelvedataBarsAdapter],
-  // sentiment.news / fundamentals.valuation / macro.regime_inputs / events.* /
+  "price.daily_bars":      [observedBarsAdapter, massiveBarsAdapter, eodhdBarsAdapter, twelvedataBarsAdapter],
+  "sentiment.news":        [observedSentimentAdapter],
+  "macro.regime_inputs":   [observedMacroAdapter],
+  // fundamentals.valuation / events.* /
   // price.quote — deferred: their existing chains stay legacy until adapters land.
 };
 
@@ -58,6 +67,13 @@ export function adaptersForIntent(intent: EvidenceIntent, market: Market): Provi
 // (provider_runtime_config) can only make these MORE conservative. Only the
 // providers with a registered adapter are listed here for now.
 export const PROVIDER_SPECS: Partial<Record<ProviderId, ProviderSpec>> = {
+  kairos: {
+    id: "kairos", label: "Kairos observed evidence", transport: "internal",
+    markets: ["us", "india"],
+    capabilities: ["fundamentals.reported", "price.daily_bars", "sentiment.news", "macro.regime_inputs", "insider.transactions"],
+    dailyLimitState: "none", rateLimitState: "none",
+    minIntervalMs: 0, reserveCalls: 0, entitlementRequired: false, trustTier: 1, official: true,
+  },
   finnhub: {
     id: "finnhub", label: "Finnhub", transport: "http",
     markets: ["us"], capabilities: ["fundamentals.reported"],

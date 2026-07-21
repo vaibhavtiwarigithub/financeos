@@ -30,6 +30,7 @@ const WALLCLOCK_MS = 45_000;
 
 // Only intents that actually have a registered adapter are worth shadowing.
 const SHADOW_INTENTS = (Object.keys(ADAPTERS_BY_INTENT) as EvidenceIntent[]);
+const MARKET_WIDE_INTENTS = new Set<EvidenceIntent>(["macro.regime_inputs"]);
 
 export async function GET(req: NextRequest) {
   if (!verifyCronSecret(req)) {
@@ -87,11 +88,27 @@ export async function GET(req: NextRequest) {
   let resolvedFresh = 0, resolvedLive = 0, unavailable = 0, symbolsDone = 0;
   const perIntent: Record<string, { ok: number; unavailable: number }> = {};
 
+  // Market-wide facts are resolved once, never once per symbol. The observed
+  // macro adapter is cache-fed by ResearchAgent and performs no external call.
+  for (const intent of SHADOW_INTENTS.filter((value) => MARKET_WIDE_INTENTS.has(value))) {
+    perIntent[intent] = { ok: 0, unavailable: 0 };
+    try {
+      const env = await resolveEvidence({ market, intent, runId: `shadow:${market}`, allowDisabledPolicy: true });
+      if (env.quality === "fresh" && env.cacheState === "fresh") resolvedFresh++;
+      else if (env.quality === "fresh") resolvedLive++;
+      if (env.payload != null) perIntent[intent].ok++;
+      else { unavailable++; perIntent[intent].unavailable++; }
+    } catch {
+      unavailable++;
+      perIntent[intent].unavailable++;
+    }
+  }
+
   outer:
   for (const symbol of symbols) {
     if (Date.now() - started > WALLCLOCK_MS) break;
     symbolsDone++;
-    for (const intent of SHADOW_INTENTS) {
+    for (const intent of SHADOW_INTENTS.filter((value) => !MARKET_WIDE_INTENTS.has(value))) {
       if (Date.now() - started > WALLCLOCK_MS) break outer;
       perIntent[intent] ??= { ok: 0, unavailable: 0 };
       try {

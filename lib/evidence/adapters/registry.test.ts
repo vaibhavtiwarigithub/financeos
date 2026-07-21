@@ -14,10 +14,11 @@ describe("adaptersForIntent — market filtering", () => {
     expect(adaptersForIntent("analyst.consensus", "india")).toEqual([]);
   });
 
-  it("US fundamentals.reported starts with finnhub, then includes webull + yahoo", () => {
+  it("US fundamentals.reported starts with the quota-free internal bridge", () => {
     const chain = adaptersForIntent("fundamentals.reported", "us");
     const ids = chain.map((a) => a.providerId);
-    expect(ids[0]).toBe("finnhub");
+    expect(ids[0]).toBe("kairos");
+    expect(ids[1]).toBe("finnhub");
     expect(ids).toContain("webull");
     expect(ids).toContain("yahoo");
   });
@@ -30,7 +31,7 @@ describe("adaptersForIntent — market filtering", () => {
   });
 
   it("returns [] for an intent with no registered chain", () => {
-    expect(adaptersForIntent("sentiment.news", "us")).toEqual([]);
+    expect(adaptersForIntent("price.quote", "us")).toEqual([]);
   });
 });
 
