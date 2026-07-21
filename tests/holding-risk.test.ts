@@ -48,6 +48,7 @@ const holding = (over: Partial<HoldingRiskInput> = {}): HoldingRiskInput => ({
 // A ctx with every optional dimension present (full confidence), all benign.
 const fullCtx = (over: Partial<HoldingRiskContext> = {}): HoldingRiskContext => ({
   accountTotalValue: 10000, currency: "USD", limits: LIMITS, quoteFresh: true,
+  readOnlyAccount: false,
   sectorWeightPct: 0.10, grossExposurePct: 0.5,
   clusterAvgCorr: 0.2, clusterPeers: [], clusterWeightPct: 0.10,
   stopDistancePct: 0.20, protectiveStopHit: false, thesisBreak: false,
@@ -110,10 +111,11 @@ describe("computeHoldingRisk — name concentration (30 cap)", () => {
     expect(over.drivers.find(d => d.component === "name_concentration")!.points).toBeCloseTo(30, 5);
   });
 
-  it("name breach at/over the cap yields a trim posture", () => {
+  it("name breach at/over the global reference yields review, not a sell instruction", () => {
     const r = computeHoldingRisk(holding({ marketValue: 1300 }), fullCtx({ accountTotalValue: 10000, sectorWeightPct: 0.13 }));
-    expect(r.riskPosture).toBe("trim");
+    expect(r.riskPosture).toBe("review");
     expect(r.actionReason).toMatch(/name/i);
+    expect(r.actionReason).toMatch(/no trim is recommended/i);
   });
 });
 
@@ -126,17 +128,27 @@ describe("computeHoldingRisk — sector concentration (20 cap), missing-dim conf
     expect(r.missingInputs).toContain("sector_exposure");
   });
 
+  it("does not apply an equity-sector cap to broad asset-class exposures", () => {
+    for (const sector of ["Diversified Equity", "International Equity", "Fixed Income", "Commodities", "Digital Assets"]) {
+      const r = computeHoldingRisk(holding({ sector }), fullCtx({ sectorWeightPct: 0.80 }));
+      const d = r.drivers.find(x => x.component === "sector_concentration")!;
+      expect(d.points, sector).toBe(0);
+      expect(d.utilization, sector).toBeNull();
+      expect(r.riskPosture, sector).not.toBe("trim");
+    }
+  });
+
   it("full 20 points when the sector sits exactly at its cap", () => {
     const r = computeHoldingRisk(holding(), fullCtx({ sectorWeightPct: 0.30 }));
     expect(r.drivers.find(d => d.component === "sector_concentration")!.points).toBeCloseTo(20, 5);
   });
 
-  it("sector breach contributes a trim posture WHEN this name was selected to absorb it", () => {
+  it("sector allocation quantifies exposure but remains review-only", () => {
     const r = computeHoldingRisk(holding(), fullCtx({
       sectorWeightPct: 0.31,
       sectorBreachAllocation: allocOf("absorb"),
     }));
-    expect(r.riskPosture).toBe("trim");
+    expect(r.riskPosture).toBe("review");
     expect(r.actionReason).toMatch(/sector/i);
   });
 });
@@ -145,16 +157,16 @@ describe("computeHoldingRisk — sector concentration (20 cap), missing-dim conf
 // allocation, so hr-v1 gave EVERY holding in the sector the identical "trim".
 // hr-v2 makes it a per-name verdict via the deterministic allocator.
 // Spec: features/risk-sector-breach-allocation/FEATURE_ARCHITECTURE.md §6, §9.
-describe("computeHoldingRisk — sector breach is allocated, not blanket (hr-v2)", () => {
+describe("computeHoldingRisk — sector breach is allocated, not blanket (hr-v3)", () => {
   const breachedCtx = (over: Partial<HoldingRiskContext> = {}) =>
     fullCtx({ sectorWeightPct: 0.656, ...over });
 
-  it("selected to absorb → trim, and the reason carries the pp figure (§9.10)", () => {
+  it("selected to absorb is review-only and exposes no simulated sell quantity", () => {
     const r = computeHoldingRisk(holding(), breachedCtx({ sectorBreachAllocation: allocOf("absorb") }));
-    expect(r.riskPosture).toBe("trim");
-    expect(r.actionReason).toMatch(/4\.65pp of NAV/);
-    expect(r.actionReason).toMatch(/from 10\.00% to 5\.35%/);
-    expect(r.actionReason).toMatch(/#1 of the 4 largest/);
+    expect(r.riskPosture).toBe("review");
+    expect(r.actionReason).toMatch(/contributes materially/i);
+    expect(r.actionReason).toMatch(/no trim is recommended/i);
+    expect(r.actionReason).not.toMatch(/4\.65pp|5\.35%|#1 of/);
   });
 
   it("NOT selected → hold, and the hold says WHY (§9.11)", () => {
@@ -175,7 +187,7 @@ describe("computeHoldingRisk — sector breach is allocated, not blanket (hr-v2)
       sectorBreachAllocation: allocOf("not_selected", { symbol: "INTC" }),
     }));
     // hr-v1 returned "trim" for both off the identical sector number.
-    expect(absorb.riskPosture).toBe("trim");
+    expect(absorb.riskPosture).toBe("review");
     expect(held.riskPosture).toBe("hold");
     expect(absorb.actionReason).not.toEqual(held.actionReason);
   });
@@ -212,15 +224,16 @@ describe("computeHoldingRisk — sector breach is allocated, not blanket (hr-v2)
     const name = computeHoldingRisk(holding({ marketValue: 1300 }), breachedCtx({
       accountTotalValue: 10000, sectorBreachAllocation: allocOf("not_selected"),
     }));
-    expect(name.riskPosture).toBe("trim");
-    expect(name.actionReason).toMatch(/name 13\.0% > 12% cap/);
+    expect(name.riskPosture).toBe("review");
+    expect(name.actionReason).toMatch(/name weight 13\.0% exceeds the 12% global Kairos trading reference/);
 
-    // Correlated-cluster breach while the sector allocator says not_selected.
+    // Correlation identifies overlap, but without a per-name quantity allocator
+    // it can only request review, never a blanket trim.
     const cluster = computeHoldingRisk(holding(), breachedCtx({
       clusterAvgCorr: 0.9, clusterWeightPct: 0.30, clusterPeers: ["BBB"],
       sectorBreachAllocation: allocOf("not_selected"),
     }));
-    expect(cluster.riskPosture).toBe("trim");
+    expect(cluster.riskPosture).toBe("review");
     expect(cluster.actionReason).toMatch(/correlated cluster/i);
   });
 
@@ -265,11 +278,13 @@ describe("computeHoldingRisk — an exit is NEVER suppressed by an allocation (�
   });
 });
 
-describe("computeHoldingRisk — advisory labelling (§9.20)", () => {
+describe("computeHoldingRisk - concentration remains advisory", () => {
   it("a read-only account says the app cannot trade it", () => {
     const trim = computeHoldingRisk(holding(), fullCtx({
       sectorWeightPct: 0.656, readOnlyAccount: true, sectorBreachAllocation: allocOf("absorb"),
     }));
+    expect(trim.riskPosture).toBe("review");
+    expect(trim.actionReason).toMatch(/no trim is recommended/i);
     expect(trim.actionReason).toMatch(/Advisory only — this account is read-only in Kairos; the app cannot trade it\./);
 
     const exit = computeHoldingRisk(holding(), fullCtx({ readOnlyAccount: true, protectiveStopHit: true }));
@@ -280,12 +295,14 @@ describe("computeHoldingRisk — advisory labelling (§9.20)", () => {
     const r = computeHoldingRisk(holding(), fullCtx({
       sectorWeightPct: 0.656, readOnlyAccount: false, sectorBreachAllocation: allocOf("absorb"),
     }));
+    expect(r.riskPosture).toBe("review");
+    expect(r.actionReason).toMatch(/no trim is recommended/i);
     expect(r.actionReason).toMatch(/this feature places no order/);
     expect(r.actionReason).toMatch(/requires owner approval in the Execution Gateway/);
   });
 
   it("an absent flag defaults to the read-only wording (honest default)", () => {
-    const r = computeHoldingRisk(holding(), fullCtx({ protectiveStopHit: true }));
+    const r = computeHoldingRisk(holding(), fullCtx({ readOnlyAccount: undefined, protectiveStopHit: true }));
     expect(r.actionReason).toMatch(/read-only in Kairos/);
   });
 });
@@ -327,11 +344,12 @@ describe("computeHoldingRisk × allocateSectorBreach — the AVGO defect (end to
     expect([...v.values()].every(r => r.riskPosture === "trim")).toBe(false);
   });
 
-  it("AVGO (the largest) absorbs the most and is told how much", () => {
+  it("AVGO exposes the simulated reduction but a read-only account is not told to trade", () => {
     const r = verdicts().get("AVGO")!;
-    expect(r.riskPosture).toBe("trim");
-    expect(r.actionReason).toMatch(/Trim AVGO by 14\.65pp of NAV/);
-    expect(r.actionReason).toMatch(/≈ 14650 USD/);
+    expect(r.riskPosture).toBe("review");
+    expect(r.actionReason).toMatch(/contributes materially/i);
+    expect(r.actionReason).not.toMatch(/14\.65pp/);
+    expect(r.actionReason).toMatch(/no trim is recommended/i);
     expect(r.actionReason).toMatch(/read-only in Kairos/);
   });
 
@@ -375,12 +393,13 @@ describe("computeHoldingRisk — correlated cluster (15 cap), computed corr", ()
     expect(r.missingInputs).toContain("correlation");
   });
 
-  it("high corr with material cluster weight triggers a trim (cluster breach)", () => {
+  it("high corr with material cluster weight triggers review, not an unallocated trim", () => {
     const r = computeHoldingRisk(holding(), fullCtx({
       clusterAvgCorr: 0.9, clusterWeightPct: 0.30, clusterPeers: ["BBB", "CCC"],
     }));
-    expect(r.riskPosture).toBe("trim");
+    expect(r.riskPosture).toBe("review");
     expect(r.actionReason).toMatch(/correlated cluster/i);
+    expect(r.actionReason).toMatch(/does not identify which holding or quantity to sell/i);
   });
 
   it("high corr but immaterial cluster weight does NOT breach", () => {

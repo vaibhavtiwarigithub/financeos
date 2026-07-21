@@ -45,6 +45,7 @@ import { computeCorrelationClusters } from "@/lib/risk/correlation";
 import {
   computeHoldingRisk,
   HOLDING_RISK_FORMULA_VERSION,
+  isSectorCapEligible,
   type HoldingRiskLimits,
   type HoldingRiskInput,
   type HoldingRiskContext,
@@ -186,7 +187,7 @@ async function processAccount(
   const breach = allocateSectorBreach({
     positions: account.holdings.map(h => ({
       symbol: h.symbol,
-      sector: enriched.get(h.symbol)?.sector ?? null,
+      sector: isSectorCapEligible(enriched.get(h.symbol)?.sector) ? enriched.get(h.symbol)!.sector : null,
       marketValue: h.marketValue,
     })),
     navValue: accountTotal,
@@ -249,7 +250,7 @@ async function processAccount(
       currency,
       limits,
       quoteFresh: true, // just-fetched broker snapshot
-      sectorWeightPct: sector && sector !== "Other" ? (sectorNavWeight.get(sector) ?? null) : null,
+      sectorWeightPct: isSectorCapEligible(sector) ? (sectorNavWeight.get(sector) ?? null) : null,
       sectorBreachAllocation: breach.bySymbol.get(h.symbol) ?? null,
       readOnlyAccount,
       grossExposurePct,

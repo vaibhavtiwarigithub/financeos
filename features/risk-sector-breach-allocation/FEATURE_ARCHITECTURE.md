@@ -1,7 +1,7 @@
 # Feature: Sector-Cap Breach Allocation (risk-internal, deterministic)
 
-**Status:** BUILT — branch `worktree-agent-a6596ea918d82369a`, not merged
-**Last updated:** 2026-07-16
+**Status:** SHIPPED - allocator `sba-v1`, posture consumer `hr-v3`
+**Last updated:** 2026-07-21
 **Owner:** Vaibhav
 **Update this file when:** the allocation rule, its denominator basis, the breach
 arithmetic, the roles (`absorb` / `not_selected` / `no_breach` / `sector_unknown`),
@@ -10,6 +10,15 @@ or the read-only advisory labelling changes.
 **Parent feature:** `features/holding-risk-daily/FEATURE_ARCHITECTURE.md` — this file
 is the authority for the allocator; that file remains the authority for the score,
 the cron, the snapshot schema, and the LLM prose boundary.
+
+> **Current posture boundary (`hr-v3`, 2026-07-21):** this allocator remains the
+> correct simulation for a genuine equity-sector breach, but its `absorb` output
+> is internal diagnostic evidence only. Every live account displays measured
+> concentration under `review`, with no trim recommendation, because the current
+> limits are global references rather than account-specific mandates. An order-
+> permitted account is not an exception. Asset-class buckets
+> such as Diversified Equity, Fixed Income, Commodities, and Digital Assets never
+> enter this sector allocator.
 
 ---
 
@@ -182,7 +191,7 @@ a Research↔Risk coupling decision, not a change to this allocator.
 | `no_breach` | sector within cap | sector weight vs cap, no reduction required. |
 | `sector_unknown` | sector null/empty/"Other", or unvalued | "sector unknown — excluded from sector-cap allocation: neither counted toward a breach nor asked to absorb one." Never treated as its own sector, never as cap-compliant. |
 
-## 6. Posture wiring (`lib/risk/holding-risk.ts`, `hr-v1` → `hr-v2`)
+## 6. Posture wiring (`lib/risk/holding-risk.ts`, current `hr-v3`)
 
 Two new **optional** `HoldingRiskContext` fields:
 `sectorBreachAllocation?: SectorBreachAllocation | null`, `readOnlyAccount?: boolean`.
@@ -194,10 +203,10 @@ Precedence (the exit branch is untouched and stays first):
 
 1. verified protective-stop / thesis-break → `exit_review` — **unconditionally**,
    regardless of any allocation. Drawdown alone still never triggers it.
-2. `nameBreach || sectorSelected || clusterBreach` → `trim`, where
-   `sectorSelected = sectorBreach && allocation.role === "absorb"`.
-   **A sector breach on its own is no longer a trim trigger for a name the
-   allocator did not select.**
+2. `nameBreach || sectorSelected || clusterBreach` → `review`, where
+   `sectorSelected = sectorBreach && allocation.role === "absorb"`. The allocator
+   remains internal evidence; its simulated reduction is not exposed as advice.
+   No concentration condition creates a sell instruction.
 3. `sectorBreach` **and no usable allocation** → `review` +
    `missing_inputs: ["sector_breach_allocation"]`. Reason: the sector is over cap
    but the engine cannot say whether *this* name should absorb it.
@@ -211,8 +220,8 @@ Precedence (the exit branch is untouched and stays first):
 `review` — the *old* blanket-trim behavior is not preserved as a fallback,
 because a fallback to the bug is the bug.
 
-`formula_version` bumps `hr-v1` → `hr-v2`: the posture semantics changed, and
-`risk-daily` must not diff a v2 posture against a v1 posture. No migration —
+`formula_version` is now `hr-v3`: the posture semantics changed again, and
+`risk-daily` must not diff a v3 posture against a prior formula. No migration —
 `formula_version` is `text`, `risk_posture` keeps its existing CHECK values, and
 the allocation surfaces in the existing `action_reason` (text) and the sector
 driver's `detail` (jsonb).
@@ -238,7 +247,8 @@ driver's `detail` (jsonb).
 
 `readOnlyAccount` is set by the cron: `false` only for `605420660` (the sole
 order-permitted account per CLAUDE.md), `true` for every other account including
-`965848641` — where AVGO sits. Actionable postures (`trim`, `exit_review`) carry:
+`965848641` - where AVGO sits. `readOnlyAccount` changes advisory transport wording
+only; concentration is `review` for both account classes. `exit_review` reasons carry:
 
 - read-only → *"Advisory only — this account is read-only in Kairos; the app cannot trade it."*
 - `605420660` → *"Advisory only — this feature places no order; any action requires owner approval in the Execution Gateway."*
@@ -261,17 +271,17 @@ at all, rather than implying one does.
 | 7 | `protectiveStopHit` + `role: "not_selected"` → still `exit_review` | the allocator being consulted before the exit branch |
 | 8 | `thesisBreak` + `role: "not_selected"` → still `exit_review` | same |
 | 9 | Sector breached, **no** allocation supplied → `review`, `missing_inputs` contains `sector_breach_allocation`, posture is **not** `trim` | a fallback to blanket-trim |
-| 10 | Sector breached, `role: "absorb"` → `trim`, reason carries the pp figure | allocation ignored |
+| 10 | Sector breached, `role: "absorb"` → `review`, no simulated sell quantity in the action reason | diagnostic allocation leaking as advice |
 | 11 | Sector breached, `role: "not_selected"`, nothing else breached → `hold` **and** reason is not "within owner-approved risk limits" | the generic hold string leaking while the sector is over cap |
-| 12 | Name breach + `role: "not_selected"` → still `trim` (name cap) | the allocator suppressing a *different* limit's breach |
-| 13 | Cluster breach + `role: "not_selected"` → still `trim` | same |
+| 12 | Name breach + `role: "not_selected"` → `review`, with no trim recommendation | global reference leaking as a sell mandate |
+| 13 | Cluster breach + `role: "not_selected"` → `review`, with no sell quantity | unallocated overlap leaking as advice |
 | 14 | India: INR account, `.NS` symbols, India sector labels → identical allocation shape; `no_breach` when within cap | any US-GICS or USD assumption |
 | 15 | US and India inputs with equal weights produce equal `trimPct` and never a summed/cross-market total | cross-market contamination |
 | 16 | `sector: null` / `"Other"` / `""` → `role: "sector_unknown"`, excluded from every sector total, reason says "sector unknown"; the other names' allocation is unchanged by its presence | bucketing unknowns into a synthetic sector (what `constructPortfolio` does), or treating them as cap-compliant |
 | 17 | A sector that is entirely unknown-sector names produces **no** `no_breach` claim for them | silent cap-compliance |
 | 18 | `parseStrategyNotes` given `{"AVGO":{"trim_pct":99},"risk_posture":"hold","ZZZZ":"x"}` returns **no** AVGO note, no `risk_posture` key, no `ZZZZ` | any parser that passes non-strings or unrequested keys through |
 | 19 | `parseStrategyNotes` over unparseable/absent LLM text → empty map, never throws | prose failure blocking a deterministic row |
-| 20 | Read-only account → `trim`/`exit_review` reason states the account cannot be traded | missing advisory labelling |
+| 20 | Both read-only and order-permitted accounts keep concentration at `review`; transport wording remains accurate | order permission being confused with a concentration mandate |
 | 21 | `navValue` unchanged, cap 0/100/NaN → `no_breach`, never a fabricated breach | an unguarded cap divide |
 
 Plus the parent feature's existing `hr` suite (structural gate, component caps,

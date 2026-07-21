@@ -453,11 +453,15 @@ US 21:30 UTC / India 11:00 UTC). Scores **every holding in every live account** 
 `605420660`, Robinhood **read-only `965848641`**, and Kite India — with a deterministic 0–100
 risk-control pressure index and a risk posture. Safety properties:
 
-- **Hybrid, deterministic-first.** `lib/risk/holding-risk.ts` (`hr-v2`) computes the score **and** the
+- **Hybrid, deterministic-first.** `lib/risk/holding-risk.ts` (`hr-v3`) computes the score **and** the
   posture (`hold` / `review` / `trim` / `exit_review` / `insufficient_data`) with strict precedence: a
   verified protective-stop or thesis-break → `exit_review`; **unrealized drawdown ALONE never** triggers
-  `exit_review` (loss-chasing guard); a hard **name**/cluster breach **or a sector breach this name was
-  SELECTED to absorb** → `trim`; a sector breach with **no usable allocation** → `review`; data
+  `exit_review` (loss-chasing guard); hard **name**, allocated genuine equity-sector, and correlated-
+  cluster concentration all produce `review`, never `trim`, because a global trading reference is not
+  an account-specific sell mandate. Having an order path does not establish that mandate. A future
+  trim posture requires an approved per-account objective/cap and executable share-quantity plan. A correlated cluster produces `review` until an
+  allocator identifies which holding and quantity to reduce. A sector breach with **no usable
+  allocation** → `review`; data
   confidence < 0.5 → `review`. An LLM writes **only** the human-readable `strategy_note` — it **cannot
   change the score, posture, action, or allocation**. `lib/risk/strategy-notes.ts` makes that provable
   rather than prompt-dependent: `parseStrategyNotes()` returns `Map<requestedSymbol, string>` and drops
@@ -476,17 +480,18 @@ risk-control pressure index and a risk posture. Safety properties:
   strictly BELOW the exit branch: it can never delay or suppress a risk-driven exit** (the same
   invariant `lib/evidence/degradation-guard.ts` holds for `short`). Unknown-sector holdings are excluded
   from every sector total and reported as unknown — never bucketed into a synthetic sector, never
-  assumed cap-compliant. Design + justification: `features/risk-sector-breach-allocation/FEATURE_ARCHITECTURE.md`.
+  assumed cap-compliant. Broad asset-class sleeves (Diversified/International Equity, Fixed Income,
+  Commodities, Digital Assets) are also excluded: they are not equity sectors, so applying the sector
+  cap to IVV/SGOV/GLD/IBIT is a category error. Design + justification:
+  `features/risk-sector-breach-allocation/FEATURE_ARCHITECTURE.md`.
 - **Wired to NO order path — for ALL accounts.** The `strategy_note`, posture, and `add_capacity` flag
   are advisory. `add_capacity` means "risk limits have room," **not** a buy signal. Nothing here reaches
-  `executeApprovedOrder`, the gateway, or a broker. The read-only `965848641` account is scored
-  identically and, like every other account, the strategy line reaches no order path. The UI labels the
-  note "advisory" and, for read-only accounts, "advisory only · no order path." Since `hr-v2` the
-  deterministic `action_reason` **also** carries the labelling: the cron sets `readOnlyAccount` from the
-  `605420660` allowlist, so an actionable posture on any other account (including `965848641`, where the
-  AVGO advice sat) states *"Advisory only — this account is read-only in Kairos; the app cannot trade
-  it,"* and on `605420660` states that the feature places no order and any action needs owner approval at
-  the Execution Gateway. An absent flag defaults to the read-only wording.
+  `executeApprovedOrder`, the gateway, or a broker. The UI labels the note "advisory" and, for read-only
+  accounts, "advisory only - no order path." Since `hr-v3`, every account receives concentration
+  `review`, not `trim`; allowlisting account `605420660` for order transport does not create an account-
+  specific objective/cap mandate. The deterministic reason states that no trim is recommended. The
+  `readOnlyAccount` flag controls advisory transport wording only, not concentration posture. An absent
+  flag defaults to the read-only wording.
 - **Research is SHOWN next to the verdict, and coupled to nothing** (2026-07-17,
   `features/risk-research-visibility`). `GET /api/portfolio/risk-daily` now attaches a nullable
   `research` block per holding — score, direction, `scored_at`, `sessions_since`, `days_since`, `state`,

@@ -31,12 +31,36 @@
 // (`lib/risk/sector-breach.ts`): the sector breach makes THIS name a trim only
 // when the allocator selected it to absorb. See
 // features/risk-sector-breach-allocation/FEATURE_ARCHITECTURE.md.
+// hr-v3 (2026-07-21): CONCENTRATION IS REVIEW-ONLY. The available limits are
+// global trading references, not account-specific objectives or sell mandates.
+// Name, allocated sector, and correlated-cluster breaches therefore surface the
+// measured exposure under `review`; they never tell the owner to trim. A future
+// trim posture requires an explicit per-account mandate and deterministic share
+// quantity plan. Protective-stop/thesis-break `exit_review` remains first.
+//
 // The score, the six components, their caps, the confidence weights, and
 // `add_capacity` are UNCHANGED — only the sector→posture step moved.
 
 import type { SectorBreachAllocation } from "@/lib/risk/sector-breach";
 
-export const HOLDING_RISK_FORMULA_VERSION = "hr-v2";
+export const HOLDING_RISK_FORMULA_VERSION = "hr-v3";
+
+// These are asset classes/exposure sleeves, not equity sectors. Applying a
+// max_sector_exposure cap to IVV/SGOV/GLD/IBIT is a category error: an ETF book
+// can legitimately be mostly diversified equity, and a bond sleeve is not a
+// "Fixed Income sector" in the mandate's sense.
+const NON_SECTOR_EXPOSURES = new Set([
+  "Diversified Equity",
+  "International Equity",
+  "Fixed Income",
+  "Commodities",
+  "Digital Assets",
+  "Other",
+]);
+
+export function isSectorCapEligible(sector: string | null | undefined): sector is string {
+  return typeof sector === "string" && sector.length > 0 && !NON_SECTOR_EXPOSURES.has(sector);
+}
 
 // Component caps (sum = 100).
 const CAP_NAME = 30;
@@ -210,7 +234,7 @@ export function computeHoldingRisk(h: HoldingRiskInput, ctx: HoldingRiskContext)
 
   // ── Sector concentration (20) ───────────────────────────────────────────────
   let sectorUtil: number | null = null;
-  const sectorKnown = isFiniteNum(ctx.sectorWeightPct) && (h.sector ?? "Other") !== "Other";
+  const sectorKnown = isFiniteNum(ctx.sectorWeightPct) && isSectorCapEligible(h.sector);
   if (sectorKnown) {
     const sectorLimit = isFiniteNum(limits.maxSectorExposurePct) && limits.maxSectorExposurePct > 0 ? limits.maxSectorExposurePct : 30;
     const sectorPct = (ctx.sectorWeightPct as number) * 100;
@@ -342,8 +366,10 @@ export function computeHoldingRisk(h: HoldingRiskInput, ctx: HoldingRiskContext)
 
   // ── Posture precedence (deterministic) ──────────────────────────────────────
   // 1. verified protective-stop/thesis-break → exit_review (drawdown alone NEVER)
-  // 2. hard name/cluster breach, OR a sector breach THIS name was SELECTED to
-  //    absorb → trim
+  // 2. hard name breach, OR a sector breach THIS name was SELECTED to absorb:
+  //    review only. Global trading references are not account-specific sell mandates.
+  // 3. correlated cluster breach → review until a deterministic allocator names
+  //    the exposure and quantity to reduce
   // 3. sector breached but no usable allocation → review (honest: we cannot say
   //    whether THIS name should absorb it)
   // 4. incomplete / low-confidence evidence → review
@@ -383,14 +409,20 @@ export function computeHoldingRisk(h: HoldingRiskInput, ctx: HoldingRiskContext)
       ctx.thesisBreak ? "thesis break confirmed" : null,
     ].filter(Boolean).join(" + ");
     actionReason = `Exit review: ${why}. ${advisory}`;
-  } else if (nameBreach || sectorSelected || clusterBreach) {
-    riskPosture = "trim";
-    const breaches = [
-      nameBreach ? `name ${weightPct.toFixed(1)}% > ${nameLimit}% cap` : null,
-      sectorSelected ? alloc!.reason : null,
-      clusterBreach ? `correlated cluster over ${limits.maxAvgPairwiseCorr} corr cap with material weight` : null,
-    ].filter(Boolean).join(" ");
-    actionReason = `Trim: ${breaches} ${advisory}`;
+  } else if (nameBreach || sectorSelected) {
+    riskPosture = "review";
+    const measured = [
+      nameBreach ? `name weight ${weightPct.toFixed(1)}% exceeds the ${nameLimit}% global Kairos trading reference` : null,
+      sectorSelected && alloc
+        ? `${h.sector} exceeds the ${limits.maxSectorExposurePct}% global Kairos sector reference; this holding contributes materially to that exposure`
+        : null,
+    ].filter(Boolean).join("; ");
+    actionReason = `Review concentration: ${measured}. Kairos has no approved account-specific concentration mandate or executable share-quantity plan for this account, so no trim is recommended. ${advisory}`;
+  } else if (clusterBreach) {
+    riskPosture = "review";
+    actionReason =
+      `Review overlap: this holding is in a material correlated cluster above the ${limits.maxAvgPairwiseCorr} correlation reference. ` +
+      `Correlation identifies shared exposure but does not identify which holding or quantity to sell, so no trim is recommended.`;
   } else if (sectorUnallocated) {
     riskPosture = "review";
     actionReason =

@@ -53,5 +53,15 @@ the 7-day agent recap from agent_runs + learner_runs + rescore flags.
 - Snapshot date, session age, formula version, confidence, missing inputs,
   current price, NAV weight, unrealized P&L, score, posture, and deterministic
   action reason are displayed. Missing values stay unavailable, never zero.
+- Every displayed live holding also carries the latest canonical ResearchAgent
+  annotation for the same `(symbol, market)`: score, direction, exact researched
+  timestamp, market-session age/freshness, and `holding re-score` versus
+  `candidate score`. Only `deterministic_v1 + session_validated=true` rows count;
+  a failed read, abstention, stale result, and never-researched state remain
+  distinct. This is display-only and never changes Holding Risk.
+- The email explains that research conviction and portfolio risk answer different
+  questions. Since `hr-v3`, concentration is `REVIEW`, not `TRIM`, for every
+  account; a high research score never erases measured exposure, but a global
+  trading reference is never treated as an account-specific sell mandate.
 - Failed reads and missing complete runs are visible states. A stale or missing
   snapshot must never be described as safe/current.

@@ -1,7 +1,7 @@
 # Feature: Daily Per-Holding Risk Analytics
 
-**Status:** DRAFT — awaiting owner approval
-**Last updated:** 2026-07-16
+**Status:** SHIPPED — current formula `hr-v3`
+**Last updated:** 2026-07-21
 **Owner:** Vaibhav
 **Update this file when:** the per-holding risk score formula, the strategy-decision
 rules, the daily cron cadence, or the snapshot schema changes.
@@ -16,6 +16,18 @@ rules, the daily cron cadence, or the snapshot schema changes.
 > authority for that rule, its NAV denominator, and the read-only advisory labelling.
 > This file remains the authority for the score, the cron, the snapshot schema, and
 > the LLM prose boundary. No migration; `formula_version` carries the change.
+
+> **Account-intent correction (`hr-v2` → `hr-v3`, 2026-07-21):** a generic Kairos
+> trading cap is not an approved sell mandate for a long-term/read-only account.
+> Concentration breaches on every live account now produce `review`, never `trim`.
+> Broad asset-class sleeves (`Diversified Equity`, `International Equity`, Fixed
+> Income, Commodities, Digital Assets) are not equity sectors and are excluded
+> from `max_sector_exposure_pct`. Correlation remains measured but produces
+> `review` until a deterministic allocator identifies the holding and quantity.
+> Having an order path is not proof of an account-specific concentration mandate.
+> A future `trim` requires both that mandate and a deterministic executable share-
+> quantity plan. Protective-stop/thesis `exit_review` precedence is unchanged. No
+> schema or order-path change.
 
 ## Intent (owner, verbatim)
 
@@ -57,8 +69,9 @@ rules, the daily cron cadence, or the snapshot schema changes.
 - Unrealized loss alone never creates an `exit_review`. Selling solely because a
   holding is down is a loss-chasing rule. Exit review requires a deterministic
   protective-stop/thesis-break/hard-risk-breach reason with its evidence recorded.
-- Read-only accounts stay read-only — a `trim`/`exit` call on `965848641` is
-  informational, no order path exists for it.
+- Read-only accounts stay read-only. Without an approved account-specific
+  objective/cap mandate, concentration produces `review`, not a sell instruction.
+  A verified protective-stop/thesis break may still produce advisory `exit_review`.
 
 ## Data model (additive)
 
@@ -131,7 +144,9 @@ Schema rules:
      score. Optional missing dimensions reduce `data_confidence` and are excluded
      from the numerator without renormalizing the score to appear fully confident.
    - Posture precedence: verified protective-stop/thesis-break →
-     `exit_review`; hard concentration/cluster breach → `trim`; incomplete or
+     `exit_review`; direct-name, allocated real-sector, and correlated-cluster
+     concentration produce `review` for every account because global references
+     are not account-specific sell mandates; incomplete or
      conflicting evidence → `review`; otherwise `hold`. `add_capacity` means
      only that owner-approved risk limits have room.
 2. New cron `POST /api/agents/holding-risk` (cron-secret gated):

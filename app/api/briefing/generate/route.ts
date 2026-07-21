@@ -88,6 +88,36 @@ function escapeHtml(value: unknown): string {
     .replace(/'/g, "&#39;");
 }
 
+function researchHtml(
+  holding: LiveRiskBriefing["accounts"][number]["holdingsShown"][number],
+  currency: "USD" | "INR",
+): string {
+  const research = holding.research;
+  if (research == null) {
+    return `<div style="color:${E.red};margin-top:6px"><b>ResearchAgent:</b> read unavailable — do not infer a score.</div>`;
+  }
+  if (research.state === "never") {
+    return `<div style="color:${E.amber};margin-top:6px"><b>ResearchAgent:</b> never researched in this market.</div>`;
+  }
+  if (research.state === "unavailable" || research.score == null || research.scored_at == null) {
+    return `<div style="color:${E.amber};margin-top:6px"><b>ResearchAgent:</b> last run abstained; no usable score.</div>`;
+  }
+  const scoredAt = new Date(research.scored_at);
+  const timestamp = Number.isFinite(scoredAt.getTime())
+    ? new Intl.DateTimeFormat("en-US", {
+        timeZone: currency === "INR" ? "Asia/Kolkata" : "America/New_York",
+        month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
+        timeZoneName: "short",
+      }).format(scoredAt)
+    : research.scored_at;
+  const stateColor = research.state === "stale" ? E.red : E.blue;
+  const age = research.sessions_since == null
+    ? "session age unavailable"
+    : `${research.sessions_since} market session${research.sessions_since === 1 ? "" : "s"} ago`;
+  const scope = research.scored_as_holding ? "holding re-score" : "candidate score";
+  return `<div style="color:${stateColor};margin-top:6px"><b>ResearchAgent:</b> ${research.score}/100 · ${escapeHtml((research.direction ?? "no direction").toUpperCase())} · ${escapeHtml(timestamp)} · ${age} · ${scope}${research.state === "stale" ? " · STALE" : ""}</div>`;
+}
+
 function buildLiveRiskHtml(risk: LiveRiskBriefing, baseUrl: string): string {
   if (risk.state === "unavailable") {
     return `<div style="font-size:13px;color:${E.red};padding:8px 0">Live holding risk is unavailable. No safe posture is inferred; use Risk Analytics before acting.</div>`;
@@ -118,11 +148,12 @@ function buildLiveRiskHtml(risk: LiveRiskBriefing, baseUrl: string): string {
       const pnl = holding.unrealizedPnlPct == null ? "n/a" : `${sign(holding.unrealizedPnlPct)}${holding.unrealizedPnlPct.toFixed(1)}%`;
       const price = holding.currentPrice == null ? "price n/a" : `${cur}${holding.currentPrice.toFixed(2)}`;
       const missing = holding.missingInputs.length ? `<div style="color:${E.amber};margin-top:3px">Missing: ${escapeHtml(holding.missingInputs.join(", "))}</div>` : "";
+      const research = researchHtml(holding, account.currency);
       return `<tr>
         <td style="padding:8px 7px;border-bottom:1px solid ${E.border};font-size:12px;font-weight:700;color:${E.text}">${escapeHtml(holding.symbol)}</td>
         <td style="padding:8px 7px;border-bottom:1px solid ${E.border};font-size:11px;color:${postureColor};font-weight:700">${escapeHtml(holding.posture.replace(/_/g, " ").toUpperCase())}<div style="font-weight:400;color:${E.muted};margin-top:2px">${score}</div></td>
         <td style="padding:8px 7px;border-bottom:1px solid ${E.border};font-size:11px;color:${E.sub}">${price}<div style="margin-top:2px">${weight}</div><div style="color:${pctColor(holding.unrealizedPnlPct)};margin-top:2px">P&amp;L ${pnl}</div></td>
-        <td style="padding:8px 7px;border-bottom:1px solid ${E.border};font-size:11px;color:${E.sub};line-height:1.45">${escapeHtml(holding.reason ?? "No deterministic action reason available.")}${missing}</td>
+        <td style="padding:8px 7px;border-bottom:1px solid ${E.border};font-size:11px;color:${E.sub};line-height:1.45">${escapeHtml(holding.reason ?? "No deterministic action reason available.")}${missing}${research}</td>
       </tr>`;
     }).join("");
     const omitted = account.holdingsOmitted > 0
@@ -136,7 +167,7 @@ function buildLiveRiskHtml(risk: LiveRiskBriefing, baseUrl: string): string {
       ${account.holdingsShown.length ? `<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-top:8px">${rows}</table>` : `<div style="font-size:12px;color:${E.muted};margin-top:8px">No holdings were present in this completed snapshot.</div>`}
       ${omitted}
     </div>`;
-  }).join("") + `<div style="font-size:11px;color:${E.muted};margin-top:4px">Deterministic, advisory-only results. The briefing never recalculates or changes a posture. <a href="${baseUrl}/dashboard/risk" style="color:${E.accent};text-decoration:none">Open full Risk Analytics »</a></div>`;
+  }).join("") + `<div style="font-size:11px;color:${E.muted};margin-top:4px;line-height:1.5"><b>Research and risk answer different questions:</b> ResearchAgent scores the stock thesis; Holding Risk measures exposure. Concentration is REVIEW-only because Kairos does not have an account-specific concentration mandate or executable quantity plan. A high research score does not erase measured risk, and measured concentration does not create a sell instruction. Deterministic, advisory-only results; the briefing never recalculates or changes either verdict. <a href="${baseUrl}/dashboard/risk" style="color:${E.accent};text-decoration:none">Open full Risk Analytics »</a></div>`;
 }
 
 function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string; html: string } {
@@ -506,6 +537,18 @@ export async function POST(req: NextRequest) {
           .select("run_id,market,currency,account_id,total_value,metrics,data_confidence,missing_inputs")
           .in("run_id", runIds),
       ]);
+      const riskSymbols = Array.from(new Set((holdingRows.data ?? [])
+        .filter((row: any) => row.market === market && typeof row.symbol === "string")
+        .map((row: any) => row.symbol)));
+      const researchRows = riskSymbols.length > 0
+        ? await svc.from("agent_signals")
+            .select("symbol,market,analyst_score,direction,created_at,is_holding")
+            .eq("market", market)
+            .eq("score_source", "deterministic_v1")
+            .eq("session_validated", true)
+            .in("symbol", riskSymbols)
+            .order("created_at", { ascending: false })
+        : { data: [], error: null };
       liveRisk = buildLiveRiskBriefing({
         market,
         now,
@@ -513,6 +556,8 @@ export async function POST(req: NextRequest) {
         holdings: holdingRows.data ?? [],
         accounts: accountRows.data ?? [],
         error: holdingRows.error?.message ?? accountRows.error?.message ?? null,
+        researchRows: researchRows.data ?? [],
+        researchError: researchRows.error?.message ?? null,
       });
     }
   }
@@ -663,7 +708,7 @@ ${positionLines.length > 0 ? positionLines.join("\n") : "  • No open positions
 LIVE ROBINHOOD ACCOUNT (••••8641, read-only):
 ${liveBlock}
 
-LIVE HOLDINGS RISK (DETERMINISTIC, ADVISORY ONLY; NEVER CHANGE THESE POSTURES):
+LIVE HOLDINGS RISK (DETERMINISTIC, ADVISORY ONLY; CONCENTRATION IS REVIEW-ONLY; RESEARCH DOES NOT ALTER RISK):
 ${liveRiskContextLines(liveRisk).join("\n")}
 
 AGENT SIGNALS (pending, score ≥50):

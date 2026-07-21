@@ -1,4 +1,11 @@
 import { marketSessionsSince } from "@/lib/trading/paper-exit-policy";
+import {
+  buildResearchBlock,
+  indexLatestSignals,
+  researchKey,
+  type ResearchBlock,
+  type ResearchSignalRow,
+} from "@/lib/research/risk-annotation";
 
 export type BriefingMarket = "us" | "india";
 export type LiveRiskState = "available" | "no_complete_runs" | "unavailable";
@@ -57,9 +64,12 @@ export interface BriefingRiskHolding {
   score: number | null;
   label: string | null;
   posture: "exit_review" | "trim" | "review" | "insufficient_data" | "hold";
+  sourcePosture: "exit_review" | "trim" | "review" | "insufficient_data" | "hold";
   reason: string | null;
   dataConfidence: number | null;
   missingInputs: string[];
+  /** Display-only ResearchAgent annotation; null means the research read failed. */
+  research: ResearchBlock | null;
 }
 
 export interface BriefingRiskAccount {
@@ -86,6 +96,8 @@ export interface LiveRiskBriefing {
   state: LiveRiskState;
   accounts: BriefingRiskAccount[];
   error: string | null;
+  researchAvailable: boolean;
+  researchError: string | null;
 }
 
 const POSTURE_RANK: Record<BriefingRiskHolding["posture"], number> = {
@@ -95,6 +107,8 @@ const POSTURE_RANK: Record<BriefingRiskHolding["posture"], number> = {
   insufficient_data: 2,
   hold: 1,
 };
+
+const LEGACY_GENERIC_TRIM_FORMULAS = new Set(["hr-v1", "hr-v2"]);
 
 function finiteNumber(value: unknown): number | null {
   if (value == null || value === "") return null;
@@ -164,11 +178,19 @@ export function buildLiveRiskBriefing(input: {
   holdings: readonly LiveRiskHoldingRow[];
   accounts: readonly LiveRiskAccountRow[];
   error?: string | null;
+  researchRows?: readonly ResearchSignalRow[];
+  researchError?: string | null;
 }): LiveRiskBriefing {
-  if (input.error) return { state: "unavailable", accounts: [], error: input.error };
+  const researchAvailable = !input.researchError;
+  const researchByKey = researchAvailable ? indexLatestSignals(input.researchRows ?? []) : new Map();
+  if (input.error) return {
+    state: "unavailable", accounts: [], error: input.error, researchAvailable, researchError: input.researchError ?? null,
+  };
 
   const runs = latestCompleteRiskRuns(input.runs, input.market);
-  if (runs.length === 0) return { state: "no_complete_runs", accounts: [], error: null };
+  if (runs.length === 0) return {
+    state: "no_complete_runs", accounts: [], error: null, researchAvailable, researchError: input.researchError ?? null,
+  };
 
   const accountByRun = new Map(input.accounts.map((row) => [row.run_id, row]));
   const accounts = runs.map((run): BriefingRiskAccount => {
@@ -184,19 +206,30 @@ export function buildLiveRiskBriefing(input: {
         && row.market === run.market
         && row.currency === run.currency
         && row.account_id === run.account_id)
-      .map((row): BriefingRiskHolding => ({
-        symbol: row.symbol,
-        currentPrice: finiteNumber(row.current_price),
-        marketValue: finiteNumber(row.market_value),
-        weightPct: finiteNumber(row.weight_pct),
-        unrealizedPnlPct: finiteNumber(row.unrealized_pnl_pct),
-        score: finiteNumber(row.holding_risk_score),
-        label: row.risk_label,
-        posture: normalizePosture(row.risk_posture),
-        reason: row.action_reason,
-        dataConfidence: finiteNumber(row.data_confidence),
-        missingInputs: row.missing_inputs ?? [],
-      }))
+      .map((row): BriefingRiskHolding => {
+        const sourcePosture = normalizePosture(row.risk_posture);
+        const legacyGenericTrim = sourcePosture === "trim"
+          && LEGACY_GENERIC_TRIM_FORMULAS.has(run.formula_version);
+        return {
+          symbol: row.symbol,
+          currentPrice: finiteNumber(row.current_price),
+          marketValue: finiteNumber(row.market_value),
+          weightPct: finiteNumber(row.weight_pct),
+          unrealizedPnlPct: finiteNumber(row.unrealized_pnl_pct),
+          score: finiteNumber(row.holding_risk_score),
+          label: row.risk_label,
+          posture: legacyGenericTrim ? "review" : sourcePosture,
+          sourcePosture,
+          reason: legacyGenericTrim
+            ? `Legacy ${run.formula_version} concentration alert — review only. No trim is recommended without an account-specific objective/cap mandate. Historical reason: ${row.action_reason ?? "unavailable"}`
+            : row.action_reason,
+          dataConfidence: finiteNumber(row.data_confidence),
+          missingInputs: row.missing_inputs ?? [],
+          research: researchAvailable
+            ? buildResearchBlock(researchByKey.get(researchKey(row.symbol, input.market)), input.now, input.market)
+            : null,
+        };
+      })
       .sort((a, b) => POSTURE_RANK[b.posture] - POSTURE_RANK[a.posture]
         || (b.score ?? -1) - (a.score ?? -1)
         || a.symbol.localeCompare(b.symbol));
@@ -234,7 +267,13 @@ export function buildLiveRiskBriefing(input: {
     };
   });
 
-  return { state: "available", accounts, error: null };
+  return {
+    state: "available",
+    accounts,
+    error: null,
+    researchAvailable,
+    researchError: input.researchError ?? null,
+  };
 }
 
 export function liveRiskContextLines(risk: LiveRiskBriefing): string[] {
@@ -246,7 +285,7 @@ export function liveRiskContextLines(risk: LiveRiskBriefing): string[] {
       : `current (${account.sessionsOld} sessions old)`;
     const header = `  - ${promptField(account.accountLabel, 80)} [${account.currency}], ${freshness}, account risk ${account.accountRiskScore ?? "unavailable"}${account.accountRiskLabel ? `/${promptField(account.accountRiskLabel, 40)}` : ""}`;
     const holdings = account.holdingsShown.map((holding) =>
-      `    - ${promptField(holding.symbol, 24)}: ${holding.posture}, risk ${holding.score ?? "unavailable"}${holding.reason ? `; ${promptField(holding.reason)}` : ""}`,
+      `    - ${promptField(holding.symbol, 24)}: ${holding.posture}, risk ${holding.score ?? "unavailable"}; research ${holding.research == null ? "read unavailable" : holding.research.state === "never" ? "never" : `${holding.research.score ?? "unavailable"}/${holding.research.direction ?? "no direction"}, ${holding.research.state}, ${holding.research.sessions_since ?? "unknown"} sessions old`}${holding.reason ? `; ${promptField(holding.reason)}` : ""}`,
     );
     if (account.holdingsOmitted > 0) holdings.push(`    - ${account.holdingsOmitted} lower-priority hold(s) omitted from the briefing; see Risk Analytics.`);
     return [header, ...holdings];

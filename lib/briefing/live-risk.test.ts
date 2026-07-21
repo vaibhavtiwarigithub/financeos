@@ -7,6 +7,7 @@ import {
   type LiveRiskHoldingRow,
   type LiveRiskRunRow,
 } from "./live-risk";
+import type { ResearchSignalRow } from "@/lib/research/risk-annotation";
 
 const run = (overrides: Partial<LiveRiskRunRow> = {}): LiveRiskRunRow => ({
   id: "run-us-new",
@@ -19,7 +20,7 @@ const run = (overrides: Partial<LiveRiskRunRow> = {}): LiveRiskRunRow => ({
   captured_on: "2026-07-20",
   source_captured_at: "2026-07-20T21:00:00Z",
   completed_at: "2026-07-20T21:30:00Z",
-  formula_version: "hr-v2",
+  formula_version: "hr-v3",
   data_confidence: 0.9,
   missing_inputs: [],
   ...overrides,
@@ -53,6 +54,16 @@ const account = (overrides: Partial<LiveRiskAccountRow> = {}): LiveRiskAccountRo
   metrics: { riskScore: 58, riskLabel: "Elevated" },
   data_confidence: 0.9,
   missing_inputs: [],
+  ...overrides,
+});
+
+const research = (overrides: Partial<ResearchSignalRow> = {}): ResearchSignalRow => ({
+  symbol: "AVGO",
+  market: "us",
+  analyst_score: 74,
+  direction: "long",
+  created_at: "2026-07-20T13:00:00Z",
+  is_holding: true,
   ...overrides,
 });
 
@@ -115,7 +126,13 @@ describe("live risk briefing", () => {
     const unavailable = buildLiveRiskBriefing({
       market: "us", now: new Date(), runs: [], holdings: [], accounts: [], error: "db read failed",
     });
-    expect(unavailable).toEqual({ state: "unavailable", accounts: [], error: "db read failed" });
+    expect(unavailable).toEqual({
+      state: "unavailable",
+      accounts: [],
+      error: "db read failed",
+      researchAvailable: true,
+      researchError: null,
+    });
     expect(liveRiskContextLines(unavailable)[0]).toContain("do not infer a safe posture");
   });
 
@@ -146,5 +163,73 @@ describe("live risk briefing", () => {
 
     expect(result.accounts[0].accountLabel).toBe("Robinhood (••••8641)");
     expect(result.accounts[0].accountLabel).not.toContain("965848641");
+  });
+
+  it("attaches the latest same-market research score with timestamp and holding scope", () => {
+    const result = buildLiveRiskBriefing({
+      market: "us",
+      now: new Date("2026-07-21T14:00:00Z"),
+      runs: [run()],
+      holdings: [holding()],
+      accounts: [account()],
+      researchRows: [
+        research({ analyst_score: 74, created_at: "2026-07-20T13:00:00Z", is_holding: true }),
+        research({ analyst_score: 60, created_at: "2026-07-19T13:00:00Z", is_holding: false }),
+        research({ market: "india", analyst_score: 99, created_at: "2026-07-21T04:00:00Z" }),
+      ],
+    });
+
+    expect(result.accounts[0].holdingsShown[0].research).toMatchObject({
+      score: 74,
+      direction: "long",
+      scored_at: "2026-07-20T13:00:00Z",
+      sessions_since: 1,
+      state: "fresh",
+      scored_as_holding: true,
+    });
+  });
+
+  it("distinguishes a failed research read from a symbol that was never researched", () => {
+    const failed = buildLiveRiskBriefing({
+      market: "us", now: new Date(), runs: [run()], holdings: [holding()], accounts: [account()], researchError: "RLS denied",
+    });
+    expect(failed.researchAvailable).toBe(false);
+    expect(failed.accounts[0].holdingsShown[0].research).toBeNull();
+
+    const never = buildLiveRiskBriefing({
+      market: "us", now: new Date(), runs: [run()], holdings: [holding()], accounts: [account()], researchRows: [],
+    });
+    expect(never.researchAvailable).toBe(true);
+    expect(never.accounts[0].holdingsShown[0].research?.state).toBe("never");
+  });
+
+  it("downgrades a legacy generic-cap trim on a read-only account to review without rewriting history", () => {
+    const result = buildLiveRiskBriefing({
+      market: "us",
+      now: new Date("2026-07-21T14:00:00Z"),
+      runs: [run({ formula_version: "hr-v2", account_id: "965848641" })],
+      holdings: [holding({ account_id: "965848641", risk_posture: "trim" })],
+      accounts: [],
+    });
+
+    expect(result.accounts[0].holdingsShown[0]).toMatchObject({
+      posture: "review",
+      sourcePosture: "trim",
+    });
+    expect(result.accounts[0].holdingsShown[0].reason).toMatch(/No trim is recommended/i);
+  });
+
+  it("downgrades a legacy generic-cap trim even when the account has an order path", () => {
+    const result = buildLiveRiskBriefing({
+      market: "us",
+      now: new Date("2026-07-21T16:00:00Z"),
+      runs: [run({ formula_version: "hr-v2", account_id: "605420660" })],
+      holdings: [holding({ account_id: "605420660", risk_posture: "trim" })],
+      accounts: [account({ account_id: "605420660" })],
+    });
+
+    expect(result.accounts[0].holdingsShown[0].posture).toBe("review");
+    expect(result.accounts[0].holdingsShown[0].sourcePosture).toBe("trim");
+    expect(result.accounts[0].holdingsShown[0].reason).toMatch(/No trim is recommended/i);
   });
 });
