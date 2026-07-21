@@ -19,6 +19,7 @@ import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/
 import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
 import { paperPerformanceTruth } from "@/lib/paper-nav";
 import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
+import { isMarketSessionOpen } from "@/lib/trading/market-calendar";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -110,6 +111,19 @@ export async function POST(req: NextRequest) {
     }
     let activeMarkets = [...poolByMarket.keys()]; // 'us' always; 'india' when 057 applied
     if (marketScope) activeMarkets = activeMarkets.filter(m => m === marketScope); // scoped cron run
+
+    // Paper fills model executable market orders, so they must happen during the
+    // exchange's regular session. This also makes fixed-UTC cron drift fail closed
+    // across EDT/EST changes and prevents a manually-triggered holiday fill.
+    const sessionBlocks: Record<string, string> = {};
+    for (const m of activeMarkets) {
+      if (!isMarketSessionOpen(m)) sessionBlocks[m] = "outside_regular_session";
+    }
+    activeMarkets = activeMarkets.filter((m) => !sessionBlocks[m]);
+    if (activeMarkets.length === 0) {
+      await finishSkippedRun(`Paper entries skipped outside regular market session: ${JSON.stringify(sessionBlocks)}`);
+      return NextResponse.json({ skipped: true, reason: "Outside regular market session", markets: sessionBlocks });
+    }
 
     // Both controls are latched operator/risk controls. A fresh kill-switch
     // calculation returning safe must never bypass a prior manual/automatic
@@ -661,7 +675,13 @@ export async function POST(req: NextRequest) {
           const result = rpcData as any;
           if (!result?.ok) {
             await revertClaim(signal.id);
-            skipped.push({ symbol: signal.symbol, reason: `rpc_fill_denied: ${result?.error ?? "unknown"}` });
+            const denial = String(result?.error ?? "unknown");
+            skipped.push({ symbol: signal.symbol, reason: `rpc_fill_denied: ${denial}` });
+            await logStage(supabase, {
+              signal_id: signal.id, symbol: signal.symbol, market,
+              stage: denial === "pyramid_gate" ? "pyramid_gate" : "execution",
+              outcome: "rejected", reason: `rpc_fill_denied:${denial}`, detail: result,
+            });
             continue;
           }
           orderEventId = result.event_id;
@@ -901,9 +921,19 @@ export async function POST(req: NextRequest) {
     if (runId) {
       const tradedSymbols = filled.map((f: any) => f.symbol);
       const navSummary = Object.entries(navByMarket).map(([m, n]) => `${m}:${m === "india" ? "₹" : "$"}${n.toFixed(2)}`).join(" ");
+      const skipReasons = skipped.reduce<Record<string, number>>((counts, item) => {
+        const reason = String(item?.reason ?? "unknown");
+        counts[reason] = (counts[reason] ?? 0) + 1;
+        return counts;
+      }, {});
+      const skipSummary = Object.entries(skipReasons)
+        .sort((a, b) => b[1] - a[1])
+        .map(([reason, count]) => `${reason}=${count}`)
+        .join(", ");
       await supabase.from("agent_runs").update({
         status: "done", symbols: tradedSymbols, signals_written: filled.length,
-        result_summary: `${filled.length} trades filled, ${skipped.length} skipped, ${expiredTotal} stale expired. NAV ${navSummary}`,
+        result_summary: `${filled.length} trades filled, ${skipped.length} skipped${skipSummary ? ` (${skipSummary})` : ""}, ${expiredTotal} stale expired. NAV ${navSummary}`,
+        workload_metrics: { skip_reasons: skipReasons },
         completed_at: new Date().toISOString(), tokens_input: 0, tokens_output: 0, claude_calls: 0,
       } as any).eq("id", runId);
     }

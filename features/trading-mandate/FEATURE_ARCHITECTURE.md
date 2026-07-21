@@ -140,3 +140,16 @@ project (`dionkikgdmlaotvtbnfr`) because its timestamped migration ledger does n
 align with the repository's numbered local ledger and a broad CLI push could replay
 unrelated migrations. The table, US/India seeds, provenance columns, and owner-read
 RLS policy were verified from the production schema after application.
+
+## Paper Entry Cadence Correction (2026-07-21)
+
+- Research produces signals only; it never invokes PaperTrader inline.
+- Exactly one pg_cron job per market attempts paper entries each regular session.
+- PaperTrader independently verifies the market-local session and holiday calendar,
+  so UTC/DST drift or a manual invocation cannot create an off-session fill.
+- US runs at 15:15 UTC (inside both EDT and EST sessions); India runs at 04:10 UTC
+  (09:40 IST). Both retain same-session signal freshness and all existing gates.
+- A rejected fill RPC is written to `pipeline_stage_events` and summarized by
+  reason in `agent_runs.workload_metrics`; observability never changes eligibility.
+- The per-market 10-name default remains a concentration gate, not a cash-use
+  target. Idle cash does not authorize an eleventh name or averaging down.

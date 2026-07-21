@@ -1,5 +1,6 @@
 # Kairos — Crons & Scheduling
-> Last updated: 2026-07-19 (Per-market ResearchAgent catch-up now runs on supported market-closed days: weekends plus verified full NYSE/NSE equity holidays. Daily triggers self-skip on trading days, special sessions, and unsupported calendar years. Results remain `weekend_staged` under the legacy status name, `session_validated=false`, and never chain a trader.)
+> Last updated: 2026-07-21 (PaperTrader is standalone-only: one in-session attempt per market, with US at 15:15 UTC and India at 04:10 UTC. Research no longer tail-calls it. The route independently refuses weekends, holidays, and outside-session execution.)
+> Previously: 2026-07-19 (Per-market ResearchAgent catch-up now runs on supported market-closed days: weekends plus verified full NYSE/NSE equity holidays. Daily triggers self-skip on trading days, special sessions, and unsupported calendar years. Results remain `weekend_staged` under the legacy status name, `session_validated=false`, and never chain a trader.)
 > Previously: 2026-07-17 (Documented the two `macro-read` crons, which were missing from this table entirely. `macro-read-india` is now a **no-op** — the route refuses `market=india` — and is flagged for removal.)
 > Previously: 2026-07-17 (`kairos-price-cache-fill` now also backfills ~400d of sector-XL daily history — one paced, resumable provider call per symbol on the existing schedule. No new cron, no schema change.)
 > Previously: 2026-07-15 (Codex audit: added the missing daily `kairos-earnings-pit-capture` at 02:10 UTC; moved `kairos-india-markets-fill-retry` from a colliding 10:45 slot to 10:35 UTC. India primary remains 10:15; symbol-profile backfill remains 11:40.)
@@ -35,11 +36,11 @@ All triggered by `scripts/run-agents.ps1 -Agent <name>`. PC must be on for these
 |---|---|---|---|
 | `brief-morning` | Weekdays 8:00 AM | `/api/briefing/generate` | Morning email before market open |
 | `research` | Weekdays 9:00 AM | `/api/agents/research/cron?market=us` | US signal generation (3 candidates/day) |
-| `paper-trade-us` | Weekdays 10:05 AM | `/api/agents/paper-trade?market=us` | US paper fills (standalone, freshness-gated) |
+| `paper-trade-us` | Legacy local task; disable when pg_cron is active | `/api/agents/paper-trade?market=us` | Route is session-gated; production authority is pg_cron |
 | `trader` | Weekdays 9:45 AM | `/api/agents/trader` | TraderAgent proposals; `approval_required=true` |
 | `scan-india-refresh` | Weekdays 5:30 AM | `/api/scan/india/refresh` | Refresh up to 600 NSE equities oldest-first; scanner reports fresh/stale rotating coverage |
 | `research-india` | Weekdays 6:15 AM | `/api/agents/research/cron?market=india` | India signal generation post-NSE-close |
-| `paper-trade-india` | Weekdays 4:35 PM IST (≈6:05 AM ET) | `/api/agents/paper-trade?market=india` | India paper fills |
+| `paper-trade-india` | Legacy local task; disable when pg_cron is active | `/api/agents/paper-trade?market=india` | Route is session-gated; production authority is pg_cron |
 | `position-monitor` | Weekdays 4:15 PM | `/api/agents/position-monitor?market=us` | US stop/target/time-stop/partial-profit checks |
 | `position-monitor-india` | Weekdays 6:35 AM | `/api/agents/position-monitor?market=india` | India position exits |
 | `brief-evening` | Weekdays 4:30 PM | `/api/briefing/generate` | Evening email recap |
@@ -62,6 +63,8 @@ Scheduled inside Supabase via `cron.schedule`, calling the deployed app through 
 
 | Job | Schedule (UTC) | Calls | What it does |
 |---|---|---|---|
+| `kairos-paper-trade-us` | Weekdays 15:15 UTC (11:15 EDT / 10:15 EST) | `POST /api/agents/paper-trade?market=us` | The sole scheduled US paper-entry attempt. Runs safely inside both DST regimes; the route also enforces the NYSE calendar/session. |
+| `kairos-paper-trade-india` | Weekdays 04:10 UTC (09:40 IST) | `POST /api/agents/paper-trade?market=india` | The sole scheduled India paper-entry attempt, after research starts and inside NSE hours. |
 | `kairos-holding-risk-us` | Weekdays 21:30 UTC (17:30 ET) | `POST /api/agents/holding-risk?market=us` | Daily Per-Holding Risk: scores every US live-account holding (deterministic score + posture, LLM prose note only). Fires after the 16:00 ET close **and** after `nav-snapshot` refreshes the account book at 21:00 UTC. 290s timeout. **Advisory-only — touches no order path.** |
 | `kairos-holding-risk-india` | Weekdays 11:00 UTC (16:30 IST) | `POST /api/agents/holding-risk?market=india` | Same, India (Kite): fires after the 15:30 IST close. 290s timeout. Advisory-only. |
 | `kairos-live-snapshot` | Weekdays 13:00–21:00 UTC every 2h | `POST /api/live-account/refresh-snapshot` | Refreshes the live account book for every CONNECTED cloud MCP broker (Robinhood + Webull via the registry driver `captureAccounts`) → `live_account_snapshots` + `live_performance` (US, `market='us'`, VOO bench). Cloud-native (OAuth vault token, no local machine). Auto-ADDs newly-returned accounts. Auto-pruning is broker-scoped and fail-safe: it runs only after that broker returns at least one valid account, deletes only rows for that broker not in the successful capture set, and never runs on failed/empty capture, so a broker outage cannot mass-delete another broker or wipe the kill-switch baseline. **India (Kite) accrual (`refreshKite`)** runs in the same call, fully independent + fail-soft: NAV = Kite `margins.equity.net` + Σ(last_price×qty), bench = ^NSEI close, written as ONE `live_performance` row (`market='india'`, `broker='kite'`, `currency='INR'`, `account_id`=Kite `user_id`). It writes **only** `live_performance`, never `live_account_snapshots`, so the Kite account can never leak into the US account chips or the US kill-switch NAV baseline; a stale Kite daily token just skips the day. This is the forward-built source for the India Live-vs-NIFTY chart (`/api/live-portfolio/performance?market=india`, which falls back to the paper India NIFTY curve until ≥2 live Kite days exist). |
@@ -137,7 +140,7 @@ Cron routes do NOT require an owner session — they accept the cron secret as a
 9:00 AM ET  — research (US)
 9:25 AM ET  — price-cache-fill (Markets ETF cache; retry 9:45)
 9:45 AM ET  — trader (US proposals)
-10:05 AM ET — paper-trade-us
+10:15/11:15 AM ET — paper-trade-us (EST/EDT; fixed 15:15 UTC)
 4:15 PM ET  — position-monitor (US)
 4:30 PM ET  — brief-evening
 5:00 PM ET  — nav-snapshot

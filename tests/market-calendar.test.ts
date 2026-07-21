@@ -13,6 +13,10 @@ describe("market-calendar: isMarketSessionOpen", () => {
   it("US: open mid-session on a normal weekday (Thu 11:00 ET)", () => {
     expect(isMarketSessionOpen("us", new Date("2026-07-09T15:00:00Z"))).toBe(true);
   });
+  it("US: fixed 15:15 UTC paper cron is in-session in both EDT and EST", () => {
+    expect(isMarketSessionOpen("us", new Date("2026-07-09T15:15:00Z"))).toBe(true);
+    expect(isMarketSessionOpen("us", new Date("2026-12-10T15:15:00Z"))).toBe(true);
+  });
   it("US: closed after 16:00 ET", () => {
     expect(isMarketSessionOpen("us", new Date("2026-07-09T21:00:00Z"))).toBe(false); // 17:00 ET
   });
@@ -27,6 +31,9 @@ describe("market-calendar: isMarketSessionOpen", () => {
   });
   it("India: open mid-session (Thu 11:30 IST)", () => {
     expect(isMarketSessionOpen("india", new Date("2026-07-09T06:00:00Z"))).toBe(true);
+  });
+  it("India: fixed 04:10 UTC paper cron is in-session", () => {
+    expect(isMarketSessionOpen("india", new Date("2026-07-09T04:10:00Z"))).toBe(true);
   });
   it("India: closed after 15:30 IST", () => {
     expect(isMarketSessionOpen("india", new Date("2026-07-09T11:00:00Z"))).toBe(false); // 16:30 IST

@@ -12,11 +12,18 @@ describe("closed-day research catch-up safety contract", () => {
   const rotation = readFileSync("lib/trading/capital-rotation.ts", "utf8");
   const migration = readFileSync("supabase/migrations/20260719090000_weekend_research_catchup.sql", "utf8");
   const holidayMigration = readFileSync("supabase/migrations/20260719100000_market_holiday_research_catchup.sql", "utf8");
+  const paperScheduleMigration = readFileSync("supabase/migrations/20260721170000_align_paper_trader_schedule.sql", "utf8");
 
   it("writes weekend scores as unvalidated and does not chain PaperTrader", () => {
     expect(cron).toContain('status: "weekend_staged"');
     expect(cron).toContain("sessionValidated: false");
-    expect(cron).toMatch(/if \(!closedDayCatchup\) \{[\s\S]*\/api\/agents\/paper-trade/);
+    expect(cron).not.toContain("/api/agents/paper-trade");
+  });
+
+  it("runs PaperTrader once per market at an in-session UTC time", () => {
+    expect(paper).toContain("isMarketSessionOpen");
+    expect(paperScheduleMigration).toContain("'15 15 * * 1-5'");
+    expect(paperScheduleMigration).toContain("'10 4 * * 1-5'");
   });
 
   it("requires positive session validation on both entry paths", () => {

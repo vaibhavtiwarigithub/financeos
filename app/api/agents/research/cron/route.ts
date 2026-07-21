@@ -461,27 +461,6 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Chain PaperTrader only after session research. Closed-day scores are staged
-  // evidence and must never enter any execution path.
-  // so an India research run fills the ₹ pool, a US run the $ pool.
-  let paperTradeResult: any = null;
-  if (!closedDayCatchup) {
-    try {
-      const ptUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/agents/paper-trade${marketScope ? `?market=${marketScope}` : ""}`;
-      const ptRes = await fetch(ptUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // Service-to-service: pass cron secret so paper-trade can skip user auth if needed
-          "x-cron-secret": process.env.CRON_SECRET ?? "",
-        },
-      });
-      paperTradeResult = await ptRes.json();
-    } catch (e) {
-      paperTradeResult = { error: e instanceof Error ? e.message : String(e) };
-    }
-  }
-
   // Pre-warm price_cache for researched symbols + benchmark ETFs (fire async, don't block response)
   const BENCHMARK_SYMBOLS = ["VOO", "QQQ", "SPY", "IWM", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLC", "XLP", "XLU", "XLRE", "XLB"];
   const prewarmSymbols = [...new Set([...batch, ...BENCHMARK_SYMBOLS])];
@@ -490,6 +469,5 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     success: true, mode: closedDayCatchup ? "closed_day_catchup" : "session",
     processed: results.length, ok, errors: errs, symbols: batch,
-    paperTrade: paperTradeResult,
   });
 }
