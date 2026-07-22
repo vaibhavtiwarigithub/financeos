@@ -330,6 +330,198 @@ function PaperPerformancePanel({ strategy, market }: { strategy: any; market: Mk
   );
 }
 
+// ── Strategy Lanes Panel ─────────────────────────────────────────────────────
+
+interface LaneComparisonData {
+  market: string;
+  seed: number;
+  lanes: Array<{
+    id: "champion" | "high_conviction" | "no_etf";
+    label: string;
+    description: string;
+    color: string;
+    navHistory: { date: string; nav: number }[];
+    stats: {
+      winRate: number;
+      totalReturn: number;
+      tradeCount: number;
+      avgReturn: number;
+      maxDrawdown: number;
+    };
+  }>;
+  monteCarlo: {
+    p5: { date: string; nav: number }[];
+    p50: { date: string; nav: number }[];
+    p95: { date: string; nav: number }[];
+    finalNavDist: number[];
+  };
+}
+
+type LaneStat = "winRate" | "totalReturn" | "tradeCount" | "avgReturn" | "maxDrawdown";
+
+const LANE_STAT_ROWS: { key: LaneStat; label: string; fmt: (v: number) => string; colorFn?: (v: number) => string }[] = [
+  { key: "winRate",     label: "Win Rate",     fmt: v => v.toFixed(1) + "%",                         colorFn: v => v >= 55 ? T.green : T.red },
+  { key: "totalReturn", label: "Total Return", fmt: v => (v >= 0 ? "+" : "") + v.toFixed(2) + "%",  colorFn: v => v >= 0 ? T.green : T.red },
+  { key: "tradeCount",  label: "Trade Count",  fmt: v => String(v) },
+  { key: "avgReturn",   label: "Avg Return",   fmt: v => (v >= 0 ? "+" : "") + v.toFixed(2) + "%",  colorFn: v => v >= 0 ? T.green : T.red },
+  { key: "maxDrawdown", label: "Max Drawdown", fmt: v => "-" + Math.abs(v).toFixed(2) + "%",        colorFn: () => T.red },
+];
+
+function StrategyLanesPanel({ market }: { market: Mkt }) {
+  const [data, setData] = useState<LaneComparisonData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/agents/lane-comparison?market=${market}`, { cache: "no-store" })
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [market]);
+
+  if (loading) {
+    return (
+      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "clamp(16px,4vw,24px)" }}>
+        <div style={{ color: T.muted, fontSize: "13px", marginBottom: "20px" }}>Loading lane comparison…</div>
+        {[220, 160, 190].map((w, i) => (
+          <div key={i} style={{ height: "10px", borderRadius: "5px", background: T.border, marginBottom: "12px", width: `${w}px`, opacity: 0.5 }} />
+        ))}
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const hasData = data.lanes.some(l => l.navHistory.length >= 2);
+  if (!hasData) {
+    return (
+      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "clamp(16px,4vw,40px)", textAlign: "center" }}>
+        <div style={{ fontSize: "15px", color: T.textSub, marginBottom: "8px" }}>No closed trades yet</div>
+        <div style={{ fontSize: "13px", color: T.muted, lineHeight: 1.6 }}>
+          Run paper trades to build lane comparison data — strategy lanes show champion vs high-conviction vs no-ETF equity curves side-by-side.
+        </div>
+      </div>
+    );
+  }
+
+  // Merge dates across all lanes for a unified x-axis
+  const allDates = Array.from(
+    new Set(data.lanes.flatMap(l => l.navHistory.map(h => h.date)))
+  ).sort();
+  const laneChartData = allDates.map(date => {
+    const pt: Record<string, string | number> = { date };
+    data.lanes.forEach(lane => {
+      const h = lane.navHistory.find(r => r.date === date);
+      if (h) pt[lane.id] = h.nav;
+    });
+    return pt;
+  });
+
+  // Monte Carlo series merged by date
+  const { p5, p50, p95 } = data.monteCarlo;
+  const mcDates = Array.from(
+    new Set([...p5.map(h => h.date), ...p50.map(h => h.date), ...p95.map(h => h.date)])
+  ).sort();
+  const hasMC = mcDates.length >= 2;
+  const mcChartData = mcDates.map(date => ({
+    date,
+    p5:  p5.find(h => h.date === date)?.nav,
+    p50: p50.find(h => h.date === date)?.nav,
+    p95: p95.find(h => h.date === date)?.nav,
+  }));
+
+  const dateTick = (d: string) => { const dt = new Date(d); return `${dt.getMonth() + 1}/${dt.getDate()}`; };
+
+  return (
+    <div>
+      {/* Lane equity curves */}
+      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "clamp(16px,4vw,24px)", marginBottom: "16px" }}>
+        <div style={{ fontSize: "14px", fontWeight: 700, color: T.text, marginBottom: "3px" }}>Strategy Lane Equity Curves</div>
+        <div style={{ fontSize: "12px", color: T.muted, marginBottom: "18px" }}>
+          Champion (all signals) · High Conviction (≥75) · No-ETF — same paper book, different entry filters
+        </div>
+        <ResponsiveContainer width="100%" height={220}>
+          <LineChart data={laneChartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="date" tick={{ fontSize: 10, fill: T.muted }} tickLine={false} axisLine={false} interval="preserveStartEnd" tickFormatter={dateTick} />
+            <YAxis tick={{ fontSize: 10, fill: T.muted }} tickLine={false} axisLine={false} tickFormatter={(v: number) => fmtMoneyAbbrev(v, market)} width={56} />
+            <RechartsTooltip content={<NavChartTooltip market={market} />} />
+            {data.lanes.map(lane => (
+              <Line key={lane.id} type="monotone" dataKey={lane.id} name={lane.label} stroke={lane.color} strokeWidth={2.5} dot={false} connectNulls />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", marginTop: "10px" }}>
+          {data.lanes.map(lane => (
+            <span key={lane.id} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", color: T.muted }}>
+              <span style={{ display: "inline-block", width: "18px", height: "2.5px", background: lane.color, borderRadius: "2px" }} />
+              {lane.label}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Monte Carlo fan — p5/p50/p95 lines; no Area import needed */}
+      {hasMC && (
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "clamp(16px,4vw,24px)", marginBottom: "16px" }}>
+          <div style={{ fontSize: "14px", fontWeight: 700, color: T.text, marginBottom: "3px" }}>Monte Carlo (500 runs, champion lane)</div>
+          <div style={{ fontSize: "12px", color: T.muted, marginBottom: "18px" }}>
+            If trade order was different — outcome range across 500 simulated orderings
+          </div>
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={mcChartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+              <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: T.muted }} tickLine={false} axisLine={false} interval="preserveStartEnd" tickFormatter={dateTick} />
+              <YAxis tick={{ fontSize: 10, fill: T.muted }} tickLine={false} axisLine={false} tickFormatter={(v: number) => fmtMoneyAbbrev(v, market)} width={56} />
+              <RechartsTooltip content={<NavChartTooltip market={market} />} />
+              <Line type="monotone" dataKey="p95"  name="95th pct"    stroke={T.accent} strokeWidth={1}   dot={false} strokeDasharray="3 2" strokeOpacity={0.45} connectNulls />
+              <Line type="monotone" dataKey="p50"  name="Median (p50)" stroke={T.accent} strokeWidth={2.5} dot={false} connectNulls />
+              <Line type="monotone" dataKey="p5"   name="5th pct"     stroke={T.accent} strokeWidth={1}   dot={false} strokeDasharray="3 2" strokeOpacity={0.45} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+          <div style={{ display: "flex", gap: "16px", marginTop: "8px", fontSize: "11px", color: T.muted }}>
+            <span><span style={{ color: T.accent, fontWeight: 700 }}>—</span> Median (p50)</span>
+            <span style={{ opacity: 0.6 }}><span style={{ color: T.accent }}>- -</span> p5 / p95 band</span>
+          </div>
+        </div>
+      )}
+
+      {/* Stats table */}
+      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "clamp(16px,4vw,24px)", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div style={{ fontSize: "14px", fontWeight: 700, color: T.text, marginBottom: "16px" }}>Lane Statistics</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", minWidth: "400px" }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", padding: "6px 12px 10px 0", fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 500 }}>Metric</th>
+              {data.lanes.map(lane => (
+                <th key={lane.id} style={{ textAlign: "left", padding: "6px 12px 10px 0", fontSize: "11px", fontWeight: 700, color: lane.color }}>
+                  {lane.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {LANE_STAT_ROWS.map(row => (
+              <tr key={row.key} style={{ borderTop: `1px solid ${T.border}` }}>
+                <td style={{ padding: "10px 12px 10px 0", color: T.muted, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{row.label}</td>
+                {data.lanes.map(lane => {
+                  const v = lane.stats[row.key];
+                  return (
+                    <td key={lane.id} style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: row.colorFn ? row.colorFn(v) : T.text }}>
+                      {row.fmt(v)}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 
 function ScoreBar({ score }: { score: number }) {
@@ -356,7 +548,7 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
   const [runLog, setRunLog] = useState<string[]>([]);
   const [monitorRunning, setMonitorRunning] = useState(false);
   const [monitorResult, setMonitorResult] = useState<{ checked: number; closed: number; closedDetails: string[]; updated: number } | null>(null);
-  const [tab, setTab] = useState<"queue" | "signals" | "history">("queue");
+  const [tab, setTab] = useState<"queue" | "signals" | "history" | "lanes">("queue");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   const [queueItems, setQueueItems] = useState<any[]>(queue);
   const [actionLog, setActionLog] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
@@ -529,9 +721,9 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: "4px", marginBottom: "16px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>
-        {(["queue", "signals", "history"] as const).map(t => (
+        {(["queue", "signals", "history", "lanes"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === t ? T.accent : T.card, color: tab === t ? "#fff" : T.muted, textTransform: "capitalize", flexShrink: 0, whiteSpace: "nowrap" }}>
-            {t === "queue" ? (isIndia ? "Trade Queue (US only)" : `Trade Queue (${queueItems.length})`) : t === "signals" ? `Paper Signals (${pendingSignals.length})` : `Paper History (${tradeLog.length})`}
+            {t === "queue" ? (isIndia ? "Trade Queue (US only)" : `Trade Queue (${queueItems.length})`) : t === "signals" ? `Paper Signals (${pendingSignals.length})` : t === "history" ? `Paper History (${tradeLog.length})` : "Strategy Lanes"}
           </button>
         ))}
       </div>
@@ -648,6 +840,9 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
           <StockModal symbol={chartSymbol} onClose={() => setChartSymbol(null)} />
         </Suspense>
       )}
+
+      {/* Strategy Lanes */}
+      {tab === "lanes" && <StrategyLanesPanel market={market} />}
 
       {/* Trade history */}
       {tab === "history" && (
