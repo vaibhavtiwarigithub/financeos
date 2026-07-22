@@ -236,6 +236,14 @@ makes it a harmless no-op meanwhile.
 
 Sub-score formulas are deterministic and **fixed** (hand-tuned priors in `lib/data/scores.ts` + `lib/data/technicals.ts`) — they are NOT agent/genome-mutable. Only the dimension **weights** evolve (champion loop). New candidate features flow through the IC-gated Feature Registry, not by editing these formulas. (2026-07-10: scored the previously-dead volume + analyst-target signals, made RSI continuous, made P/E sector-relative.)
 
+**Technical calibration shadow (2026-07-21):** EdgeScout now measures the exact
+`kairos_technical_score_v1` composite beside bounded `macd_atr_12_26_9` and
+`signed_adx_14` challengers. EdgeIC evaluates them independently for US and India
+and emits market-wide plus sufficiently broad sector diagnostic rows from the same
+already-fetched candles. This is measure-only: it does not add MACD/ADX to the
+score, create sector-specific parameters, or change any agent decision. Formula,
+dataset, segment, and run fingerprints preserve later recalibration history.
+
 **Weighted composite (availability-masked + renormalized):**
 ```
 analyst_score = Σ (dimension_score × effective_weight[dimension])

@@ -3,6 +3,7 @@
 // fundamentals). Returns null on insufficient data. Cross-sectional z-scoring is
 // applied later (standardize.ts); these return RAW values.
 import type { EdgeDef, EdgeContext } from "@/lib/edges/types";
+import { computeTechnicals, scoreTechnicals } from "@/lib/data/technicals";
 
 const closesOf = (ctx: EdgeContext) => ctx.candles.map(c => c.close);
 const last = <T,>(a: T[]) => a[a.length - 1];
@@ -29,9 +30,137 @@ function stdev(xs: number[]): number {
   return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / xs.length);
 }
 
+function emaAligned(values: number[], period: number): Array<number | null> {
+  const out: Array<number | null> = new Array(values.length).fill(null);
+  if (values.length < period) return out;
+  let ema = values.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+  out[period - 1] = ema;
+  const k = 2 / (period + 1);
+  for (let i = period; i < values.length; i++) {
+    ema = values[i] * k + ema * (1 - k);
+    out[i] = ema;
+  }
+  return out;
+}
+
+function wilderAtr(candles: EdgeContext["candles"], period: number): number | null {
+  if (candles.length < period + 1) return null;
+  const trs: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const candle = candles[i];
+    const previousClose = candles[i - 1].close;
+    trs.push(Math.max(
+      candle.high - candle.low,
+      Math.abs(candle.high - previousClose),
+      Math.abs(candle.low - previousClose),
+    ));
+  }
+  let atr = trs.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+  for (let i = period; i < trs.length; i++) atr = (atr * (period - 1) + trs[i]) / period;
+  return Number.isFinite(atr) && atr > 0 ? atr : null;
+}
+
+function macdHistogramAtr(ctx: EdgeContext): number | null {
+  const closes = closesOf(ctx);
+  const fast = emaAligned(closes, 12);
+  const slow = emaAligned(closes, 26);
+  const macd = closes
+    .map((_, i) => fast[i] != null && slow[i] != null ? fast[i]! - slow[i]! : null)
+    .filter((value): value is number => value != null);
+  if (macd.length < 9) return null;
+  const signal = emaAligned(macd, 9);
+  const signalLatest = signal[signal.length - 1];
+  const atr = wilderAtr(ctx.candles, 14);
+  if (signalLatest == null || atr == null) return null;
+  const histogram = macd[macd.length - 1] - signalLatest;
+  const normalized = histogram / atr;
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
+function signedAdx(ctx: EdgeContext, period = 14): number | null {
+  if (ctx.candles.length < period * 2) return null;
+  const trs: number[] = [];
+  const plusDm: number[] = [];
+  const minusDm: number[] = [];
+  for (let i = 1; i < ctx.candles.length; i++) {
+    const current = ctx.candles[i];
+    const previous = ctx.candles[i - 1];
+    const upMove = current.high - previous.high;
+    const downMove = previous.low - current.low;
+    plusDm.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDm.push(downMove > upMove && downMove > 0 ? downMove : 0);
+    trs.push(Math.max(
+      current.high - current.low,
+      Math.abs(current.high - previous.close),
+      Math.abs(current.low - previous.close),
+    ));
+  }
+
+  let smoothedTr = trs.slice(0, period).reduce((sum, value) => sum + value, 0);
+  let smoothedPlus = plusDm.slice(0, period).reduce((sum, value) => sum + value, 0);
+  let smoothedMinus = minusDm.slice(0, period).reduce((sum, value) => sum + value, 0);
+  const dx: number[] = [];
+  let latestPlusDi = 0;
+  let latestMinusDi = 0;
+
+  for (let i = period - 1; i < trs.length; i++) {
+    if (i >= period) {
+      smoothedTr = smoothedTr - smoothedTr / period + trs[i];
+      smoothedPlus = smoothedPlus - smoothedPlus / period + plusDm[i];
+      smoothedMinus = smoothedMinus - smoothedMinus / period + minusDm[i];
+    }
+    if (!(smoothedTr > 0)) continue;
+    latestPlusDi = 100 * smoothedPlus / smoothedTr;
+    latestMinusDi = 100 * smoothedMinus / smoothedTr;
+    const denominator = latestPlusDi + latestMinusDi;
+    if (denominator > 0) dx.push(100 * Math.abs(latestPlusDi - latestMinusDi) / denominator);
+  }
+  if (dx.length < period) return null;
+  let adx = dx.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+  for (let i = period; i < dx.length; i++) adx = (adx * (period - 1) + dx[i]) / period;
+  const signed = (latestPlusDi >= latestMinusDi ? 1 : -1) * adx / 100;
+  return Number.isFinite(signed) ? signed : null;
+}
+
 const TRADING_YEAR = 252;
 
 export const EDGES: EdgeDef[] = [
+  {
+    id: "kairos_technical_score_v1",
+    name: "Kairos technical composite v1",
+    category: "technical",
+    expectedSign: 1,
+    horizonDays: 10,
+    minCandles: 50,
+    rationale: "The exact production technical composite as a measure-only edge: RSI(14), EMA20/50 position, 20-day trend, directional volume confirmation, and the breakdown veto.",
+    dataSource: "daily adjusted candles",
+    references: ["Kairos Decision 51; lib/data/technicals.ts"],
+    compute: (ctx) => scoreTechnicals(computeTechnicals(ctx.candles)),
+  },
+  {
+    id: "macd_atr_12_26_9",
+    name: "ATR-normalized MACD histogram (12/26/9)",
+    category: "technical",
+    expectedSign: 1,
+    horizonDays: 10,
+    minCandles: 35,
+    rationale: "MACD trend acceleration normalized by the stock's own Wilder ATR so nominal price and volatility scale do not dominate the cross-section.",
+    dataSource: "daily adjusted OHLC candles",
+    references: ["Appel MACD; Wilder ATR"],
+    compute: macdHistogramAtr,
+  },
+  {
+    id: "signed_adx_14",
+    name: "Signed ADX(14) trend strength",
+    category: "technical",
+    expectedSign: 1,
+    horizonDays: 10,
+    minCandles: 28,
+    rationale: "Wilder ADX trend strength signed positive when +DI exceeds -DI and negative otherwise; tests whether trend strength adds information beyond EMA position.",
+    dataSource: "daily adjusted OHLC candles",
+    references: ["Wilder ADX/DMI"],
+    compute: signedAdx,
+  },
   {
     id: "mom_12_1",
     name: "12-1 Momentum (skip last month)",

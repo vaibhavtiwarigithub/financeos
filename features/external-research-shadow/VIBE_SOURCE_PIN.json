@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "vibe-source-pin.v1",
+  "repository": "https://github.com/HKUDS/Vibe-Trading",
+  "commit": "a5eb30fd00d6ee71cd5099d15f57de5ae47010ff",
+  "reviewedAt": "2026-07-21",
+  "license": "MIT",
+  "admissionStatus": "not_admitted",
+  "allowedUse": "independent_comparator_after_native_baseline",
+  "reviewScope": "deterministic backtest validation subset only",
+  "candidateFiles": [
+    {
+      "path": "agent/backtest/models.py",
+      "gitBlob": "c003648848f8ecaddeaff6633f5a3dbd2866faf9"
+    },
+    {
+      "path": "agent/backtest/validation.py",
+      "gitBlob": "b43dea877fca0491fbad1d908e33561a1af9b2b3"
+    }
+  ],
+  "excludedSurfaces": [
+    "agent and swarm runtime",
+    "LLM providers",
+    "MCP servers and tools",
+    "broker connectors and live trading",
+    "network data loaders",
+    "web API and frontend",
+    "dynamic strategy import runner",
+    "environment and credential handling"
+  ],
+  "reasonNotAdmitted": "The native Kairos Edge lab can run the first calibration without importing Vibe's broad dependency and attack surface. A later comparator requires a hash-locked minimal image, SBOM, hostile-output tests, and no-network synthetic proof."
+}

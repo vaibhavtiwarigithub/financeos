@@ -15,6 +15,7 @@ import { resolveCandles, resolveBenchmark } from "@/lib/edges/data";
 import { neweyWestLag } from "@/lib/edges/evidence";
 import type { Candle } from "@/lib/data/technicals";
 import type { Market } from "@/lib/edges/types";
+import crypto from "node:crypto";
 
 // ── rank / correlation ────────────────────────────────────────────────────────
 function ranks(xs: number[]): number[] {
@@ -73,6 +74,8 @@ function idxOnOrBefore(candles: Candle[], date: string): number {
 export interface IcRow {
   edgeId: string; market: Market; horizon: number; windowEnd: string;
   meanIC: number; icIR: number; tStat: number; nObs: number; statusAfter: string;
+  segmentType: "market" | "sector";
+  segmentValue: string;
 }
 
 export interface IcRunReport {
@@ -81,6 +84,8 @@ export interface IcRunReport {
   asOfDates: number;
   horizons: number[];
   rows: number;
+  sectorsEvaluated: string[];
+  datasetFingerprint: string;
 }
 
 // Priored (academically-documented) factors clear at t≈2; a data-mined edge would
@@ -97,12 +102,36 @@ export function classifyEdgeIC(meanIC: number, tStat: number, nObs: number): str
   return "measure_only";
 }
 
+const NON_EQUITY_SECTORS = new Set([
+  "other", "diversified equity", "international equity", "fixed income",
+  "commodities", "digital assets", "unknown", "n/a",
+]);
+
+export function normalizeSectorSegment(value: string | null | undefined): string | null {
+  const normalized = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!normalized || NON_EQUITY_SECTORS.has(normalized.toLowerCase())) return null;
+  return normalized;
+}
+
+function summarizeIc(ics: number[], horizon: number, step: number) {
+  const nObs = ics.length;
+  const meanIC = nObs ? ics.reduce((sum, value) => sum + value, 0) / nObs : NaN;
+  const se = neweyWestSEofMean(ics, neweyWestLag(horizon, step));
+  const std = nObs > 1
+    ? Math.sqrt(ics.reduce((sum, value) => sum + (value - meanIC) ** 2, 0) / nObs)
+    : NaN;
+  const icIR = std > 0 ? meanIC / std : NaN;
+  const tStat = se > 0 ? meanIC / se : NaN;
+  return { meanIC, icIR, tStat, nObs, statusAfter: classifyEdgeIC(meanIC, tStat, nObs) };
+}
+
 export async function computeEdgeIC(opts: {
   market: Market;
   symbols: string[];
   horizons?: number[];
   maxDates?: number;
   stepDays?: number;   // sample every Nth trading day to reduce overlap
+  sectors?: Record<string, string | null | undefined>;
   candleDays?: number; // history depth (calendar days) — deeper = multi-year IC
 }): Promise<{ rows: IcRow[]; catalogStatus: Record<string, string>; report: IcRunReport }> {
   const { market, symbols } = opts;
@@ -117,6 +146,15 @@ export async function computeEdgeIC(opts: {
     if (candles.length) resolved.push({ symbol: sym, candles });
   }
 
+  const datasetFingerprint = crypto.createHash("sha256").update(JSON.stringify({
+    market,
+    benchmark: bench.candles.map(c => [c.date, c.open, c.high, c.low, c.close, c.volume]),
+    symbols: resolved
+      .slice()
+      .sort((a, b) => a.symbol.localeCompare(b.symbol))
+      .map(r => [r.symbol, r.candles.map(c => [c.date, c.open, c.high, c.low, c.close, c.volume])]),
+  })).digest("hex");
+
   // As-of dates = benchmark trading days, sampled every `step`, leaving room for the
   // longest forward horizon at the end.
   const benchDates = bench.candles.map(c => c.date);
@@ -129,13 +167,13 @@ export async function computeEdgeIC(opts: {
   const windowEnd = benchDates[benchDates.length - 1] ?? new Date().toISOString().slice(0, 10);
   const rows: IcRow[] = [];
   const catalogStatus: Record<string, string> = {};
+  const sectorsEvaluated = new Set<string>();
 
   for (const edge of EDGES) {
     for (const h of horizons) {
-      const ics: number[] = [];
+      const icBySegment = new Map<string, number[]>([["market\u0000all", []]]);
       for (const t of sampled) {
-        const edgeVals: number[] = [];
-        const fwdRets: number[] = [];
+        const observations: Array<{ edge: number; forward: number; sector: string | null }> = [];
         const benchSlice = bench.candles.filter(c => c.date <= t);
         for (const r of resolved) {
           const pt = idxOnOrBefore(r.candles, t);
@@ -149,32 +187,67 @@ export async function computeEdgeIC(opts: {
           const fwd = cH / c0 - 1;
           // For edges whose expected_sign is -1 (lower raw = better), flip so a
           // positive IC always means "the edge ranks winners above losers".
-          edgeVals.push(edge.expectedSign < 0 ? -raw : raw);
-          fwdRets.push(fwd);
+          observations.push({
+            edge: edge.expectedSign < 0 ? -raw : raw,
+            forward: fwd,
+            sector: normalizeSectorSegment(opts.sectors?.[r.symbol]),
+          });
         }
-        if (edgeVals.length >= 5) {
-          const ic = spearman(edgeVals, fwdRets);
-          if (Number.isFinite(ic)) ics.push(ic);
+
+        if (observations.length >= 5) {
+          const ic = spearman(observations.map(o => o.edge), observations.map(o => o.forward));
+          if (Number.isFinite(ic)) icBySegment.get("market\u0000all")!.push(ic);
+        }
+
+        const bySector = new Map<string, typeof observations>();
+        for (const observation of observations) {
+          if (!observation.sector) continue;
+          const group = bySector.get(observation.sector) ?? [];
+          group.push(observation);
+          bySector.set(observation.sector, group);
+        }
+        for (const [sector, group] of bySector) {
+          if (group.length < 5) continue;
+          const ic = spearman(group.map(o => o.edge), group.map(o => o.forward));
+          if (!Number.isFinite(ic)) continue;
+          const key = `sector\u0000${sector}`;
+          const series = icBySegment.get(key) ?? [];
+          series.push(ic);
+          icBySegment.set(key, series);
+          sectorsEvaluated.add(sector);
         }
       }
-      const nObs = ics.length;
-      const meanIC = nObs ? ics.reduce((s, v) => s + v, 0) / nObs : NaN;
-      // `ics` is sampled every `step` sessions, so its autocorrelation lag is
-      // horizon/step rather than the raw horizon. Using the raw horizon here
-      // discarded far more degrees of freedom than the sampled series has.
-      const se = neweyWestSEofMean(ics, neweyWestLag(h, step));
-      const std = nObs > 1 ? Math.sqrt(ics.reduce((s, v) => s + (v - meanIC) ** 2, 0) / nObs) : NaN;
-      const icIR = std > 0 ? meanIC / std : NaN;
-      const tStat = se > 0 ? meanIC / se : NaN;
-      const statusAfter = classifyEdgeIC(meanIC, tStat, nObs);
-      rows.push({ edgeId: edge.id, market, horizon: h, windowEnd, meanIC, icIR, tStat, nObs, statusAfter });
+      for (const [key, ics] of icBySegment) {
+        const [segmentType, segmentValue] = key.split("\u0000") as ["market" | "sector", string];
+        rows.push({
+          edgeId: edge.id,
+          market,
+          horizon: h,
+          windowEnd,
+          segmentType,
+          segmentValue,
+          ...summarizeIc(ics, h, step),
+        });
+      }
     }
     // Advisory edge status = best across horizons (shadow_eligible if any horizon clears).
-    const mine = rows.filter(r => r.edgeId === edge.id);
+    const mine = rows.filter(r => r.edgeId === edge.id && r.segmentType === "market");
     catalogStatus[edge.id] = mine.some(r => r.statusAfter === "shadow_eligible")
       ? "shadow_eligible"
       : mine.some(r => r.statusAfter === "benched_negative") ? "benched_negative" : "measure_only";
   }
 
-  return { rows, catalogStatus, report: { market, symbolsResolved: resolved.length, asOfDates: sampled.length, horizons, rows: rows.length } };
+  return {
+    rows,
+    catalogStatus,
+    report: {
+      market,
+      symbolsResolved: resolved.length,
+      asOfDates: sampled.length,
+      horizons,
+      rows: rows.length,
+      sectorsEvaluated: [...sectorsEvaluated].sort(),
+      datasetFingerprint,
+    },
+  };
 }

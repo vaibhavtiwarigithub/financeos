@@ -381,13 +381,22 @@ Information Coefficient (IC) history per factor.
 | `edge_id` | text | |
 | `market` | text | |
 | `window_end` / `horizon` | date / int | Independent market window and forward-return horizon |
+| `segment_type` / `segment_value` | text / text | Explicit `market/all` or diagnostic `sector/<name>` identity; sector rows never drive market lifecycle |
+| `formula_version` | text | Versioned formula identity; currently the immutable edge ID |
+| `dataset_fingerprint` / `run_fingerprint` | text / text | Frozen OHLCV dataset identity and exact experiment identity; exact reruns deduplicate, changed data/config appends |
 | `ic` / `ic_ir` / `t_stat` | numeric | Rank IC diagnostics |
 | `n_obs` / `universe_size` / `as_of_dates` | int | Confidence and breadth; never inferred from row count |
 | `step_days` / `history_days` | int | Reproducible run configuration |
 | `net_of_fee_ic` / `turnover` | numeric | Null until cost phase; null blocks capital promotion |
 | `evidence_quality` / `provider_report` | text / jsonb | Retrospective/PIT quality and provider coverage |
 | `status_after` | text | Advisory horizon status only |
-| `created_at` | timestamptz | Pruned >365d by DB cleanup |
+| `created_at` | timestamptz | Append-only experiment timestamp; calibration history is retained |
+
+Migration `20260721130000` made this ledger append-only and replaced the old
+market-window overwrite key with a run fingerprint. Historical rows are preserved
+as `market/all` with `legacy_unverified` dataset provenance. The technical
+calibration trial family and sector sample policy are defined in
+`features/technical-factor-calibration/FEATURE_ARCHITECTURE.md`.
 
 ### `edge_market_status`
 

@@ -774,3 +774,32 @@ learning-loop/agent architecture docs, and focused tests.
 
 Reversal cost: Low; all persistence is additive in existing columns/JSONB and
 research-time rendering is independent of executable position state.
+
+### Decision 51: Technical calibration is a reusable, measure-only market and sector experiment
+
+Date: 2026-07-21
+Status: Approved
+Category: Research / Validation / Architecture
+
+Decision: Reuse the existing Edge evidence lab to evaluate the exact current
+technical composite, market-relative strength, ATR-normalized MACD(12,26,9), and
+signed ADX(14) independently for US and India. Persist explicit market-wide and
+sector diagnostic segments with versioned formula identities and complete trial
+history. Sector specialization is not authorized; thin sector results remain
+measure-only. Pin Vibe-Trading commit `a5eb30fd00d6ee71cd5099d15f57de5ae47010ff`
+as a later independent comparator, but do not install its broad runtime.
+
+Reason: The current technical values are hand-tuned priors. Kairos needs evidence
+that can be rerun later without losing old trials, while avoiding indicator-zoo and
+sector overfitting. Existing EdgeScout already freezes candles once per symbol and
+can evaluate more pure factors without additional provider calls.
+
+Impact: Adds measurement and segmented evidence only. Production scores, weights,
+directions, thresholds, eligibility, positions, agents, and broker behavior are
+unchanged.
+
+Files/features affected: `features/technical-factor-calibration/`, `lib/edges/`,
+EdgeIC route, `edge_ic_history`, tests, and architecture documentation.
+
+Reversal cost: Low; stop future observations while retaining immutable experiment
+history. No trading rollback exists because the feature has no trading influence.

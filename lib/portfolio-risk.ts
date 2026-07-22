@@ -205,6 +205,15 @@ function indiaSector(symbol: string): string {
   return INDIA_SECTOR_MAP[base] ?? "Other";
 }
 
+/** Deterministic fallback for research segmentation; null means unclassified. */
+export function knownSectorForSymbol(symbol: string, market: "us" | "india"): string | null {
+  const normalized = symbol.toUpperCase().trim();
+  const sector = market === "india"
+    ? indiaSector(normalized)
+    : (SECTOR_MAP[normalized.replace(/[.-]/g, "_")] ?? "Other");
+  return sector === "Other" ? null : sector;
+}
+
 // India daily-vol proxy for VaR when we have no NIFTY beta wired. NIFTY 50's
 // realized daily vol runs ~1.0% — higher than SPY's ~0.85%. Used directly
 // (beta = 1 assumption) so the ₹ VaR figure is honest, not beta-scaled off SPY.

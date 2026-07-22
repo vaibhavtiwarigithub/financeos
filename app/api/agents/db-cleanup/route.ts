@@ -130,17 +130,6 @@ const STEPS: CleanupStep[] = [
     },
   },
   {
-    label: "edge_ic_history (>365d)",
-    run: async (svc) => {
-      const cutoff = daysAgo(365);
-      const { count } = await svc
-        .from("edge_ic_history")
-        .delete({ count: "exact" })
-        .lt("created_at", cutoff);
-      return count ?? 0;
-    },
-  },
-  {
     label: "doc_chunks (>180d)",
     run: async (svc) => {
       const cutoff = daysAgo(180);
@@ -268,7 +257,6 @@ export async function GET(req: NextRequest) {
     { label: "macro_signals (>90d)",          table: "macro_signals",          col: "computed_at", days: 90  },
     { label: "rag_traces (>90d)",             table: "rag_traces",             col: "created_at",  days: 90  },
     { label: "edge_signals (>180d)",          table: "edge_signals",           col: "created_at",  days: 180 },
-    { label: "edge_ic_history (>365d)",       table: "edge_ic_history",        col: "created_at",  days: 365 },
     { label: "doc_chunks (>180d)",            table: "doc_chunks",             col: "created_at",  days: 180 },
     { label: "india_screen_cache (>7d)",      table: "india_screen_cache",     col: "updated_at",  days: 7   },
     { label: "agent_alerts resolved (>30d)",  table: "agent_alerts",           col: "resolved_at", days: 30  },

@@ -3,10 +3,13 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { computeEdgeIC } from "@/lib/edges/ic";
+import { EDGES } from "@/lib/edges/registry";
 import { liquidUniverse } from "@/lib/edges/universe";
 import type { Market } from "@/lib/edges/types";
 import { EDGE_EVIDENCE_QUALITY, edgeHealthKey } from "@/lib/edges/evidence";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { knownSectorForSymbol } from "@/lib/portfolio-risk";
+import crypto from "node:crypto";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -20,6 +23,26 @@ export const maxDuration = 300;
 
 const MAX_SYMBOLS_CAP = 200;
 const DEFAULT_MAX_SYMBOLS = 40;
+
+async function seedCatalog(svc: any) {
+  const rows = EDGES.map(edge => ({
+    edge_id: edge.id,
+    name: edge.name,
+    category: edge.category,
+    formula_spec: null,
+    inputs: [],
+    rationale: edge.rationale,
+    expected_sign: edge.expectedSign,
+    horizon_days: edge.horizonDays,
+    data_source: edge.dataSource,
+    reference_urls: edge.references,
+    status: "measure_only",
+  }));
+  const { error } = await svc.from("edge_catalog").upsert(rows, {
+    onConflict: "edge_id", ignoreDuplicates: true,
+  });
+  if (error) throw new Error(`edge_catalog seed failed: ${error.message}`);
+}
 
 async function buildUniverse(svc: any, market: Market, maxSymbols: number, mode: string, offset: number): Promise<string[]> {
   if (mode === "liquid") return liquidUniverse(market).slice(offset, offset + maxSymbols);
@@ -41,6 +64,24 @@ async function buildUniverse(svc: any, market: Market, maxSymbols: number, mode:
     }
     return syms;
   } catch { return []; }
+}
+
+async function loadSectorMap(svc: any, market: Market, symbols: string[]): Promise<Record<string, string | null>> {
+  const out: Record<string, string | null> = Object.fromEntries(
+    symbols.map(symbol => [symbol, knownSectorForSymbol(symbol, market)]),
+  );
+  const { data, error } = await svc
+    .from("symbol_profiles")
+    .select("symbol,sector")
+    .eq("market", market)
+    .in("symbol", symbols);
+  if (error) return out;
+  for (const row of data ?? []) {
+    const symbol = String(row.symbol ?? "").toUpperCase().trim();
+    const sector = typeof row.sector === "string" && row.sector.trim() ? row.sector.trim() : null;
+    if (symbol && sector) out[symbol] = sector;
+  }
+  return out;
 }
 
 export async function POST(req: NextRequest) {
@@ -71,6 +112,8 @@ export async function POST(req: NextRequest) {
     } as any).select().single();
     runId = (runRow as any)?.id ?? null;
 
+    await seedCatalog(svc);
+
     const results: Record<string, any> = {};
     for (const market of markets) {
       const symbols = await buildUniverse(svc, market, maxSymbols, universeMode, offset);
@@ -84,35 +127,57 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      const { rows, catalogStatus, report } = await computeEdgeIC({ market, symbols, maxDates, stepDays, candleDays: historyDays });
+      const sectors = await loadSectorMap(svc, market, symbols);
+      const { rows, catalogStatus, report } = await computeEdgeIC({
+        market, symbols, maxDates, stepDays, candleDays: historyDays, sectors,
+      });
 
       let icWritten = 0;
       if (rows.length) {
-        const icRows = rows.map(r => ({
-          edge_id: r.edgeId, market: r.market, window_end: r.windowEnd, horizon: r.horizon,
-          ic: Number.isFinite(r.meanIC) ? r.meanIC : null,
-          ic_ir: Number.isFinite(r.icIR) ? r.icIR : null,
-          t_stat: Number.isFinite(r.tStat) ? r.tStat : null,
-          net_of_fee_ic: null,   // cost/turnover-adjusted alpha is the P5 long-only bucket test
-          turnover: null,
-          status_after: r.statusAfter,
-          n_obs: r.nObs,
-          universe_size: report.symbolsResolved,
-          as_of_dates: report.asOfDates,
-          step_days: stepDays,
-          history_days: historyDays,
-          evidence_quality: EDGE_EVIDENCE_QUALITY,
-          provider_report: report,
-        }));
-        const { error: icError } = await svc.from("edge_ic_history").upsert(icRows, { onConflict: "edge_id,market,window_end,horizon" });
+        const icRows = rows.map(r => {
+          const runFingerprint = crypto.createHash("sha256").update(JSON.stringify({
+            edgeId: r.edgeId,
+            market: r.market,
+            windowEnd: r.windowEnd,
+            horizon: r.horizon,
+            segmentType: r.segmentType,
+            segmentValue: r.segmentValue,
+            datasetFingerprint: report.datasetFingerprint,
+            maxDates,
+            stepDays,
+            historyDays,
+          })).digest("hex");
+          return {
+            edge_id: r.edgeId, market: r.market, window_end: r.windowEnd, horizon: r.horizon,
+            segment_type: r.segmentType, segment_value: r.segmentValue,
+            formula_version: r.edgeId, dataset_fingerprint: report.datasetFingerprint,
+            run_fingerprint: runFingerprint,
+            ic: Number.isFinite(r.meanIC) ? r.meanIC : null,
+            ic_ir: Number.isFinite(r.icIR) ? r.icIR : null,
+            t_stat: Number.isFinite(r.tStat) ? r.tStat : null,
+            net_of_fee_ic: null,   // cost/turnover-adjusted alpha is the P5 long-only bucket test
+            turnover: null,
+            status_after: r.statusAfter,
+            n_obs: r.nObs,
+            universe_size: report.symbolsResolved,
+            as_of_dates: report.asOfDates,
+            step_days: stepDays,
+            history_days: historyDays,
+            evidence_quality: EDGE_EVIDENCE_QUALITY,
+            provider_report: report,
+          };
+        });
+        const { data: inserted, error: icError } = await svc.from("edge_ic_history")
+          .upsert(icRows, { onConflict: "run_fingerprint", ignoreDuplicates: true })
+          .select("id");
         if (icError) throw new Error(`edge IC write failed (${market}): ${icError.message}`);
-        icWritten = icRows.length;
+        icWritten = inserted?.length ?? 0;
       }
 
       // Advisory status is market-scoped. The catalog's global status is not an
       // evidence state and must not be overwritten by whichever market ran last.
       for (const [edgeId, status] of Object.entries(catalogStatus)) {
-        const edgeRows = rows.filter(r => r.edgeId === edgeId);
+        const edgeRows = rows.filter(r => r.edgeId === edgeId && r.segmentType === "market");
         const horizonStatuses = Object.fromEntries(edgeRows.map(r => [String(r.horizon), {
           status: r.statusAfter, nObs: r.nObs, ic: r.meanIC, tStat: r.tStat,
         }]));
@@ -126,9 +191,9 @@ export async function POST(req: NextRequest) {
         if (statusError) throw new Error(`edge market status failed (${market}/${edgeId}): ${statusError.message}`);
       }
 
-      results[market] = { symbols: symbols.length, icRows: icWritten, report,
+      results[market] = { symbols: symbols.length, icRowsEvaluated: rows.length, icRowsInserted: icWritten, report,
         shadowEligible: Object.entries(catalogStatus).filter(([, s]) => s === "shadow_eligible").map(([e]) => e) };
-      if (icWritten === 0) {
+      if (rows.length === 0) {
         await reportIssue({
           issueKey: edgeHealthKey("ic", market), severity: "warn", category: "data",
           title: `EdgeIC produced no ${market.toUpperCase()} evaluation`,
@@ -140,10 +205,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (runId) {
-      const total = Object.values(results).reduce((s: number, r: any) => s + (r.icRows ?? 0), 0);
+      const evaluated = Object.values(results).reduce((s: number, r: any) => s + (r.icRowsEvaluated ?? 0), 0);
+      const inserted = Object.values(results).reduce((s: number, r: any) => s + (r.icRowsInserted ?? 0), 0);
       await svc.from("agent_runs").update({
-        status: "done", signals_written: total, completed_at: new Date().toISOString(),
-        result_summary: `EdgeIC (measure-only): ${total} edge_ic_history rows across ${markets.join("+")}.`,
+        status: "done", signals_written: inserted, completed_at: new Date().toISOString(),
+        result_summary: `EdgeIC (measure-only): evaluated ${evaluated}; inserted ${inserted} immutable rows across ${markets.join("+")}.`,
       } as any).eq("id", runId);
     }
 
