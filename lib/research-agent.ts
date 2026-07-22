@@ -19,7 +19,7 @@ import type { Market } from "@/lib/evidence/contracts";
 import { resolveSignalDirection } from "@/lib/signal-direction";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { readDeferredCandidates, applyCandidateCarryForward } from "@/lib/research-queue";
-import { routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
+import { ETF_SCORE_CAP, routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
@@ -1628,7 +1628,6 @@ export async function processSymbol(
   const { score: rawAnalystScore, effWeights, renormalized, includedDims } = computeWeightedAnalystScore(scoreOf, included, weightOf);
   // ponytail: ETFs score high technically (no fundamental/insider drag after renorm) but
   // have no single-name upside; cap so they can't displace equity alpha candidates in rotation.
-  const ETF_SCORE_CAP = 65;
   const analystScore = isEtf ? Math.min(rawAnalystScore, ETF_SCORE_CAP) : rawAnalystScore;
   const thinEvidence = isThinEvidence(includedDims);
 
@@ -1889,13 +1888,19 @@ export async function processSymbol(
     // Only one active staged decision per market/symbol. Superseding preserves
     // history while satisfying the partial unique index under normal retries.
     if (!sessionValidated) {
-      await supabase.from("agent_signals").update({ status: "superseded" })
+      const { error: stagedSupersessionError } = await supabase.from("agent_signals").update({ status: "superseded" })
         .eq("market", market).eq("symbol", symbol).eq("status", "weekend_staged");
+      if (stagedSupersessionError) {
+        throw new Error(`agent_signals weekend-staged supersession failed for ${market}:${symbol}: ${stagedSupersessionError.message}`);
+      }
     }
     // ponytail: expire stale pending signals for this symbol so paper-trade can't
     // pick an older higher-scored row over the fresh capped one (score ordering, not recency).
-    await supabase.from("agent_signals").update({ status: "superseded" })
+    const { error: pendingSupersessionError } = await supabase.from("agent_signals").update({ status: "superseded" })
       .eq("market", market).eq("symbol", symbol).eq("status", "pending");
+    if (pendingSupersessionError) {
+      throw new Error(`agent_signals pending supersession failed for ${market}:${symbol}: ${pendingSupersessionError.message}`);
+    }
     const { data, error } = await supabase.from("agent_signals").insert(signalRow).select("id").maybeSingle();
     // Strip `market` ONLY when the column is genuinely undefined (pre-057) — never
     // on a transient/constraint error, which would silently drop the market tag.

@@ -26,7 +26,8 @@ describe("agent source pipeline remediation", () => {
     const prewarm = read("app/api/agents/prewarm/route.ts");
     expect(agent).toContain('includeUs ? fetchHoldings(supabase) : Promise.resolve([])');
     expect(agent).toContain('includeUs ? runScreener(supabase) : Promise.resolve([])');
-    expect(agent).toContain("includeIndia\n    ? await orderHoldingsByLastScored");
+    expect(agent).toContain("const indiaHeld = includeIndia");
+    expect(agent).toContain('orderHoldingsByLastScored(supabase, await fetchIndiaHoldings(supabase), "india")');
     expect(cron).toContain("gatherSymbols(supabase, undefined, marketScope ?? undefined)");
     expect(prewarm).toContain("gatherSymbols(svc, undefined, market)");
   });
