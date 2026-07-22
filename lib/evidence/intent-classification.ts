@@ -120,9 +120,14 @@ export const INTENT_CLASSIFICATION: Record<EvidenceIntent, IntentClassification>
   },
   "macro.regime_inputs": {
     intent: "macro.regime_inputs",
-    byMarket: { us: "score_affecting", india: "score_affecting" },
+    // India has NO macro regime: MacroSentinel is US-only FRED data,
+    // macro_regime table has no market column, and fetchMacroScore explicitly
+    // returns available:false for India. Marking india "unsupported" here
+    // matches the pipeline reality and stops the shadow resolver from
+    // reporting 0% India macro coverage as a starvation alert.
+    byMarket: { us: "score_affecting" },
     alsoGates: false,
-    note: "Macro dimension, market-wide (no symbol).",
+    note: "Macro dimension, market-wide (no symbol). US-only — India has no MacroSentinel.",
   },
 };
 
@@ -301,7 +306,11 @@ export const SCORER_FIELD_CONTRACTS: readonly ScorerFieldContract[] = [
     dimension: "macro",
     intent: "macro.regime_inputs",
     requiredClass: "score_affecting",
-    markets: ["us", "india"],
+    // US-only: matches INTENT_CATALOG and INTENT_CLASSIFICATION above.
+    // India macro is structurally inapplicable; applicableDimensions() in
+    // research-agent.ts excludes it, fetchMacroScore() returns available:false,
+    // and persistObservedResearchEvidence() never writes India macro to cache.
+    markets: ["us"],
     applicableShapes: ["equity", "etf", "adr", "metal"],
     // Market-wide and cached; its absence renormalizes across the cohort
     // uniformly, so it cannot single out one symbol's eligibility.

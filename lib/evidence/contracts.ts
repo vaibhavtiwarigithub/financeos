@@ -152,7 +152,11 @@ export const INTENT_CATALOG: Record<EvidenceIntent, IntentSpec> = {
   "insider.transactions":       { intent: "insider.transactions",       markets: ["us", "india"], freshTtlSeconds: DAY,       staleCeilingSeconds: 7 * DAY,   scoreAffecting: true },
   "events.earnings":            { intent: "events.earnings",            markets: ["us", "india"], freshTtlSeconds: DAY,       staleCeilingSeconds: 0,         scoreAffecting: false },
   "events.corporate_actions":   { intent: "events.corporate_actions",   markets: ["us", "india"], freshTtlSeconds: DAY,       staleCeilingSeconds: 0,         scoreAffecting: false },
-  "macro.regime_inputs":        { intent: "macro.regime_inputs",        markets: ["us", "india"], freshTtlSeconds: 7 * DAY,   staleCeilingSeconds: 10 * DAY,  scoreAffecting: true },
+  // MacroSentinel is backed by US-only FRED series; macro_regime table has no
+  // market column. India never produces or stores macro regime data, so this
+  // intent is US-only. The research pipeline (fetchMacroScore, applicableDimensions,
+  // persistObservedResearchEvidence) all enforce this — the contract must match.
+  "macro.regime_inputs":        { intent: "macro.regime_inputs",        markets: ["us"],          freshTtlSeconds: 7 * DAY,   staleCeilingSeconds: 10 * DAY,  scoreAffecting: true },
 };
 
 // ── Provider spec — code-owned capability/limit registry ──────────────────────
