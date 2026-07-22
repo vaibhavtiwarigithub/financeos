@@ -219,6 +219,16 @@ Backtest / Validation Engine run records.
 | `eligibility_passed` | bool | Sharpe ≥ 0.5 and win_rate ≥ 40% |
 | `created_at` | timestamptz | |
 
+### `observation_labels` ATR exit evidence
+
+Migration `20260722110000_atr_exit_evidence_labels.sql` extends the canonical
+future-label table with `entry_atr`, `entry_atr_pct`, ATR-normalized MAE/MFE,
+`atr_exit_outcomes`, and `atr_policy_version`. Entry ATR comes only from the
+immutable decision observation's point-in-time technical evidence; unavailable
+ATR remains null. Outcomes are versioned, deterministic, close-observed,
+measure-only candidate labels. There is no trigger, RPC, or relationship from
+these columns to paper positions, cash, broker orders, or live execution.
+
 ### `strategy_evaluations`
 Append-only mandate-aware evaluation snapshots (Performance Truth Layer).
 

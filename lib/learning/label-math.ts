@@ -10,6 +10,10 @@ export interface ComputedLabel {
   maxFavorableExcursion: number;
   entryPrice: number;
   exitPrice: number;
+  entryAtr: number | null;
+  entryAtrPct: number | null;
+  maxAdverseExcursionAtr: number | null;
+  maxFavorableExcursionAtr: number | null;
 }
 
 export const LABEL_COST_HAIRCUT = 0.001; // 10bps round-trip
@@ -20,7 +24,8 @@ export function computeLabel(
   entryPrice: number,
   candlesAfterEntry: LabelCandle[],
   horizonDays: number,
-  benchmarkReturn?: number | null
+  benchmarkReturn?: number | null,
+  entryAtr?: number | null
 ): ComputedLabel | null {
   if (entryPrice <= 0 || candlesAfterEntry.length < horizonDays) return null;
 
@@ -29,6 +34,7 @@ export function computeLabel(
   const fwdReturn = (exitPrice - entryPrice) / entryPrice - LABEL_COST_HAIRCUT;
   const mae = Math.min(...window.map(c => (c.low - entryPrice) / entryPrice), 0);
   const mfe = Math.max(...window.map(c => (c.high - entryPrice) / entryPrice), 0);
+  const validEntryAtr = entryAtr != null && Number.isFinite(entryAtr) && entryAtr > 0 ? entryAtr : null;
 
   return {
     fwdReturn,
@@ -37,5 +43,13 @@ export function computeLabel(
     maxFavorableExcursion: mfe,
     entryPrice,
     exitPrice,
+    entryAtr: validEntryAtr,
+    entryAtrPct: validEntryAtr != null ? validEntryAtr / entryPrice : null,
+    maxAdverseExcursionAtr: validEntryAtr != null
+      ? Math.min(...window.map(c => (c.low - entryPrice) / validEntryAtr), 0)
+      : null,
+    maxFavorableExcursionAtr: validEntryAtr != null
+      ? Math.max(...window.map(c => (c.high - entryPrice) / validEntryAtr), 0)
+      : null,
   };
 }

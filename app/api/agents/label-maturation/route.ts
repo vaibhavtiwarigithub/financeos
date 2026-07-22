@@ -3,6 +3,11 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchIndiaCandles } from "@/lib/india-data";
 import { computeLabel } from "@/lib/learning/label-math";
+import {
+  ATR_EXIT_POLICY_VERSION,
+  computeAtrExitOutcomes,
+  readEntryAtr,
+} from "@/lib/learning/atr-exit-evidence";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { fetchUsCandles } from "@/lib/data/candles";
 
@@ -64,9 +69,44 @@ async function candlesFor(supabase: any, market: string, symbol: string, sinceDa
   return usCandles(supabase, symbol, sinceDate);
 }
 
+async function loadPendingObservations(
+  svc: any,
+  horizonDays: number,
+  cutoff: string,
+  marketScope: "us" | "india" | null
+): Promise<any[]> {
+  const pending: any[] = [];
+  const PAGE_SIZE = 200;
+  // Page past completed observations instead of repeatedly anti-joining only
+  // the oldest page, which can permanently starve newer labels.
+  for (let offset = 0; pending.length < PAGE_SIZE; offset += PAGE_SIZE) {
+    let query = svc.from("decision_observations")
+      .select("id, ts, market, symbol, price_at_decision, currency, features")
+      .lte("ts", cutoff)
+      .order("ts", { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (marketScope) query = query.eq("market", marketScope);
+    const { data: observations, error: observationError } = await query;
+    if (observationError || !observations?.length) break;
+
+    const { data: labels, error: labelError } = await svc
+      .from("observation_labels")
+      .select("observation_id, atr_policy_version")
+      .eq("horizon_days", horizonDays)
+      .in("observation_id", observations.map((row: any) => row.id));
+    if (labelError) break;
+    const current = new Set((labels ?? [])
+      .filter((label: any) => label.atr_policy_version === ATR_EXIT_POLICY_VERSION)
+      .map((label: any) => label.observation_id));
+    pending.push(...observations.filter((row: any) => !current.has(row.id)));
+    if (observations.length < PAGE_SIZE) break;
+  }
+  return pending.slice(0, PAGE_SIZE);
+}
+
 async function runMaturation(marketScope: "us" | "india" | null) {
   const svc = createServiceClient();
-  let matured = 0, skipped = 0;
+  let matured = 0, skipped = 0, atrLabeled = 0, atrUnavailable = 0;
   // One provider fetch per symbol per run. The same symbol is otherwise fetched
   // once for every observation and horizon, causing a request stampede.
   const candleMemo = new Map<string, Promise<Candle[]>>();
@@ -85,26 +125,8 @@ async function runMaturation(marketScope: "us" | "india" | null) {
   for (const horizonDays of HORIZONS) {
     const cutoff = maturityCutoff(horizonDays);
 
-    // Candidate observations old enough for this horizon to be maturable,
-    // scoped to market if requested, oldest first, capped per run.
-    let obsQuery = svc.from("decision_observations")
-      .select("id, ts, market, symbol, price_at_decision, currency")
-      .lte("ts", cutoff)
-      .order("ts", { ascending: true })
-      .limit(200);
-    if (marketScope) obsQuery = obsQuery.eq("market", marketScope);
-    const { data: obsRows, error: obsErr } = await obsQuery;
-    if (obsErr || !obsRows?.length) continue;
-
-    // Which of these already have this horizon labeled? Anti-join in JS.
-    const obsIds = obsRows.map((r: any) => r.id);
-    const { data: existingLabels } = await svc
-      .from("observation_labels")
-      .select("observation_id")
-      .eq("horizon_days", horizonDays)
-      .in("observation_id", obsIds);
-    const already = new Set((existingLabels ?? []).map((l: any) => l.observation_id));
-    const pending = obsRows.filter((r: any) => !already.has(r.id));
+    const pending = await loadPendingObservations(svc, horizonDays, cutoff, marketScope);
+    if (pending.length === 0) continue;
 
     // Batch candle fetches, ~8 parallel with a pause, matching scan/india/refresh style.
     const BATCH = 8;
@@ -140,8 +162,10 @@ async function runMaturation(marketScope: "us" | "india" | null) {
             }
           } catch { /* benchmark optional — label still inserted */ }
 
-          const label = computeLabel(entryPrice, afterEntry, horizonDays, benchmarkReturn);
+          const entryAtr = readEntryAtr(obs.features);
+          const label = computeLabel(entryPrice, afterEntry, horizonDays, benchmarkReturn, entryAtr);
           if (!label) { skipped++; return; }
+          const atrExitOutcomes = computeAtrExitOutcomes(entryPrice, entryAtr, afterEntry, horizonDays);
 
           const { error: insErr } = await svc.from("observation_labels").upsert({
             observation_id: obs.id,
@@ -153,8 +177,16 @@ async function runMaturation(marketScope: "us" | "india" | null) {
             max_favorable_excursion: label.maxFavorableExcursion,
             entry_price: label.entryPrice,
             exit_price: label.exitPrice,
+            entry_atr: label.entryAtr,
+            entry_atr_pct: label.entryAtrPct,
+            max_adverse_excursion_atr: label.maxAdverseExcursionAtr,
+            max_favorable_excursion_atr: label.maxFavorableExcursionAtr,
+            atr_exit_outcomes: atrExitOutcomes,
+            atr_policy_version: ATR_EXIT_POLICY_VERSION,
           }, { onConflict: "observation_id,horizon_days" });
           if (insErr) { skipped++; return; }
+          if (atrExitOutcomes) atrLabeled++;
+          else atrUnavailable++;
           matured++;
         } catch {
           skipped++;
@@ -164,7 +196,7 @@ async function runMaturation(marketScope: "us" | "india" | null) {
     }
   }
 
-  return { matured, skipped, market: marketScope ?? "all" };
+  return { matured, skipped, atrLabeled, atrUnavailable, market: marketScope ?? "all" };
 }
 
 export async function POST(req: NextRequest) {
@@ -187,7 +219,7 @@ export async function POST(req: NextRequest) {
         agent_type: "label_maturation",
         status: "done",
         trigger_source: isCron ? "scheduled" : "manual",
-        result_summary: `Matured ${result.matured}, skipped ${result.skipped} (${result.market}).`,
+        result_summary: `Matured ${result.matured}, skipped ${result.skipped}, ATR ${result.atrLabeled}/${result.matured} (${result.market}).`,
         completed_at: new Date().toISOString(),
       } as any);
     } catch { /* best-effort */ }

@@ -68,4 +68,20 @@ describe("computeLabel (fwd_return / MAE / MFE on a hand-built fixture)", () => 
     expect(label!.exitPrice).toBe(108);
     expect(label!.maxFavorableExcursion).toBeCloseTo(0.15, 6);
   });
+
+  it("normalizes MAE and MFE by the point-in-time entry ATR when present", () => {
+    const label = computeLabel(ENTRY, fixture, 10, null, 4);
+    expect(label!.entryAtr).toBe(4);
+    expect(label!.entryAtrPct).toBeCloseTo(0.04, 6);
+    expect(label!.maxAdverseExcursionAtr).toBeCloseTo(-1, 6);
+    expect(label!.maxFavorableExcursionAtr).toBeCloseTo(3.75, 6);
+  });
+
+  it("leaves ATR diagnostics null instead of inventing volatility", () => {
+    const label = computeLabel(ENTRY, fixture, 10, null, null);
+    expect(label!.entryAtr).toBeNull();
+    expect(label!.entryAtrPct).toBeNull();
+    expect(label!.maxAdverseExcursionAtr).toBeNull();
+    expect(label!.maxFavorableExcursionAtr).toBeNull();
+  });
 });

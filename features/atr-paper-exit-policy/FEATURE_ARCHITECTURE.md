@@ -1,6 +1,6 @@
 # ATR Paper Exit Policy
 
-> Status: **DRAFT - NOT APPROVED FOR IMPLEMENTATION**
+> Status: **MEASURE-ONLY PHASE APPROVED AND IMPLEMENTED**
 > Date: 2026-07-22
 
 ## Decision
@@ -52,20 +52,41 @@ validation and paper shadow evidence.
 - US and India stay separate for prices, ATR units, data sources, policy
   evidence, positions, cash, and evaluation.
 
-## Measure-Only Phase (Proposed)
+## Measure-Only Phase (Implemented)
 
 1. Extend immutable `decision_observations` / `observation_labels`, not the
    execution tables, with derived ATR-normalized MAE/MFE diagnostics where the
    entry candle history is adequate. Record null rather than inventing an ATR.
-2. Evaluate a small, predeclared family of stop/target/trail candidates per
-   market and horizon against the same frozen entry opportunities. Include
-   spread/slippage and a conservative daily-bar ambiguity policy.
-3. Use purged walk-forward splits, a locked holdout, costs, turnover, drawdown,
-   and trial-family correction. Require enough independent labels; never pool
-   US and India.
-4. Write only Edge/validation evidence and health telemetry. No change to
+2. Evaluate the versioned `close_observed_v1` family of three stop/partial/
+   target/trail candidates against the same frozen entry opportunities. The
+   simulation observes completed daily closes, matching PositionMonitor's
+   cadence, and applies the existing 10 bps round-trip haircut. It never claims
+   an intraday barrier fill from a daily candle.
+3. Expose a read-only, market-and-horizon-local evidence report. A candidate is
+   `insufficient_sample` until it has at least 60 labels and 12 effective
+   horizon-adjusted observations. This status is descriptive only: it cannot
+   promote or activate an exit policy.
+4. Write only matured label evidence and health telemetry. No change to
    `agent_signals`, PaperTrader, PositionMonitor, positions, cash, broker
    proposals, or live orders.
+
+### Implemented contracts
+
+- Entry ATR is read from immutable `decision_observations.features.technical.atr14`.
+  Missing or invalid ATR remains null.
+- `observation_labels` owns `entry_atr`, ATR-normalized MAE/MFE, the versioned
+  candidate outcomes, and the policy version. Existing labels are reprocessed
+  only when the version is missing or stale.
+- `GET /api/analytics/atr-exit-evidence?market=us|india&horizon=2|5|10|20`
+  returns coverage and candidate aggregates for authenticated owner review.
+- No execution module imports the candidate family. The database migration has
+  no trigger or RPC capable of changing positions, cash, signals, or orders.
+
+### Still required before paper shadow
+
+After enough prospective labels accrue, add the predeclared purged walk-forward,
+locked-holdout, drawdown/turnover, and trial-family correction evaluation. A
+`reviewable_evidence` aggregate is not approval and cannot skip that gate.
 
 ## Later Paper Shadow Gate
 

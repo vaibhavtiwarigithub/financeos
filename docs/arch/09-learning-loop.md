@@ -189,6 +189,18 @@ This is separate from weight mutation — it runs regardless of the phase gate.
 **Deterministic, no LLM.** Replays a Challenger vs the current Champion on walk-forward
 held-out slices of the `decision_observations` ledger.
 
+### ATR exit-policy evidence (measure-only)
+
+Nightly label maturation also records point-in-time entry ATR, ATR-normalized
+MAE/MFE, and three predeclared `close_observed_v1` exit-policy outcomes. The
+simulation uses completed daily closes and the standard 10 bps haircut, so it
+does not infer intraday fills from daily OHLC ranges. The authenticated
+`/api/analytics/atr-exit-evidence` report is strictly market- and horizon-local.
+Its `reviewable_evidence` status requires at least 60 labels and 12 effective
+observations, but is not a promotion gate and cannot change PaperTrader,
+PositionMonitor, live orders, or broker protection. Purged walk-forward and
+paper shadow approval remain mandatory before any execution-policy proposal.
+
 ### Eligibility gates (same for US and India)
 
 | Gate | Threshold |
