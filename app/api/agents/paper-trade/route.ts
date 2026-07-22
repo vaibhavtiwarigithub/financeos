@@ -16,6 +16,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadTradingMandate, mandateSnapshot, resolveHorizonDays, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaused, isTradingEnabled } from "@/lib/market-controls";
 import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/trading/capital-rotation";
+import { selectBestPaperSignals } from "@/lib/trading/paper-signal-selection";
 import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
 import { paperPerformanceTruth } from "@/lib/paper-nav";
 import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
@@ -185,13 +186,14 @@ export async function POST(req: NextRequest) {
       let expQ = supabase.from("agent_signals").update({ status: "expired" })
         .eq("status", "pending").eq("direction", "long").lt("created_at", cutoff);
       expQ = hasMarketCol ? expQ.eq("market", m) : expQ.neq("asset_class", "india");
-      const { data: expd } = await expQ.select("id");
+      const { data: expd, error: expireError } = await expQ.select("id");
+      if (expireError) throw new Error(`stale signal expiry failed (${m}): ${expireError.message}`);
       const nExp = expd?.length ?? 0;
       expiredTotal += nExp;
       if (nExp > 0) await logStage(supabase, { signal_id: null, symbol: null, market: m, stage: "freshness", outcome: "expired", reason: `${nExp} stale pending long signal(s) expired (older than ${m}-local ${cutoff})`, detail: { cutoff, count: nExp } });
 
       // Fetch only fresh (same-trading-day) pending long candidates.
-      let selQ = supabase.from("agent_signals").select("*")
+      let selQ = supabase.from("agent_signals").select("*", { count: "exact" })
         .eq("status", "pending").eq("direction", "long")
         .gte("analyst_score", entryThreshold).gte("created_at", cutoff)
         // Positive session proof: weekend catch-up scores are useful research
@@ -201,27 +203,48 @@ export async function POST(req: NextRequest) {
         // A negative filter (is.null OR neq llm_advisory) failed OPEN — it admitted
         // null/unknown score_source, so any untagged signal could be traded.
         .eq("score_source", "deterministic_v1")
-        .order("analyst_score", { ascending: false }).limit(hasMarketCol ? 10 : 5);
+        .order("analyst_score", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(1000);
       selQ = hasMarketCol ? selQ.eq("market", m) : selQ.neq("asset_class", "india");
-      const { data } = await selQ;
+      const { data, error, count } = await selQ;
+      if (error) throw new Error(`paper signal query failed (${m}): ${error.message}`);
+      if ((count ?? 0) > (data?.length ?? 0)) {
+        throw new Error(`paper signal cohort truncated (${m}): ${data?.length ?? 0}/${count}`);
+      }
       if (data) signals.push(...data);
     }
 
     // Dedup: research runs 3x/day, stacking duplicate pending rows per symbol.
     // Keep only the highest-scoring signal per (symbol, market); ties → most recent.
     if (signals.length > 0) {
-      const best = new Map<string, any>();
-      for (const s of signals) {
-        const key = `${String(s.symbol).toUpperCase()}:${s.market ?? "us"}`;
-        const prev = best.get(key);
-        if (!prev || s.analyst_score > prev.analyst_score ||
-            (s.analyst_score === prev.analyst_score && s.created_at > prev.created_at)) {
-          best.set(key, s);
-        }
+      const selected: any[] = [];
+      const duplicateIds: string[] = [];
+      for (const market of activeMarkets) {
+        const marketRows = signals.filter(signal => {
+          const rowMarket = hasMarketCol
+            ? String(signal.market ?? (signal.asset_class === "india" ? "india" : "us"))
+            : "us";
+          return rowMarket === market;
+        });
+        const result = selectBestPaperSignals(
+          marketRows,
+          market as "us" | "india",
+          hasMarketCol ? 10 : 5,
+        );
+        selected.push(...result.selected);
+        duplicateIds.push(...result.duplicateIds);
+      }
+      if (duplicateIds.length > 0) {
+        const { error } = await supabase.from("agent_signals")
+          .update({ status: "superseded" })
+          .in("id", duplicateIds)
+          .eq("status", "pending");
+        if (error) throw new Error(`paper signal supersession failed: ${error.message}`);
       }
       signals.length = 0;
-      signals.push(...best.values());
-      signals.sort((a, b) => b.analyst_score - a.analyst_score);
+      signals.push(...selected);
+      signals.sort((a, b) => Number(b.analyst_score) - Number(a.analyst_score));
     }
 
     // Tradable-universe policy: drop leveraged/inverse ETFs + owner-blocklisted
@@ -245,7 +268,7 @@ export async function POST(req: NextRequest) {
 
     const filled: any[] = [];
     const skipped: any[] = [];
-    let rotationsThisRun = 0; // capital-rotation P1 (paper): bounded per-run counter
+    const rotationsThisRun = new Map<string, number>(); // market-local; caps never cross-consume
 
     // Sector cap is market-local. US sector occupancy must never block an India
     // name (or vice versa); the books and currencies are independent.
@@ -625,22 +648,21 @@ export async function POST(req: NextRequest) {
         } catch (e: any) {
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_shadow_log_failed", detail: { error: e?.message ?? String(e) } });
         }
-        // Capital-rotation P1 (SHIPPED OFF): if rotation_paper_execute_enabled AND
-        // every guardrail passes, atomically sell the weakest holding to fund this
-        // candidate. Default flag is off → executeCapitalRotationPaper returns
-        // {executed:false} and this is a plain insufficient_cash skip (unchanged).
+        // Capital-rotation P1 is containment-locked OFF. Shadow measurement runs,
+        // but the DB constraint, deployment gate, and no-write RPC stub prevent
+        // any sell/buy until the missing P1 guardrails are approved and replaced.
         let rotReason = "not_attempted";
         try {
           const rot = await executeCapitalRotationPaper(supabase, {
-            runId, rotationsThisRun,
+            runId, rotationsThisRun: rotationsThisRun.get(market) ?? 0,
             candidate: { ...rotCandidate, qty, fillPrice, priceTarget, stopLoss, sector: candSector },
             scoreThreshold: tradingMandate.score_threshold, minHoldingDays: tradingMandate.min_hold_days ?? 2,
           });
           if (rot.executed) {
-            rotationsThisRun += 1;
+            rotationsThisRun.set(market, (rotationsThisRun.get(market) ?? 0) + 1);
             filled.push({ symbol: signal.symbol, qty, price: fillPrice, via: "capital_rotation", sold: rot.sourceSymbol });
             await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "filled", reason: `capital_rotation: sold ${rot.sourceSymbol} to fund ${signal.symbol}`, detail: { soldSymbol: rot.sourceSymbol, qty, fillPrice } });
-            continue; // candidate bought + source sold atomically by the RPC (signal already marked paper_traded)
+            continue; // reachable only after a future approved P1 RPC replaces the containment stub
           }
           rotReason = rot.reason ?? "unknown";
         } catch (e: any) {

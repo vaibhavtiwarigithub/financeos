@@ -1041,7 +1041,17 @@ Append-only per-account roll-up — one row per run (UNIQUE `(run_id)`; FK → `
 | 20260721130000 | **Router evidence hardening** (still shadow-only): `evidence_policy_evaluations` gains immutable `safety_pass`, `quality_pass`, and `market_session_date`; one inactive `router_enabled=true` candidate per market copies the current active rule set so evidence binds the exact future candidate without moving the active pointer; the bound activation RPC requires both verdicts plus ten distinct passing market sessions in the prior 45 days and a still-fresh selected evaluation. Adds daily cache-only cohort crons. Production stays on disabled baselines. |
 | 20260721164500 | Router cohort session-source clarification: `market_session_date` is sourced from executable ResearchAgent rows (`session_validated=true`, `as_of_session`), not candidate candle availability. Missing India bars therefore persist as failed coverage evidence instead of crashing the evaluator; weekend/holiday staged rows cannot count. |
 
-### Evidence evaluation tables — who writes them
+### Capital rotation containment (20260722185000)
+
+Migration `20260722185000` contains capital-rotation P1 and hardens its future
+claim contract. It forces `rotation_paper_execute_enabled=false` with a database
+check constraint because the cost/tax/turnover/fresh-price/post-swap gates are
+incomplete, while preserving shadow measurement. The replacement RPC verifies
+the exact `claim_run_id` and then returns `p1_guardrails_incomplete`; it contains
+no position, cash, trade, or order mutation. The caller also requires an
+independent deployment flag.
+
+### Evidence evaluation tables
 
 `evidence_policy_evaluations` and `evidence_evaluation_details` sat at **0 rows** from the
 20260716210000 migration until 2026-07-18: the comparator, degradation guard, and bound

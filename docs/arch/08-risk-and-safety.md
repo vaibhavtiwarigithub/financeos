@@ -109,9 +109,13 @@ drawdown breaker acts on corrupted NAV.
 records a `rotation_events` audit row when a candidate is rejected for
 `insufficient_cash`, showing whether a same-market weaker holding could have
 funded it. This is measurement only: `rotation_paper_execute_enabled=false` and
-`rotation_live_proposals_enabled=false` by default, no paper sell/buy RPC exists
-in this phase, no live proposal is created, and PositionMonitor remains the only
-owner of true exit labels.
+`rotation_live_proposals_enabled=false` by default. Migration 177 added a paper
+sell/buy RPC scaffold, but migration `20260722185000` now enforces
+`rotation_paper_execute_enabled=false` at the database level and the caller also
+requires an independent deployment flag. P1 remains unapproved because the
+full cost/tax, turnover, fresh-source-price, correlation, and post-swap replay
+gates are incomplete. No live proposal is created, and PositionMonitor remains
+the only owner of true exit labels.
 
 **Per-market pause/kill isolation (migration 171).** The pause and kill-switch
 state was GLOBAL (`strategy_config.app_paused`/`trading_enabled`), so one

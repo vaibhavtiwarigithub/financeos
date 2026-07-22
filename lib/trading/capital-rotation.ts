@@ -42,6 +42,17 @@ export interface RotationEvaluation {
   gates: Record<string, unknown>;
 }
 
+export function countDistinctPriorRotationRuns(rows: Array<{ audit_json?: unknown }>, currentRunId: string): number {
+  return new Set(rows
+    .map(row => {
+      const audit = row.audit_json && typeof row.audit_json === "object"
+        ? row.audit_json as Record<string, unknown>
+        : null;
+      return String(audit?.run_id ?? "");
+    })
+    .filter(id => id.length > 0 && id !== currentRunId)).size;
+}
+
 function daysHeld(openedAt: string | null, now = new Date()): number | null {
   if (!openedAt) return null;
   const t = new Date(openedAt).getTime();
@@ -149,7 +160,7 @@ async function latestScoresBySymbol(supabase: any, market: "us" | "india", symbo
   const out = new Map<string, number>();
   if (symbols.length === 0) return out;
   const since = new Date(Date.now() - 7 * 86400000).toISOString();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("agent_signals")
     .select("symbol, analyst_score, created_at")
     .eq("market", market)
@@ -158,6 +169,7 @@ async function latestScoresBySymbol(supabase: any, market: "us" | "india", symbo
     .gte("created_at", since)
     .order("created_at", { ascending: false })
     .limit(200);
+  if (error) throw new Error(`rotation score query failed: ${error.message}`);
   for (const row of (data ?? []) as any[]) {
     const sym = String(row.symbol ?? "");
     if (!sym || out.has(sym)) continue;
@@ -184,7 +196,8 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   const { data: positions } = await supabase
     .from("paper_positions")
     .select("id, symbol, market, qty, avg_cost, current_price, opened_at, price_target, stop_loss, exit_reason")
-    .eq("market", candidate.market);
+    .eq("market", candidate.market)
+    .eq("position_role", "alpha");
 
   const symbols = (positions ?? []).map((p: any) => String(p.symbol)).filter(Boolean);
   const scores = await latestScoresBySymbol(supabase, candidate.market, symbols);
@@ -251,11 +264,9 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
 }
 
 // ── Phase 1 PAPER EXECUTION (SHIPPED OFF) ────────────────────────────────────
-// Actually sell the weakest still-valid holding to fund a better candidate, via
-// the atomic execute_paper_rotation RPC (one transaction — never leaves the book
-// in cash). Runs ONLY when rotation_config.rotation_paper_execute_enabled is true
-// (default false) AND every guardrail passes. Paper book only; no live path.
-// Returns {executed, reason}. Fail-soft: any error → not executed (shadow still logged).
+// The evaluator remains for future P1 work, but the production DB constraint,
+// deployment gate, and no-write RPC stub make execution unreachable. Paper
+// shadow measurement remains active; there is no live path.
 export interface RotationExecInput {
   runId: string | null;
   rotationsThisRun: number;
@@ -269,10 +280,18 @@ export interface RotationExecInput {
 export async function executeCapitalRotationPaper(supabase: any, args: RotationExecInput): Promise<{ executed: boolean; reason: string; sourceSymbol?: string }> {
   const c = args.candidate;
   try {
-    const { data: cfgRow } = await supabase
+    // The DB toggle is necessary but not sufficient. P1 must also be explicitly
+    // enabled at deployment time after its architecture gates are approved.
+    if (process.env.CAPITAL_ROTATION_PAPER_ENABLED !== "true") {
+      return { executed: false, reason: "deployment_disabled" };
+    }
+    if (!args.runId) return { executed: false, reason: "missing_claim_run_id" };
+
+    const { data: cfgRow, error: cfgError } = await supabase
       .from("rotation_config")
       .select("rotation_paper_execute_enabled, rotation_margin_score, rotation_persistence_runs, rotation_cooldown_days, max_rotations_per_run, max_rotations_per_day")
       .eq("market", c.market).eq("book_type", "paper").maybeSingle();
+    if (cfgError) return { executed: false, reason: `config_query_failed:${cfgError.message}` };
 
     // GATE 0: master execution flag (default OFF).
     if (!(cfgRow as any)?.rotation_paper_execute_enabled) return { executed: false, reason: "execute_disabled" };
@@ -287,10 +306,12 @@ export async function executeCapitalRotationPaper(supabase: any, args: RotationE
     if (args.rotationsThisRun >= maxPerRun) return { executed: false, reason: "max_rotations_per_run" };
 
     // Re-run the deterministic eligibility eval against the current book.
-    const { data: positions } = await supabase
+    const { data: positions, error: positionsError } = await supabase
       .from("paper_positions")
       .select("id, symbol, market, qty, avg_cost, current_price, opened_at, price_target, stop_loss, exit_reason")
-      .eq("market", c.market);
+      .eq("market", c.market)
+      .eq("position_role", "alpha");
+    if (positionsError) return { executed: false, reason: `positions_query_failed:${positionsError.message}` };
     const symbols = (positions ?? []).map((p: any) => String(p.symbol)).filter(Boolean);
     const scores = await latestScoresBySymbol(supabase, c.market, symbols);
     const holdings: RotationHolding[] = (positions ?? []).map((p: any) => ({
@@ -310,17 +331,19 @@ export async function executeCapitalRotationPaper(supabase: any, args: RotationE
 
     // GATE: per-day cap.
     const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
-    const { count: todayCount } = await supabase
+    const { count: todayCount, error: todayError } = await supabase
       .from("rotation_events").select("id", { count: "exact", head: true })
       .eq("market", c.market).eq("status", "paper_executed").gte("created_at", dayStart.toISOString());
+    if (todayError) return { executed: false, reason: `daily_cap_query_failed:${todayError.message}` };
     if ((todayCount ?? 0) >= maxPerDay) return { executed: false, reason: "max_rotations_per_day" };
 
     // GATE: cooldown — no execution touching this candidate or source recently.
     if (cooldownDays > 0) {
       const cdStart = new Date(Date.now() - cooldownDays * 86400000).toISOString();
-      const { data: recent } = await supabase
+      const { data: recent, error: recentError } = await supabase
         .from("rotation_events").select("candidate_symbol, source_symbol")
         .eq("market", c.market).eq("status", "paper_executed").gte("created_at", cdStart);
+      if (recentError) return { executed: false, reason: `cooldown_query_failed:${recentError.message}` };
       const hit = (recent ?? []).some((r: any) => r.candidate_symbol === c.symbol || r.source_symbol === source.symbol || r.candidate_symbol === source.symbol);
       if (hit) return { executed: false, reason: "cooldown_active" };
     }
@@ -329,10 +352,12 @@ export async function executeCapitalRotationPaper(supabase: any, args: RotationE
     // in >= (persistenceRuns-1) prior runs (anti-thrash on a one-day score blip).
     if (persistenceRuns > 1) {
       const pStart = new Date(Date.now() - 4 * 86400000).toISOString();
-      const { count: priorPlanned } = await supabase
-        .from("rotation_events").select("id", { count: "exact", head: true })
+      const { data: priorRows, error: persistenceError } = await supabase
+        .from("rotation_events").select("audit_json")
         .eq("market", c.market).eq("candidate_symbol", c.symbol).eq("status", "planned").gte("created_at", pStart);
-      if ((priorPlanned ?? 0) < persistenceRuns - 1) return { executed: false, reason: "awaiting_persistence" };
+      if (persistenceError) return { executed: false, reason: `persistence_query_failed:${persistenceError.message}` };
+      const priorRuns = countDistinctPriorRotationRuns(priorRows ?? [], args.runId);
+      if (priorRuns < persistenceRuns - 1) return { executed: false, reason: "awaiting_persistence" };
     }
 
     // Execute atomically.
@@ -343,6 +368,7 @@ export async function executeCapitalRotationPaper(supabase: any, args: RotationE
       p_candidate_fill_price: c.fillPrice, p_candidate_price_target: c.priceTarget, p_candidate_stop_loss: c.stopLoss,
       p_candidate_sector: c.sector, p_candidate_score: c.score, p_source_score: source.score,
       p_score_edge: evaluation.scoreEdge, p_idempotency_key: idempotencyKey,
+      p_claim_run_id: args.runId,
       p_gate_json: { ...evaluation.gates, persistence_runs: persistenceRuns, cooldown_days: cooldownDays },
     });
     if (rpcErr) return { executed: false, reason: `rpc_error:${rpcErr.message}` };

@@ -194,6 +194,15 @@ Built 2026-07-13. The evaluator and append-only audit rows are implemented. On `
 
 After P0 evidence is reviewed, enable market-by-market paper execution only. Requires atomic paper RPC, persistence, post-swap gate replay, turnover budget, cost/tax model, and complete audit rows.
 
+**Current enforcement (2026-07-22):** P1 is not approved. A production audit
+found the US paper flag enabled while several required gates above were still
+absent. It was reset to false, and migration `20260722185000` adds a database
+constraint that prevents either market from enabling paper rotation. The old
+money-moving RPC is replaced by a claim-verifying stub that always returns
+`p1_guardrails_incomplete` and performs no ledger mutation. P0 shadow
+measurement is the only reachable phase until a later migration removes that
+constraint and introduces a fully reviewed P1 transaction.
+
 ### P2 - Live approval proposals
 
 After P1 shows low churn and net-positive behavior, add live proposal generation. Owner approval is required. Sell and buy legs are reconciled separately through the canonical gateway. No autonomous live rotation in this phase.
