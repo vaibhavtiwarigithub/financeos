@@ -40,6 +40,15 @@
   361 currently matured labels predate that evidence and are intentionally not
   backfilled with reconstructed ATR.
 
+### Production smoke
+
+- US: 458 labels matured, 54 with valid point-in-time ATR outcomes.
+- India: 164 labels matured, 77 with valid point-in-time ATR outcomes.
+- Every populated ATR label contains all three `close_observed_v1` outcomes;
+  database verification found zero invalid rows.
+- Ten- and twenty-day evidence remains sparse or absent until those prospective
+  observations genuinely mature.
+
 ## Next Gate
 
 Evidence must accrue prospectively. Before any paper shadow proposal, Kairos
