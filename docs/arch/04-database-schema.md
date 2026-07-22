@@ -406,6 +406,15 @@ global catalog label. Includes `latest_window_end`, `n_obs_min`,
 `evidence_quality`, and per-horizon JSON diagnostics. Service-role write;
 authenticated/anon have no table grant. No money-path reader exists.
 
+### `edge_readiness_status`
+
+Latest deterministic readiness projection per (`edge_id`, `market`, `horizon`). It
+stores policy version, independent-window progress, stability diagnostics, future
+cost-validation progress, next action, gate details, and separate first-notified
+timestamps for validation-build and shadow-review milestones. The immutable source
+remains `edge_ic_history`; this projection is service-role only and may be updated by
+the weekly monitor. No score, signal, mandate, position, or order reader exists.
+
 `edge_signal_inputs` records actual `observed_at`, `provenance_mode`, and an
 input fingerprint. Original synthetic next-session rows are retained but marked
 `legacy_unverified`; they cannot prove point-in-time availability.

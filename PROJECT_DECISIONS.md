@@ -803,3 +803,19 @@ EdgeIC route, `edge_ic_history`, tests, and architecture documentation.
 
 Reversal cost: Low; stop future observations while retaining immutable experiment
 history. No trading rollback exists because the feature has no trading influence.
+### Decision 52: Edge Calibration Readiness Is A Review Milestone, Never Trade Authority
+
+Date: 2026-07-21
+Status: Approved
+Category: Product / Architecture / Data / Safety
+
+- **Why:** Weekly factor evidence needs an automatic, durable answer to “what is
+  next?” without relying on memory or overreacting to one favorable IC snapshot.
+- **Who:** The single Kairos owner reviewing US and India research quality.
+- **ROI:** Prevents premature indicator changes, makes evidence collection visible,
+  and surfaces stalled calibration without adding providers or trading risk.
+- **Decision:** Build deterministic per-factor/market/horizon progress with six-window
+  historical stability and a separate four-window PIT/walk-forward/cost/FDR gate.
+  Emit one-time informational milestones and collection-stall warnings. Neither
+  milestone changes scoring, lifecycle, paper trading, or live trading.
+- **Shipped at:** 2026-07-21.

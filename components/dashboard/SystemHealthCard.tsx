@@ -37,6 +37,7 @@ function fixHint(a: Alert): { href?: string; label: string } {
   if (cat === "trading") return { href: "/dashboard/settings", label: "Review in Settings → Trading" };
   if (cat === "data") return { label: "Resolves at the next data-quota reset" };
   if (cat === "cron") return { href: "/dashboard/intelligence", label: "See Intelligence → runs" };
+  if (cat === "calibration") return { href: "/dashboard/edges", label: "Review calibration evidence" };
   return { label: "" };
 }
 

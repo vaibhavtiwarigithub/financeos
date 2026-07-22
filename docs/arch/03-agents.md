@@ -244,6 +244,14 @@ already-fetched candles. This is measure-only: it does not add MACD/ADX to the
 score, create sector-specific parameters, or change any agent decision. Formula,
 dataset, segment, and run fingerprints preserve later recalibration history.
 
+**Calibration readiness monitor (2026-07-21):** A weekly deterministic monitor
+collapses same-window provider revisions, counts only market-wide windows at least
+five calendar days apart, and publishes progress per edge/market/horizon. Six stable
+historical windows can request the PIT/walk-forward/cost/FDR validation build; four
+qualified validation windows can request shadow review. Both are review milestones,
+not lifecycle promotion or trading permission. The monitor makes no provider call and
+emits a one-time informational notice plus a warning if collection is stale >10 days.
+
 **Weighted composite (availability-masked + renormalized):**
 ```
 analyst_score = Σ (dimension_score × effective_weight[dimension])
