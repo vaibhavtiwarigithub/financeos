@@ -5,6 +5,7 @@ import RhReconnectBanner from "@/components/dashboard/RhReconnectBanner";
 import LiveStatCards from "@/components/dashboard/LiveStatCards";
 import LivePerformanceChart from "@/components/dashboard/LivePerformanceChart";
 import LivePortfolioShell from "@/components/dashboard/LivePortfolioShell";
+import { brokerAccountDisplayLabel } from "@/lib/brokers/account-label";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -196,7 +197,9 @@ export default function LivePortfolioPage({
       badge={
         <>
           <span style={{ fontSize: "10px", fontWeight: 800, padding: "2px 8px", borderRadius: "4px", background: T.blueBg, color: T.blue, letterSpacing: "0.08em" }}>LIVE</span>
-          <span style={{ fontSize: "10px", color: T.muted }}>••••8641 · READ-ONLY</span>
+          <span style={{ fontSize: "10px", color: T.muted }}>
+            {snaps.length} linked account{snaps.length === 1 ? "" : "s"}
+          </span>
         </>
       }
       syncLine={
@@ -277,7 +280,7 @@ export default function LivePortfolioPage({
                 }}>
                   {s.broker === "webull" ? "WB" : s.broker === "robinhood" ? "RH" : String(s.broker ?? "??").slice(0, 2).toUpperCase()}
                 </span>
-                {s.nickname ?? "••••" + s.account_id.slice(-4)}
+                {brokerAccountDisplayLabel({ broker: String(s.broker ?? "robinhood"), accountId: String(s.account_id), nickname: s.nickname })}
                 {s.equity ? " · " + maskText(fmt$(Number(s.equity)), masked) : ""}
                 {s.position_count > 0 ? ` · ${masked ? "••" : s.position_count}p` : " · no pos"}
               </button>

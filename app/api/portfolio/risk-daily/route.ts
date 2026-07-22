@@ -4,9 +4,11 @@
 //
 // GET /api/portfolio/risk-daily?market=us|india[&accountId=...]
 //
-// Owner-gated: this uses the AUTHENTICATED user's Supabase client, so the
-// owner-email RLS policy on holding_risk_* is what actually scopes the rows — no
-// service-role read here. Returns only COMPLETE runs.
+// Owner-gated: the authenticated client and owner-email RLS scope risk rows.
+// Only after a visible run is found, a service client reads the latest broker
+// nickname for presentation; raw snapshot rows are not returned and account IDs
+// remain authenticated request keys rather than visible labels. Returns only
+// COMPLETE runs.
 //
 //   • without accountId → one latest-complete run per account (for the account tabs),
 //     never aggregated across accounts and never summed across currencies.
@@ -23,6 +25,8 @@ import {
   type ResearchSignalRow,
 } from "@/lib/research/risk-annotation";
 import { effectiveHoldingRiskPosture } from "@/lib/risk/holding-risk-history";
+import { createServiceClient } from "@/lib/supabase/service";
+import { brokerAccountDisplayLabel, brokerAccountKey, loadLatestBrokerNicknames } from "@/lib/brokers/account-label";
 
 export const dynamic = "force-dynamic";
 
@@ -74,11 +78,19 @@ export async function GET(req: NextRequest) {
     for (const r of (runs ?? []) as RunRow[]) {
       if (!byAccount.has(r.account_id)) byAccount.set(r.account_id, r);
     }
+    const latestNicknames = await loadLatestBrokerNicknames(
+      createServiceClient(),
+      Array.from(byAccount.values()).map((r) => ({ broker: r.broker, accountId: r.account_id })),
+    );
     return NextResponse.json({
       market,
       accounts: Array.from(byAccount.values()).map(r => ({
         accountId: r.account_id,
-        label: r.account_label,
+        label: r.broker === "internal" ? "Paper Portfolio" : brokerAccountDisplayLabel({
+          broker: r.broker,
+          accountId: r.account_id,
+          nickname: latestNicknames.get(brokerAccountKey(r.broker, r.account_id)),
+        }),
         broker: r.broker,
         currency: r.currency,
         capturedOn: r.captured_on,
@@ -113,6 +125,11 @@ export async function GET(req: NextRequest) {
     && r.formula_version === latest.formula_version
     && r.captured_on < latest.captured_on,
   ) ?? null;
+
+  const latestNicknames = await loadLatestBrokerNicknames(
+    createServiceClient(),
+    [{ broker: latest.broker, accountId: latest.account_id }],
+  );
 
   const runIds = [latest.id, ...(previous ? [previous.id] : [])];
 
@@ -197,7 +214,11 @@ export async function GET(req: NextRequest) {
     capturedOn: r.captured_on,
     currency: r.currency,
     broker: r.broker,
-    accountLabel: r.account_label,
+    accountLabel: r.broker === "internal" ? "Paper Portfolio" : brokerAccountDisplayLabel({
+      broker: r.broker,
+      accountId: r.account_id,
+      nickname: latestNicknames.get(brokerAccountKey(r.broker, r.account_id)),
+    }),
     sourceCapturedAt: r.source_captured_at,
     completedAt: r.completed_at,
     formulaVersion: r.formula_version,

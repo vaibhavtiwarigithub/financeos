@@ -5,7 +5,7 @@ import { currentPaperTradePnl } from "@/lib/paper-current-pnl";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket } from "@/lib/market-context";
 import { fmtMoney } from "@/lib/format-money";
-import type { PaperExitPlan } from "@/lib/trading/paper-exit-plan";
+import { paperExitPlanForTrade, type PaperExitPlan } from "@/lib/trading/paper-exit-plan";
 const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
@@ -643,6 +643,45 @@ function ExitPlanColumn({ plan, market }: { plan: PaperExitPlan | null; market: 
   );
 }
 
+function TradeExitPlanCell({ trade, plan, market }: { trade: any; plan: PaperExitPlan | null; market: "us" | "india" }) {
+  if (trade.closed_at != null || trade.outcome != null) {
+    const reason = String(trade.exit_reason ?? "").split(" (")[0].replaceAll("_", " ");
+    return (
+      <div style={{ color: T.muted, fontSize: "11px", lineHeight: 1.35 }}>
+        <div style={{ color: T.textSub, fontWeight: 600 }}>Completed</div>
+        {reason && <div style={{ textTransform: "capitalize" }}>{reason}</div>}
+      </div>
+    );
+  }
+  if (!plan) return <span style={{ color: T.muted, fontSize: "11px" }}>No current held-position plan</span>;
+
+  const label: Record<PaperExitPlan["state"], string> = {
+    hold: "Hold",
+    time_exit_due: "Time due",
+    score_exit_due: "Score due",
+    stop_exit_due: "Stop reached",
+    target_exit_due: "Target reached",
+  };
+  return (
+    <div style={{ minWidth: "210px", fontSize: "11px", lineHeight: 1.4, color: T.textSub }}>
+      <div style={{ fontWeight: 700, color: plan.state === "hold" ? T.green : T.red }}>{label[plan.state]}</div>
+      <div>
+        Stop {plan.stopPrice == null ? "—" : fmtMoney(plan.stopPrice, market)}
+        <span style={{ color: T.muted }}> · </span>
+        Target {plan.targetPrice == null ? "none" : fmtMoney(plan.targetPrice, market)}
+      </div>
+      <div>
+        {plan.score == null
+          ? "Score unavailable"
+          : plan.scoreFresh
+            ? `Score ${Math.round(plan.score)} · exit < ${Math.round(plan.scoreExitThreshold)}`
+            : `Score ${Math.round(plan.score)} stale · mechanical only`}
+        <span style={{ color: T.muted }}> · {plan.ageWeekdays ?? "?"}/{plan.horizonDays}d</span>
+      </div>
+    </div>
+  );
+}
+
 /** Rich position card — replaces plain table row */
 function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; plan: PaperExitPlan | null; onChart: (sym: string) => void; cur?: string; market?: "us" | "india" }) {
   const px = p.current_price ?? p.avg_cost;
@@ -879,10 +918,10 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>No paper trades yet.</div>
           ) : (
             <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-            <table style={{ width: "100%", minWidth: "820px", borderCollapse: "collapse", fontSize: "13px" }}>
+            <table style={{ width: "100%", minWidth: "1100px", borderCollapse: "collapse", fontSize: "13px" }}>
               <thead>
                 <tr style={{ color: T.muted }}>
-                  {["Symbol", "Side", "Qty", "Fill Price", "Total", "Score", "Realized P&L", "Current P&L", "Outcome", "Date"].map(h => (
+                  {["Symbol", "Side", "Qty", "Fill Price", "Total", "Score", "Exit Plan", "Realized P&L", "Current P&L", "Outcome", "Date"].map(h => (
                     <th key={h} style={{ padding: "5px 12px 10px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left" }}>{h}</th>
                   ))}
                 </tr>
@@ -890,6 +929,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
               <tbody>
                 {trades.map((t: any) => {
                   const currentPnl = currentPaperTradePnl(t, positions, activeMarket);
+                  const tradeExitPlan = paperExitPlanForTrade(t, exitPlans ?? {});
                   return <tr key={t.id} style={{ borderTop: `1px solid ${T.border}` }}>
                     <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -909,6 +949,9 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
                     <td style={{ padding: "10px 12px 10px 0" }}>{fmtMoney(Number(t.fill_price), activeMarket)}</td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{fmtMoney(t.qty * t.fill_price, activeMarket, 0)}</td>
                     <td style={{ padding: "10px 12px 10px 0", color: T.accent }}>{t.analyst_score ?? "—"}</td>
+                    <td style={{ padding: "10px 18px 10px 0", verticalAlign: "top" }}>
+                      <TradeExitPlanCell trade={t} plan={tradeExitPlan} market={activeMarket} />
+                    </td>
                     <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: t.realized_pnl != null ? pnlColor(t.realized_pnl) : T.muted }}>
                       {t.realized_pnl != null ? fmt(t.realized_pnl, cur) : "—"}
                     </td>

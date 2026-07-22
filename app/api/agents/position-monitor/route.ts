@@ -34,7 +34,7 @@ const marketOf = (p: any, hasMarketCol: boolean) => (hasMarketCol ? String(p.mar
 
 // Always leave a trace when a scheduled run throws, so the stale-check sees an
 // (errored) run instead of silence, and the real error is captured for diagnosis.
-async function logMonitorError(marketScope: "us" | "india" | null, msg: string) {
+async function logMonitorError(marketScope: "us" | "india" | null, msg: string, startedAt: string) {
   try {
     await createServiceClient().from("agent_runs").insert({
       agent_type: "position_monitor",
@@ -43,12 +43,13 @@ async function logMonitorError(marketScope: "us" | "india" | null, msg: string) 
       symbols: [],
       trigger_source: marketScope ? "scheduled" : "manual",
       result_summary: `PositionMonitor failed: ${msg}`.slice(0, 500),
+      started_at: startedAt,
       completed_at: new Date().toISOString(),
     } as any);
   } catch { /* never mask the original error */ }
 }
 
-async function runMonitor(marketScope?: "us" | "india" | null) {
+async function runMonitor(marketScope: "us" | "india" | null | undefined, startedAt: string) {
   const svc = createServiceClient();
 
   // 1. Fetch all paper positions — paper_positions has NO closed_at column
@@ -81,6 +82,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       symbols: [],
       trigger_source: marketScope ? "scheduled" : "manual",
       result_summary: "No open positions for this market.",
+      started_at: startedAt,
       completed_at: new Date().toISOString(),
     } as any).catch(() => {});
     return { checked: 0, closed: 0, closedDetails: [], updated: 0 };
@@ -575,6 +577,7 @@ async function runMonitor(marketScope?: "us" | "india" | null) {
       result_summary: navWriteFailed
         ? `NAV/performance write FAILED: ${navWriteErrors.join("; ")}`.slice(0, 500)
         : `Checked ${positions.length}, closed ${closed.length}, updated ${updated.length}, unpriced ${unpricedByMarket.us.length + unpricedByMarket.india.length}, stale scores held ${staleScoresHeld.length}.`,
+      started_at: startedAt,
       completed_at: new Date().toISOString(),
     } as any);
   } catch { /* best-effort — never fail the monitor run over bookkeeping */ }
@@ -619,12 +622,13 @@ export async function POST(req: NextRequest) {
 
     const mp = new URL(req.url).searchParams.get("market");
     const scope = mp === "india" ? "india" : mp === "us" ? "us" : null;
+    const startedAt = new Date().toISOString();
     try {
-      const result = await runMonitor(scope);
+      const result = await runMonitor(scope, startedAt);
       return NextResponse.json({ success: true, ...result });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      await logMonitorError(scope, msg);
+      await logMonitorError(scope, msg, startedAt);
       return NextResponse.json({ error: msg }, { status: 500 });
     }
   } catch (err: unknown) {
@@ -645,12 +649,13 @@ export async function GET(req: NextRequest) {
   }
   const mp = new URL(req.url).searchParams.get("market");
   const scope = mp === "india" ? "india" : mp === "us" ? "us" : null;
+  const startedAt = new Date().toISOString();
   try {
-    const result = await runMonitor(scope);
+    const result = await runMonitor(scope, startedAt);
     return NextResponse.json({ success: true, ...result });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    await logMonitorError(scope, msg);
+    await logMonitorError(scope, msg, startedAt);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

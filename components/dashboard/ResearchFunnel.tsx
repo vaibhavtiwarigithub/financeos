@@ -65,6 +65,9 @@ function MiniMetric({ label, value, color }: { label: string; value: string; col
  */
 export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string | null } = {}) {
   const [date, setDate] = useState(today());
+  const [scope, setScope] = useState<"date" | "all">("date");
+  const [symbolDraft, setSymbolDraft] = useState("");
+  const [symbolFilter, setSymbolFilter] = useState("");
   const { market } = useMarket();
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
@@ -75,16 +78,18 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
   useEffect(() => {
     let live = true;
     setData(null); setError(""); setExpanded(new Set()); setContexts({});
-    fetch(`/api/agents/research-journal?date=${date}&market=${market}`)
+    const params = new URLSearchParams({ date, market, scope });
+    if (symbolFilter) params.set("symbol", symbolFilter);
+    fetch(`/api/agents/research-journal?${params.toString()}`)
       .then(async r => { if (!r.ok) throw new Error(await r.text()); return r.json(); })
       .then(j => {
         if (!live) return;
-        if (j.count === 0 && j.latest_available_date && j.latest_available_date !== date) { setDate(j.latest_available_date); return; }
+        if (scope === "date" && j.count === 0 && j.latest_available_date && j.latest_available_date !== date) { setDate(j.latest_available_date); return; }
         setData(j);
       })
       .catch(e => { if (live) setError(e?.message ?? String(e)); });
     return () => { live = false; };
-  }, [date, market]);
+  }, [date, market, scope, symbolFilter]);
 
   // Deep-link focus: expand the requested symbol once its row exists. The fetch
   // effect above clears `expanded` on every date/market change, so this must run
@@ -95,15 +100,20 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
     if (!focusSymbol || !data?.symbols) return;
     const match = data.symbols.find((s: any) => s?.symbol === focusSymbol);
     if (!match) return;
-    setExpanded(current => current.has(focusSymbol) ? current : new Set(current).add(focusSymbol));
+    const key = String(match.observation_id ?? match.symbol);
+    setExpanded(current => current.has(key) ? current : new Set(current).add(key));
   }, [focusSymbol, data]);
 
-  function toggle(symbol: string) {
+  function toggle(key: string) {
     setExpanded(current => {
       const next = new Set(current);
-      if (next.has(symbol)) next.delete(symbol); else next.add(symbol);
+      if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
+  }
+
+  function applySymbolFilter() {
+    setSymbolFilter(symbolDraft.trim().toUpperCase());
   }
 
   async function loadCurrentContext(symbol: string) {
@@ -121,9 +131,25 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
 
   return <div>
     <div style={{ display: "flex", gap: "10px", marginBottom: "10px", alignItems: "center", flexWrap: "wrap" }}>
-      <input aria-label="Journal date" type="date" value={date} onChange={e => setDate(e.target.value)}
-        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "7px", color: T.text, padding: "8px 10px", fontSize: "13px" }} />
-      {data && <span style={{ fontSize: "12px", color: T.muted }}>{data.count} symbols · latest decision per symbol</span>}
+      <div style={{ display: "flex", gap: "4px", padding: "3px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px" }}>
+        {(["date", "all"] as const).map(option => <button key={option} type="button" onClick={() => setScope(option)}
+          style={{ background: scope === option ? T.accent : "transparent", border: 0, borderRadius: "6px", color: scope === option ? "#fff" : T.muted, padding: "5px 10px", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>
+          {option === "date" ? "One date" : "All dates"}
+        </button>)}
+      </div>
+      {scope === "date" && <input aria-label="Journal date" type="date" value={date} onChange={e => setDate(e.target.value)}
+        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "7px", color: T.text, padding: "8px 10px", fontSize: "13px", colorScheme: "dark" }} />}
+      <input aria-label="Filter funnel by symbol" value={symbolDraft} onChange={e => setSymbolDraft(e.target.value.toUpperCase())}
+        onKeyDown={e => { if (e.key === "Enter") applySymbolFilter(); }} placeholder="Filter symbol"
+        style={{ width: "145px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "7px", color: T.text, padding: "8px 10px", fontSize: "12px" }} />
+      <button type="button" onClick={applySymbolFilter} style={{ background: T.accent, border: 0, borderRadius: "7px", color: "#fff", padding: "8px 11px", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>Apply</button>
+      {symbolFilter && <button type="button" onClick={() => { setSymbolDraft(""); setSymbolFilter(""); }}
+        style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: "7px", color: T.textSub, padding: "7px 10px", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>Clear symbol</button>}
+      {data && <span style={{ fontSize: "12px", color: T.muted }}>
+        {data.count} {scope === "all" ? "observations" : "symbols · latest decision per symbol"}
+        {symbolFilter ? ` · ${symbolFilter}` : ""}
+        {data.capped ? ` · newest ${data.limit} shown` : ""}
+      </span>}
     </div>
     <div style={{ color: T.muted, fontSize: "11px", marginBottom: "16px" }}>
       Score measures the available evidence. Coverage shows how much applicable evidence was present. Confidence tells you how cautiously to read the conclusion.
@@ -134,15 +160,17 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
       : data.count === 0 ? <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "24px", color: T.muted, textAlign: "center" }}>No research observations exist for this market yet.</div>
       : <div style={{ display: "grid", gap: "12px" }}>
         {data.symbols.map((s: any) => {
-          const open = expanded.has(s.symbol);
+          const rowKey = String(s.observation_id ?? s.symbol);
+          const open = expanded.has(rowKey);
           const terminal = terminalBadge(s.terminal);
           const ac = actionColor(s.novice.action);
-          return <article key={s.symbol} style={{ background: T.card, border: `1px solid ${open ? T.accent + "77" : T.border}`, borderRadius: "12px", overflow: "hidden", boxShadow: open ? "0 18px 44px rgba(0,0,0,.22)" : "none" }}>
-            <button type="button" aria-expanded={open} onClick={() => toggle(s.symbol)} style={{ width: "100%", background: "transparent", border: 0, color: T.text, padding: "16px", cursor: "pointer", textAlign: "left" }}>
+          return <article key={rowKey} style={{ background: T.card, border: `1px solid ${open ? T.accent + "77" : T.border}`, borderRadius: "12px", overflow: "hidden", boxShadow: open ? "0 18px 44px rgba(0,0,0,.22)" : "none" }}>
+            <button type="button" aria-expanded={open} onClick={() => toggle(rowKey)} style={{ width: "100%", background: "transparent", border: 0, color: T.text, padding: "16px", cursor: "pointer", textAlign: "left" }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: "14px", alignItems: "flex-start", flexWrap: "wrap" }}>
                 <div>
                   <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
                     <span style={{ fontFamily: "Georgia, serif", fontSize: "20px", fontWeight: 700 }}>{open ? "▾" : "▸"} {s.symbol}</span>
+                    {scope === "all" && <span style={{ color: T.textSub, fontSize: "10px", border: `1px solid ${T.border}`, padding: "3px 7px", borderRadius: "999px" }}>{s.observed_date}</span>}
                     <span style={{ color: T.muted, fontSize: "10px", border: `1px solid ${T.border}`, padding: "3px 7px", borderRadius: "999px" }}>{s.identity.asset_label}</span>
                     <span style={{ color: s.history.state === "new" ? T.blue : s.history.state === "holding" ? T.green : T.muted, fontSize: "10px", border: `1px solid currentColor`, padding: "3px 7px", borderRadius: "999px" }}>{titleCase(s.history.state)}</span>
                   </div>

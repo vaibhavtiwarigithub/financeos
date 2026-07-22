@@ -7,6 +7,11 @@ import PageHeader from "@/components/dashboard/PageHeader";
 import SymbolAutocomplete from "@/components/dashboard/SymbolAutocomplete";
 import { useMarket } from "@/lib/market-context";
 import { fmtMoney, type Mkt } from "@/lib/format-money";
+import {
+  applyScoreTrackerSelection,
+  chunkScoreTrackerSymbols,
+  SCORE_TRACKER_MAX_SYMBOLS,
+} from "@/lib/research/journal-controls";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -342,18 +347,21 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
   const [loading, setLoading] = useState(false);
   const [versions, setVersions] = useState<StrategyVersion[]>([]);
   const [selected, setSelected] = useState<Selected>(null);
+  const [matchingSymbols, setMatchingSymbols] = useState<string[]>([]);
+  const [matchingLoading, setMatchingLoading] = useState(false);
 
   // Rich "why" evidence for the currently-selected point (fetched on click).
   const [pointDetail, setPointDetail] = useState<PointDetailResp | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const historySequence = useRef(0);
+  const matchingSequence = useRef(0);
 
   // ── Hydrate selection from localStorage + fetch candidate symbols ──────────
   useEffect(() => {
     let cancelled = false;
     let saved: string[] = [];
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(`${STORAGE_KEY}-${market}`);
       if (raw) saved = JSON.parse(raw);
     } catch { /* non-fatal */ }
 
@@ -371,7 +379,9 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
         // the chart) matches whichever market's tab the switcher shows elsewhere.
         const [wRes, pRes] = await Promise.all([
           fetch(`/api/watchlist?market=${market}`).then(r => r.json()).catch(() => ({})),
-          fetch("/api/live-portfolio").then(r => r.json()).catch(() => ({})),
+          market === "us"
+            ? fetch("/api/live-portfolio").then(r => r.json()).catch(() => ({}))
+            : Promise.resolve({}),
         ]);
         for (const it of (wRes.items ?? [])) {
           if (it.symbol) collected.add(String(it.symbol).toUpperCase());
@@ -407,8 +417,8 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
   // ── Persist selection ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!hydrated) return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(selectedSymbols)); } catch { /* non-fatal */ }
-  }, [selectedSymbols, hydrated]);
+    try { localStorage.setItem(`${STORAGE_KEY}-${market}`, JSON.stringify(selectedSymbols)); } catch { /* non-fatal */ }
+  }, [selectedSymbols, hydrated, market]);
 
   // ── Persist filter selection ────────────────────────────────────────────────
   useEffect(() => {
@@ -421,6 +431,56 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     [filters],
   );
 
+  const buildHistoryParams = useCallback((symbols: string[]) => {
+    const qs = new URLSearchParams({ symbols: symbols.join(","), period, market });
+    if (filters.direction !== "all") qs.set("direction", filters.direction);
+    if (filters.source !== "all") qs.set("source", filters.source);
+    if (filters.scoreBand !== "all") qs.set("scoreBand", filters.scoreBand);
+    if (filters.from) qs.set("from", filters.from);
+    if (filters.to) qs.set("to", filters.to);
+    return qs;
+  }, [period, market, filters]);
+
+  // Match active filters against every current-market candidate. This only
+  // changes the picker; chart selection changes through an explicit command.
+  useEffect(() => {
+    if (!hydrated) return;
+    const sequence = ++matchingSequence.current;
+    if (!filtersActive) {
+      setMatchingSymbols(allSymbols);
+      setMatchingLoading(false);
+      return;
+    }
+    if (allSymbols.length === 0) {
+      setMatchingSymbols([]);
+      setMatchingLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setMatchingLoading(true);
+    const chunks = chunkScoreTrackerSymbols(allSymbols);
+    Promise.all(chunks.map(async symbols => {
+      const response = await fetch(`/api/charts/score-history?${buildHistoryParams(symbols).toString()}`);
+      if (!response.ok) throw new Error("score filter request failed");
+      const payload = await response.json();
+      return Object.keys(payload.bySymbol ?? {}).filter(symbol => (payload.bySymbol[symbol] ?? []).length > 0);
+    }))
+      .then(matches => {
+        if (!cancelled && sequence === matchingSequence.current) {
+          const matched = new Set(matches.flat());
+          setMatchingSymbols(allSymbols.filter(symbol => matched.has(symbol)));
+        }
+      })
+      .catch(() => {
+        if (!cancelled && sequence === matchingSequence.current) setMatchingSymbols([]);
+      })
+      .finally(() => {
+        if (!cancelled && sequence === matchingSequence.current) setMatchingLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [hydrated, allSymbols, filtersActive, buildHistoryParams]);
+
   // ── Fetch score history when symbols or period change ───────────────────────
   const loadHistory = useCallback(async () => {
     const sequence = ++historySequence.current;
@@ -429,14 +489,7 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     try {
       // Market always comes from the global switcher — the chart is never allowed
       // to plot two books at once, so this is unconditional, not a filter.
-      const qs = new URLSearchParams({ symbols: selectedSymbols.join(","), period, market });
-      // Only append filters that constrain (keeps the URL — and the query — a
-      // no-op when nothing is filtered, so default behavior is unchanged).
-      if (filters.direction !== "all") qs.set("direction", filters.direction);
-      if (filters.source !== "all") qs.set("source", filters.source);
-      if (filters.scoreBand !== "all") qs.set("scoreBand", filters.scoreBand);
-      if (filters.from) qs.set("from", filters.from);
-      if (filters.to) qs.set("to", filters.to);
+      const qs = buildHistoryParams(selectedSymbols);
       const r = await fetch(`/api/charts/score-history?${qs.toString()}`);
       const d = await r.json();
       if (sequence === historySequence.current) setBySymbol(d.bySymbol ?? {});
@@ -445,7 +498,7 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     } finally {
       if (sequence === historySequence.current) setLoading(false);
     }
-  }, [selectedSymbols, period, filters, market]);
+  }, [selectedSymbols, buildHistoryParams]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -454,15 +507,25 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
   }, [hydrated, loadHistory]);
 
   function toggleSymbol(sym: string) {
-    setSelectedSymbols(prev => prev.includes(sym) ? prev.filter(s => s !== sym) : [...prev, sym]);
+    setSelectedSymbols(prev => prev.includes(sym) ? prev.filter(s => s !== sym) : applyScoreTrackerSelection(prev, [sym], "add"));
   }
 
   function addCustom() {
     const sym = customTicker.trim().toUpperCase();
     if (!sym) return;
     setAllSymbols(prev => prev.includes(sym) ? prev : [...prev, sym]);
-    setSelectedSymbols(prev => prev.includes(sym) ? prev : [...prev, sym]);
+    setSelectedSymbols(prev => prev.includes(sym) ? prev : applyScoreTrackerSelection(prev, [sym], "add"));
     setCustomTicker("");
+  }
+
+  const visibleSymbols = filtersActive ? matchingSymbols : allSymbols;
+
+  function selectFiltered() {
+    setSelectedSymbols(current => applyScoreTrackerSelection(current, visibleSymbols, "replace"));
+  }
+
+  function addFiltered() {
+    setSelectedSymbols(current => applyScoreTrackerSelection(current, visibleSymbols, "add"));
   }
 
   // ── Merge bySymbol into unified chart rows keyed by created_at ──────────────
@@ -616,14 +679,28 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
 
         {/* ── Symbol picker ── */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "18px 20px", marginBottom: "16px" }}>
-          <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "12px" }}>
-            Symbols {selectedSymbols.length > 0 && <span style={{ color: T.textSub, fontWeight: 400 }}>({selectedSymbols.length} selected)</span>}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
+            <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+              Symbols {selectedSymbols.length > 0 && <span style={{ color: T.textSub, fontWeight: 400 }}>({selectedSymbols.length} selected)</span>}
+              {filtersActive && <span style={{ color: T.accent, fontWeight: 400 }}> · {matchingLoading ? "matching…" : `${visibleSymbols.length} match`}</span>}
+            </div>
+            {selectedSymbols.length > 0 && (
+              <button
+                onClick={() => setSelectedSymbols(current => applyScoreTrackerSelection(current, [], "clear"))}
+                style={{ background: "none", border: `1px solid ${T.border}`, color: T.textSub, borderRadius: "6px", padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}
+              >
+                Clear selection
+              </button>
+            )}
           </div>
 
           <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "14px" }}>
             {allSymbols.length === 0 && !hydrated && <span style={{ fontSize: "12px", color: T.muted }}>Loading symbols…</span>}
             {allSymbols.length === 0 && hydrated && <span style={{ fontSize: "12px", color: T.muted }}>No candidate symbols found — add one below.</span>}
-            {allSymbols.map(sym => {
+            {filtersActive && !matchingLoading && allSymbols.length > 0 && visibleSymbols.length === 0 && (
+              <span style={{ fontSize: "12px", color: T.muted }}>No candidate symbols match the active filters.</span>
+            )}
+            {visibleSymbols.map(sym => {
               const active = selectedSymbols.includes(sym);
               const c = colorFor(sym, selectedSymbols);
               return (
@@ -736,6 +813,23 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
                 style={{ background: T.dim, border: `1px solid ${T.border}`, color: T.text, borderRadius: "7px", padding: "6px 10px", fontSize: "12px", cursor: "pointer", width: "100%", colorScheme: "dark" }}
               />
             </label>
+          </div>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginTop: "12px", paddingTop: "12px", borderTop: `1px solid ${T.border}` }}>
+            <button
+              onClick={selectFiltered}
+              disabled={matchingLoading || visibleSymbols.length === 0}
+              style={{ background: T.accent, border: `1px solid ${T.accent}`, color: "#fff", borderRadius: "7px", padding: "6px 12px", fontSize: "11px", fontWeight: 700, cursor: matchingLoading || visibleSymbols.length === 0 ? "not-allowed" : "pointer", opacity: matchingLoading || visibleSymbols.length === 0 ? 0.5 : 1 }}
+            >
+              {filtersActive ? "Select filtered" : "Select all"} ({Math.min(visibleSymbols.length, SCORE_TRACKER_MAX_SYMBOLS)})
+            </button>
+            <button
+              onClick={addFiltered}
+              disabled={matchingLoading || visibleSymbols.length === 0}
+              style={{ background: "none", border: `1px solid ${T.border}`, color: T.textSub, borderRadius: "7px", padding: "6px 12px", fontSize: "11px", fontWeight: 700, cursor: matchingLoading || visibleSymbols.length === 0 ? "not-allowed" : "pointer", opacity: matchingLoading || visibleSymbols.length === 0 ? 0.5 : 1 }}
+            >
+              {filtersActive ? "Add filtered" : "Add all"}
+            </button>
+            {visibleSymbols.length > SCORE_TRACKER_MAX_SYMBOLS && <span style={{ fontSize: "10px", color: T.amber }}>Chart limit: first {SCORE_TRACKER_MAX_SYMBOLS} matching symbols.</span>}
           </div>
         </div>
 

@@ -11,6 +11,7 @@ import {
   normalizeSnapshotHolding,
   reconstructAccountLivePositions,
 } from "@/lib/trading/live-position-ledger";
+import { JOURNAL_ALL_DATES_LIMIT, normalizeJournalSymbol } from "@/lib/research/journal-controls";
 
 export const dynamic = "force-dynamic";
 
@@ -99,6 +100,12 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const url = new URL(req.url);
+  const scope = url.searchParams.get("scope") === "all" ? "all" : "date";
+  const rawSymbolFilter = url.searchParams.get("symbol");
+  const symbolFilter = normalizeJournalSymbol(rawSymbolFilter);
+  if (rawSymbolFilter?.trim() && !symbolFilter) {
+    return NextResponse.json({ error: "invalid symbol" }, { status: 400 });
+  }
   const requestedDate = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
     return NextResponse.json({ error: "invalid date; expected YYYY-MM-DD" }, { status: 400 });
@@ -112,17 +119,29 @@ export async function GET(req: NextRequest) {
   envelopeStart.setUTCDate(envelopeStart.getUTCDate() - 1);
   const envelopeEnd = new Date(`${requestedDate}T23:59:59.999Z`);
   envelopeEnd.setUTCDate(envelopeEnd.getUTCDate() + 1);
+  const observationColumns = "id,ts,market,symbol,analyst_score,score_threshold,entry_eligible,direction,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,features,availability_mask,weights_used,signal_id,discovery_source,evidence_confidence,scoring_version,price_at_decision,currency";
+  let observationQuery = svc.from("decision_observations").select(observationColumns).eq("market", market);
+  let latestQuery = svc.from("decision_observations").select("ts").eq("market", market);
+  if (symbolFilter) {
+    observationQuery = observationQuery.eq("symbol", symbolFilter);
+    latestQuery = latestQuery.eq("symbol", symbolFilter);
+  }
+  observationQuery = scope === "all"
+    ? observationQuery.order("ts", { ascending: false }).order("id", { ascending: false }).limit(JOURNAL_ALL_DATES_LIMIT + 1)
+    : observationQuery.gte("ts", envelopeStart.toISOString()).lte("ts", envelopeEnd.toISOString())
+      .order("ts", { ascending: true }).order("id", { ascending: true });
+
   const [{ data: rawRows, error: obsError }, { data: latestRows, error: latestError }] = await Promise.all([
-    svc.from("decision_observations")
-      .select("id,ts,market,symbol,analyst_score,score_threshold,entry_eligible,direction,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,features,availability_mask,weights_used,signal_id,discovery_source,evidence_confidence,scoring_version,price_at_decision,currency")
-      .eq("market", market).gte("ts", envelopeStart.toISOString()).lte("ts", envelopeEnd.toISOString())
-      .order("ts", { ascending: true }).order("id", { ascending: true }),
-    svc.from("decision_observations").select("ts").eq("market", market).order("ts", { ascending: false }).limit(1),
+    observationQuery,
+    latestQuery.order("ts", { ascending: false }).limit(1),
   ]);
   if (obsError || latestError) {
     return NextResponse.json({ error: obsError?.message ?? latestError?.message ?? "journal query failed" }, { status: 500 });
   }
-  const rawObservations = (rawRows ?? []).filter((row: any) => localDate(row.ts, market) === requestedDate);
+  const allDatesCapped = scope === "all" && (rawRows?.length ?? 0) > JOURNAL_ALL_DATES_LIMIT;
+  const rawObservations = scope === "all"
+    ? (rawRows ?? []).slice(0, JOURNAL_ALL_DATES_LIMIT)
+    : (rawRows ?? []).filter((row: any) => localDate(row.ts, market) === requestedDate);
   const latestAvailableDate = latestRows?.[0]?.ts ? localDate(latestRows[0].ts, market) : null;
 
   const bySymbol = new Map<string, { obs: any; runCount: number }>();
@@ -130,11 +149,13 @@ export async function GET(req: NextRequest) {
     const existing = bySymbol.get(obs.symbol);
     bySymbol.set(obs.symbol, { obs, runCount: (existing?.runCount ?? 0) + 1 });
   }
-  const observations = Array.from(bySymbol.values())
-    .map(({ obs, runCount }) => ({ ...obs, runCount }))
-    .sort((a, b) => b.analyst_score - a.analyst_score);
+  const observations = scope === "all"
+    ? (rawObservations as any[]).map(obs => ({ ...obs, runCount: bySymbol.get(obs.symbol)?.runCount ?? 1 }))
+    : Array.from(bySymbol.values())
+      .map(({ obs, runCount }) => ({ ...obs, runCount }))
+      .sort((a, b) => b.analyst_score - a.analyst_score);
 
-  const signalIds = observations.map((o: any) => o.signal_id).filter(Boolean);
+  const signalIds = [...new Set(observations.map((o: any) => o.signal_id).filter(Boolean))];
   let stageEvents: any[] = [];
   let signals: any[] = [];
   if (signalIds.length) {
@@ -165,7 +186,7 @@ export async function GET(req: NextRequest) {
 
   // One bounded cross-symbol read supplies novelty and score-change context.
   // It never mutates historical observations and avoids an N+1 query per card.
-  const journalSymbols = observations.map((o: any) => o.symbol);
+  const journalSymbols = [...new Set(observations.map((o: any) => o.symbol))];
   const latestObservationTs = observations.reduce((latest: string, o: any) => o.ts > latest ? o.ts : latest, "");
   const historyBySymbol = new Map<string, any[]>();
   let historyCapped = false;
@@ -376,6 +397,9 @@ export async function GET(req: NextRequest) {
       : false;
     const outcome = outcomeBySignal.get(obs.signal_id) ?? null;
     return {
+      observation_id: obs.id,
+      observed_at: obs.ts,
+      observed_date: localDate(obs.ts, market),
       symbol: obs.symbol, run_count: obs.runCount, analyst_score: obs.analyst_score,
       score_threshold: obs.score_threshold, entry_eligible: obs.entry_eligible, direction: obs.direction,
       evidence_confidence: obs.evidence_confidence, scoring_version: obs.scoring_version,
@@ -470,5 +494,9 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({ date: requestedDate, market, latest_available_date: latestAvailableDate, count: symbols.length, symbols });
+  return NextResponse.json({
+    scope, date: requestedDate, market, symbol_filter: symbolFilter || null,
+    latest_available_date: latestAvailableDate, count: symbols.length,
+    capped: allDatesCapped, limit: scope === "all" ? JOURNAL_ALL_DATES_LIMIT : null, symbols,
+  });
 }

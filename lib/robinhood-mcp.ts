@@ -700,8 +700,6 @@ export async function captureAllRobinhoodAccounts(): Promise<BrokerAccount[]> {
     source: "robinhood", accountId, accountLabel, totalValue: 0, cashBalance: 0,
     holdings: [], fetchedAt, error,
   });
-  const labelFor = (id: string) => id === "605420660" ? `Robinhood Trading (${id})`
-    : id === "965848641" ? `Robinhood (${id})` : `Robinhood ${id}`;
 
   const svc = createServiceClient();
   const tk = await getValidAccessToken(svc);
@@ -717,6 +715,18 @@ export async function captureAllRobinhoodAccounts(): Promise<BrokerAccount[]> {
   const rawAccounts: any[] = Array.isArray(accountObject?.data?.accounts) ? accountObject.data.accounts
     : Array.isArray(accountObject?.accounts) ? accountObject.accounts : [];
   if (!rawAccounts.length) return [errorStub("Robinhood MCP returned no accounts")];
+
+  const { brokerAccountDisplayLabel, brokerAccountKey, loadLatestBrokerNicknames } = await import("@/lib/brokers/account-label");
+  const rawIdentities = rawAccounts.map((raw: any) => ({
+    broker: "robinhood",
+    accountId: String(raw?.account_number ?? raw?.rhs_account_number ?? raw?.id ?? "").trim(),
+  })).filter((identity: { accountId: string }) => identity.accountId);
+  const nicknames = await loadLatestBrokerNicknames(svc, rawIdentities);
+  const labelFor = (id: string) => brokerAccountDisplayLabel({
+    broker: "robinhood",
+    accountId: id,
+    nickname: nicknames.get(brokerAccountKey("robinhood", id)),
+  });
 
   type Captured = { id: string; wireId: string; positions?: any[]; portfolio?: any; error?: string };
   const captured: Captured[] = [];

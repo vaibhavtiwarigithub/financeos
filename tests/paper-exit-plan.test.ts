@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectPaperExitPlan, resolvePaperPositionHorizon } from "@/lib/trading/paper-exit-plan";
+import { paperExitPlanForTrade, projectPaperExitPlan, resolvePaperPositionHorizon } from "@/lib/trading/paper-exit-plan";
 
 const now = new Date("2026-07-21T20:00:00.000Z");
 
@@ -114,5 +114,20 @@ describe("paper position horizon resolution", () => {
       currentHorizonDays: 20,
       currentHorizonSource: "champion",
     })).toEqual({ days: 20, source: "champion" });
+  });
+});
+
+describe("paper trade exit-plan lookup", () => {
+  const usPlan = plan();
+  const indiaPlan = plan({ position: { id: "india-position", symbol: "AVGO", market: "india" } });
+  const plans = { [usPlan.positionId]: usPlan, [indiaPlan.positionId]: indiaPlan };
+
+  it("returns the current plan only for an open same-market BUY trade", () => {
+    expect(paperExitPlanForTrade({ market: "us", symbol: "AVGO", order_side: "buy", closed_at: null, outcome: null }, plans)).toBe(usPlan);
+    expect(paperExitPlanForTrade({ market: "india", symbol: "AVGO", order_side: "buy", closed_at: null, outcome: null }, plans)).toBe(indiaPlan);
+  });
+
+  it("does not attach a newer held-position plan to a completed trade", () => {
+    expect(paperExitPlanForTrade({ market: "us", symbol: "AVGO", order_side: "buy", closed_at: "2026-07-20T20:00:00Z", outcome: "win" }, plans)).toBeNull();
   });
 });

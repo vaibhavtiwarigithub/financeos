@@ -149,19 +149,21 @@ function getIndiaMarketStatus(): { label: string; color: string; bg: string; det
 }
 
 function useMarketClock() {
-  const [tick, setTick] = useState(0);
-  const [timeStr, setTimeStr] = useState("");
+  const [times, setTimes] = useState({ us: "", india: "" });
   useEffect(() => {
     function update() {
       const now = new Date();
-      setTimeStr(now.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }));
-      setTick(t => t + 1);
+      const options: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true };
+      setTimes({
+        us: now.toLocaleTimeString("en-US", { ...options, timeZone: "America/New_York" }),
+        india: now.toLocaleTimeString("en-US", { ...options, timeZone: "Asia/Kolkata" }),
+      });
     }
     update();
     const id = setInterval(update, 30000);
     return () => clearInterval(id);
   }, []);
-  return { timeStr, status: getMarketStatus(), indiaStatus: getIndiaMarketStatus() };
+  return { timeStr: times.us, indiaTimeStr: times.india, status: getMarketStatus(), indiaStatus: getIndiaMarketStatus() };
 }
 
 const TIER_COLORS: Record<string, string> = { free: T.muted, pro: T.accent, elite: T.yellow };
@@ -213,7 +215,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
   const [marketPauses, setMarketPauses] = useState<{ market: string; paused: boolean; paused_reason: string | null }[]>([]);
   const bellRef = useRef<HTMLDivElement>(null);
   const seenProposalIds = useRef<Set<string>>(new Set());
-  const { timeStr, status: mktStatus, indiaStatus } = useMarketClock();
+  const { timeStr, indiaTimeStr, status: mktStatus, indiaStatus } = useMarketClock();
   const isMobile = useIsMobile();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // Close the drawer automatically on navigation — otherwise it stays open
@@ -702,6 +704,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
           <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
             <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: mktStatus.color, flexShrink: 0 }} />
             <span style={{ fontSize: "12px", fontWeight: 700, color: T.textSub }}>🇺🇸</span>
+            <span style={{ fontSize: "11px", color: T.textSub, fontVariantNumeric: "tabular-nums" }}>{timeStr} ET</span>
             <span style={{ fontSize: "12px", fontWeight: 700, color: mktStatus.color }}>{mktStatus.label}</span>
             <span style={{ fontSize: "11px", color: T.muted }}>· {mktStatus.detail}</span>
           </div>
@@ -712,6 +715,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
             <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
               <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: indiaStatus.color, flexShrink: 0 }} />
               <span style={{ fontSize: "12px", fontWeight: 700, color: T.textSub }}>🇮🇳</span>
+              <span style={{ fontSize: "11px", color: T.textSub, fontVariantNumeric: "tabular-nums" }}>{indiaTimeStr} IST</span>
               <span style={{ fontSize: "12px", fontWeight: 700, color: indiaStatus.color }}>{indiaStatus.label}</span>
               <span style={{ fontSize: "11px", color: T.muted }}>· {indiaStatus.detail}</span>
             </div>

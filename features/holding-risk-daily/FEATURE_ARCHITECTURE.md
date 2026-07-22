@@ -34,6 +34,16 @@ rules, the daily cron cadence, or the snapshot schema changes.
 
 ## Intent (owner, verbatim)
 
+> **Canonical account labels (2026-07-21):** `broker + account_id` remains the
+> stable identity and join key. The latest verified `live_account_snapshots.nickname`
+> is presentation metadata only. Live Portfolio and Risk Analytics render
+> `<nickname> · <broker> ••••<last4>`; if the nickname is unavailable they render
+> `<broker> ••••<last4>`. The read API enriches historical runs at response time,
+> so immutable risk evidence is never rewritten when an account is renamed. Full
+> account IDs remain authenticated API request keys but are never rendered as
+> visible account labels; raw snapshot rows are not returned. Nickname lookup
+> failure degrades to the masked fallback without blocking risk results.
+
 > Risk analytics on left panel — add live OTHER accounts, each holding's risk
 > analytics, score, and details of risk and what should be our strategy for each
 > one of them, updated everyday.
@@ -201,6 +211,8 @@ Schema rules:
 - Account tabs never aggregate currencies. Read-only accounts show
   “advisory only”; the agentic trading account still offers no order button from
   this feature.
+- Account tabs use the canonical presentation label above. Never use a transport-
+  adapter fallback label or expose a full broker account number in UI copy.
 
 ## Cron
 

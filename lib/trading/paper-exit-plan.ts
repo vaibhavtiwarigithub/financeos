@@ -130,3 +130,13 @@ export function projectPaperExitPlan(input: ProjectPaperExitPlanInput): PaperExi
     state,
   };
 }
+
+export function paperExitPlanForTrade(
+  trade: { market?: string | null; symbol?: string | null; order_side?: string | null; closed_at?: unknown; outcome?: unknown },
+  plans: Record<string, PaperExitPlan>,
+): PaperExitPlan | null {
+  if (trade.closed_at != null || trade.outcome != null || String(trade.order_side).toLowerCase() !== "buy") return null;
+  const market = trade.market === "india" ? "india" : "us";
+  const symbol = String(trade.symbol ?? "");
+  return Object.values(plans).find((plan) => plan.market === market && plan.symbol === symbol) ?? null;
+}

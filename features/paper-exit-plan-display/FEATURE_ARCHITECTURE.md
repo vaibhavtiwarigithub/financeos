@@ -18,6 +18,7 @@ The owner needs to understand why an open paper position is still held and which
 - Show current score versus the per-market exit threshold and whether the score is fresh enough to act.
 - Show current position age versus the effective time horizon, including whether the position is grandfathered onto its entry horizon.
 - Show the first currently met condition using PositionMonitor's precedence: time, score, stop, target.
+- Reuse the same projection in the Paper Portfolio Trades table, immediately after Score. Only an open BUY trade in the same market and symbol may receive the current plan; completed trades display their completed state and cannot inherit a later position's plan.
 
 ## Boundaries
 
@@ -59,3 +60,4 @@ The projection is assembled on the server. The client receives only display data
 5. Null targets remain null.
 6. The page performs no external provider request and no write.
 7. Pure projection tests cover precedence, stale/missing score, null target, grandfathered horizon, and market identity.
+8. The Trades table places Exit plan between Score and Realized P&L, and closed trades never receive a current plan.
