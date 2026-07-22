@@ -437,6 +437,13 @@
     {
       "date": "2026-07-22",
       "event": "changed",
+      "nodeId": "ROTATION",
+      "label": "Capital-rotation trigger corrected — evaluator was unreachable",
+      "reason": "Rotation was wired only to the insufficient_cash branch, but the max_open_names cap binds first (book fills 10 slots long before it runs out of cash) and that check `continue`d before the rotation call. The evaluator was therefore unreachable and rotation_events stayed empty for 9 days with shadow enabled, while $3,635 of $9,954 US NAV (36%) sat idle and 8 of 10 holdings were flat. The cap check now sets a flag instead of skipping; the candidate flows through the remaining gates and is evaluated at the funding step. Rotation is slot-for-slot so the book cannot grow. Verified: first run after the fix produced 5 planned events (PLTR score 51 as source, edge 26-29) where prior runs produced 0; 0 trades filled and NAV unchanged, confirming measurement-only."
+    },
+    {
+      "date": "2026-07-22",
+      "event": "changed",
       "nodeId": "YAHOO",
       "label": "Yahoo Finance promoted to primary US candle source",
       "reason": "Massive served stale 07-17 bars on 07-22 (day-cached, no recency check), causing agents to miss MU +14.4%, ARM +8.4%, MRVL +10.2% moves. Yahoo v8/finance/chart has no API key, no observed rate limit, 251 adjusted bars, works for US and India. fetchUsCandles now: (1) tries Yahoo first, (2) rejects any source whose newest bar is >4 calendar days old, (3) enforces minCandles≥60 default so EMA50 is never silently under-fed. Massive/EODHD/TwelveData demoted to fallback. Affects all 7 fetchUsCandles consumers including label-maturation."

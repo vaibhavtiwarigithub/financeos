@@ -401,10 +401,21 @@ export async function POST(req: NextRequest) {
 
       const openNames = openAlphaNamesByMarket.get(market) ?? new Set<string>();
       const marketNameCap = mandateByMarket.get(market)?.max_open_positions ?? 10;
-      if (!canOpenPaperName(openNames, signal.symbol, marketNameCap)) {
-        skipped.push({ symbol: signal.symbol, reason: `max_open_names (${marketNameCap})` });
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason: "max_open_names", detail: { current: openNames.size, cap: marketNameCap } });
-        continue;
+      // Capital-rotation reachability: at the name cap the candidate is NOT
+      // rejected here. It flows through the remaining gates (sector cap,
+      // re-entry cooldown, pricing, sizing) and is evaluated as a rotation
+      // candidate at the funding step below.
+      //
+      // This used to `continue`, which made the rotation path at the funding
+      // step unreachable whenever the name cap bound first — the common case,
+      // since the book exhausts its 10 slots long before it runs out of cash.
+      // rotation_events stayed empty for 9 days with shadow enabled as a
+      // result. Rotation is slot-for-slot (sell one, buy one), so bypassing the
+      // cap here does not grow the book; if no rotation executes the candidate
+      // is still skipped below with the same max_open_names reason.
+      const atNameCap = !canOpenPaperName(openNames, signal.symbol, marketNameCap);
+      if (atNameCap) {
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "deferred", reason: "max_open_names_rotation_candidate", detail: { current: openNames.size, cap: marketNameCap } });
       }
 
       // Idempotent claim — stamp ownership so only THIS run can revert it later.
@@ -577,7 +588,11 @@ export async function POST(req: NextRequest) {
         continue;
       }
       const totalCost = qty * fillPrice;
-      if (!Number.isFinite(totalCost) || totalCost > portfolio.cash_balance) {
+      // Rotation is evaluated when the book cannot take this candidate as-is:
+      // either it is out of cash (original trigger) or it is out of name slots
+      // (added — this is the trigger that actually binds in practice).
+      const cashShort = !Number.isFinite(totalCost) || totalCost > portfolio.cash_balance;
+      if (atNameCap || cashShort) {
         const rotCandidate = {
           signalId: signal.id,
           symbol: signal.symbol,
@@ -613,8 +628,9 @@ export async function POST(req: NextRequest) {
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_execute_error", detail: { error: e?.message ?? String(e) } });
         }
         await revertClaim(signal.id);
-        skipped.push({ symbol: signal.symbol, reason: "insufficient_cash" });
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "insufficient_cash", detail: { totalCost, cash: portfolio.cash_balance } });
+        const blockReason = atNameCap ? `max_open_names (${marketNameCap})` : "insufficient_cash";
+        skipped.push({ symbol: signal.symbol, reason: blockReason });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: blockReason, detail: { totalCost, cash: portfolio.cash_balance, atNameCap, cashShort } });
         continue;
       }
 
