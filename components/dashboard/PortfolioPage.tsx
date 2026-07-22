@@ -5,6 +5,7 @@ import { currentPaperTradePnl } from "@/lib/paper-current-pnl";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket } from "@/lib/market-context";
 import { fmtMoney } from "@/lib/format-money";
+import type { PaperExitPlan } from "@/lib/trading/paper-exit-plan";
 const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
@@ -584,8 +585,66 @@ function LiveHoldingsTab({ market = "us" }: { market?: string }) {
   );
 }
 
+function ExitPlanColumn({ plan, market }: { plan: PaperExitPlan | null; market: "us" | "india" }) {
+  if (!plan) {
+    return (
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>Exit plan</div>
+        <div style={{ fontSize: "12px", color: T.muted }}>Plan unavailable · PositionMonitor still owns exits</div>
+      </div>
+    );
+  }
+
+  const stateLabel: Record<PaperExitPlan["state"], string> = {
+    hold: "Hold",
+    time_exit_due: "Time exit due",
+    score_exit_due: "Score exit due",
+    stop_exit_due: "Stop reached",
+    target_exit_due: "Target reached",
+  };
+  const due = plan.state !== "hold";
+  const scoreLine = plan.isHedge
+    ? "Score exit not used for hedge"
+    : plan.score == null
+      ? "No validated held-name score · mechanical exits only"
+      : plan.scoreFresh
+        ? `Score ${Math.round(plan.score)} · exit below ${Math.round(plan.scoreExitThreshold)} · fresh`
+        : `Score ${Math.round(plan.score)} · ${plan.scoreAgeSessions ?? "?"} sessions old · mechanical exits only`;
+  const horizonOwner = plan.horizonSource === "entry"
+    ? "entry plan"
+    : plan.horizonSource === "champion"
+      ? "learner"
+      : plan.horizonSource === "user"
+        ? "settings"
+        : "hedge policy";
+
+  return (
+    <div style={{ minWidth: 0, borderLeft: `1px solid ${T.border}`, paddingLeft: "16px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px", flexWrap: "wrap" }}>
+        <span style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Exit plan</span>
+        <span style={{ fontSize: "11px", fontWeight: 700, color: due ? T.red : T.green }}>{stateLabel[plan.state]}</span>
+      </div>
+      <div style={{ display: "grid", gap: "3px", fontSize: "12px", color: T.textSub, lineHeight: 1.35 }}>
+        <div>
+          Stop {plan.stopPrice == null ? "unavailable" : `≤ ${fmtMoney(plan.stopPrice, market)}`}
+          <span style={{ color: T.muted }}> · current trailing protection</span>
+        </div>
+        <div>
+          Target {plan.targetPrice == null ? "none remaining" : `≥ ${fmtMoney(plan.targetPrice, market)}`}
+          <span style={{ color: T.muted }}>{plan.targetPrice == null ? " · stop/score/time still active" : " · partial profit when possible"}</span>
+        </div>
+        <div style={{ color: plan.score != null && !plan.scoreFresh ? T.amber : T.textSub }}>{scoreLine}</div>
+        <div>
+          Time {plan.ageWeekdays == null ? "age unavailable" : `${plan.ageWeekdays}/${plan.horizonDays} weekdays`}
+          <span style={{ color: T.muted }}> · {horizonOwner}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Rich position card — replaces plain table row */
-function PositionCard({ p, onChart, cur = "$", market = "us" }: { p: any; onChart: (sym: string) => void; cur?: string; market?: string }) {
+function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; plan: PaperExitPlan | null; onChart: (sym: string) => void; cur?: string; market?: "us" | "india" }) {
   const px = p.current_price ?? p.avg_cost;
   const pnl = (px - p.avg_cost) * p.qty;
   const pnlPct = ((px - p.avg_cost) / p.avg_cost) * 100;
@@ -614,7 +673,7 @@ function PositionCard({ p, onChart, cur = "$", market = "us" }: { p: any; onChar
     <div style={{
       background: T.surface, border: `1px solid ${T.border}`,
       borderRadius: "12px", padding: "16px 20px",
-      display: "grid", gridTemplateColumns: "1fr auto",
+      display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
       gap: "12px", alignItems: "center",
     }}>
       {/* Left: symbol + price flow */}
@@ -639,6 +698,8 @@ function PositionCard({ p, onChart, cur = "$", market = "us" }: { p: any; onChar
           </span>
         </div>
       </div>
+
+      <ExitPlanColumn plan={plan} market={market} />
 
       {/* Right: P&L + value */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
@@ -668,9 +729,9 @@ function PositionCard({ p, onChart, cur = "$", market = "us" }: { p: any; onChar
   );
 }
 
-export default function PortfolioPage({ pools, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, strategy, tradeQueue: allTradeQueue }: {
+export default function PortfolioPage({ pools, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, strategy, tradeQueue: allTradeQueue, exitPlans }: {
   pools: any[]; positions: any[]; trades: any[]; perf: any[]; signals: any[];
-  pendingSignals: any[]; strategy: any; tradeQueue: any[];
+  pendingSignals: any[]; strategy: any; tradeQueue: any[]; exitPlans: Record<string, PaperExitPlan>;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue">("positions");
@@ -723,7 +784,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
         whatItDoes="Your paper trading portfolio — all open positions, closed trades, P&L history, and pending signals queue. Agent executes paper trades automatically each morning. NAV (Net Asset Value) = your uninvested cash + the current market value of everything you hold — what the whole paper account is worth right now."
         whatToLookFor={[
           "NAV = uninvested cash + current market value of all holdings. Paper pools start at $10,000 (US) and ₹10,00,000 (India); P&L and % are measured against that starting amount. US is always shown in $ and India in ₹ — the two currencies are never mixed.",
-          "Positions tab: check unrealized P&L on open trades. Exit if signal flips to 'short'.",
+          "Positions tab: each Exit plan shows the current trailing stop, remaining profit target, fresh-score threshold, and time horizon. PositionMonitor applies the first due rule automatically; stale research cannot force a score exit.",
           "Trade Queue tab: signals the agent wants to act on — approve or reject before next cron run.",
           "Win rate should trend above 50% after 20+ trades. Below = prompt/screener adjustment needed.",
           "Compare NAV vs VOO benchmark — are you beating the index?",
@@ -804,7 +865,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               {positions.map((p: any) => (
-                <PositionCard key={p.id} p={p} cur={cur} market={market} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
+                <PositionCard key={p.id} p={p} plan={exitPlans?.[String(p.id)] ?? null} cur={cur} market={activeMarket} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
               ))}
             </div>
           )}
