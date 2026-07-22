@@ -1,5 +1,5 @@
 # Kairos — Learning Loop
-> Last updated: 2026-07-16 (OPEN ITEM: India macro contamination in the historical trade set — 4 closed + 13 open India trades entered on a US/stale macro score; taint proposal pending owner decision, no rows mutated. Prior: automated strategy validation + auto-shadow routing, migration 170; cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
+> Last updated: 2026-07-22 (ATR exit evidence layer: measure-only, three versioned candidates, label maturation writes ATR-normalized MAE/MFE + outcomes, evidence API, migration applied. No paper/live execution change. Prior: India macro contamination OPEN ITEM — taint proposal pending owner decision, no rows mutated; automated strategy validation + auto-shadow routing, migration 170; cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
 > Update this file when: the learning flow changes, new guardrails are added to weight mutation, genome parameters change, Phase 1 unlocks, the RAG pipeline changes, or Performance Truth Layer evaluation logic changes.
 
 ---
