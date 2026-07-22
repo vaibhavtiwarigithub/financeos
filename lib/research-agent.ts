@@ -1892,6 +1892,10 @@ export async function processSymbol(
       await supabase.from("agent_signals").update({ status: "superseded" })
         .eq("market", market).eq("symbol", symbol).eq("status", "weekend_staged");
     }
+    // ponytail: expire stale pending signals for this symbol so paper-trade can't
+    // pick an older higher-scored row over the fresh capped one (score ordering, not recency).
+    await supabase.from("agent_signals").update({ status: "superseded" })
+      .eq("market", market).eq("symbol", symbol).eq("status", "pending");
     const { data, error } = await supabase.from("agent_signals").insert(signalRow).select("id").maybeSingle();
     // Strip `market` ONLY when the column is genuinely undefined (pre-057) — never
     // on a transient/constraint error, which would silently drop the market tag.
