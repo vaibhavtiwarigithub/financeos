@@ -612,6 +612,7 @@ export async function POST(req: NextRequest) {
         // every guardrail passes, atomically sell the weakest holding to fund this
         // candidate. Default flag is off → executeCapitalRotationPaper returns
         // {executed:false} and this is a plain insufficient_cash skip (unchanged).
+        let rotReason = "not_attempted";
         try {
           const rot = await executeCapitalRotationPaper(supabase, {
             runId, rotationsThisRun,
@@ -624,14 +625,14 @@ export async function POST(req: NextRequest) {
             await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "filled", reason: `capital_rotation: sold ${rot.sourceSymbol} to fund ${signal.symbol}`, detail: { soldSymbol: rot.sourceSymbol, qty, fillPrice } });
             continue; // candidate bought + source sold atomically by the RPC (signal already marked paper_traded)
           }
-          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: rot.reason, detail: { qty, fillPrice, rotationsThisRun } });
+          rotReason = rot.reason ?? "unknown";
         } catch (e: any) {
-          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_execute_error", detail: { error: e?.message ?? String(e) } });
+          rotReason = `rotation_execute_error:${e?.message ?? String(e)}`;
         }
         await revertClaim(signal.id);
         const blockReason = atNameCap ? `max_open_names (${marketNameCap})` : "insufficient_cash";
         skipped.push({ symbol: signal.symbol, reason: blockReason });
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: blockReason, detail: { totalCost, cash: portfolio.cash_balance, atNameCap, cashShort } });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: blockReason, detail: { totalCost, cash: portfolio.cash_balance, atNameCap, cashShort, rotReason } });
         continue;
       }
 
