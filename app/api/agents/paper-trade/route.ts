@@ -624,6 +624,7 @@ export async function POST(req: NextRequest) {
             await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "filled", reason: `capital_rotation: sold ${rot.sourceSymbol} to fund ${signal.symbol}`, detail: { soldSymbol: rot.sourceSymbol, qty, fillPrice } });
             continue; // candidate bought + source sold atomically by the RPC (signal already marked paper_traded)
           }
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: rot.reason, detail: { qty, fillPrice, rotationsThisRun } });
         } catch (e: any) {
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_execute_error", detail: { error: e?.message ?? String(e) } });
         }
