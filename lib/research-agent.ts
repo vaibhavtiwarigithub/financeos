@@ -1625,7 +1625,11 @@ export async function processSymbol(
     fundamental: scores.fundamental_score, technical: scores.technical_score,
     sentiment: scores.sentiment_score, macro: scores.macro_score, insider: scores.insider_score,
   };
-  const { score: analystScore, effWeights, renormalized, includedDims } = computeWeightedAnalystScore(scoreOf, included, weightOf);
+  const { score: rawAnalystScore, effWeights, renormalized, includedDims } = computeWeightedAnalystScore(scoreOf, included, weightOf);
+  // ponytail: ETFs score high technically (no fundamental/insider drag after renorm) but
+  // have no single-name upside; cap so they can't displace equity alpha candidates in rotation.
+  const ETF_SCORE_CAP = 65;
+  const analystScore = isEtf ? Math.min(rawAnalystScore, ETF_SCORE_CAP) : rawAnalystScore;
   const thinEvidence = isThinEvidence(includedDims);
 
   // System Health (data category): accumulate this symbol's evidence
@@ -2136,7 +2140,8 @@ export async function processSymbol(
             macro:       cwShadow("macro", "macro_weight") ?? mw,
             insider:     cwShadow("insider", "insider_weight") ?? iw,
           };
-          const { score: shadowScore } = computeWeightedAnalystScore(scoreOf, included, challengerWeights);
+          const { score: rawShadow } = computeWeightedAnalystScore(scoreOf, included, challengerWeights);
+          const shadowScore = isEtf ? Math.min(rawShadow, ETF_SCORE_CAP) : rawShadow;
           await supabase.from("shadow_decisions").insert({
             market, symbol, observation_id: obsRow.id, policy_version_id: sv.id,
             would_enter: shadowScore >= (scoreThreshold ?? 60), score: shadowScore,

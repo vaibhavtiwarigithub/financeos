@@ -97,10 +97,18 @@ export function routeToArchetypes(input: ArchetypeRouterInput): ArchetypeConfig[
   return active;
 }
 
+// ponytail: matches the cap in research-agent.ts — ETFs trend cleanly so their
+// technical dimension dominates after renorm; cap prevents displacing equity alpha candidates.
+export const ETF_SCORE_CAP = 65;
+
 export function computeArchetypeScore(
   archetype: ArchetypeConfig,
   scoreOf: DimensionRecord<number>,
   included: DimensionRecord<boolean>,
 ): WeightedScoreResult {
-  return computeWeightedAnalystScore(scoreOf, included, archetype.weights);
+  const result = computeWeightedAnalystScore(scoreOf, included, archetype.weights);
+  if (archetype.id === "etf_trend") {
+    return { ...result, score: Math.min(result.score, ETF_SCORE_CAP) };
+  }
+  return result;
 }
