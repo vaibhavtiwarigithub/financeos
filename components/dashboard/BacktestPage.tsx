@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import PageHeader from "./PageHeader";
 import { useMarket } from "@/lib/market-context";
@@ -46,6 +46,38 @@ interface BacktestResult {
   gate_pass: boolean;
   gate_reasons: Record<string, GateCheck>;
   outcomes: TradeOutcome[];
+}
+
+interface MonteCarloResult {
+  p5Nav: number; p50Nav: number; p95Nav: number;
+  p5DD: number;  p50DD: number;  p95DD: number;
+  finalNavDist: number[];
+}
+
+function runMonteCarlo(outcomes: TradeOutcome[], N = 500, seed = 10000): MonteCarloResult {
+  const runs: { finalNav: number; maxDrawdown: number }[] = [];
+  for (let i = 0; i < N; i++) {
+    const shuffled = [...outcomes].sort(() => Math.random() - 0.5);
+    let nav = seed, peak = seed, maxDD = 0;
+    for (const t of shuffled) {
+      nav = nav * (1 + t.return_pct / 100);
+      if (nav > peak) peak = nav;
+      const dd = (peak - nav) / peak * 100;
+      if (dd > maxDD) maxDD = dd;
+    }
+    runs.push({ finalNav: nav, maxDrawdown: maxDD });
+  }
+  const finalNavs = runs.map(r => r.finalNav).sort((a, b) => a - b);
+  const maxDDs   = runs.map(r => r.maxDrawdown).sort((a, b) => a - b);
+  return {
+    p5Nav:  finalNavs[Math.floor(N * 0.05)],
+    p50Nav: finalNavs[Math.floor(N * 0.50)],
+    p95Nav: finalNavs[Math.floor(N * 0.95)],
+    p5DD:   maxDDs[Math.floor(N * 0.05)],
+    p50DD:  maxDDs[Math.floor(N * 0.50)],
+    p95DD:  maxDDs[Math.floor(N * 0.95)],
+    finalNavDist: finalNavs,
+  };
 }
 
 const GATE_LABELS: Record<string, string> = {
@@ -109,6 +141,24 @@ export default function BacktestPage() {
   const [sortAsc, setSortAsc] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
   const [optimizeResult, setOptimizeResult] = useState<any>(null);
+  const [mcOpen, setMcOpen] = useState(false);
+
+  // ponytail: seed mirrors account sizes; India ₹10L, US $10k
+  const mcSeed = market === "india" ? 1_000_000 : 10_000;
+
+  const mc = useMemo<MonteCarloResult | null>(() => {
+    if (!result || result.outcomes.length < 10) return null;
+    return runMonteCarlo(result.outcomes, 500, mcSeed);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
+
+  const actualFinalNav = useMemo(() => {
+    if (!result || result.outcomes.length === 0) return mcSeed;
+    let nav = mcSeed;
+    for (const t of result.outcomes) nav = nav * (1 + t.return_pct / 100);
+    return nav;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
 
   // Clear stale results when the global market switches (US ↔ India) so a $ run
   // is never shown under a ₹ header or vice versa.
@@ -371,6 +421,111 @@ export default function BacktestPage() {
                     <span>0%</span>
                     <span>{max.toFixed(1)}%</span>
                   </div>
+                </div>
+              );
+            })()}
+
+            {/* Monte Carlo Analysis */}
+            {mc && (() => {
+              const cur = result!.currency ?? (market === "india" ? "₹" : "$");
+              const fmtNav = (v: number) => cur + (market === "india" ? Math.round(v).toLocaleString("en-IN") : Math.round(v).toLocaleString("en-US"));
+              const navRet = (v: number) => pct((v - mcSeed) / mcSeed * 100);
+
+              // Histogram
+              const dist = mc.finalNavDist;
+              const hMin = dist[0], hMax = dist[dist.length - 1];
+              const HBUCKETS = 20;
+              const hStep = (hMax - hMin) / HBUCKETS || 1;
+              const hBuckets = Array.from({ length: HBUCKETS }, (_, i) => ({ start: hMin + i * hStep, count: 0 }));
+              for (const v of dist) {
+                const idx = Math.min(HBUCKETS - 1, Math.floor((v - hMin) / hStep));
+                hBuckets[idx].count++;
+              }
+              const hMaxCount = Math.max(...hBuckets.map(b => b.count));
+              const actualBucket = Math.min(HBUCKETS - 1, Math.floor((actualFinalNav - hMin) / hStep));
+
+              return (
+                <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px", marginBottom: "20px" }}>
+                  {/* Header + toggle */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: mcOpen ? "16px" : 0 }}>
+                    <div>
+                      <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em" }}>Monte Carlo Analysis · 500 simulations</div>
+                      {!mcOpen && <div style={{ fontSize: "11px", color: T.sub, marginTop: "4px" }}>Was your return sequence-dependent or robust?</div>}
+                    </div>
+                    <button
+                      onClick={() => setMcOpen(o => !o)}
+                      style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", color: T.sub, padding: "5px 14px", fontSize: "12px", cursor: "pointer", whiteSpace: "nowrap" }}
+                    >
+                      {mcOpen ? "Hide" : "Show"} analysis
+                    </button>
+                  </div>
+
+                  {mcOpen && (
+                    <>
+                      {/* Interpretation */}
+                      <div style={{ fontSize: "12.5px", color: T.sub, lineHeight: 1.6, marginBottom: "18px", background: T.surface, borderRadius: "8px", padding: "10px 14px" }}>
+                        If trade order was random, your strategy&rsquo;s final NAV would fall between{" "}
+                        <span style={{ color: T.text, fontWeight: 600 }}>{fmtNav(mc.p5Nav)}</span> and{" "}
+                        <span style={{ color: T.text, fontWeight: 600 }}>{fmtNav(mc.p95Nav)}</span> in 90% of simulations.
+                        {" "}Your actual result:{" "}
+                        <span style={{ color: actualFinalNav >= mcSeed ? T.green : T.red, fontWeight: 700 }}>{fmtNav(actualFinalNav)}</span>.
+                      </div>
+
+                      {/* NAV percentile cards */}
+                      <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "8px" }}>Final NAV distribution</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", marginBottom: "20px" }}>
+                        {[
+                          { label: "P5 NAV (worst 5%)", val: mc.p5Nav },
+                          { label: "P50 NAV (median)",   val: mc.p50Nav },
+                          { label: "P95 NAV (best 5%)",  val: mc.p95Nav },
+                        ].map(({ label, val }) => (
+                          <div key={label} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "12px 16px", flex: 1, minWidth: "130px" }}>
+                            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "5px" }}>{label}</div>
+                            <div style={{ fontSize: "18px", fontWeight: 700, color: val >= mcSeed ? T.green : T.red }}>{fmtNav(val)}</div>
+                            <div style={{ fontSize: "11px", color: T.sub, marginTop: "2px" }}>{navRet(val)} vs seed</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Drawdown percentile cards */}
+                      <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "8px" }}>Max drawdown distribution</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", marginBottom: "20px" }}>
+                        {[
+                          { label: "P5 drawdown (least bad)", val: mc.p5DD },
+                          { label: "P50 drawdown (median)",    val: mc.p50DD },
+                          { label: "P95 drawdown (worst 5%)",  val: mc.p95DD },
+                        ].map(({ label, val }) => (
+                          <div key={label} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "12px 16px", flex: 1, minWidth: "130px" }}>
+                            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "5px" }}>{label}</div>
+                            <div style={{ fontSize: "18px", fontWeight: 700, color: val <= 15 ? T.green : val <= 25 ? T.amber : T.red }}>-{val.toFixed(1)}%</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* NAV histogram */}
+                      <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "8px" }}>Final NAV histogram (500 runs)</div>
+                      <div style={{ display: "flex", alignItems: "flex-end", gap: "2px", height: "60px" }}>
+                        {hBuckets.map((b, i) => (
+                          <div
+                            key={i}
+                            title={`${fmtNav(b.start)}–${fmtNav(b.start + hStep)}: ${b.count} runs`}
+                            style={{
+                              flex: 1,
+                              height: `${hMaxCount > 0 ? Math.max(2, (b.count / hMaxCount) * 60) : 2}px`,
+                              background: i === actualBucket ? T.accent : T.muted,
+                              borderRadius: "2px 2px 0 0",
+                              opacity: b.count === 0 ? 0.15 : 1,
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: T.muted, marginTop: "4px" }}>
+                        <span>{fmtNav(hMin)}</span>
+                        <span style={{ color: T.accent }}>▲ actual {fmtNav(actualFinalNav)}</span>
+                        <span>{fmtNav(hMax)}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })()}
