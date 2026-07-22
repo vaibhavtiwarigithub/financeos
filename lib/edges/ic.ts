@@ -86,6 +86,8 @@ export interface IcRunReport {
   rows: number;
   sectorsEvaluated: string[];
   datasetFingerprint: string;
+  benchmarkSource: string;
+  providerCounts: Record<string, number>;
 }
 
 // Priored (academically-documented) factors clear at t≈2; a data-mined edge would
@@ -140,11 +142,15 @@ export async function computeEdgeIC(opts: {
   const step = Math.max(1, opts.stepDays ?? 5);
 
   const bench = await resolveBenchmark(market, opts.candleDays);
-  const resolved: { symbol: string; candles: Candle[] }[] = [];
+  const resolved: { symbol: string; candles: Candle[]; source: string }[] = [];
   for (const sym of symbols) {
-    const { candles } = await resolveCandles(sym, market, opts.candleDays);
-    if (candles.length) resolved.push({ symbol: sym, candles });
+    const { candles, source } = await resolveCandles(sym, market, opts.candleDays);
+    if (candles.length) resolved.push({ symbol: sym, candles, source });
   }
+  const providerCounts = resolved.reduce<Record<string, number>>((counts, row) => {
+    counts[row.source] = (counts[row.source] ?? 0) + 1;
+    return counts;
+  }, {});
 
   const datasetFingerprint = crypto.createHash("sha256").update(JSON.stringify({
     market,
@@ -248,6 +254,8 @@ export async function computeEdgeIC(opts: {
       rows: rows.length,
       sectorsEvaluated: [...sectorsEvaluated].sort(),
       datasetFingerprint,
+      benchmarkSource: bench.source,
+      providerCounts,
     },
   };
 }

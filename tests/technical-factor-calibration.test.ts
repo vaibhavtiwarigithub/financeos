@@ -72,6 +72,7 @@ describe("technical factor calibration", () => {
     const migration = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/20260721130000_technical_factor_calibration_segments.sql"), "utf8");
     expect(route).toContain('onConflict: "run_fingerprint"');
     expect(route).toContain('r.segmentType === "market"');
+    expect(fs.readFileSync(path.join(process.cwd(), "lib/edges/ic.ts"), "utf8")).toContain("providerCounts");
     expect(migration).toContain("edge_ic_history is append-only");
     expect(cleanup).not.toContain("edge_ic_history");
     for (const forbidden of ["agent_signals", "paper_positions", "broker_orders", "strategy_config", "trading_mandates"]) {

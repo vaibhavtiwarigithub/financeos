@@ -59,8 +59,11 @@ depth, sampling step, universe size, evidence quality, and provider report.
 - `segment_type = sector`, `segment_value = <normalized sector>`.
 
 Old market-wide rows are migrated to the explicit `market/all` identity. A rerun of
-the same edge/market/window/horizon/segment is idempotent; a changed formula requires
-a new edge ID and therefore appends a distinct trial history.
+the same edge/market/window/horizon/segment against the exact same frozen dataset and
+configuration is idempotent. Provider corrections or newly available symbols change
+the dataset fingerprint and append a distinct snapshot. Each report records the
+benchmark source and per-provider symbol counts so the change is explainable. A changed
+formula requires a new edge ID and therefore appends a distinct trial history.
 
 The Vibe comparator is pinned separately to commit
 `a5eb30fd00d6ee71cd5099d15f57de5ae47010ff`. Its full package is not admitted:
@@ -113,6 +116,7 @@ paper validation, and owner approval.
 - Unknown/thin sectors abstain rather than report zero or fabricate confidence.
 - Added factors trigger no additional provider request within a run.
 - Formula, as-of slicing, market isolation, segment isolation, and thin-sample tests pass.
+- Every persisted report names the benchmark source and per-provider symbol counts.
 - TypeScript, Vitest, production build, migration verification, and security checks pass.
 
 ## 9. Build Order
