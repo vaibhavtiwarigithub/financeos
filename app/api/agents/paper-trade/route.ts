@@ -207,6 +207,23 @@ export async function POST(req: NextRequest) {
       if (data) signals.push(...data);
     }
 
+    // Dedup: research runs 3x/day, stacking duplicate pending rows per symbol.
+    // Keep only the highest-scoring signal per (symbol, market); ties → most recent.
+    if (signals.length > 0) {
+      const best = new Map<string, any>();
+      for (const s of signals) {
+        const key = `${String(s.symbol).toUpperCase()}:${s.market ?? "us"}`;
+        const prev = best.get(key);
+        if (!prev || s.analyst_score > prev.analyst_score ||
+            (s.analyst_score === prev.analyst_score && s.created_at > prev.created_at)) {
+          best.set(key, s);
+        }
+      }
+      signals.length = 0;
+      signals.push(...best.values());
+      signals.sort((a, b) => b.analyst_score - a.analyst_score);
+    }
+
     // Tradable-universe policy: drop leveraged/inverse ETFs + owner-blocklisted
     // symbols BEFORE filling, so they never become paper positions (paper fills
     // do not pass through the live execution gateway).
