@@ -10,6 +10,7 @@ import InfoTooltip from "@/components/dashboard/InfoTooltip";
 import { fmtMoney } from "@/lib/format-money";
 import { paperStartNav } from "@/lib/paper-nav";
 import type { AgentCapacityRow } from "@/lib/agents/capacity";
+import type { RotationStatus } from "@/lib/agents/rotation-status";
 const SignalCharts = lazy(() => import("@/components/charts/SignalChartsWrapper"));
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 const MermaidChart = lazy(() => import("@/components/dashboard/MermaidChart"));
@@ -50,11 +51,12 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export default function AgentsPage({ signals, weights, strategy, learningLog, paperPortfolio, paperPositions, paperTrades, paperPerf, agentRuns, agentCapacity, market = "us" }: {
+export default function AgentsPage({ signals, weights, strategy, learningLog, paperPortfolio, paperPositions, paperTrades, paperPerf, agentRuns, agentCapacity, rotationStatus, market = "us" }: {
   signals: any[]; weights: any; strategy: any; learningLog: any[];
   paperPortfolio: any; paperPositions: any[]; paperTrades: any[]; paperPerf: any[];
   agentRuns?: Record<string, any[]>;
   agentCapacity?: AgentCapacityRow[];
+  rotationStatus?: RotationStatus;
   market?: "us" | "india";
 }) {
   const currency = market === "india" ? "₹" : "$";
@@ -68,10 +70,10 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const searchParams = useSearchParams();
   const initialTab = (() => {
     const t = searchParams.get("tab");
-    const valid = ["signals", "paper", "capacity", "weights", "log", "architecture", "backtest", "brain", "learner-ctrl", "weight-history", "experiments", "proposals", "history"];
+    const valid = ["signals", "paper", "capacity", "rotation", "weights", "log", "architecture", "backtest", "brain", "learner-ctrl", "weight-history", "experiments", "proposals", "history"];
     return t && valid.includes(t) ? t : "paper";
   })();
-  const [tab, setTab] = useState<"signals" | "paper" | "capacity" | "weights" | "log" | "architecture" | "backtest" | "brain" | "learner-ctrl" | "weight-history" | "experiments" | "proposals" | "history">(initialTab as any);
+  const [tab, setTab] = useState<"signals" | "paper" | "capacity" | "rotation" | "weights" | "log" | "architecture" | "backtest" | "brain" | "learner-ctrl" | "weight-history" | "experiments" | "proposals" | "history">(initialTab as any);
   const [minScore, setMinScore] = useState<number>(strategy?.min_analyst_score ?? 70);
   const [maxPos, setMaxPos] = useState<number>(strategy?.max_position_pct ?? 5);
   const [maxTrades, setMaxTrades] = useState<number>(strategy?.max_daily_trades ?? 3);
@@ -381,6 +383,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           { key: "paper", label: "Paper Trades" },
           { key: "signals", label: `Signals (${signals.length})` },
           { key: "capacity", label: "Capacity" },
+          { key: "rotation", label: "Rotation" },
           { key: "weights", label: "Weights" },
           { key: "log", label: "Learning Log" },
           { key: "history", label: "History" },
@@ -435,6 +438,51 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
             </table>
           </div>
           {(agentCapacity ?? []).length === 0 && <div style={{ color: T.muted, padding: "18px 0" }}>Capacity data unavailable.</div>}
+        </div>
+      )}
+
+      {tab === "rotation" && (
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "20px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", flexWrap: "wrap", marginBottom: "18px" }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: "14px" }}>Capital Rotation Readiness · {market === "india" ? "India" : "US"}</div>
+              <div style={{ color: T.muted, fontSize: "12px", marginTop: "4px" }}>Shadow evidence only. PositionMonitor still owns exits and rotation cannot move paper or live money.</div>
+            </div>
+            <div style={{ color: rotationStatus?.executionEnabled ? T.red : T.green, fontSize: "12px", fontWeight: 700 }}>
+              {rotationStatus?.executionEnabled ? "EXECUTION MISCONFIGURED" : "EXECUTION LOCKED OFF"}
+            </div>
+          </div>
+          {rotationStatus ? (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))", gap: "10px", marginBottom: "18px" }}>
+                {[
+                  ["Shadow events", rotationStatus.eventCount],
+                  ["Eligible by score", rotationStatus.plannedCount],
+                  ["Independent runs", rotationStatus.distinctRuns],
+                  ["P1-ready rows", rotationStatus.p1ReadyCount],
+                  ["Legacy rows", rotationStatus.incompleteLegacyCount],
+                  ["Turnover budget", rotationStatus.turnoverBudgetMonthlyPct == null ? "Not configured" : `${rotationStatus.turnoverBudgetMonthlyPct}%`],
+                ].map(([label, value]) => (
+                  <div key={String(label)} style={{ border: `1px solid ${T.border}`, borderRadius: "6px", padding: "12px", minWidth: 0 }}>
+                    <div style={{ color: T.muted, fontSize: "11px", marginBottom: "6px" }}>{label}</div>
+                    <div style={{ color: value === "Not configured" ? T.amber : T.text, fontWeight: 700, fontSize: "15px", overflowWrap: "anywhere" }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: "12px", color: T.textSub, marginBottom: "14px", lineHeight: 1.5 }}>{rotationStatus.nextAction}</div>
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", minWidth: "420px" }}>
+                  <thead><tr style={{ color: T.muted, borderBottom: `1px solid ${T.border}` }}><th style={{ textAlign: "left", padding: "8px 12px 8px 0", fontWeight: 500 }}>Current blocker</th><th style={{ textAlign: "right", padding: "8px 0", fontWeight: 500 }}>Rows</th></tr></thead>
+                  <tbody>
+                    {rotationStatus.blockerCounts.map(row => (
+                      <tr key={row.blocker} style={{ borderBottom: `1px solid ${T.border}` }}><td style={{ padding: "10px 12px 10px 0", color: T.textSub }}>{row.blocker.replaceAll("_", " ")}</td><td style={{ padding: "10px 0", textAlign: "right", color: T.amber }}>{row.count}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {rotationStatus.blockerCounts.length === 0 && <div style={{ color: T.muted, fontSize: "12px", padding: "10px 0" }}>Completed blocker diagnostics will appear after the next qualifying shadow run.</div>}
+            </>
+          ) : <div style={{ color: T.muted, fontSize: "12px" }}>Rotation readiness unavailable.</div>}
         </div>
       )}
 

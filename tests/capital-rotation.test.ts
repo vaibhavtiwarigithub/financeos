@@ -93,4 +93,30 @@ describe("evaluateCapitalRotationShadow", () => {
     expect(result.status).toBe("rejected");
     expect(result.reason).toBe("no_sellable_holding");
   });
+
+  it("cannot sell and rebuy the candidate's existing position", () => {
+    const result = evaluateCapitalRotationShadow({
+      candidate,
+      holdings: [baseHolding({ symbol: "strong", score: 55 })],
+      config,
+      now: new Date("2026-07-13T00:00:00.000Z"),
+    });
+    expect(result.reason).toBe("no_sellable_holding");
+    expect((result.gates.source_reject_counts as any).candidate_already_held).toBe(1);
+  });
+
+  it("does not relabel a canonical exit-due or stale-priced holding as rotation", () => {
+    const result = evaluateCapitalRotationShadow({
+      candidate,
+      holdings: [
+        baseHolding({ id: "exit", exitPlanState: "time_exit_due" }),
+        baseHolding({ id: "stale", symbol: "STALE", priceFresh: false }),
+      ],
+      config,
+      now: new Date("2026-07-13T00:00:00.000Z"),
+    });
+    expect(result.reason).toBe("no_sellable_holding");
+    expect((result.gates.source_reject_counts as any)["position_exit_due:time_exit_due"]).toBe(1);
+    expect((result.gates.source_reject_counts as any).missing_fresh_price).toBe(1);
+  });
 });

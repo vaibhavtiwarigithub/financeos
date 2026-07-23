@@ -49,4 +49,13 @@ describe("paper capital-rotation hardening", () => {
     expect(sql).not.toContain("delete from public.paper_positions");
     expect(sql).toContain("drop function if exists public.execute_paper_rotation");
   });
+
+  it("loads a complete revision-collapsed return cohort without exposing the RPC", () => {
+    const sql = readFileSync("supabase/migrations/20260722203000_rotation_shadow_readiness.sql", "utf8");
+    expect(sql).toContain("distinct on (r.symbol, r.session_date)");
+    expect(sql).toContain("cardinality(p_symbols) between 1 and 20");
+    expect(sql).toContain("security invoker");
+    expect(sql).toContain("from public, anon, authenticated");
+    expect(sql).toContain("to service_role");
+  });
 });

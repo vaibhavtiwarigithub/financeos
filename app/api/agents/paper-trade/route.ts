@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
 
     const { data: cfg } = await supabase
       .from("strategy_config")
-      .select("score_threshold, position_size_pct, stop_loss_pct, target_pct, max_gross_exposure_pct, max_sector_exposure_pct, max_name_exposure_pct, max_portfolio_vol_pct, max_avg_pairwise_corr, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper")
+      .select("score_threshold, position_size_pct, stop_loss_pct, target_pct, exit_hysteresis, max_gross_exposure_pct, max_sector_exposure_pct, max_name_exposure_pct, max_portfolio_vol_pct, max_avg_pairwise_corr, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper")
       .limit(1)
       .single();
     let maxPerSector = 3;
@@ -644,7 +644,19 @@ export async function POST(req: NextRequest) {
         };
         // Always log the shadow evaluation (measurement).
         try {
-          await recordCapitalRotationShadow(supabase, { runId, candidate: rotCandidate, scoreThreshold: tradingMandate.score_threshold, minHoldingDays: tradingMandate.min_hold_days ?? 2 });
+          await recordCapitalRotationShadow(supabase, {
+            runId,
+            candidate: { ...rotCandidate, sector: candSector, dailyVol },
+            scoreThreshold: tradingMandate.score_threshold,
+            minHoldingDays: tradingMandate.min_hold_days ?? 2,
+            resolvedHorizonDays,
+            maxSignalAgeSessions: tradingMandate.max_signal_age_sessions,
+            exitHysteresis: Number((cfg as any)?.exit_hysteresis) || 15,
+            portfolioNav: constructorNavByMarket.get(market) ?? 0,
+            book: bookByMarket.get(market) ?? [],
+            portfolioLimits: marketLimits,
+            existingPositionsPolicy: tradingMandate.existing_positions_policy,
+          });
         } catch (e: any) {
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_shadow_log_failed", detail: { error: e?.message ?? String(e) } });
         }

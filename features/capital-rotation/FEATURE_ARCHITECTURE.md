@@ -190,6 +190,17 @@ Implementation must not overload global `trading_enabled`; rotation has its own 
 
 Built 2026-07-13. The evaluator and append-only audit rows are implemented. On `insufficient_cash`, PaperTrader records whether a rotation would have been eligible and why. No sell, no buy, no proposal. This validates frequency, churn pressure, score persistence, priceability, and missing tax/lot data.
 
+**P0 readiness completion (2026-07-22):** New shadow rows reuse the
+canonical paper exit-plan projection so a holding already due for a time,
+score, stop, or target exit cannot be mislabeled as a rotation source. They
+also record distinct-run persistence, current-month paper turnover, mandate
+budget/tax sensitivity, the existing 5 bps-per-leg paper slippage floor,
+post-swap constructor replay, and measured candidate-to-remaining-book
+correlation from frozen `symbol_daily_returns`. Missing or truncated evidence
+fails closed and is recorded in `p1_blockers`; no value is guessed as zero.
+Agents -> Rotation exposes these blockers per market. This is measurement and
+visibility only: it does not grant P1 permission.
+
 ### P1 - Paper auto-rotation, still default off
 
 After P0 evidence is reviewed, enable market-by-market paper execution only. Requires atomic paper RPC, persistence, post-swap gate replay, turnover budget, cost/tax model, and complete audit rows.
@@ -221,12 +232,12 @@ Out of scope for this architecture. Would need a separate architecture review, b
 
 ## Recommended build order
 
-1. Add P0 shadow evaluator and `rotation_events` audit table.
-2. Share or extract PositionMonitor exit predicates so rotation cannot relabel true exits.
-3. Add post-swap gate replay for paper and live proposal generation.
-4. Add persistence/churn, turnover, and cost/tax model tests.
-5. Add atomic paper rotation RPC and enable only with `rotation_paper_execute_enabled`.
-6. Add owner-visible rotation audit UI/reporting.
+1. [Done] Add P0 shadow evaluator and `rotation_events` audit table.
+2. [Done] Reuse the canonical paper exit-plan projection so rotation cannot relabel true exits.
+3. [Done for P0 measurement] Replay the post-swap paper constructor and measured candidate correlation; live remains out of scope.
+4. [Done for P0 measurement] Add persistence, turnover, friction, tax-evidence, and truncation tests.
+5. [Blocked] Validate a score-to-forward-return mapping, configure an owner-approved turnover budget, and collect independent-session evidence before designing a new atomic P1 RPC.
+6. [Done] Add owner-visible market-local rotation readiness reporting.
 7. Add live proposal generation only after P1 paper evidence is reviewed.
 
 ## Single riskiest assumption to validate first

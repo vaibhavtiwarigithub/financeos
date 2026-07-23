@@ -117,6 +117,16 @@ full cost/tax, turnover, fresh-source-price, correlation, and post-swap replay
 gates are incomplete. No live proposal is created, and PositionMonitor remains
 the only owner of true exit labels.
 
+New P0 rows now carry a fail-closed P1 readiness contract. Rotation source
+selection reuses the canonical paper exit-plan projection; post-swap sizing
+and measured correlation are evaluated over the same market only; persistence
+counts distinct prior runs; turnover uses filled paper-order notional against
+same-market NAV; and missing tax lots, economic mapping, configured turnover,
+correlation, or complete query results remain explicit blockers. These fields
+are diagnostic only and cannot relax an entry, exit, cash, position, or order
+gate. Agents -> Rotation exposes the market-local evidence without an enable
+control.
+
 **Per-market pause/kill isolation (migration 171).** The pause and kill-switch
 state was GLOBAL (`strategy_config.app_paused`/`trading_enabled`), so one
 market's breaker halted BOTH — India's phantom drawdown even skipped the US

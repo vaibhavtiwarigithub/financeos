@@ -1,3 +1,12 @@
+import { constructPortfolio, DEFAULT_LIMITS, type BookPosition, type PortfolioLimits } from "@/lib/portfolio/constructor";
+import { projectPaperExitPlan, type PaperExitPlanState } from "@/lib/trading/paper-exit-plan";
+import { isPaperScoreFresh } from "@/lib/trading/paper-exit-policy";
+import {
+  assessRotationP1Readiness,
+  estimateRotationFrictionPct,
+  measureCandidatePostSwapCorrelation,
+} from "@/lib/trading/rotation-readiness";
+
 export interface RotationCandidate {
   signalId: string;
   symbol: string;
@@ -6,6 +15,8 @@ export interface RotationCandidate {
   score: number;
   targetNotional: number;
   cash: number;
+  sector?: string | null;
+  dailyVol?: number | null;
 }
 
 export interface RotationHolding {
@@ -20,6 +31,9 @@ export interface RotationHolding {
   stopLoss: number | null;
   exitReason: string | null;
   score: number | null;
+  scoreCreatedAt?: string | null;
+  exitPlanState?: PaperExitPlanState;
+  priceFresh?: boolean;
 }
 
 export interface RotationConfig {
@@ -72,6 +86,8 @@ function holdingNotional(h: RotationHolding): number {
 
 function sourceRejectReason(h: RotationHolding, cfg: RotationConfig, now: Date): string | null {
   if (h.exitReason) return "position_has_exit_reason";
+  if (h.exitPlanState && h.exitPlanState !== "hold") return `position_exit_due:${h.exitPlanState}`;
+  if (h.priceFresh === false) return "missing_fresh_price";
   if (h.score == null || !Number.isFinite(h.score)) return "missing_fresh_score";
   if (h.score < cfg.exitScoreThreshold) return "below_exit_threshold";
   const held = daysHeld(h.openedAt, now);
@@ -115,7 +131,9 @@ export function evaluateCapitalRotationShadow(args: {
   const sellable = args.holdings
     .filter((h) => h.market === candidate.market)
     .map((h) => {
-      const reject = sourceRejectReason(h, cfg, now);
+      const reject = h.symbol.trim().toUpperCase() === candidate.symbol.trim().toUpperCase()
+        ? "candidate_already_held"
+        : sourceRejectReason(h, cfg, now);
       if (reject) rejectCounts[reject] = (rejectCounts[reject] ?? 0) + 1;
       return { holding: h, reject };
     })
@@ -156,8 +174,8 @@ export function evaluateCapitalRotationShadow(args: {
   };
 }
 
-async function latestScoresBySymbol(supabase: any, market: "us" | "india", symbols: string[]): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
+async function latestScoresBySymbol(supabase: any, market: "us" | "india", symbols: string[]): Promise<Map<string, { score: number; createdAt: string }>> {
+  const out = new Map<string, { score: number; createdAt: string }>();
   if (symbols.length === 0) return out;
   const since = new Date(Date.now() - 7 * 86400000).toISOString();
   const { data, error } = await supabase
@@ -174,7 +192,7 @@ async function latestScoresBySymbol(supabase: any, market: "us" | "india", symbo
     const sym = String(row.symbol ?? "");
     if (!sym || out.has(sym)) continue;
     const score = Number(row.analyst_score);
-    if (Number.isFinite(score)) out.set(sym, score);
+    if (Number.isFinite(score) && row.created_at) out.set(sym, { score, createdAt: String(row.created_at) });
   }
   return out;
 }
@@ -184,36 +202,57 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   candidate: RotationCandidate;
   scoreThreshold: number;
   minHoldingDays: number;
+  resolvedHorizonDays: number;
+  maxSignalAgeSessions: number;
+  exitHysteresis: number;
+  portfolioNav: number;
+  book: BookPosition[];
+  portfolioLimits?: PortfolioLimits;
+  existingPositionsPolicy: "grandfather" | "apply";
 }) {
   const candidate = args.candidate;
-  const { data: cfgRow } = await supabase
+  const { data: cfgRow, error: cfgError } = await supabase
     .from("rotation_config")
-    .select("rotation_shadow_enabled, rotation_margin_score")
+    .select("rotation_shadow_enabled, rotation_margin_score, rotation_persistence_runs")
     .eq("market", candidate.market)
     .eq("book_type", "paper")
     .maybeSingle();
+  if (cfgError) throw new Error(`rotation config query failed: ${cfgError.message}`);
 
-  const { data: positions } = await supabase
+  const { data: positions, error: positionsError } = await supabase
     .from("paper_positions")
-    .select("id, symbol, market, qty, avg_cost, current_price, opened_at, price_target, stop_loss, exit_reason")
+    .select("id, symbol, market, qty, avg_cost, current_price, opened_at, created_at, updated_at, price_target, stop_loss, exit_reason, resolved_horizon_days")
     .eq("market", candidate.market)
     .eq("position_role", "alpha");
+  if (positionsError) throw new Error(`rotation position query failed: ${positionsError.message}`);
 
   const symbols = (positions ?? []).map((p: any) => String(p.symbol)).filter(Boolean);
   const scores = await latestScoresBySymbol(supabase, candidate.market, symbols);
-  const holdings: RotationHolding[] = (positions ?? []).map((p: any) => ({
-    id: String(p.id),
-    symbol: String(p.symbol),
-    market: candidate.market,
-    qty: Number(p.qty ?? 0),
-    avgCost: Number(p.avg_cost ?? 0),
-    currentPrice: Number(p.current_price ?? p.avg_cost ?? 0),
-    openedAt: p.opened_at ?? null,
-    priceTarget: p.price_target == null ? null : Number(p.price_target),
-    stopLoss: p.stop_loss == null ? null : Number(p.stop_loss),
-    exitReason: p.exit_reason ?? null,
-    score: scores.get(String(p.symbol)) ?? null,
-  }));
+  const now = new Date();
+  const holdings: RotationHolding[] = (positions ?? []).map((p: any) => {
+    const score = scores.get(String(p.symbol));
+    const exitPlan = projectPaperExitPlan({
+      position: p,
+      signal: score ? { analyst_score: score.score, created_at: score.createdAt } : null,
+      entryThreshold: args.scoreThreshold,
+      hysteresis: args.exitHysteresis,
+      maxScoreAgeSessions: args.maxSignalAgeSessions,
+      horizonDays: args.existingPositionsPolicy === "apply"
+        ? args.resolvedHorizonDays
+        : Number(p.resolved_horizon_days) || args.resolvedHorizonDays,
+      horizonSource: args.existingPositionsPolicy !== "apply" && Number(p.resolved_horizon_days) > 0 ? "entry" : "user",
+      now,
+    });
+    return {
+      id: String(p.id), symbol: String(p.symbol), market: candidate.market,
+      qty: Number(p.qty ?? 0), avgCost: Number(p.avg_cost ?? 0),
+      currentPrice: Number(p.current_price ?? p.avg_cost ?? 0), openedAt: p.opened_at ?? p.created_at ?? null,
+      priceTarget: p.price_target == null ? null : Number(p.price_target),
+      stopLoss: p.stop_loss == null ? null : Number(p.stop_loss), exitReason: p.exit_reason ?? null,
+      score: score?.score ?? null, scoreCreatedAt: score?.createdAt ?? null, exitPlanState: exitPlan.state,
+      priceFresh: isPaperScoreFresh(p.updated_at, now, candidate.market, 1),
+    };
+  });
 
   const evaluation = evaluateCapitalRotationShadow({
     candidate,
@@ -227,6 +266,80 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
       nearStopPct: 0.03,
     },
   });
+
+  const limits = args.portfolioLimits ?? DEFAULT_LIMITS;
+  const sourceSymbol = evaluation.source?.symbol ?? null;
+  const postSwapBook = sourceSymbol
+    ? args.book.filter(position => position.symbol.toUpperCase() !== sourceSymbol.toUpperCase())
+    : args.book;
+  const proposedSizePct = args.portfolioNav > 0 ? candidate.targetNotional / args.portfolioNav * 100 : Number.NaN;
+  const constructed = Number.isFinite(proposedSizePct) && proposedSizePct > 0
+    ? constructPortfolio(postSwapBook, [{
+        symbol: candidate.symbol, market: candidate.market, proposedSizePct,
+        sector: candidate.sector ?? null, beta: null, dailyVol: candidate.dailyVol ?? null,
+      }], limits)
+    : null;
+  const sized = constructed?.orders[0];
+  const postSwapAllowed = sized ? sized.finalSizePct + 1e-9 >= proposedSizePct : null;
+
+  const symbolsAfterSwap = postSwapBook.map(position => position.symbol);
+  const returnCutoff = new Date(Date.now() - 100 * 86400000).toISOString().slice(0, 10);
+  const { data: returnRows, error: returnsError } = await supabase.rpc("get_rotation_return_cohort", {
+    p_market: candidate.market,
+    p_symbols: [...new Set([candidate.symbol, ...symbolsAfterSwap])],
+    p_since: returnCutoff,
+  });
+  if (returnsError) throw new Error(`rotation return query failed: ${returnsError.message}`);
+  const correlation = measureCandidatePostSwapCorrelation(returnRows ?? [], candidate.symbol, symbolsAfterSwap);
+  const correlationAllowed = correlation.status === "ok" && correlation.maxAbsCorrelation != null
+    ? correlation.maxAbsCorrelation <= limits.maxAvgPairwiseCorr
+    : null;
+  const completePostSwapAllowed = postSwapAllowed == null || correlationAllowed == null
+    ? null
+    : postSwapAllowed && correlationAllowed;
+
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const [mandateResult, turnoverResult, persistenceResult] = await Promise.all([
+    supabase.from("investment_mandates").select("turnover_budget_monthly, tax_sensitivity")
+      .eq("market", candidate.market).eq("active", true).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("paper_order_events").select("total_value", { count: "exact" }).eq("market", candidate.market)
+      .eq("fill_status", "filled").gte("created_at", monthStart).limit(1000),
+    supabase.from("rotation_events").select("audit_json").eq("market", candidate.market)
+      .eq("candidate_symbol", candidate.symbol).eq("status", "planned").gte("created_at", new Date(Date.now() - 4 * 86400000).toISOString()),
+  ]);
+  if (mandateResult.error) throw new Error(`rotation mandate query failed: ${mandateResult.error.message}`);
+  if (turnoverResult.error) throw new Error(`rotation turnover query failed: ${turnoverResult.error.message}`);
+  if ((turnoverResult.count ?? 0) > (turnoverResult.data?.length ?? 0)) throw new Error(`rotation turnover cohort truncated: ${turnoverResult.data?.length ?? 0}/${turnoverResult.count}`);
+  if (persistenceResult.error) throw new Error(`rotation persistence query failed: ${persistenceResult.error.message}`);
+  const monthlyTurnover = (turnoverResult.data ?? []).reduce((sum: number, row: any) => sum + Math.max(0, Number(row.total_value ?? 0)), 0);
+  const proposedTurnover = (evaluation.sellNotional ?? 0) + evaluation.buyNotional;
+  const persistenceRequiredRuns = Math.max(0, Number((cfgRow as any)?.rotation_persistence_runs ?? 2) - 1);
+  const persistencePriorRuns = countDistinctPriorRotationRuns(persistenceResult.data ?? [], args.runId ?? "manual");
+  const frictionPct = evaluation.sellNotional == null ? null : estimateRotationFrictionPct(evaluation.sellNotional, evaluation.buyNotional);
+  const readiness = assessRotationP1Readiness({
+    persistencePriorRuns,
+    persistenceRequiredRuns,
+    turnoverBudgetMonthlyPct: (mandateResult.data as any)?.turnover_budget_monthly == null ? null : Number((mandateResult.data as any).turnover_budget_monthly),
+    monthlyTurnoverUsedPct: args.portfolioNav > 0 ? monthlyTurnover / args.portfolioNav * 100 : null,
+    proposedTurnoverPct: args.portfolioNav > 0 ? proposedTurnover / args.portfolioNav * 100 : null,
+    taxSensitivity: ["low", "high"].includes(String((mandateResult.data as any)?.tax_sensitivity))
+      ? (mandateResult.data as any).tax_sensitivity : "medium",
+    hasExactTaxLots: false,
+    expectedEdgePct: null,
+    frictionPct,
+    postSwapAllowed: completePostSwapAllowed,
+    correlation,
+  });
+  evaluation.gates.p1_ready = readiness.ready;
+  evaluation.gates.p1_blockers = readiness.blockers;
+  evaluation.gates.persistence_prior_runs = persistencePriorRuns;
+  evaluation.gates.persistence_required_prior_runs = persistenceRequiredRuns;
+  evaluation.gates.post_swap_allowed = completePostSwapAllowed;
+  evaluation.gates.post_swap_adjustments = sized?.adjustments ?? [];
+  evaluation.gates.candidate_correlation = correlation;
+  evaluation.gates.candidate_correlation_allowed = correlationAllowed;
+  evaluation.gates.monthly_turnover_used_pct = readiness.turnoverAfterPct == null || args.portfolioNav <= 0 ? null : monthlyTurnover / args.portfolioNav * 100;
+  evaluation.gates.proposed_turnover_pct = args.portfolioNav > 0 ? proposedTurnover / args.portfolioNav * 100 : null;
 
   const idempotencyKey = `paper:${candidate.market}:${args.runId ?? "manual"}:${candidate.signalId}:rotation-shadow`;
   const event = {
@@ -245,14 +358,16 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     sell_notional: evaluation.sellNotional,
     buy_notional: evaluation.buyNotional,
     turnover_consumed: evaluation.sellNotional != null ? evaluation.sellNotional + evaluation.buyNotional : null,
-    cost_model_json: { phase: "p0_shadow", costs_applied: false },
-    tax_model_json: { phase: "p0_shadow", tax_drag_applied: false },
+    cost_model_json: { phase: "p0_shadow", slippage_bps_per_leg: 5, friction_pct: frictionPct, spread_impact_fees_status: "unavailable" },
+    tax_model_json: { phase: "p0_shadow", sensitivity: (mandateResult.data as any)?.tax_sensitivity ?? "medium", exact_lots_available: false, tax_drag_status: "unavailable" },
     gate_results_json: evaluation.gates,
     audit_json: {
       reason: evaluation.reason,
       eligible: evaluation.eligible,
       no_execution: true,
       run_id: args.runId,
+      p1_ready: readiness.ready,
+      p1_blockers: readiness.blockers,
     },
   };
 
@@ -320,7 +435,7 @@ export async function executeCapitalRotationPaper(supabase: any, args: RotationE
       currentPrice: Number(p.current_price ?? p.avg_cost ?? 0), openedAt: p.opened_at ?? null,
       priceTarget: p.price_target == null ? null : Number(p.price_target),
       stopLoss: p.stop_loss == null ? null : Number(p.stop_loss),
-      exitReason: p.exit_reason ?? null, score: scores.get(String(p.symbol)) ?? null,
+      exitReason: p.exit_reason ?? null, score: scores.get(String(p.symbol))?.score ?? null,
     }));
     const evaluation = evaluateCapitalRotationShadow({
       candidate: c, holdings,

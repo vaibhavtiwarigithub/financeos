@@ -1051,6 +1051,13 @@ the exact `claim_run_id` and then returns `p1_guardrails_incomplete`; it contain
 no position, cash, trade, or order mutation. The caller also requires an
 independent deployment flag.
 
+Migration `20260722203000` adds the read-only, service-role-only
+`get_rotation_return_cohort(market, symbols, since)` RPC. It returns one latest
+point-in-time revision per symbol/session from `symbol_daily_returns`, bounded
+to one market and at most 20 symbols. This prevents PostgREST row limits from
+silently truncating P0 candidate-correlation evidence. It has no write or
+trading authority.
+
 ### Evidence evaluation tables
 
 `evidence_policy_evaluations` and `evidence_evaluation_details` sat at **0 rows** from the
