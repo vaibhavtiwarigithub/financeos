@@ -2,6 +2,7 @@
 import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { currentPaperTradePnl } from "@/lib/paper-current-pnl";
+import { SymbolLink } from "@/components/ui/SymbolLink";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket } from "@/lib/market-context";
 import { fmtMoney } from "@/lib/format-money";
@@ -653,33 +654,8 @@ function TradeExitPlanCell({ trade, plan, market }: { trade: any; plan: PaperExi
       </div>
     );
   }
-  if (!plan) return <span style={{ color: T.muted, fontSize: "11px" }}>No current held-position plan</span>;
-
-  const label: Record<PaperExitPlan["state"], string> = {
-    hold: "Hold",
-    time_exit_due: "Time due",
-    score_exit_due: "Score due",
-    stop_exit_due: "Stop reached",
-    target_exit_due: "Target reached",
-  };
-  return (
-    <div style={{ minWidth: "210px", fontSize: "11px", lineHeight: 1.4, color: T.textSub }}>
-      <div style={{ fontWeight: 700, color: plan.state === "hold" ? T.green : T.red }}>{label[plan.state]}</div>
-      <div>
-        Stop {plan.stopPrice == null ? "—" : fmtMoney(plan.stopPrice, market)}
-        <span style={{ color: T.muted }}> · </span>
-        Target {plan.targetPrice == null ? "none" : fmtMoney(plan.targetPrice, market)}
-      </div>
-      <div>
-        {plan.score == null
-          ? "Score unavailable"
-          : plan.scoreFresh
-            ? `Score ${Math.round(plan.score)} · exit < ${Math.round(plan.scoreExitThreshold)}`
-            : `Score ${Math.round(plan.score)} stale · mechanical only`}
-        <span style={{ color: T.muted }}> · {plan.ageWeekdays ?? "?"}/{plan.horizonDays}d</span>
-      </div>
-    </div>
-  );
+  // Open trade — render full expanded plan (same as PositionCard, both markets)
+  return <ExitPlanColumn plan={plan} market={market} />;
 }
 
 /** Rich position card — replaces plain table row */
@@ -921,7 +897,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
             <table style={{ width: "100%", minWidth: "1100px", borderCollapse: "collapse", fontSize: "13px" }}>
               <thead>
                 <tr style={{ color: T.muted }}>
-                  {["Symbol", "Side", "Qty", "Fill Price", "Total", "Score", "Exit Plan", "Realized P&L", "Current P&L", "Outcome", "Date"].map(h => (
+                  {["Symbol", "Side", "Qty", "Fill Price", "Exit / Mkt", "Total", "Score", "Exit Plan", "Realized P&L", "Current P&L", "Outcome", "Date"].map(h => (
                     <th key={h} style={{ padding: "5px 12px 10px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left" }}>{h}</th>
                   ))}
                 </tr>
@@ -933,7 +909,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
                   return <tr key={t.id} style={{ borderTop: `1px solid ${T.border}` }}>
                     <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        {t.symbol}
+                        <SymbolLink symbol={t.symbol} market={activeMarket} style={{ fontWeight: 800, color: T.accent }} />
                         <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#2D1B00", color: "#FBBF24", letterSpacing: "0.04em" }}>PAPER</span>
                         {/seeded_at/i.test(t.rationale ?? "") && (
                           <span title="Manually seeded demo data — not a real agent sizing/scoring decision" style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#3B0000", color: T.red, letterSpacing: "0.04em", cursor: "help" }}>SEEDED</span>
@@ -947,6 +923,11 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
                     </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{t.qty}</td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{fmtMoney(Number(t.fill_price), activeMarket)}</td>
+                    <td style={{ padding: "10px 12px 10px 0", color: T.textSub }}>
+                      {t.closed_at != null
+                        ? (t.exit_price != null ? fmtMoney(Number(t.exit_price), activeMarket) : <span style={{ color: T.muted }}>—</span>)
+                        : (currentPnl?.currentPrice != null ? fmtMoney(currentPnl.currentPrice, activeMarket) : <span style={{ color: T.muted }}>—</span>)}
+                    </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{fmtMoney(t.qty * t.fill_price, activeMarket, 0)}</td>
                     <td style={{ padding: "10px 12px 10px 0", color: T.accent }}>{t.analyst_score ?? "—"}</td>
                     <td style={{ padding: "10px 18px 10px 0", verticalAlign: "top" }}>
