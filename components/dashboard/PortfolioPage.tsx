@@ -435,7 +435,7 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
             {pendingSignals.map((s: any) => (
             <div key={s.id} style={{ background: T.card, border: `1px solid ${s.analyst_score >= 60 && s.direction === "long" ? T.accent + "44" : T.border}`, borderRadius: "12px", padding: "16px 20px", display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr 1fr", gap: "12px", alignItems: "center", minWidth: "460px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <SymbolLink symbol={s.symbol} market={activeMarket} style={{ fontWeight: 800, fontSize: "16px", color: T.accent }}>{ s.symbol} ↗</SymbolLink>
+                <SymbolLink symbol={s.symbol} market={s.market ?? "us"} style={{ fontWeight: 800, fontSize: "16px", color: T.accent }}>{s.symbol} ↗</SymbolLink>
                 <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#2D1B00", color: "#FBBF24", letterSpacing: "0.04em" }}>PAPER</span>
               </div>
               <div>
