@@ -180,7 +180,25 @@ function buildNewsSection(feed: any[]): string {
   return sectionCard("Market Intelligence — News", "◈", html, "#60A5FA");
 }
 
-function buildSignalsSection(signals: any[], title: string, emptyMsg: string): string {
+type RiskInfo = { score: number; label: string; posture: string };
+
+// Explicit two-axis label so "Conviction" and "Risk" never read as one
+// contradictory number. Conviction: higher = agent likes the stock more.
+// Risk: higher = riskier to hold (concentration/vol/etc.), NOT a quality score.
+function scoreLabelLine(conviction: number, risk?: RiskInfo): string {
+  const cColor = conviction >= 70 ? "#34D399" : conviction >= 55 ? "#6366F1" : "#9B9EA8";
+  let out = `<span style="color:${cColor};font-size:12px;font-weight:700;">Conviction ${conviction}/100</span>`;
+  if (risk) {
+    // Risk color is inverted: high risk = red, not green.
+    const rColor = risk.score >= 66 ? "#F87171" : risk.score >= 45 ? "#FBBF24" : "#34D399";
+    const labelTxt = risk.label ? ` ${risk.label}` : "";
+    out += `<span style="color:#6B7280;font-size:12px;margin:0 6px;">·</span>` +
+      `<span style="color:${rColor};font-size:12px;font-weight:700;">Risk ${risk.score}/100${labelTxt}</span>`;
+  }
+  return out;
+}
+
+function buildSignalsSection(signals: any[], title: string, emptyMsg: string, riskBySymbol: Record<string, RiskInfo> = {}): string {
   if (signals.length === 0) return sectionCard(title, "â—‰", `<div style="color:#6B7280;font-size:13px;">${emptyMsg}</div>`);
   let html = "";
   for (const s of signals) {
@@ -195,7 +213,7 @@ function buildSignalsSection(signals: any[], title: string, emptyMsg: string): s
           ${dirBadge(s.direction)}
           <span style="color:#6B7280;font-size:10px;margin-left:8px;">${s.agent_label ?? "agent"} &middot; ${s.is_holding ? "HOLDING" : "watchlist"}</span>
         </div>
-        <div style="margin-bottom:8px;">${scoreBar(score, bColor)} <span style="color:${bColor};font-size:12px;font-weight:700;margin-left:8px;vertical-align:middle;">${score}/100</span></div>
+        <div style="margin-bottom:8px;">${scoreBar(score, bColor)} <span style="margin-left:8px;vertical-align:middle;">${scoreLabelLine(score, s.is_holding ? riskBySymbol[String(s.symbol).toUpperCase()] : undefined)}</span></div>
         ${s.summary ? `<div style="color:#9B9EA8;font-size:12px;line-height:1.6;margin-bottom:6px;">${s.summary}</div>` : ""}
         ${risks.length > 0 ? `<div style="color:#F87171;font-size:11px;margin-top:4px;">âš  ${risks.slice(0, 2).join(" &middot; ")}</div>` : ""}
         ${catalysts.length > 0 ? `<div style="color:#34D399;font-size:11px;margin-top:3px;">â–² ${catalysts.slice(0, 2).join(" &middot; ")}</div>` : ""}
@@ -205,7 +223,7 @@ function buildSignalsSection(signals: any[], title: string, emptyMsg: string): s
   return sectionCard(title, "â—‰", html);
 }
 
-function buildExitSection(signals: any[]): string {
+function buildExitSection(signals: any[], riskBySymbol: Record<string, RiskInfo> = {}): string {
   if (signals.length === 0) return sectionCard("Exit Watch — Held Stocks", "â—Ž", `<div style="color:#6B7280;font-size:13px;">No held stocks with deteriorating signals. All holdings look stable.</div>`, "#34D399");
   let html = `<div style="color:#F87171;font-size:11px;margin-bottom:12px;font-weight:600;">âš  Research agent flagged these Robinhood holdings for review</div>`;
   for (const s of signals) {
@@ -216,9 +234,9 @@ function buildExitSection(signals: any[]): string {
         <td>
           <span style="color:#ECEDEF;font-size:14px;font-weight:700;">${s.symbol}</span>
           <span style="margin-left:8px;">${dirBadge(s.direction)}</span>
-          <span style="color:#6B7280;font-size:10px;margin-left:8px;">score ${score}/100</span>
         </td>
       </tr>
+      <tr><td style="padding-top:6px;">${scoreLabelLine(score, riskBySymbol[String(s.symbol).toUpperCase()])}</td></tr>
       ${s.summary ? `<tr><td style="color:#9B9EA8;font-size:12px;padding-top:6px;">${s.summary}</td></tr>` : ""}
       ${risks.length > 0 ? `<tr><td style="color:#F87171;font-size:11px;padding-top:4px;">âš  ${risks.join(" &middot; ")}</td></tr>` : ""}
     </table>`;
@@ -270,6 +288,76 @@ function buildRobinSection(snapshot: any): string {
   ) + posHtml;
 
   return sectionCard("Robinhood Account", "â—‡", html, "#60A5FA");
+}
+
+// Per-live-account HEALTH. Health = 100 - risk (higher = healthier), so the word
+// matches the direction. Risk detail shown alongside so it reconciles with the
+// Risk Analytics page (which shows risk directly). Source: account_risk_snapshots.
+function buildAccountHealthSection(accounts: Array<{ label: string; risk: number | null; healthLabel: string; total: number | null; conf: number | null }>): string {
+  if (accounts.length === 0) {
+    return sectionCard("Live Account Health", "♥", `<div style="color:#6B7280;font-size:13px;">No account risk snapshot yet. The holding-risk cron populates this after each US close.</div>`, "#34D399");
+  }
+  let rows = "";
+  for (const a of accounts) {
+    const health = a.risk == null ? null : 100 - a.risk;
+    // Health color is the INVERSE of risk color: high health = green.
+    const hColor = health == null ? "#6B7280" : health >= 66 ? "#34D399" : health >= 50 ? "#FBBF24" : "#F87171";
+    const bars = health == null ? 0 : health;
+    rows += `<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #252836;">
+      <tr>
+        <td style="vertical-align:top;">
+          <div style="color:#ECEDEF;font-size:13px;font-weight:700;">${a.label}</div>
+          <div style="color:#6B7280;font-size:11px;margin-top:2px;">${a.total != null ? "$" + fmtNum(a.total) + " equity" : "value unavailable"}${a.conf != null ? ` &middot; data confidence ${(a.conf * 100).toFixed(0)}%` : ""}</div>
+        </td>
+        <td style="text-align:right;vertical-align:top;white-space:nowrap;">
+          <div style="color:${hColor};font-size:18px;font-weight:800;">${health == null ? "—" : health}<span style="color:#6B7280;font-size:12px;font-weight:600;">/100 Health</span></div>
+          <div style="color:#9B9EA8;font-size:11px;margin-top:2px;">Risk ${a.risk == null ? "—" : a.risk}/100${a.healthLabel ? ` &middot; ${a.healthLabel}` : ""}</div>
+        </td>
+      </tr>
+      <tr><td colspan="2" style="padding-top:6px;">${scoreBar(bars, hColor)}</td></tr>
+    </table>`;
+  }
+  const note = `<div style="color:#6B7280;font-size:11px;margin-top:8px;line-height:1.5;">Health = 100 − Risk. Higher is calmer. Same 0–100 engine as the Risk Analytics page (which shows Risk directly). Advisory only — read-only accounts place no orders.</div>`;
+  return sectionCard("Live Account Health", "♥", rows + note, "#34D399");
+}
+
+// Plain-language legend so no number in this email is a mystery. Bulleted on
+// purpose — the owner asked for highlights, not paragraphs.
+function buildLegendSection(): string {
+  const li = (label: string, body: string) =>
+    `<li style="margin-bottom:8px;line-height:1.5;"><span style="color:#ECEDEF;font-weight:700;">${label}</span> <span style="color:#9B9EA8;">${body}</span></li>`;
+  const html = `
+    <div style="color:#ECEDEF;font-size:12px;font-weight:700;margin-bottom:8px;">The two scores (they are NOT the same axis)</div>
+    <ul style="margin:0 0 14px 0;padding-left:18px;color:#9B9EA8;font-size:12px;">
+      ${li("Conviction (0–100):", "how much the research agent likes the stock. Higher = better. Green ≥70.")}
+      ${li("Risk (0–100):", "how risky it is to HOLD right now — concentration, volatility, correlation. Higher = riskier. Red ≥66. A great stock you own too much of can be high conviction AND high risk at once.")}
+      ${li("Health (0–100):", "account-level, = 100 − Risk. Higher = calmer account.")}
+    </ul>
+    <div style="color:#ECEDEF;font-size:12px;font-weight:700;margin-bottom:8px;">Posture words (what the agent suggests)</div>
+    <ul style="margin:0 0 14px 0;padding-left:18px;color:#9B9EA8;font-size:12px;">
+      ${li("Hold:", "within owner-approved limits. No action.")}
+      ${li("Review:", "a limit (usually single-name concentration) is over its reference. Look at it — but Kairos has no account-specific sell mandate, so it does NOT tell you to trim.")}
+      ${li("Trim:", "this name was deterministically selected to absorb a sector-cap breach. Advisory.")}
+      ${li("Exit review:", "a verified protective-stop breach or thesis break. Highest priority.")}
+      ${li("No data / Insufficient:", "missing structural inputs — no score is shown rather than a fake one.")}
+    </ul>
+    <div style="color:#ECEDEF;font-size:12px;font-weight:700;margin-bottom:8px;">What builds the Risk score (6 drivers)</div>
+    <ul style="margin:0 0 14px 0;padding-left:18px;color:#9B9EA8;font-size:12px;">
+      ${li("Name concentration (30):", "weight vs the 12% single-name reference.")}
+      ${li("Sector concentration (20):", "sector weight vs the 30% sector reference.")}
+      ${li("Volatility / beta (15):", "daily vol vs a 4% name reference, plus beta.")}
+      ${li("Correlated cluster (15):", "how correlated co-held names are, vs the 0.70 reference.")}
+      ${li("Drawdown / stop (10):", "distance to cost / protective stop. Never triggers an exit on its own.")}
+      ${li("Liquidity / event (10):", "a fresh news/liquidity flag — e.g. an earnings date, a halt, or thin volume. Only counts when a live feed was actually queried; otherwise excluded, not assumed safe.")}
+    </ul>
+    <div style="color:#ECEDEF;font-size:12px;font-weight:700;margin-bottom:8px;">Owner-approved risk limits (references in force)</div>
+    <ul style="margin:0;padding-left:18px;color:#9B9EA8;font-size:12px;">
+      ${li("Single name ≤ 12%", "of account value.")}
+      ${li("Single sector ≤ 30%", "of NAV.")}
+      ${li("Portfolio daily vol ≤ 2%", "· avg pairwise correlation ≤ 0.70 · gross exposure ≤ 80%.")}
+      ${li("Order authority:", "only account ••••0660 can ever place an order; every other account is read-only and advisory.")}
+    </ul>`;
+  return sectionCard("Legend — What the numbers mean", "❔", html, "#6366F1");
 }
 
 function buildPerformanceSection(
@@ -602,6 +690,8 @@ serve(async (req) => {
     { data: learnerPriors },
     marketNews,
     vooData,
+    { data: holdingRiskRows },
+    { data: accountHealthRows },
   ] = await Promise.all([
     supabase.from("paper_portfolio").select("nav, updated_at").limit(1).single(),
     supabase.from("agent_signals").select("symbol,direction,analyst_score,summary,risks,catalysts,agent_label,is_holding,created_at").gte("created_at", since24h).order("analyst_score", { ascending: false }).limit(20),
@@ -624,7 +714,53 @@ serve(async (req) => {
     resolveChampionWeightsRow(supabase, "us"),
     fetchMarketNews(avKey),
     fetchVOOReturn(avKey),
+    // Latest holding-risk snapshot per Robinhood US name — the RISK score, a
+    // DIFFERENT axis from analyst_score (conviction). Both are 0-100 but move in
+    // opposite directions, which is what made "74 vs 53" look contradictory.
+    supabase.from("holding_risk_snapshots")
+      .select("symbol,holding_risk_score,risk_label,risk_posture,captured_on")
+      .eq("market", "us").eq("broker", "robinhood")
+      .order("captured_on", { ascending: false }).limit(60),
+    // Account-level health: the SAME 0-100 risk score, rolled up per live account
+    // (already computed daily). Health = 100 - risk. Live accounts only (broker
+    // != internal; internal is the paper book, shown elsewhere).
+    supabase.from("account_risk_snapshots")
+      .select("account_id,account_label,broker,currency,total_value,metrics,data_confidence,captured_on")
+      .eq("market", "us").neq("broker", "internal")
+      .order("captured_on", { ascending: false }).limit(40),
   ]);
+
+  // Latest snapshot per live account (rows sorted captured_on desc).
+  type AccountHealth = { label: string; risk: number | null; healthLabel: string; total: number | null; conf: number | null };
+  const accountHealth: AccountHealth[] = [];
+  const seenAccount = new Set<string>();
+  for (const r of accountHealthRows ?? []) {
+    const id = String(r.account_id);
+    if (seenAccount.has(id)) continue;
+    seenAccount.add(id);
+    const m = (r.metrics ?? {}) as Record<string, unknown>;
+    const risk = m.riskScore == null ? null : Number(m.riskScore);
+    accountHealth.push({
+      label: String(r.account_label ?? `Robinhood ••••${id.slice(-4)}`),
+      risk,
+      healthLabel: String(m.riskLabel ?? ""),
+      total: r.total_value == null ? null : Number(r.total_value),
+      conf: r.data_confidence == null ? null : Number(r.data_confidence),
+    });
+  }
+
+  // Reduce to latest row per symbol (rows already sorted captured_on desc).
+  const riskBySymbol: Record<string, { score: number; label: string; posture: string }> = {};
+  for (const r of holdingRiskRows ?? []) {
+    const sym = String(r.symbol).toUpperCase();
+    if (!riskBySymbol[sym]) {
+      riskBySymbol[sym] = {
+        score: Number(r.holding_risk_score ?? 0),
+        label: String(r.risk_label ?? ""),
+        posture: String(r.risk_posture ?? ""),
+      };
+    }
+  }
 
   // Aggregate agent counts manually (RPC might not exist)
   const countMap: Record<string, { count: number; avg_score: number }> = {};
@@ -654,14 +790,16 @@ serve(async (req) => {
   if (edition === "morning") {
     if ((pendingProposals ?? []).length > 0) body += buildPendingProposalsSection(pendingProposals ?? []);
     body += buildNewsSection(marketNews);
-    body += buildSignalsSection(topSignals, "Top Signals — Act On These", "No qualifying long signals in last 24h. Agents run at 12:00 + 13:00 UTC.");
-    body += buildExitSection(exitCandidates ?? []);
+    body += buildSignalsSection(topSignals, "Top Signals — Act On These", "No qualifying long signals in last 24h. Agents run at 12:00 + 13:00 UTC.", riskBySymbol);
+    body += buildExitSection(exitCandidates ?? [], riskBySymbol);
+    body += buildAccountHealthSection(accountHealth);
     body += buildSignalsSection(buyOpportunities ?? [], "Strong Buy Opportunities (Score â‰¥72)", "No high-conviction buys identified in last 48h.");
     body += buildOpenPositionsSection(openPositions ?? []);
     if ((edgarInsiders ?? []).length > 0) body += buildEdgarInsidersSection(edgarInsiders ?? []);
     body += buildMacroSection(macroData);
     body += buildLearnerWeightsSection(learnerPriors ?? []);
     body += buildAgentStatusSection(agentCountArray, learnerRun);
+    body += buildLegendSection();
   }
 
   if (edition === "evening") {
@@ -670,14 +808,16 @@ serve(async (req) => {
     body += buildOpenPositionsSection(openPositions ?? []);
     body += buildPerformanceSection(nav, prevPerf?.nav ?? null, monthPerf?.nav ?? null, vooData);
     body += buildRobinSection(robinSnapshot);
+    body += buildAccountHealthSection(accountHealth);
     body += buildNewsSection(marketNews);
     body += buildSignalsSection(buyOpportunities ?? [], "Strong Buy Opportunities (Score â‰¥72)", "No high-conviction buys in last 48h.");
-    body += buildExitSection(exitCandidates ?? []);
-    body += buildSignalsSection((allSignals ?? []).slice(0, 5), "Today's Full Signal Digest", "No signals today.");
+    body += buildExitSection(exitCandidates ?? [], riskBySymbol);
+    body += buildSignalsSection((allSignals ?? []).slice(0, 5), "Today's Full Signal Digest", "No signals today.", riskBySymbol);
     if ((edgarInsiders ?? []).length > 0) body += buildEdgarInsidersSection(edgarInsiders ?? []);
     body += buildMacroSection(macroData);
     body += buildLearnerWeightsSection(learnerPriors ?? []);
     body += buildAgentStatusSection(agentCountArray, learnerRun);
+    body += buildLegendSection();
   }
 
   const editionLabel = edition === "morning" ? "Morning Intelligence Brief" : "Evening Market Recap";

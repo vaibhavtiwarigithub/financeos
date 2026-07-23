@@ -172,6 +172,10 @@ function AccountRiskSection({ ar, isIndia }: { ar: AccountRisk; isIndia: boolean
           {!ar.error && (
             <>
               <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: "9px", color: T.muted, textTransform: "uppercase" }}>Health</div>
+                <div style={{ fontSize: "14px", fontWeight: 700, color: (100 - risk.riskScore) >= 66 ? T.green : (100 - risk.riskScore) >= 50 ? T.amber : T.red }}>{100 - risk.riskScore}/100</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: "9px", color: T.muted, textTransform: "uppercase" }}>Risk</div>
                 <div style={{ fontSize: "14px", fontWeight: 700, color: risk.riskColor }}>{risk.riskScore}/100</div>
               </div>
@@ -717,6 +721,63 @@ function DailyHoldingRiskPanel({ market }: { market: string }) {
   );
 }
 
+// Plain-language legend so the two scores + posture words are never a mystery.
+// Same content as the newsletter legend — one source of truth for "what the
+// numbers mean". Collapsed by default (owner asked for info-on-demand, not noise).
+function RiskLegend() {
+  const [open, setOpen] = useState(false);
+  const Item = ({ k, children }: { k: string; children: React.ReactNode }) => (
+    <li style={{ marginBottom: "7px", lineHeight: 1.5 }}>
+      <span style={{ color: T.text, fontWeight: 700 }}>{k}</span>{" "}
+      <span style={{ color: T.sub }}>{children}</span>
+    </li>
+  );
+  const H = ({ children }: { children: React.ReactNode }) => (
+    <div style={{ fontSize: "12px", color: T.text, fontWeight: 700, margin: "12px 0 6px" }}>{children}</div>
+  );
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", marginBottom: "20px", overflow: "hidden" }}>
+      <div onClick={() => setOpen(o => !o)} style={{ padding: "12px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: "10px" }}>
+        <span style={{ fontSize: "13px", fontWeight: 700, color: T.text }}>❔ What do these numbers mean?</span>
+        <span style={{ marginLeft: "auto", color: T.muted, fontSize: "14px" }}>{open ? "▲" : "▼"}</span>
+      </div>
+      {open && (
+        <div style={{ padding: "0 18px 16px", fontSize: "12px" }}>
+          <H>The two scores (NOT the same axis)</H>
+          <ul style={{ margin: 0, paddingLeft: "18px" }}>
+            <Item k="Conviction (0–100):">how much the research agent likes the stock. Higher = better. This is the ResearchAgent&apos;s analyst score.</Item>
+            <Item k="Risk (0–100):">how risky it is to HOLD now — concentration, volatility, correlation. Higher = riskier. A great stock you own too much of is high conviction AND high risk at once.</Item>
+            <Item k="Health (0–100):">account-level, = 100 − Risk. Higher = calmer account.</Item>
+          </ul>
+          <H>Posture words (Action column)</H>
+          <ul style={{ margin: 0, paddingLeft: "18px" }}>
+            <Item k="Hold:">within owner-approved limits. No action.</Item>
+            <Item k="Review:">a limit (usually single-name concentration) is over its reference. Look at it — but Kairos has no account-specific sell mandate, so it does NOT tell you to trim.</Item>
+            <Item k="Trim:">this name was deterministically selected to absorb a sector-cap breach. Advisory.</Item>
+            <Item k="Exit review:">a verified protective-stop breach or thesis break. Highest priority.</Item>
+            <Item k="No data:">missing structural inputs — no score shown rather than a fake one.</Item>
+          </ul>
+          <H>What builds the Risk score (6 drivers)</H>
+          <ul style={{ margin: 0, paddingLeft: "18px" }}>
+            <Item k="Name concentration (30):">weight vs the 12% single-name reference.</Item>
+            <Item k="Sector concentration (20):">sector weight vs the 30% sector reference.</Item>
+            <Item k="Volatility / beta (15):">daily vol vs a 4% name reference, plus beta.</Item>
+            <Item k="Correlated cluster (15):">how correlated co-held names are, vs the 0.70 reference.</Item>
+            <Item k="Drawdown / stop (10):">distance to cost / protective stop. Never triggers an exit on its own.</Item>
+            <Item k="Liquidity / event (10):">a fresh news/liquidity flag — an earnings date, a trading halt, or thin volume. Only counts when a live feed was actually queried; otherwise excluded, never assumed safe.</Item>
+          </ul>
+          <H>Owner-approved risk limits (references in force)</H>
+          <ul style={{ margin: 0, paddingLeft: "18px" }}>
+            <Item k="Single name ≤ 12%">of account value · <span style={{ color: T.text, fontWeight: 700 }}>Single sector ≤ 30%</span> of NAV.</Item>
+            <Item k="Portfolio daily vol ≤ 2%">· avg pairwise correlation ≤ 0.70 · gross exposure ≤ 80%.</Item>
+            <Item k="Order authority:">only account ••••0660 can ever place an order; every other account is read-only and advisory.</Item>
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PortfolioRiskPage() {
   const { market } = useMarket();
   const [data, setData] = useState<{
@@ -770,6 +831,8 @@ export default function PortfolioRiskPage() {
 
         {!isIndia && <RhReconnectBanner />}
 
+        <RiskLegend />
+
         {/* Refresh */}
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "16px" }}>
           <button onClick={load} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.sub, padding: "7px 16px", fontSize: "12px", cursor: "pointer" }}>
@@ -820,6 +883,12 @@ export default function PortfolioRiskPage() {
             </div>
             <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "20px" }}>
               <StatCard label="Invested Value" value={fmtMoney(risk.totalValue, mktOf(cur), 0)} sub={`${risk.holdingCount} positions · cash excluded`} />
+              <StatCard
+                label="Account Health"
+                value={`${100 - risk.riskScore}/100`}
+                sub={`Health = 100 − Risk · higher is calmer`}
+                color={(100 - risk.riskScore) >= 66 ? T.green : (100 - risk.riskScore) >= 50 ? T.amber : T.red}
+              />
               <StatCard label="Risk Score" value={`${risk.riskScore}/100`} sub={risk.riskLabel} color={risk.riskColor} />
               <StatCard
                 label="Market Sensitivity"

@@ -303,8 +303,8 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
                           <span style={{ marginLeft: "8px", fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "4px", background: T.greenBg, color: T.green }}>{t.order_side?.toUpperCase()}</span>
                           <span style={{ marginLeft: "6px", fontSize: "12px", color: T.textSub }}>{t.qty} shares @ ${t.limit_price?.toFixed(2)}</span>
                           <span style={{ marginLeft: "8px", fontSize: "11px", color: T.muted, display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                            Score {t.analyst_score}
-                            <InfoTooltip title="Analyst Score" body="Composite 0–100 score computed from 5 weighted dimensions: momentum, technical, sentiment, insider, and value. Threshold for a trade proposal is set in Settings → Strategy." bullets={["≥ 70: strong signal", "50–69: moderate — review thesis", "< 50: not proposed"]} placement="top" />
+                            Conviction {t.analyst_score}
+                            <InfoTooltip title="Conviction (Analyst Score)" body="How much the ResearchAgent LIKES this stock — composite 0–100 from 5 weighted dimensions (momentum, technical, sentiment, insider, value). This is NOT a risk score: it says nothing about how risky the position is to hold. Per-holding Risk (concentration, volatility, correlation) lives on Risk Analytics." bullets={["≥ 70: strong conviction", "50–69: moderate — review thesis", "< 50: not proposed", "Higher = more attractive, NOT safer"]} placement="top" />
                           </span>
                         </div>
                         <div style={{ display: "flex", gap: "8px" }}>
