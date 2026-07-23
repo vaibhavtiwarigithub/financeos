@@ -378,10 +378,12 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   return evaluation;
 }
 
-// ── Phase 1 PAPER EXECUTION (SHIPPED OFF) ────────────────────────────────────
-// The evaluator remains for future P1 work, but the production DB constraint,
-// deployment gate, and no-write RPC stub make execution unreachable. Paper
-// shadow measurement remains active; there is no live path.
+// ── Phase 1 PAPER EXECUTION (ENABLED 2026-07-23) ─────────────────────────────
+// Gated by: CAPITAL_ROTATION_PAPER_ENABLED env var + per-market
+// rotation_config.rotation_paper_execute_enabled (paper book only) + the
+// atomic execute_paper_rotation RPC (sell source via execute_paper_exit,
+// buy candidate via execute_paper_fill — one transaction, buy-leg denial
+// rolls back the sell). There is NO live rotation path.
 export interface RotationExecInput {
   runId: string | null;
   rotationsThisRun: number;

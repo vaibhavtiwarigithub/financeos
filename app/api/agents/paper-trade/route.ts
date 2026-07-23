@@ -660,9 +660,10 @@ export async function POST(req: NextRequest) {
         } catch (e: any) {
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_shadow_log_failed", detail: { error: e?.message ?? String(e) } });
         }
-        // Capital-rotation P1 is containment-locked OFF. Shadow measurement runs,
-        // but the DB constraint, deployment gate, and no-write RPC stub prevent
-        // any sell/buy until the missing P1 guardrails are approved and replaced.
+        // Capital-rotation P1 PAPER execution is live (owner-approved 2026-07-23).
+        // executeCapitalRotationPaper re-runs eligibility + persistence/cooldown/
+        // daily-cap gates, then the execute_paper_rotation RPC atomically sells
+        // the source and buys the candidate (buy-leg denial rolls back the sell).
         let rotReason = "not_attempted";
         try {
           const rot = await executeCapitalRotationPaper(supabase, {
@@ -674,7 +675,7 @@ export async function POST(req: NextRequest) {
             rotationsThisRun.set(market, (rotationsThisRun.get(market) ?? 0) + 1);
             filled.push({ symbol: signal.symbol, qty, price: fillPrice, via: "capital_rotation", sold: rot.sourceSymbol });
             await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "filled", reason: `capital_rotation: sold ${rot.sourceSymbol} to fund ${signal.symbol}`, detail: { soldSymbol: rot.sourceSymbol, qty, fillPrice } });
-            continue; // reachable only after a future approved P1 RPC replaces the containment stub
+            continue;
           }
           rotReason = rot.reason ?? "unknown";
         } catch (e: any) {

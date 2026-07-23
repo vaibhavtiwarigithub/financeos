@@ -105,17 +105,23 @@ position-monitor now runs a **ledger reconciliation guard** every cycle: if
 `paper-cash-drift:<market>` (warn) so drift is visible and actionable BEFORE the
 drawdown breaker acts on corrupted NAV.
 
-**Capital rotation P0 shadow only (migration 20260713143000).** PaperTrader now
-records a `rotation_events` audit row when a candidate is rejected for
-`insufficient_cash`, showing whether a same-market weaker holding could have
-funded it. This is measurement only: `rotation_paper_execute_enabled=false` and
-`rotation_live_proposals_enabled=false` by default. Migration 177 added a paper
-sell/buy RPC scaffold, but migration `20260722185000` now enforces
-`rotation_paper_execute_enabled=false` at the database level and the caller also
-requires an independent deployment flag. P1 remains unapproved because the
-full cost/tax, turnover, fresh-source-price, correlation, and post-swap replay
-gates are incomplete. No live proposal is created, and PositionMonitor remains
-the only owner of true exit labels.
+**Capital rotation P1 PAPER execution enabled (migration 20260723120000,
+owner-approved 2026-07-23).** PaperTrader records a `rotation_events` audit row
+when a candidate is rejected for `max_open_names` or `insufficient_cash`, and —
+paper book only — may now execute the rotation. The gate stack, all fail-closed:
+`CAPITAL_ROTATION_PAPER_ENABLED` deployment env var, per-market
+`rotation_config.rotation_paper_execute_enabled` (true only for
+`book_type='paper'`; both live rows remain false), a fresh deterministic
+eligibility re-eval against the current book, persistence (≥2 distinct prior
+planned runs), cooldown (5d per symbol), per-run (1) and per-day (1) caps, and
+finally the atomic `execute_paper_rotation` RPC: it re-validates the signal
+claim, sells the source via `execute_paper_exit` (marked price − 5 bps), buys
+the candidate via `execute_paper_fill` (which re-runs mandate threshold, market
+controls, pyramid, name/sector caps, cash) in ONE transaction — a buy-leg
+denial rolls back the sell. The prior containment check constraint
+(`rotation_paper_execution_p1_not_approved`) was dropped by the same migration.
+There is NO live rotation path: no live proposal is created, and
+PositionMonitor remains the only owner of true exit labels.
 
 New P0 rows now carry a fail-closed P1 readiness contract. Rotation source
 selection reuses the canonical paper exit-plan projection; post-swap sizing
