@@ -380,9 +380,9 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
             {queueItems.map((q: any) => (
             <div key={q.id} style={{ background: T.card, border: `1px solid ${q.status === "pending_approval" ? T.amber + "60" : T.border}`, borderRadius: "12px", padding: "18px 20px", marginBottom: "10px" }}>
               <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr auto", gap: "12px", alignItems: "center", minWidth: "480px" }}>
-                <div style={{ fontWeight: 800, fontSize: "16px", color: T.accent, cursor: "pointer" }} onClick={() => router.push(`/dashboard/symbol/${q.symbol}`)}>
+                <SymbolLink symbol={q.symbol} market="us" style={{ fontWeight: 800, fontSize: "16px", color: T.accent }}>
                   {q.symbol} ↗
-                </div>
+                </SymbolLink>
                 <div>
                   <div style={{ fontSize: "10px", color: T.muted, marginBottom: "3px" }}>ORDER</div>
                   <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: T.greenBg, color: T.green }}>
@@ -435,7 +435,7 @@ function TradeQueueTab({ pendingSignals, strategy, tradeQueue }: {
             {pendingSignals.map((s: any) => (
             <div key={s.id} style={{ background: T.card, border: `1px solid ${s.analyst_score >= 60 && s.direction === "long" ? T.accent + "44" : T.border}`, borderRadius: "12px", padding: "16px 20px", display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr 1fr", gap: "12px", alignItems: "center", minWidth: "460px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <div style={{ fontWeight: 800, fontSize: "16px", cursor: "pointer", color: T.accent }} onClick={() => router.push(`/dashboard/symbol/${s.symbol}`)}>{s.symbol} ↗</div>
+                <SymbolLink symbol={s.symbol} market={activeMarket} style={{ fontWeight: 800, fontSize: "16px", color: T.accent }}>{ s.symbol} ↗</SymbolLink>
                 <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#2D1B00", color: "#FBBF24", letterSpacing: "0.04em" }}>PAPER</span>
               </div>
               <div>
@@ -985,7 +985,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
               <tbody>
                 {signals.map((s: any) => (
                   <tr key={s.id} style={{ borderTop: `1px solid ${T.border}` }}>
-                    <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}>{s.symbol}</td>
+                    <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}><SymbolLink symbol={s.symbol} market={activeMarket} style={{ fontWeight: 700, color: T.accent }} /></td>
                     <td style={{ padding: "10px 12px 10px 0" }}>
                       <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 7px", borderRadius: "4px", background: s.direction === "long" ? T.greenBg : T.amberBg, color: s.direction === "long" ? T.green : T.amber }}>
                         {s.direction?.toUpperCase()}
@@ -1073,7 +1073,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
                 <tbody>
                   {rows.map((r: any, i: number) => (
                     <tr key={r.id + i} style={{ borderTop: `1px solid ${T.border}` }}>
-                      <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}>{r.symbol}</td>
+                      <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}><SymbolLink symbol={r.symbol} market={activeMarket} style={{ fontWeight: 700, color: T.accent }} /></td>
                       <td style={{ padding: "10px 12px 10px 0" }}>
                         <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 7px", borderRadius: "4px", background: r.direction === "long" ? T.greenBg : r.direction === "short" ? T.redBg : T.amberBg, color: r.direction === "long" ? T.green : r.direction === "short" ? T.red : T.amber }}>
                           {r.direction?.toUpperCase()}
