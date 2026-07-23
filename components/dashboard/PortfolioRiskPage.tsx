@@ -243,6 +243,128 @@ function AccountRiskSection({ ar, isIndia }: { ar: AccountRisk; isIndia: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Account Health History — driven by GET /api/portfolio/health-history.
+// Health = 100 − riskScore per account per day. Sparkline + delta + top action.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type HealthSeries = { date: string; health: number | null; risk: number | null; label: string | null };
+type HealthAccount = {
+  accountId: string; label: string; broker: string; readOnly: boolean;
+  latestHealth: number | null; latestRisk: number | null; latestLabel: string | null;
+  deltaVsPrior: number | null;
+  topAction: { message: string; action: string; severity: string } | null;
+  series: HealthSeries[];
+};
+type HealthHistoryData = { market: string; firstDay: string | null; accounts: HealthAccount[] };
+
+function Sparkline({ series, id }: { series: HealthSeries[]; id: string }) {
+  const vals = series.filter(s => s.health != null);
+  if (vals.length < 2) return <span style={{ fontSize: "10px", color: T.muted }}>accruing…</span>;
+  const W = 100, H = 28, PAD = 2;
+  const xStep = (W - PAD * 2) / (vals.length - 1);
+  const yOf = (v: number) => PAD + (H - PAD * 2) * (1 - v / 100);
+  const pts = vals.map((s, i) => `${(PAD + i * xStep).toFixed(1)},${yOf(s.health as number).toFixed(1)}`);
+  const lastX = +(PAD + (vals.length - 1) * xStep).toFixed(1);
+  const lastY = +yOf(vals[vals.length - 1].health as number).toFixed(1);
+  const lh = vals[vals.length - 1].health as number;
+  const lc = lh >= 66 ? T.green : lh >= 50 ? T.amber : T.red;
+  const gId = `sg${id.replace(/[^a-zA-Z0-9]/g, "")}`;
+  const areaD = `M ${pts[0]} ${pts.slice(1).map(p => `L ${p}`).join(" ")} L ${lastX},${H} L ${PAD},${H} Z`;
+  return (
+    <svg width={W} height={H} style={{ display: "block", flexShrink: 0 }}>
+      <defs>
+        <linearGradient id={gId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={lc} stopOpacity="0.25" />
+          <stop offset="100%" stopColor={lc} stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <path d={areaD} fill={`url(#${gId})`} />
+      <polyline points={pts.join(" ")} fill="none" stroke={lc} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={lastX} cy={lastY} r="2.5" fill={lc} />
+    </svg>
+  );
+}
+
+function HealthHistoryPanel({ market }: { market: string }) {
+  const [data, setData] = useState<HealthHistoryData | null>(null);
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true); setErr(""); setData(null);
+    fetch(`/api/portfolio/health-history?market=${market}`)
+      .then(async r => { if (!r.ok) throw new Error(await r.text()); return r.json(); })
+      .then(j => { if (live) setData(j); })
+      .catch(e => { if (live) setErr(e.message); })
+      .finally(() => { if (live) setLoading(false); });
+    return () => { live = false; };
+  }, [market]);
+
+  if (loading) return <div style={{ color: T.muted, fontSize: "13px", padding: "8px 0" }}>Loading health history…</div>;
+  if (err) return <div style={{ color: T.red, fontSize: "13px", padding: "8px 0" }}>Health history unavailable: {err.slice(0, 120)}</div>;
+  if (!data || !data.accounts.length) {
+    return (
+      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px 18px", color: T.muted, fontSize: "13px", marginBottom: "20px" }}>
+        No account health history yet. Accrues daily after each risk cron run.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: "24px" }}>
+      {data.firstDay && (
+        <div style={{ fontSize: "10px", color: T.muted, marginBottom: "10px" }}>
+          History from {data.firstDay} · accrues daily going forward
+        </div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        {data.accounts.map(acc => {
+          const h = acc.latestHealth;
+          const hColor = h == null ? T.muted : h >= 66 ? T.green : h >= 50 ? T.amber : T.red;
+          const delta = acc.deltaVsPrior;
+          const deltaColor = delta == null ? T.muted : delta > 0 ? T.green : delta < 0 ? T.red : T.muted;
+          return (
+            <div key={acc.accountId} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "12px 16px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: "120px" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 700, color: T.text, display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                    {acc.label}
+                    {acc.readOnly && <span style={{ fontSize: "9px", color: T.amber, fontWeight: 600 }}>read-only</span>}
+                    {acc.broker === "internal" && <span style={{ fontSize: "9px", color: T.accent, fontWeight: 600 }}>paper</span>}
+                  </div>
+                  {acc.topAction && (
+                    <div style={{ fontSize: "11px", color: acc.topAction.severity === "critical" ? T.red : T.amber, marginTop: "4px", lineHeight: 1.4 }}>
+                      {acc.topAction.severity === "critical" ? "🔴" : "🟡"} {acc.topAction.message}
+                      {acc.topAction.action && <span style={{ color: T.muted }}> → {acc.topAction.action}</span>}
+                    </div>
+                  )}
+                  {!acc.topAction && acc.latestLabel && (
+                    <div style={{ fontSize: "10px", color: T.muted, marginTop: "2px" }}>{acc.latestLabel}</div>
+                  )}
+                </div>
+                <Sparkline series={acc.series} id={acc.accountId} />
+                <div style={{ textAlign: "right", minWidth: "60px" }}>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: hColor, fontVariantNumeric: "tabular-nums" }}>
+                    {h == null ? "—" : `${h}`}<span style={{ fontSize: "11px", color: T.muted, fontWeight: 400 }}>/100</span>
+                  </div>
+                  <div style={{ fontSize: "9px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Health</div>
+                  {delta != null && (
+                    <div style={{ fontSize: "10px", color: deltaColor, fontVariantNumeric: "tabular-nums" }}>
+                      {delta > 0 ? "+" : ""}{delta} vs prior
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Daily Per-Holding Risk — driven by GET /api/portfolio/risk-daily. Deterministic
 // score + posture from the daily snapshot; the strategy_note is LLM prose that
 // cannot change either. Never aggregates across accounts or currencies. This is a
@@ -839,6 +961,15 @@ export default function PortfolioRiskPage() {
             ↻ Refresh
           </button>
         </div>
+
+        {/* ── Account Health History ── */}
+        <div style={{ fontSize: "9px", color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 700, marginBottom: "4px" }}>
+          Account Health History
+        </div>
+        <div style={{ fontSize: "11px", color: T.muted, marginBottom: "12px" }}>
+          Health = 100 − Risk per account, daily. Worst health first. Top warning shown.
+        </div>
+        <HealthHistoryPanel market={market} />
 
         {/* ── Daily Per-Holding Risk (historical run, separate from live Refresh) ── */}
         <div style={{ fontSize: "9px", color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 700, marginBottom: "4px" }}>
