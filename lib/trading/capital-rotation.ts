@@ -221,7 +221,7 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
 
   const { data: positions, error: positionsError } = await supabase
     .from("paper_positions")
-    .select("id, symbol, market, qty, avg_cost, current_price, opened_at, created_at, updated_at, price_target, stop_loss, exit_reason, resolved_horizon_days")
+    .select("id, symbol, market, qty, avg_cost, current_price, opened_at, updated_at, price_target, stop_loss, exit_reason, resolved_horizon_days")
     .eq("market", candidate.market)
     .eq("position_role", "alpha");
   if (positionsError) throw new Error(`rotation position query failed: ${positionsError.message}`);
@@ -246,7 +246,7 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     return {
       id: String(p.id), symbol: String(p.symbol), market: candidate.market,
       qty: Number(p.qty ?? 0), avgCost: Number(p.avg_cost ?? 0),
-      currentPrice: Number(p.current_price ?? p.avg_cost ?? 0), openedAt: p.opened_at ?? p.created_at ?? null,
+      currentPrice: Number(p.current_price ?? p.avg_cost ?? 0), openedAt: p.opened_at ?? null,
       priceTarget: p.price_target == null ? null : Number(p.price_target),
       stopLoss: p.stop_loss == null ? null : Number(p.stop_loss), exitReason: p.exit_reason ?? null,
       score: score?.score ?? null, scoreCreatedAt: score?.createdAt ?? null, exitPlanState: exitPlan.state,
