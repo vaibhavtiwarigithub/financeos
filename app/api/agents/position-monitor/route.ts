@@ -12,6 +12,7 @@ import { computeExitFillPrice, getBatchQuotes, getQuote } from "@/lib/data/quote
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { paperPerformanceTruth } from "@/lib/paper-nav";
+import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -297,14 +298,16 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     // Closes slow bleeds that never hit the hard stop but overstay the swing window.
     // Matches the backtest's max_hold_days assumption so live and backtest are consistent.
     const openedAt = paperPositionOpenedAt(pos);
-    if (openedAt) {
+    // Market days held — shared by the time stop and the direction-flip min-hold
+    // floor. null when the open time is unknown (fail-open: never blocks a flip).
+    const ageDays = openedAt ? tradingWeekdaysBetween(new Date(openedAt), new Date()) : null;
+    if (openedAt && ageDays != null) {
       const mandate = mandateByMarket.get(market);
       const storedHorizon = Number(pos.resolved_horizon_days);
       const grandfathered = mandate?.existing_positions_policy !== "apply" && Number.isFinite(storedHorizon) && storedHorizon >= 2;
       const horizonDays = pos.position_role === "hedge"
         ? (Number.isFinite(storedHorizon) && storedHorizon >= 1 ? storedHorizon : 5)
         : grandfathered ? storedHorizon : (horizonDaysByMarket.get(market) ?? 10);
-      const ageDays = tradingWeekdaysBetween(new Date(openedAt), new Date());
       if (ageDays > horizonDays) {
         const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
         await closePosition(pos, currentPrice, `time_stop (${ageDays} market days > ${horizonDays}d${grandfathered ? ", grandfathered" : ""})`, outcome);
@@ -334,14 +337,49 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
         && pos.exit_reason !== "score_reassess_exit" && pos.exit_reason !== "llm_exit") {
       staleScoresHeld.push(`${pos.symbol} (${marketSessionsSince(sc.createdAt ?? "", new Date(), market)} sessions old; max ${maxScoreAge})`);
     }
-    if (pos.position_role !== "hedge" && sc?.score != null && (scoreBelowExit || directionFlipped)) {
+
+    // Pure score-below-exit (direction still long, NOT a flip) stays immediate —
+    // only the direction-flip path is debounced (see below).
+    if (pos.position_role !== "hedge" && scoreBelowExit && !directionFlipped) {
       const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
-      // closePosition takes a string reason; prefix with a machine-readable code.
-      const exitReason = directionFlipped
-        ? `direction_flip (was long, now ${sc.direction})`
-        : `score_below_exit_threshold (${sc.score} < ${exitThreshold})`;
-      await closePosition(pos, currentPrice, exitReason, outcome);
+      await closePosition(pos, currentPrice, `score_below_exit_threshold (${sc!.score} < ${exitThreshold})`, outcome);
       continue;
+    }
+
+    // Direction-flip: two-step, min-hold-gated. A single flipped session ARMS
+    // the exit (staged in exit_reason with the arming session); it only CONFIRMS
+    // once a strictly newer research session still flips. A one-session wobble
+    // disarms and we hold. This attacks the same-week whipsaw churn (13/22 closed
+    // paper trades exited on a flip, min 1.3 days held). See lib/trading/direction-flip.ts.
+    if (pos.position_role !== "hedge") {
+      const armedSession = parseArmedSession(pos.exit_reason);
+      const action = decideDirectionFlip({
+        flipped: directionFlipped,
+        ageDays,
+        minHoldDays: MIN_FLIP_HOLD_DAYS,
+        armedSession,
+        currentSession: sc?.createdAt != null ? String(sc.createdAt) : null,
+      });
+      if (action === "confirm") {
+        const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
+        await closePosition(pos, currentPrice, `direction_flip (confirmed across 2 sessions, now ${sc!.direction})`, outcome);
+        continue;
+      }
+      if (action === "arm") {
+        await svc.from("paper_positions")
+          .update({ exit_reason: armedFlag(sc?.createdAt != null ? String(sc.createdAt) : null), updated_at: new Date().toISOString() })
+          .eq("id", pos.id);
+        staleScoresHeld.push(`${pos.symbol} (direction-flip armed: holds until a 2nd flipped session confirms)`);
+        continue;
+      }
+      if (action === "disarm") {
+        await svc.from("paper_positions").update({ exit_reason: null, updated_at: new Date().toISOString() }).eq("id", pos.id);
+        staleScoresHeld.push(`${pos.symbol} (direction-flip disarmed: signal no longer flipped)`);
+        // fall through — position is healthy; let trailing-stop / target below run.
+      } else if (action === "too_young") {
+        staleScoresHeld.push(`${pos.symbol} (flip ignored: held ${ageDays}d < ${MIN_FLIP_HOLD_DAYS}d min)`);
+      }
+      // "hold" / "too_young" / post-"disarm": fall through to mechanical stops.
     }
 
     // Update highest_price (trailing stop anchor)
