@@ -279,6 +279,7 @@ async function run(force: boolean) {
   }
 
   const expected = mostRecentWeekday();
+  const issueKey = "price-cache-fill-degraded";
 
   // Idempotency: skip only when the ENTIRE universe already has the most-recent
   // session. `force` bypasses this.
@@ -300,6 +301,12 @@ async function run(force: boolean) {
     const freshSymbols = (freshRows ?? []).map((r: { symbol: string }) => r.symbol);
     const freshCount = new Set(freshSymbols).size;
     if (shouldSkipFill(freshSymbols, UNIVERSE)) {
+      // The universe is fully fresh, so any open degraded alert is stale — a
+      // prior tick's shortfall has since been filled (often by other jobs that
+      // write price_cache). Without this, the skip path returned before ever
+      // reaching resolveIssue, so a degraded alert only cleared at midnight
+      // auto-expire instead of on recovery (prod: 3/31 alert lingered 7 days).
+      await resolveIssue(issueKey, svc);
       // The daily session is already cached, but sector HISTORY may still be
       // draining — spend this tick's budget on the backfill rather than no-op.
       const backfill = await backfillSectorHistory(svc, apiKey, started);
@@ -377,7 +384,7 @@ async function run(force: boolean) {
 
   // Persist. A failed write must NOT be reported as a successful fill — surface
   // it as a health issue and return ok:false so the retry tick tries again.
-  const issueKey = "price-cache-fill-degraded";
+  // (issueKey is declared once at the top of run() so the skip path can resolve it.)
   if (bars.length > 0) {
     const up = await upsertBars(svc, bars);
     if (!up.ok) {

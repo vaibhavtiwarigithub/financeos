@@ -13,7 +13,7 @@
 // than it already is.
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { reconcileIssues, reportIssue } from "@/lib/system-health";
+import { reconcileIssues, reportIssue, resolveIssue } from "@/lib/system-health";
 import type { Market } from "@/lib/evidence/contracts";
 import type { SymbolShape } from "@/lib/evidence/intent-classification";
 import {
@@ -279,6 +279,10 @@ export async function runDegradationGuard(input: GuardRunInput): Promise<GuardRu
     }
     await emitAggregatedHealth(input.market, input.runKey, mode, input.client);
 
+    // The guard completed for this symbol, so any open runtime-failure alert for
+    // this market is stale — clear it. (Recovery signal for the catch below.)
+    await resolveIssue(`evidence-degradation-runtime:${input.market}`, input.client).catch(() => {});
+
     return {
       direction: application.direction,
       note: application.note,
@@ -288,8 +292,13 @@ export async function runDegradationGuard(input: GuardRunInput): Promise<GuardRu
       mode,
     };
   } catch (error) {
+    // STABLE per-market key — never per-runKey. A run-scoped key can never be
+    // resolved by a later clean run (its runKey is gone), so every transient
+    // failure leaked one permanent open row (prod: evidence-degradation-runtime
+    // rows accumulating after the 2026-07-24 Supabase 525 outage). One key per
+    // market: repeated failures refresh it, a clean run clears it (above).
     await reportIssue({
-      issueKey: `evidence-degradation-runtime:${input.market}:${input.runKey}`,
+      issueKey: `evidence-degradation-runtime:${input.market}`,
       severity: mode === "enforce" ? "critical" : "warn",
       category: "data",
       title: `${input.market.toUpperCase()} evidence guard runtime failure`,

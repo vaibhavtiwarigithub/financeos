@@ -21,6 +21,26 @@ export const dynamic = "force-dynamic";
 // Scout run on their own schedule and never consume this route's time budget.
 export const maxDuration = 150;
 
+// Per-symbol hard ceiling. The worker loop only checks the wall-clock budget
+// BETWEEN symbols, so a single processSymbol() that HANGS (a DB read or fetch
+// with no internal timeout stuck on a provider/Supabase outage) would stall its
+// worker forever, Promise.all would never resolve, and the whole function would
+// blow past maxDuration and be watchdog-reaped as ERROR (prod: US research
+// 2026-07-24 during a Supabase 525 outage). Racing each symbol against this
+// deadline turns one hung symbol into a deferred symbol, not a dead run.
+const PER_SYMBOL_TIMEOUT_MS = (() => {
+  const v = Number(process.env.RESEARCH_SYMBOL_TIMEOUT_MS ?? 30_000);
+  return Number.isFinite(v) ? Math.min(60_000, Math.max(10_000, v)) : 30_000;
+})();
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`processSymbol timed out after ${ms}ms: ${label}`)), ms);
+  });
+  return Promise.race([p.finally(() => clearTimeout(timer)), timeout]);
+}
+
 // Called by Windows Task Scheduler. US run ~9 AM ET; India run ~6:15 AM ET (after
 // the 15:30 IST / 06:00 ET NSE close). `?market=us|india` scopes the run to one
 // market so each fires on its own market's schedule and only touches its own
@@ -229,16 +249,20 @@ export async function POST(req: NextRequest) {
       if (i == null) break;
       const entry = entries[i];
       try {
-        results[i] = await processSymbol(
-          entry,
-          supabase,
-          universeSnapshotId,
-          runId ? String(runId) : null,
-          closedDayCatchup && marketScope ? {
-            status: "weekend_staged",
-            sessionValidated: false,
-            asOfSession: lastCompletedMarketSession(marketScope),
-          } : undefined,
+        results[i] = await withTimeout(
+          processSymbol(
+            entry,
+            supabase,
+            universeSnapshotId,
+            runId ? String(runId) : null,
+            closedDayCatchup && marketScope ? {
+              status: "weekend_staged",
+              sessionValidated: false,
+              asOfSession: lastCompletedMarketSession(marketScope),
+            } : undefined,
+          ),
+          PER_SYMBOL_TIMEOUT_MS,
+          entry.symbol,
         );
       } catch (e) {
         results[i] = { symbol: entry.symbol, error: e instanceof Error ? e.message : String(e) };
