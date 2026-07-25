@@ -84,6 +84,7 @@ export default function LearningPage({
   totalTrades,
   winRate,
   market,
+  showHeader = true,
 }: {
   learningLog: WeightRow[];
   fullLog: LearningLogRow[];
@@ -94,6 +95,7 @@ export default function LearningPage({
   /** Book being displayed. `performance`/`totalTrades`/`winRate` are already
    *  scoped to it upstream — used here for the NAV seed and currency. */
   market: Mkt;
+  showHeader?: boolean;
 }) {
   const [tab, setTab] = useState<"accuracy" | "weights" | "equity">("accuracy");
 
@@ -118,18 +120,20 @@ export default function LearningPage({
 
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
-      <PageHeader
-        title="Learning"
-        subtitle="Agent intelligence and weight evolution"
-        cadence="weekly"
-        whatItDoes="Shows the LearnerAgent's memory — what it learned from closed trades, how the scoring weights evolve over time, and whether Phase 1 (live weight mutation) is unlocked yet."
-        whatToLookFor={[
-          "Phase 0 = learning but weights frozen. Need 10+ closed paper trades to unlock Phase 1.",
-          "Weight bars show how the agent weighs momentum vs value vs fundamentals.",
-          "Learning notes are 1-sentence summaries the agent writes after each closed trade.",
-          "If no notes appear, no trades have closed yet — check the Trading page.",
-        ]}
-      />
+      {showHeader && (
+        <PageHeader
+          title="Learning"
+          subtitle="Agent intelligence and weight evolution"
+          cadence="weekly"
+          whatItDoes="Shows the LearnerAgent's memory — what it learned from closed trades, how the scoring weights evolve over time, and whether Phase 1 (live weight mutation) is unlocked yet."
+          whatToLookFor={[
+            "Phase 0 = learning but weights frozen. Need 10+ closed paper trades to unlock Phase 1.",
+            "Weight bars show how the agent weighs momentum vs value vs fundamentals.",
+            "Learning notes are 1-sentence summaries the agent writes after each closed trade.",
+            "If no notes appear, no trades have closed yet — check the Trading page.",
+          ]}
+        />
+      )}
       <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 32px" }}>
 
       {/* Agent Pipeline Diagram */}
@@ -279,7 +283,7 @@ export default function LearningPage({
       </div>
 
       {/* Performance Truth — risk-adjusted / cost-net / calibrated metrics */}
-      <PerformanceTruth />
+      {showHeader && <PerformanceTruth />}
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: "4px", marginBottom: "20px", marginTop: "24px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>

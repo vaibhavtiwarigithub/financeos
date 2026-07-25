@@ -5,6 +5,7 @@ import MentorCoachPanel from "@/components/dashboard/MentorCoachPanel";
 import SymbolAutocomplete from "@/components/dashboard/SymbolAutocomplete";
 import AiAttribution from "@/components/dashboard/AiAttribution";
 import { fmtMoney, type Mkt } from "@/lib/format-money";
+import LearningPage from "@/components/dashboard/LearningPage";
 import { navReturnPct, paperStartNav } from "@/lib/paper-nav";
 import {
   ResponsiveContainer, LineChart as LC, Line, BarChart, Bar,
@@ -1040,11 +1041,14 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
 
       {/* Learning tab */}
       {tab === "learning" && (
-        <LearningContent
+        <LearningPage
+          showHeader={false}
+          learningLog={[]}
           fullLog={fullLog}
           performance={performance}
           weights={weights}
-          allTrades={allTrades}
+          totalTrades={allTrades.length}
+          winRate={allTrades.length > 0 ? (allTrades.filter((t: any) => t.outcome === "win").length / allTrades.length) * 100 : 0}
           market={market}
         />
       )}
