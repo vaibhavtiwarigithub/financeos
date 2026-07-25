@@ -5,14 +5,15 @@
  */
 
 export type EvidenceType =
-  | "ohlcv" | "quote" | "fundamental" | "insider"
+  | "ohlcv" | "quote" | "fundamental" | "analyst" | "insider"
   | "sentiment" | "macro" | "earnings" | "dividend" | "split" | "news";
 
 export type SourceName =
   | "alpha_vantage" | "financial_datasets" | "robinhood"
   | "stocktwits" | "fred" | "price_cache" | "macro_sentinel" | "manual"
   | "finnhub" | "yahoo" | "fmp" | "massive" | "sec_edgar" | "gdelt"
-  | "upstox" | "eodhd" | "twelvedata" | "social_composite" | "unavailable";
+  | "upstox" | "eodhd" | "twelvedata" | "social_composite" | "webull"
+  | "unavailable";
 
 export type QualityState = "ok" | "stale" | "conflict" | "missing" | "quarantined";
 
@@ -35,6 +36,7 @@ export const SOURCE_TIERS: Record<SourceName, number> = {
   upstox:             1,  // Broker/exchange transport
   eodhd:              2,
   twelvedata:         2,
+  webull:             2,  // Cloud MCP read-only research (analyst/fundamentals/quotes)
   unavailable:        5,
   manual:             3,
 };

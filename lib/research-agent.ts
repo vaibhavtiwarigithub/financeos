@@ -54,7 +54,7 @@ import { fetchWebullAnalyst, webullAnalystLine, type WebullAnalyst } from "@/lib
 import { fetchDaysToEarnings } from "@/lib/data/earnings";
 import { getBenchmarkSeries } from "@/lib/data/benchmark-series";
 import { captureReturnObservation } from "@/lib/data/return-observations";
-import type { SourceName } from "@/lib/data/evidence";
+import { writeEvidence, type SourceName } from "@/lib/data/evidence";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
 // US, ^NSEI for India) — computed once per market per process, not per symbol.
@@ -1485,6 +1485,15 @@ export async function processSymbol(
   const webullAnalyst: WebullAnalyst | null = !india
     ? await fetchWebullAnalyst(symbol).catch(() => null)
     : null;
+  if (webullAnalyst) {
+    void writeEvidence(supabase, {
+      symbol,
+      evidence_type: "analyst",
+      source: "webull",
+      quality_state: "ok",
+      payload: webullAnalyst,
+    });
+  }
 
   // Event-proximity: days to next earnings. Logged for the learner to test the
   // "buy the rumor, sell the news" pattern (does pre-earnings hype fade after
