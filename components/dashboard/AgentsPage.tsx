@@ -70,10 +70,10 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const searchParams = useSearchParams();
   const initialTab = (() => {
     const t = searchParams.get("tab");
-    const valid = ["signals", "paper", "capacity", "rotation", "weights", "log", "architecture", "backtest", "brain", "learner-ctrl", "weight-history", "experiments", "proposals", "history"];
+    const valid = ["signals", "paper", "capacity", "rotation", "weights", "log", "architecture", "backtest", "brain", "learner-ctrl", "weight-history", "experiments", "proposals", "history", "edges"];
     return t && valid.includes(t) ? t : "paper";
   })();
-  const [tab, setTab] = useState<"signals" | "paper" | "capacity" | "rotation" | "weights" | "log" | "architecture" | "backtest" | "brain" | "learner-ctrl" | "weight-history" | "experiments" | "proposals" | "history">(initialTab as any);
+  const [tab, setTab] = useState<"signals" | "paper" | "capacity" | "rotation" | "weights" | "log" | "architecture" | "backtest" | "brain" | "learner-ctrl" | "weight-history" | "experiments" | "proposals" | "history" | "edges">(initialTab as any);
   const [minScore, setMinScore] = useState<number>(strategy?.min_analyst_score ?? 70);
   const [maxPos, setMaxPos] = useState<number>(strategy?.max_position_pct ?? 5);
   const [maxTrades, setMaxTrades] = useState<number>(strategy?.max_daily_trades ?? 3);
@@ -93,6 +93,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   const [validatingId, setValidatingId] = useState<number | null>(null);
   const [backtestResult, setBacktestResult] = useState<any | null>(null);
   const [proposalToast, setProposalToast] = useState("");
+  const [edgeData, setEdgeData] = useState<any[]>([]);
 
   // Brain / Experiments / Proposals are per-market reads. `market` comes from the
   // server page (which reads the `mkt` cookie MarketProvider keeps in sync), so it
@@ -107,7 +108,9 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
     setStrategyVersions([]);
     setProposals([]);
     setBacktestResult(null);
+    setEdgeData([]);
     fetch(`/api/agents/learner-brain?market=${market}`).then(r => r.json()).then(d => { if (!cancelled && d.runs) setLearnerRuns(d.runs); }).catch(() => {});
+    fetch(`/api/agents/edge-status?market=${market}`).then(r => r.json()).then(d => { if (!cancelled && d.edges) setEdgeData(d.edges); }).catch(() => {});
     fetch("/api/agents/learner-controls").then(r => r.json()).then(d => {
       if (!cancelled && d.config) setLearnerConfig(d.config);
       if (!cancelled && d.history) setWeightHistory(d.history);
@@ -365,6 +368,34 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         })}
       </div>
 
+      {/* Background agents (auto-running, not manually triggerable) */}
+      {(() => {
+        const manualKeys = new Set(AGENTS.map(a => a.id === "paper-trade" ? "paper_trader" : a.id));
+        const bgKeys = Object.keys(agentRuns ?? {}).filter(k => !manualKeys.has(k)).sort();
+        if (bgKeys.length === 0) return null;
+        return (
+          <div style={{ marginBottom: "20px" }}>
+            <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>Background Agents (auto-schedule)</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              {bgKeys.map(key => {
+                const runs: any[] = agentRuns?.[key] ?? [];
+                const last = runs[0];
+                const statusColor = !last ? T.muted : last.status === "error" ? T.red : last.status === "running" ? T.amber : T.green;
+                return (
+                  <div key={key} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "8px 12px", display: "flex", alignItems: "center", gap: "8px", fontSize: "11px" }}>
+                    <span style={{ color: statusColor }}>●</span>
+                    <span style={{ fontWeight: 600, color: T.textSub }}>{key.replace(/_/g, " ")}</span>
+                    {last && <span style={{ color: T.muted }}>{timeAgo(last.started_at)}</span>}
+                    {last?.result_summary && <span style={{ color: T.muted, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={last.result_summary}>{last.result_summary}</span>}
+                    {!last && <span style={{ color: T.muted }}>no runs logged</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Run result */}
       {runResult && (
         <div style={{ marginBottom: "16px", background: T.surface, border: `1px solid ${runResult.startsWith("Error") ? T.red : T.green}40`, borderRadius: "8px", padding: "10px 14px", fontSize: "12px", color: runResult.startsWith("Error") ? T.red : T.green, whiteSpace: "pre-wrap", fontFamily: "monospace", maxHeight: "120px", overflowY: "auto" }}>
@@ -394,6 +425,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           { key: "weight-history", label: "📜 Weight History" },
           { key: "experiments", label: "🔬 Experiments" },
           { key: "proposals", label: "⚡ Proposals" },
+          { key: "edges", label: "🧬 Edge Lab" },
         ] as const).map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             style={{ padding: "7px 16px", borderRadius: "7px", border: "none", cursor: "pointer", fontSize: "12px", fontWeight: 500, background: tab === t.key ? T.card : "transparent", color: tab === t.key ? T.text : T.muted }}>
@@ -1628,6 +1660,167 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
       {tab === "history" && (
         <AgentHistoryPanel embedded />
       )}
+
+      {/* Edge Lab tab — genome evolution (factor IC tracking) */}
+      {tab === "edges" && (() => {
+        const shadowEdges = edgeData.filter(e => e.latest?.status_after === "shadow_eligible");
+        const measureEdges = edgeData.filter(e => e.latest?.status_after !== "shadow_eligible");
+
+        function IcBar({ value, max = 0.25 }: { value: number; max?: number }) {
+          const pct = Math.min(Math.abs(value) / max * 100, 100);
+          const color = value > 0 ? T.green : T.red;
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <div style={{ width: "80px", height: "6px", background: T.border, borderRadius: "3px", flexShrink: 0 }}>
+                <div style={{ height: "6px", borderRadius: "3px", background: color, width: `${pct}%` }} />
+              </div>
+              <span style={{ fontFamily: "monospace", fontSize: "11px", color }}>{value >= 0 ? "+" : ""}{value.toFixed(3)}</span>
+            </div>
+          );
+        }
+
+        function IcSparkline({ history, edgeId }: { history: any[]; edgeId: string }) {
+          if (history.length < 2) return <span style={{ fontSize: "10px", color: T.muted }}>accruing…</span>;
+          const W = 80, H = 24, PAD = 2;
+          const vals = history.map(h => Number(h.ic_ir ?? 0));
+          const min = Math.min(...vals, -0.1);
+          const max = Math.max(...vals, 0.1);
+          const range = max - min || 1;
+          const xStep = (W - PAD * 2) / (vals.length - 1);
+          const yOf = (v: number) => PAD + (H - PAD * 2) * (1 - (v - min) / range);
+          const pts = vals.map((v, i) => `${(PAD + i * xStep).toFixed(1)},${yOf(v).toFixed(1)}`).join(" ");
+          const last = vals[vals.length - 1];
+          const lc = last > 0.2 ? T.green : last > 0 ? T.amber : T.red;
+          const gId = `eg${edgeId.replace(/[^a-zA-Z0-9]/g, "")}`;
+          const zero = yOf(0);
+          return (
+            <svg width={W} height={H} style={{ overflow: "visible" }}>
+              <defs>
+                <linearGradient id={gId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={lc} stopOpacity="0.3" />
+                  <stop offset="100%" stopColor={lc} stopOpacity="0.02" />
+                </linearGradient>
+              </defs>
+              <line x1={PAD} y1={zero} x2={W - PAD} y2={zero} stroke={T.border} strokeWidth="1" strokeDasharray="2,2" />
+              <polyline points={pts} fill="none" stroke={lc} strokeWidth="1.5" strokeLinejoin="round" />
+              <circle cx={PAD + (vals.length - 1) * xStep} cy={yOf(last)} r="2.5" fill={lc} />
+            </svg>
+          );
+        }
+
+        function EdgeRow({ e }: { e: any }) {
+          const l = e.latest;
+          const isShadow = l?.status_after === "shadow_eligible";
+          const ic = l ? Number(l.ic) : null;
+          const icIr = l ? Number(l.ic_ir) : null;
+          const tStat = l ? Number(l.t_stat) : null;
+          return (
+            <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+              <td style={{ padding: "10px 12px 10px 0" }}>
+                <div style={{ fontWeight: 600, fontSize: "12px" }}>{e.name}</div>
+                <div style={{ fontSize: "10px", color: T.muted, marginTop: "2px" }}>{e.edge_id} · {e.category} · {e.horizon_days}d</div>
+              </td>
+              <td style={{ padding: "10px 12px 10px 0", textAlign: "center" }}>
+                <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px",
+                  background: isShadow ? T.greenBg : T.amberBg,
+                  color: isShadow ? T.green : T.amber }}>
+                  {isShadow ? "🟢 SHADOW" : "🟡 MEASURE"}
+                </span>
+              </td>
+              <td style={{ padding: "10px 12px 10px 0" }}>
+                {ic != null ? <IcBar value={ic} /> : <span style={{ color: T.muted, fontSize: "11px" }}>—</span>}
+              </td>
+              <td style={{ padding: "10px 12px 10px 0" }}>
+                {icIr != null ? <IcBar value={icIr} max={0.5} /> : <span style={{ color: T.muted, fontSize: "11px" }}>—</span>}
+              </td>
+              <td style={{ padding: "10px 12px 10px 0", fontFamily: "monospace", fontSize: "11px",
+                color: tStat != null && Math.abs(tStat) >= 2 ? T.green : T.muted }}>
+                {tStat != null ? (tStat >= 0 ? "+" : "") + tStat.toFixed(2) : "—"}
+              </td>
+              <td style={{ padding: "10px 12px 10px 0", fontSize: "11px", color: T.muted }}>
+                {l?.n_obs ?? "—"}
+              </td>
+              <td style={{ padding: "10px 0" }}>
+                <IcSparkline history={e.history} edgeId={e.edge_id} />
+              </td>
+            </tr>
+          );
+        }
+
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            {/* Shadow-eligible summary */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" }}>
+              {[
+                { label: "Total Edges", val: edgeData.length, color: T.text },
+                { label: "Shadow-Eligible", val: shadowEdges.length, color: T.green },
+                { label: "Measure-Only", val: measureEdges.length, color: T.amber },
+                { label: "Market", val: market === "india" ? "🇮🇳 India" : "🇺🇸 US", color: T.accent },
+              ].map(s => (
+                <div key={s.label} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 16px" }}>
+                  <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "5px" }}>{s.label}</div>
+                  <div style={{ fontSize: "20px", fontWeight: 700, color: s.color }}>{edgeData.length === 0 ? "…" : s.val}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Shadow-eligible callout */}
+            {shadowEdges.length > 0 && (
+              <div style={{ background: T.greenBg, border: `1px solid ${T.green}30`, borderRadius: "10px", padding: "14px 16px" }}>
+                <div style={{ fontWeight: 700, fontSize: "13px", color: T.green, marginBottom: "8px" }}>🟢 Shadow-Eligible Edges (graduated from measure-only)</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                  {shadowEdges.map(e => (
+                    <div key={e.edge_id} style={{ background: T.card, border: `1px solid ${T.green}30`, borderRadius: "6px", padding: "6px 12px" }}>
+                      <div style={{ fontWeight: 600, fontSize: "12px", color: T.green }}>{e.name}</div>
+                      <div style={{ fontSize: "10px", color: T.muted, marginTop: "2px" }}>
+                        IC={Number(e.latest?.ic ?? 0).toFixed(3)} · IC_IR={Number(e.latest?.ic_ir ?? 0).toFixed(3)} · t={Number(e.latest?.t_stat ?? 0).toFixed(2)} · n={e.latest?.n_obs}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize: "11px", color: T.green, marginTop: "10px", opacity: 0.7 }}>
+                  Shadow-eligible = IC_IR ≥ 0.30 + t-stat ≥ 2.0 on recent window. Still measure-only in live scoring until explicitly promoted.
+                </div>
+              </div>
+            )}
+
+            {/* Full IC table */}
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+              <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "4px" }}>Factor IC Leaderboard · {market === "india" ? "India" : "US"}</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "14px" }}>
+                Information Coefficient (IC) = rank correlation of factor vs 10–21d forward return. IC_IR = IC / σ(IC). t-stat ≥ 2.0 is the shadow-eligibility gate.
+              </div>
+              {edgeData.length === 0 ? (
+                <div style={{ color: T.muted, fontSize: "12px", textAlign: "center", padding: "30px 0" }}>Loading edge data…</div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", minWidth: "700px" }}>
+                    <thead>
+                      <tr style={{ color: T.muted, borderBottom: `1px solid ${T.border}` }}>
+                        {["Edge", "Status", "IC", "IC_IR", "t-stat", "n_obs", "IC_IR trend"].map(h => (
+                          <th key={h} style={{ padding: "6px 12px 10px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...edgeData].sort((a, b) => {
+                        const aIr = Number(a.latest?.ic_ir ?? -99);
+                        const bIr = Number(b.latest?.ic_ir ?? -99);
+                        return bIr - aIr;
+                      }).map(e => <EdgeRow key={e.edge_id} e={e} />)}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Genome note */}
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "12px 16px", fontSize: "11px", color: T.muted, lineHeight: 1.6 }}>
+              <span style={{ fontWeight: 600, color: T.textSub }}>About genome evolution:</span> Each edge is a hypothesis (factor). EdgeScout measures its daily IC in shadow. EdgeIC batches the rolling IC history weekly. Edges graduating to shadow_eligible are candidates for live scoring — promotion requires explicit decision. The IC_IR trend sparkline shows whether signal quality is improving or degrading over time. Weight history (LearnerAgent genome) is on the Weight History tab — currently 1 snapshot (Phase 0, mutations locked until 10+ closed trades).
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Agent & Flow Architecture Section */}
       <div style={{ marginTop: 24, borderRadius: 12, border: "1px solid #1E2130", background: "#13151C", overflow: "hidden" }}>
