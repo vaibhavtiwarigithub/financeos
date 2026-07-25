@@ -16,8 +16,9 @@ function daysFromToday(isoDate: string): number | null {
   return Math.round((d - today) / 86400000);
 }
 
-export async function fetchDaysToEarnings(symbol: string, india: boolean): Promise<number | null> {
+export async function fetchDaysToEarnings(symbol: string, india: boolean, preferredDate?: string): Promise<number | null> {
   try {
+    if (!india && preferredDate) return daysFromToday(preferredDate);
     if (india) {
       const dt = await fetchIndiaEarningsDate(symbol).catch(() => null);
       return dt ? daysFromToday(String(dt).slice(0, 10)) : null;

@@ -1511,7 +1511,7 @@ export async function processSymbol(
   // "buy the rumor, sell the news" pattern (does pre-earnings hype fade after
   // the print?). Not a gate or sizing input — just an observed feature. ETFs
   // have no single-company earnings date, so skip the fetch (saves a Finnhub call).
-  const daysToEarnings = isEtf ? null : await fetchDaysToEarnings(symbol, india).catch(() => null);
+  const daysToEarnings = isEtf ? null : await fetchDaysToEarnings(symbol, india, webullExtended?.earnings?.nextDate ?? undefined).catch(() => null);
 
   // Compute all 5 scores deterministically from fetched data
   const scores = await computeScores({
@@ -2072,6 +2072,12 @@ export async function processSymbol(
         ...(analystResult?.available ? { analyst: { score: analystResult.score, ...analystResult.evidence } } : {}),
         // Event proximity for the "buy the rumor, sell the news" learnable pattern.
         ...(daysToEarnings != null ? { days_to_earnings: daysToEarnings } : {}),
+        // Smart-money capital flow (Webull) — institutional $ in/out over 5 days.
+        // Logged for LearnerAgent to correlate large-cap flow direction with returns.
+        ...(webullExtended?.capitalFlow ? {
+          capital_flow_5d: webullExtended.capitalFlow.largNet5d,
+          capital_flow_signal: webullExtended.capitalFlow.signal,
+        } : {}),
         // Structured per-dimension quality state for v_decision_quality and
         // future learner taint detection. Eliminates reliance on string heuristics
         // for rows written from this version forward.
