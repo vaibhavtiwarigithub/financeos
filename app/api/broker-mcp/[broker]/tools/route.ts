@@ -36,10 +36,15 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ broker: str
   if (!list.ok) return NextResponse.json({ error: `tools/list failed: ${list.error}` }, { status: 502 });
 
   const tools = (list.result?.tools ?? []) as any[];
+  const withSchemas = req.nextUrl.searchParams.get("schemas") === "1";
   return NextResponse.json({
     broker: cfg.id,
     tool_count: tools.length,
-    tools: tools.map(t => ({ name: t.name, description: String(t.description ?? "").slice(0, 200) })),
+    tools: tools.map(t => ({
+      name: t.name,
+      description: String(t.description ?? "").slice(0, 200),
+      ...(withSchemas ? { inputSchema: t.inputSchema } : {}),
+    })),
   });
 }
 
