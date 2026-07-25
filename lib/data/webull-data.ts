@@ -324,3 +324,256 @@ export function webullAnalystLine(a: WebullAnalyst | null): string | null {
   if (parts.length === 0) return null;
   return `Webull analyst: ${parts.join(", ")}`;
 }
+
+// ── Extended research data (5 new tools) ─────────────────────────────────────
+// Confirmed live 2026-07-25 via probe: get_stock_capital_flow,
+// get_stock_earnings_calendar, get_financial_alert, get_company_profile,
+// get_income_statement, get_balance_sheet all return data with {symbol,category}.
+// get_stock_bars_single and get_stock_snapshot require additional required params.
+
+export interface WebullCapitalFlow {
+  days: Array<{ date: string; largeNet: number; mediumNet: number; smallNet: number }>;
+  largNet5d: number;
+  signal: "bullish" | "bearish" | "neutral";
+}
+
+export interface WebullEarnings {
+  nextDate: string | null;
+  nextEpsEst: number | null;
+  nextRevEst: number | null;
+  lastEpsActual: number | null;
+  lastEpsBeat: boolean | null;
+  epsYoY: number | null;
+  revYoY: number | null;
+}
+
+export interface WebullProfile {
+  companyName: string | null;
+  industries: string[];
+  employees: number | null;
+  ceo: string | null;
+  exchange: string | null;
+}
+
+export interface WebullIncomeStatement {
+  revenue: number | null;
+  grossMargin: number | null;
+  opMargin: number | null;
+  netMargin: number | null;
+  dilutedEps: number | null;
+  revenueGrowthQoQ: number | null;
+  period: string | null;
+}
+
+export interface WebullBalanceSheet {
+  totalDebt: number | null;
+  totalEquity: number | null;
+  debtToEquity: number | null;
+  cash: number | null;
+  totalAssets: number | null;
+  period: string | null;
+}
+
+export interface WebullExtended {
+  capitalFlow: WebullCapitalFlow | null;
+  earnings: WebullEarnings | null;
+  profile: WebullProfile | null;
+  incomeStatement: WebullIncomeStatement | null;
+  balanceSheet: WebullBalanceSheet | null;
+}
+
+function parseCapitalFlow(raw: any): WebullCapitalFlow | null {
+  const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : null;
+  if (!arr || arr.length === 0) return null;
+  const days = arr.map((d: any) => ({
+    date: String(d.date ?? ""),
+    largeNet: (Number(d.large_in) || 0) - (Number(d.large_out) || 0),
+    mediumNet: (Number(d.medium_in) || 0) - (Number(d.medium_out) || 0),
+    smallNet: (Number(d.small_in) || 0) - (Number(d.small_out) || 0),
+  }));
+  const largNet5d = days.reduce((s: number, d: { date: string; largeNet: number; mediumNet: number; smallNet: number }) => s + d.largeNet, 0);
+  return {
+    days,
+    largNet5d,
+    signal: largNet5d > 0 ? "bullish" : largNet5d < 0 ? "bearish" : "neutral",
+  };
+}
+
+function parseEarningsCalendar(calRaw: any, alertRaw: any): WebullEarnings | null {
+  const arr = Array.isArray(calRaw) ? calRaw : Array.isArray(calRaw?.data) ? calRaw.data : null;
+  let nextDate: string | null = null;
+  let nextEpsEst: number | null = null;
+  let nextRevEst: number | null = null;
+  let lastEpsActual: number | null = null;
+  let lastEpsBeat: boolean | null = null;
+
+  if (arr && arr.length > 0) {
+    const sorted = [...arr].sort((a: any, b: any) =>
+      ((Number(a.fiscal_year) || 0) * 10 + (Number(a.fiscal_period) || 0)) -
+      ((Number(b.fiscal_year) || 0) * 10 + (Number(b.fiscal_period) || 0))
+    );
+    const next = sorted.find((r: any) => r.eps_actual == null && r.expected_publish_date);
+    if (next) {
+      nextDate = String(next.expected_publish_date);
+      const est = Number(next.eps_est);
+      if (Number.isFinite(est)) nextEpsEst = est;
+      const rest = Number(next.rev_est);
+      if (Number.isFinite(rest)) nextRevEst = rest;
+    }
+    const reported = sorted.filter((r: any) => r.eps_actual != null).reverse();
+    if (reported.length > 0) {
+      const actual = Number(reported[0].eps_actual);
+      if (Number.isFinite(actual)) {
+        lastEpsActual = actual;
+        const est = Number(reported[0].eps_est);
+        if (Number.isFinite(est)) lastEpsBeat = actual > est;
+      }
+    }
+  }
+
+  let epsYoY: number | null = null;
+  let revYoY: number | null = null;
+  if (alertRaw && typeof alertRaw === "object") {
+    const epsLy = Number(alertRaw.eps_ly);
+    const revLy = Number(alertRaw.rev_ly);
+    if (nextEpsEst != null && Number.isFinite(epsLy) && epsLy !== 0)
+      epsYoY = (nextEpsEst - epsLy) / Math.abs(epsLy);
+    if (nextRevEst != null && Number.isFinite(revLy) && revLy !== 0)
+      revYoY = (nextRevEst - revLy) / Math.abs(revLy);
+  }
+
+  if (!nextDate && lastEpsActual == null && epsYoY == null) return null;
+  return { nextDate, nextEpsEst, nextRevEst, lastEpsActual, lastEpsBeat, epsYoY, revYoY };
+}
+
+function parseProfile(raw: any): WebullProfile | null {
+  if (!raw || typeof raw !== "object") return null;
+  const industries = Array.isArray(raw.industries) ? raw.industries.map(String) : [];
+  const employees = Number(raw.employees);
+  return {
+    companyName: pickStr(raw, ["company_name", "companyName", "name"]),
+    industries,
+    employees: Number.isFinite(employees) && employees > 0 ? employees : null,
+    ceo: pickStr(raw, ["ceo", "CEO"]),
+    exchange: pickStr(raw, ["exhibition_code", "exchange", "exchangeCode"]),
+  };
+}
+
+function parseIncomeStatement(raw: any): WebullIncomeStatement | null {
+  const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : null;
+  if (!arr || arr.length === 0) return null;
+  const key = (r: any) => (Number(r?.fiscal_year) || 0) * 10 + (Number(r?.fiscal_period) || 0);
+  const sorted = [...arr].sort((a, b) => key(b) - key(a));
+  const latest = sorted[0];
+  const prev = sorted[1] ?? null;
+
+  const revenue = pickNum(latest, ["total_revenue", "revenue"]);
+  const grossProfit = pickNum(latest, ["gross_profit"]);
+  const opIncome = pickNum(latest, ["op_income", "op_profit"]);
+  const netIncome = pickNum(latest, ["net_income"]);
+  const dilutedEps = pickNum(latest, ["diluted_eps_incl_extra", "diluted_eps_excl_extra", "diluted_norm_eps"]);
+
+  const grossMargin = revenue && grossProfit != null ? grossProfit / revenue : null;
+  const opMargin = revenue && opIncome != null ? opIncome / revenue : null;
+  const netMargin = revenue && netIncome != null ? netIncome / revenue : null;
+
+  let revenueGrowthQoQ: number | null = null;
+  if (prev && revenue != null) {
+    const prevRev = pickNum(prev, ["total_revenue", "revenue"]);
+    if (prevRev && prevRev !== 0) revenueGrowthQoQ = (revenue - prevRev) / Math.abs(prevRev);
+  }
+
+  const fy = latest?.fiscal_year;
+  const fp = latest?.fiscal_period;
+  if (revenue == null && dilutedEps == null) return null;
+  return {
+    revenue, grossMargin, opMargin, netMargin, dilutedEps, revenueGrowthQoQ,
+    period: fy && fp ? `FY${fy}Q${fp}` : null,
+  };
+}
+
+function parseBalanceSheet(raw: any): WebullBalanceSheet | null {
+  const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : null;
+  if (!arr || arr.length === 0) return null;
+  const key = (r: any) => (Number(r?.fiscal_year) || 0) * 10 + (Number(r?.fiscal_period) || 0);
+  const latest = [...arr].sort((a, b) => key(b) - key(a))[0];
+
+  const totalDebt = pickNum(latest, ["total_debt"]);
+  const totalEquity = pickNum(latest, ["total_equity", "total_sh_equity"]);
+  const cash = pickNum(latest, ["cash_st_invest", "cash"]);
+  const totalAssets = pickNum(latest, ["total_assets"]);
+  const debtToEquity = totalDebt != null && totalEquity && totalEquity !== 0
+    ? totalDebt / totalEquity : null;
+
+  const fy = latest?.fiscal_year;
+  const fp = latest?.fiscal_period;
+  if (totalAssets == null && totalDebt == null) return null;
+  return {
+    totalDebt, totalEquity, debtToEquity, cash, totalAssets,
+    period: fy && fp ? `FY${fy}Q${fp}` : null,
+  };
+}
+
+// Opens ONE Webull session and fetches all 5 extended research tools in parallel.
+// Fail-soft: null when not connected; partial result when some tools fail.
+export async function fetchWebullExtended(symbol: string): Promise<WebullExtended | null> {
+  const sym = String(symbol ?? "").trim().toUpperCase();
+  if (!sym) return null;
+  const cacheKey = `extended:${sym}`;
+  const cached = cacheGet<WebullExtended | null>(cacheKey);
+  if (cached !== undefined) return cached;
+
+  try {
+    const sess = await openWebull();
+    if (!sess) { cacheSet(cacheKey, null); return null; }
+
+    const [flowRaw, calRaw, alertRaw, profileRaw, incomeRaw, balanceRaw] = await Promise.all([
+      callToolRaw(sess, "get_stock_capital_flow", { symbol: sym }),
+      callToolRaw(sess, "get_stock_earnings_calendar", { symbol: sym }),
+      callToolRaw(sess, "get_financial_alert", { symbol: sym }),
+      callToolRaw(sess, "get_company_profile", { symbol: sym }),
+      callToolRaw(sess, "get_income_statement", { symbol: sym }),
+      callToolRaw(sess, "get_balance_sheet", { symbol: sym }),
+    ]);
+
+    const capitalFlow = parseCapitalFlow(flowRaw);
+    const earnings = parseEarningsCalendar(calRaw, alertRaw);
+    const profile = parseProfile(profileRaw);
+    const incomeStatement = parseIncomeStatement(incomeRaw);
+    const balanceSheet = parseBalanceSheet(balanceRaw);
+
+    if (!capitalFlow && !earnings && !profile && !incomeStatement && !balanceSheet) {
+      cacheSet(cacheKey, null);
+      return null;
+    }
+
+    const out: WebullExtended = { capitalFlow, earnings, profile, incomeStatement, balanceSheet };
+    cacheSet(cacheKey, out);
+    return out;
+  } catch {
+    cacheSet(cacheKey, null);
+    return null;
+  }
+}
+
+// One-line evidence string for the thesis prompt. Null = nothing usable.
+export function webullExtendedLine(e: WebullExtended | null): string | null {
+  if (!e) return null;
+  const parts: string[] = [];
+  if (e.capitalFlow) {
+    const net = e.capitalFlow.largNet5d;
+    parts.push(`smart-money ${net >= 0 ? "+" : ""}${(net / 1e6).toFixed(0)}M (${e.capitalFlow.signal})`);
+  }
+  if (e.earnings?.nextDate) {
+    parts.push(`earnings ${e.earnings.nextDate}`);
+    if (e.earnings.epsYoY != null) parts.push(`YoY ${(e.earnings.epsYoY * 100).toFixed(0)}%`);
+  }
+  if (e.incomeStatement) {
+    const is = e.incomeStatement;
+    if (is.grossMargin != null) parts.push(`GM ${(is.grossMargin * 100).toFixed(0)}%`);
+    if (is.revenueGrowthQoQ != null) parts.push(`rev QoQ ${(is.revenueGrowthQoQ >= 0 ? "+" : "")}${(is.revenueGrowthQoQ * 100).toFixed(0)}%`);
+  }
+  if (e.balanceSheet?.debtToEquity != null)
+    parts.push(`D/E ${e.balanceSheet.debtToEquity.toFixed(1)}`);
+  return parts.length ? `Webull extended: ${parts.join(", ")}` : null;
+}

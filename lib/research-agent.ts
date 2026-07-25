@@ -50,7 +50,7 @@ import { captureFundamentalsFact } from "@/lib/data/pit-fundamentals";
 import { scoreEdgarInsider } from "@/lib/data/edgar-insider";
 import { fetchUpstoxCandles } from "@/lib/data/upstox";
 import { scoreAnalyst } from "@/lib/data/analyst";
-import { fetchWebullAnalyst, webullAnalystLine, type WebullAnalyst } from "@/lib/data/webull-data";
+import { fetchWebullAnalyst, webullAnalystLine, fetchWebullExtended, webullExtendedLine, type WebullAnalyst, type WebullExtended } from "@/lib/data/webull-data";
 import { fetchDaysToEarnings } from "@/lib/data/earnings";
 import { getBenchmarkSeries } from "@/lib/data/benchmark-series";
 import { captureReturnObservation } from "@/lib/data/return-observations";
@@ -1482,9 +1482,12 @@ export async function processSymbol(
   // the India FII/DII flow line), NOT a new weighted scoring dimension — same
   // conservative posture as the Finnhub analyst evidence above. India names skip
   // it entirely (Webull MCP covers US symbols). Off the AV/provider budget.
-  const webullAnalyst: WebullAnalyst | null = !india
-    ? await fetchWebullAnalyst(symbol).catch(() => null)
-    : null;
+  const [webullAnalyst, webullExtended] = !india
+    ? await Promise.all([
+        fetchWebullAnalyst(symbol).catch(() => null) as Promise<WebullAnalyst | null>,
+        fetchWebullExtended(symbol).catch(() => null) as Promise<WebullExtended | null>,
+      ])
+    : [null, null];
   if (webullAnalyst) {
     void writeEvidence(supabase, {
       symbol,
@@ -1492,6 +1495,15 @@ export async function processSymbol(
       source: "webull",
       quality_state: "ok",
       payload: webullAnalyst,
+    });
+  }
+  if (webullExtended) {
+    void writeEvidence(supabase, {
+      symbol,
+      evidence_type: "fundamental",
+      source: "webull",
+      quality_state: "ok",
+      payload: webullExtended,
     });
   }
 
@@ -1697,8 +1709,10 @@ export async function processSymbol(
   } catch { /* RAG is best-effort — a retrieval failure must not block research */ }
 
   // LLM only writes thesis + direction — no score generation.
-  // US-only Webull analyst grounding line (null when not connected/India → omitted).
-  const webullLine = !india ? webullAnalystLine(webullAnalyst) : null;
+  // US-only Webull grounding lines (null when not connected/India → omitted).
+  const webullLine = !india
+    ? [webullAnalystLine(webullAnalyst), webullExtendedLine(webullExtended)].filter(Boolean).join(" | ") || null
+    : null;
   const thesisPrompt = isHeld ? "" : buildThesisOnlyPrompt(symbol, false, scores, analystScore, scoreThreshold, marketFocus, india ? indiaNews : null, indiaMacroLine, webullLine) + trendNote + memoryNote;
   const llmResult = isHeld ? {
     text: JSON.stringify({
