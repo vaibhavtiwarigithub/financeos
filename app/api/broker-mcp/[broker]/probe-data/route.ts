@@ -57,6 +57,20 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ broker: str
 
   const symbol = (req.nextUrl.searchParams.get("symbol") ?? "AAPL").trim().toUpperCase();
 
+  // ?tool=<name> → probe a single arbitrary tool with {symbol, category:US_STOCK}
+  const singleTool = req.nextUrl.searchParams.get("tool");
+  if (singleTool) {
+    const svc2 = createServiceClient();
+    const tk2 = await getValidAccessToken(svc2, cfg);
+    if (!tk2.ok || !tk2.token) return NextResponse.json({ error: `not connected: ${tk2.error}` }, { status: 400 });
+    const init2 = await mcpRpc(cfg, tk2.token, "initialize", { protocolVersion: cfg.protocolVersion, capabilities: {}, clientInfo: { name: "kairos-probe", version: "1.0" } });
+    if (!init2.ok) return NextResponse.json({ error: `initialize failed: ${init2.error}` }, { status: 502 });
+    await mcpRpc(cfg, tk2.token, "notifications/initialized", undefined, init2.sessionId, true).catch(() => {});
+    const r = await mcpRpc(cfg, tk2.token, "tools/call", { name: singleTool, arguments: { symbol, category: "US_STOCK" } }, init2.sessionId);
+    const { decoded, rawHead } = summarize(r.result);
+    return NextResponse.json({ broker: cfg.id, symbol, tool: singleTool, ok: r.ok, error: r.error, decoded, rawHead, probedAt: new Date().toISOString() });
+  }
+
   // ?parsed=1 → skip the raw dual-variant dump and instead prove the ACTUAL
   // adapter parsers (fetchWebullAnalyst / fetchWebullFinancials) produce the
   // right numbers on live data. This is the end-to-end Phase-1a proof.
