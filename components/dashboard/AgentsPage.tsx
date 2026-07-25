@@ -425,7 +425,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           { key: "weight-history", label: "📜 Weight History" },
           { key: "experiments", label: "🔬 Experiments" },
           { key: "proposals", label: "⚡ Proposals" },
-          { key: "edges", label: "🧬 Edge Lab" },
+          { key: "edges", label: "🧬 Genome" },
         ] as const).map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             style={{ padding: "7px 16px", borderRadius: "7px", border: "none", cursor: "pointer", fontSize: "12px", fontWeight: 500, background: tab === t.key ? T.card : "transparent", color: tab === t.key ? T.text : T.muted }}>
