@@ -43,7 +43,7 @@ arrows exist.
 | `benchmark_scorecard` | BenchmarkScorecard route | PerformanceTruth dashboard, future gated learner evidence |
 | `rotation_events` | PaperTrader capital-rotation shadow evaluator | Dashboard/audit, future rotation validation |
 | `validation_experiments`, `model_artifacts` | Validation/Calibration | Promotion gate, Dashboard |
-| `broker_orders` | Execution Gateway + order sync | Reconciliation, Dashboard |
+| `broker_orders` | Execution Gateway + order sync | Reconciliation, **Trading Dashboard** (live orders surface on `/dashboard/trading` — read-only, pending/submitted/filled/error/unknown_needs_reconcile statuses, last 20 rows, market-scoped) |
 | `broker_order_events` (target) | Execution Gateway + order sync | Audit/reconciliation |
 | `trade_proposals` (shadow) | AutonomousShadow | Dashboard, owner audit |
 | `trade_proposals` (live) | AutonomousLive | Dashboard, reconciliation |

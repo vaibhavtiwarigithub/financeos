@@ -21,6 +21,7 @@ export default async function Page() {
     { data: portfolio },
     { data: highScoreSignals },
     { data: positions },
+    { data: liveOrders },
   ] = await Promise.all([
     supabase.from("agent_signals").select("*, research_packets(*)").eq("market", market).eq("status", "pending").order("created_at", { ascending: false }).limit(20),
     supabase.from("paper_trades").select("*").eq("market", market).order("executed_at", { ascending: false }).limit(30),
@@ -35,6 +36,12 @@ export default async function Page() {
       ? Promise.resolve({ data: [] as any[] })
       : supabase.from("agent_signals").select("id, symbol, direction, analyst_score, conviction, rationale, created_at, status").eq("market", "us").eq("status", "pending").gte("analyst_score", 60).order("analyst_score", { ascending: false }).limit(20),
     supabase.from("paper_positions").select("symbol,market,current_price,updated_at").eq("market", market),
+    supabase.from("broker_orders")
+      .select("id, symbol, side, qty, estimated_value, status, broker_order_id, error, created_at, market")
+      .eq("market", market)
+      .in("status", ["pending_submit", "submitted", "partially_filled", "unknown_needs_reconcile", "filled", "error"])
+      .order("created_at", { ascending: false })
+      .limit(20),
   ]);
 
   return (
@@ -46,6 +53,7 @@ export default async function Page() {
       queue={highScoreSignals ?? []}
       positions={positions ?? []}
       market={market}
+      liveOrders={liveOrders ?? []}
     />
   );
 }

@@ -536,8 +536,107 @@ function ScoreBar({ score }: { score: number }) {
   );
 }
 
-export default function TradingPage({ pendingSignals, tradeLog, strategy, portfolio, queue, positions, market }: {
+// ── Live Orders (broker_orders table) ────────────────────────────────────────
+
+type OrderStatus = "pending_submit" | "submitted" | "partially_filled" | "filled" | "cancelled" | "unknown_needs_reconcile" | "error";
+
+interface BrokerOrder {
+  id: string;
+  symbol: string;
+  side: "buy" | "sell";
+  qty: number;
+  estimated_value: number | null;
+  status: OrderStatus;
+  broker_order_id: string | null;
+  error: string | null;
+  created_at: string;
+  market: string;
+}
+
+const ORDER_STATUS_MAP: Record<OrderStatus, { label: string; color: string; bg: string }> = {
+  pending_submit:           { label: "Submitting…",      color: T.amber,   bg: T.amberBg },
+  submitted:                { label: "In Market",         color: "#60A5FA", bg: "#1E3A5F" },
+  partially_filled:         { label: "In Market",         color: "#60A5FA", bg: "#1E3A5F" },
+  filled:                   { label: "Filled",            color: T.green,   bg: T.greenBg },
+  cancelled:                { label: "Cancelled",         color: T.muted,   bg: T.surface },
+  unknown_needs_reconcile:  { label: "⚠ Needs Review",   color: T.red,     bg: T.redBg },
+  error:                    { label: "Error",             color: T.red,     bg: T.redBg },
+};
+
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function LiveOrdersSection({ liveOrders }: { liveOrders: BrokerOrder[] }) {
+  if (liveOrders.length === 0) return null;
+
+  const needsReconcile = liveOrders.filter(o => o.status === "unknown_needs_reconcile");
+
+  return (
+    <div style={{ marginBottom: "20px" }}>
+      <div style={{ fontSize: "14px", fontWeight: 700, color: T.text, marginBottom: "10px" }}>
+        Live Orders
+        <span style={{ fontSize: "12px", fontWeight: 400, color: T.muted, marginLeft: "8px" }}>last 20 · read-only</span>
+      </div>
+
+      {needsReconcile.length > 0 && (
+        <div style={{ background: T.redBg, border: `1px solid ${T.red}60`, borderRadius: "10px", padding: "12px 16px", marginBottom: "12px", fontSize: "13px", color: T.red, fontWeight: 600 }}>
+          ⚠ Check Robinhood — {needsReconcile.length} order{needsReconcile.length > 1 ? "s" : ""} outcome unknown: {needsReconcile.map(o => o.symbol).join(", ")}
+        </div>
+      )}
+
+      {/* Table with horizontal scroll — same pattern as trade history */}
+      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", minWidth: "600px" }}>
+          <thead>
+            <tr>
+              {["Symbol", "Side", "Qty", "~Value", "Status", "Time", "Order ID"].map(h => (
+                <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 500, borderBottom: `1px solid ${T.border}` }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {liveOrders.map(o => {
+              const st = ORDER_STATUS_MAP[o.status] ?? ORDER_STATUS_MAP.error;
+              return (
+                <tr key={o.id} style={{ borderTop: `1px solid ${T.border}` }}>
+                  <td style={{ padding: "10px 14px", fontWeight: 700, color: T.text }}>{o.symbol}</td>
+                  <td style={{ padding: "10px 14px" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 7px", borderRadius: "4px", background: o.side === "buy" ? T.greenBg : T.redBg, color: o.side === "buy" ? T.green : T.red }}>
+                      {o.side.toUpperCase()}
+                    </span>
+                  </td>
+                  <td style={{ padding: "10px 14px", color: T.text }}>{o.qty}</td>
+                  <td style={{ padding: "10px 14px", color: T.textSub }}>{o.estimated_value != null ? `$${o.estimated_value.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "—"}</td>
+                  <td style={{ padding: "10px 14px" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: st.bg, color: st.color }}>{st.label}</span>
+                    {o.error && <div style={{ fontSize: "10px", color: T.red, fontFamily: "monospace", marginTop: "2px" }}>{o.error.slice(0, 60)}{o.error.length > 60 ? "…" : ""}</div>}
+                  </td>
+                  <td style={{ padding: "10px 14px", color: T.muted, fontSize: "11px", whiteSpace: "nowrap" }}>{timeAgo(o.created_at)}</td>
+                  <td style={{ padding: "10px 14px", color: T.muted, fontSize: "10px", fontFamily: "monospace" }}>
+                    {o.broker_order_id ? `${o.broker_order_id.slice(0, 10)}…` : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function TradingPage({ pendingSignals, tradeLog, strategy, portfolio, queue, positions, market, liveOrders }: {
   pendingSignals: any[]; tradeLog: any[]; strategy: any; portfolio: any; queue: any[]; positions: any[];
+  liveOrders: BrokerOrder[];
   // Resolved from the `mkt` cookie by the server component. Every row here is
   // already scoped to this market and every amount renders in its currency —
   // US ($) and India (₹) NAV are never blended.
@@ -718,6 +817,9 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
           {monitorRunning ? "Checking…" : "Run Position Monitor"}
         </button>
       </div>
+
+      {/* Live broker orders */}
+      <LiveOrdersSection liveOrders={liveOrders} />
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: "4px", marginBottom: "16px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>
