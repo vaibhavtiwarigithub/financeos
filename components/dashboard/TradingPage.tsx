@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
+import { RefreshCw } from "lucide-react";
 import { currentPaperTradePnl } from "@/lib/paper-current-pnl";
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 import PageHeader from "@/components/dashboard/PageHeader";
@@ -577,16 +578,33 @@ function LiveOrdersSection({ liveOrders }: { liveOrders: BrokerOrder[] }) {
   if (liveOrders.length === 0) return null;
 
   const needsReconcile = liveOrders.filter(o => o.status === "unknown_needs_reconcile");
+  const router = useRouter();
+  const [reconciling, setReconciling] = useState(false);
+
+  async function refreshReconciliation() {
+    setReconciling(true);
+    try {
+      await fetch("/api/agents/order-maintenance?mode=reconcile", { method: "POST" });
+      router.refresh();
+    } finally {
+      setReconciling(false);
+    }
+  }
 
   return (
     <div style={{ marginBottom: "20px" }}>
       <div style={{ fontSize: "14px", fontWeight: 700, color: T.text, marginBottom: "10px" }}>
         Live Orders
+        {needsReconcile.length > 0 && (
+          <button type="button" title="Refresh broker order status" onClick={refreshReconciliation} disabled={reconciling} style={{ marginLeft: "8px", width: "30px", height: "30px", verticalAlign: "middle", border: `1px solid ${T.red}80`, background: T.redBg, color: T.red, borderRadius: "4px", cursor: reconciling ? "wait" : "pointer", opacity: reconciling ? 0.6 : 1 }}>
+            <RefreshCw size={15} />
+          </button>
+        )}
         <span style={{ fontSize: "12px", fontWeight: 400, color: T.muted, marginLeft: "8px" }}>last 20 · read-only</span>
       </div>
 
       {needsReconcile.length > 0 && (
-        <div style={{ background: T.redBg, border: `1px solid ${T.red}60`, borderRadius: "10px", padding: "12px 16px", marginBottom: "12px", fontSize: "13px", color: T.red, fontWeight: 600 }}>
+        <div style={{ background: T.redBg, border: `1px solid ${T.red}60`, borderRadius: "10px", padding: "12px 16px", marginBottom: "12px", fontSize: "13px", color: T.red, fontWeight: 600, display: "flex", gap: "12px", alignItems: "center", justifyContent: "space-between" }}>
           ⚠ Check Robinhood — {needsReconcile.length} order{needsReconcile.length > 1 ? "s" : ""} outcome unknown: {needsReconcile.map(o => o.symbol).join(", ")}
         </div>
       )}

@@ -5,16 +5,14 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { cancelStaleOrders, reconcileUnknownOrders } from "@/lib/trading/order-maintenance";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 120;
 
 // Cron: every 30 min — cancel pending_submit/submitted orders stuck >30 min,
 // then reconcile unknown_needs_reconcile rows by polling Robinhood order status.
-async function run() {
+async function run(reconcileOnly = false) {
   const svc = createServiceClient();
-  const [cancelResult, reconcileResult] = await Promise.all([
-    cancelStaleOrders(svc),
-    reconcileUnknownOrders(svc),
-  ]);
+  const cancelResult = reconcileOnly ? { cancelled: 0, errors: 0 } : await cancelStaleOrders(svc);
+  const reconcileResult = await reconcileUnknownOrders(svc);
   return {
     ok: true,
     cancelled: cancelResult.cancelled,
@@ -30,7 +28,7 @@ export async function GET(req: NextRequest) {
     const authError = await requireOwner();
     if (authError) return authError;
   }
-  return NextResponse.json(await run());
+  return NextResponse.json(await run(req.nextUrl.searchParams.get("mode") === "reconcile"));
 }
 
 export const POST = GET;

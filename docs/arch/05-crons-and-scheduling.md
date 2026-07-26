@@ -175,3 +175,5 @@ and `watchlist.research_enabled` prevent disabled or month-old machine discoveri
 from silently expanding the daily universe. Prewarm and evidence-shadow are Canonical
 Evidence Router jobs, not GitHub/Vibe jobs; shadow remains observational and never
 feeds scoring or orders, though its provider calls still obey the shared pacing layer.
+
+**Order-maintenance correction (2026-07-26):** The every-30-minute maintenance trigger only sends stale-order cancellation during a US market session and processes one candidate. It independently reconciles one unknown order through a read-only broker status query; the owner can request that read-only reconciliation from Trading. The limits avoid overnight/weekend MCP churn and leave cold-start headroom.

@@ -1056,6 +1056,13 @@
       "event": "Capital rotation P1 PAPER execution enabled (owner-approved). Real atomic execute_paper_rotation RPC (sell source via execute_paper_exit + buy candidate via execute_paper_fill in one transaction), rotation_paper_execute_enabled=true for paper books, containment check constraint dropped, CAPITAL_ROTATION_PAPER_ENABLED env set. Live books remain locked with no live rotation path. Added afternoon US (18:00/19:15 UTC) and midday India (07:00/07:45 UTC) research+paper-trade cron cycles for intraday adaptation.",
       "nodeId": "PAPER_TRADER",
       "reason": "Agents were stuck holding stale names while semis/AI ripped: rotation evaluator correctly planned swaps (e.g. SMCI 82 over RDDT 53) but shadow containment blocked execution, and single pre-open research runs never rescored intraday moves."
+    },
+    {
+      "date": "2026-07-26",
+      "event": "changed",
+      "nodeId": "GATEWAY",
+      "label": "Order maintenance now confirms terminal state before recording it",
+      "reason": "The 30-minute US maintenance path now skips closed sessions, bounds cold-start work to one cancellation and one read-only reconciliation, and records a successful cancel as unknown_needs_reconcile until broker status confirms filled or cancelled. Reconciliation writes fill facts and proposal outcome without changing requested quantity. Trading exposes an owner-triggered read-only refresh for unresolved orders. ETF allocation uses current marks and fails closed on unavailable inputs; no new order placement path was added."
     }
   ]
 }

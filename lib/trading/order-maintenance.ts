@@ -1,5 +1,10 @@
 import { robinhoodMcpAdapter } from "@/lib/brokers/adapters/robinhood-mcp";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { isMarketSessionOpen } from "@/lib/trading/market-calendar";
+
+// A Robinhood MCP cold start can take more than a minute. Bound each cron run
+// to one write and one read so Vercel can finish deterministically.
+const MAX_BROKER_CALLS_PER_RUN = 1;
 
 // Auto-cancel broker_orders stuck in pending_submit/submitted for >30 min.
 // Only acts on US market rows with a broker_order_id (can't cancel without one).
@@ -8,6 +13,10 @@ export async function cancelStaleOrders(supabase: any): Promise<{ cancelled: num
   let cancelled = 0;
   let errors = 0;
 
+  // There is nothing to cancel on a closed US session. More importantly, do not
+  // wake a broker MCP session every thirty minutes through nights and weekends.
+  if (!isMarketSessionOpen("us")) return { cancelled, errors };
+
   try {
     const { data: rows, error } = await supabase
       .from("broker_orders")
@@ -15,7 +24,9 @@ export async function cancelStaleOrders(supabase: any): Promise<{ cancelled: num
       .in("status", ["pending_submit", "submitted"])
       .eq("market", "us")
       .not("broker_order_id", "is", null)
-      .lt("created_at", new Date(Date.now() - 30 * 60 * 1000).toISOString());
+      .lt("created_at", new Date(Date.now() - 30 * 60 * 1000).toISOString())
+      .order("created_at", { ascending: true })
+      .limit(MAX_BROKER_CALLS_PER_RUN);
 
     if (error) {
       console.error("[order-maintenance] cancelStaleOrders query failed:", error.message);
@@ -27,10 +38,15 @@ export async function cancelStaleOrders(supabase: any): Promise<{ cancelled: num
     const adapter = robinhoodMcpAdapter();
     for (const row of rows) {
       try {
-        const r = await adapter.cancelOrder(row.broker_order_id, "live");
+        const r = await adapter.cancelOrder(String(row.broker_order_id), "live");
         if (r.ok) {
-          await supabase.from("broker_orders").update({ status: "cancelled" }).eq("id", row.id);
-          console.log(`[order-maintenance] cancelled stale order ${row.id} (${row.symbol})`);
+          // A cancel ACK is not proof of terminal state: a fill can win the race
+          // with the cancel. Reconcile before ever calling the row cancelled.
+          const { error: updateError } = await supabase.from("broker_orders")
+            .update({ status: "unknown_needs_reconcile", error: "cancel accepted; confirmation pending" })
+            .eq("id", row.id);
+          if (updateError) throw new Error(`could not mark cancel for reconciliation: ${updateError.message}`);
+          console.log(`[order-maintenance] cancel accepted; reconciliation pending for ${row.id} (${row.symbol})`);
           cancelled++;
         } else {
           console.error(`[order-maintenance] cancel failed for order ${row.id}: ${r.error}`);
@@ -66,10 +82,12 @@ export async function reconcileUnknownOrders(supabase: any): Promise<{ resolved:
   try {
     const { data: rows, error } = await supabase
       .from("broker_orders")
-      .select("id, symbol, broker_order_id")
+      .select("id, symbol, broker_order_id, proposal_id, qty")
       .eq("status", "unknown_needs_reconcile")
       .eq("market", "us")
-      .not("broker_order_id", "is", null);
+      .not("broker_order_id", "is", null)
+      .order("created_at", { ascending: true })
+      .limit(MAX_BROKER_CALLS_PER_RUN);
 
     if (error) {
       console.error("[order-maintenance] reconcileUnknownOrders query failed:", error.message);
@@ -81,8 +99,8 @@ export async function reconcileUnknownOrders(supabase: any): Promise<{ resolved:
     const adapter = robinhoodMcpAdapter();
     for (const row of rows) {
       try {
-        const r = await adapter.getOrder(row.broker_order_id, "live");
-        if (!r.ok) {
+        const r = await adapter.getOrder(String(row.broker_order_id), "live");
+        if (!r.ok || !r.status) {
           console.error(`[order-maintenance] getOrder failed for ${row.id}: ${r.error}`);
           errors++;
           continue;
@@ -94,11 +112,31 @@ export async function reconcileUnknownOrders(supabase: any): Promise<{ resolved:
           ? "cancelled"
           : r.status; // "filled" | "partially_filled" | "submitted"
 
-        const update: Record<string, any> = { status: newStatus };
-        if (r.filledQty != null) update.qty = r.filledQty; // ponytail: reuse qty col for filled qty
-        await supabase.from("broker_orders").update(update).eq("id", row.id);
+        const terminal = ["filled", "cancelled"].includes(newStatus);
+        const update: Record<string, any> = {
+          status: newStatus,
+          raw_last_state: r.raw ?? null,
+          closed_at: terminal ? new Date().toISOString() : null,
+        };
+        if (r.filledQty != null) update.filled_qty = r.filledQty;
+        if (r.avgFillPrice != null) update.avg_fill_price = r.avgFillPrice;
+        const { error: updateError } = await supabase.from("broker_orders").update(update).eq("id", row.id);
+        if (updateError) throw new Error(`reconciliation update failed: ${updateError.message}`);
 
-        await resolveIssue(`order-needs-reconcile:${row.broker_order_id}`, supabase);
+        // The order ledger owns fill truth. Portfolio snapshots remain the
+        // authoritative holdings/NAV source, but the proposal must reflect a
+        // confirmed broker fill rather than remain pending forever.
+        if (newStatus === "filled" && row.proposal_id) {
+          const { error: proposalError } = await supabase.from("trade_proposals").update({
+            status: "executed",
+            fill_price: r.avgFillPrice ?? null,
+            fill_qty: r.filledQty ?? row.qty,
+            filled_at: new Date().toISOString(),
+          }).eq("id", row.proposal_id);
+          if (proposalError) throw new Error(`proposal fill update failed: ${proposalError.message}`);
+        }
+
+        await resolveIssue(`order-needs-reconcile:${row.id}`, supabase);
         console.log(`[order-maintenance] reconciled order ${row.id} (${row.symbol}) → ${newStatus}`);
         resolved++;
       } catch (e) {
