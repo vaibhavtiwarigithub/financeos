@@ -20,7 +20,8 @@ export async function PATCH(req: NextRequest) {
   const body = await req.json();
   const { risk_profile, trading_style, target_hold_days, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_mode, broker, max_positions_per_sector, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_days, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr,
     max_daily_notional_usd, max_daily_notional_inr, max_daily_trades,
-    max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper } = body;
+    max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper,
+    etf_allocation_cap_pct } = body;
 
   // Per-market live notional caps (per-order + daily cumulative). null clears
   // (that market's limit is not enforced); a value must be a positive finite number.
@@ -100,6 +101,10 @@ export async function PATCH(req: NextRequest) {
   }
   if (exit_hysteresis !== undefined && (exit_hysteresis < 1 || exit_hysteresis > 40)) {
     return NextResponse.json({ error: "exit_hysteresis must be 1–40" }, { status: 400 });
+  }
+  if (etf_allocation_cap_pct !== undefined && etf_allocation_cap_pct !== null &&
+      (!Number.isFinite(Number(etf_allocation_cap_pct)) || Number(etf_allocation_cap_pct) < 0 || Number(etf_allocation_cap_pct) > 100)) {
+    return NextResponse.json({ error: "etf_allocation_cap_pct must be 0–100" }, { status: 400 });
   }
 
   const svc = createServiceClient();
@@ -194,10 +199,11 @@ export async function PATCH(req: NextRequest) {
   if (ks_drawdown_pct !== undefined) update.ks_drawdown_pct = ks_drawdown_pct;
   if (ks_accuracy_pct !== undefined) update.ks_accuracy_pct = ks_accuracy_pct;
   if (exit_hysteresis !== undefined) update.exit_hysteresis = exit_hysteresis;
+  if (etf_allocation_cap_pct !== undefined) update.etf_allocation_cap_pct = etf_allocation_cap_pct === null ? null : Number(etf_allocation_cap_pct);
 
   // Resilient write — some columns may not exist on older schemas; retry
   // stripping the optional ones so saving a profile still works.
-  const OPTIONAL_COLS = ["max_positions_per_sector", "ks_daily_loss_pct", "ks_drawdown_pct", "ks_accuracy_pct", "exit_hysteresis", "posture", "posture_expires_at", "base_risk_profile", "active_broker_us", "active_broker_india", "trading_enabled_us", "trading_enabled_india", "active_account_us", "active_account_india", "live_account_source", "robinhood_mcp_enabled", "trading_style", "target_hold_days"];
+  const OPTIONAL_COLS = ["max_positions_per_sector", "ks_daily_loss_pct", "ks_drawdown_pct", "ks_accuracy_pct", "exit_hysteresis", "posture", "posture_expires_at", "base_risk_profile", "active_broker_us", "active_broker_india", "trading_enabled_us", "trading_enabled_india", "active_account_us", "active_account_india", "live_account_source", "robinhood_mcp_enabled", "trading_style", "target_hold_days", "etf_allocation_cap_pct"];
   // Money limits are NOT optional (migrations 103/105/107 are applied). A failed money-
   // limit write must surface as a visible error, never silently succeed with the old cap.
   const MONEY_COLS = ["max_order_notional", "max_order_notional_usd", "max_order_notional_inr", "max_daily_notional_usd", "max_daily_notional_inr", "max_daily_trades", "max_order_notional_usd_paper", "max_order_notional_inr_paper", "max_daily_notional_usd_paper", "max_daily_notional_inr_paper"];
@@ -229,7 +235,7 @@ export async function GET() {
   if (gate) return gate;
 
   const svc = createServiceClient();
-  const fullSelect = "risk_profile, trading_style, target_hold_days, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_expires_at, base_risk_profile, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr, max_daily_notional_usd, max_daily_notional_inr, max_daily_trades, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper";
+  const fullSelect = "risk_profile, trading_style, target_hold_days, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_expires_at, base_risk_profile, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr, max_daily_notional_usd, max_daily_notional_inr, max_daily_trades, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper, etf_allocation_cap_pct";
   let { data, error } = await svc
     .from("strategy_config")
     .select(fullSelect)
