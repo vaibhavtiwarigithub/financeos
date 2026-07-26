@@ -509,13 +509,16 @@ export async function computeScores(opts: {
 
   // Phase 1: write evidence records (fire-and-forget, never blocks scoring)
   void writeBatchEvidence(supabase, [
-    {
+    // An ETF has no company-reported fundamentals. Its score correctly treats
+    // the dimension as structurally inapplicable, so do not audit an empty
+    // payload as a successful fundamental observation.
+    ...(!isEtf ? [{
       symbol,
-      evidence_type: "fundamental",
+      evidence_type: "fundamental" as const,
       source: opts.provenance?.fundamental ?? "unavailable",
       payload: fundEvidence,
-      quality_state: result.dataQuality.fundamentalDataAvailable ? "ok" : "missing",
-    },
+      quality_state: result.dataQuality.fundamentalDataAvailable ? "ok" as const : "missing" as const,
+    }] : []),
     {
       symbol,
       evidence_type: "ohlcv",
