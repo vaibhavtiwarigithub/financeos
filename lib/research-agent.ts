@@ -20,6 +20,7 @@ import { resolveSignalDirection } from "@/lib/signal-direction";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { readDeferredCandidates, applyCandidateCarryForward } from "@/lib/research-queue";
 import { ETF_SCORE_CAP, routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
+import { classifyInstrument, persistInstrumentClassification } from "@/lib/scoring/instrument-registry";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
@@ -1550,6 +1551,16 @@ export async function processSymbol(
   }).catch(() => {});
 
   const market = india ? "india" : "us"; // Phase 4: per-market champion weights
+  // L0 registry observation is deliberately independent of v1 scoring. It is
+  // persisted alongside the run but cannot grant entry permission or change a
+  // candidate's dimensions, score, direction, size, or execution path.
+  const instrument = classifyInstrument({
+    symbol,
+    market,
+    isAdr: US_ADRS.has(symbol.toUpperCase()),
+  });
+  const instrumentRegistryWrite = persistInstrumentClassification(supabase, instrument)
+    .catch((error) => console.error("[research-agent] instrument registry write failed:", error instanceof Error ? error.message : error));
   const tradingMandate = await loadTradingMandate(supabase, market);
 
   // Weight resolution is champion-first → static per-risk-profile baseline. The
@@ -2062,6 +2073,13 @@ export async function processSymbol(
       features: {
         schemaVersion: "v1",             // P1: version tag for PIT replay and feature-schema migration
         decisionTs: new Date().toISOString(), // P1: precise timestamp this observation was written
+        instrument: {
+          kind: instrument.instrumentKind,
+          source: instrument.source,
+          confidence: instrument.confidence,
+          review_status: "observe",
+          new_entry_allowed: false,
+        },
         ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}),
         weighting: { renormalized, included_dims: includedDims, base_weights: weightOf, applied_weights: effWeights },
         trading_mandate: tradingMandate,
@@ -2217,6 +2235,7 @@ export async function processSymbol(
   } catch (e) { console.error("[research-agent] observation write threw:", e); }
 
   await returnCapturePromise;
+  await instrumentRegistryWrite;
 
   return {
     symbol,

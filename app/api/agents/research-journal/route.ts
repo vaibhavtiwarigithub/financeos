@@ -281,6 +281,20 @@ export async function GET(req: NextRequest) {
     const packet = packetById.get(signal?.research_packet_id) as any;
     const assetType = classifyJournalAsset(obs.symbol, signal?.asset_class);
     const isFund = assetType === "etf" || assetType === "metal_fund";
+    // Instrument classification is captured at research time. Do not infer it
+    // here for historical observations: the journal must show what the run knew.
+    const observedInstrument = obs.features?.instrument;
+    const instrument = observedInstrument
+      && typeof observedInstrument === "object"
+      && typeof observedInstrument.kind === "string"
+      ? {
+        kind: observedInstrument.kind,
+        source: typeof observedInstrument.source === "string" ? observedInstrument.source : null,
+        confidence: typeof observedInstrument.confidence === "string" ? observedInstrument.confidence : null,
+        reviewStatus: typeof observedInstrument.review_status === "string" ? observedInstrument.review_status : null,
+        newEntryAllowed: observedInstrument.new_entry_allowed === true,
+      }
+      : null;
     const weighting = obs.features?.weighting ?? {};
     const quality = obs.features?.quality ?? {};
     const rationale = signal?.rationale ?? packet?.summary ?? null;
@@ -433,6 +447,11 @@ export async function GET(req: NextRequest) {
       weighting, dimensions, missing_inputs: missingInputs, weak_dimensions: weakDimensions,
       identity: {
         asset_type: assetType, asset_label: assetLabel(assetType), is_fund: isFund,
+        instrument_kind: instrument?.kind ?? null,
+        classification_source: instrument?.source ?? null,
+        classification_confidence: instrument?.confidence ?? null,
+        review_status: instrument?.reviewStatus ?? null,
+        new_entry_allowed: instrument?.newEntryAllowed ?? null,
         description: isFund ? "Fund exposure; issuer profile and holdings were not stored with this historical decision."
           : dimensions.fundamental.evidence?.sector ? `${assetLabel(assetType)} in the ${dimensions.fundamental.evidence.sector} sector.`
           : `${assetLabel(assetType)}; business description was not stored with this historical decision.`,

@@ -172,6 +172,7 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
                     <span style={{ fontFamily: "Georgia, serif", fontSize: "20px", fontWeight: 700 }}>{open ? "▾" : "▸"} {s.symbol}</span>
                     {scope === "all" && <span style={{ color: T.textSub, fontSize: "10px", border: `1px solid ${T.border}`, padding: "3px 7px", borderRadius: "999px" }}>{s.observed_date}</span>}
                     <span style={{ color: T.muted, fontSize: "10px", border: `1px solid ${T.border}`, padding: "3px 7px", borderRadius: "999px" }}>{s.identity.asset_label}</span>
+                    {s.identity.instrument_kind && <span title={`Observed classification (${s.identity.classification_source ?? "unknown source"}); it does not change scoring or trading.`} style={{ color: T.blue, fontSize: "10px", border: `1px solid ${T.blue}`, padding: "3px 7px", borderRadius: "999px" }}>{titleCase(s.identity.instrument_kind)} · observe</span>}
                     <span style={{ color: s.history.state === "new" ? T.blue : s.history.state === "holding" ? T.green : T.muted, fontSize: "10px", border: `1px solid currentColor`, padding: "3px 7px", borderRadius: "999px" }}>{titleCase(s.history.state)}</span>
                   </div>
                   <div style={{ marginTop: "7px", color: ac, fontWeight: 800, fontSize: "13px", letterSpacing: ".04em" }}>{s.novice.action}</div>
