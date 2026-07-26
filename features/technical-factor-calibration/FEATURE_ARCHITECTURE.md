@@ -43,8 +43,15 @@ Reuse the existing measure-only Edge lab:
 - `edge_market_status`: advisory market-level lifecycle only.
 
 This feature creates no parallel truth layer and makes no provider call per added
-factor. EdgeScout resolves a symbol's candle history once and evaluates every factor
-over that same snapshot.
+factor. EdgeScout resolves a symbol's candle history once per run and evaluates every factor
+over the same logical `asOf` slice.
+
+**Current PIT limit:** the run stores a dataset fingerprint, but its candle inputs are
+retrieved from current providers. Slicing them to `asOf` prevents direct future-bar
+look-ahead; it does not prove that historical bars were not restated after `asOf`.
+Therefore this evidence is retrospective/measure-only today and must not be labeled
+PIT-safe or satisfy a future promotion gate until a Kairos-owned immutable daily
+candle-vintage archive is available.
 
 ## 4. Recalibration And Memory
 
@@ -117,6 +124,7 @@ paper validation, and owner approval.
 - Added factors trigger no additional provider request within a run.
 - Formula, as-of slicing, market isolation, segment isolation, and thin-sample tests pass.
 - Every persisted report names the benchmark source and per-provider symbol counts.
+- Current-provider historical-candle evidence is labeled retrospective, not PIT-safe.
 - TypeScript, Vitest, production build, migration verification, and security checks pass.
 
 ## 9. Build Order

@@ -92,6 +92,11 @@ LearnerAgent runs but only writes a "mutation blocked: insufficient trades" note
 `learning_log`. Phase 1 (mutation unlocked) requires the owner to verify the trade set and
 acknowledge the gate has been cleared.
 
+**Run-accounting convention:** A LearnerAgent run may reconcile dangling orphan trade rows as
+maintenance. Its run summary reports that count separately from the market-local total
+closed-trade corpus (`Reconciled … | Total closed: …`); zero reconciliations never means zero
+learning data.
+
 ### OPEN ITEM (2026-07-16): India macro contamination in the historical trade set — NOT yet remediated
 
 Until 2026-07-16, India signals were scored with the **US** macro regime (`macro_regime` has no

@@ -69,6 +69,22 @@ At least four independent validation windows exist and all of these gates pass:
 This remains a review milestone. It never changes an Edge lifecycle state and never
 grants production, paper, or live trading permission.
 
+### 3.5 FDR Contract Before Any Validation Row Can Qualify
+
+`pit_walk_forward_cost_adjusted_fdr` is not a label a route may set by convention.
+Before the first row claims that evidence quality, the validation design must specify
+and persist: the complete predeclared trial family (factor formula/version, market,
+horizon, segment, and parameter variants), the family size, raw p-value, and the
+Benjamini-Hochberg procedure at `q = 0.05`. The correction is applied independently
+per market and validation family; US and India are never pooled. Missing/non-finite
+p-values, an unknown family size, or a changed family definition fail closed and keep
+the row below the validation milestone.
+
+The current EdgeIC implementation does **not** yet supply this contract or immutable
+candle vintages. Consequently no current row may claim
+`pit_walk_forward_cost_adjusted_fdr`, and the monitor may report only collection or
+historical-stability progress until a separate approved validation-layer build.
+
 ## 4. Data Model
 
 `edge_readiness_status` is a latest-state projection keyed by

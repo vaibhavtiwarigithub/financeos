@@ -9,6 +9,7 @@ import { validateFeatureInputs } from "@/lib/validation/feature-compiler";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { applyLearningTaintFilter } from "@/lib/learning/taint-filter";
+import { formatLearnerRunSummary } from "@/lib/learning/run-summary";
 import { runAutomatedValidation } from "@/lib/validation/automation";
 import { fetchIndiaQuote } from "@/lib/india-data";
 
@@ -154,13 +155,13 @@ export async function POST(req: NextRequest) {
     const [
       { data: agentCfg },
       { data: existingRun },
-      { count: totalClosedTrades },
+      { data: closedTradeOutcomes, count: totalClosedTrades },
       { data: learnerConfig },
       { data: recentRuns },
     ] = await Promise.all([
       svc.from("agent_config").select("model, enabled").eq("agent_name", "learner").single(),
       svc.from("learner_runs").select("id").eq("run_date", new Date().toISOString().slice(0, 10)).eq("market", LEARN_MARKET).maybeSingle(),
-      scopeMkt(svc.from("paper_trades").select("*", { count: "exact", head: true }).not("closed_at", "is", null)),
+      scopeMkt(svc.from("paper_trades").select("outcome", { count: "exact" }).not("closed_at", "is", null)),
       svc.from("learner_config").select("*"),
       svc.from("learner_runs").select("win_rate_snapshot, mutations_paused, run_date").eq("market", LEARN_MARKET).order("run_date", { ascending: false }).limit(5),
     ]);
@@ -845,11 +846,16 @@ REASONING APPROACH:
       }
     }
 
-    const wins = outcomes.filter(o => o.outcome === "win").length;
-    const losses = outcomes.filter(o => o.outcome === "loss").length;
+    // `outcomes` contains only orphan rows reconciled during this run. Keep that
+    // operational count distinct from the market-local learning corpus so run
+    // history cannot imply there are no closed trades available to learn from.
+    const reconciledWins = outcomes.filter(o => o.outcome === "win").length;
+    const reconciledLosses = outcomes.filter(o => o.outcome === "loss").length;
+    const totalWins = (closedTradeOutcomes ?? []).filter((trade: any) => trade.outcome === "win").length;
+    const totalLosses = (closedTradeOutcomes ?? []).filter((trade: any) => trade.outcome === "loss").length;
 
     await svc.from("learning_log").insert({
-      note: `Run ${today}: closed ${outcomes.length} trades (${wins}W/${losses}L). ${priceFailures.length} price failures. ${positionReassessments.length} reassessments. Agent: ${learnerResult ? `${learnerResult.steps} steps, ${learnerResult.hypotheses?.length ?? 0} hypotheses, ${learnerResult.weightMutations?.length ?? 0} mutations${autoGuardTripped ? " [AUTO-GUARD ACTIVE]" : ""}` : "skipped (already ran today or disabled)"}.`,
+      note: `Run ${today}: reconciled ${outcomes.length} orphan trades (${reconciledWins}W/${reconciledLosses}L); total closed ${totalClosedTrades ?? 0} (${totalWins}W/${totalLosses}L). ${priceFailures.length} price failures. ${positionReassessments.length} reassessments. Agent: ${learnerResult ? `${learnerResult.steps} steps, ${learnerResult.hypotheses?.length ?? 0} hypotheses, ${learnerResult.weightMutations?.length ?? 0} mutations${autoGuardTripped ? " [AUTO-GUARD ACTIVE]" : ""}` : "skipped (already ran today or disabled)"}.`,
       weight_snapshot: null,
       trades_evaluated: outcomes.length,
     });
@@ -859,7 +865,14 @@ REASONING APPROACH:
         status: "done",
         symbols: outcomes.map(o => o.symbol),
         signals_written: outcomes.length,
-        result_summary: `Closed ${outcomes.length} trades: ${wins}W/${losses}L. ${learnerResult?.hypotheses?.length ?? 0} hypotheses, ${learnerResult?.weightMutations?.length ?? 0} mutations.`,
+        result_summary: formatLearnerRunSummary({
+          reconciled: outcomes.length,
+          reconciledWins,
+          reconciledLosses,
+          totalClosed: totalClosedTrades ?? 0,
+          totalWins,
+          totalLosses,
+        }, learnerResult?.hypotheses?.length ?? 0, learnerResult?.weightMutations?.length ?? 0),
         completed_at: new Date().toISOString(),
         tokens_input: learnerResult?.tokensIn ?? 0,
         tokens_output: learnerResult?.tokensOut ?? 0,
