@@ -9,19 +9,50 @@ import { fetchIndiaEarningsDate } from "@/lib/india-data";
 //
 // US: Finnhub earnings calendar (free, verified). India: Yahoo calendarEvents.
 
-function daysFromToday(isoDate: string): number | null {
-  const d = new Date(isoDate + "T00:00:00Z").getTime();
-  if (!Number.isFinite(d)) return null;
-  const today = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
-  return Math.round((d - today) / 86400000);
+function marketTodayUtc(india: boolean): number {
+  return marketDayUtc(new Date(), india);
 }
 
-export async function fetchDaysToEarnings(symbol: string, india: boolean, preferredDate?: string): Promise<number | null> {
+function marketDayUtc(date: Date, india: boolean): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: india ? "Asia/Kolkata" : "America/New_York",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(date);
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  return Date.UTC(get("year"), get("month") - 1, get("day"));
+}
+
+export function daysFromToday(value: unknown, india = false): number | null {
+  let time: number;
+  let isMarketLocalDate = false;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    time = value < 100_000_000_000 ? value * 1000 : value;
+  } else if (typeof value === "string") {
+    const date = value.trim();
+    const isoDay = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+    const usDay = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(date);
+    if (isoDay) {
+      time = Date.UTC(Number(isoDay[1]), Number(isoDay[2]) - 1, Number(isoDay[3]));
+      isMarketLocalDate = true;
+    } else if (usDay) {
+      time = Date.UTC(Number(usDay[3]), Number(usDay[1]) - 1, Number(usDay[2]));
+      isMarketLocalDate = true;
+    }
+    else time = Date.parse(date);
+  } else return null;
+  if (!Number.isFinite(time)) return null;
+  // An earnings event is a market-session date, not a UTC-duration countdown.
+  // Normalize timestamps into the book's local market day before subtracting.
+  const eventDay = isMarketLocalDate ? time : marketDayUtc(new Date(time), india);
+  return Math.round((eventDay - marketTodayUtc(india)) / 86400000);
+}
+
+export async function fetchDaysToEarnings(symbol: string, india: boolean, preferredDate?: string | number): Promise<number | null> {
   try {
-    if (!india && preferredDate) return daysFromToday(preferredDate);
+    if (!india && preferredDate != null) return daysFromToday(preferredDate, false);
     if (india) {
       const dt = await fetchIndiaEarningsDate(symbol).catch(() => null);
-      return dt ? daysFromToday(String(dt).slice(0, 10)) : null;
+      return dt ? daysFromToday(dt, true) : null;
     }
     const key = process.env.FINNHUB_API_KEY ?? "";
     if (!key) return null;
@@ -35,6 +66,6 @@ export async function fetchDaysToEarnings(symbol: string, india: boolean, prefer
     });
     const rows: any[] = json?.earningsCalendar ?? [];
     const next = rows.map((r) => r.date).filter(Boolean).sort()[0];
-    return next ? daysFromToday(String(next).slice(0, 10)) : null;
+    return next ? daysFromToday(next, false) : null;
   } catch { return null; }
 }

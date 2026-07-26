@@ -35,6 +35,12 @@ const WEBULL_CATEGORY = "US_STOCK";
 // run, and this keeps Webull off the AV/provider daily budget entirely.
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h — analyst/fundamentals move slowly
 const cache = new Map<string, { at: number; value: any }>();
+// MCP sessions are scoped to a warm serverless instance. Reuse one briefly so
+// a research run does not cold-initialize a session for every symbol.
+const SESSION_TTL_MS = 5 * 60 * 1000;
+type WebullSession = { token: string; sessionId?: string };
+let activeSession: { at: number; value: WebullSession } | null = null;
+let openingSession: Promise<WebullSession | null> | null = null;
 
 function cacheGet<T>(key: string): T | undefined {
   const hit = cache.get(key);
@@ -92,8 +98,12 @@ function unwrapRecord(result: any): any | null {
 // ── session + tool-call plumbing (read-only) ────────────────────────────────
 // Open one MCP session and reuse it across the small number of tool calls a
 // single analyst/financials fetch needs. Fail-soft: any error → null.
-async function openWebull(): Promise<{ token: string; sessionId?: string } | null> {
-  try {
+async function openWebull(): Promise<WebullSession | null> {
+  if (activeSession && Date.now() - activeSession.at < SESSION_TTL_MS) return activeSession.value;
+  if (openingSession) return openingSession;
+
+  openingSession = (async () => {
+    try {
     const svc = createServiceClient();
     const tk = await getValidAccessToken(svc, CFG);
     if (!tk.ok || !tk.token) return null; // not connected / expired → silent
@@ -104,9 +114,17 @@ async function openWebull(): Promise<{ token: string; sessionId?: string } | nul
     });
     if (!init.ok) return null;
     await mcpRpc(CFG, tk.token, "notifications/initialized", undefined, init.sessionId, true).catch(() => {});
-    return { token: tk.token, sessionId: init.sessionId };
+    const session = { token: tk.token, sessionId: init.sessionId };
+    activeSession = { at: Date.now(), value: session };
+    return session;
   } catch {
     return null;
+    }
+  })();
+  try {
+    return await openingSession;
+  } finally {
+    openingSession = null;
   }
 }
 
@@ -382,18 +400,33 @@ export interface WebullExtended {
   balanceSheet: WebullBalanceSheet | null;
 }
 
-function parseCapitalFlow(raw: any): WebullCapitalFlow | null {
+export function parseCapitalFlow(raw: any): WebullCapitalFlow | null {
   const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : null;
   if (!arr || arr.length === 0) return null;
-  const days = arr.map((d: any) => ({
-    date: String(d.date ?? ""),
-    largeNet: (Number(d.large_in) || 0) - (Number(d.large_out) || 0),
-    mediumNet: (Number(d.medium_in) || 0) - (Number(d.medium_out) || 0),
-    smallNet: (Number(d.small_in) || 0) - (Number(d.small_out) || 0),
-  }));
-  const largNet5d = days.reduce((s: number, d: { date: string; largeNet: number; mediumNet: number; smallNet: number }) => s + d.largeNet, 0);
+  // Missing flow legs are unavailable, not zero. Otherwise a partial payload
+  // could fabricate a directional smart-money observation.
+  const days: Array<{ date: string; largeNet: number; mediumNet: number; smallNet: number } | null> = arr.slice(0, 5).map((d: any) => {
+    const largeIn = Number(d?.large_in);
+    const largeOut = Number(d?.large_out);
+    const mediumIn = Number(d?.medium_in);
+    const mediumOut = Number(d?.medium_out);
+    const smallIn = Number(d?.small_in);
+    const smallOut = Number(d?.small_out);
+    if (!String(d?.date ?? "").trim() ||
+        [d?.large_in, d?.large_out, d?.medium_in, d?.medium_out, d?.small_in, d?.small_out].some((value) => value == null) ||
+        ![largeIn, largeOut, mediumIn, mediumOut, smallIn, smallOut].every(Number.isFinite)) return null;
+    return {
+      date: String(d.date),
+      largeNet: largeIn - largeOut,
+      mediumNet: mediumIn - mediumOut,
+      smallNet: smallIn - smallOut,
+    };
+  });
+  if (days.some((day) => day == null)) return null;
+  const completeDays = days as Array<{ date: string; largeNet: number; mediumNet: number; smallNet: number }>;
+  const largNet5d = completeDays.reduce((s, d) => s + d.largeNet, 0);
   return {
-    days,
+    days: completeDays,
     largNet5d,
     signal: largNet5d > 0 ? "bullish" : largNet5d < 0 ? "bearish" : "neutral",
   };
