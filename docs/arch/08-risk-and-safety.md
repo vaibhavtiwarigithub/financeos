@@ -694,3 +694,5 @@ with a hard max-loss bound), the minimum ratchet step/cadence, and the build
 sequence (Kite-first vs Webull-first). Then apply the migration, wire the plan to a
 reviewed live path, flip `protective_orders_enabled` to true, and run a single
 owner-approved small live test per market.
+
+**Order-maintenance and ETF-cap correction (2026-07-26):** A stale US-order cancel ACK is not a cancellation record. It becomes `unknown_needs_reconcile`; only a later read-only broker observation may set terminal state. The maintenance cron skips closed US sessions, bounds outbound cancellation and reconciliation to one item each, and the Trading dashboard offers an owner-triggered read-only refresh. A confirmed fill writes `filled_qty`, `avg_fill_price`, terminal time, and its proposal result without overwriting requested quantity. ETF allocation now fails closed on unavailable configuration, stale or unpriceable current marks, stale live snapshots, invalid NAV, or missing order price; it uses current marks, not cost basis. India remains outside the US ETF sleeve and SELLs bypass it.

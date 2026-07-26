@@ -9,7 +9,7 @@ export const KNOWN_US_ETFS = new Set([
   "SQQQ","SOXS","SPXS","SPDN","FAZ","SIJ","DRV","GLL","SDOW","FNGD","LABD","HIBS","MSTZ","NVDD",
   "USO","GLD","SLV","UNG","PDBC","IAU","GDX","GDXJ",
   "TLT","SHY","IEF","HYG","LQD","BND","AGG","GOVT",
-  "IBIT","BITO","GBTC",
+  "IBIT","BITO","GBTC","MAGS","CONY","MSFO",
   "INDA","EPI","INDY","EUAD","FEZ","VGK","EWG","EWL","EWU","EWQ","DXJ","EWJ","EWT","EWY","EWH","FXI","ASHR","EMXC",
   "VT","ACWI","EFA",
 ]);

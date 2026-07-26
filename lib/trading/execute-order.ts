@@ -27,10 +27,55 @@ const DEFAULT_NOTIONAL_FRAC = 0.15;
 // price the proposal was approved at (matches trader/route.ts's approval gate).
 const MAX_PRICE_DRIFT = 0.03;
 const SYMBOL_RE = /^[A-Z.\-]{1,10}$/;
+const PAPER_POSITION_PRICE_MAX_AGE_MS = 36 * 60 * 60 * 1000;
+const LIVE_SNAPSHOT_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 // Adapter id → the brokerage key used in the broker_accounts allowlist.
 function allowlistBrokerKey(brokerId: string): string {
   return brokerId === "robinhood_mcp" ? "robinhood" : brokerId;
+}
+
+type FundClassification = { ok: true; isFund: boolean } | { ok: false; error: string };
+
+// Static symbols cover established funds, while ResearchAgent's persisted asset
+// class covers newer symbols. Unknown is intentionally a refusal for a BUY: an
+// allocation safety gate cannot safely assume an unknown instrument is equity.
+async function classifyUsFund(svc: any, symbol: string): Promise<FundClassification> {
+  if (isEtfSymbol(symbol)) return { ok: true, isFund: true };
+  try {
+    const { data, error } = await svc.from("agent_signals")
+      .select("asset_class")
+      .eq("market", "us")
+      .eq("symbol", symbol)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) return { ok: false, error: `asset classification read failed: ${error.message}` };
+    const assetClass = String((data as any)?.asset_class ?? "");
+    if (assetClass === "etf" || assetClass === "metal") return { ok: true, isFund: true };
+    if (assetClass === "us_equity") return { ok: true, isFund: false };
+    return { ok: false, error: `asset class for ${symbol} is unknown; refresh research before buying` };
+  } catch (e) {
+    return { ok: false, error: `asset classification error: ${String(e)}` };
+  }
+}
+
+async function fundValueFromPositions(svc: any, positions: any[]): Promise<{ ok: true; value: number } | { ok: false; error: string }> {
+  let value = 0;
+  for (const position of positions) {
+    const symbol = String(position?.symbol ?? position?.ticker ?? "").trim().toUpperCase();
+    if (!symbol) return { ok: false, error: "position without a symbol prevents ETF allocation validation" };
+    const classification = await classifyUsFund(svc, symbol);
+    if (!classification.ok) return classification;
+    if (!classification.isFund) continue;
+    const qty = Number(position?.qty);
+    const price = Number(position?.current_price);
+    if (!Number.isFinite(qty) || qty < 0 || !Number.isFinite(price) || price <= 0) {
+      return { ok: false, error: `unpriceable fund position ${symbol} prevents ETF allocation validation` };
+    }
+    value += qty * price;
+  }
+  return { ok: true, value };
 }
 
 // Resolve the live trading account for a market from the broker_accounts
@@ -158,41 +203,47 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
   // ponytail: fail-open on any DB error — cap check is advisory, not safety-critical
   if (side === "buy" && market === "us" && isEtfSymbol(symbol)) {
     try {
-      const { data: capCfg } = await supabase.from("strategy_config")
+      const { data: capCfg, error: capError } = await supabase.from("strategy_config")
         .select("etf_allocation_cap_pct").limit(1).maybeSingle();
+      if (capError) return { ok: false, status: 503, error: `ETF allocation cap configuration unavailable: ${capError.message}` };
       const cap = capCfg?.etf_allocation_cap_pct != null ? Number(capCfg.etf_allocation_cap_pct) : 30;
-      if (Number.isFinite(cap) && cap >= 0) {
+      if (!Number.isFinite(cap) || cap < 0 || cap > 100) {
+        return { ok: false, status: 503, error: "ETF allocation cap configuration is invalid" };
+      }
         let nav: number | null = null;
-        let etfValue = 0;
+        let positions: any[] = [];
         if (orderEnv === "paper") {
           const [portRes, posRes] = await Promise.all([
             supabase.from("paper_portfolio").select("nav").eq("market", market).maybeSingle(),
-            supabase.from("paper_positions").select("symbol, qty, avg_cost").eq("market", market),
+            supabase.from("paper_positions").select("symbol, qty, current_price, updated_at").eq("market", market),
           ]);
+          if (portRes.error || posRes.error) return { ok: false, status: 503, error: "ETF allocation inputs are unavailable" };
+          const stale = (posRes.data ?? []).some((p: any) => !p.updated_at || Date.now() - Date.parse(p.updated_at) > PAPER_POSITION_PRICE_MAX_AGE_MS);
+          if (stale) return { ok: false, status: 503, error: "ETF allocation inputs are stale; refresh paper prices before buying" };
           nav = portRes.data?.nav != null ? Number(portRes.data.nav) : null;
-          etfValue = ((posRes.data ?? []) as any[])
-            .filter((p: any) => isEtfSymbol(String(p.symbol ?? "")))
-            .reduce((s: number, p: any) => s + Number(p.qty) * Number(p.avg_cost), 0);
+          positions = posRes.data ?? [];
         } else {
-          const { data: snap } = await supabase.from("live_account_snapshots")
-            .select("equity, positions_json").order("captured_at", { ascending: false }).limit(1).maybeSingle();
+          const { data: snap, error: snapError } = await supabase.from("live_account_snapshots")
+            .select("equity, positions_json, captured_at").order("captured_at", { ascending: false }).limit(1).maybeSingle();
+          if (snapError || !snap?.captured_at || Date.now() - Date.parse(snap.captured_at) > LIVE_SNAPSHOT_MAX_AGE_MS) {
+            return { ok: false, status: 503, error: "ETF allocation inputs are stale; refresh the live account before buying" };
+          }
           nav = snap?.equity != null ? Number(snap.equity) : null;
-          etfValue = ((snap?.positions_json as any[]) ?? [])
-            .filter((p: any) => isEtfSymbol(String(p?.symbol ?? p?.ticker ?? "")))
-            .reduce((s: number, p: any) => s + Number(p?.qty ?? 0) * Number(p?.current_price ?? p?.avg_cost ?? 0), 0);
+          positions = Array.isArray(snap?.positions_json) ? snap.positions_json : [];
         }
-        if (nav != null && Number.isFinite(nav) && nav > 0) {
+        if (!Number.isFinite(nav) || (nav as number) <= 0) return { ok: false, status: 503, error: "ETF allocation NAV is unavailable" };
+        const currentFundValue = await fundValueFromPositions(supabase, positions);
+        if (!currentFundValue.ok) return { ok: false, status: 503, error: `ETF allocation check: ${currentFundValue.error}` };
           const approxPrice = Number((proposal as any).price_at_proposal ?? (proposal as any).limit_price ?? 0);
-          const orderNotional = approxPrice > 0 ? qty * approxPrice : 0;
-          const currentEtfPct = (etfValue / nav) * 100;
-          const projectedPct = currentEtfPct + (orderNotional / nav) * 100;
+        if (!Number.isFinite(approxPrice) || approxPrice <= 0) return { ok: false, status: 503, error: "ETF allocation order price is unavailable" };
+          const orderNotional = qty * approxPrice;
+          const currentEtfPct = (currentFundValue.value / (nav as number)) * 100;
+          const projectedPct = currentEtfPct + (orderNotional / (nav as number)) * 100;
           if (projectedPct > cap) {
             return { ok: false, status: 403, error: `ETF allocation cap: would exceed ${cap}% of portfolio NAV (currently at ${currentEtfPct.toFixed(1)}%, this order would bring it to ${projectedPct.toFixed(1)}%)` };
           }
-        }
-      }
     } catch (e) {
-      console.warn("[execute-order] ETF allocation cap check failed (fail-open):", String(e));
+      return { ok: false, status: 503, error: `ETF allocation check failed: ${String(e)}` };
     }
   }
 
