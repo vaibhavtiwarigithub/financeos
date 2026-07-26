@@ -13,6 +13,7 @@ import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type Tr
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { paperPerformanceTruth } from "@/lib/paper-nav";
 import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
+import { paperPartialTargetQuantity } from "@/lib/trading/paper-quantity";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -411,8 +412,8 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     } else if (pos.position_role !== "hedge" && priceTarget && currentPrice >= priceTarget) {
       // Partial profit-taking: close half at target, move stop to breakeven on remainder.
       // Only split if qty >= 2 — a single share must fully close.
-      const halfQty = Math.floor(pos.qty / 2);
-      if (halfQty >= 1) {
+      const halfQty = paperPartialTargetQuantity(market as "us" | "india", pos.qty);
+      if (halfQty != null) {
         await closePosition(pos, currentPrice, "partial_target", "win", halfQty, Number(pos.avg_cost));
         continue;
       }

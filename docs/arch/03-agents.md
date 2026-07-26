@@ -473,7 +473,8 @@ Until 2026-07-22 the evaluator was reachable **only** from the `insufficient_cas
    - **Time stop:** age from `paper_positions.opened_at` > holding horizon → close. The per-market Trading Mandate is authoritative unless its governance explicitly permits a promoted champion horizon within the mandate bounds.
    - **Trailing stop:** `stop_loss = max(original_stop, highest_price × 0.93)` → close if breached
    - **Price target:** at target price → **partial profit-taking** (sell half, move stop to
-     breakeven on remainder; full close only when qty < 2)
+     breakeven on remainder; US paper uses six-decimal fractional quantity, India remains
+     whole-share; full close only when no valid partial leg remains)
    - **Score exit (immediate):** a fresh same-market `deterministic_v1` score below the exit threshold with direction still long closes the position at once. The score must be no older than `trading_mandates.max_signal_age_sessions` (default 2). A stale/unavailable score can never close a position; price, stop, target, time-stop, and hedge exits remain active. Legacy score flags are revalidated and cleared when stale or no longer below the exit threshold.
    - **Direction-flip exit (debounced):** a held-long position whose fresh signal flips to `short` below exit is NOT sold on the first session. It **arms** (staged in `paper_positions.exit_reason` as `direction_flip_armed:<session>`) and only **confirms** the exit once a strictly newer research session still flips; a one-session wobble disarms and the position is held. A flip on a position held fewer than `MIN_FLIP_HOLD_DAYS` (2) market days is ignored. Pure logic in `lib/trading/direction-flip.ts`. This debounce was added 2026-07-24 after 13/22 closed paper trades exited on same-week flips (min 1.3 days held).
 4. **NAV drawdown circuit breaker:** if weekly NAV return < -5%, set

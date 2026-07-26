@@ -21,6 +21,7 @@ import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
 import { paperPerformanceTruth } from "@/lib/paper-nav";
 import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 import { isMarketSessionOpen } from "@/lib/trading/market-calendar";
+import { paperEntryQuantity } from "@/lib/trading/paper-quantity";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -620,11 +621,12 @@ export async function POST(req: NextRequest) {
       // paper notional cap (scaled to paper NAV) so an outlier can't exceed it.
       const perTradeCapPaper = market === "india" ? perTradeCapInrPaper : perTradeCapUsdPaper;
       const maxSpend = Math.min(portfolio.cash_balance * (sizedPct / 100), perTradeCapPaper != null ? Number(perTradeCapPaper) : Infinity);
-      const qty = Math.floor(maxSpend / fillPrice);
-      if (!Number.isFinite(fillPrice) || fillPrice <= 0 || !Number.isFinite(maxSpend) || !Number.isFinite(qty) || qty < 1) {
+      const qty = paperEntryQuantity(market as "us" | "india", maxSpend, fillPrice);
+      if (qty == null) {
         await revertClaim(signal.id);
-        skipped.push({ symbol: signal.symbol, reason: "insufficient_cash_for_1_share" });
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "insufficient_cash_for_1_share", detail: { maxSpend, fillPrice } });
+        const reason = market === "us" ? "insufficient_cash_for_fractional_share" : "insufficient_cash_for_1_share";
+        skipped.push({ symbol: signal.symbol, reason });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason, detail: { maxSpend, fillPrice } });
         continue;
       }
       const totalCost = qty * fillPrice;
