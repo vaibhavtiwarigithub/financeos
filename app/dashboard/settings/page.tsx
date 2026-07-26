@@ -178,6 +178,7 @@ export default function SettingsPage() {
   const [positionSizePct, setPositionSizePct] = useState(10);
   const [stopLossPct, setStopLossPct] = useState(7);
   const [targetPct, setTargetPct] = useState(20);
+  const [etfCapPct, setEtfCapPct] = useState<string>("30");
   const [savingRisk, setSavingRisk] = useState(false);
 
   // Trading Style state (holding-horizon preset — Swing / Position / Long-term)
@@ -305,6 +306,7 @@ export default function SettingsPage() {
         if (d.max_order_notional_inr_paper != null) setPaperInr(String(d.max_order_notional_inr_paper));
         if (d.max_daily_notional_usd_paper != null) setDailyPaperUsd(String(d.max_daily_notional_usd_paper));
         if (d.max_daily_notional_inr_paper != null) setDailyPaperInr(String(d.max_daily_notional_inr_paper));
+        if (d.etf_allocation_cap_pct != null) setEtfCapPct(String(d.etf_allocation_cap_pct));
       })
       .catch(() => {});
 
@@ -540,10 +542,11 @@ export default function SettingsPage() {
   async function saveRiskProfile() {
     setSavingRisk(true);
     try {
+      const etfCap = etfCapPct.trim() === "" ? null : Number(etfCapPct);
       await fetch("/api/settings/risk-profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ risk_profile: riskProfile, score_threshold: scoreThreshold, position_size_pct: positionSizePct, stop_loss_pct: stopLossPct, target_pct: targetPct }),
+        body: JSON.stringify({ risk_profile: riskProfile, score_threshold: scoreThreshold, position_size_pct: positionSizePct, stop_loss_pct: stopLossPct, target_pct: targetPct, etf_allocation_cap_pct: etfCap }),
       });
       setToast("Risk profile saved!");
       setTimeout(() => setToast(""), 2500);
@@ -1286,6 +1289,30 @@ export default function SettingsPage() {
             >
               {savingRisk ? "Saving..." : "Save Profile"}
             </button>
+
+            {/* ETF Allocation Cap — US-only soft guardrail enforced at the execution gateway */}
+            <div style={{ borderTop: `1px solid ${T.border}`, marginTop: "20px", paddingTop: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", flexWrap: "wrap" as const }}>
+                <div style={{ flex: "1 1 200px" }}>
+                  <div style={{ fontSize: "13px", color: T.textSub, fontWeight: 600, marginBottom: "4px" }}>ETF Allocation Cap</div>
+                  <div style={{ fontSize: "11px", color: T.muted, lineHeight: 1.5 }}>
+                    US market only. BUY orders that would push ETF holdings above this % of portfolio NAV are refused at the gateway. SELL always allowed. Leveraged/inverse ETFs are blocked separately.
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={etfCapPct}
+                    onChange={e => setEtfCapPct(e.target.value)}
+                    style={numInp}
+                  />
+                  <span style={{ fontSize: "12px", color: T.muted }}>% of portfolio</span>
+                </div>
+              </div>
+            </div>
 
             {/* Time-bound posture (Part B) — applies a profile with an expiry, auto-reverts */}
             {!posture && (

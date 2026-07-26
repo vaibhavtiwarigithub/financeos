@@ -17,6 +17,7 @@ import { getKiteHoldings } from "@/lib/kite";
 import { reportIssue } from "@/lib/system-health";
 import { liveOrdersAllowed, autonomousWorkerAllowed } from "@/lib/autonomy";
 import { isSymbolBlocked } from "@/lib/trading/symbol-policy";
+import { isEtfSymbol } from "@/lib/asset-classification";
 import { isTradingEnabled } from "@/lib/market-controls";
 
 // Fraction of live equity used as the default per-order notional ceiling when
@@ -149,6 +150,50 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
   if (side === "buy") {
     const pol = await isSymbolBlocked(supabase, symbol, market, { failClosed: true });
     if (pol.blocked) return { ok: false, status: 403, error: `Refusing BUY of ${symbol}: ${pol.reason}` };
+  }
+
+  // ETF allocation cap — soft guardrail (fail-open): refuse a BUY if current ETF
+  // allocation + this order would exceed etf_allocation_cap_pct of portfolio NAV.
+  // India market: skip (isEtfSymbol is US-only). SELL always allowed.
+  // ponytail: fail-open on any DB error — cap check is advisory, not safety-critical
+  if (side === "buy" && market === "us" && isEtfSymbol(symbol)) {
+    try {
+      const { data: capCfg } = await supabase.from("strategy_config")
+        .select("etf_allocation_cap_pct").limit(1).maybeSingle();
+      const cap = capCfg?.etf_allocation_cap_pct != null ? Number(capCfg.etf_allocation_cap_pct) : 30;
+      if (Number.isFinite(cap) && cap >= 0) {
+        let nav: number | null = null;
+        let etfValue = 0;
+        if (orderEnv === "paper") {
+          const [portRes, posRes] = await Promise.all([
+            supabase.from("paper_portfolio").select("nav").eq("market", market).maybeSingle(),
+            supabase.from("paper_positions").select("symbol, qty, avg_cost").eq("market", market),
+          ]);
+          nav = portRes.data?.nav != null ? Number(portRes.data.nav) : null;
+          etfValue = ((posRes.data ?? []) as any[])
+            .filter((p: any) => isEtfSymbol(String(p.symbol ?? "")))
+            .reduce((s: number, p: any) => s + Number(p.qty) * Number(p.avg_cost), 0);
+        } else {
+          const { data: snap } = await supabase.from("live_account_snapshots")
+            .select("equity, positions_json").order("captured_at", { ascending: false }).limit(1).maybeSingle();
+          nav = snap?.equity != null ? Number(snap.equity) : null;
+          etfValue = ((snap?.positions_json as any[]) ?? [])
+            .filter((p: any) => isEtfSymbol(String(p?.symbol ?? p?.ticker ?? "")))
+            .reduce((s: number, p: any) => s + Number(p?.qty ?? 0) * Number(p?.current_price ?? p?.avg_cost ?? 0), 0);
+        }
+        if (nav != null && Number.isFinite(nav) && nav > 0) {
+          const approxPrice = Number((proposal as any).price_at_proposal ?? (proposal as any).limit_price ?? 0);
+          const orderNotional = approxPrice > 0 ? qty * approxPrice : 0;
+          const currentEtfPct = (etfValue / nav) * 100;
+          const projectedPct = currentEtfPct + (orderNotional / nav) * 100;
+          if (projectedPct > cap) {
+            return { ok: false, status: 403, error: `ETF allocation cap: would exceed ${cap}% of portfolio NAV (currently at ${currentEtfPct.toFixed(1)}%, this order would bring it to ${projectedPct.toFixed(1)}%)` };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[execute-order] ETF allocation cap check failed (fail-open):", String(e));
+    }
   }
 
   // STRICT broker resolution — never falls back to a default broker on a config read error.
