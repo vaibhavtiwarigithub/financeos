@@ -962,6 +962,20 @@ export async function queryRobinhoodOrder(brokerOrderId: string): Promise<{
   return { ok: true, status, filledQty, avgFillPrice, raw: redact(order) };
 }
 
+// Cancel an open order by broker order id. Same mcpRpc pattern as queryRobinhoodOrder.
+// Race note: Robinhood may fill the order before the cancel reaches it — ok:false with
+// a tool error in that case. The reconcile step handles fill-vs-cancel races.
+export async function cancelRobinhoodOrder(brokerOrderId: string): Promise<{ ok: boolean; error?: string; raw?: any }> {
+  const svc = createServiceClient();
+  const tk = await getValidAccessToken(svc);
+  if (!tk.ok || !tk.token) return { ok: false, error: tk.error ?? "not connected" };
+  const sess = await openSession(tk.token);
+  if (!sess.ok) return { ok: false, error: sess.error };
+  const res = await mcpRpc(tk.token, "tools/call", { name: "cancel_equity_order", arguments: { order_id: brokerOrderId } }, sess.sessionId);
+  if (!res.ok) return { ok: false, error: res.error, raw: redact(res.result) };
+  return { ok: true, raw: redact(res.result) };
+}
+
 // Kill switch: wipe local tokens regardless of remote reachability. (The
 // metadata exposes no revocation_endpoint, so there is no remote revoke to
 // call — Robinhood's own Agentic Trading dashboard is the authoritative revoke.)
