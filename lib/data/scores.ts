@@ -148,13 +148,14 @@ export function scoreFundamentals(overview: Record<string, string>, isEtf: boole
     else score -= 5;
   }
 
-  // Margin trend from RH get_financials (net margin delta last 2 quarters).
+  // Margin trend from RH get_financials (net margin delta last 2 quarters, in pp).
+  // net_margin comes back as a percentage (26.6 = 26.6%), so thresholds are pp.
   const marginTrend = parseFloat(overview.MarginTrend ?? "");
   if (!isNaN(marginTrend)) {
     evidence.margin_trend = marginTrend;
-    if (marginTrend > 0.02) score += 8;
+    if (marginTrend > 1.0) score += 8;
     else if (marginTrend > 0) score += 3;
-    else if (marginTrend < -0.02) score -= 8;
+    else if (marginTrend < -1.0) score -= 8;
     else score -= 3;
   }
 

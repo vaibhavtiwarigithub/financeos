@@ -1001,14 +1001,14 @@ export async function fetchRhFinancialsForSymbol(symbol: string): Promise<{
     }, sess.sessionId);
     if (!res.ok) return null;
     const parsed = mcpToolJson(res.result?.content ?? res.result);
-    // RH returns [{symbol, financials:[{period, revenue, gross_profit, net_income, net_margin}]}]
-    const rows: any[] = parsed?.data?.[0]?.financials
-      ?? parsed?.[0]?.financials
-      ?? parsed?.financials
+    // Shape: { data: { results: [{ symbol, financials: [{ period_end_date, revenue, net_margin, ... }] }] } }
+    // financials is most-recent-first; sort to oldest-first for acceleration math.
+    const rows: any[] = parsed?.data?.results?.[0]?.financials
+      ?? parsed?.results?.[0]?.financials
       ?? [];
     if (rows.length < 3) return null;
     const sorted = [...rows].sort((a, b) =>
-      String(a.period ?? a.date ?? "").localeCompare(String(b.period ?? b.date ?? ""))
+      String(a.period_end_date ?? "").localeCompare(String(b.period_end_date ?? ""))
     );
     const rev = (r: any): number | null => {
       const v = typeof r.revenue === "number" ? r.revenue : parseFloat(r.revenue ?? "");
