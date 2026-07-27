@@ -962,16 +962,22 @@ export async function queryRobinhoodOrder(brokerOrderId: string): Promise<{
   return { ok: true, status, filledQty, avgFillPrice, raw: redact(order) };
 }
 
-// Cancel an open order by broker order id. Same mcpRpc pattern as queryRobinhoodOrder.
+// Cancel an open order by broker order id. Robinhood's MCP tool is account-scoped,
+// so callers must supply the pre-validated trading account. Same mcpRpc pattern as
+// queryRobinhoodOrder.
 // Race note: Robinhood may fill the order before the cancel reaches it — ok:false with
 // a tool error in that case. The reconcile step handles fill-vs-cancel races.
-export async function cancelRobinhoodOrder(brokerOrderId: string): Promise<{ ok: boolean; error?: string; raw?: any }> {
+export async function cancelRobinhoodOrder(brokerOrderId: string, account: string): Promise<{ ok: boolean; error?: string; raw?: any }> {
+  if (!account.trim()) return { ok: false, error: "account_number is required for Robinhood order cancellation" };
   const svc = createServiceClient();
   const tk = await getValidAccessToken(svc);
   if (!tk.ok || !tk.token) return { ok: false, error: tk.error ?? "not connected" };
   const sess = await openSession(tk.token);
   if (!sess.ok) return { ok: false, error: sess.error };
-  const res = await mcpRpc(tk.token, "tools/call", { name: "cancel_equity_order", arguments: { order_id: brokerOrderId } }, sess.sessionId);
+  const res = await mcpRpc(tk.token, "tools/call", {
+    name: "cancel_equity_order",
+    arguments: { order_id: brokerOrderId, account_number: account },
+  }, sess.sessionId);
   if (!res.ok) return { ok: false, error: res.error, raw: redact(res.result) };
   return { ok: true, raw: redact(res.result) };
 }

@@ -57,7 +57,13 @@ export function robinhoodMcpAdapter(): BrokerAdapter {
       if (env !== "live") return { ok: false, error: "Robinhood MCP is live-only (no paper env)" };
       const configured = await hasRobinhoodToken();
       if (!configured) return { ok: false, error: "Robinhood MCP is not connected" };
-      const r = await cancelRobinhoodOrder(brokerOrderId);
+      // Robinhood's cancel tool is account-scoped. Resolve the same allowlisted
+      // account used for submission rather than sending an unscoped cancel or
+      // guessing from a broker-order row that predates account provenance.
+      const svc = createServiceClient();
+      const acct = await resolveTradingAccount(svc);
+      if (!acct.ok) return { ok: false, error: acct.error };
+      const r = await cancelRobinhoodOrder(brokerOrderId, acct.account);
       return { ok: r.ok, error: r.error, raw: r.raw };
     },
   };
