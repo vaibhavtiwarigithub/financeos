@@ -982,6 +982,59 @@ export async function cancelRobinhoodOrder(brokerOrderId: string, account: strin
   return { ok: true, raw: redact(res.result) };
 }
 
+// Quarterly revenue acceleration + margin trend for a US equity via RH get_financials.
+// Opens its own session; always fail-open (returns null on any error). Used by
+// ResearchAgent to enrich fundamental scoring with time-series momentum.
+export async function fetchRhFinancialsForSymbol(symbol: string): Promise<{
+  revenueAccel: number | null;
+  marginTrend: number | null;
+} | null> {
+  try {
+    const svc = createServiceClient();
+    const tk = await getValidAccessToken(svc);
+    if (!tk.ok || !tk.token) return null;
+    const sess = await openSession(tk.token);
+    if (!sess.ok) return null;
+    const res = await mcpRpc(tk.token, "tools/call", {
+      name: "get_financials",
+      arguments: { symbols: [symbol], period: "quarterly" },
+    }, sess.sessionId);
+    if (!res.ok) return null;
+    const parsed = mcpToolJson(res.result?.content ?? res.result);
+    // RH returns [{symbol, financials:[{period, revenue, gross_profit, net_income, net_margin}]}]
+    const rows: any[] = parsed?.data?.[0]?.financials
+      ?? parsed?.[0]?.financials
+      ?? parsed?.financials
+      ?? [];
+    if (rows.length < 3) return null;
+    const sorted = [...rows].sort((a, b) =>
+      String(a.period ?? a.date ?? "").localeCompare(String(b.period ?? b.date ?? ""))
+    );
+    const rev = (r: any): number | null => {
+      const v = typeof r.revenue === "number" ? r.revenue : parseFloat(r.revenue ?? "");
+      return Number.isFinite(v) ? v : null;
+    };
+    const mgn = (r: any): number | null => {
+      const v = typeof r.net_margin === "number" ? r.net_margin : parseFloat(r.net_margin ?? "");
+      return Number.isFinite(v) ? v : null;
+    };
+    const n = sorted.length;
+    const r0 = rev(sorted[n - 3]);
+    const r1 = rev(sorted[n - 2]);
+    const r2 = rev(sorted[n - 1]);
+    let revenueAccel: number | null = null;
+    if (r0 != null && r1 != null && r2 != null && Math.abs(r0) > 0 && Math.abs(r1) > 0) {
+      const g1 = (r1 - r0) / Math.abs(r0);
+      const g2 = (r2 - r1) / Math.abs(r1);
+      revenueAccel = parseFloat((g2 - g1).toFixed(4));
+    }
+    const m1 = mgn(sorted[n - 2]);
+    const m2 = mgn(sorted[n - 1]);
+    const marginTrend = m1 != null && m2 != null ? parseFloat((m2 - m1).toFixed(4)) : null;
+    return { revenueAccel, marginTrend };
+  } catch { return null; }
+}
+
 // Kill switch: wipe local tokens regardless of remote reachability. (The
 // metadata exposes no revocation_endpoint, so there is no remote revoke to
 // call — Robinhood's own Agentic Trading dashboard is the authoritative revoke.)
