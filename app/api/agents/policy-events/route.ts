@@ -176,12 +176,16 @@ export async function POST(req: NextRequest) {
   for (const event of decided) {
     for (const horizon of [1, 5]) {
       const benchmarkWindow = completePostEventWindow(spy, event.actual_effective_date, horizon);
-      if (!benchmarkWindow) continue;
-      const dates = benchmarkWindow.map((row) => row.sessionDate);
-      const benchmarkReturn = compoundReturn(benchmarkWindow);
-      const benchmarkBasis = new Set(benchmarkWindow.map((row) => row.priceBasis));
+      const benchmarkDates = benchmarkWindow?.map((row) => row.sessionDate) ?? null;
+      const benchmarkReturn = benchmarkWindow ? compoundReturn(benchmarkWindow) : null;
+      const benchmarkBasis = new Set(benchmarkWindow?.map((row) => row.priceBasis) ?? []);
       for (const [symbol, symbolRows] of returnsBySymbol) {
-        const window = sameSessions(symbolRows, dates);
+        // A raw post-event move is still useful evidence. It must not disappear
+        // just because the benchmark was never captured. Relative performance is
+        // withheld until the exact same frozen benchmark sessions are available.
+        const window = benchmarkDates
+          ? sameSessions(symbolRows, benchmarkDates)
+          : completePostEventWindow(symbolRows, event.actual_effective_date, horizon);
         if (!window) continue;
         const symbolReturn = compoundReturn(window);
         if (symbolReturn == null) continue;
@@ -193,14 +197,14 @@ export async function POST(req: NextRequest) {
           symbol,
           benchmark_symbol: "SPY",
           horizon_sessions: horizon,
-          first_session_date: dates[0],
-          last_session_date: dates[dates.length - 1],
+          first_session_date: window[0].sessionDate,
+          last_session_date: window[window.length - 1].sessionDate,
           symbol_return_pct: round(symbolReturn * 100),
           benchmark_return_pct: comparable ? round(benchmarkReturn! * 100) : null,
           excess_return_pct: comparable ? round((symbolReturn - benchmarkReturn!) * 100) : null,
           symbol_price_basis: [...symbolBasis][0],
           benchmark_price_basis: comparable ? [...benchmarkBasis][0] : null,
-          source_fingerprint: impactFingerprint({ eventId: event.id, symbol, horizonSessions: horizon, rows: window, benchmarkRows: benchmarkWindow }),
+          source_fingerprint: impactFingerprint({ eventId: event.id, symbol, horizonSessions: horizon, rows: window, benchmarkRows: benchmarkWindow ?? [] }),
           available_at: now.toISOString(),
         });
       }

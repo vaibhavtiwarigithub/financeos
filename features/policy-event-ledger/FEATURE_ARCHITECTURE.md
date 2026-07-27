@@ -30,7 +30,8 @@ a slow US macro regime. This feature is not a score, trade, sizing, or exit inpu
 
 An impact row includes an input fingerprint and its available time. It can be
 recomputed when more frozen daily-return data exists, but it never overwrites a
-previous calculation.
+previous calculation. Raw symbol returns may be recorded without a benchmark;
+SPY-relative excess stays null until identical frozen benchmark sessions exist.
 
 ## Operation
 

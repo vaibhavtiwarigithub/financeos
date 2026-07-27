@@ -67,8 +67,12 @@ export default function PolicyEventLedger() {
       {latest?.impact_summary.map((summary) => <section key={summary.horizon_sessions} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "12px" }}>
         <div style={{ color: T.accent, fontSize: "10px", letterSpacing: "0.08em", textTransform: "uppercase" }}>{summary.horizon_sessions}-session observed impact</div>
         {summary.largest_excess.length === 0
-          ? <div style={{ color: T.muted, fontSize: "11px", marginTop: "8px" }}>{summary.observed_symbols ? `${summary.observed_symbols} symbols captured; no comparable SPY basis.` : "Awaiting frozen daily-return coverage."}</div>
-          : <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginTop: "7px" }}>{summary.largest_excess.map((impact) => <div key={impact.symbol} style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}><span style={{ color: T.text }}>{impact.symbol}</span><span style={{ color: Number(impact.excess_return_pct) >= 0 ? T.green : T.amber }}>{Number(impact.excess_return_pct) >= 0 ? "+" : ""}{Number(impact.excess_return_pct).toFixed(2)}% vs SPY</span></div>)}</div>}
+          ? <div style={{ color: T.muted, fontSize: "11px", marginTop: "8px" }}>Awaiting frozen daily-return coverage.</div>
+          : <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginTop: "7px" }}>{summary.largest_excess.map((impact) => {
+            const relative = impact.excess_return_pct != null;
+            const value = Number(relative ? impact.excess_return_pct : impact.symbol_return_pct);
+            return <div key={impact.symbol} style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}><span style={{ color: T.text }}>{impact.symbol}</span><span style={{ color: value >= 0 ? T.green : T.amber }}>{value >= 0 ? "+" : ""}{value.toFixed(2)}%{relative ? " vs SPY" : " raw"}</span></div>;
+          })}</div>}
       </section>)}
     </div>}
   </div>;

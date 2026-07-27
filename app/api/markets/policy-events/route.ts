@@ -51,8 +51,8 @@ export async function GET() {
     const impacts = impactsByEvent.get(event.id) ?? [];
     const impactSummary = [1, 5].map((horizon) => {
       const candidates = impacts
-        .filter((impact) => impact.horizon_sessions === horizon && impact.excess_return_pct != null)
-        .sort((a, b) => Math.abs(Number(b.excess_return_pct)) - Math.abs(Number(a.excess_return_pct)));
+        .filter((impact) => impact.horizon_sessions === horizon)
+        .sort((a, b) => Math.abs(Number(b.excess_return_pct ?? b.symbol_return_pct)) - Math.abs(Number(a.excess_return_pct ?? a.symbol_return_pct)));
       return {
         horizon_sessions: horizon,
         observed_symbols: impacts.filter((impact) => impact.horizon_sessions === horizon).length,
