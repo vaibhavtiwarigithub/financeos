@@ -1,11 +1,11 @@
 # International Equity Exposure Architecture
 
-> Status: **P0-P1 SHIPPED (read-only). P2-P4 remain unapproved.**
+> Status: **P0-P2A SHIPPED (read-only). P2 comparative study and P3-P4 remain unapproved.**
 > Date: 2026-07-27
-> P0-P1 shipped: current US paper-book visibility plus an append-only VXUS
-> policy, issuer-mandate snapshot, and observation assessment. It has no target,
-> provider runtime, allocation, paper-trading, or live-trading effect. P2-P4
-> require separate approval.
+> P0-P2A shipped: current US paper-book visibility plus an append-only VXUS
+> policy, issuer-mandate snapshot, and weekly operational-shadow assessment. It
+> has no target, provider runtime, allocation, paper-trading, or live-trading
+> effect. Comparative P2 and P3-P4 require separate approval.
 
 ## P0 Implementation (2026-07-27)
 
@@ -33,7 +33,20 @@
   a point-in-time country-weight breakdown.
 - The owner/cron-gated assessment route can append a current US paper-book
   observation only. It calls no provider and cannot generate a candidate,
-  alter allocation, or place an order. P2 scheduling remains unapproved.
+  alter allocation, or place an order. P2A weekly scheduling is now active;
+  comparative P2 remains unapproved.
+
+## P2A Implementation (2026-07-27)
+
+- `kairos-international-allocation-shadow` runs once weekly at Monday 03:30
+  UTC through the existing protected Vercel transport.
+- Each P2A row records a no-action proposal, explicitly null costs/tax drag,
+  source coverage state, snapshot/position fingerprints, and one shadow week.
+  A partial index-mandate snapshot or unset target can only suppress action.
+- This is an operational evidence track for the approved VXUS policy. It does
+  **not** compare no-international, VXUS, and VEA+VWO strategies yet: the latter
+  two require separately approved policies and point-in-time source snapshots.
+  Country satellites remain out of scope.
 
 ## 1. Decision
 

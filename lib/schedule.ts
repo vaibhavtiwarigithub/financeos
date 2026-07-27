@@ -11,7 +11,7 @@
 
 export type Runner = "Supabase pg_cron → Vercel" | "Windows Task Scheduler";
 
-export type ScheduleDays = "Weekdays" | "Friday" | "Daily";
+export type ScheduleDays = "Weekdays" | "Friday" | "Weekly" | "Daily";
 
 export interface ScheduledJob {
   /** Task name as registered under \Kairos in Task Scheduler (e.g. "brief-morning"). */
@@ -43,6 +43,18 @@ export interface ScheduledJob {
  * (summer) — needs a 1h shift when clocks change in November.
  */
 export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
+  {
+    name: "international-allocation-shadow",
+    agent: "international-allocation-shadow",
+    time: "Sunday 10:30 PM CT (Monday 03:30 UTC)",
+    days: "Weekly",
+    runner: "Supabase pg_cron \u2192 Vercel",
+    editable: false,
+    description:
+      "P2A US/USD VXUS allocation shadow: appends one persisted-paper-position assessment with a suppressed no-action while target and band remain unset. No provider, candidate, paper/live execution, broker, or India read.",
+    handoff: "â†’ International Allocation evidence ledger (observation only)",
+    agentRunsType: null,
+  },
   {
     name: "earnings-pit-capture",
     agent: "earnings-pit-capture",

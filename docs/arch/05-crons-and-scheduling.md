@@ -120,6 +120,7 @@ Scheduled inside Supabase via `cron.schedule`, calling the deployed app through 
 | `kairos-edge-scout-india` | Weekdays 11:30 UTC | `POST /api/agents/edge-scout?market=india&maxSymbols=50` | India post-close equivalent. Never cross-sums or updates US lifecycle state. |
 | `kairos-edge-ic-us` / `-india` | Mondays 02:00 / 03:00 UTC | `POST /api/agents/edge-ic?...` | Weekly bounded retrospective IC diagnostic. Explicitly current-universe/survivorship-biased; cannot promote, score, size, or trade. |
 | `kairos-edge-readiness` | Daily 03:20 UTC | `POST /api/agents/edge-readiness` | Reads cached IC history only, updates the measure-only readiness projection, emits one-time review milestones, and warns when collection is stale. No provider or trading call. |
+| `kairos-international-allocation-shadow` | Mondays 03:30 UTC | `POST /api/allocation/international/assess?mode=p2_weekly` | **P2A international-allocation operational shadow.** Appends one US/USD VXUS assessment per ISO week from persisted paper positions and the latest immutable policy snapshot. It records `action=none`, null costs/tax drag, coverage state, and input fingerprints while target/band remain unset. No provider call, candidate, paper/live position, order, broker, or India/INR read. |
 
 The route fails closed (publishes a failed/insufficient-data run, never yesterday-as-today) when a broker
 snapshot is missing/stale, so cron timing is a best-effort ordering, not a correctness dependency. **EDT/EST

@@ -58,7 +58,7 @@ export default function InternationalExposurePanel({
       ) : null}
       {policy?.assessment ? (
         <div style={{ marginTop: "8px", color: T.muted, fontSize: "11px" }}>
-          Last assessment: {new Date(policy.assessment.assessed_at).toLocaleString()} · {policy.assessment.reason}
+          Last assessment: {new Date(policy.assessment.assessed_at).toLocaleString()} · {policy.assessment.observation_kind === "p2_weekly" ? "weekly shadow" : "manual observation"} · {policy.assessment.reason}
         </div>
       ) : null}
 

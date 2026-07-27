@@ -23,6 +23,8 @@ export type InternationalAllocationPolicyRead = {
     recognized_international_pct: number | null;
     assessment_status: "disabled_no_target" | "hold" | "below_band" | "above_band" | "unavailable";
     reason: string;
+    observation_kind: "p1_manual" | "p2_weekly";
+    shadow_week: string | null;
   } | null;
 };
 
@@ -46,7 +48,7 @@ export async function loadInternationalAllocationPolicy(supabase: any): Promise<
         .limit(1)
         .maybeSingle(),
       supabase.from("international_allocation_assessments")
-        .select("assessed_at, us_paper_invested_value, recognized_international_value, recognized_international_pct, assessment_status, reason")
+        .select("assessed_at, us_paper_invested_value, recognized_international_value, recognized_international_pct, assessment_status, reason, observation_kind, shadow_week")
         .eq("policy_id", policy.id)
         .order("assessed_at", { ascending: false })
         .limit(1)
