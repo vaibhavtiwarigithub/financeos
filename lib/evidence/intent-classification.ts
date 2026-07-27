@@ -271,9 +271,13 @@ export const SCORER_FIELD_CONTRACTS: readonly ScorerFieldContract[] = [
     intent: "sentiment.news",
     requiredClass: "score_affecting",
     markets: ["us", "india"],
-    applicableShapes: ["equity", "etf", "adr"],
+    applicableShapes: ["equity", "etf", "adr", "metal"],
     // Genuinely sparse (India GDELT barely covers NSE names). Expected absence —
     // requiring it would abstain on healthy runs.
+    // "metal" included: commodity ETFs (GLD, SLV, IAU) have news coverage and
+    // legacy scoring included sentiment for them via sentimentDataAvailable.
+    // Excluding "metal" caused a persistent −12 score delta for GLD because the
+    // candidate path stripped its sentiment block while legacy kept it.
     required: false,
     minFields: ["score", "has_data"],
     acceptableQuality: ["fresh", "stale", "partial"],
