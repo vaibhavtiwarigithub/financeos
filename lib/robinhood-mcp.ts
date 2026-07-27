@@ -394,6 +394,48 @@ async function listTools(token: string, sessionId?: string): Promise<{ ok: boole
   return { ok: true, tools: r.result?.tools ?? [] };
 }
 
+export type RobinhoodMcpCapabilitySnapshot = {
+  toolCount: number;
+  toolNames: string[];
+  schemaFingerprint: string;
+};
+
+// A deliberately non-executing capability probe. It only opens an MCP session
+// and asks for tools/list; it must never call a market-data, account, or order
+// tool. Persist hashes rather than untrusted tool descriptions/schemas.
+export function fingerprintRobinhoodMcpTools(tools: unknown[]): RobinhoodMcpCapabilitySnapshot {
+  const normalized: Array<{ name: string; inputSchema: unknown }> = [];
+  for (const tool of tools) {
+    const candidate = tool && typeof tool === "object" ? tool as Record<string, unknown> : {};
+    const name = typeof candidate.name === "string" ? candidate.name.trim() : "";
+    if (name) normalized.push({ name, inputSchema: candidate.inputSchema ?? null });
+  }
+  normalized.sort((a, b) => a.name.localeCompare(b.name));
+  const stable = JSON.stringify(normalized);
+  return {
+    toolCount: normalized.length,
+    toolNames: normalized.map((tool) => tool.name),
+    schemaFingerprint: createHash("sha256").update(stable).digest("hex"),
+  };
+}
+
+export async function inspectRobinhoodMcpCapabilities(): Promise<
+  { ok: true; snapshot: RobinhoodMcpCapabilitySnapshot } | { ok: false; errorCode: string }
+> {
+  const svc = createServiceClient();
+  const token = await getValidAccessToken(svc);
+  if (!token.ok || !token.token) return { ok: false, errorCode: "not_connected" };
+  try {
+    const session = await openSession(token.token);
+    if (!session.ok) return { ok: false, errorCode: "initialize_failed" };
+    const tools = await listTools(token.token, session.sessionId);
+    if (!tools.ok || !Array.isArray(tools.tools)) return { ok: false, errorCode: "tools_list_failed" };
+    return { ok: true, snapshot: fingerprintRobinhoodMcpTools(tools.tools) };
+  } catch {
+    return { ok: false, errorCode: "transport_failed" };
+  }
+}
+
 // Map our canonical order fields onto a discovered tool's inputSchema property
 // names. FAIL CLOSED: if a required schema property can't be confidently
 // filled, return null so the caller aborts rather than sending a guessed
