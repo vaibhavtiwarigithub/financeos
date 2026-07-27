@@ -60,7 +60,9 @@ const WALLCLOCK_BUDGET_MS = 45_000; // leave headroom under maxDuration=60s
 // couple of days unattended, or immediately via ?backfill=1 re-runs. No new
 // cron and no schema change are required — this rides the existing schedule.
 const BACKFILL_DAYS = 400; // > 365 so the 1Y window has margin at the start edge
-const BACKFILL_UNIVERSE = SECTORS; // sector-returns is the only period-windowed consumer
+const ALLOCATION_REPLAY_DAYS = 5 * 366;
+const BACKFILL_UNIVERSE = SECTORS;
+const ALLOCATION_REPLAY_SYMBOLS = ["VOO", "VXUS"];
 
 interface Bar {
   symbol: string;
@@ -205,7 +207,7 @@ async function fetchDailyRange(
  * Backfill daily history for the sector universe, paced + bounded + resumable.
  * Only touches symbols whose cached history does not already reach `from`.
  */
-async function backfillSectorHistory(
+async function backfillHistoricalSeries(
   svc: ReturnType<typeof createServiceClient>,
   apiKey: string,
   started: number,
@@ -252,6 +254,53 @@ async function backfillSectorHistory(
   }
 
   return { attempted, filled, remaining: needs.filter((s) => !filled.includes(s)), bars: barCount };
+}
+
+// The allocation replay needs same-span history for both legs. This work is
+// deliberately bounded and uses the existing Massive lease, so it cannot burst
+// the free tier or affect any decision path while it drains over scheduled ticks.
+async function backfillAllocationReplayHistory(
+  svc: ReturnType<typeof createServiceClient>,
+  apiKey: string,
+  started: number,
+): Promise<{ attempted: string[]; filled: string[]; remaining: string[]; bars: number }> {
+  const to = mostRecentWeekday();
+  const fromDate = new Date();
+  fromDate.setUTCDate(fromDate.getUTCDate() - ALLOCATION_REPLAY_DAYS);
+  const from = ymd(fromDate);
+  const satisfiedBefore = ymd(new Date(Date.parse(`${from}T00:00:00Z`) + 7 * 86_400_000));
+  const needs: string[] = [];
+
+  for (const symbol of ALLOCATION_REPLAY_SYMBOLS) {
+    const { data: oldest } = await svc
+      .from("price_cache")
+      .select("date")
+      .eq("symbol", symbol)
+      .order("date", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (!oldest || (oldest as { date: string }).date > satisfiedBefore) needs.push(symbol);
+  }
+
+  const attempted: string[] = [];
+  const filled: string[] = [];
+  let barCount = 0;
+  for (const symbol of needs) {
+    if (Date.now() - started > WALLCLOCK_BUDGET_MS - MASSIVE_PACE_MS) break;
+    const { data: slot } = await svc.rpc("try_acquire_provider_slot", {
+      p_provider: "massive",
+      p_min_interval_ms: MASSIVE_PACE_MS,
+    });
+    if (slot !== true) { await sleep(1_000); continue; }
+    attempted.push(symbol);
+    const bars = await fetchDailyRange(symbol, from, to, apiKey);
+    if (!bars?.length) continue;
+    const up = await upsertBars(svc, bars);
+    if (!up.ok) continue;
+    filled.push(symbol);
+    barCount += bars.length;
+  }
+  return { attempted, filled, remaining: needs.filter((symbol) => !filled.includes(symbol)), bars: barCount };
 }
 
 // Persist the fetched bars. Returns the error message on failure so the caller
@@ -309,7 +358,8 @@ async function run(force: boolean) {
       await resolveIssue(issueKey, svc);
       // The daily session is already cached, but sector HISTORY may still be
       // draining — spend this tick's budget on the backfill rather than no-op.
-      const backfill = await backfillSectorHistory(svc, apiKey, started);
+      const allocationReplayBackfill = await backfillAllocationReplayHistory(svc, apiKey, started);
+      const backfill = await backfillHistoricalSeries(svc, apiKey, started);
       return {
         ok: true,
         skipped: true,
@@ -317,6 +367,7 @@ async function run(force: boolean) {
         date: expected,
         filled: 0,
         backfill,
+        allocationReplayBackfill,
         elapsedMs: Date.now() - started,
       };
     }
@@ -355,7 +406,8 @@ async function run(force: boolean) {
   // symbols: the range call spans up to the most recent session, so a
   // backfilled sector is daily-filled by the same request, and the fallback's
   // "already have this session" query then skips it.
-  const backfill = await backfillSectorHistory(svc, apiKey, started);
+  const allocationReplayBackfill = await backfillAllocationReplayHistory(svc, apiKey, started);
+  const backfill = await backfillHistoricalSeries(svc, apiKey, started);
 
   // ── Fallback path: sequential per-symbol /prev, paced + bounded + resumable ──
   if (!chosenDate && groupedError) {
@@ -441,6 +493,7 @@ async function run(force: boolean) {
     missing,
     attempts,
     backfill,
+    allocationReplayBackfill,
     elapsedMs: Date.now() - started,
   };
 }

@@ -287,6 +287,29 @@ Acceptance: zero cross-currency records, zero generic ResearchAgent entries,
 and reproducible weekly proposals. Operational evidence is healthy for at least
 8-12 weeks; long-horizon performance claims remain unproven.
 
+### P2B - Historical static-allocation diagnostic (implemented, not a promotion gate)
+
+1. Backfill only `VOO` and `VXUS` adjusted-close history through the existing
+   paced Massive cache job. This is two bounded, resumable symbols and does not
+   add either symbol to Markets tiles, research, scoring, or execution.
+2. Compare one predeclared US/USD policy pair only: `100% VOO` against `80% VOO
+   / 20% VXUS`, monthly rebalanced at the matched-session close with a recorded
+   5 bps one-way cost assumption. The 20% is a diagnostic constant, not an
+   owner target or recommendation.
+3. Require at least three years of matched sessions. Until then, persist and
+   display `insufficient_history`; never fill missing dates from current prices
+   or a provider call in the replay request.
+4. Persist the exact cache/configuration fingerprint and result in a
+   service-only append-only replay ledger. Show return, volatility, drawdown,
+   information ratio, cost drag, and three contiguous reporting windows, but
+   never designate a winner or alter policy state.
+
+Acceptance: the replay makes zero provider calls, produces no paper/live order,
+does not mutate a target/band/status, and clearly says it is not a reconstruction
+of the Kairos paper/live book. It is useful historical context only; PIT fund
+composition, distributions, taxes, and a separately predeclared owner target are
+still required before a performance-oriented promotion.
+
 ### P3 - Paper execution, only after P2 and allocation-core completion
 
 1. Finish the already-deferred allocation sizing/rebalancer work with a US-only

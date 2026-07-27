@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { fmtMoney } from "@/lib/format-money";
 import {
   summarizeInternationalExposure,
@@ -103,6 +105,7 @@ export default function InternationalExposurePanel({
       <div style={{ marginTop: "12px", color: T.muted, fontSize: "11px", lineHeight: 1.45 }}>
         Scope: current US paper positions only, valued in USD. India/INR holdings, live accounts, company revenue geography, fund holdings, tax lots, and target bands are intentionally not estimated in P0.
       </div>
+      <HistoricalReplay policyAvailable={Boolean(policy)} />
     </section>
   );
 }
@@ -113,6 +116,82 @@ function Metric({ label, value, sub, color }: { label: string; value: string; su
       <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
       <div style={{ marginTop: "4px", color: color ?? T.text, fontWeight: 700, fontSize: "18px" }}>{value}</div>
       {sub ? <div style={{ marginTop: "3px", color: T.textSub, fontSize: "11px", lineHeight: 1.35 }}>{sub}</div> : null}
+    </div>
+  );
+}
+
+type ReplayResult = {
+  status: "completed" | "insufficient_history";
+  reason?: string;
+  startDate: string | null;
+  endDate: string | null;
+  sessions: number;
+  testWeightPct: number;
+  oneWayCostBps: number;
+  rebalanceCount: number;
+  totalCostDragPct: number;
+  baseline: { totalReturnPct: number; annualizedReturnPct: number; annualizedVolatilityPct: number; maxDrawdownPct: number } | null;
+  testSleeve: { totalReturnPct: number; annualizedReturnPct: number; annualizedVolatilityPct: number; maxDrawdownPct: number } | null;
+  excessReturnPct: number | null;
+  informationRatio: number | null;
+};
+
+function HistoricalReplay({ policyAvailable }: { policyAvailable: boolean }) {
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<ReplayResult | null>(null);
+
+  async function runReplay() {
+    setRunning(true);
+    setError("");
+    try {
+      const response = await fetch("/api/allocation/international/replay", { method: "POST" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Historical replay could not run");
+      setResult(payload.result);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Historical replay could not run");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: `1px solid ${T.border}` }}>
+      <div style={{ display: "flex", gap: "12px", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+        <div>
+          <div style={{ color: T.text, fontWeight: 700, fontSize: "13px" }}>Historical Allocation Replay</div>
+          <div style={{ marginTop: "3px", color: T.textSub, fontSize: "11px", lineHeight: 1.4 }}>Fixed diagnostic only: 100% VOO versus 80% VOO / 20% VXUS, monthly rebalance, 5 bps one-way cost.</div>
+        </div>
+        <button
+          type="button"
+          title="Run cache-only historical allocation replay"
+          disabled={!policyAvailable || running}
+          onClick={runReplay}
+          style={{ border: `1px solid ${T.accent}`, background: running ? T.card : "transparent", color: policyAvailable ? T.accent : T.muted, borderRadius: "6px", padding: "7px 10px", fontSize: "12px", fontWeight: 700, cursor: !policyAvailable || running ? "not-allowed" : "pointer" }}
+        >
+          {running ? "Running replay..." : "Run historical replay"}
+        </button>
+      </div>
+      {error ? <div style={{ marginTop: "9px", color: T.amber, fontSize: "12px" }}>{error}</div> : null}
+      {result?.status === "insufficient_history" ? (
+        <div style={{ marginTop: "10px", color: T.amber, fontSize: "12px", lineHeight: 1.45 }}>
+          {result.reason} The cache backfill is paced through the existing provider budget; no provider call was made by this replay.
+        </div>
+      ) : null}
+      {result?.status === "completed" && result.baseline && result.testSleeve ? (
+        <div style={{ marginTop: "12px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "8px" }}>
+            <Metric label="Matched sessions" value={String(result.sessions)} sub={`${result.startDate} to ${result.endDate}`} />
+            <Metric label="VOO return" value={`${result.baseline.totalReturnPct.toFixed(1)}%`} sub={`max drawdown ${result.baseline.maxDrawdownPct.toFixed(1)}%`} />
+            <Metric label="Test sleeve return" value={`${result.testSleeve.totalReturnPct.toFixed(1)}%`} sub={`max drawdown ${result.testSleeve.maxDrawdownPct.toFixed(1)}%`} />
+            <Metric label="Excess vs VOO" value={`${(result.excessReturnPct ?? 0).toFixed(1)}%`} sub={`information ratio ${result.informationRatio == null ? "unavailable" : result.informationRatio.toFixed(2)}`} color={(result.excessReturnPct ?? 0) >= 0 ? T.green : T.amber} />
+          </div>
+          <div style={{ marginTop: "8px", color: T.muted, fontSize: "11px", lineHeight: 1.45 }}>
+            {result.rebalanceCount} scheduled rebalances; modeled cost drag {result.totalCostDragPct.toFixed(3)}%. This is not a reconstruction of Kairos holdings, a target, a recommendation, or a paper/live execution input.
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
