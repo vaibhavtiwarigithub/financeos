@@ -454,6 +454,18 @@ Per-indicator breakdown for the current regime.
 | `direction` | text | `positive` \| `negative` \| `neutral` |
 | `computed_at` | timestamptz | Pruned >90d by DB cleanup |
 
+### `policy_rate_events`, `policy_rate_expectation_snapshots`, `policy_event_impacts`
+
+US-only FOMC event evidence (migration `20260726123000_policy_event_ledger`).
+`policy_rate_events` is the mutable official schedule/outcome record. Expectations
+are append-only snapshots captured before the scheduled 2:00 PM New York decision;
+an expectation feed is intentionally unconfigured until a licensed source is
+available. Impacts are append-only 1- and 5-session returns from already-frozen
+`symbol_daily_returns`, with SPY-relative excess only when price bases match.
+All three tables are RLS deny-by-default with no browser grants and service-role
+only writes. They are display/measurement evidence only: no scoring, sizing,
+paper, live, or exit path reads them.
+
 ### `india_screen_cache`
 Full NSE universe cache (avoids re-scoring 5000 names each run).
 

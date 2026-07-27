@@ -47,6 +47,7 @@ All triggered by `scripts/run-agents.ps1 -Agent <name>`. PC must be on for these
 | `nav-snapshot` | Weekdays 5:00 PM | `/api/agents/performance` | Daily NAV + alpha snapshot |
 | `learner` | Fridays 5:00 PM | `/api/agents/learner` | Weekly weight learning; route skips non-Fridays |
 | `macro-sentinel` | Mondays 8:00 AM | `/api/agents/macro-sentinel` | Weekly macro regime computation |
+| `policy-events` | Weekdays 23:00 UTC | `/api/agents/policy-events` | US-only FOMC schedule/outcome sync plus record-only 1D/5D impact capture from frozen return evidence; no expectation source, scoring, or execution effect |
 | `macro-read-us` | Weekdays 9:30 AM ET (13:30 UTC) | `/api/agent-mind/macro-read?market=us` | Agent Mind Phase 3: cached daily plain-English "what the macro backdrop means for your book" (US). Advisory/narrative only — never trades or sizes |
 | `macro-read-india` | Weekdays 10:00 AM IST (04:30 UTC) | `/api/agent-mind/macro-read?market=india` | **NO-OP — should be dropped.** The route refuses `market=india` before any LLM call or DB write (2026-07-17): both macro inputs (`macro_regime`, `category='macro'` `learning_priors`) are US-only and unmarket-tagged, so there is no honest India read to generate. Left active pending owner removal (dropping the `cron.job` row is a prod DB mutation); the route-level refusal makes it harmless — zero LLM spend, zero rows |
 | `theme-scout` | Sundays 8:00 PM ET | `/api/agents/theme-scout` | Weekly, discovery-only watchlist additions; independent of ResearchAgent |

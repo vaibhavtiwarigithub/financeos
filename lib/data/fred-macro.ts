@@ -19,6 +19,7 @@ import { providerCachedFetch } from "@/lib/data/provider-fetch";
 export const FRED_SERIES = {
   y2: "DGS2", y10: "DGS10", unemployment: "UNRATE", payrolls: "PAYEMS",
   gdp: "GDPC1", cpi: "CPIAUCSL", retail: "RSAFS", fedFunds: "FEDFUNDS", durables: "DGORDER",
+  fedTargetLower: "DFEDTARL", fedTargetUpper: "DFEDTARU",
 } as const;
 
 export interface FredObservation {

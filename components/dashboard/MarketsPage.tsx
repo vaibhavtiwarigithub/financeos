@@ -10,6 +10,7 @@ import { useMarket, CURRENCY } from "@/lib/market-context";
 import type { IndiaMarketsSnapshot } from "@/lib/india-markets/snapshot";
 import SectorTradingViewOverview from "@/components/charts/SectorTradingViewOverview";
 import SectorTreemap from "@/components/charts/SectorTreemap";
+import PolicyEventLedger from "@/components/dashboard/PolicyEventLedger";
 const PriceChart = lazy(() => import("@/components/charts/PriceChart"));
 const SectorPerformanceChart = lazy(() => import("@/components/charts/SectorPerformanceChart"));
 const SectorBreadth = lazy(() => import("@/components/dashboard/SectorBreadth"));
@@ -1898,6 +1899,10 @@ export default function MarketsPage() {
       {/* Macro Recession Sentinel */}
       <div style={{ marginTop: "16px", marginBottom: "16px" }}>
         <MacroSentinelCard />
+      </div>
+
+      <div style={{ marginBottom: "16px" }}>
+        <PolicyEventLedger />
       </div>
 
       {/* What the macro backdrop means for your book (Agent Mind, Phase 3).
