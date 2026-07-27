@@ -60,7 +60,6 @@ const WALLCLOCK_BUDGET_MS = 45_000; // leave headroom under maxDuration=60s
 // couple of days unattended, or immediately via ?backfill=1 re-runs. No new
 // cron and no schema change are required — this rides the existing schedule.
 const BACKFILL_DAYS = 400; // > 365 so the 1Y window has margin at the start edge
-const ALLOCATION_REPLAY_DAYS = 5 * 366;
 const BACKFILL_UNIVERSE = SECTORS;
 const ALLOCATION_REPLAY_SYMBOLS = ["VOO", "VXUS"];
 
@@ -256,19 +255,51 @@ async function backfillHistoricalSeries(
   return { attempted, filled, remaining: needs.filter((s) => !filled.includes(s)), bars: barCount };
 }
 
+// The Massive free entitlement returned only about two years of archive data in
+// production, below the replay's three-year validity floor. Yahoo's auth-free
+// chart endpoint provides the five-year adjusted-close series for these two
+// isolated comparators. It is never called by the replay endpoint itself and
+// is deliberately not admitted to scoring or execution.
+async function fetchYahooReplayRange(symbol: string): Promise<Bar[] | null> {
+  try {
+    const response = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5y`,
+      { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(20_000), cache: "no-store" },
+    );
+    if (!response.ok) return null;
+    const payload = await response.json();
+    const result = payload?.chart?.result?.[0];
+    const timestamps: number[] = result?.timestamp ?? [];
+    const quote = result?.indicators?.quote?.[0] ?? {};
+    const adjusted: Array<number | null> = result?.indicators?.adjclose?.[0]?.adjclose ?? [];
+    const bars: Bar[] = [];
+    for (let index = 0; index < timestamps.length; index++) {
+      const close = adjusted[index];
+      if (close == null || !Number.isFinite(close) || close <= 0) continue;
+      bars.push({
+        symbol,
+        date: ymd(new Date(timestamps[index] * 1_000)),
+        open: quote.open?.[index] ?? close,
+        high: quote.high?.[index] ?? close,
+        low: quote.low?.[index] ?? close,
+        close,
+        volume: quote.volume?.[index] != null ? Math.round(quote.volume[index]) : null,
+      });
+    }
+    return bars;
+  } catch {
+    return null;
+  }
+}
+
 // The allocation replay needs same-span history for both legs. This work is
-// deliberately bounded and uses the existing Massive lease, so it cannot burst
-// the free tier or affect any decision path while it drains over scheduled ticks.
+// deliberately bounded to two Yahoo chart requests and cannot affect any
+// decision path while it drains over scheduled ticks.
 async function backfillAllocationReplayHistory(
   svc: ReturnType<typeof createServiceClient>,
-  apiKey: string,
   started: number,
 ): Promise<{ attempted: string[]; filled: string[]; remaining: string[]; bars: number }> {
-  const to = mostRecentWeekday();
-  const fromDate = new Date();
-  fromDate.setUTCDate(fromDate.getUTCDate() - ALLOCATION_REPLAY_DAYS);
-  const from = ymd(fromDate);
-  const satisfiedBefore = ymd(new Date(Date.parse(`${from}T00:00:00Z`) + 7 * 86_400_000));
+  const satisfiedBefore = ymd(new Date(Date.now() - 5 * 365 * 86_400_000 + 7 * 86_400_000));
   const needs: string[] = [];
 
   for (const symbol of ALLOCATION_REPLAY_SYMBOLS) {
@@ -286,14 +317,9 @@ async function backfillAllocationReplayHistory(
   const filled: string[] = [];
   let barCount = 0;
   for (const symbol of needs) {
-    if (Date.now() - started > WALLCLOCK_BUDGET_MS - MASSIVE_PACE_MS) break;
-    const { data: slot } = await svc.rpc("try_acquire_provider_slot", {
-      p_provider: "massive",
-      p_min_interval_ms: MASSIVE_PACE_MS,
-    });
-    if (slot !== true) { await sleep(1_000); continue; }
+    if (Date.now() - started > WALLCLOCK_BUDGET_MS - 10_000) break;
     attempted.push(symbol);
-    const bars = await fetchDailyRange(symbol, from, to, apiKey);
+    const bars = await fetchYahooReplayRange(symbol);
     if (!bars?.length) continue;
     const up = await upsertBars(svc, bars);
     if (!up.ok) continue;
@@ -358,7 +384,7 @@ async function run(force: boolean) {
       await resolveIssue(issueKey, svc);
       // The daily session is already cached, but sector HISTORY may still be
       // draining — spend this tick's budget on the backfill rather than no-op.
-      const allocationReplayBackfill = await backfillAllocationReplayHistory(svc, apiKey, started);
+      const allocationReplayBackfill = await backfillAllocationReplayHistory(svc, started);
       const backfill = await backfillHistoricalSeries(svc, apiKey, started);
       return {
         ok: true,
@@ -406,7 +432,7 @@ async function run(force: boolean) {
   // symbols: the range call spans up to the most recent session, so a
   // backfilled sector is daily-filled by the same request, and the fallback's
   // "already have this session" query then skips it.
-  const allocationReplayBackfill = await backfillAllocationReplayHistory(svc, apiKey, started);
+  const allocationReplayBackfill = await backfillAllocationReplayHistory(svc, started);
   const backfill = await backfillHistoricalSeries(svc, apiKey, started);
 
   // ── Fallback path: sequential per-symbol /prev, paced + bounded + resumable ──

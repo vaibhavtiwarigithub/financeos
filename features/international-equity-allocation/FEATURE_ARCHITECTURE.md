@@ -289,9 +289,10 @@ and reproducible weekly proposals. Operational evidence is healthy for at least
 
 ### P2B - Historical static-allocation diagnostic (implemented, not a promotion gate)
 
-1. Backfill only `VOO` and `VXUS` adjusted-close history through the existing
-   paced Massive cache job. This is two bounded, resumable symbols and does not
-   add either symbol to Markets tiles, research, scoring, or execution.
+1. Backfill only `VOO` and `VXUS` adjusted-close history through two bounded,
+   cache-only Yahoo chart requests. Massive's production entitlement returned
+   only about two years of archive data, below the required history floor. This
+   does not add either symbol to Markets tiles, research, scoring, or execution.
 2. Compare one predeclared US/USD policy pair only: `100% VOO` against `80% VOO
    / 20% VXUS`, monthly rebalanced at the matched-session close with a recorded
    5 bps one-way cost assumption. The 20% is a diagnostic constant, not an
