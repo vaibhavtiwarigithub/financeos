@@ -7,6 +7,7 @@ import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket } from "@/lib/market-context";
 import { fmtMoney } from "@/lib/format-money";
 import { paperExitPlanForTrade, type PaperExitPlan } from "@/lib/trading/paper-exit-plan";
+import InternationalExposurePanel from "@/components/dashboard/InternationalExposurePanel";
 const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
@@ -832,6 +833,8 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
         cur={cur}
         startingNAV={startingNAV}
       />
+
+      <InternationalExposurePanel market={activeMarket} positions={positions} />
 
       {/* Charts row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px,1fr))", gap: "16px", marginBottom: "20px" }}>

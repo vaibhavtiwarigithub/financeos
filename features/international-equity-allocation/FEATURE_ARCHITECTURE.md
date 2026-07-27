@@ -1,9 +1,22 @@
 # International Equity Exposure Architecture
 
-> Status: **DESIGN DRAFT. NOT APPROVED FOR IMPLEMENTATION.**
+> Status: **P0 SHIPPED (read-only). P1-P4 remain unapproved.**
 > Date: 2026-07-27
-> Decision requested: approve the measurement-first sequence before any schema,
-> allocation, paper-trading, or live-trading change.
+> P0 shipped: current US paper-book country-ETF visibility only. It has no
+> schema, provider, registry-write, allocation, paper-trading, or live-trading
+> effect. P1-P4 require separate approval.
+
+## P0 Implementation (2026-07-27)
+
+- `lib/allocation/international-exposure.ts` calculates a current US paper-book
+  view from existing persisted paper marks only. It uses a deliberately narrow,
+  static country-ETF map; other ETFs remain unavailable rather than inferred.
+- `components/dashboard/InternationalExposurePanel.tsx` renders the read-only
+  Portfolio panel with a disabled/no-action state, recognized-country exposure,
+  unclassified-ETF disclosure, and cost-mark disclosure.
+- The panel is hidden on the India view. It cannot read India holdings or mix
+  USD and INR. No position, policy, instrument registry, provider ledger, or
+  money-path writer was added.
 
 ## 1. Decision
 
