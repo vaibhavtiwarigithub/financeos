@@ -11,7 +11,7 @@ export const KNOWN_US_ETFS = new Set([
   "TLT","SHY","IEF","HYG","LQD","BND","AGG","GOVT",
   "IBIT","BITO","GBTC","MAGS","CONY","MSFO",
   "INDA","EPI","INDY","EUAD","FEZ","VGK","EWG","EWL","EWU","EWQ","DXJ","EWJ","EWT","EWY","EWH","FXI","ASHR","EMXC",
-  "VT","ACWI","EFA",
+  "VT","ACWI","EFA","VXUS",
 ]);
 
 export function isEtfSymbol(symbol: string): boolean {

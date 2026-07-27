@@ -14,19 +14,17 @@ describe("summarizeInternationalExposure", () => {
     expect(result.rows).toMatchObject([{ symbol: "INDA", geography: "India", value: 500, bookPct: 50, valuation: "mark" }]);
   });
 
-  it("refuses to invent geographic exposure for broad or unknown ETFs", () => {
+  it("recognizes the reviewed VXUS broad-core label but refuses unknown ETF geography", () => {
     const result = summarizeInternationalExposure([
       { symbol: "VOO", qty: 2, current_price: 500 },
       { symbol: "VXUS", qty: 3, current_price: 100 },
       { symbol: "AAPL", qty: 1, current_price: 100 },
     ]);
 
-    expect(result.recognizedInternationalValue).toBe(0);
-    expect(result.recognizedInternationalPct).toBe(0);
+    expect(result.recognizedInternationalValue).toBe(300);
+    expect(result.recognizedInternationalPct).toBe(300 / 1400 * 100);
     expect(result.unclassifiedEtfSymbols).toEqual(["VOO"]);
-    // VXUS is not in the current static ETF registry. P0 reports no fabricated
-    // exposure, which is safer than silently classifying an unreviewed ticker.
-    expect(result.rows).toEqual([]);
+    expect(result.rows).toMatchObject([{ symbol: "VXUS", geography: "Broad ex-US", value: 300 }]);
   });
 
   it("uses cost only when the current paper mark is unavailable and records it", () => {

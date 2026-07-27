@@ -24,10 +24,12 @@ export type InternationalExposureSummary = {
   costValuedSymbols: string[];
 };
 
-// P0 has no fund-data provider or holdings look-through. This map is deliberately
-// narrow: only an explicit curated country ETF gets a geographic label. Unknown
-// or broad/global ETFs are shown as unavailable rather than silently estimated.
+// P0/P1 has no runtime fund-data provider or country holdings look-through. This
+// map is deliberately narrow: only a reviewed broad-core or curated country ETF
+// gets a geographic label. Unknown or broad/global ETFs stay unavailable rather
+// than being silently estimated.
 const COUNTRY_ETF_GEOGRAPHY: Readonly<Record<string, string>> = {
+  VXUS: "Broad ex-US",
   INDA: "India",
   EPI: "India",
   INDY: "India",

@@ -8,6 +8,7 @@ import { useMarket } from "@/lib/market-context";
 import { fmtMoney } from "@/lib/format-money";
 import { paperExitPlanForTrade, type PaperExitPlan } from "@/lib/trading/paper-exit-plan";
 import InternationalExposurePanel from "@/components/dashboard/InternationalExposurePanel";
+import type { InternationalAllocationPolicyRead } from "@/lib/allocation/international-policy";
 const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
@@ -745,9 +746,9 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; 
   );
 }
 
-export default function PortfolioPage({ pools, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, strategy, tradeQueue: allTradeQueue, exitPlans }: {
+export default function PortfolioPage({ pools, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, strategy, tradeQueue: allTradeQueue, exitPlans, internationalAllocationPolicy }: {
   pools: any[]; positions: any[]; trades: any[]; perf: any[]; signals: any[];
-  pendingSignals: any[]; strategy: any; tradeQueue: any[]; exitPlans: Record<string, PaperExitPlan>;
+  pendingSignals: any[]; strategy: any; tradeQueue: any[]; exitPlans: Record<string, PaperExitPlan>; internationalAllocationPolicy: InternationalAllocationPolicyRead | null;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue">("positions");
@@ -834,7 +835,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
         startingNAV={startingNAV}
       />
 
-      <InternationalExposurePanel market={activeMarket} positions={positions} />
+      <InternationalExposurePanel market={activeMarket} positions={positions} policy={internationalAllocationPolicy} />
 
       {/* Charts row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px,1fr))", gap: "16px", marginBottom: "20px" }}>

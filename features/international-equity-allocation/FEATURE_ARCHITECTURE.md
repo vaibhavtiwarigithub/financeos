@@ -1,10 +1,11 @@
 # International Equity Exposure Architecture
 
-> Status: **P0 SHIPPED (read-only). P1-P4 remain unapproved.**
+> Status: **P0-P1 SHIPPED (read-only). P2-P4 remain unapproved.**
 > Date: 2026-07-27
-> P0 shipped: current US paper-book country-ETF visibility only. It has no
-> schema, provider, registry-write, allocation, paper-trading, or live-trading
-> effect. P1-P4 require separate approval.
+> P0-P1 shipped: current US paper-book visibility plus an append-only VXUS
+> policy, issuer-mandate snapshot, and observation assessment. It has no target,
+> provider runtime, allocation, paper-trading, or live-trading effect. P2-P4
+> require separate approval.
 
 ## P0 Implementation (2026-07-27)
 
@@ -17,6 +18,22 @@
 - The panel is hidden on the India view. It cannot read India holdings or mix
   USD and INR. No position, policy, instrument registry, provider ledger, or
   money-path writer was added.
+
+## P1 Implementation (2026-07-27)
+
+- Migration `20260727100000_international_allocation_p1.sql` added service-only
+  `international_allocation_policies`, append-only `fund_exposure_snapshots`,
+  and append-only `international_allocation_assessments`. Browser roles have no
+  table grants and cannot execute the refresh RPC.
+- The sole policy is `us_non_us_broad_core_v1`: `market=us`, `core=VXUS`,
+  `construction=broad_core`, `status=observe`, and **null target/band**. The
+  observed `instrument_registry` row remains `new_entry_allowed=false`.
+- The first issuer snapshot preserves Vanguard's broad developed/emerging
+  ex-US mandate and source URL. It is deliberately `partial`: it does not claim
+  a point-in-time country-weight breakdown.
+- The owner/cron-gated assessment route can append a current US paper-book
+  observation only. It calls no provider and cannot generate a candidate,
+  alter allocation, or place an order. P2 scheduling remains unapproved.
 
 ## 1. Decision
 

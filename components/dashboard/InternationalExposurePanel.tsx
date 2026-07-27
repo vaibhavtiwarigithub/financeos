@@ -5,6 +5,7 @@ import {
   summarizeInternationalExposure,
   type PaperPositionExposureInput,
 } from "@/lib/allocation/international-exposure";
+import type { InternationalAllocationPolicyRead } from "@/lib/allocation/international-policy";
 
 const T = {
   card: "#1A1D27", border: "#252836", text: "#ECEDEF", textSub: "#9B9EA8",
@@ -14,9 +15,11 @@ const T = {
 export default function InternationalExposurePanel({
   market,
   positions,
+  policy,
 }: {
   market: "us" | "india";
   positions: PaperPositionExposureInput[];
+  policy: InternationalAllocationPolicyRead | null;
 }) {
   if (market !== "us") return null;
   const summary = summarizeInternationalExposure(positions);
@@ -28,23 +31,36 @@ export default function InternationalExposurePanel({
         <div>
           <div style={{ fontSize: "11px", color: T.accent, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 700 }}>US Book Allocation</div>
           <h2 style={{ fontSize: "16px", margin: "5px 0 3px", color: T.text }}>International Equity Exposure</h2>
-          <div style={{ fontSize: "12px", color: T.textSub }}>Read-only P0. No international allocation policy or trade is enabled.</div>
+          <div style={{ fontSize: "12px", color: T.textSub }}>Read-only P1. Source-backed policy observation only; no target or trade is enabled.</div>
         </div>
         <div style={{ border: `1px solid ${T.border}`, borderRadius: "6px", padding: "7px 10px", color: T.muted, fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-          Disabled · no action
+          Observe only · no action
         </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "10px", marginTop: "16px" }}>
         <Metric label="US paper invested" value={fmtMoney(summary.investedValue, "us", 0)} />
         <Metric
-          label="Known country-ETF exposure"
+          label="Known fund geography"
           value={summary.recognizedInternationalPct == null ? "—" : `${summary.recognizedInternationalPct.toFixed(1)}%`}
-          sub={hasRecognizedExposure ? `${fmtMoney(summary.recognizedInternationalValue, "us", 0)} of marked positions` : "No recognized country ETF held"}
+          sub={hasRecognizedExposure ? `${fmtMoney(summary.recognizedInternationalValue, "us", 0)} of valued positions` : "No recognized international fund held"}
           color={hasRecognizedExposure ? T.green : undefined}
         />
-        <Metric label="Core construction" value="Not selected" sub="Broad core or developed/emerging split requires P1 policy" />
+        <Metric label="Core construction" value={policy ? `${policy.policy.core_symbol} broad ex-US` : "Source unavailable"} sub={policy ? "Observed only; no target or band set" : "P1 policy record could not be read"} />
       </div>
+
+      {policy?.snapshot ? (
+        <div style={{ marginTop: "12px", border: `1px solid ${T.border}`, borderRadius: "6px", padding: "10px", color: T.textSub, fontSize: "12px", lineHeight: 1.45 }}>
+          <span style={{ color: T.text, fontWeight: 700 }}>{policy.snapshot.source_name} snapshot</span>
+          {" "}· {policy.snapshot.quality} coverage · {policy.snapshot.coverage_pct.toFixed(0)}% mandate scope · country weights unavailable.
+          <a href={policy.snapshot.source_url} target="_blank" rel="noreferrer" style={{ color: T.accent, marginLeft: "6px" }}>Source</a>
+        </div>
+      ) : null}
+      {policy?.assessment ? (
+        <div style={{ marginTop: "8px", color: T.muted, fontSize: "11px" }}>
+          Last assessment: {new Date(policy.assessment.assessed_at).toLocaleString()} · {policy.assessment.reason}
+        </div>
+      ) : null}
 
       {hasRecognizedExposure ? (
         <div style={{ marginTop: "16px", overflowX: "auto" }}>

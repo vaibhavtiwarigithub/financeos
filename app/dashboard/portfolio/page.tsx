@@ -1,6 +1,7 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import PortfolioPage from "@/components/dashboard/PortfolioPage";
 import { loadPaperExitPlans } from "@/lib/trading/load-paper-exit-plans";
+import { loadInternationalAllocationPolicy } from "@/lib/allocation/international-policy";
 
 export const revalidate = 30;
 
@@ -30,7 +31,10 @@ export default async function Page() {
     supabase.from("agent_signals").select("id, symbol, direction, analyst_score, conviction, rationale, created_at").eq("status", "pending").gte("analyst_score", 60).order("analyst_score", { ascending: false }).limit(20),
   ]);
 
-  const exitPlans = await loadPaperExitPlans(supabase, positions ?? []);
+  const [exitPlans, internationalAllocationPolicy] = await Promise.all([
+    loadPaperExitPlans(supabase, positions ?? []),
+    loadInternationalAllocationPolicy(supabase),
+  ]);
 
   return (
     <PortfolioPage
@@ -43,6 +47,7 @@ export default async function Page() {
       strategy={strategyArr?.[0] ?? null}
       tradeQueue={tradeQueueArr ?? []}
       exitPlans={exitPlans}
+      internationalAllocationPolicy={internationalAllocationPolicy}
     />
   );
 }
