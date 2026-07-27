@@ -490,6 +490,7 @@ export async function submitRobinhoodOrder(o: RobinhoodOrderInput): Promise<Robi
   const tools = tl.tools ?? [];
   const reviewTool = tools.find(t => t.name === "review_equity_order");
   const placeTool = tools.find(t => t.name === "place_equity_order");
+  if (!reviewTool) return { ok: false, error: "review_equity_order not offered by the Robinhood MCP server — refusing unreviewed live order" };
   if (!placeTool) return { ok: false, error: "place_equity_order not offered by the Robinhood MCP server" };
 
   const canonical = {
@@ -497,18 +498,16 @@ export async function submitRobinhoodOrder(o: RobinhoodOrderInput): Promise<Robi
     type: o.type, limitPrice: o.limitPrice, timeInForce: "gfd",
   };
 
-  // Review first (if the server exposes it) — never send an order we couldn't
+  // Review first — never send an order we couldn't
   // review, and verify the broker's preview ECHOES the exact order we intend.
   // A review that comes back with a different symbol/side/qty means our schema
   // mapping is wrong (e.g. a dollar-amount field) — abort rather than place.
-  if (reviewTool) {
-    const rArgs = buildArgsFromSchema(reviewTool.inputSchema, canonical);
-    if ("__error" in rArgs) return { ok: false, error: `review: ${rArgs.__error}` };
-    const review = await mcpRpc(tk.token, "tools/call", { name: "review_equity_order", arguments: rArgs }, sid);
-    if (!review.ok) return { ok: false, error: `review_equity_order failed: ${review.error}` };
-    const echo = reviewEchoMismatch(review.result?.content ?? review.result, o);
-    if (echo) return { ok: false, error: `review preview did not match the intended order (${echo}) — refusing to place` };
-  }
+  const rArgs = buildArgsFromSchema(reviewTool.inputSchema, canonical);
+  if ("__error" in rArgs) return { ok: false, error: `review: ${rArgs.__error}` };
+  const review = await mcpRpc(tk.token, "tools/call", { name: "review_equity_order", arguments: rArgs }, sid);
+  if (!review.ok) return { ok: false, error: `review_equity_order failed: ${review.error}` };
+  const echo = reviewEchoMismatch(review.result?.content ?? review.result, o);
+  if (echo) return { ok: false, error: `review preview did not match the intended order (${echo}) — refusing to place` };
 
   const pArgs = buildArgsFromSchema(placeTool.inputSchema, canonical);
   if ("__error" in pArgs) return { ok: false, error: `place: ${pArgs.__error}` };
@@ -980,59 +979,6 @@ export async function cancelRobinhoodOrder(brokerOrderId: string, account: strin
   }, sess.sessionId);
   if (!res.ok) return { ok: false, error: res.error, raw: redact(res.result) };
   return { ok: true, raw: redact(res.result) };
-}
-
-// Quarterly revenue acceleration + margin trend for a US equity via RH get_financials.
-// Opens its own session; always fail-open (returns null on any error). Used by
-// ResearchAgent to enrich fundamental scoring with time-series momentum.
-export async function fetchRhFinancialsForSymbol(symbol: string): Promise<{
-  revenueAccel: number | null;
-  marginTrend: number | null;
-} | null> {
-  try {
-    const svc = createServiceClient();
-    const tk = await getValidAccessToken(svc);
-    if (!tk.ok || !tk.token) return null;
-    const sess = await openSession(tk.token);
-    if (!sess.ok) return null;
-    const res = await mcpRpc(tk.token, "tools/call", {
-      name: "get_financials",
-      arguments: { symbols: [symbol], period: "quarterly" },
-    }, sess.sessionId);
-    if (!res.ok) return null;
-    const parsed = mcpToolJson(res.result?.content ?? res.result);
-    // Shape: { data: { results: [{ symbol, financials: [{ period_end_date, revenue, net_margin, ... }] }] } }
-    // financials is most-recent-first; sort to oldest-first for acceleration math.
-    const rows: any[] = parsed?.data?.results?.[0]?.financials
-      ?? parsed?.results?.[0]?.financials
-      ?? [];
-    if (rows.length < 3) return null;
-    const sorted = [...rows].sort((a, b) =>
-      String(a.period_end_date ?? "").localeCompare(String(b.period_end_date ?? ""))
-    );
-    const rev = (r: any): number | null => {
-      const v = typeof r.revenue === "number" ? r.revenue : parseFloat(r.revenue ?? "");
-      return Number.isFinite(v) ? v : null;
-    };
-    const mgn = (r: any): number | null => {
-      const v = typeof r.net_margin === "number" ? r.net_margin : parseFloat(r.net_margin ?? "");
-      return Number.isFinite(v) ? v : null;
-    };
-    const n = sorted.length;
-    const r0 = rev(sorted[n - 3]);
-    const r1 = rev(sorted[n - 2]);
-    const r2 = rev(sorted[n - 1]);
-    let revenueAccel: number | null = null;
-    if (r0 != null && r1 != null && r2 != null && Math.abs(r0) > 0 && Math.abs(r1) > 0) {
-      const g1 = (r1 - r0) / Math.abs(r0);
-      const g2 = (r2 - r1) / Math.abs(r1);
-      revenueAccel = parseFloat((g2 - g1).toFixed(4));
-    }
-    const m1 = mgn(sorted[n - 2]);
-    const m2 = mgn(sorted[n - 1]);
-    const marginTrend = m1 != null && m2 != null ? parseFloat((m2 - m1).toFixed(4)) : null;
-    return { revenueAccel, marginTrend };
-  } catch { return null; }
 }
 
 // Kill switch: wipe local tokens regardless of remote reachability. (The

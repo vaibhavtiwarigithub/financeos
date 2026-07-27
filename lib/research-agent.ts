@@ -46,7 +46,6 @@ async function getDefaultMandateId(market: string, supabase: any): Promise<strin
   return id;
 }
 import { fetchUsOverview } from "@/lib/data/fundamentals";
-import { fetchRhFinancialsForSymbol } from "@/lib/robinhood-mcp";
 import { scoreMassiveInsider } from "@/lib/data/massive-insider";
 import { captureFundamentalsFact } from "@/lib/data/pit-fundamentals";
 import { scoreEdgarInsider } from "@/lib/data/edgar-insider";
@@ -1372,7 +1371,7 @@ export async function processSymbol(
   const applicable = applicableDimensions(entry);
 
   // Phase 0: fetch all real data in parallel — no LLM-generated numbers
-  const [socialResult, insiderResult, fundamentalResult, candleResult, indiaNews, fiiDii, rhFinancials] = await Promise.all([
+  const [socialResult, insiderResult, fundamentalResult, candleResult, indiaNews, fiiDii] = await Promise.all([
     applicable.has("sentiment") && !india ? fetchSocialSentiment(symbol).catch(() => null) : Promise.resolve(null),
     // Insider: SEC EDGAR Form 4 primary (free, official, unlimited) → Alpha
     // Vantage INSIDER_TRANSACTIONS fallback. Skipped for ETFs/India/ADRs (no
@@ -1425,15 +1424,8 @@ export async function processSymbol(
     // which case no India-macro flow line is added and the macro dimension keeps
     // the US/global backdrop. NEVER fabricates a flow number.
     india ? fetchFiiDiiFlows().catch(() => null) : Promise.resolve(null),
-    // RH get_financials: quarterly revenue acceleration + margin trend.
-    // US non-ETF only. Fail-open — null if RH not connected or symbol unknown.
-    !india && applicable.has("fundamental") && !isEtf
-      ? fetchRhFinancialsForSymbol(symbol).catch(() => null)
-      : Promise.resolve(null),
   ]);
   const avOverview = fundamentalResult.overview;
-  if (rhFinancials?.revenueAccel != null) avOverview.RevenueAcceleration = String(rhFinancials.revenueAccel);
-  if (rhFinancials?.marginTrend != null) avOverview.MarginTrend = String(rhFinancials.marginTrend);
   const candles: Candle[] = candleResult.candles;
   const indiaMacroLine = india ? fiiDiiMacroLine(fiiDii) : null;
 

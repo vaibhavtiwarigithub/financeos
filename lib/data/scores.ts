@@ -137,28 +137,6 @@ export function scoreFundamentals(overview: Record<string, string>, isEtf: boole
     else if (revGrowth < 0) score -= 10;
   }
 
-  // Revenue acceleration from RH get_financials (QoQ growth rate delta).
-  // Positive = growth rate improving → bullish; negative = decelerating → bearish.
-  const revenueAccel = parseFloat(overview.RevenueAcceleration ?? "");
-  if (!isNaN(revenueAccel)) {
-    evidence.revenue_acceleration = revenueAccel;
-    if (revenueAccel > 0.05) score += 12;
-    else if (revenueAccel > 0) score += 5;
-    else if (revenueAccel < -0.05) score -= 12;
-    else score -= 5;
-  }
-
-  // Margin trend from RH get_financials (net margin delta last 2 quarters, in pp).
-  // net_margin comes back as a percentage (26.6 = 26.6%), so thresholds are pp.
-  const marginTrend = parseFloat(overview.MarginTrend ?? "");
-  if (!isNaN(marginTrend)) {
-    evidence.margin_trend = marginTrend;
-    if (marginTrend > 1.0) score += 8;
-    else if (marginTrend > 0) score += 3;
-    else if (marginTrend < -1.0) score -= 8;
-    else score -= 3;
-  }
-
   // Analyst target vs current price — a real forward signal (previously logged
   // as evidence but never scored). Upside = (target - price)/price. Uses the
   // live close when available, else the 200-day MA as a price proxy.

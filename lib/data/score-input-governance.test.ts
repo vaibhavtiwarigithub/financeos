@@ -31,3 +31,27 @@ describe("score input governance", () => {
     });
   });
 });
+
+describe("unvalidated broker financial trends", () => {
+  it("cannot change a trade-eligible fundamental score", () => {
+    const base = {
+      Symbol: "TEST",
+      Sector: "Technology",
+      PERatio: "20",
+      ProfitMargin: "0.15",
+      ReturnOnEquityTTM: "0.15",
+      EPS: "3",
+      QuarterlyRevenueGrowthYOY: "0.12",
+    };
+    const baseline = scoreFundamentals(base, false, 100);
+    const withBrokerTrendFields = scoreFundamentals({
+      ...base,
+      RevenueAcceleration: "0.50",
+      MarginTrend: "10",
+    }, false, 100);
+
+    expect(withBrokerTrendFields.score).toBe(baseline.score);
+    expect(withBrokerTrendFields.evidence).not.toHaveProperty("revenue_acceleration");
+    expect(withBrokerTrendFields.evidence).not.toHaveProperty("margin_trend");
+  });
+});

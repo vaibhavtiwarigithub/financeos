@@ -63,6 +63,8 @@ const PLACE_TOOL = {
   },
 };
 
+const REVIEW_TOOL = { ...PLACE_TOOL, name: "review_equity_order" };
+
 // Build a Response-shaped object mcpRpc understands (ok/status/headers.get/text).
 function mcpResponse(
   reqBody: any,
@@ -93,7 +95,7 @@ function mcpResponse(
 // tools/list → tools/call(place_equity_order). `placeResponder` decides the
 // place outcome. `placeCalls` records every actual submit so a test can assert
 // the submit path was reached exactly once (no double-submit / no auto-retry).
-function installFetch(placeResponder: (reqBody: any) => Response) {
+function installFetch(placeResponder: (reqBody: any) => Response, tools = [REVIEW_TOOL, PLACE_TOOL]) {
   const placeCalls: any[] = [];
   const fetchMock = vi.fn(async (_url: any, init: any) => {
     const body = JSON.parse(init.body);
@@ -103,9 +105,17 @@ function installFetch(placeResponder: (reqBody: any) => Response) {
       case "notifications/initialized":
         return mcpResponse(body, { result: {} });
       case "tools/list":
-        return mcpResponse(body, { result: { tools: [PLACE_TOOL] } });
+        return mcpResponse(body, { result: { tools } });
       case "tools/call": {
         const name = body.params?.name;
+        if (name === "review_equity_order") {
+          return mcpResponse(body, {
+            result: { content: [{ type: "text", text: JSON.stringify({
+              symbol: ORDER.symbol, side: ORDER.side, quantity: ORDER.qty,
+              account_number: ORDER.account, order_type: ORDER.type,
+            }) }] },
+          });
+        }
         if (name === "place_equity_order") {
           placeCalls.push(body.params?.arguments);
           return placeResponder(body);
@@ -227,4 +237,19 @@ describe.skip("sync route resubmit-vs-reconcile decision", () => {
   // the broker registry; the needsReconcile contract it depends on is proven via
   // submitRobinhoodOrder (Tests 5/7/13) rather than by re-exercising the route.
   it("leaves needs-reconcile orders untouched instead of resubmitting", () => {});
+});
+
+describe("pre-trade review gate", () => {
+  it("refuses to place when the broker does not expose review_equity_order", async () => {
+    const { placeCalls } = installFetch(
+      (body) => mcpResponse(body, { result: {} }),
+      [PLACE_TOOL],
+    );
+
+    const res = await submitRobinhoodOrder(ORDER);
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("review_equity_order not offered");
+    expect(placeCalls).toHaveLength(0);
+  });
 });
