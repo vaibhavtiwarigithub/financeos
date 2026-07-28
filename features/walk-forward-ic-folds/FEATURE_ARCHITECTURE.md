@@ -751,3 +751,90 @@ Approve `purged_temporal_oos` as the mode for the current registry, with:
 - the data-derived-parameter guard forcing `walk_forward` when it ever applies.
 
 This unblocks step 4. #3 and #4 remain open and gate steps 8-9 only.
+
+---
+
+# Annex E — Step 4 progress and a new constraint (2026-07-28)
+
+Approved 2026-07-28: 1C sample floors, 5A/5B PIT universe, `purged_temporal_oos`
+mode, the 2.0/3.0 per-edge t-hurdle split, and the fitted-parameter guard.
+
+## Shipped
+
+`lib/edges/pit-universe.ts` — resolves which symbols were tradeable and liquid ON
+an as-of date, using only information knowable then. 17 tests.
+
+It **fails closed** on every path, with a named reason and never a fallback to
+the curated current-liquid list:
+
+| Reason | When |
+|---|---|
+| `universe_not_point_in_time` | market ≠ us — Massive carries no NSE listings, so India has no PIT source until 5D |
+| `liquidity_not_available_for_date` | as-of date outside the ~2y aggregate entitlement (checked before any network call) |
+| `membership_incomplete` | the page walk truncated — see below |
+| `liquidity_unavailable` | grouped aggregates returned nothing usable |
+| `universe_below_min_symbols` | fewer eligible liquid names than the 1C floor |
+| `provider_unconfigured` | no API key |
+
+Migration `20260728120000_pit_universe_provenance.sql` **written, NOT APPLIED**
+(Supabase MCP unavailable at the time). It extends `edge_universe_members` rather
+than adding a parallel table: `is_point_in_time` (default **false**, so every
+pre-existing row correctly declares itself non-PIT), `membership_source`,
+`pit_policy_version`, `active_on_as_of`, `delisted_at`, `adv_value`, `adv_rank`,
+`snapshot_fingerprint`. No shipped code reads these columns yet, so nothing is
+schema-coupled ahead of the migration.
+
+## Defect caught during verification
+
+The first implementation walked pagination and `break`ed on any failed page. A
+**real 429 was hit** while verifying against the live provider — the membership
+set is ~10k tickers, so a full walk is ~10 requests and the plan rate-limits.
+
+That would have produced a smaller universe that looked entirely valid: fewer
+names, a different fingerprint, a different IC, and no error anywhere. A
+truncated walk is not a smaller universe, it is an **unknown** one.
+`fetchPitMembership` now returns `{ tickers, complete, pages }` and the resolver
+refuses on `complete: false`. Two tests cover it.
+
+## NEW CONSTRAINT — 1C's fold floors are not reachable yet
+
+Measured entitlement boundary (verified 2026-07-28):
+
+| As-of date | Grouped daily aggregates |
+|---|---|
+| 2026-07-24 | OK — 12,410 tickers in one call |
+| 2024-10-15 | OK — 10,704 |
+| 2023-06-30 | **NOT_AUTHORIZED** |
+
+Membership resolves at any date; **liquidity does not**. So the usable OOS window
+is ~2 years ≈ 500 sessions. Non-overlapping at h20 that is **~25 as-of dates**.
+
+1C approved **3 folds × 12 dates = 36**. Short by ~11.
+
+Options — I am **not** picking one, because Annex A explicitly recommended
+against relaxing statistical floors to fit a provider limit:
+
+1. **3 folds × 8 dates = 24.** Meets fold count, breaks the 12/fold floor.
+2. **2 folds × 12 = 24.** Meets the per-fold floor, breaks the 3-fold minimum.
+3. **Wait.** Each further month adds ~1 as-of date at h20; reaching 36 takes
+   ~11 months.
+4. **Find another whole-market liquidity source** with deeper history. Yahoo is
+   per-symbol, so ranking ~10k names per date is not viable through it; this
+   needs a grouped/bulk endpoint.
+5. **Rank liquidity once per fold** rather than per as-of date. Liquidity is
+   slow-moving, so a fold-start rank is defensible and cuts the calls ~12x — but
+   it does not extend the 2-year entitlement, so it does not add dates.
+
+Note options 1 and 2 both land on 24 usable dates. The honest reading is that
+the current entitlement supports roughly **one** 1C-shaped experiment, not three
+folds at full width.
+
+## Not done
+
+- Migration not applied; persistence of snapshots to `edge_universe_members` not
+  written (blocked on the migration).
+- Input-eligibility enforcement beyond the universe (feature availability per
+  as-of date) not started.
+- Steps 5-10 unchanged. Promotion remains dormant.
+- Open Decisions #3 (false-discovery) and #4 (cost-adjusted test) still open,
+  gating steps 8-9.

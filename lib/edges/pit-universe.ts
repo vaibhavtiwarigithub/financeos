@@ -1,0 +1,293 @@
+// Step 4 of features/walk-forward-ic-folds: point-in-time universe resolution.
+//
+// Answers one question: which symbols were tradeable and liquid ON a given
+// as-of date, using only information knowable on that date?
+//
+// The existing lib/edges/universe.ts list is a hand-picked CURRENT-liquid set —
+// its own header says so. Replaying today's survivors through past dates is
+// survivorship bias: the names that blew up are simply absent, so every
+// backward-looking IC is measured on a population selected for having survived.
+// This module is the replacement, and it FAILS CLOSED. It never falls back to
+// the curated list, because a silent fallback would reintroduce exactly the bias
+// it exists to remove.
+//
+// Verified against the live provider 2026-07-28:
+//   /v3/reference/tickers?date=<asOf>&active=true  -> OK at ANY date. Returns
+//     names active ON that date, so later-delisted names are present and
+//     not-yet-listed names are absent. This is the survivorship fix.
+//   /v2/aggs/grouped/.../{date}                    -> OK to ~2 years back
+//     (12410 tickers for 2026-07-24, 10704 for 2024-10-15), then
+//     NOT_AUTHORIZED "past historical entitlements" for 2023-06-30.
+//
+// So membership is available at any date but LIQUIDITY is not. Rather than
+// fabricate a rank outside the entitled window, this module refuses. See
+// FEATURE_ARCHITECTURE.md Annex E for what that costs in as-of dates.
+
+import crypto from "node:crypto";
+import type { Market } from "@/lib/edges/types";
+
+/** Bump when the selection RULES change. Snapshots are keyed by this. */
+export const PIT_POLICY_VERSION = "us_pit_v1";
+
+/** Massive `type` codes we accept. CS = common stock. */
+const ELIGIBLE_TYPES = new Set(["CS"]);
+
+export interface PitTicker {
+  ticker: string;
+  type?: string | null;
+  active?: boolean | null;
+  delisted_utc?: string | null;
+  primary_exchange?: string | null;
+}
+
+export interface PitMember {
+  symbol: string;
+  advValue: number;
+  advRank: number;
+  delistedAt: string | null;
+}
+
+export type PitUniverseResult =
+  | {
+      ok: true;
+      market: Market;
+      asOf: string;
+      policyVersion: string;
+      source: string;
+      members: PitMember[];
+      fingerprint: string;
+    }
+  | { ok: false; reason: string; detail: string };
+
+// ── pure helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Common stock only, on a real exchange. Excludes ETFs, ADRs, warrants, units
+ * and OTC — `lib/edges/universe.ts` also holds individual stocks only, so the
+ * PIT set must not silently widen the population it replaces.
+ */
+export function isEligibleTicker(t: PitTicker): boolean {
+  if (!t.ticker || !ELIGIBLE_TYPES.has(String(t.type ?? ""))) return false;
+  const ex = String(t.primary_exchange ?? "");
+  // XNAS/XNYS/ARCX/BATS etc. OTC Link and blank are excluded.
+  if (!ex || ex === "OTC Link" || ex.startsWith("OTC")) return false;
+  // Yahoo cannot resolve symbols carrying warrant/unit/preferred suffixes.
+  if (/[.\-]W[SI]?$|[.\-]U$|[.\-]P[A-Z]?$/.test(t.ticker)) return false;
+  return true;
+}
+
+/**
+ * Top `size` by dollar volume. Ties break on symbol so the set is deterministic —
+ * a snapshot that shuffled under equal ADV would break its own fingerprint.
+ */
+export function rankByLiquidity(
+  rows: Array<{ symbol: string; advValue: number; delistedAt?: string | null }>,
+  size: number,
+): PitMember[] {
+  return rows
+    .filter((r) => Number.isFinite(r.advValue) && r.advValue > 0)
+    .sort((a, b) => (b.advValue - a.advValue) || a.symbol.localeCompare(b.symbol))
+    .slice(0, size)
+    .map((r, i) => ({
+      symbol: r.symbol,
+      advValue: r.advValue,
+      advRank: i + 1,
+      delistedAt: r.delistedAt ?? null,
+    }));
+}
+
+/**
+ * Deterministic hash of the member set. Same policy + market + date + symbols
+ * must always produce the same value, so a re-run that silently changed the
+ * population is detectable rather than invisible.
+ */
+export function universeFingerprint(
+  market: Market,
+  asOf: string,
+  policyVersion: string,
+  symbols: string[],
+): string {
+  const payload = [market, asOf, policyVersion, ...[...symbols].sort()].join("|");
+  return crypto.createHash("sha256").update(payload).digest("hex").slice(0, 32);
+}
+
+/**
+ * Massive's aggregate entitlement is ~2 years; membership is not limited but
+ * liquidity is. Checked BEFORE any network call so a refusal is cheap and the
+ * reason is precise.
+ */
+export function liquidityAvailableFor(asOf: string, today = new Date()): boolean {
+  const asOfMs = Date.parse(`${asOf}T00:00:00Z`);
+  if (!Number.isFinite(asOfMs)) return false;
+  const twoYearsAgo = Date.UTC(today.getUTCFullYear() - 2, today.getUTCMonth(), today.getUTCDate());
+  return asOfMs >= twoYearsAgo && asOfMs <= today.getTime();
+}
+
+// ── provider calls ───────────────────────────────────────────────────────────
+
+const BASE = "https://api.massive.com";
+
+async function getJson(url: string): Promise<any | null> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every common stock active ON `asOf`, following pagination.
+ *
+ * `complete` is load-bearing. The membership set runs to ~10k tickers, so a full
+ * page walk is ~10 requests and the plan DOES rate-limit — a 429 mid-walk was
+ * observed while verifying this on 2026-07-28. An aborted walk yields a smaller
+ * universe that looks perfectly valid: fewer names, a different fingerprint, a
+ * different IC, and no error anywhere. Callers must refuse on `complete: false`
+ * rather than rank whatever arrived.
+ */
+export async function fetchPitMembership(
+  asOf: string,
+  apiKey: string,
+): Promise<{ tickers: PitTicker[]; complete: boolean; pages: number }> {
+  const out: PitTicker[] = [];
+  let url = `${BASE}/v3/reference/tickers?market=stocks&date=${asOf}&active=true&limit=1000&apiKey=${apiKey}`;
+  const MAX_PAGES = 30;
+  let pages = 0;
+
+  while (url && pages < MAX_PAGES) {
+    const j = await getJson(url);
+    // Null means transport failure, HTTP error, or a rate limit. Either way we
+    // do not know what we missed, so the walk is incomplete — never partial.
+    if (!j || j.status === "NOT_AUTHORIZED") {
+      return { tickers: out, complete: false, pages };
+    }
+    for (const r of j.results ?? []) out.push(r as PitTicker);
+    pages++;
+    url = j.next_url ? `${j.next_url}&apiKey=${apiKey}` : "";
+  }
+
+  // Hitting the page ceiling with a next_url still pending is also incomplete.
+  return { tickers: out, complete: !url, pages };
+}
+
+/** Whole-market OHLCV for one session in ONE call — close x volume per ticker. */
+export async function fetchGroupedDollarVolume(
+  date: string,
+  apiKey: string,
+): Promise<Map<string, number> | null> {
+  const j = await getJson(
+    `${BASE}/v2/aggs/grouped/locale/us/market/stocks/${date}?adjusted=true&apiKey=${apiKey}`,
+  );
+  if (!j || j.status === "NOT_AUTHORIZED" || !Array.isArray(j.results)) return null;
+  const m = new Map<string, number>();
+  for (const r of j.results) {
+    const sym = r.T, close = r.c, vol = r.v;
+    if (typeof sym === "string" && Number.isFinite(close) && Number.isFinite(vol)) {
+      m.set(sym, close * vol);
+    }
+  }
+  return m;
+}
+
+// ── resolver ─────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve the PIT universe for one market/date. FAILS CLOSED — every refusal is
+ * a named reason, never a fallback to the curated current-liquid list.
+ *
+ * India: refused. Massive carries no NSE listings (verified 2026-07-28 —
+ * searching RELIANCE returns only US-listed and OTC instruments), so India has
+ * no PIT membership source until the NSE index-archive path (5D) is built.
+ */
+export async function resolvePitUniverse(opts: {
+  market: Market;
+  asOf: string;
+  size: number;
+  minSymbols: number;
+  apiKey?: string;
+  today?: Date;
+}): Promise<PitUniverseResult> {
+  const { market, asOf, size, minSymbols } = opts;
+  const apiKey = opts.apiKey ?? process.env.MASSIVE_API_KEY ?? "";
+
+  if (market !== "us") {
+    return {
+      ok: false,
+      reason: "universe_not_point_in_time",
+      detail:
+        `No point-in-time membership source for market=${market}. Massive carries no NSE ` +
+        `listings; the NSE index-archive path (5D) is not built. India evidence is ` +
+        `diagnostic-only and must not be promoted.`,
+    };
+  }
+  if (!apiKey) {
+    return { ok: false, reason: "provider_unconfigured", detail: "MASSIVE_API_KEY is not set." };
+  }
+  if (!liquidityAvailableFor(asOf, opts.today)) {
+    return {
+      ok: false,
+      reason: "liquidity_not_available_for_date",
+      detail:
+        `Grouped daily aggregates are entitled to ~2 years; ${asOf} is outside that window. ` +
+        `Membership is resolvable at this date but liquidity is not, and a rank will not be ` +
+        `fabricated from a later window.`,
+    };
+  }
+
+  const membership = await fetchPitMembership(asOf, apiKey);
+  if (!membership.tickers.length) {
+    return { ok: false, reason: "membership_unavailable", detail: `No PIT membership returned for ${asOf}.` };
+  }
+  // A truncated page walk is NOT a smaller universe — it is an unknown one. A
+  // 429 partway through would otherwise yield a plausible-looking snapshot with
+  // a different population and a different fingerprint, silently.
+  if (!membership.complete) {
+    return {
+      ok: false,
+      reason: "membership_incomplete",
+      detail:
+        `Pagination stopped after ${membership.pages} page(s) with ${membership.tickers.length} ` +
+        `tickers for ${asOf} (rate limit, transport error, or page ceiling). Refusing rather ` +
+        `than ranking a partial universe.`,
+    };
+  }
+
+  const eligible = membership.tickers.filter(isEligibleTicker);
+  const dollarVol = await fetchGroupedDollarVolume(asOf, apiKey);
+  if (!dollarVol) {
+    return {
+      ok: false,
+      reason: "liquidity_unavailable",
+      detail: `Grouped aggregates returned no usable rows for ${asOf}.`,
+    };
+  }
+
+  const ranked = rankByLiquidity(
+    eligible.map((t) => ({
+      symbol: t.ticker,
+      advValue: dollarVol.get(t.ticker) ?? 0,
+      delistedAt: t.delisted_utc ? t.delisted_utc.slice(0, 10) : null,
+    })),
+    size,
+  );
+
+  if (ranked.length < minSymbols) {
+    return {
+      ok: false,
+      reason: "universe_below_min_symbols",
+      detail: `Resolved ${ranked.length} eligible liquid names for ${asOf}, below the ${minSymbols} floor.`,
+    };
+  }
+
+  return {
+    ok: true,
+    market,
+    asOf,
+    policyVersion: PIT_POLICY_VERSION,
+    source: "massive_pit_tickers",
+    members: ranked,
+    fingerprint: universeFingerprint(market, asOf, PIT_POLICY_VERSION, ranked.map((m) => m.symbol)),
+  };
+}
