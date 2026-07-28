@@ -996,3 +996,76 @@ inside the ceiling, one above it.
   the per-date IC series the aggregator consumes.
 - Steps 7-10. Promotion remains dormant.
 - Open Decisions #3 and #4 still open, gating steps 8-9.
+
+---
+
+# Annex H — Migration applied and verified; OOS runner shipped (2026-07-28)
+
+## Migration `20260728120000` — APPLIED, verified independently
+
+Supabase MCP was unavailable, so it was applied through the Management API
+(`POST /v1/projects/{ref}/database/query`, HTTP 201). `urllib` was blocked by
+Cloudflare (403/1010); curl succeeded.
+
+Verified afterwards through PostgREST with a control column, the same check that
+caught the earlier false "applied" report:
+
+| Column | Result |
+|---|---|
+| `symbol` (control) | OK |
+| `is_point_in_time`, `membership_source`, `pit_policy_version`, `active_on_as_of`, `delisted_at`, `adv_value`, `adv_rank`, `snapshot_fingerprint` | all OK |
+
+The honesty default behaved as designed: **805 of 805 pre-existing rows are
+`is_point_in_time = false`, zero true.** Every legacy row now declares itself a
+survivorship-biased snapshot rather than passing as evidence.
+
+## Shipped — `lib/edges/oos-runner.ts`
+
+Turns a fold plan into the per-as-of-date IC series. 12 tests.
+
+The ordering discipline is the entire point, and it is tested rather than
+asserted:
+
+| Element | Sees |
+|---|---|
+| feature | candles `<= asOf` only |
+| label | `asOf` → `asOf + H`, and only if fully matured |
+| universe | PIT membership resolved AT `asOf` |
+
+A spy edge confirms it: with monotonically rising series, the values the edge
+observes at `day(1)` are the SECOND close of each symbol, never the fifth. Had
+the full series leaked in, every date would have produced the same value.
+
+Refusals, all counted rather than silently dropped:
+
+- `cross_section_below_min` — a sparse date is excluded and recorded. Coercing
+  it to IC = 0 would assert "no predictive power" when the truth is
+  "unmeasurable".
+- `ic_not_finite` — a degenerate cross-section (zero label variance) is refused
+  for the same reason. Found by a test whose own fixture was accidentally
+  degenerate; the guard was already correct.
+- `universe_unavailable` — `datesEvaluated + datesSkipped` always equals the
+  planned date count, so no date can vanish unaccounted for.
+
+Labels that have not matured by the data cutoff return null rather than a
+truncated return: a partially matured label is a shorter horizon wearing the
+same name, and mixing the two silently changes what the IC measures.
+
+## The stop condition is executable end to end
+
+`describeSigma()` renders the Annex F verdict in words, including the dates that
+*would* be required at the realized sigma. At the legacy 0.438 it emits:
+
+> STOP: sigma=0.4380 EXCEEDS the 0.10 plan ceiling. Detecting the approved 0.04
+> IC floor at t=2.0 would need ~480 as-of dates, not 24.
+
+Both branches are tested.
+
+## Not done
+
+- Snapshot persistence to `edge_universe_members` (schema is now ready).
+- The fetch orchestration: resolve PIT universes across the 24 as-of dates,
+  fetch the union of symbols' 5y candles once each, and call `runOosFolds`.
+  This is the step that finally produces the real sigma number.
+- Steps 8-10. Promotion remains dormant.
+- Open Decisions #3 and #4 still open, gating steps 8-9.
