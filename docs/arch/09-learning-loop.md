@@ -1,5 +1,5 @@
 # Kairos — Learning Loop
-> Last updated: 2026-07-27 (**Deterministic promotion gate wired.** `lib/gates/promotion-gate.ts` + `POST /api/agents/backtest/promote` turn IC evidence into a `strategy_policies` row with no LLM anywhere on the path. Four gates: ≥3 IC windows, latest IC ≥ 0.02, **latest-window** Newey-West t-stat ≥ 2.0, DSR z > 0, and walk-forward (IC still positive, not decayed >50% from the earliest window). A pass supersedes the incumbent policy for that segment and appends; a fail returns 200 with machine-readable reason codes and writes nothing. **Three defects found and fixed same day by running it against prod:** (1) market-wide evidence was matched on `segment_type is null` but every row is written as `('market','all')`, so the gate was a silent no-op; (2) the t-stat was `max()` across windows — a cherry-pick that read 2.83 where the latest window reads 0.55, now latest-only; (3) the horizon band interleaved 5d/10d/20d rows into one evidence array, now one `evidence_horizon` per evaluation. **First real run promotes nothing** — best latest t is 1.73 (US) / 1.04 (India) against a 2.0 hurdle; ~3 weeks of overlapping history is not enough. See "Promotion gate" below. Prior: 2026-07-22 ATR exit evidence layer: measure-only, three versioned candidates, label maturation writes ATR-normalized MAE/MFE + outcomes, evidence API, migration applied. No paper/live execution change. Prior: India macro contamination OPEN ITEM — taint proposal pending owner decision, no rows mutated; automated strategy validation + auto-shadow routing, migration 170; cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
+> Last updated: 2026-07-27 (**Deterministic promotion gate wired.** `lib/gates/promotion-gate.ts` + `POST /api/agents/backtest/promote` turn IC evidence into a `strategy_policies` row with no LLM anywhere on the path. Four gates: ≥3 IC windows, latest IC ≥ 0.02, **latest-window** Newey-West t-stat ≥ 2.0, DSR z > 0, and IC-estimate stability (still positive, not halved from the earliest window — deliberately NOT called walk-forward, see below). A pass supersedes the incumbent policy for that segment and appends; a fail returns 200 with machine-readable reason codes and writes nothing. **Four defects found and fixed same day by running it against prod:** (1) market-wide evidence was matched on `segment_type is null` but every row is written as `('market','all')`, so the gate was a silent no-op; (2) the t-stat was `max()` across windows — a cherry-pick that read 2.83 where the latest window reads 0.55, now latest-only; (3) the horizon band interleaved 5d/10d/20d rows into one evidence array, now one `evidence_horizon` per evaluation; (4) duplicate `window_end` rows (6 rows across 4 distinct windows, 6 run_fingerprints, universe_size drifting 31→40) inflated `sample_n`, now deduped newest-run-wins. **Separately: these windows are NOT walk-forward folds** — each is a 1000-day IC and the six US windows span 16 days, so they overlap ~98.4%; the cross-window check is renamed `ic_stability_pass` so the gate stops overclaiming. Real folds are proposed in `features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` (draft, not approved). **First real run promotes nothing** — best latest t is 1.73 (US) / 1.04 (India) against a 2.0 hurdle; ~3 weeks of overlapping history is not enough. See "Promotion gate" below. Prior: 2026-07-22 ATR exit evidence layer: measure-only, three versioned candidates, label maturation writes ATR-normalized MAE/MFE + outcomes, evidence API, migration applied. No paper/live execution change. Prior: India macro contamination OPEN ITEM — taint proposal pending owner decision, no rows mutated; automated strategy validation + auto-shadow routing, migration 170; cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
 > Update this file when: the learning flow changes, new guardrails are added to weight mutation, genome parameters change, Phase 1 unlocks, the RAG pipeline changes, or Performance Truth Layer evaluation logic changes.
 
 ---
@@ -428,7 +428,7 @@ that boundary is enforced by the database rather than by convention.
 | IC floor | latest window IC ≥ 0.02 | Matches `classifyEdgeIC` in `lib/edges/ic.ts`. A decayed edge does not get promoted on its history. |
 | t-stat | **latest window's** Newey-West t ≥ 2.0 | Newey-West because overlapping forward-return windows make naive IID t-stats overstate significance. Latest — not max — see "Which t-stat" below. |
 | DSR | `t_best − E[max t over S trials] > 0` | Bailey 2014: `E[max t] ≈ Φ⁻¹(1 − 1/(2S))`. Testing more variants must not buy significance — this is why `variant_budget` is locked before the engine runs. |
-| Walk-forward | latest IC > 0 and ≥ 50% of earliest IC | An edge that halved across the sample is decaying, not stable. |
+| IC stability | latest IC > 0 and ≥ 50% of earliest IC | An edge whose estimate halves as data is appended is not stable. **This is NOT walk-forward** — the windows overlap ~98%, see below. |
 
 Note the interaction worth knowing: `variant_budget` is capped at 20 by the
 schema, and `E[max t]` at 20 trials is ≈ 1.96 — just under the 2.0 t-hurdle. So
@@ -482,9 +482,34 @@ sit on ~3 weeks of heavily overlapping data. `strategy_policies` is expected to
 stay empty until there is materially more non-overlapping history. An empty
 policy table is the gate working, not the gate broken.
 
-### Known limitation
+### The windows are NOT walk-forward folds
 
-`MIN_WINDOWS = 3` counts windows, not independent observations. Rolling windows
-over a short history can satisfy it while carrying almost no new information.
-A span-based guard (require N days of non-overlapping history) is the correct
-addition and is not yet implemented.
+Measured in prod 2026-07-27. Every `edge_ic_history` row is an IC over
+`history_days = 1000`, and the six US windows span **16 calendar days** end to
+end — so the first and last windows share **~98.4%** of their data. They are the
+same backtest re-run weekly with the end date nudged, not out-of-sample folds.
+
+Consequences, and what was done:
+
+- The cross-window check is renamed `ic_stability_pass` (failure code
+  `ic_stability_failed`). It measures whether the IC estimate holds as data is
+  appended — **not** out-of-sample decay. The gate no longer claims a property it
+  does not have.
+- `strategy_policies.walk_forward_pass` (the DB column) keeps its name; renaming
+  it needs a migration on an append-only governance table. It stores stability.
+- The route now **dedupes by `window_end`**, newest run wins. US edges had 6 rows
+  across only 4 distinct `window_end` values from 6 distinct `run_fingerprint`s,
+  with `universe_size` drifting 31 → 32 → 40. Undeduped, a same-day re-run reads
+  as fresh evidence and can lift `sample_n` over `MIN_WINDOWS` by itself.
+- A span-based guard was considered and **rejected**: with 1000-day windows,
+  genuinely disjoint history needs ~8 years. Waiting does not help either — four
+  more weeks moves overlap from 98.4% to ~95.6%.
+
+What is *not* affected: the Newey-West `t_stat` **within** a single window
+(~96 as-of dates). That is real evidence and remains the binding constraint.
+
+The real fix is disjoint folds emitted by the IC engine, proposed in
+`features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` — **draft, not
+approved, not implemented**. Its own risk section notes it would likely make
+promotion *harder* (fewer as-of dates per fold), so the recommendation there is
+to build it once an edge is close to clearing the hurdle, not before.

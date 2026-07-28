@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
     // Evidence: IC windows for this edge/market/segment inside the horizon band.
     let icQuery = svc
       .from("edge_ic_history")
-      .select("window_end, ic, t_stat, horizon, formula_version, run_fingerprint, segment_type, segment_value")
+      .select("window_end, created_at, ic, t_stat, horizon, formula_version, run_fingerprint, segment_type, segment_value")
       .eq("edge_id", edgeId)
       .eq("market", market)
       // ONE horizon per evaluation. A band filter (gte/lte) interleaves 5d/10d/20d
@@ -89,10 +89,30 @@ export async function POST(req: NextRequest) {
     const { data: icRows, error: icError } = await icQuery;
     if (icError) throw new Error(`edge_ic_history read failed: ${icError.message}`);
 
-    type IcRow = { ic: number | null; t_stat: number | null; formula_version: string | null; run_fingerprint: string | null };
-    const rows = ((icRows ?? []) as IcRow[]).filter(
+    type IcRow = {
+      window_end: string; created_at: string;
+      ic: number | null; t_stat: number | null;
+      formula_version: string | null; run_fingerprint: string | null;
+    };
+    const usable = ((icRows ?? []) as IcRow[]).filter(
       (r) => r.ic !== null && r.t_stat !== null,
     );
+
+    // Dedupe by window_end, newest run wins.
+    //
+    // edge-ic can write more than one row for the same window_end (re-runs, or a
+    // universe that changed size mid-day). Measured in prod 2026-07-27: US edges
+    // had 6 rows across only 4 distinct window_end values, from 6 distinct
+    // run_fingerprints, with universe_size drifting 31 → 32 → 40. Counting those
+    // as 6 windows inflated sample_n and let a re-run of the same day masquerade
+    // as fresh evidence.
+    const byWindow = new Map<string, IcRow>();
+    for (const r of usable) {
+      const prev = byWindow.get(r.window_end);
+      if (!prev || r.created_at > prev.created_at) byWindow.set(r.window_end, r);
+    }
+    const rows = [...byWindow.values()].sort((a, b) => a.window_end.localeCompare(b.window_end));
+    const duplicateWindowsDropped = usable.length - rows.length;
 
     // variants_run drives the DSR selection-bias penalty. Absent an experiment we
     // assume 1 trial — the least punitive assumption, so the other gates carry it.
@@ -159,7 +179,11 @@ export async function POST(req: NextRequest) {
         verdict: (superseded?.length ?? 0) > 0 ? "variant" : "baseline",
         sample_n: gate.sample_n,
         dsr: gate.dsr_z,
-        walk_forward_pass: gate.walk_forward_pass,
+        // Column name predates the 2026-07-27 finding that these windows overlap
+        // ~98% and are not walk-forward folds. It stores IC estimate STABILITY.
+        // Renaming it needs a migration on an append-only governance table and is
+        // deferred until real folds land (features/walk-forward-ic-folds/).
+        walk_forward_pass: gate.ic_stability_pass,
         promoted_by: "deterministic_gate",
         notes: body.notes ?? `t_stat_latest=${gate.t_stat_latest?.toFixed(2)}, trials_run=${trialsRun}, edge_id=${edgeId}`,
       })

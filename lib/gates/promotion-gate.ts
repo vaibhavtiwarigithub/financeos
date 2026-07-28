@@ -3,17 +3,34 @@
 // Answers: does this edge formula's IC evidence (from edge_ic_history) clear the
 // bar for insertion into strategy_policies?
 //
-// Three gates:
-//   1. t_stat > T_HURDLE (Newey-West corrected — priors need t≈2)
-//   2. DSR_z > 0  (deflates t_stat for number of variants tested, Bailey 2014)
-//   3. Walk-forward: IC positive in latest window, not decayed >50% from earliest
-//
-// "metal" shape note: sentiment.news_tone now includes "metal" — no impact here.
+// Four gates:
+//   1. ≥ MIN_WINDOWS distinct IC windows
+//   2. latest-window IC ≥ IC_MIN
+//   3. latest-window Newey-West t_stat ≥ T_HURDLE, and DSR_z > 0 after deflating
+//      for the number of variants tested (Bailey 2014)
+//   4. IC estimate stability across windows (NOT walk-forward — see banner below)
 
-const MIN_WINDOWS = 3;   // minimum independent IC runs before gate evaluates
+// ⚠ THESE WINDOWS ARE NOT WALK-FORWARD FOLDS. Measured in prod 2026-07-27:
+// every edge_ic_history row is an IC over history_days = 1000, and the six US
+// windows span 16 calendar days end to end — so consecutive windows share ~98.4%
+// of their underlying data. They are the same backtest re-run weekly with the
+// end date nudged, not out-of-sample folds.
+//
+// Consequence: the cross-window check below measures ESTIMATE STABILITY (does the
+// IC estimate hold when a couple more weeks are appended?), NOT out-of-sample
+// decay. It is named accordingly. The genuine statistical evidence is the
+// Newey-West t-stat WITHIN a single window, computed over that window's ~96
+// as-of dates — that one is unaffected by the overlap.
+//
+// Real walk-forward requires the IC engine to emit disjoint folds (window k
+// evaluated only on data after window k-1 ended). That is an edge-ic change,
+// proposed in features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md — NOT
+// approved, NOT implemented. Until it lands, nothing here may claim
+// out-of-sample validation.
+const MIN_WINDOWS = 3;   // distinct window_end values (deduped by caller)
 const IC_MIN = 0.02;     // IC floor — matches classifyEdgeIC in lib/edges/ic.ts
 const T_HURDLE = 2.0;    // priored-factor t-stat standard
-const WF_RATIO_MIN = 0.5; // latest IC must be ≥ 50% of earliest IC
+const STABILITY_RATIO_MIN = 0.5; // latest IC must be ≥ 50% of earliest IC
 
 // Inverse normal CDF (Abramowitz & Stegun 26.2.23, max error 4.5e-4).
 // Used only for DSR E_max_t computation — this precision is sufficient.
@@ -50,8 +67,8 @@ function expectedMaxTStat(trials: number): number {
 //   latest window   — unbiased and no cherry-pick, at the cost of using one
 //                     window's worth of data. Underpowered, which fails CLOSED.
 //
-// We take the latest. It also matches the walk-forward philosophy already in this
-// file: recent evidence governs. Correctly pooling overlapping windows (a
+// We take the latest. It also matches the "recent evidence governs" philosophy in
+// this file. Correctly pooling overlapping windows (a
 // Newey-West correction across windows rather than within one) is the real fix
 // and is deferred until there is enough non-overlapping history to justify it.
 export interface GateInput {
@@ -69,7 +86,11 @@ export interface GateResult {
   dsr_z: number | null;
   /** Newey-West t-stat of the LATEST window — never the max across windows. */
   t_stat_latest: number | null;
-  walk_forward_pass: boolean;
+  /**
+   * IC estimate held up as data was appended. NOT out-of-sample validation —
+   * the windows overlap ~98%. See the banner at the top of this file.
+   */
+  ic_stability_pass: boolean;
   /** Number of IC windows evaluated. */
   sample_n: number;
   /** Non-empty when pass=false. Each entry is a machine-readable failure code. */
@@ -86,7 +107,7 @@ export function evaluateGate(input: GateInput): GateResult {
       pass: false,
       dsr_z: null,
       t_stat_latest: null,
-      walk_forward_pass: false,
+      ic_stability_pass: false,
       sample_n: n,
       reasons: [`insufficient_windows:${n}<${MIN_WINDOWS}`],
     };
@@ -113,16 +134,16 @@ export function evaluateGate(input: GateInput): GateResult {
     reasons.push(`dsr_failed:dsr_z=${dsrZ?.toFixed(2) ?? "null"}<=0 (eMaxT=${eMaxT.toFixed(2)},trials=${trialsRun})`);
   }
 
-  // Gate 4: walk-forward — IC positive and not decaying >50%
-  const walkForwardPass =
+  // Gate 4: stability — IC positive in both endpoints and not halved
+  const icStabilityPass =
     Number.isFinite(icLatest) &&
     Number.isFinite(icEarliest) &&
     icLatest > 0 &&
     icEarliest > 0 &&
-    icLatest >= WF_RATIO_MIN * icEarliest;
-  if (!walkForwardPass) {
+    icLatest >= STABILITY_RATIO_MIN * icEarliest;
+  if (!icStabilityPass) {
     reasons.push(
-      `walk_forward_failed:earliest=${icEarliest?.toFixed(4)},latest=${icLatest?.toFixed(4)},ratio_min=${WF_RATIO_MIN}`,
+      `ic_stability_failed:earliest=${icEarliest?.toFixed(4)},latest=${icLatest?.toFixed(4)},ratio_min=${STABILITY_RATIO_MIN}`,
     );
   }
 
@@ -130,7 +151,7 @@ export function evaluateGate(input: GateInput): GateResult {
     pass: reasons.length === 0,
     dsr_z: dsrZ,
     t_stat_latest: Number.isFinite(tStatLatest) ? tStatLatest : null,
-    walk_forward_pass: walkForwardPass,
+    ic_stability_pass: icStabilityPass,
     sample_n: n,
     reasons,
   };

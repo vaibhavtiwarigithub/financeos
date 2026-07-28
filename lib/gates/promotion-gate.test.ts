@@ -10,7 +10,7 @@ describe("evaluateGate", () => {
     expect(r.pass).toBe(true);
     expect(r.reasons).toEqual([]);
     expect(r.sample_n).toBe(3);
-    expect(r.walk_forward_pass).toBe(true);
+    expect(r.ic_stability_pass).toBe(true);
     expect(r.dsr_z).toBeCloseTo(2.8, 5); // trialsRun=1 → no DSR penalty
   });
 
@@ -60,10 +60,22 @@ describe("evaluateGate", () => {
     expect(r.reasons.some((x) => x.includes("t_stat_below_hurdle:latest=0.55"))).toBe(true);
   });
 
-  it("rejects a walk-forward decay of more than 50%", () => {
+  it("counts windows, so duplicate window_end rows must be deduped by the caller", () => {
+    // Prod 2026-07-27: US edges had 6 rows across only 4 distinct window_end
+    // values. Undeduped, a same-day re-run reads as fresh evidence and can lift
+    // sample_n over MIN_WINDOWS on its own. The route dedupes before calling.
+    const deduped = evaluateGate({ ics: [0.05, 0.06], tStats: [2.4, 2.5], trialsRun: 1 });
+    expect(deduped.reasons).toEqual(["insufficient_windows:2<3"]);
+    // Same two windows, one re-run duplicated — would have squeaked through.
+    const withDupe = evaluateGate({ ics: [0.05, 0.05, 0.06], tStats: [2.4, 2.4, 2.5], trialsRun: 1 });
+    expect(withDupe.sample_n).toBe(3);
+    expect(withDupe.pass).toBe(true);
+  });
+
+  it("rejects an IC estimate that halved across windows", () => {
     const r = evaluateGate({ ...PASSING, ics: [0.10, 0.07, 0.04] });
     expect(r.pass).toBe(false);
-    expect(r.walk_forward_pass).toBe(false);
-    expect(r.reasons.some((x) => x.startsWith("walk_forward_failed"))).toBe(true);
+    expect(r.ic_stability_pass).toBe(false);
+    expect(r.reasons.some((x) => x.startsWith("ic_stability_failed"))).toBe(true);
   });
 });
