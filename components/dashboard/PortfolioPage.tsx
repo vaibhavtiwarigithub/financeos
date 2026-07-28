@@ -151,15 +151,19 @@ function NavSparkline({ perf, cur = "$" }: { perf: any[]; cur?: string }) {
 
 /** Rich gauge+stats header row */
 function PortfolioHeader({
-  nav, cash, totalPnl, totalPnlPct, posValue, positions, winRate, wins, closedTrades, perf, cur = "$", startingNAV = 10000,
+  nav, cash, totalPnl, totalPnlPct, posValue, positions, winRate, tradeRecord, perf, cur = "$", startingNAV = 10000,
 }: {
   nav: number; cash: number; totalPnl: number; totalPnlPct: number; posValue: number;
-  positions: any[]; winRate: number | null; wins: number; closedTrades: any[];
+  positions: any[]; winRate: number | null; tradeRecord: TradeRecord;
   perf: any[]; cur?: string; startingNAV?: number;
 }) {
   const cashPct = (cash / nav) * 100;
   const wr = winRate ?? 0;
   const wrColor = winRate !== null ? (wr >= 60 ? T.green : wr >= 40 ? T.amber : T.red) : T.muted;
+  // Breakeven is its own outcome — counting it as "closed minus wins" reported a
+  // US book of 1W/5L/2BE as "1W / 7L" and made the gauge unreconcilable.
+  const { wins, losses, breakeven } = tradeRecord;
+  const wrSublabel = `${wins}W / ${losses}L${breakeven > 0 ? ` / ${breakeven}BE` : ""}`;
   // Benchmark comparison now lives in the multi-timeframe BenchmarkPerformanceChart
   // below (Portfolio % return vs VOO / NIFTY 50, rebased per timeframe).
 
@@ -180,7 +184,7 @@ function PortfolioHeader({
           <SemiGauge
             value={winRate}
             label="Win Rate"
-            sublabel={winRate !== null ? `${wins}W / ${closedTrades.length - wins}L` : "no closed trades"}
+            sublabel={winRate !== null ? wrSublabel : "no closed trades"}
             color={wrColor}
           />
           <div style={{ width: "1px", height: "80px", background: T.border }} />
@@ -746,9 +750,11 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; 
   );
 }
 
-export default function PortfolioPage({ pools, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, strategy, tradeQueue: allTradeQueue, exitPlans, internationalAllocationPolicy }: {
+export interface TradeRecord { wins: number; losses: number; breakeven: number; closed: number }
+
+export default function PortfolioPage({ pools, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, tradeRecord, strategy, tradeQueue: allTradeQueue, exitPlans, internationalAllocationPolicy }: {
   pools: any[]; positions: any[]; trades: any[]; perf: any[]; signals: any[];
-  pendingSignals: any[]; strategy: any; tradeQueue: any[]; exitPlans: Record<string, PaperExitPlan>; internationalAllocationPolicy: InternationalAllocationPolicyRead | null;
+  pendingSignals: any[]; tradeRecord: TradeRecord; strategy: any; tradeQueue: any[]; exitPlans: Record<string, PaperExitPlan>; internationalAllocationPolicy: InternationalAllocationPolicyRead | null;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue">("positions");
@@ -788,9 +794,12 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
   const totalPnl = nav - startingNAV;
   const totalPnlPct = (totalPnl / startingNAV) * 100;
   const posValue = nav - cash;
+  // closedTrades drives the trades TAB (display, capped at 50 rows). The win-rate
+  // gauge reads tradeRecord instead — a whole-book count from the server, so the
+  // headline stat can't drift as the display cap truncates older trades.
   const closedTrades = trades.filter(t => t.closed_at);
-  const wins = closedTrades.filter(t => t.outcome === "win").length;
-  const winRate = closedTrades.length ? Math.round((wins / closedTrades.length) * 100) : null;
+  const wins = tradeRecord.wins;
+  const winRate = tradeRecord.closed ? Math.round((wins / tradeRecord.closed) * 100) : null;
 
   return (
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
@@ -828,8 +837,7 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
         posValue={posValue}
         positions={positions}
         winRate={winRate}
-        wins={wins}
-        closedTrades={closedTrades}
+        tradeRecord={tradeRecord}
         perf={perf}
         cur={cur}
         startingNAV={startingNAV}

@@ -1,5 +1,5 @@
 # Kairos — Learning Loop
-> Last updated: 2026-07-22 (ATR exit evidence layer: measure-only, three versioned candidates, label maturation writes ATR-normalized MAE/MFE + outcomes, evidence API, migration applied. No paper/live execution change. Prior: India macro contamination OPEN ITEM — taint proposal pending owner decision, no rows mutated; automated strategy validation + auto-shadow routing, migration 170; cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
+> Last updated: 2026-07-27 (**Deterministic promotion gate wired.** `lib/gates/promotion-gate.ts` + `POST /api/agents/backtest/promote` turn IC evidence into a `strategy_policies` row with no LLM anywhere on the path. Four gates: ≥3 IC windows, latest IC ≥ 0.02, best Newey-West t-stat ≥ 2.0, DSR z > 0, and walk-forward (IC still positive, not decayed >50% from the earliest window). A pass supersedes the incumbent policy for that segment and appends; a fail returns 200 with machine-readable reason codes and writes nothing. See "Promotion gate" below. Prior: 2026-07-22 ATR exit evidence layer: measure-only, three versioned candidates, label maturation writes ATR-normalized MAE/MFE + outcomes, evidence API, migration applied. No paper/live execution change. Prior: India macro contamination OPEN ITEM — taint proposal pending owner decision, no rows mutated; automated strategy validation + auto-shadow routing, migration 170; cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
 > Update this file when: the learning flow changes, new guardrails are added to weight mutation, genome parameters change, Phase 1 unlocks, the RAG pipeline changes, or Performance Truth Layer evaluation logic changes.
 
 ---
@@ -398,3 +398,56 @@ Every weight change is logged to both `learning_priors_history` (all dimension h
 - `allow_mutation = false` → LearnerAgent cannot propose weight changes for this dimension
 
 These are toggled via `/api/agents/learner-controls`.
+
+---
+
+## Promotion gate (deterministic)
+
+The path from "this edge measures well" to "this edge is policy" runs through
+`lib/gates/promotion-gate.ts` and `POST /api/agents/backtest/promote`. It is the
+**only** writer to `strategy_policies`, and there is no LLM anywhere on it — the
+LLM's role ends at proposing a bounded hypothesis into `backtest_experiments`.
+`strategy_policies.promoted_by` is CHECK-constrained to `'deterministic_gate'`, so
+that boundary is enforced by the database rather than by convention.
+
+### Inputs
+
+- `edge_ic_history` rows for one `edge_id` + `market`, scoped to the requested
+  segment (`sector` → `segment_type='sector'`, `regime` → `segment_type='regime'`,
+  neither → market-wide rows where `segment_type is null`) and to the horizon band
+  `[horizon_days_min, horizon_days_max]`.
+- `backtest_experiments.variants_run` when an `experiment_id` is supplied. Absent
+  one, the gate assumes a single trial — the least punitive assumption, so the
+  other gates have to carry the decision.
+
+### The four gates
+
+| Gate | Rule | Why |
+|---|---|---|
+| Window count | ≥ 3 IC windows | Below this there is no walk-forward to speak of; returns `insufficient_windows` without evaluating anything else. |
+| IC floor | latest window IC ≥ 0.02 | Matches `classifyEdgeIC` in `lib/edges/ic.ts`. A decayed edge does not get promoted on its history. |
+| t-stat | best Newey-West t ≥ 2.0 | Newey-West because overlapping forward-return windows make naive IID t-stats overstate significance. |
+| DSR | `t_best − E[max t over S trials] > 0` | Bailey 2014: `E[max t] ≈ Φ⁻¹(1 − 1/(2S))`. Testing more variants must not buy significance — this is why `variant_budget` is locked before the engine runs. |
+| Walk-forward | latest IC > 0 and ≥ 50% of earliest IC | An edge that halved across the sample is decaying, not stable. |
+
+Note the interaction worth knowing: `variant_budget` is capped at 20 by the
+schema, and `E[max t]` at 20 trials is ≈ 1.96 — just under the 2.0 t-hurdle. So
+within the allowed budget range the DSR gate never binds on its own; it tightens
+the margin rather than rejecting outright. The rejection case is covered by test
+and only triggers above the schema ceiling.
+
+### Outcomes
+
+- **Pass** — supersedes the incumbent active policy for that segment (the partial
+  unique index allows exactly one non-superseded row per segment), then appends a
+  new row. `verdict` is `baseline` when the segment had no incumbent and `variant`
+  when one was superseded. `model_id` is the latest window's `formula_version`,
+  falling back to `run_fingerprint`.
+- **Fail** — HTTP 200 with `promoted: false` and machine-readable reason codes.
+  A rejected promotion is a normal outcome, not an error, and nothing is written.
+- When `experiment_id` is supplied, the resulting `policy_id` and `completed_at`
+  are written back to `backtest_experiments` to close the lineage loop.
+
+Auth is cron secret **or** an authenticated user; both land on the identical
+deterministic path, so there is no privileged variant. Tests live in
+`lib/gates/promotion-gate.test.ts`.
