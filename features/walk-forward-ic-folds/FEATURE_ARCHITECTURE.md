@@ -378,3 +378,118 @@ These sources support multiple-testing and backtest-overfitting controls. The
 specific Kairos schema, market isolation, PIT requirements, and fail-closed
 design above are architectural decisions derived from the current code and
 production schema.
+
+---
+
+# Annex A — Open Decisions #1 and #5: options with arithmetic (2026-07-28)
+
+Prepared for owner decision. Nothing here is approved or implemented.
+
+## Measured inputs (production, not assumed)
+
+Effective IC standard deviation backed out of Kairos's own rows, using
+`sigma = mean_ic * sqrt(as_of_dates) / t_stat` on the latest window of each
+market-wide edge/horizon:
+
+| Market | Horizon | Universe | As-of dates | Implied sigma_IC | Mean abs IC | Best abs IC |
+|---|---|---|---|---|---|---|
+| US | 5 | 40 | 96 | 0.318 | 0.0192 | 0.0403 |
+| US | 10 | 40 | 96 | 0.364 | 0.0279 | 0.0625 |
+| US | 20 | 40 | 96 | 0.438 | 0.0308 | 0.0612 |
+| India | 5 | 39 | 120 | 0.222 | 0.0133 | 0.0325 |
+| India | 10 | 39 | 120 | 0.264 | 0.0127 | 0.0461 |
+| India | 20 | 39 | 120 | 0.307 | 0.0203 | 0.0561 |
+
+The theoretical cross-sectional rank-IC standard deviation for `n` names is
+approximately `1/sqrt(n-3)`; at n=40 that is **0.164**. US h20 shows **0.438**,
+an inflation of ~2.7x. With `step_days = 5` against a 20-day horizon each label
+overlaps four as-of dates, and `sqrt(4) = 2` accounts for most of it. The
+inflation is overlap, not mystery.
+
+## Decision #1 — sample floors
+
+Required as-of dates for a target IC at hurdle T:
+
+```
+N = ( T * sigma_IC / IC_target )^2
+```
+
+Two independent levers, and they are not equally priced.
+
+**Lever 1 — remove label overlap** (`step_days >= horizon`). sigma falls 0.438 ->
+~0.164, cutting N by ~7.1x. But available dates/year falls from ~50 to ~12.5,
+costing 4x. **Net gain only ~1.8x.**
+
+**Lever 2 — enlarge the universe.** sigma ~ `1/sqrt(n-3)`, and N scales with
+sigma², so N falls *linearly* in n. This costs **no calendar time at all**.
+
+| n | sigma_IC | vs n=40 |
+|---|---|---|
+| 40 | 0.164 | 1.0x |
+| 100 | 0.101 | 2.6x fewer dates |
+| 200 | 0.071 | 5.3x fewer dates |
+| 400 | 0.050 | 10.7x fewer dates |
+
+Years of history required, non-overlapping (step=horizon=20, ~12.5 dates/year),
+at T=2.0:
+
+| True IC | n=40 | n=100 | n=200 | n=400 |
+|---|---|---|---|---|
+| 0.03 | 9.6 yrs | 3.6 yrs | 1.8 yrs | 0.9 yrs |
+| 0.05 | 3.4 yrs | 1.3 yrs | 0.7 yrs | 0.3 yrs |
+| 0.06 (best observed) | 2.4 yrs | 0.9 yrs | 0.5 yrs | 0.2 yrs |
+
+At T=3.0 (Harvey/Liu/Zhu for newly proposed factors) multiply every cell by
+2.25.
+
+**The conclusion is blunt: at n=40 nothing in the current registry is provable
+this decade. Universe size is the dominant lever and it is free.**
+
+### Options
+
+| Option | Floors | Consequence |
+|---|---|---|
+| **1A Keep n≈40** | any | Rejected. Even IC=0.06 needs 2.4 yrs at T=2.0 and 5.4 yrs at T=3.0. Weak edges are permanently unprovable. |
+| **1B n>=100, 12 dates/fold, 3 folds** | 36 dates, ~2.9 yrs | Detects IC>=0.05 at T=2.0. Marginal at T=3.0. |
+| **1C n>=200 US / n>=100 India, 12 dates/fold, 3 folds (RECOMMENDED)** | 36 dates, ~2.9 yrs | Detects IC>=0.035 at T=2.0 and IC>=0.05 at T=3.0. Reachable with existing free data. |
+| **1D n>=400, 8 dates/fold, 3 folds** | 24 dates, ~1.9 yrs | Strongest, but 400 liquid US names stretches "liquid" and multiplies fetch cost. |
+
+Recommended floors under 1C: `min_symbols_per_as_of_date` 200 US / 100 India;
+`min_as_of_dates_per_fold` 12; `min_folds` 3; `step_days = horizon`; declared IC
+floor **0.04**, replacing the current 0.02 — which the table shows is below the
+detection limit at any realistic sample.
+
+**Verify before adopting:** the system map records Yahoo at "251 bars" while
+`edge_ic_history.history_days` is 1000. 1C needs ~3 years of daily candles for
+200 US names. If the 251-bar cap is real, deeper history must be sourced first
+and 1C is blocked until then.
+
+## Decision #5 — point-in-time universe
+
+The current list is a hand-picked, current-liquid snapshot
+(`lib/edges/universe.ts` says so in its own header). Replaying today's survivors
+through past dates is survivorship bias, and it cannot be fixed by waiting.
+
+| Option | Survivorship fixed? | Cost | Notes |
+|---|---|---|---|
+| **5A Massive PIT tickers (RECOMMENDED, US)** | Yes | MCP already connected; plan limits unverified | `GET /v3/reference/tickers` takes `date` (membership as of that date) and `active=false` (delisted names). `/vX/reference/tickers/{id}/events` covers renames. This is a real PIT source already wired in. |
+| **5B Reconstructed liquidity screen** | **No** | Free | Rank by trailing dollar volume using only data <= as-of date, take top N. Removes *selection* hindsight but NOT delisting survivorship — the dead names are absent from the symbol list to begin with. **Only sound layered on top of 5A.** |
+| **5C Freeze-forward (run in parallel)** | Yes, by construction | Free, already running | `edge_universe_members` has snapshotted since 2026-07-09 (805 rows, 9 dates). Validate only on data at/after the first snapshot. Zero bias, but ~19 days of history today, so first promotable evidence is years away. |
+| **5D Index-membership history** | Yes | Free-ish for NIFTY via NSE archives; S&P harder | Manual/scraped, ongoing maintenance. Fallback for India if 5A lacks NSE coverage. |
+
+Recommended: **5A + 5B for US** (PIT membership, then a PIT liquidity rank
+within it), **5D for India** if Massive's NSE coverage is thin, and **5C running
+in parallel indefinitely** as the unimpeachable ground truth that eventually
+supersedes the reconstruction. Any disagreement between 5C and 5A/5B once they
+overlap is a bug in the reconstruction and must fail closed.
+
+**Verify before adopting 5A:** Massive plan limits for `/v3/reference/tickers`
+with `active=false`, and whether NSE/India is covered at all. Both are unknown.
+
+## What these two decisions do NOT settle
+
+Even at 1C + 5A, the binding constraint stays the t-hurdle. Best current
+latest-window t is 1.73 (US) / 1.04 (India). A larger universe and clean PIT
+data change the *precision* of the estimate, not its *sign* — they make a real
+edge provable and a fake edge refutable. Neither manufactures an edge that is
+not there.
