@@ -23,8 +23,11 @@ describe("agent source pipeline remediation", () => {
 
   it("reconciles ambiguous broker cancellations instead of retrying forever", () => {
     const maintenance = read("lib/trading/order-maintenance.ts");
+    const robinhood = read("lib/robinhood-mcp.ts");
     expect(maintenance).toContain("cancel not confirmed; reconciliation required");
     expect(maintenance).toContain('resolveIssue(`order-cancel-failed:${row.id}`');
+    expect(maintenance).toContain('issueKey: `order-needs-reconcile:${row.id}`');
+    expect(robinhood).toContain("arguments: { account_number: account }");
   });
 
   it("retains bounded research retries and self-resolves per-market failures", () => {

@@ -975,15 +975,19 @@ function finiteNum(v: any): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-export async function queryRobinhoodOrder(brokerOrderId: string): Promise<{
+export async function queryRobinhoodOrder(brokerOrderId: string, account: string): Promise<{
   ok: boolean; error?: string; status?: RhOrderStatus; filledQty?: number; avgFillPrice?: number; raw?: any;
 }> {
+  if (!account.trim()) return { ok: false, error: "account_number is required for Robinhood order reconciliation" };
   const svc = createServiceClient();
   const tk = await getValidAccessToken(svc);
   if (!tk.ok || !tk.token) return { ok: false, error: tk.error ?? "not connected" };
   const sess = await openSession(tk.token);
   if (!sess.ok) return { ok: false, error: sess.error };
-  const res = await mcpRpc(tk.token, "tools/call", { name: "get_equity_orders", arguments: {} }, sess.sessionId);
+  const res = await mcpRpc(tk.token, "tools/call", {
+    name: "get_equity_orders",
+    arguments: { account_number: account },
+  }, sess.sessionId);
   if (!res.ok) return { ok: false, error: res.error };
 
   const content = res.result?.content ?? res.result;

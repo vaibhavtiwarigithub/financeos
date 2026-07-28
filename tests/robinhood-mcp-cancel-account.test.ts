@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   cancelRobinhoodOrder: vi.fn(),
+  queryRobinhoodOrder: vi.fn(),
   hasRobinhoodToken: vi.fn(),
   createServiceClient: vi.fn(),
 }));
@@ -9,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/robinhood-mcp", () => ({
   cancelRobinhoodOrder: mocks.cancelRobinhoodOrder,
   hasRobinhoodToken: mocks.hasRobinhoodToken,
-  queryRobinhoodOrder: vi.fn(),
+  queryRobinhoodOrder: mocks.queryRobinhoodOrder,
   submitRobinhoodOrder: vi.fn(),
 }));
 
@@ -40,6 +41,7 @@ describe("Robinhood MCP order cancellation", () => {
     vi.clearAllMocks();
     mocks.hasRobinhoodToken.mockResolvedValue(true);
     mocks.cancelRobinhoodOrder.mockResolvedValue({ ok: true });
+    mocks.queryRobinhoodOrder.mockResolvedValue({ ok: true, status: "submitted" });
     mocks.createServiceClient.mockReturnValue(service("605420660", true));
   });
 
@@ -58,5 +60,22 @@ describe("Robinhood MCP order cancellation", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/no active us trading account/i);
     expect(mocks.cancelRobinhoodOrder).not.toHaveBeenCalled();
+  });
+
+  it("passes the proven allowlisted account to account-scoped reconciliation", async () => {
+    const result = await robinhoodMcpAdapter().getOrder("order-1", "live");
+
+    expect(result.ok).toBe(true);
+    expect(mocks.queryRobinhoodOrder).toHaveBeenCalledWith("order-1", "605420660");
+  });
+
+  it("fails closed instead of attempting unscoped reconciliation", async () => {
+    mocks.createServiceClient.mockReturnValue(service(null, false));
+
+    const result = await robinhoodMcpAdapter().getOrder("order-1", "live");
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/no active us trading account/i);
+    expect(mocks.queryRobinhoodOrder).not.toHaveBeenCalled();
   });
 });

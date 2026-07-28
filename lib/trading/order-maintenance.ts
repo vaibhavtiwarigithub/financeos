@@ -128,6 +128,13 @@ export async function reconcileUnknownOrders(supabase: any): Promise<{ resolved:
         const r = await adapter.getOrder(String(row.broker_order_id), "live");
         if (!r.ok || !r.status) {
           console.error(`[order-maintenance] getOrder failed for ${row.id}: ${r.error}`);
+          await reportIssue({
+            issueKey: `order-needs-reconcile:${row.id}`,
+            severity: "warn",
+            category: "trading",
+            title: `Order ${row.symbol} still needs broker reconciliation`,
+            detail: r.error ?? "broker status unavailable",
+          }, supabase);
           errors++;
           continue;
         }
@@ -168,6 +175,13 @@ export async function reconcileUnknownOrders(supabase: any): Promise<{ resolved:
         resolved++;
       } catch (e) {
         console.error(`[order-maintenance] reconcile threw for ${row.id}:`, String(e));
+        await reportIssue({
+          issueKey: `order-needs-reconcile:${row.id}`,
+          severity: "warn",
+          category: "trading",
+          title: `Order ${row.symbol} reconciliation failed`,
+          detail: e instanceof Error ? e.message : String(e),
+        }, supabase);
         errors++;
       }
     }

@@ -49,7 +49,10 @@ export function robinhoodMcpAdapter(): BrokerAdapter {
     },
     async getOrder(brokerOrderId, env): Promise<BrokerOrderState> {
       if (env !== "live") return { ok: false, error: "Robinhood MCP is live-only (no paper env)" };
-      const r = await queryRobinhoodOrder(brokerOrderId);
+      const svc = createServiceClient();
+      const acct = await resolveTradingAccount(svc);
+      if (!acct.ok) return { ok: false, error: acct.error };
+      const r = await queryRobinhoodOrder(brokerOrderId, acct.account);
       if (!r.ok) return { ok: false, error: r.error };
       return { ok: true, status: r.status, filledQty: r.filledQty, avgFillPrice: r.avgFillPrice, raw: r.raw };
     },
