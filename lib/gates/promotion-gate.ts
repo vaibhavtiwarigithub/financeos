@@ -37,6 +37,23 @@ function expectedMaxTStat(trials: number): number {
   return normInv(1 - 1 / (2 * Math.max(1, trials)));
 }
 
+// Which t-stat represents the edge? Measured against real prod data 2026-07-27,
+// all three plausible choices were tried and two are unusable:
+//
+//   max(tStats)     — cherry-picks the luckiest of N windows. dma_trend_slope@20d
+//                     reads 2.83 as a max and 0.55 as its latest window. Upward
+//                     biased by exactly the order-statistic effect the DSR gate
+//                     exists to correct, so using it made the gate self-defeating.
+//   mean/SE(ICs)    — pooling assumes independent windows. These are ROLLING and
+//                     overlapping, so the IC series is autocorrelated and the SE
+//                     collapses: an India edge with 3 windows scored t = 13.77.
+//   latest window   — unbiased and no cherry-pick, at the cost of using one
+//                     window's worth of data. Underpowered, which fails CLOSED.
+//
+// We take the latest. It also matches the walk-forward philosophy already in this
+// file: recent evidence governs. Correctly pooling overlapping windows (a
+// Newey-West correction across windows rather than within one) is the real fix
+// and is deferred until there is enough non-overlapping history to justify it.
 export interface GateInput {
   /** mean_ic per window_end in ascending chronological order (≥ 1 element). */
   ics: number[];
@@ -48,9 +65,10 @@ export interface GateInput {
 
 export interface GateResult {
   pass: boolean;
-  /** DSR z-score: t_best − E_max_t. Must be > 0 to pass. */
+  /** DSR z-score: t_latest − E_max_t. Must be > 0 to pass. */
   dsr_z: number | null;
-  t_stat_best: number | null;
+  /** Newey-West t-stat of the LATEST window — never the max across windows. */
+  t_stat_latest: number | null;
   walk_forward_pass: boolean;
   /** Number of IC windows evaluated. */
   sample_n: number;
@@ -67,7 +85,7 @@ export function evaluateGate(input: GateInput): GateResult {
     return {
       pass: false,
       dsr_z: null,
-      t_stat_best: null,
+      t_stat_latest: null,
       walk_forward_pass: false,
       sample_n: n,
       reasons: [`insufficient_windows:${n}<${MIN_WINDOWS}`],
@@ -76,7 +94,7 @@ export function evaluateGate(input: GateInput): GateResult {
 
   const icLatest = ics[n - 1];
   const icEarliest = ics[0];
-  const tStatBest = Math.max(...tStats);
+  const tStatLatest = tStats[n - 1];
 
   // Gate 1: IC floor in latest window
   if (!Number.isFinite(icLatest) || icLatest < IC_MIN) {
@@ -84,13 +102,13 @@ export function evaluateGate(input: GateInput): GateResult {
   }
 
   // Gate 2: raw t-stat hurdle
-  if (!Number.isFinite(tStatBest) || tStatBest < T_HURDLE) {
-    reasons.push(`t_stat_below_hurdle:best=${tStatBest?.toFixed(2)}<${T_HURDLE}`);
+  if (!Number.isFinite(tStatLatest) || tStatLatest < T_HURDLE) {
+    reasons.push(`t_stat_below_hurdle:latest=${tStatLatest?.toFixed(2)}<${T_HURDLE}`);
   }
 
   // Gate 3: DSR — deflate t_stat for selection bias from variants_run
   const eMaxT = expectedMaxTStat(Math.max(1, trialsRun));
-  const dsrZ = Number.isFinite(tStatBest) ? tStatBest - eMaxT : null;
+  const dsrZ = Number.isFinite(tStatLatest) ? tStatLatest - eMaxT : null;
   if (dsrZ === null || dsrZ <= 0) {
     reasons.push(`dsr_failed:dsr_z=${dsrZ?.toFixed(2) ?? "null"}<=0 (eMaxT=${eMaxT.toFixed(2)},trials=${trialsRun})`);
   }
@@ -111,7 +129,7 @@ export function evaluateGate(input: GateInput): GateResult {
   return {
     pass: reasons.length === 0,
     dsr_z: dsrZ,
-    t_stat_best: Number.isFinite(tStatBest) ? tStatBest : null,
+    t_stat_latest: Number.isFinite(tStatLatest) ? tStatLatest : null,
     walk_forward_pass: walkForwardPass,
     sample_n: n,
     reasons,

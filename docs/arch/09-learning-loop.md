@@ -1,5 +1,5 @@
 # Kairos — Learning Loop
-> Last updated: 2026-07-27 (**Deterministic promotion gate wired.** `lib/gates/promotion-gate.ts` + `POST /api/agents/backtest/promote` turn IC evidence into a `strategy_policies` row with no LLM anywhere on the path. Four gates: ≥3 IC windows, latest IC ≥ 0.02, best Newey-West t-stat ≥ 2.0, DSR z > 0, and walk-forward (IC still positive, not decayed >50% from the earliest window). A pass supersedes the incumbent policy for that segment and appends; a fail returns 200 with machine-readable reason codes and writes nothing. See "Promotion gate" below. Prior: 2026-07-22 ATR exit evidence layer: measure-only, three versioned candidates, label maturation writes ATR-normalized MAE/MFE + outcomes, evidence API, migration applied. No paper/live execution change. Prior: India macro contamination OPEN ITEM — taint proposal pending owner decision, no rows mutated; automated strategy validation + auto-shadow routing, migration 170; cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
+> Last updated: 2026-07-27 (**Deterministic promotion gate wired.** `lib/gates/promotion-gate.ts` + `POST /api/agents/backtest/promote` turn IC evidence into a `strategy_policies` row with no LLM anywhere on the path. Four gates: ≥3 IC windows, latest IC ≥ 0.02, **latest-window** Newey-West t-stat ≥ 2.0, DSR z > 0, and walk-forward (IC still positive, not decayed >50% from the earliest window). A pass supersedes the incumbent policy for that segment and appends; a fail returns 200 with machine-readable reason codes and writes nothing. **Three defects found and fixed same day by running it against prod:** (1) market-wide evidence was matched on `segment_type is null` but every row is written as `('market','all')`, so the gate was a silent no-op; (2) the t-stat was `max()` across windows — a cherry-pick that read 2.83 where the latest window reads 0.55, now latest-only; (3) the horizon band interleaved 5d/10d/20d rows into one evidence array, now one `evidence_horizon` per evaluation. **First real run promotes nothing** — best latest t is 1.73 (US) / 1.04 (India) against a 2.0 hurdle; ~3 weeks of overlapping history is not enough. See "Promotion gate" below. Prior: 2026-07-22 ATR exit evidence layer: measure-only, three versioned candidates, label maturation writes ATR-normalized MAE/MFE + outcomes, evidence API, migration applied. No paper/live execution change. Prior: India macro contamination OPEN ITEM — taint proposal pending owner decision, no rows mutated; automated strategy validation + auto-shadow routing, migration 170; cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
 > Update this file when: the learning flow changes, new guardrails are added to weight mutation, genome parameters change, Phase 1 unlocks, the RAG pipeline changes, or Performance Truth Layer evaluation logic changes.
 
 ---
@@ -426,7 +426,7 @@ that boundary is enforced by the database rather than by convention.
 |---|---|---|
 | Window count | ≥ 3 IC windows | Below this there is no walk-forward to speak of; returns `insufficient_windows` without evaluating anything else. |
 | IC floor | latest window IC ≥ 0.02 | Matches `classifyEdgeIC` in `lib/edges/ic.ts`. A decayed edge does not get promoted on its history. |
-| t-stat | best Newey-West t ≥ 2.0 | Newey-West because overlapping forward-return windows make naive IID t-stats overstate significance. |
+| t-stat | **latest window's** Newey-West t ≥ 2.0 | Newey-West because overlapping forward-return windows make naive IID t-stats overstate significance. Latest — not max — see "Which t-stat" below. |
 | DSR | `t_best − E[max t over S trials] > 0` | Bailey 2014: `E[max t] ≈ Φ⁻¹(1 − 1/(2S))`. Testing more variants must not buy significance — this is why `variant_budget` is locked before the engine runs. |
 | Walk-forward | latest IC > 0 and ≥ 50% of earliest IC | An edge that halved across the sample is decaying, not stable. |
 
@@ -451,3 +451,40 @@ and only triggers above the schema ceiling.
 Auth is cron secret **or** an authenticated user; both land on the identical
 deterministic path, so there is no privileged variant. Tests live in
 `lib/gates/promotion-gate.test.ts`.
+
+### Which t-stat (measured against prod, 2026-07-27)
+
+Three candidate statistics were computed on real `edge_ic_history` rows. Two are
+unusable and the choice is not cosmetic — it decides every promotion:
+
+| Statistic | Result on prod data | Verdict |
+|---|---|---|
+| `max(t_stat)` across windows | `dma_trend_slope@20d` = **2.83** | Rejected — cherry-picks the luckiest of N windows. Same edge's latest window reads **0.55**. This is the exact order-statistic bias the DSR gate exists to remove, so using it made the gate self-defeating. |
+| `mean(IC) / SE(IC)` pooled | An India edge with 3 windows scored **t = 13.77** | Rejected — pooling assumes independent windows. These are ROLLING and overlapping, so the IC series is autocorrelated and the SE collapses. |
+| **latest window's `t_stat`** | best US = **1.73**, best India = **1.04** | **Adopted.** Unbiased, no cherry-pick, uses one window of data. Underpowered, which fails closed. |
+
+Correctly pooling overlapping windows (a Newey-West correction *across* windows,
+not within one) is the real fix and is deferred until there is enough
+non-overlapping history to justify the machinery.
+
+### First real run — zero promotions, and that is the correct answer
+
+Evaluated against every market-wide edge/horizon pair with ≥3 windows:
+
+| Market | Pairs evaluated | Pass IC floor | Pass t ≥ 2.0 | Pass walk-forward | **Promotable** | Best latest t |
+|---|---|---|---|---|---|---|
+| US | 33 | 18 | **0** | 15 | **0** | 1.73 |
+| India | 24 | 1 | **0** | 3 | **0** | 1.04 |
+
+Nothing promotes in either market. The binding constraint is the t-stat hurdle,
+and the cause is history length: US IC history starts 2026-07-08, so 6 "windows"
+sit on ~3 weeks of heavily overlapping data. `strategy_policies` is expected to
+stay empty until there is materially more non-overlapping history. An empty
+policy table is the gate working, not the gate broken.
+
+### Known limitation
+
+`MIN_WINDOWS = 3` counts windows, not independent observations. Rolling windows
+over a short history can satisfy it while carrying almost no new information.
+A span-based guard (require N days of non-overlapping history) is the correct
+addition and is not yet implemented.

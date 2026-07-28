@@ -18,7 +18,7 @@ describe("evaluateGate", () => {
     const r = evaluateGate({ ics: [0.05, 0.06], tStats: [3, 3], trialsRun: 1 });
     expect(r.pass).toBe(false);
     expect(r.reasons).toEqual(["insufficient_windows:2<3"]);
-    expect(r.t_stat_best).toBeNull();
+    expect(r.t_stat_latest).toBeNull();
   });
 
   it("rejects when latest IC is below the floor", () => {
@@ -48,6 +48,16 @@ describe("evaluateGate", () => {
     expect(r.pass).toBe(false);
     expect(r.dsr_z! < 0).toBe(true);
     expect(r.reasons.some((x) => x.startsWith("dsr_failed"))).toBe(true);
+  });
+
+  it("uses the LATEST window t-stat, never the max across windows", () => {
+    // Real shape from prod: dma_trend_slope@20d read 2.83 as a max and 0.55 as
+    // its latest window. Taking the max promoted an edge whose current evidence
+    // is nowhere near the hurdle.
+    const r = evaluateGate({ ics: [0.04, 0.05, 0.045], tStats: [2.83, 2.4, 0.55], trialsRun: 1 });
+    expect(r.t_stat_latest).toBeCloseTo(0.55, 5);
+    expect(r.pass).toBe(false);
+    expect(r.reasons.some((x) => x.includes("t_stat_below_hurdle:latest=0.55"))).toBe(true);
   });
 
   it("rejects a walk-forward decay of more than 50%", () => {

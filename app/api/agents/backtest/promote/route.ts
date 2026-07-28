@@ -22,6 +22,8 @@ interface PromoteBody {
   market?: "us" | "india";
   horizon_days_min?: number;
   horizon_days_max?: number;
+  /** Which edge_ic_history horizon supplies the evidence. Defaults to horizon_days_max. */
+  evidence_horizon?: number;
   sector?: string | null;
   regime?: "trend" | "mean_revert" | "high_vol" | "low_vol" | null;
   /** backtest_experiments.id — supplies variants_run for the DSR penalty. */
@@ -47,9 +49,14 @@ export async function POST(req: NextRequest) {
     const sector = body.sector ?? null;
     const regime = body.regime ?? null;
 
+    const evidenceHorizon = body.evidence_horizon ?? hMax;
+
     if (!edgeId) return NextResponse.json({ error: "edge_id is required" }, { status: 400 });
     if (!Number.isInteger(hMin) || hMin <= 0 || !Number.isInteger(hMax) || hMax < hMin) {
       return NextResponse.json({ error: "horizon_days_min/max must be integers with 0 < min <= max" }, { status: 400 });
+    }
+    if (!Number.isInteger(evidenceHorizon) || evidenceHorizon < hMin || evidenceHorizon > hMax) {
+      return NextResponse.json({ error: "evidence_horizon must be an integer within [horizon_days_min, horizon_days_max]" }, { status: 400 });
     }
 
     const svc = createServiceClient();
@@ -60,15 +67,24 @@ export async function POST(req: NextRequest) {
       .select("window_end, ic, t_stat, horizon, formula_version, run_fingerprint, segment_type, segment_value")
       .eq("edge_id", edgeId)
       .eq("market", market)
-      .gte("horizon", hMin)
-      .lte("horizon", hMax)
+      // ONE horizon per evaluation. A band filter (gte/lte) interleaves 5d/10d/20d
+      // rows into a single ics[] ordered only by window_end, so "the latest window"
+      // became whichever horizon happened to sort last — the walk-forward and
+      // t-stat gates were then comparing different horizons to each other.
+      // The band stays as policy metadata; the evidence horizon defaults to hMax.
+      .eq("horizon", evidenceHorizon)
       .order("window_end", { ascending: true });
 
     // Segment scoping: a sector/regime policy must be gated on that segment's IC,
-    // not on the all-universe IC. Null sector+regime = market-wide evidence.
+    // not on the all-universe IC.
+    //
+    // Market-wide is ('market','all'), NOT a null segment_type — edge-ic/route.ts
+    // always writes an explicit segment tuple and there is not a single null row
+    // in the table. Matching on null here made every market-wide promote return
+    // `insufficient_windows:0<3`, i.e. the gate was a silent no-op.
     if (sector) icQuery = icQuery.eq("segment_type", "sector").eq("segment_value", sector);
     else if (regime) icQuery = icQuery.eq("segment_type", "regime").eq("segment_value", regime);
-    else icQuery = icQuery.is("segment_type", null);
+    else icQuery = icQuery.eq("segment_type", "market").eq("segment_value", "all");
 
     const { data: icRows, error: icError } = await icQuery;
     if (icError) throw new Error(`edge_ic_history read failed: ${icError.message}`);
@@ -145,7 +161,7 @@ export async function POST(req: NextRequest) {
         dsr: gate.dsr_z,
         walk_forward_pass: gate.walk_forward_pass,
         promoted_by: "deterministic_gate",
-        notes: body.notes ?? `t_stat_best=${gate.t_stat_best?.toFixed(2)}, trials_run=${trialsRun}, edge_id=${edgeId}`,
+        notes: body.notes ?? `t_stat_latest=${gate.t_stat_latest?.toFixed(2)}, trials_run=${trialsRun}, edge_id=${edgeId}`,
       })
       .select()
       .single();
