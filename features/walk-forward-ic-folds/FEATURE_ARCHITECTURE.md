@@ -619,3 +619,68 @@ poorly shaped for it.**
 state. They are not a research-data source, and routing validation evidence
 through them would couple the evidence layer to trading entitlements. The
 existing separation is correct and should not be relaxed.
+
+---
+
+# Annex C — Correction to Annex B, and the step-4 scope boundary (2026-07-28)
+
+## C1. Annex B overstated the Massive dependency — corrected
+
+Annex B said "`resolveCandles()` routes US through Massive first, so US IC
+history is capped at ~2 years." That is true **only of the edge/IC path**. It is
+not true of US candles generally, and the difference matters.
+
+There are two separate US candle resolvers:
+
+| Resolver | Used by | US order | Depth |
+|---|---|---|---|
+| `resolveCandles()` in `lib/edges/data.ts` | edge lab / IC | Massive → EODHD → TwelveData | **capped at 2y by the Massive plan** |
+| `fetchUsCandles()` in `lib/data/candles.ts` | main research path | **Yahoo first**, then Massive → EODHD → TwelveData → AV | governed by the range passed |
+
+So the main US path was already Yahoo-first. Only the edge/IC path — the one
+this feature depends on — goes to Massive first and hits the 2-year wall. The
+Annex B conclusion for step 4 stands; the general claim about "US candles" did
+not, and is withdrawn.
+
+## C2. A second under-service, same class as the yahooRange defect
+
+`fetchUsCandles()` calls `fetchYahooCandles(symbol)` with **no range argument**,
+so it takes the `"6mo"` default — roughly 125 sessions. `minCandles` defaults to
+60, so that passes the acceptance check and the shallow series is used.
+
+125 sessions is below the 273 needed for 12-1 momentum (252 + 21), the same
+failure mode as the `indiaRange` defect fixed in `5d48bd0e`, on the US side and
+in the live research path rather than the measure-only edge lab.
+
+**Not fixed here.** Changing the depth of the main US research path changes
+`analyst_score` inputs and therefore what gets traded. It needs its own
+architecture decision, and it is not part of this feature. Recorded so it is not
+rediscovered a third time.
+
+Related: the `YAHOO` node in `system-map.json` claimed "251 adjusted bars",
+which does not match the `"6mo"` default in the code. Node corrected.
+
+## C3. Step 4 is NOT unblocked by the 1C + 5A/5B approval alone
+
+Owner approved **1C** (sample floors) and **5A/5B** (PIT universe source) on
+2026-07-28. Those answer Open Decisions **#1** and **#5**.
+
+Three remain open, and the approved scope line at the top of this document says
+steps 4-10 are blocked on **all five**:
+
+| # | Decision | Blocks |
+|---|---|---|
+| 2 | Expanding-window calibration vs externally fixed formula | Fold construction — whether a fold has a train segment at all, and therefore whether the mode is `walk_forward` or `purged_temporal_oos` |
+| 3 | False-discovery procedure for correlated edge families | Aggregate pass criteria (step 8) |
+| 4 | Required cost-adjusted portfolio test and benchmark | Final promotion criteria (step 9) |
+
+**#2 genuinely blocks step 4.** Whether folds carry a training segment
+determines the fold boundary layout, the purge rule, and which `validation_mode`
+value the schema will accept — all of which step 4 must fix before any universe
+snapshot is keyed to a plan.
+
+**#3 and #4 do not block step 4.** They gate steps 8-9. Step 4 could proceed
+once #2 is answered.
+
+Recommendation: answer #2 before step 4 starts; #3 and #4 can be decided while
+steps 4-7 are built.
