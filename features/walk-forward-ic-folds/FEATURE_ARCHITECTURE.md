@@ -2,11 +2,45 @@
 
 ## Status
 
-Architecture status: Draft, revised after adversarial review
-Architecture approved: No
-Approved scope: None
-Approved date: None
-Implementation allowed: No
+Architecture status: Approved
+Architecture approved: Yes
+Approved scope: Build-order steps 2 and 3 ONLY - disable legacy-window promotion,
+  repair policy/experiment schema semantics, and add the atomic promotion RPC.
+Approved date: 2026-07-28
+Implementation allowed: Steps 2-3 only. Steps 4-10 remain BLOCKED on the five
+  Open Decisions For Approval at the end of this document (sample floors from a
+  power analysis, calibration mode, false-discovery procedure, cost-adjusted
+  portfolio test, and the PIT-universe/corporate-action policy per market).
+  Nothing may claim out-of-sample evidence until those are answered and 4-10 ship.
+
+## Implementation Status (2026-07-28)
+
+Steps 2 and 3 are SHIPPED. Migration
+`20260728090000_promotion_schema_repair_and_atomic_rpc.sql`, applied and verified
+against production while `strategy_policies` and `backtest_experiments` were both
+empty:
+
+| Repair | State |
+|---|---|
+| `dsr` renamed `t_margin_vs_trials` (it was never a Deflated Sharpe Ratio) | done |
+| `walk_forward_pass` renamed `ic_stability_pass` | done |
+| `validation_mode` NOT NULL, CHECK in (`purged_temporal_oos`,`walk_forward`) | done - a legacy rolling-window result has no representable value, so it cannot be promoted |
+| `experiment_id` NOT NULL FK to `backtest_experiments` | done |
+| Mutation trigger compares whole rows minus `superseded_at` | done - the hand-listed column set left 7 fields silently mutable |
+| `superseded_at` and experiment `policy_id` are write-once | done |
+| `promote_strategy_policy()` RPC, SECURITY DEFINER, service-role only | done |
+| Promote route calls the RPC instead of supersede-then-insert | done |
+| `experiment_id` required; `variants_run` must be recorded | done - the old fallback chain substituted a flattering trial count when the run count was missing |
+
+P0 proven in production 2026-07-28: inside one transaction, two promotions
+produced `baseline` then `variant` with exactly one active row; a third
+promotion was then forced to fail at insert AFTER its supersede, and the
+incumbent survived unchanged. The whole block was rolled back, leaving both
+tables at zero rows.
+
+Promotion remains DORMANT at the route (`promotion_evidence_not_oos`, 503).
+Steps 2-3 fixed how a policy would be written. They did nothing about whether
+the evidence deserves to be written, which is steps 4-10.
 
 ## Decision
 

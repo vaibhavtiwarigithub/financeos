@@ -82,6 +82,16 @@ export async function POST(req: NextRequest) {
     const evidenceHorizon = body.evidence_horizon ?? hMax;
 
     if (!edgeId) return NextResponse.json({ error: "edge_id is required" }, { status: 400 });
+    // Lineage is mandatory, not optional. Without a bound experiment the DSR
+    // trial count defaulted to 1 — the least punitive possible assumption — and
+    // nothing tied the trial family to the edge/market/horizon/segment being
+    // promoted. The RPC re-checks this binding server-side.
+    if (!body.experiment_id) {
+      return NextResponse.json({
+        error: "trial_family_incomplete",
+        detail: "experiment_id is required: a promotion must cite the frozen experiment whose variants_run bounds its multiple-testing adjustment.",
+      }, { status: 400 });
+    }
     if (market !== "us" && market !== "india") {
       return NextResponse.json({ error: "market must be us or india" }, { status: 400 });
     }
@@ -155,19 +165,35 @@ export async function POST(req: NextRequest) {
     const rows = [...byWindow.values()].sort((a, b) => a.window_end.localeCompare(b.window_end));
     const duplicateWindowsDropped = usable.length - rows.length;
 
-    // variants_run drives the DSR selection-bias penalty. Absent an experiment we
-    // assume 1 trial — the least punitive assumption, so the other gates carry it.
-    let trialsRun = 1;
-    if (body.experiment_id) {
-      const { data: exp, error: expError } = await svc
-        .from("backtest_experiments")
-        .select("id, variants_run, variants_proposed, variant_budget")
-        .eq("id", body.experiment_id)
-        .maybeSingle();
-      if (expError) throw new Error(`backtest_experiments read failed: ${expError.message}`);
-      if (!exp) return NextResponse.json({ error: "experiment_id not found" }, { status: 404 });
-      trialsRun = exp.variants_run ?? exp.variants_proposed ?? exp.variant_budget ?? 1;
+    // variants_run drives the multiple-testing adjustment, so it must be the
+    // number of variants ACTUALLY RUN — not proposed, not budgeted. The old
+    // fallback chain (variants_run ?? variants_proposed ?? variant_budget ?? 1)
+    // silently substituted a smaller, more flattering trial count whenever the
+    // engine had not recorded its run count, which is exactly backwards: an
+    // unknown trial count must fail closed, not default to the weakest penalty.
+    const { data: exp, error: expError } = await svc
+      .from("backtest_experiments")
+      .select("id, market, segment_type, segment_value, variants_run, policy_id")
+      .eq("id", body.experiment_id)
+      .maybeSingle();
+    if (expError) throw new Error(`backtest_experiments read failed: ${expError.message}`);
+    if (!exp) return NextResponse.json({ error: "experiment_id not found" }, { status: 404 });
+
+    const expectedSegmentType = sector ? "sector" : regime ? "regime" : "market";
+    const expectedSegmentValue = sector ?? regime ?? "all";
+    if (exp.market !== market || exp.segment_type !== expectedSegmentType || exp.segment_value !== expectedSegmentValue) {
+      return NextResponse.json({
+        error: "experiment_scope_mismatch",
+        detail: `experiment covers ${exp.market}/${exp.segment_type}/${exp.segment_value}, request is ${market}/${expectedSegmentType}/${expectedSegmentValue}`,
+      }, { status: 400 });
     }
+    if (typeof exp.variants_run !== "number" || exp.variants_run < 1) {
+      return NextResponse.json({
+        error: "trial_family_incomplete",
+        detail: "experiment has no recorded variants_run; the multiple-testing adjustment cannot be computed.",
+      }, { status: 400 });
+    }
+    const trialsRun = exp.variants_run;
 
     const gate = evaluateGate({
       ics: rows.map((r) => Number(r.ic)),
@@ -210,75 +236,46 @@ export async function POST(req: NextRequest) {
     const latest = rows[rows.length - 1];
     const modelId = latest.formula_version ?? latest.run_fingerprint ?? edgeId;
 
-    // Supersede the incumbent BEFORE insert — the partial unique index allows
-    // only one non-superseded row per segment.
+    // One locked transaction does validate → supersede → insert → bind.
     //
-    // The filter MUST match the index key exactly:
-    //   (market, coalesce(sector,'__all__'), coalesce(regime,'__all__'),
-    //    horizon_days_min, horizon_days_max) WHERE superseded_at IS NULL
-    // Omitting regime here superseded every regime's policy for the segment —
-    // promoting a regime-less policy would have retired the 'trend' and
-    // 'high_vol' policies for the same market/sector/horizons, which are
-    // distinct segments under the index.
-    let supersedeQuery = svc
-      .from("strategy_policies")
-      .update({ superseded_at: new Date().toISOString() })
-      .eq("market", market)
-      .eq("horizon_days_min", hMin)
-      .eq("horizon_days_max", hMax)
-      .is("superseded_at", null);
-    supersedeQuery = sector ? supersedeQuery.eq("sector", sector) : supersedeQuery.is("sector", null);
-    supersedeQuery = regime ? supersedeQuery.eq("regime", regime) : supersedeQuery.is("regime", null);
-    const { data: superseded, error: supersedeError } = await supersedeQuery.select("id, model_id");
-    if (supersedeError) throw new Error(`supersede failed: ${supersedeError.message}`);
-
-    const { data: policy, error: insertError } = await svc
-      .from("strategy_policies")
-      .insert({
-        market,
-        sector,
-        regime,
-        horizon_days_min: hMin,
-        horizon_days_max: hMax,
-        model_id: modelId,
-        // First policy for a segment is the baseline; anything replacing an
-        // incumbent is a variant that beat it.
-        verdict: (superseded?.length ?? 0) > 0 ? "variant" : "baseline",
-        sample_n: gate.sample_n,
-        // Deliberately NULL. The `dsr` column expects a Deflated Sharpe Ratio;
-        // the gate computes only a trial-count-adjusted t margin, which is a
-        // different quantity on a different input (IC, not strategy returns).
-        // Writing the margin here would put a wrong number under a right name.
-        // Populate only once cost-adjusted strategy-return DSR actually exists.
-        dsr: null,
-        // Column name predates the 2026-07-27 finding that these windows overlap
-        // ~98% and are not walk-forward folds. It stores IC estimate STABILITY.
-        // Renaming it needs a migration on an append-only governance table and is
-        // deferred until real folds land (features/walk-forward-ic-folds/).
-        walk_forward_pass: gate.ic_stability_pass,
-        promoted_by: "deterministic_gate",
-        notes: body.notes ?? `t_stat_latest=${gate.t_stat_latest?.toFixed(2)}, t_margin_vs_trials=${gate.t_margin_vs_trials?.toFixed(2)}, trials_run=${trialsRun}, edge_id=${edgeId}`,
-      })
-      .select()
-      .single();
-    if (insertError) throw new Error(`strategy_policies insert failed: ${insertError.message}`);
-
-    // Close the lineage loop so an experiment points at the policy it produced.
-    if (body.experiment_id) {
-      await svc
-        .from("backtest_experiments")
-        .update({ policy_id: policy.id, completed_at: new Date().toISOString() })
-        .eq("id", body.experiment_id);
-    }
+    // The route no longer issues its own supersede and insert. Those were two
+    // separate round trips: if the insert failed after the supersede committed,
+    // the segment was left with NO active policy. The partial unique index stops
+    // two active rows but cannot stop zero. promote_strategy_policy() takes a
+    // per-segment advisory lock, re-validates the experiment binding server-side,
+    // and rolls everything back together on any failure. Proven in prod on
+    // 2026-07-28 with a forced mid-transaction insert failure: the incumbent
+    // survived unchanged.
+    //
+    // experiment_id is REQUIRED here (the RPC rejects a null) because an unbound
+    // experiment could otherwise supply a favourable trial count for any edge.
+    const { data: rpcResult, error: rpcError } = await svc.rpc("promote_strategy_policy", {
+      p_experiment_id:      body.experiment_id,
+      p_market:             market,
+      p_sector:             sector,
+      p_regime:             regime,
+      p_horizon_days_min:   hMin,
+      p_horizon_days_max:   hMax,
+      p_model_id:           modelId,
+      p_validation_mode:    "purged_temporal_oos",
+      p_sample_n:           gate.sample_n,
+      p_t_margin_vs_trials: gate.t_margin_vs_trials,
+      p_ic_stability_pass:  gate.ic_stability_pass,
+      p_notes:              body.notes ?? `t_stat_latest=${gate.t_stat_latest?.toFixed(2)}, t_margin_vs_trials=${gate.t_margin_vs_trials?.toFixed(2)}, trials_run=${trialsRun}, edge_id=${edgeId}`,
+    });
+    // The RPC's refusal codes (market_scope_mismatch, experiment_scope_mismatch,
+    // trial_family_incomplete, …) are the contract — surface them verbatim.
+    if (rpcError) throw new Error(`promote_strategy_policy failed: ${rpcError.message}`);
 
     return NextResponse.json({
       promoted: true,
       edge_id: edgeId,
       segment,
+      policy_id:  (rpcResult as any)?.policy_id ?? null,
+      superseded: (rpcResult as any)?.superseded ?? null,
+      verdict:    (rpcResult as any)?.verdict ?? null,
       trials_run: trialsRun,
       gate,
-      policy,
-      superseded: superseded ?? [],
     });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
