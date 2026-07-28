@@ -6,6 +6,10 @@
 // cookie+crumb handshake; the chart endpoint (price + candles) does not.
 
 import type { Candle } from "@/lib/data/technicals";
+// Candle fetching moved to lib/data/yahoo-candles.ts — it was never India-specific.
+// Re-exported here so existing India call sites keep one import, but new code
+// (especially US) should import fetchYahooCandles directly.
+export { fetchYahooCandles } from "@/lib/data/yahoo-candles";
 
 let _crumb: { cookie: string; crumb: string; at: number } | null = null;
 const CRUMB_TTL_MS = 30 * 60 * 1000;
@@ -32,33 +36,6 @@ async function getCrumb(): Promise<{ cookie: string; crumb: string } | null> {
 
 const isIndia = (s: string) => s.toUpperCase().endsWith(".NS") || s.toUpperCase().endsWith(".BO");
 export { isIndia };
-
-// Price + OHLC candles from the auth-free chart endpoint.
-export async function fetchIndiaCandles(symbol: string, range = "6mo"): Promise<Candle[]> {
-  try {
-    const res = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${range}`,
-      { headers: { "User-Agent": "Mozilla/5.0" }, next: { revalidate: 3600 }, signal: AbortSignal.timeout(8000) }
-    );
-    if (!res.ok) return [];
-    const j = await res.json();
-    const r = j?.chart?.result?.[0];
-    const ts: number[] = r?.timestamp ?? [];
-    const q = r?.indicators?.quote?.[0] ?? {};
-    const out: Candle[] = [];
-    for (let i = 0; i < ts.length; i++) {
-      if (q.close?.[i] == null) continue;
-      out.push({
-        date: new Date(ts[i] * 1000).toISOString().slice(0, 10),
-        open: q.open?.[i] ?? q.close[i], high: q.high?.[i] ?? q.close[i],
-        low: q.low?.[i] ?? q.close[i], close: q.close[i], volume: q.volume?.[i] ?? 0,
-      });
-    }
-    return out;
-  } catch {
-    return [];
-  }
-}
 
 export interface IndiaQuote {
   price: number;

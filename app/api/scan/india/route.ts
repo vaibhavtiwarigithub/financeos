@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { indiaScreenUniverse } from "@/lib/india-universe";
-import { fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
+import { fetchIndiaOverview, fetchYahooCandles } from "@/lib/india-data";
 import { computeTechnicals } from "@/lib/data/technicals";
 import { STRATEGY_MAP } from "@/lib/strategy-definitions";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 //
 // There is NO free India screen API, so we screen the ~NIFTY-100 universe
 // (indiaScreenUniverse) name-by-name: pull Yahoo fundamentals (fetchIndiaOverview,
-// AV-OVERVIEW-shaped) + daily candles (fetchIndiaCandles), compute RSI-14 / EMA-50
+// AV-OVERVIEW-shaped) + daily candles (fetchYahooCandles), compute RSI-14 / EMA-50
 // locally, and apply the SAME filter conditions the US scanner UI exposes
 // (RSI min/max, price vs 50-MA, plus a strategy's fundamental scan_filters).
 //
@@ -347,7 +347,7 @@ export async function POST(req: NextRequest) {
       const batchOut = await Promise.all(batch.map(async (symbol): Promise<ScanResult> => {
         const [ov, candles] = await Promise.all([
           fetchIndiaOverview(symbol),
-          fetchIndiaCandles(symbol, "6mo"),
+          fetchYahooCandles(symbol, "6mo"),
         ]);
 
         const tech = computeTechnicals(candles);

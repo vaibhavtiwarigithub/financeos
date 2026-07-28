@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchNseEquityList } from "@/lib/nse-data";
 import { indiaScreenUniverse } from "@/lib/india-universe";
-import { fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
+import { fetchIndiaOverview, fetchYahooCandles } from "@/lib/india-data";
 import { computeTechnicals } from "@/lib/data/technicals";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
         try {
           const [ov, candles] = await Promise.all([
             fetchIndiaOverview(symbol),
-            fetchIndiaCandles(symbol, "6mo"),
+            fetchYahooCandles(symbol, "6mo"),
           ]);
 
           const tech = computeTechnicals(candles);

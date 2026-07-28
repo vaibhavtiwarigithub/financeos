@@ -4,7 +4,7 @@
 // India via Yahoo .NS. Returns partial results (empty candles) instead of retrying
 // indefinitely, and reports the source so the job can surface provider usage.
 import { fetchMassiveCandles, fetchEodhdCandles, fetchTwelveDataCandles } from "@/lib/data/candles";
-import { fetchIndiaCandles } from "@/lib/india-data";
+import { fetchYahooCandles, yahooRange } from "@/lib/data/yahoo-candles";
 import type { Candle } from "@/lib/data/technicals";
 import type { Market } from "@/lib/edges/types";
 
@@ -12,19 +12,18 @@ import type { Market } from "@/lib/edges/types";
 // IC backfill passes a larger value to span multiple years of forward returns.
 const US_DAYS_DEFAULT = 420;
 
-export interface CandleResult { candles: Candle[]; source: string }
+// KNOWN CEILING on the US branch below: Massive is plan-capped at a 2-year
+// lookback (HTTP 403 NOT_AUTHORIZED beyond it, measured 2026-07-28), so a US
+// `days` above ~730 silently yields only ~500 bars. Yahoo serves 5y for US too
+// and is already imported here — but switching the US branch to it changes live
+// ResearchAgent scoring inputs, so it is build-order step 4 in
+// features/walk-forward-ic-folds/, not a drive-by change.
 
-// Map a calendar-day depth to a Yahoo range string for India candles.
-function indiaRange(days: number): string {
-  if (days > 1400) return "5y";
-  if (days > 900) return "3y";
-  if (days > 500) return "2y";
-  return "1y";
-}
+export interface CandleResult { candles: Candle[]; source: string }
 
 export async function resolveCandles(symbol: string, market: Market, days: number = US_DAYS_DEFAULT): Promise<CandleResult> {
   if (market === "india") {
-    const c = await fetchIndiaCandles(symbol, indiaRange(days)).catch(() => [] as Candle[]);
+    const c = await fetchYahooCandles(symbol, yahooRange(days)).catch(() => [] as Candle[]);
     return { candles: c, source: c.length ? "yahoo_india" : "unavailable" };
   }
   let c = await fetchMassiveCandles(symbol, days).catch(() => [] as Candle[]);
@@ -39,7 +38,7 @@ export async function resolveCandles(symbol: string, market: Market, days: numbe
 // (^NSEI) for India. Resolved ONCE per run, not per symbol.
 export async function resolveBenchmark(market: Market, days: number = US_DAYS_DEFAULT): Promise<CandleResult> {
   if (market === "india") {
-    const c = await fetchIndiaCandles("^NSEI", indiaRange(days)).catch(() => [] as Candle[]);
+    const c = await fetchYahooCandles("^NSEI", yahooRange(days)).catch(() => [] as Candle[]);
     return { candles: c, source: c.length ? "yahoo_india" : "unavailable" };
   }
   return resolveCandles("SPY", "us", days);

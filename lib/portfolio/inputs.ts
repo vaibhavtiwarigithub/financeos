@@ -3,7 +3,7 @@
 // sector-agnostic 2% default when candles are unavailable — the constructor
 // treats that as "typical" volatility rather than blocking a trade over a data gap.
 
-import { fetchIndiaCandles } from "@/lib/india-data";
+import { fetchYahooCandles } from "@/lib/india-data";
 
 const DEFAULT_DAILY_VOL = 0.02;
 
@@ -22,7 +22,7 @@ function stdevOfReturns(closes: number[]): number | null {
 export async function estimateDailyVolPct(symbol: string, market: "us" | "india", supabase: any): Promise<number> {
   try {
     if (market === "india") {
-      const candles = await fetchIndiaCandles(symbol, "1mo");
+      const candles = await fetchYahooCandles(symbol, "1mo");
       const closes = candles.slice(-21).map(c => c.close);
       return stdevOfReturns(closes) ?? DEFAULT_DAILY_VOL;
     }

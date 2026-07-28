@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
-import { fetchIndiaCandles } from "@/lib/india-data";
+import { fetchYahooCandles } from "@/lib/india-data";
 
 export const dynamic = "force-dynamic";
 
@@ -147,11 +147,11 @@ export async function POST(req: NextRequest) {
 
     if (market === "india") {
       // India: source `.NS` candles from free Yahoo (price_cache is US-only).
-      const candleArrays = await Promise.all(symbols.map(s => fetchIndiaCandles(s, "2y")));
+      const candleArrays = await Promise.all(symbols.map(s => fetchYahooCandles(s, "2y")));
       symbols.forEach((sym, i) => {
         priceMap[sym] = candleArrays[i].map(c => ({ date: c.date, close: c.close }));
       });
-      const nifty = await fetchIndiaCandles("^NSEI", "2y");
+      const nifty = await fetchYahooCandles("^NSEI", "2y");
       for (const c of nifty) benchPrices[c.date] = c.close;
     } else {
       // US: price_cache candles (unchanged path).

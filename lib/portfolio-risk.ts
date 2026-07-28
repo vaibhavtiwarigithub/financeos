@@ -1,5 +1,5 @@
 import type { BrokerHolding } from "./brokers/types";
-import { fetchIndiaCandles } from "./india-data";
+import { fetchYahooCandles } from "./india-data";
 import type { Candle } from "@/lib/data/technicals";
 
 // ── Sector reference data ────────────────────────────────────────────────────
@@ -271,14 +271,14 @@ async function computeIndiaPortfolioBeta(
   holdings: BrokerHolding[],
   totalValue: number,
 ): Promise<number | null> {
-  const niftyCandles = await fetchIndiaCandles("^NSEI", "1y");
+  const niftyCandles = await fetchYahooCandles("^NSEI", "1y");
   if (niftyCandles.length < 21) return null;
   const benchRet = dailyReturnsByDate(niftyCandles);
 
   const uniqueSymbols = Array.from(new Set(holdings.map(h => h.symbol)));
   const betaBySymbol = new Map<string, number>();
   await Promise.all(uniqueSymbols.map(async (sym) => {
-    const candles = await fetchIndiaCandles(sym, "1y");
+    const candles = await fetchYahooCandles(sym, "1y");
     if (candles.length < 21) return;
     const b = betaVsNifty(dailyReturnsByDate(candles), benchRet);
     if (b != null) betaBySymbol.set(sym, b);

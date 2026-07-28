@@ -1,0 +1,74 @@
+// Daily OHLC candles from Yahoo's auth-free chart endpoint.
+//
+// MARKET-AGNOSTIC. This lived in lib/india-data.ts as `fetchIndiaCandles` and was
+// treated as India-only — but it was never India-specific. It takes any Yahoo
+// symbol and any Yahoo range; `.NS`/`.BO` suffixes are just what India callers
+// happened to pass. Measured 2026-07-28:
+//
+//   AAPL         range=5y -> 1254 bars from 2021-07-28
+//   RELIANCE.NS  range=5y -> 1239 bars from 2021-07-27
+//
+// That matters because Massive (Polygon-backed), which `resolveCandles()` uses
+// first for US, returns HTTP 403 NOT_AUTHORIZED beyond a 2-year lookback on the
+// current plan. This endpoint is the free, keyless deep-history source for BOTH
+// markets — see features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md Annex B1.
+//
+// Unlike Yahoo's fundamentals endpoints (v7 quote, v10 quoteSummary), the chart
+// endpoint needs no cookie+crumb handshake.
+//
+// NOTE: this module is currently called only where fetchIndiaCandles was called.
+// Routing US deep history through it is a separate, unapproved change (build-order
+// step 4) because it would alter live ResearchAgent scoring inputs.
+
+import type { Candle } from "@/lib/data/technicals";
+
+/** Yahoo `range` values, shortest to longest. */
+export type YahooRange = "5d" | "1mo" | "3mo" | "6mo" | "1y" | "2y" | "3y" | "5y" | "10y" | "max";
+
+/**
+ * Smallest Yahoo range that COVERS `days` of calendar history — never less.
+ *
+ * The inherited `indiaRange` under-served every request between 366 and 500
+ * days: it returned "1y" (~247 trading sessions) for a 420-day ask. That is
+ * below the 273 sessions 12-1 momentum needs (252 + 21), so `mom_12_1` on the
+ * India branch of resolveCandles() was being computed on truncated history at
+ * the default depth. Each boundary here is now the range's own calendar length,
+ * so the returned window is always >= what the caller asked for.
+ */
+export function yahooRange(days: number): YahooRange {
+  if (days <= 365) return "1y";
+  if (days <= 730) return "2y";
+  if (days <= 1095) return "3y";
+  if (days <= 1825) return "5y";
+  return "10y";
+}
+
+/**
+ * Daily candles for any Yahoo symbol. Returns [] on any failure — callers treat
+ * an empty series as "unavailable" rather than as a zero-valued history.
+ */
+export async function fetchYahooCandles(symbol: string, range: string = "6mo"): Promise<Candle[]> {
+  try {
+    const res = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${range}`,
+      { headers: { "User-Agent": "Mozilla/5.0" }, next: { revalidate: 3600 }, signal: AbortSignal.timeout(8000) }
+    );
+    if (!res.ok) return [];
+    const j = await res.json();
+    const r = j?.chart?.result?.[0];
+    const ts: number[] = r?.timestamp ?? [];
+    const q = r?.indicators?.quote?.[0] ?? {};
+    const out: Candle[] = [];
+    for (let i = 0; i < ts.length; i++) {
+      if (q.close?.[i] == null) continue;
+      out.push({
+        date: new Date(ts[i] * 1000).toISOString().slice(0, 10),
+        open: q.open?.[i] ?? q.close[i], high: q.high?.[i] ?? q.close[i],
+        low: q.low?.[i] ?? q.close[i], close: q.close[i], volume: q.volume?.[i] ?? 0,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}

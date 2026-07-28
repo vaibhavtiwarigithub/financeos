@@ -40,7 +40,7 @@ import {
 import { verifyKiteTradingIdentity } from "@/lib/kite";
 import { computeRiskMetrics } from "@/lib/portfolio-risk";
 import { fetchUsCandles } from "@/lib/data/candles";
-import { fetchIndiaCandles } from "@/lib/india-data";
+import { fetchYahooCandles } from "@/lib/india-data";
 import { computeCorrelationClusters } from "@/lib/risk/correlation";
 import {
   computeHoldingRisk,
@@ -207,7 +207,7 @@ async function processAccount(
   await Promise.all(account.holdings.map(async (h) => {
     try {
       const candles = market === "india"
-        ? await fetchIndiaCandles(h.symbol)
+        ? await fetchYahooCandles(h.symbol)
         : (await fetchUsCandles(h.symbol, async () => [] as Candle[])).candles;
       candlesBySymbol.set(h.symbol, candles ?? []);
     } catch {

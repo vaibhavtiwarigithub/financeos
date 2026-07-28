@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchIndiaCandles } from "@/lib/india-data";
+import { fetchYahooCandles } from "@/lib/india-data";
 import { computeLabel } from "@/lib/learning/label-math";
 import {
   ATR_EXIT_POLICY_VERSION,
@@ -60,7 +60,7 @@ async function usCandles(supabase: any, symbol: string, sinceDate: string): Prom
 }
 
 async function indiaCandles(symbol: string): Promise<Candle[]> {
-  const raw = await fetchIndiaCandles(symbol, "3mo");
+  const raw = await fetchYahooCandles(symbol, "3mo");
   return raw.map(c => ({ date: c.date, close: c.close, high: c.high, low: c.low }));
 }
 

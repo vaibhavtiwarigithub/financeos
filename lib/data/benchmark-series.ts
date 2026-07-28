@@ -9,14 +9,14 @@
 //
 // So both consumers now share ONE cache:
 //   - US: read from `price_cache` (a DB read — no provider call at all).
-//   - India: `fetchIndiaCandles("^NSEI")` — the SAME single call the regime path
+//   - India: `fetchYahooCandles("^NSEI")` — the SAME single call the regime path
 //     already made. It is not an additional call; it is the existing one, hoisted.
 //
 // The cache stores the in-flight PROMISE (not the resolved value) so two concurrent
 // callers — the fire-and-forget observation capture and the awaited regime read —
 // collapse into a single fetch rather than racing into two.
 
-import { fetchIndiaCandles } from "@/lib/india-data";
+import { fetchYahooCandles } from "@/lib/india-data";
 
 export interface BenchmarkBar {
   date: string; // YYYY-MM-DD
@@ -57,7 +57,7 @@ async function loadUsBenchmark(supabase: any): Promise<BenchmarkBar[]> {
 }
 
 async function loadIndiaBenchmark(): Promise<BenchmarkBar[]> {
-  const candles = await fetchIndiaCandles(BENCHMARK_BY_MARKET.india, "1y");
+  const candles = await fetchYahooCandles(BENCHMARK_BY_MARKET.india, "1y");
   return candles
     .map((c) => ({ date: c.date, close: c.close }))
     .filter((b) => Number.isFinite(b.close) && b.close > 0);

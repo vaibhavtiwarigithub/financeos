@@ -6,7 +6,7 @@ import { fetchSocialSentiment, shrinkSentimentScore, SocialSentiment } from "@/l
 import type { OptionsSignal } from "@/lib/options-signal";
 import { computeScores, type ComputedScores } from "@/lib/data/scores";
 import type { Candle } from "@/lib/data/technicals";
-import { isIndia, fetchIndiaOverview, fetchIndiaCandles } from "@/lib/india-data";
+import { isIndia, fetchIndiaOverview, fetchYahooCandles } from "@/lib/india-data";
 import { fetchIndiaNewsSentiment, type IndiaNewsSentiment } from "@/lib/india-news";
 import { fetchFiiDiiFlows, fiiDiiMacroLine } from "@/lib/india-macro";
 import { niftyCandidates } from "@/lib/india-universe";
@@ -1402,8 +1402,8 @@ export async function processSymbol(
       ? fetchUpstoxCandles(symbol)
           .then(c => c.length >= 15
             ? { candles: c, source: "upstox" }
-            : fetchIndiaCandles(symbol).then(y => ({ candles: y, source: y.length ? "yahoo" : "unavailable" })))
-          .catch(() => fetchIndiaCandles(symbol)
+            : fetchYahooCandles(symbol).then(y => ({ candles: y, source: y.length ? "yahoo" : "unavailable" })))
+          .catch(() => fetchYahooCandles(symbol)
             .then(y => ({ candles: y, source: y.length ? "yahoo" : "unavailable" }))
             .catch(() => ({ candles: [] as Candle[], source: "unavailable" })))
       // US candles: Massive → EODHD → Twelve Data → Alpha Vantage (fallback).
