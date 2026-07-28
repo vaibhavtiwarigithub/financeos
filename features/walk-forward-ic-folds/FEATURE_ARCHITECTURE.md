@@ -493,3 +493,129 @@ latest-window t is 1.73 (US) / 1.04 (India). A larger universe and clean PIT
 data change the *precision* of the estimate, not its *sign* — they make a real
 edge provable and a fake edge refutable. Neither manufactures an edge that is
 not there.
+
+---
+
+# Annex B — Verification of the two unknowns (2026-07-28)
+
+Both open questions from Annex A were tested against the live providers. One
+blocker is real, one dissolved, and a third problem surfaced that Annex A missed.
+
+## B1. Candle depth — RESOLVED, and the fix already exists
+
+**Massive (Polygon-backed) has a hard 2-year lookback wall on the current plan.**
+
+- `/v2/aggs/ticker/AAPL/range/1/day/2022-07-01/2026-07-27` with `limit=5000`
+  returned exactly **500 bars, 2024-07-29 → 2026-07-27**.
+- Requesting only the older window `2022-07-01 → 2023-07-01` returned
+  **HTTP 403 `NOT_AUTHORIZED` — "Your plan doesn't include this data timeframe."**
+
+This matters because `resolveCandles()` routes **US** through Massive first
+(`lib/edges/data.ts`), so US IC history is capped at ~2 years. Net of a 252-day
+feature lookback (12-1 momentum), that leaves only ~12 usable non-overlapping
+20-day as-of dates. 1C would have been unbuildable on US.
+
+**However — Yahoo's auth-free chart endpoint serves 5 years for BOTH markets,
+free, and Kairos already has the code.** Measured:
+
+| Symbol | range=5y | range=3y |
+|---|---|---|
+| AAPL | 1254 bars, from 2021-07-28 | 751 bars, from 2023-07-28 |
+| RELIANCE.NS | 1239 bars, from 2021-07-27 | 742 bars, from 2023-07-27 |
+
+`fetchIndiaCandles(symbol, range)` in `lib/india-data.ts` is a **generic Yahoo
+chart fetcher**. It is India-only by naming accident, not by capability — it
+takes any symbol and any range, and `indiaRange()` already maps >900d → `3y` and
+>1400d → `5y`. The 251-bar figure in the system map is simply the 1y default.
+
+**Proposed (NOT approved, step 4 scope):** rename it to `fetchYahooCandles` and
+use it as the DEEP-HISTORY source for both markets in the validation path, while
+Massive stays primary for recent/live US data. No new provider, no new key, no
+cost.
+
+Recomputed 1C feasibility with 5 years (~1254 sessions, minus a 252-day feature
+lookback, non-overlapping at h20 → ~50 as-of dates):
+
+| n | Detectable IC at T=2.0 | at T=3.0 |
+|---|---|---|
+| 100 | 0.029 | 0.043 |
+| 200 | 0.020 | 0.030 |
+
+**1C becomes fully buildable: 3 folds x 16 dates, comfortably above the 12/fold
+floor, with the proposed 0.04 IC floor safely above the detection limit.**
+
+## B2. Massive PIT coverage — CONFIRMED for US, ABSENT for India
+
+**US: works.** `GET /v3/reference/tickers` with `date=2023-06-30` and
+`active=false` returned genuine delisted names with `delisted_utc` timestamps
+(e.g. Altaba, delisted 2019-10-07; Advanced Accelerator Applications, 2018-02-12).
+This is a real point-in-time membership source with survivorship intact, already
+connected, no new vendor.
+
+**India: not covered.** Searching `RELIANCE` returned only US-listed and OTC
+instruments — Reliance Global Group (NASDAQ), Reliance Inc (NYSE), and OTC GDRs.
+No NSE listings. Massive is US-equities-only for this purpose.
+
+## B3. Consequence Annex A did not anticipate
+
+The two markets have **opposite** gaps:
+
+| | PIT universe source | Deep candle history |
+|---|---|---|
+| US | 5A Massive — **yes** | Massive capped at 2y; **Yahoo 5y fixes it** |
+| India | Massive — **no**, needs 5D | Yahoo — **yes, 5y** |
+
+Neither market has both from one provider. The recommended pairing is therefore
+**asymmetric by necessity**, not by preference:
+
+- **US:** 5A (Massive PIT tickers) for membership + Yahoo 5y for candles + 5B
+  liquidity rank within the PIT set.
+- **India:** 5D (NSE index-membership archives) for membership + Yahoo 5y for
+  candles. Until 5D exists, India has **no** PIT universe and therefore cannot
+  produce promotion-grade evidence at all — it stays diagnostic-only.
+- **Both:** 5C freeze-forward continues in parallel as ground truth.
+
+This means US reaches promotable evidence materially before India. That is an
+honest consequence of the data available, not a choice — and it should be
+recorded rather than papered over by letting India promote on a survivorship-
+biased universe.
+
+## Revised recommendation
+
+Adopt **1C + 5A/5B (US) + 5D (India, blocked until built)**, with the Yahoo
+deep-history change as a prerequisite for both. Do not relax the fold floors to
+accommodate the 2-year Massive wall — the wall is removable for free, and
+lowering statistical floors to fit a provider limit would be exactly the kind of
+accommodation this whole feature exists to prevent.
+
+## B4. Why the brokers (Robinhood / Webull / Kite) do not solve either problem
+
+Asked during review: can the broker APIs supply what is missing?
+
+**For #5 (PIT universe) — structurally impossible, not a plan limitation.**
+A broker API lists instruments you can trade *today*. That is the literal
+definition of a survivorship-biased universe. Robinhood has no reason to serve
+a name that delisted in 2019, and does not. `active=false` on the Massive
+reference endpoint exists precisely because a *market-data* vendor has an
+incentive to retain dead tickers, while a *broker* has none. No broker
+integration can fix survivorship bias, regardless of entitlement or plan.
+
+**For #1 (candle depth) — possible in principle, unnecessary in practice, and
+poorly shaped for it.**
+- Broker historicals are entitled and rate-limited for a personal account, not
+  for a 200-symbol nightly backfill across 5 years.
+- Robinhood MCP requires an interactive OAuth session; the token is not
+  available to unattended validation jobs on the same terms as an open HTTP
+  endpoint.
+- Webull's data tools are recorded in this repo as requiring
+  `category:US_STOCK`, returning quarterly fractions, being cron-entitled, and
+  the adapter is currently dead.
+- Kite is India-only and account-scoped.
+- Yahoo already supplies 5 years for both markets, free, keyless, with existing
+  code (B1). Adding a broker dependency to solve a solved problem would trade a
+  keyless endpoint for an entitled, rate-limited, auth-bound one.
+
+**Conclusion:** the brokers stay what they are — execution and live account
+state. They are not a research-data source, and routing validation evidence
+through them would couple the evidence layer to trading entitlements. The
+existing separation is correct and should not be relaxed.
