@@ -1069,3 +1069,105 @@ Both branches are tested.
   This is the step that finally produces the real sigma number.
 - Steps 8-10. Promotion remains dormant.
 - Open Decisions #3 and #4 still open, gating steps 8-9.
+
+---
+
+# Annex I — THE SIGMA MEASUREMENT (2026-07-28)
+
+First real out-of-sample run. **Verdict: the approved plan does not hold.**
+
+## Run configuration
+
+`mom_12_1` (Jegadeesh-Titman, a cited prior), US, horizon 20 sessions,
+step = horizon, 2 folds x 6 dates = **12 as-of dates**, top-200 PIT universe,
+min cross-section 100, 5y Yahoo candles, as-of dates confined to the 2-year
+liquidity window. 255 symbols fetched, 5 missing. **Zero universe errors, zero
+skipped dates** — every planned date produced an IC.
+
+Approximation used: `per_fold` membership cadence (2 walks instead of 12), so
+this is not fully point-in-time. Recorded in the report, not glossed.
+
+## Result
+
+| Statistic | Value |
+|---|---|
+| n (as-of dates) | 12 |
+| mean IC | **0.0335** |
+| **realized sigma** | **0.1436** |
+| Newey-West SE | 0.0419 |
+| **t_HAC** | **0.80** |
+| NW lag | 1 (step = horizon, so no overlap to correct) |
+| fold signs | [+1, +1] — consistently positive |
+
+## The mechanism worked; the level did not
+
+Legacy overlapping windows measured **sigma = 0.438**. Removing overlap cut it to
+**0.1436 — a 3.1x reduction.** The core hypothesis behind step = horizon is
+confirmed: most of the legacy dispersion really was label overlap.
+
+But realized sigma is **2.0x the theoretical 0.071** at n=200, not equal to it.
+Annex F assumed it would collapse to roughly theoretical. It did not, and the
+gap is not noise:
+
+**95% CI for sigma (chi-square, df=11): [0.1017, 0.2437].**
+
+The lower bound sits above the 0.10 plan ceiling. Even allowing for a 12-date
+estimate, sigma is confidently above the level the approved floors require.
+
+The residual 2x is the expected consequence of factor structure — real
+cross-sections are not independent draws, so cross-sectional IC disperses more
+than iid theory predicts. That is a property of markets, not a fixable defect.
+
+## What it costs
+
+Dates needed to detect a floor at sigma = 0.1436, against ~25 available:
+
+| IC floor | T = 2.0 | T = 3.0 |
+|---|---|---|
+| 0.04 (approved) | **51.5** | 115.9 |
+| 0.05 | 33.0 | 74.2 |
+| 0.06 | 22.9 | 51.5 |
+| 0.08 | 12.9 | 29.0 |
+
+At N = 25 the smallest detectable IC is **0.0574**, well above the approved 0.04
+floor. And the measured mean IC is **0.0335** — below the floor it would have to
+clear even if the sample were large enough.
+
+So `mom_12_1` fails twice over: too little signal, and too little sample to
+prove the signal it has. t_HAC = 0.80 against a 2.0 hurdle.
+
+## Honest reading
+
+This is **not** the catastrophic outcome (sigma 0.438, ~480 dates, approach
+dead). It is the middle outcome: the machinery is correct, the overlap fix
+works, the edge is consistently positive across both folds — and it is still
+nowhere near promotable, with no realistic path to promotable on the current
+entitlement.
+
+The gate is behaving exactly as designed. It refused, and the refusal is right.
+
+## Options, none chosen
+
+1. **Raise the IC floor to ~0.06 and accept ~23 dates.** Honest given sigma, but
+   `mom_12_1`'s 0.0335 does not clear 0.06, and neither would most factors. This
+   mostly guarantees nothing ever promotes.
+2. **Enlarge the universe.** If the excess dispersion were pure sampling noise,
+   4x the names would halve sigma. It is probably factor structure, so the
+   return is likely much less than sqrt(n). **Cheap to test: re-run at n=400 and
+   compare.** This is the one experiment worth doing before any decision.
+3. **Longer horizon.** IC typically rises with horizon; a 60-session horizon
+   might carry a higher mean IC — but it also cuts as-of dates by 3x, and the
+   date budget is already binding.
+4. **Deeper history.** Needs a whole-market liquidity source beyond the 2-year
+   entitlement. That is a paid upgrade.
+5. **Accept that single-factor IC promotion is not reachable here** and keep the
+   edge lab strictly diagnostic.
+
+## Immediate consequence
+
+`SIGMA_PLAN_CEILING = 0.10` is exceeded, so under the rule adopted in Annex F
+the approved floors are void pending re-derivation. **Promotion stays dormant**,
+now on measured evidence rather than on the absence of it.
+
+Open Decisions #3 and #4 remain open, but they are moot until the sample-floor
+question is resolved.
