@@ -32,6 +32,9 @@ export const PIT_POLICY_VERSION = "us_pit_v1";
 /** Massive `type` codes we accept. CS = common stock. */
 const ELIGIBLE_TYPES = new Set(["CS"]);
 
+/** Retry/backoff knobs. Injectable so tests can exercise 429 handling instantly. */
+export interface RetryOpts { retries?: number; baseDelayMs?: number }
+
 export interface PitTicker {
   ticker: string;
   type?: string | null;
@@ -127,14 +130,36 @@ export function liquidityAvailableFor(asOf: string, today = new Date()): boolean
 
 const BASE = "https://api.massive.com";
 
-async function getJson(url: string): Promise<any | null> {
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
+/**
+ * Measured 2026-07-28: the plan allows ~5 requests per minute, then returns 429.
+ * A membership walk is ~10 pages, so without backoff this module can never
+ * complete a single as-of date — the walk aborts and every run refuses with
+ * `membership_incomplete`. Retrying a 429 is therefore required for the module
+ * to function at all, not an optimisation.
+ *
+ * Only 429 and 5xx are retried. A 403 (entitlement) or 400 (bad request) is a
+ * permanent answer and retrying it would just burn the quota.
+ */
+async function getJson(url: string, opts?: { retries?: number; baseDelayMs?: number }): Promise<any | null> {
+  const retries = opts?.retries ?? 4;
+  const base = opts?.baseDelayMs ?? 13_000; // just over the 5/min window
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+      if (res.ok) return await res.json();
+      if (res.status !== 429 && res.status < 500) return null; // permanent
+      if (attempt === retries) return null;
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : base * Math.pow(1.5, attempt);
+      await new Promise((r) => setTimeout(r, waitMs));
+    } catch {
+      if (attempt === retries) return null;
+      await new Promise((r) => setTimeout(r, base));
+    }
   }
+  return null;
 }
 
 /**
@@ -150,6 +175,7 @@ async function getJson(url: string): Promise<any | null> {
 export async function fetchPitMembership(
   asOf: string,
   apiKey: string,
+  retry?: RetryOpts,
 ): Promise<{ tickers: PitTicker[]; complete: boolean; pages: number }> {
   const out: PitTicker[] = [];
   let url = `${BASE}/v3/reference/tickers?market=stocks&date=${asOf}&active=true&limit=1000&apiKey=${apiKey}`;
@@ -157,7 +183,7 @@ export async function fetchPitMembership(
   let pages = 0;
 
   while (url && pages < MAX_PAGES) {
-    const j = await getJson(url);
+    const j = await getJson(url, retry);
     // Null means transport failure, HTTP error, or a rate limit. Either way we
     // do not know what we missed, so the walk is incomplete — never partial.
     if (!j || j.status === "NOT_AUTHORIZED") {
@@ -176,9 +202,11 @@ export async function fetchPitMembership(
 export async function fetchGroupedDollarVolume(
   date: string,
   apiKey: string,
+  retry?: RetryOpts,
 ): Promise<Map<string, number> | null> {
   const j = await getJson(
     `${BASE}/v2/aggs/grouped/locale/us/market/stocks/${date}?adjusted=true&apiKey=${apiKey}`,
+    retry,
   );
   if (!j || j.status === "NOT_AUTHORIZED" || !Array.isArray(j.results)) return null;
   const m = new Map<string, number>();
@@ -208,6 +236,7 @@ export async function resolvePitUniverse(opts: {
   minSymbols: number;
   apiKey?: string;
   today?: Date;
+  retry?: RetryOpts;
 }): Promise<PitUniverseResult> {
   const { market, asOf, size, minSymbols } = opts;
   const apiKey = opts.apiKey ?? process.env.MASSIVE_API_KEY ?? "";
@@ -236,7 +265,7 @@ export async function resolvePitUniverse(opts: {
     };
   }
 
-  const membership = await fetchPitMembership(asOf, apiKey);
+  const membership = await fetchPitMembership(asOf, apiKey, opts.retry);
   if (!membership.tickers.length) {
     return { ok: false, reason: "membership_unavailable", detail: `No PIT membership returned for ${asOf}.` };
   }
@@ -255,7 +284,7 @@ export async function resolvePitUniverse(opts: {
   }
 
   const eligible = membership.tickers.filter(isEligibleTicker);
-  const dollarVol = await fetchGroupedDollarVolume(asOf, apiKey);
+  const dollarVol = await fetchGroupedDollarVolume(asOf, apiKey, opts.retry);
   if (!dollarVol) {
     return {
       ok: false,

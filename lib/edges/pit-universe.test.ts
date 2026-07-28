@@ -142,7 +142,7 @@ describe("fetchPitMembership completeness", () => {
     const { fetchPitMembership } = await import("./pit-universe");
     let n = 0;
     globalThis.fetch = (async () => (++n === 1 ? page([{ ticker: "A" }], "https://x/p2") : page([{ ticker: "B" }]))) as any;
-    const r = await fetchPitMembership("2026-07-24", "k");
+    const r = await fetchPitMembership("2026-07-24", "k", { retries: 0 });
     expect(r.complete).toBe(true);
     expect(r.tickers.map((t) => t.ticker)).toEqual(["A", "B"]);
   });
@@ -155,7 +155,7 @@ describe("fetchPitMembership completeness", () => {
     let n = 0;
     globalThis.fetch = (async () =>
       ++n === 1 ? page([{ ticker: "A" }], "https://x/p2") : ({ ok: false, status: 429 } as any)) as any;
-    const r = await fetchPitMembership("2026-07-24", "k");
+    const r = await fetchPitMembership("2026-07-24", "k", { retries: 0 });
     expect(r.complete).toBe(false);
     expect(r.tickers.map((t) => t.ticker)).toEqual(["A"]); // partial, and known to be
   });
@@ -168,7 +168,7 @@ describe("fetchPitMembership completeness", () => {
                 : ({ ok: false, status: 429 } as any)) as any;
     const r = await resolvePitUniverse({
       market: "us", asOf: "2026-07-24", size: 200, minSymbols: 1,
-      apiKey: "k", today: new Date("2026-07-28T00:00:00Z"),
+      apiKey: "k", today: new Date("2026-07-28T00:00:00Z"), retry: { retries: 0 },
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("membership_incomplete");

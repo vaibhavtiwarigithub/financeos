@@ -43,3 +43,10 @@ supabase/.temp/
 # Codex/Claude review + audit prompt+result docs — local scratch, never commit
 CODEX_*.md
 CLAUDE_CODE_*.md
+
+# Added by ggshield
+.cache_ggshield
+
+# temporary OOS sigma measurement harness + its output
+lib/edges/__oos-measure.test.ts
+oos-sigma-result.json
