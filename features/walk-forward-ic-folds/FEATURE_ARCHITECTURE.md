@@ -838,3 +838,86 @@ folds at full width.
 - Steps 5-10 unchanged. Promotion remains dormant.
 - Open Decisions #3 (false-discovery) and #4 (cost-adjusted test) still open,
   gating steps 8-9.
+
+---
+
+# Annex F — The 25-vs-36 question was the wrong question (2026-07-28)
+
+## The framing error
+
+Annex E presented "~25 available vs 36 required" as a shortfall needing a
+relaxed floor. **36 was never a statistical requirement.** It was the arithmetic
+product of a fold partition (3 x 12) that Annex A chose without deriving.
+
+Under the approved `purged_temporal_oos` mode there is **no training segment**
+(Annex D: nothing in the edge pipeline is fitted). So folds do not partition
+data for leakage control — they exist only as diagnostics: fold sign consistency
+and a worst-fold guard. The primary statistic is the aggregate HAC t-stat over
+the **concatenated** OOS date-level IC series.
+
+Statistical power therefore depends on **N total as-of dates**, not on how they
+are partitioned. Asking "3x12 or 2x12 or 3x8" was asking about the wrong number.
+
+## The number that actually binds
+
+Detectable IC = `T * sigma / sqrt(N)`, against the approved **0.04** IC floor:
+
+| Hurdle | N needed to detect 0.04 | Available (~2y) | Verdict |
+|---|---|---|---|
+| **T = 2.0** (cited priors) | **12.6 dates** | ~25 | **2x margin — sufficient today** |
+| **T = 3.0** (in-house) | **28.4 dates** | ~25 | short by ~4 dates (~4 months) |
+
+The approved IC floor (0.04) sits **above** the detection limit at N=25 (0.028
+at T=2.0). The floor binds first, not the sample size. That is the correct
+relationship — the floor should be the constraint, since it encodes what counts
+as economically meaningful rather than merely measurable.
+
+## Recommendation
+
+1. **Fold layout: 3 folds x 8 dates = 24.** Three folds preserves the
+   sign-consistency diagnostic; 8 per fold is fine because per-fold t-stats are
+   diagnostics, never the promotion statistic. No floor is being "relaxed to fit
+   a provider limit" — the 12/fold figure was never derived.
+2. **Cited-prior edges proceed now** (`mom_12_1`, `high_52w_proximity`,
+   `vol_adj_mom_6m`, `rel_strength_6m` — the ones carrying published citations).
+3. **In-house edges are refused until N >= 29** — `kairos_technical_score_v1`
+   and friends carry the 3.0 hurdle per the approved split, and 25 dates cannot
+   detect a 0.04 IC at that hurdle. ~4 months of accumulation, or they simply
+   never qualify. Both are acceptable outcomes; silently running them at 25
+   dates is not.
+4. **Do not wait 11 months.** That recommendation in Annex E was downstream of
+   the 36-date error.
+
+## THE ASSUMPTION THIS ALL RESTS ON — measure it first
+
+Everything above uses `sigma = 0.071`, the *theoretical* cross-sectional rank-IC
+standard deviation at n=200 (`1/sqrt(n-3)`). The **measured** sigma on the
+current windows is **0.438** — 6x higher — because those windows overlap ~98.4%
+and the IC series is heavily autocorrelated.
+
+The whole plan assumes that removing overlap (step = horizon) collapses sigma
+toward theoretical. Sensitivity:
+
+| True sigma | N needed for IC=0.04 @ T=2.0 | Years @12.5/yr |
+|---|---|---|
+| 0.071 (assumed) | 12.6 | 1.0 |
+| 0.090 | 20.2 | 1.6 |
+| **0.100** | **25.0** | **2.0 — BREAK-EVEN vs what we have** |
+| 0.150 | 56.2 | 4.5 |
+| 0.200 | 100.0 | 8.0 |
+| 0.438 (measured, overlapping) | 479.6 | 38.4 |
+
+**The recommendation holds only if realized sigma <= ~0.10.** Above that, N=25 is
+not enough and the answer changes materially; at anything near 0.438 the entire
+IC-on-40-to-200-names approach is dead regardless of entitlement.
+
+So the **first output of the fold engine must be the realized sigma of the
+non-overlapping OOS IC series**, reported before any promotion decision is
+evaluated. If it lands above ~0.10, stop and re-derive rather than proceeding on
+these floors. This is cheap to measure and it invalidates or confirms the plan
+in one run.
+
+## Open Decisions status
+
+#1 answered (1C). #2 answered (Annex D). #5 answered (5A/5B, US only).
+#3 (false-discovery) and #4 (cost-adjusted test) remain open, gating steps 8-9.
