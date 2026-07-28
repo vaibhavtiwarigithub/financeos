@@ -160,8 +160,23 @@ export async function POST(req: NextRequest) {
       if (!broker) continue;
       const c = await broker.cancelOrder(o.broker_order_id, "live");
       if (c.ok) {
-        await supabase.from("broker_orders").update({ status: "canceled", closed_at: new Date().toISOString() }).eq("id", o.id);
-        canceled.push(`${o.symbol} #${o.id}`);
+        // A broker cancel ACK is not terminal truth: a fill may win the race.
+        // Keep this in the reconciliation set until getOrder confirms the
+        // actual terminal state.
+        const { error: cancelUpdateError } = await supabase.from("broker_orders").update({
+          status: "unknown_needs_reconcile",
+          error: "kill-switch cancel accepted; confirmation pending",
+        }).eq("id", o.id);
+        if (!cancelUpdateError) canceled.push(`${o.symbol} #${o.id} (confirmation pending)`);
+        else {
+          await reportIssue({
+            issueKey: `order-needs-reconcile:${o.id}`,
+            severity: "critical",
+            category: "trading",
+            title: `Kill-switch cancellation for ${o.symbol} could not be recorded`,
+            detail: cancelUpdateError.message,
+          }, supabase);
+        }
       }
     }
     await emitAlert({

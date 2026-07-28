@@ -385,11 +385,12 @@ production schema.
 
 Prepared for owner decision. Nothing here is approved or implemented.
 
-## Measured inputs (production, not assumed)
+## Back-derived diagnostics (not direct sigma measurements)
 
-Effective IC standard deviation backed out of Kairos's own rows, using
+An effective dispersion proxy backed out of Kairos's own rows, using
 `sigma = mean_ic * sqrt(as_of_dates) / t_stat` on the latest window of each
-market-wide edge/horizon:
+market-wide edge/horizon. Because `t_stat` uses a HAC standard error, this proxy
+mixes sample dispersion with serial covariance and is not a direct sample sd:
 
 | Market | Horizon | Universe | As-of dates | Implied sigma_IC | Mean abs IC | Best abs IC |
 |---|---|---|---|---|---|---|
@@ -400,11 +401,12 @@ market-wide edge/horizon:
 | India | 10 | 39 | 120 | 0.264 | 0.0127 | 0.0461 |
 | India | 20 | 39 | 120 | 0.307 | 0.0203 | 0.0561 |
 
-The theoretical cross-sectional rank-IC standard deviation for `n` names is
+The theoretical cross-sectional rank-IC standard deviation for `n` independent
+names is
 approximately `1/sqrt(n-3)`; at n=40 that is **0.164**. US h20 shows **0.438**,
-an inflation of ~2.7x. With `step_days = 5` against a 20-day horizon each label
-overlaps four as-of dates, and `sqrt(4) = 2` accounts for most of it. The
-inflation is overlap, not mystery.
+an effective inflation of ~2.7x. Label overlap is a plausible contributor, but
+the proxy does not identify how much comes from overlap, serial covariance,
+factor structure, universe construction, or regime concentration.
 
 ## Decision #1 — sample floors
 
@@ -416,9 +418,10 @@ N = ( T * sigma_IC / IC_target )^2
 
 Two independent levers, and they are not equally priced.
 
-**Lever 1 — remove label overlap** (`step_days >= horizon`). sigma falls 0.438 ->
-~0.164, cutting N by ~7.1x. But available dates/year falls from ~50 to ~12.5,
-costing 4x. **Net gain only ~1.8x.**
+**Lever 1 — remove label overlap** (`step_days >= horizon`). If sigma fell from
+the 0.438 HAC-implied proxy to ~0.164, N would fall by ~7.1x. But available
+dates/year falls from ~50 to ~12.5, costing 4x. This is a sensitivity scenario,
+not a measured 1.8x net gain.
 
 **Lever 2 — enlarge the universe.** sigma ~ `1/sqrt(n-3)`, and N scales with
 sigma², so N falls *linearly* in n. This costs **no calendar time at all**.
@@ -892,8 +895,9 @@ as economically meaningful rather than merely measurable.
 
 Everything above uses `sigma = 0.071`, the *theoretical* cross-sectional rank-IC
 standard deviation at n=200 (`1/sqrt(n-3)`). The **measured** sigma on the
-current windows is **0.438** — 6x higher — because those windows overlap ~98.4%
-and the IC series is heavily autocorrelated.
+current windows was previously described as **0.438**. That value is actually a
+HAC-implied proxy, not a sample sd, and its excess cannot be attributed to
+overlap alone.
 
 The whole plan assumes that removing overlap (step = horizon) collapses sigma
 toward theoretical. Sensitivity:
@@ -905,7 +909,7 @@ toward theoretical. Sensitivity:
 | **0.100** | **25.0** | **2.0 — BREAK-EVEN vs what we have** |
 | 0.150 | 56.2 | 4.5 |
 | 0.200 | 100.0 | 8.0 |
-| 0.438 (measured, overlapping) | 479.6 | 38.4 |
+| 0.438 (HAC-implied legacy proxy) | 479.6 | 38.4 |
 
 **The recommendation holds only if realized sigma <= ~0.10.** Above that, N=25 is
 not enough and the answer changes materially; at anything near 0.438 the entire
@@ -1072,9 +1076,10 @@ Both branches are tested.
 
 ---
 
-# Annex I — THE SIGMA MEASUREMENT (2026-07-28)
+# Annex I — PRELIMINARY SIGMA MEASUREMENT (2026-07-28)
 
-First real out-of-sample run. **Verdict: the approved plan does not hold.**
+First end-to-end OOS harness run. **Verdict: useful diagnostic, not
+promotion-grade evidence and not sufficient to void the approved plan.**
 
 ## Run configuration
 
@@ -1085,7 +1090,10 @@ liquidity window. 255 symbols fetched, 5 missing. **Zero universe errors, zero
 skipped dates** — every planned date produced an IC.
 
 Approximation used: `per_fold` membership cadence (2 walks instead of 12), so
-this is not fully point-in-time. Recorded in the report, not glossed.
+this is not fully point-in-time. The run also ranked liquidity from one session
+rather than a trailing ADV window and used raw Yahoo closes rather than
+corporate-action-adjusted prices. Those are material methodology limitations,
+not footnotes.
 
 ## Result
 
@@ -1096,31 +1104,35 @@ this is not fully point-in-time. Recorded in the report, not glossed.
 | **realized sigma** | **0.1436** |
 | Newey-West SE | 0.0419 |
 | **t_HAC** | **0.80** |
-| NW lag | 1 (step = horizon, so no overlap to correct) |
+| NW lag | 1 (a configured HAC choice; not justified by overlap alone) |
 | fold signs | [+1, +1] — consistently positive |
 
-## The mechanism worked; the level did not
+The saved artifact contains only this aggregate, not the 12 per-date IC values.
+The aggregate therefore cannot be independently recomputed from the artifact.
+The runner now emits the complete per-date series; this preliminary run must be
+rerun before its sigma is used.
 
-Legacy overlapping windows measured **sigma = 0.438**. Removing overlap cut it to
-**0.1436 — a 3.1x reduction.** The core hypothesis behind step = horizon is
-confirmed: most of the legacy dispersion really was label overlap.
+## What the run does and does not show
 
-But realized sigma is **2.0x the theoretical 0.071** at n=200, not equal to it.
-Annex F assumed it would collapse to roughly theoretical. It did not, and the
-gap is not noise:
+The legacy **0.438** value was back-derived from `mean_ic * sqrt(n) / t_stat`.
+Because that t-stat used a HAC standard error, 0.438 is not a directly measured
+sample standard deviation and is not comparable one-for-one with 0.1436. The
+claim that removing overlap produced a 3.1x sigma reduction is withdrawn.
 
-**95% CI for sigma (chi-square, df=11): [0.1017, 0.2437].**
+For the 12 preliminary observations, the sample standard deviation is 0.1436.
+A textbook chi-square interval under independent normal observations is
+[0.1017, 0.2437], but cross-sectional ICs are not established to be independent
+normal draws here. Its lower endpoint clears 0.10 by only 0.0017, so that model
+assumption decides the conclusion. “Confidently above 0.10” is not supported.
 
-The lower bound sits above the 0.10 plan ceiling. Even allowing for a 12-date
-estimate, sigma is confidently above the level the approved floors require.
-
-The residual 2x is the expected consequence of factor structure — real
-cross-sections are not independent draws, so cross-sectional IC disperses more
-than iid theory predicts. That is a property of markets, not a fixable defect.
+The difference from the iid heuristic may reflect factor structure, universe
+construction, corporate actions, regime concentration, or sampling error. This
+run does not identify the cause. The earlier factor-structure attribution is
+withdrawn until it is tested.
 
 ## What it costs
 
-Dates needed to detect a floor at sigma = 0.1436, against ~25 available:
+Conditional planning arithmetic at sigma = 0.1436:
 
 | IC floor | T = 2.0 | T = 3.0 |
 |---|---|---|
@@ -1129,45 +1141,72 @@ Dates needed to detect a floor at sigma = 0.1436, against ~25 available:
 | 0.06 | 22.9 | 51.5 |
 | 0.08 | 12.9 | 29.0 |
 
-At N = 25 the smallest detectable IC is **0.0574**, well above the approved 0.04
-floor. And the measured mean IC is **0.0335** — below the floor it would have to
-clear even if the sample were large enough.
+These values are arithmetic conditional on a stable sigma, independent effective
+dates, and the stated hurdle. They are not a new sample-size contract.
 
-So `mom_12_1` fails twice over: too little signal, and too little sample to
-prove the signal it has. t_HAC = 0.80 against a 2.0 hurdle.
+The preliminary `mom_12_1` point estimate does not pass the promotion hurdle:
+mean IC 0.0335 and t_HAC 0.80. That is a diagnostic refusal, not proof that the
+edge is ineffective or unreachable under a corrected, adequately sized design.
 
 ## Honest reading
 
-This is **not** the catastrophic outcome (sigma 0.438, ~480 dates, approach
-dead). It is the middle outcome: the machinery is correct, the overlap fix
-works, the edge is consistently positive across both folds — and it is still
-nowhere near promotable, with no realistic path to promotable on the current
-entitlement.
-
-The gate is behaving exactly as designed. It refused, and the refusal is right.
+The fail-closed outcome is right: promotion remains dormant. The stronger claims
+that the machinery is fully correct, the overlap hypothesis is confirmed, or no
+realistic promotion path exists are not established by this run.
 
 ## Options, none chosen
 
-1. **Raise the IC floor to ~0.06 and accept ~23 dates.** Honest given sigma, but
-   `mom_12_1`'s 0.0335 does not clear 0.06, and neither would most factors. This
-   mostly guarantees nothing ever promotes.
-2. **Enlarge the universe.** If the excess dispersion were pure sampling noise,
-   4x the names would halve sigma. It is probably factor structure, so the
-   return is likely much less than sqrt(n). **Cheap to test: re-run at n=400 and
-   compare.** This is the one experiment worth doing before any decision.
-3. **Longer horizon.** IC typically rises with horizon; a 60-session horizon
-   might carry a higher mean IC — but it also cuts as-of dates by 3x, and the
-   date budget is already binding.
-4. **Deeper history.** Needs a whole-market liquidity source beyond the 2-year
-   entitlement. That is a paid upgrade.
-5. **Accept that single-factor IC promotion is not reachable here** and keep the
-   edge lab strictly diagnostic.
+1. Rerun with adjusted prices, full per-date output, and the latest eligible
+   session window.
+2. Replace one-day dollar volume with a trailing PIT liquidity measure.
+3. Use per-date membership for any evidence that could reach promotion.
+4. Predeclare the HAC lag/sensitivity analysis and minimum number of dates.
+5. Only then compare universe sizes, horizons, and edge families under immutable
+   experiment lineage.
 
 ## Immediate consequence
 
-`SIGMA_PLAN_CEILING = 0.10` is exceeded, so under the rule adopted in Annex F
-the approved floors are void pending re-derivation. **Promotion stays dormant**,
-now on measured evidence rather than on the absence of it.
+The observed point estimate exceeds `SIGMA_PLAN_CEILING = 0.10`, so it raises a
+planning warning. It does **not** void the approved floors. **Promotion stays
+dormant** because the run is approximate, too small, not independently
+recomputable, and not fully PIT.
 
 Open Decisions #3 and #4 remain open, but they are moot until the sample-floor
 question is resolved.
+
+---
+
+# Annex J — 2026-07-28 adversarial review blockers
+
+The following are hard blockers before promotion can be enabled:
+
+1. **Experiment lineage is scope-only today.** `backtest_experiments` binds
+   market and segment, but not `edge_id`, evidence horizon, formula version, or
+   the immutable OOS run fingerprint. The route and RPC must both verify all of
+   those fields. Same-market/same-segment experiments are not interchangeable.
+2. **Liquidity is not trailing ADV.** `resolvePitUniverse()` currently ranks one
+   session's adjusted close times volume. The approved contract says trailing
+   PIT dollar volume. An event-volume spike can therefore enter the universe
+   and alter IC/sigma. Build a cached trailing window or rename and reapprove the
+   selection policy; do not present the current rank as ADV.
+3. **Promotion evidence requires per-date membership.** `per_fold` is a quota
+   approximation and must remain diagnostic-only. No promotion writer may
+   accept a report carrying that approximation.
+4. **HAC lag selection is not derived.** `neweyWestLag(20, 20) = 1` is a policy
+   choice, not a consequence of non-overlapping labels. Predeclare lag selection
+   and report lag sensitivity before setting a statistical gate. Newey and West
+   explicitly treat lag selection as an estimation problem, and note finite
+   sample size distortions in their simulations.
+5. **Fold partition is conditionally irrelevant only.** Aggregate mean/sigma on
+   a fixed concatenated series do not depend on fold labels, but purge width,
+   entitlement depth, fold consistency, and worst-fold gates change the usable
+   dates and decision. The earlier unconditional wording is withdrawn.
+
+Primary references:
+
+- Newey, W.K. and West, K.D. (1994), “Automatic Lag Selection in Covariance
+  Matrix Estimation,” *Review of Economic Studies* 61(4), 631-653,
+  https://doi.org/10.2307/2297912
+- Bailey, D.H., Borwein, J., López de Prado, M., and Zhu, Q.J. (2015), “The
+  Probability of Backtest Overfitting,” *Journal of Computational Finance*,
+  https://ssrn.com/abstract=2326253

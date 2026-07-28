@@ -7,8 +7,9 @@
 // Mode is `purged_temporal_oos`, approved 2026-07-28 (Annex D): nothing in the
 // edge pipeline is fitted, so a fold has NO training segment. Folds exist only
 // as diagnostics — sign consistency and a worst-fold guard. The promotion
-// statistic is the aggregate HAC t over the CONCATENATED series, which is why
-// power depends on total as-of dates rather than on the partition (Annex F).
+// statistic is the aggregate HAC t over the CONCATENATED series. For a fixed
+// series the aggregate is partition-independent; purge width, entitlement
+// depth, and fold-level gates can still change the usable series (Annex J).
 //
 // Purge is measured in SESSIONS, not calendar days: the last as-of date in a
 // fold needs `horizonSessions` more sessions for its forward return to mature,
@@ -21,9 +22,9 @@ import { neweyWestSEofMean } from "@/lib/edges/ic";
 /**
  * Annex F: every sample floor assumes the cross-sectional rank-IC sd collapses
  * toward its theoretical value (~0.071 at n=200) once window overlap is removed.
- * The measured sd on the legacy overlapping windows was 0.438. Break-even
- * against the ~25 as-of dates available is 0.10 — above that, the approved
- * floors do not hold and the plan must be re-derived rather than proceeded on.
+ * The legacy 0.438 value was HAC-implied rather than a directly measured sample
+ * sd. A realized estimate above 0.10 is a planning warning, not promotion
+ * evidence or a statistically conclusive invalidation by itself.
  */
 export const SIGMA_PLAN_CEILING = 0.10;
 
@@ -136,7 +137,7 @@ export interface OosIcAggregate {
   seHac: number;
   tHac: number;
   lag: number;
-  /** False when sigmaIc exceeds SIGMA_PLAN_CEILING — the sample floors no longer hold. */
+  /** Point-estimate comparison only; false is a planning warning, not a gate. */
   sigmaWithinPlan: boolean;
   foldSigns: number[];
 }

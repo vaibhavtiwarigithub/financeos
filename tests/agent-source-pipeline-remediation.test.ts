@@ -34,10 +34,19 @@ describe("agent source pipeline remediation", () => {
     expect(sync).toContain("status: TRADE_PROPOSAL_STATUS.FILLED");
     expect(sync).not.toContain('status: "executed"');
     expect(sync).toContain("if (proposalError)");
+    expect(sync).toContain("kill-switch cancel accepted; confirmation pending");
+    expect(sync).not.toContain('update({ status: "canceled", closed_at:');
     expect(smartMoney).toContain("TRADE_PROPOSAL_VISIBLE_STATUSES");
     expect(smartMoney).not.toContain('"executed"');
     expect(smartMoney).not.toContain('"pending_approval"');
     expect(robinhood).toContain("arguments: { account_number: account }");
+  });
+
+  it("reproduces autonomous proposal states and hardens the dormant promotion RPC", () => {
+    const migration = read("supabase/migrations/20260728143000_reproduce_proposal_status_and_harden_promotion.sql");
+    expect(migration).toContain("'queued_auto'");
+    expect(migration).toContain("'manual_review_required'");
+    expect(migration).toContain("set search_path = pg_catalog, pg_temp");
   });
 
   it("retains bounded research retries and self-resolves per-market failures", () => {

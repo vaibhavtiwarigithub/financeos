@@ -56,6 +56,24 @@ describe("computeDateIc — no lookahead", () => {
     expect(seen).toEqual([2, 20, 200]);
   });
 
+  it("feeds the edge ONLY benchmark candles at or before as-of", () => {
+    const series = new Map<string, Candle[]>([
+      ["A", mkCandles([1, 3, 4])],
+      ["B", mkCandles([2, 3, 5])],
+      ["C", mkCandles([3, 3, 6])],
+    ]);
+    const seenBenchmarkDates: string[] = [];
+    const spy: EdgeDef = {
+      ...lastClose,
+      compute: (ctx) => {
+        seenBenchmarkDates.push(ctx.benchmark[ctx.benchmark.length - 1]?.date ?? "");
+        return ctx.candles[ctx.candles.length - 1].close;
+      },
+    } as EdgeDef;
+    computeDateIc({ ...base, edge: spy, asOf: day(1), universe: ["A", "B", "C"], series });
+    expect(seenBenchmarkDates).toEqual([day(1), day(1), day(1)]);
+  });
+
   it("excludes a sparse date rather than scoring it IC = 0", () => {
     // Too few names to measure is a different claim from "no predictive power".
     const series = new Map<string, Candle[]>([["A", mkCandles([1, 2, 3])]]);
@@ -123,6 +141,29 @@ describe("runOosFolds", () => {
     expect(r.datesSkipped.some((s) => s.asOf === day(2) && s.reason === "universe_unavailable")).toBe(true);
     expect(r.datesEvaluated + r.datesSkipped.length).toBe(2); // every date accounted for
   });
+
+  it("normalizes expectedSign=-1 so positive IC always means the edge worked", () => {
+    const lowIsGood: EdgeDef = {
+      ...lastClose,
+      id: "test_low_is_good",
+      expectedSign: -1,
+    } as EdgeDef;
+    const r = runOosFolds({
+      folds: [folds[0]],
+      universeByDate: new Map([[day(0), ["A", "B", "C"]]]),
+      series,
+      benchmark: mkCandles([1, 2, 3, 4, 5]),
+      edge: lowIsGood,
+      market: "us",
+      horizonSessions: 1,
+      stepSessions: 1,
+      minCrossSection: 3,
+    });
+    expect(r.perDate).toHaveLength(1);
+    // Raw last-close ordering and next-day return ordering are opposed here.
+    // A lower-is-better edge must invert that raw IC to positive evidence.
+    expect(r.perDate[0].ic).toBeGreaterThan(0);
+  });
 });
 
 describe("describeSigma — the Annex F stop condition", () => {
@@ -131,8 +172,9 @@ describe("describeSigma — the Annex F stop condition", () => {
       n: 24, meanIc: 0.05, sigmaIc: 0.08, seHac: 0.016, tHac: 3.1, lag: 1,
       sigmaWithinPlan: true, foldSigns: [1, 1, 1],
     });
-    expect(s).toContain("within the 0.10 plan ceiling");
-    expect(s).toContain("meaningful");
+    expect(s).toContain("within the 0.10 planning ceiling");
+    expect(s).toContain("PRELIMINARY");
+    expect(s).toContain("does not by itself validate");
   });
 
   it("says STOP and computes the dates actually required when sigma is too high", () => {
@@ -140,9 +182,9 @@ describe("describeSigma — the Annex F stop condition", () => {
       n: 24, meanIc: 0.05, sigmaIc: 0.438, seHac: 0.09, tHac: 0.56, lag: 1,
       sigmaWithinPlan: false, foldSigns: [1, -1, 1],
     });
-    expect(s).toContain("STOP");
+    expect(s).toContain("PRELIMINARY STOP");
     expect(s).toContain("~480 as-of dates"); // (2*0.438/0.04)^2
-    expect(s).toContain("Re-derive");
+    expect(s).toContain("fully PIT");
   });
 
   it("handles too few dates to measure at all", () => {

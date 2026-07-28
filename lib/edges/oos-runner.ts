@@ -115,6 +115,8 @@ export interface OosRunReport {
   stepSessions: number;
   foldCount: number;
   datesEvaluated: number;
+  /** Full audit series: enough to recompute aggregate mean/sigma/HAC externally. */
+  perDate: Array<{ date: string; ic: number; foldIndex: number }>;
   datesSkipped: Array<{ asOf: string; reason: string; crossSection: number }>;
   aggregate: OosIcAggregate | null;
   /** Plain-language verdict on the Annex F stop condition. */
@@ -154,7 +156,16 @@ export function runOosFolds(opts: {
       const r = computeDateIc({
         asOf, universe, series, benchmark, edge, market, horizonSessions, minCrossSection,
       });
-      if (r.ok) perDate.push({ date: r.asOf, ic: r.ic, foldIndex: fold.index });
+      if (r.ok) {
+        // Normalize every edge so positive IC always means "the edge worked".
+        // The standard IC path already does this; omitting it here inverted
+        // low-volatility and every future expectedSign=-1 edge.
+        perDate.push({
+          date: r.asOf,
+          ic: edge.expectedSign < 0 ? -r.ic : r.ic,
+          foldIndex: fold.index,
+        });
+      }
       else skipped.push({ asOf: r.asOf, reason: r.reason, crossSection: r.crossSection });
     }
   }
@@ -167,6 +178,7 @@ export function runOosFolds(opts: {
     stepSessions,
     foldCount: folds.length,
     datesEvaluated: perDate.length,
+    perDate,
     datesSkipped: skipped,
     aggregate,
     sigmaVerdict: describeSigma(aggregate),
@@ -175,14 +187,20 @@ export function runOosFolds(opts: {
 
 /** Annex F stop condition, stated so a reader cannot miss it. */
 export function describeSigma(a: OosIcAggregate | null): string {
-  if (!a) return "No aggregate — too few evaluated dates to measure sigma.";
+  if (!a) return "No aggregate - too few evaluated dates to measure sigma.";
   if (a.sigmaWithinPlan) {
-    return `sigma=${a.sigmaIc.toFixed(4)} is within the 0.10 plan ceiling; the approved sample floors hold. t_HAC=${a.tHac.toFixed(2)} on n=${a.n} dates is meaningful.`;
+    return (
+      `PRELIMINARY: sample sigma=${a.sigmaIc.toFixed(4)} is within the 0.10 planning ` +
+      `ceiling on n=${a.n} dates. This point estimate supports the planning assumption ` +
+      `but does not by itself validate a floor or make t_HAC=${a.tHac.toFixed(2)} promotion evidence.`
+    );
   }
   const needed = Math.ceil((2 * a.sigmaIc / 0.04) ** 2);
   return (
-    `STOP: sigma=${a.sigmaIc.toFixed(4)} EXCEEDS the 0.10 plan ceiling. Detecting the approved ` +
-    `0.04 IC floor at t=2.0 would need ~${needed} as-of dates, not ${a.n}. Re-derive the floors ` +
-    `(Annex F) rather than reading t_HAC=${a.tHac.toFixed(2)} as evidence.`
+    `PRELIMINARY STOP: sample sigma=${a.sigmaIc.toFixed(4)} exceeds the 0.10 planning ` +
+    `ceiling on n=${a.n} dates. Conditional on this point estimate, detecting a 0.04 IC ` +
+    `at t=2.0 would need ~${needed} as-of dates. Do not treat the ceiling comparison or ` +
+    `t_HAC=${a.tHac.toFixed(2)} as promotion evidence until a fully PIT, auditable run ` +
+    `with an adequate sample confirms it.`
   );
 }

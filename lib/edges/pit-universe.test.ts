@@ -13,6 +13,8 @@ describe("isEligibleTicker", () => {
 
   it("accepts exchange-listed common stock", () => {
     expect(isEligibleTicker(base)).toBe(true);
+    expect(isEligibleTicker({ ...base, ticker: "BRK.B", primary_exchange: "XNYS" })).toBe(true);
+    expect(isEligibleTicker({ ...base, ticker: "BF.B", primary_exchange: "XNYS" })).toBe(true);
   });
 
   it("rejects the instrument classes the curated list never held", () => {

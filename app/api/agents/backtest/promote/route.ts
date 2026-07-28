@@ -82,10 +82,10 @@ export async function POST(req: NextRequest) {
     const evidenceHorizon = body.evidence_horizon ?? hMax;
 
     if (!edgeId) return NextResponse.json({ error: "edge_id is required" }, { status: 400 });
-    // Lineage is mandatory, not optional. Without a bound experiment the DSR
-    // trial count defaulted to 1 — the least punitive possible assumption — and
-    // nothing tied the trial family to the edge/market/horizon/segment being
-    // promoted. The RPC re-checks this binding server-side.
+    // Lineage is mandatory, not optional. The current schema binds market and
+    // segment and supplies the trial count. It does NOT yet bind edge id,
+    // formula version, or evidence horizon, which is one reason promotion must
+    // remain dormant until the lineage schema is completed.
     if (!body.experiment_id) {
       return NextResponse.json({
         error: "trial_family_incomplete",
@@ -223,8 +223,9 @@ export async function POST(req: NextRequest) {
         error: "promotion_evidence_not_oos",
         detail:
           "Promotion is dormant. Current edge_ic_history evidence is not out-of-sample " +
-          "(~98.4% window overlap, current-universe survivorship) and the write path is " +
-          "not atomic. Re-enable only after features/walk-forward-ic-folds ships.",
+          "(~98.4% window overlap, current-universe survivorship), and experiment lineage " +
+          "does not yet bind edge/formula/horizon. Re-enable only after " +
+          "features/walk-forward-ic-folds ships.",
         edge_id: edgeId,
         segment,
         trials_run: trialsRun,

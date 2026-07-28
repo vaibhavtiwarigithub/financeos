@@ -488,10 +488,11 @@ describe("Test 9b — kill switch cancels the resting BUY but allows the protect
     const buy = store.broker_orders.find((o) => o.id === 2)!;
 
     expect(sell.status).toBe("submitted");   // protective SELL untouched → position stays protected
-    expect(buy.status).toBe("canceled");      // resting BUY canceled → no new exposure
+    // A cancel ACK is not terminal broker truth; a fill can win the race.
+    expect(buy.status).toBe("unknown_needs_reconcile");
     // cancelOrder was never asked to cancel the SELL order.
     expect(broker.cancelOrder.mock.calls.some((c) => c[0] === "bo3")).toBe(false);
-    expect(body.canceled).toContain("BBB #2");
+    expect(body.canceled).toContain("BBB #2 (confirmation pending)");
     expect(body.canceled).not.toContain("CCC #3");
   });
 });

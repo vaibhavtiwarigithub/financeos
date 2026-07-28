@@ -25,6 +25,15 @@ import type { Candle } from "@/lib/data/technicals";
 /** Yahoo `range` values, shortest to longest. */
 export type YahooRange = "5d" | "1mo" | "3mo" | "6mo" | "1y" | "2y" | "3y" | "5y" | "10y" | "max";
 
+export interface YahooCandleOptions {
+  /**
+   * Ratio-adjust OHLC with Yahoo's adjusted close. This stays opt-in because
+   * existing live callers consume raw traded prices, while return studies must
+   * not interpret splits and distributions as alpha.
+   */
+  adjusted?: boolean;
+}
+
 /**
  * Smallest Yahoo range that COVERS `days` of calendar history — never less.
  *
@@ -47,7 +56,11 @@ export function yahooRange(days: number): YahooRange {
  * Daily candles for any Yahoo symbol. Returns [] on any failure — callers treat
  * an empty series as "unavailable" rather than as a zero-valued history.
  */
-export async function fetchYahooCandles(symbol: string, range: string = "6mo"): Promise<Candle[]> {
+export async function fetchYahooCandles(
+  symbol: string,
+  range: string = "6mo",
+  options: YahooCandleOptions = {},
+): Promise<Candle[]> {
   try {
     const res = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${range}`,
@@ -58,13 +71,25 @@ export async function fetchYahooCandles(symbol: string, range: string = "6mo"): 
     const r = j?.chart?.result?.[0];
     const ts: number[] = r?.timestamp ?? [];
     const q = r?.indicators?.quote?.[0] ?? {};
+    const adjusted: Array<number | null> = r?.indicators?.adjclose?.[0]?.adjclose ?? [];
+    if (options.adjusted && adjusted.length === 0) return [];
     const out: Candle[] = [];
     for (let i = 0; i < ts.length; i++) {
       if (q.close?.[i] == null) continue;
+      const rawClose = Number(q.close[i]);
+      const adjustedClose = Number(adjusted[i]);
+      if (options.adjusted && (!Number.isFinite(adjustedClose) || adjustedClose <= 0)) continue;
+      const factor = options.adjusted && Number.isFinite(adjustedClose) && adjustedClose > 0 &&
+          Number.isFinite(rawClose) && rawClose > 0
+        ? adjustedClose / rawClose
+        : 1;
       out.push({
         date: new Date(ts[i] * 1000).toISOString().slice(0, 10),
-        open: q.open?.[i] ?? q.close[i], high: q.high?.[i] ?? q.close[i],
-        low: q.low?.[i] ?? q.close[i], close: q.close[i], volume: q.volume?.[i] ?? 0,
+        open: Number(q.open?.[i] ?? rawClose) * factor,
+        high: Number(q.high?.[i] ?? rawClose) * factor,
+        low: Number(q.low?.[i] ?? rawClose) * factor,
+        close: rawClose * factor,
+        volume: q.volume?.[i] ?? 0,
       });
     }
     return out;

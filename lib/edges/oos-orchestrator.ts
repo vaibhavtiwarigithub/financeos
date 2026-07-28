@@ -14,7 +14,12 @@
 
 import { resolvePitUniverse, type PitUniverseResult } from "@/lib/edges/pit-universe";
 import { fetchYahooCandles, yahooRange } from "@/lib/data/yahoo-candles";
-import { buildPurgedFolds, validateFoldDisjointness, type Fold } from "@/lib/edges/folds";
+import {
+  buildPurgedFolds,
+  sessionsPerFold,
+  validateFoldDisjointness,
+  type Fold,
+} from "@/lib/edges/folds";
 import { runOosFolds, type OosRunReport } from "@/lib/edges/oos-runner";
 import type { Candle } from "@/lib/data/technicals";
 import type { EdgeDef, Market } from "@/lib/edges/types";
@@ -63,7 +68,7 @@ async function fetchSeries(
     for (;;) {
       const sym = queue.shift();
       if (!sym) return;
-      const c = await fetchYahooCandles(sym, range).catch(() => [] as Candle[]);
+      const c = await fetchYahooCandles(sym, range, { adjusted: true }).catch(() => [] as Candle[]);
       if (c.length) series.set(sym, c);
       else missing.push(sym);
     }
@@ -100,7 +105,11 @@ export async function orchestrateOosRun(opts: {
   }
 
   // 1. Session calendar from the benchmark. step = horizon => no label overlap.
-  const bench = await fetchYahooCandles(opts.benchmarkSymbol, yahooRange(opts.historyDays));
+  const bench = await fetchYahooCandles(
+    opts.benchmarkSymbol,
+    yahooRange(opts.historyDays),
+    { adjusted: true },
+  );
   if (!bench.length) {
     return { run: null, folds: [], membershipCadence: cadence, approximationsUsed: approximations,
              universeErrors: [], symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: 0,
@@ -122,8 +131,18 @@ export async function orchestrateOosRun(opts: {
 
   // 2. Folds. Only the most recent `liquidityWindow` sessions are usable, since
   // the liquidity rank needs the ~2-year aggregate entitlement.
+  // Use the newest complete block inside the entitled window. Passing the
+  // entire window to the oldest-first pure builder silently left the newest
+  // ~238 sessions unused in the 2x6 measurement and measured an older regime
+  // despite reporting the current entitlement window.
+  const requiredSessions = sessionsPerFold({
+    horizonSessions: opts.horizonSessions,
+    datesPerFold: opts.datesPerFold,
+    stepSessions: opts.horizonSessions,
+  }) * opts.foldCount;
+  const foldSessions = sessions.slice(-requiredSessions);
   const built = buildPurgedFolds({
-    sessions, horizonSessions: opts.horizonSessions, foldCount: opts.foldCount,
+    sessions: foldSessions, horizonSessions: opts.horizonSessions, foldCount: opts.foldCount,
     datesPerFold: opts.datesPerFold, stepSessions: opts.horizonSessions,
   });
   if (!built.ok) {
@@ -137,7 +156,10 @@ export async function orchestrateOosRun(opts: {
              universeErrors: [], symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
              fatal: `folds not disjoint: ${disj.violations.join("; ")}` };
   }
-  log(`folds: ${built.folds.length} x ${opts.datesPerFold} dates, ${built.sessionsRequired} sessions used`);
+  log(
+    `folds: ${built.folds.length} x ${opts.datesPerFold} dates, ${built.sessionsRequired} ` +
+    `latest sessions used (${foldSessions[0]} .. ${foldSessions[foldSessions.length - 1]})`,
+  );
 
   // 3. PIT universe per as-of date (or per fold under the approximation).
   const universeByDate = new Map<string, string[]>();

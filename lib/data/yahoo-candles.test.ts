@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { yahooRange } from "./yahoo-candles";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { fetchYahooCandles, yahooRange } from "./yahoo-candles";
 
 describe("yahooRange", () => {
   it("maps day depths to the smallest covering Yahoo range", () => {
@@ -34,5 +34,50 @@ describe("yahooRange", () => {
     for (const days of [100, 400, 600, 800, 1000, 1200, 1500, 2000, 2900, 3200]) {
       expect(floorDays[yahooRange(days)]).toBeGreaterThanOrEqual(days);
     }
+  });
+});
+
+describe("fetchYahooCandles adjustment", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("uses adjusted close only when explicitly requested", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        chart: {
+          result: [{
+            timestamp: [1_700_000_000],
+            indicators: {
+              quote: [{
+                open: [100], high: [110], low: [90], close: [100], volume: [123],
+              }],
+              adjclose: [{ adjclose: [50] }],
+            },
+          }],
+        },
+      }),
+    }));
+
+    const raw = await fetchYahooCandles("TEST", "1y");
+    const adjusted = await fetchYahooCandles("TEST", "1y", { adjusted: true });
+    expect(raw[0]).toMatchObject({ open: 100, high: 110, low: 90, close: 100, volume: 123 });
+    expect(adjusted[0]).toMatchObject({ open: 50, high: 55, low: 45, close: 50, volume: 123 });
+  });
+
+  it("fails closed when an adjusted study cannot obtain adjusted close", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        chart: {
+          result: [{
+            timestamp: [1_700_000_000],
+            indicators: {
+              quote: [{ open: [100], high: [110], low: [90], close: [100], volume: [123] }],
+            },
+          }],
+        },
+      }),
+    }));
+    expect(await fetchYahooCandles("TEST", "1y", { adjusted: true })).toEqual([]);
   });
 });
