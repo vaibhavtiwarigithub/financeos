@@ -684,3 +684,70 @@ once #2 is answered.
 
 Recommendation: answer #2 before step 4 starts; #3 and #4 can be decided while
 steps 4-7 are built.
+
+---
+
+# Annex D — Open Decision #2: calibration mode (2026-07-28)
+
+Recommendation: **`purged_temporal_oos`**. Not a preference — the codebase
+already determines it.
+
+## Evidence
+
+**Nothing in the edge pipeline is fitted from data.**
+
+| Check | Result |
+|---|---|
+| `grep -c 'fit\|train\|calibrat\|regress\|optimi[sz]e\|learned'` over `lib/edges/registry.ts` and `lib/edges/compute.ts` | **0 matches in both** |
+| Edge formulas | Closed-form with hardcoded constants — `mom_12_1` reads `c[n-22] / c[n-253] - 1`; MACD is fixed 12/26/9; ADX is fixed 14; 52w proximity is a fixed lookback |
+| `crossSectionalZ` / `winsorize` (`lib/edges/standardize.ts`) | Computed **per (date, market, edge) across symbols** — purely cross-sectional, no time dimension, so no temporal parameter to leak |
+| `kairos_technical_score_v1` → `scoreTechnicals` | Hand-set integer constants (+15 EMA50, +10 EMA20, ±25 RSI anchors), authored by a human. Not estimated |
+
+A fold cannot have a training segment when there is nothing to train. Declaring
+`walk_forward` would mean building train/test boundaries, a purge rule against
+the train edge, and a refit step that would all be inert — machinery that
+implies a protocol the system does not actually run. That is the same class of
+overclaim as the `walk_forward_pass` field this feature already renamed.
+
+## What this does NOT excuse
+
+**Hand-set constants are still researcher degrees of freedom.** `+15` for EMA50
+was chosen by a person who had seen this market. That is selection bias — but it
+is bias in the **trial family**, which Open Decision #3 (false-discovery
+procedure) governs, not bias the fold protocol can repair. No train/test split
+fixes a constant a human tuned by eye before the split existed.
+
+Two consequences to carry into the frozen plan:
+
+1. The trial family must count human tuning history, not just machine variants.
+   `variants_run` currently counts engine runs only.
+2. **`kairos_technical_score_v1` is not a priored factor.** `mom_12_1`,
+   `high_52w_proximity` and `vol_adj_mom_6m` carry published citations
+   (Jegadeesh-Titman, George-Hwang); the in-house composite does not. The
+   `T_HURDLE = 2.0` comment justifies itself as "priored-factor standard", which
+   is defensible for the published set and **not** for the composite. Harvey/Liu/
+   Zhu argue ~3.0 for a newly proposed factor. Recommend a per-edge hurdle:
+   2.0 for cited priors, 3.0 for in-house constructions.
+
+## Guard required
+
+`purged_temporal_oos` is correct **today** and must not silently persist if that
+changes. The genome (`entry_threshold`, `entry.rank_pct_min`, the five dimension
+weights) **is** fitted — LearnerAgent mutates it from realized outcomes. It does
+not touch `edge_ic_history` today because IC is computed per raw edge and the
+genome acts downstream on `analyst_score` and PaperTrader. If a composite whose
+parameters come from LearnerAgent ever becomes a validated edge, that edge
+requires `walk_forward` and must not be allowed the simpler mode.
+
+Step 4 should therefore record, per experiment, whether the formula carries any
+data-derived parameter, and the gate must reject `purged_temporal_oos` when it
+does. The `validation_mode` CHECK already accepts both values, so this is a
+plan-level assertion rather than a schema change.
+
+## Decision requested
+
+Approve `purged_temporal_oos` as the mode for the current registry, with:
+- the per-edge t-hurdle split (2.0 cited / 3.0 in-house), and
+- the data-derived-parameter guard forcing `walk_forward` when it ever applies.
+
+This unblocks step 4. #3 and #4 remain open and gate steps 8-9 only.
