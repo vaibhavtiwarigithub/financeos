@@ -8,7 +8,9 @@ const MAX_BROKER_CALLS_PER_RUN = 1;
 
 // Auto-cancel broker_orders stuck in pending_submit/submitted for >30 min.
 // Only acts on US market rows with a broker_order_id (can't cancel without one).
-// Updates status to 'cancelled' on success; emits a reportIssue on failure.
+// Every broker response moves the row to reconciliation. A cancel refusal can
+// mean the order filled or reached another terminal state before our request;
+// repeatedly sending cancel without reading broker truth leaves it stuck forever.
 export async function cancelStaleOrders(supabase: any): Promise<{ cancelled: number; errors: number }> {
   let cancelled = 0;
   let errors = 0;
@@ -50,6 +52,13 @@ export async function cancelStaleOrders(supabase: any): Promise<{ cancelled: num
           cancelled++;
         } else {
           console.error(`[order-maintenance] cancel failed for order ${row.id}: ${r.error}`);
+          const { error: updateError } = await supabase.from("broker_orders")
+            .update({
+              status: "unknown_needs_reconcile",
+              error: `cancel not confirmed; reconciliation required: ${r.error ?? "unknown cancel error"}`,
+            })
+            .eq("id", row.id);
+          if (updateError) throw new Error(`could not mark cancel refusal for reconciliation: ${updateError.message}`);
           await reportIssue({
             issueKey: `order-cancel-failed:${row.id}`,
             severity: "warn",
@@ -61,6 +70,23 @@ export async function cancelStaleOrders(supabase: any): Promise<{ cancelled: num
         }
       } catch (e) {
         console.error(`[order-maintenance] cancelOrder threw for ${row.id}:`, String(e));
+        const message = e instanceof Error ? e.message : String(e);
+        const { error: updateError } = await supabase.from("broker_orders")
+          .update({
+            status: "unknown_needs_reconcile",
+            error: `cancel outcome unknown; reconciliation required: ${message}`,
+          })
+          .eq("id", row.id);
+        if (updateError) {
+          console.error(`[order-maintenance] could not queue reconciliation for ${row.id}: ${updateError.message}`);
+        }
+        await reportIssue({
+          issueKey: `order-cancel-failed:${row.id}`,
+          severity: "warn",
+          category: "trading",
+          title: `Stale order ${row.symbol} cancellation outcome is unknown`,
+          detail: message,
+        }, supabase);
         errors++;
       }
     }
@@ -137,6 +163,7 @@ export async function reconcileUnknownOrders(supabase: any): Promise<{ resolved:
         }
 
         await resolveIssue(`order-needs-reconcile:${row.id}`, supabase);
+        await resolveIssue(`order-cancel-failed:${row.id}`, supabase);
         console.log(`[order-maintenance] reconciled order ${row.id} (${row.symbol}) → ${newStatus}`);
         resolved++;
       } catch (e) {

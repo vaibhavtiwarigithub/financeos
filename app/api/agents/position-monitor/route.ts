@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchIndiaQuote, fetchIndiaQuotes } from "@/lib/india-data";
+import { fetchIndiaQuote, fetchIndiaQuotes, fetchYahooQuotes } from "@/lib/india-data";
 import { classifyOutcome } from "@/lib/trade-outcome";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -121,6 +121,18 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   for (const sym of indiaSymbols) {
     const q = indiaQuotes[sym.toUpperCase()];
     if (q && !q.stale && q.price > 0) priceMap[sym] = q.price;
+  }
+  // Massive/cache/AV occasionally miss an otherwise liquid US holding. Exhaust
+  // one independent, keyless source for only that unresolved tail. Yahoo remains
+  // a fallback (never the primary batch), and its US freshness policy rejects a
+  // multi-day close so exit decisions still fail closed.
+  const unresolvedUs = usSymbols.filter(sym => priceMap[sym] == null);
+  if (unresolvedUs.length > 0) {
+    const yahooQuotes = await fetchYahooQuotes(unresolvedUs, "us");
+    for (const sym of unresolvedUs) {
+      const q = yahooQuotes[sym.toUpperCase()];
+      if (q && !q.stale && q.price > 0) priceMap[sym] = q.price;
+    }
   }
   const unpricedByMarket: Record<"us" | "india", string[]> = {
     us: usSymbols.filter(sym => priceMap[sym] == null),

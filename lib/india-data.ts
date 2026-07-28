@@ -44,22 +44,33 @@ export interface IndiaQuote {
   stale: boolean;
 }
 
-function isIndiaMarketHours(): boolean {
+function isMarketHours(market: "us" | "india"): boolean {
   const now = new Date();
-  const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-  const day = ist.getDay();
+  const local = new Date(now.toLocaleString("en-US", {
+    timeZone: market === "india" ? "Asia/Kolkata" : "America/New_York",
+  }));
+  const day = local.getDay();
   if (day === 0 || day === 6) return false;
-  const minutes = ist.getHours() * 60 + ist.getMinutes();
-  return minutes >= 9 * 60 + 15 && minutes < 15 * 60 + 30;
+  const minutes = local.getHours() * 60 + local.getMinutes();
+  return market === "india"
+    ? minutes >= 9 * 60 + 15 && minutes < 15 * 60 + 30
+    : minutes >= 9 * 60 + 30 && minutes < 16 * 60;
 }
 
-function isIndiaQuoteStale(retrievedAt: string): boolean {
+function isYahooQuoteStale(retrievedAt: string, market: "us" | "india"): boolean {
   const age = Date.now() - new Date(retrievedAt).getTime();
   if (!Number.isFinite(age) || age < 0) return true;
-  return isIndiaMarketHours() ? age > 30 * 60_000 : age > 4 * 86_400_000;
+  if (isMarketHours(market)) return age > 30 * 60_000;
+  // India callers use Yahoo as their primary read source and need the latest
+  // close across weekends. US PositionMonitor uses it only as an independent
+  // same-session fallback, so do not accept a multi-day close there.
+  return age > (market === "india" ? 4 * 86_400_000 : 36 * 60 * 60_000);
 }
 
-export async function fetchIndiaQuote(symbol: string): Promise<IndiaQuote | null> {
+export async function fetchYahooQuote(
+  symbol: string,
+  market: "us" | "india",
+): Promise<IndiaQuote | null> {
   try {
     const res = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`,
@@ -74,11 +85,15 @@ export async function fetchIndiaQuote(symbol: string): Promise<IndiaQuote | null
       price: m.regularMarketPrice,
       changePct: prev ? ((m.regularMarketPrice - prev) / prev) * 100 : 0,
       retrievedAt,
-      stale: isIndiaQuoteStale(retrievedAt),
+      stale: isYahooQuoteStale(retrievedAt, market),
     };
   } catch {
     return null;
   }
+}
+
+export async function fetchIndiaQuote(symbol: string): Promise<IndiaQuote | null> {
+  return fetchYahooQuote(symbol, "india");
 }
 
 // Bounded quote fan-out for portfolio paths. Yahoo is unofficial and can
@@ -89,13 +104,22 @@ export async function fetchIndiaQuotes(
   batchSize = 4,
   pauseMs = 250,
 ): Promise<Record<string, IndiaQuote | null>> {
+  return fetchYahooQuotes(symbols, "india", batchSize, pauseMs);
+}
+
+export async function fetchYahooQuotes(
+  symbols: string[],
+  market: "us" | "india",
+  batchSize = 4,
+  pauseMs = 250,
+): Promise<Record<string, IndiaQuote | null>> {
   const unique = [...new Set(symbols.map(s => s.toUpperCase()))];
   const out: Record<string, IndiaQuote | null> = {};
   const size = Math.max(1, Math.min(8, Math.floor(batchSize)));
   for (let i = 0; i < unique.length; i += size) {
     const batch = unique.slice(i, i + size);
     await Promise.all(batch.map(async symbol => {
-      out[symbol] = await fetchIndiaQuote(symbol).catch(() => null);
+      out[symbol] = await fetchYahooQuote(symbol, market).catch(() => null);
     }));
     if (i + size < unique.length && pauseMs > 0) {
       await new Promise(resolve => setTimeout(resolve, pauseMs));

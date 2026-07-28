@@ -14,10 +14,28 @@ describe("agent source pipeline remediation", () => {
     const route = read("app/api/agents/position-monitor/route.ts");
     expect(route).toContain("getBatchQuotes(usSymbols, svc)");
     expect(route).toContain("fetchIndiaQuotes(indiaSymbols)");
+    expect(route).toContain('fetchYahooQuotes(unresolvedUs, "us")');
     expect(route).toContain("!q.stale");
     expect(route).toContain("position-monitor-price-unavailable:");
     expect(route).toContain("p_exit_price: exitFillPrice");
     expect(route).not.toContain("/v2/aggs/ticker/${sym}/prev");
+  });
+
+  it("reconciles ambiguous broker cancellations instead of retrying forever", () => {
+    const maintenance = read("lib/trading/order-maintenance.ts");
+    expect(maintenance).toContain("cancel not confirmed; reconciliation required");
+    expect(maintenance).toContain('resolveIssue(`order-cancel-failed:${row.id}`');
+  });
+
+  it("retains bounded research retries and self-resolves per-market failures", () => {
+    const cron = read("app/api/agents/research/cron/route.ts");
+    const queue = read("lib/research-queue.ts");
+    expect(queue).toContain("export async function completeDeferred");
+    expect(queue).not.toContain('from("research_queue").delete().eq("market", market).in("symbol", batch)');
+    expect(cron).toContain("await enqueueDeferred(supabase, queueMarket, failed)");
+    expect(cron).toContain("await completeDeferred(supabase, queueMarket, completed)");
+    expect(cron).toContain("research-symbol-failures:");
+    expect(cron).toContain("await resolveIssue(failureIssueKey, supabase)");
   });
 
   it("scopes discovery before provider and broker work", () => {

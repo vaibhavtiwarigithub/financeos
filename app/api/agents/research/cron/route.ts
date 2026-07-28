@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { gatherSymbols, processSymbol } from "@/lib/research-agent";
 import { computeComparableRank, isRankRejected, type RankCandidate } from "@/lib/scoring/rank";
 import { isIndia } from "@/lib/india-data";
-import { enqueueDeferred, readDeferredCandidates } from "@/lib/research-queue";
+import { completeDeferred, enqueueDeferred, readDeferredCandidates } from "@/lib/research-queue";
 import { prewarmPriceCache } from "@/lib/chart-data";
 import { RISK_PROFILES } from "@/lib/risk-profiles";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -39,6 +39,14 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
     timer = setTimeout(() => reject(new Error(`processSymbol timed out after ${ms}ms: ${label}`)), ms);
   });
   return Promise.race([p.finally(() => clearTimeout(timer)), timeout]);
+}
+
+function sanitizeResearchError(value: unknown): string {
+  return String(value)
+    .replace(/(authorization:\s*bearer\s+)[^\s]+/gi, "$1[redacted]")
+    .replace(/([?&](?:api_?key|token|access_token|secret)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/\s+/g, " ")
+    .slice(0, 180);
 }
 
 // Called by Windows Task Scheduler. US run ~9 AM ET; India run ~6:15 AM ET (after
@@ -315,6 +323,23 @@ export async function POST(req: NextRequest) {
   const ok = results.filter(r => r && !r.error).length;
   const errs = results.filter(r => r && r.error).length;
   const processed = ok + errs;
+  const completedCandidates = entries
+    .filter((entry, i) => !entry.isHeld && results[i] && !results[i].error)
+    .map(entry => entry.symbol);
+  const failedCandidates = entries
+    .filter((entry, i) => !entry.isHeld && results[i]?.error)
+    .map(entry => entry.symbol);
+  const failedDetails = results
+    .filter(r => r && r.error)
+    .slice(0, 10)
+    .map(r => ({ symbol: String(r.symbol), reason: sanitizeResearchError(r.error) }));
+  for (const queueMarket of ["us", "india"] as const) {
+    const isQueueMarket = (symbol: string) => (queueMarket === "india") === isIndia(symbol);
+    const completed = completedCandidates.filter(isQueueMarket);
+    const failed = failedCandidates.filter(isQueueMarket);
+    if (completed.length > 0) await completeDeferred(supabase, queueMarket, completed);
+    if (failed.length > 0) await enqueueDeferred(supabase, queueMarket, failed);
+  }
 
   // Cross-sectional rank — Pass 2 (features/cross-sectional-rank). Deterministic,
   // no LLM. Replaces the earlier naive mixed-pool percentile with a GROUPED rank
@@ -459,30 +484,28 @@ export async function POST(req: NextRequest) {
         holding_processed: holdingProcessed,
         candidate_processed: candidateProcessed,
         deferred: deferred.length,
+        failed_symbols: failedDetails,
       },
       completed_at: new Date().toISOString(),
     } as any).eq("id", runId);
   }
 
-  // Emit alerts for failures
+  // One durable issue per market: retries refresh it with current symbols and
+  // useful reasons; the first clean run resolves it. This prevents a pile of
+  // expiring duplicate warnings that cannot show whether the fault recovered.
+  const failureIssueKey = `research-symbol-failures:${marketScope ?? "mixed"}`;
   if (errs > 0) {
-    const failedSymbols = results.filter(r => r && r.error).map(r => r.symbol).join(", ");
-    await emitAlert({
-      severity: errs === processed ? "error" : "warn",
+    const failureDetails = failedDetails.map(r => `${r.symbol}: ${r.reason}`).join("; ");
+    await reportIssue({
+      issueKey: failureIssueKey,
+      severity: errs === processed ? "critical" : "warn",
       category: "cron",
       title: `Research: ${errs} symbol${errs > 1 ? "s" : ""} failed`,
-      detail: `Failed: ${failedSymbols}. ${ok} succeeded.`,
-      auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-    });
-  }
-  if (ok === 0 && processed > 0) {
-    await emitAlert({
-      severity: "error",
-      category: "cron",
-      title: "Research cron produced 0 signals",
-      detail: `Attempted ${processed} symbols, all failed; ${deferred.length} were deferred without being attempted. Check LLM keys and data APIs.`,
-      auto_expire_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
-    });
+      detail: `${failureDetails}. ${ok} succeeded; ${failedCandidates.length} failed candidate(s) queued for bounded retry.`,
+      autoExpireAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+    }, supabase);
+  } else {
+    await resolveIssue(failureIssueKey, supabase);
   }
 
   // Pre-warm price_cache for researched symbols + benchmark ETFs (fire async, don't block response)

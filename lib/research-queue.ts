@@ -75,6 +75,21 @@ export async function enqueueDeferred(svc: Svc, market: "us" | "india", symbols:
   }
 }
 
+/** Remove queue rows only after the selected symbols actually completed. */
+export async function completeDeferred(
+  svc: Svc,
+  market: "us" | "india",
+  symbols: string[],
+): Promise<void> {
+  const list = [...new Set(symbols.map((s) => String(s).toUpperCase()))];
+  if (list.length === 0) return;
+  try {
+    await svc.from("research_queue").delete().eq("market", market).in("symbol", list);
+  } catch {
+    /* best-effort */
+  }
+}
+
 export async function applyCandidateCarryForward(
   svc: Svc,
   market: "us" | "india",
@@ -84,9 +99,9 @@ export async function applyCandidateCarryForward(
   const batch = orderedSymbols.slice(0, Math.max(0, cap));
   const overflow = orderedSymbols.slice(Math.max(0, cap));
   try {
-    if (batch.length > 0) {
-      await svc.from("research_queue").delete().eq("market", market).in("symbol", batch);
-    }
+    // Keep selected queued rows until the cron confirms success. Removing them
+    // here reset `attempts` to one on every timeout and made MAX_DEFER_ATTEMPTS
+    // ineffective for permanently failing symbols.
     if (overflow.length > 0) {
       const { data: existing } = await svc
         .from("research_queue")
