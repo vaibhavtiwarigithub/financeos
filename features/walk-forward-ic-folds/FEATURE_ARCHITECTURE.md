@@ -921,3 +921,78 @@ in one run.
 
 #1 answered (1C). #2 answered (Annex D). #5 answered (5A/5B, US only).
 #3 (false-discovery) and #4 (cost-adjusted test) remain open, gating steps 8-9.
+
+---
+
+# Annex G — Fold engine shipped; migration was NOT applied (2026-07-28)
+
+## Migration verification FAILED
+
+Reported as applied. It is not. Verified through PostgREST with the app's own
+service-role credentials, with a control:
+
+```
+select=symbol            -> [{"symbol":"SOXL"}]                      (table reachable)
+select=is_point_in_time  -> 42703 "column ... does not exist"        (NOT applied)
+```
+
+Same result for `pit_policy_version`, `snapshot_fingerprint`, `adv_rank`,
+`delisted_at`. Migration `20260728120000_pit_universe_provenance.sql` is in the
+repo and not in the database — exactly the failure mode the standing rule
+describes. Snapshot persistence remains **blocked** and no shipped code reads
+those columns.
+
+## Shipped — `lib/edges/folds.ts`
+
+Pure: no network, no database, no clock. 14 tests.
+
+**`buildPurgedFolds`** lays out disjoint folds over market SESSIONS. Purge is
+structural, not advisory: fold `k+1` starts only after fold `k`'s last as-of
+date has had `horizonSessions` to mature, so no fold's label window can reach
+into the next fold's features.
+
+Refusals, all fail-closed:
+
+| Reason | Why |
+|---|---|
+| `step_below_horizon` | `step < horizon` means consecutive as-of dates share forward-return windows — the exact defect that makes the legacy windows unusable. Refused by construction rather than corrected afterwards. |
+| `insufficient_sessions` | Refuses rather than emitting a short final fold, which would be a smaller sample masquerading as a peer of the others. |
+| `invalid_plan` | Non-positive horizon/fold/date/step. |
+
+**`validateFoldDisjointness`** independently re-derives non-overlap from the
+indices. Per the architecture's "a boolean is not proof", the gate must
+recompute this rather than trust a flag the builder set about itself. It is
+tested against a hand-built violation the builder cannot produce.
+
+**`aggregateOosIc`** returns the concatenated-series statistics, reporting
+`sigmaIc` and `sigmaWithinPlan` alongside `tHac`.
+
+`neweyWestSEofMean` was exported from `lib/edges/ic.ts` rather than
+reimplemented — one Newey-West implementation, not two.
+
+## The approved layout fits
+
+3 folds x 8 dates at step = horizon = 20 needs **483 sessions ≈ 1.9 years**,
+inside the ~500 sessions the 2-year liquidity entitlement allows. Confirmed by
+test, not by arithmetic in a document.
+
+Note `neweyWestLag(20, 20) = 1`: with non-overlapping as-of dates there is no
+mechanical autocorrelation left to correct. That is the point of step = horizon,
+and it is the mechanism by which sigma is expected to fall from the measured
+0.438 toward theoretical.
+
+## The stop condition is now executable
+
+`SIGMA_PLAN_CEILING = 0.10` is in code with `sigmaWithinPlan` computed against
+it. Annex F made every approved floor conditional on realized sigma; that
+condition is no longer prose. A caller must check `sigmaWithinPlan` before
+treating `tHac` as meaningful, and both tests for it are present — one series
+inside the ceiling, one above it.
+
+## Not done
+
+- Snapshot persistence — blocked on the migration.
+- The runner that fetches PIT universes and candles per as-of date and produces
+  the per-date IC series the aggregator consumes.
+- Steps 7-10. Promotion remains dormant.
+- Open Decisions #3 and #4 still open, gating steps 8-9.

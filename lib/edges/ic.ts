@@ -46,7 +46,7 @@ export function spearman(a: number[], b: number[]): number {
 }
 
 // Newey-West standard error OF THE MEAN of a series with autocorrelation up to `lag`.
-function neweyWestSEofMean(x: number[], lag: number): number {
+export function neweyWestSEofMean(x: number[], lag: number): number {
   const n = x.length;
   if (n < 2) return NaN;
   const mean = x.reduce((s, v) => s + v, 0) / n;
