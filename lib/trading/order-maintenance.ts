@@ -1,6 +1,7 @@
 import { robinhoodMcpAdapter } from "@/lib/brokers/adapters/robinhood-mcp";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { isMarketSessionOpen } from "@/lib/trading/market-calendar";
+import { TRADE_PROPOSAL_STATUS } from "@/lib/trading/proposal-status";
 
 // A Robinhood MCP cold start can take more than a minute. Bound each cron run
 // to one write and one read so Vercel can finish deterministically.
@@ -162,7 +163,7 @@ export async function reconcileUnknownOrders(supabase: any): Promise<{ resolved:
         // a submitted proposal.
         if (newStatus === "filled" && row.proposal_id) {
           const { error: proposalError } = await supabase.from("trade_proposals").update({
-            status: "filled",
+            status: TRADE_PROPOSAL_STATUS.FILLED,
             fill_price: r.avgFillPrice ?? null,
             fill_qty: r.filledQty ?? row.qty,
             filled_at: new Date().toISOString(),

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { TRADE_PROPOSAL_VISIBLE_STATUSES } from "@/lib/trading/proposal-status";
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
       let q = svc
         .from("trade_proposals")
         .select("id, symbol, order_side:side, qty, limit_price, analyst_score, rationale:thesis, status, created_at, account_number")
-        .in("status", ["pending_review", "approved", "executed", "rejected", "pending_approval"]);
+        .in("status", TRADE_PROPOSAL_VISIBLE_STATUSES);
       if (applyMarket) q = q.eq("market", market); // no market column on trade_proposals yet — resiliently falls back unscoped
       return q.order("created_at", { ascending: false }).limit(30);
     }),

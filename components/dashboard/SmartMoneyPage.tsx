@@ -114,11 +114,9 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  // trade_proposals' real pending status is "pending_review" (matches
-  // /api/agents/trader's insert). "pending_approval" checked too for any
-  // stale/legacy rows — harmless, never the actual value going forward.
-  const pending = tradeQueue.filter(t => t.status === "pending_review" || t.status === "pending_approval");
-  const decided = tradeQueue.filter(t => t.status !== "pending_review" && t.status !== "pending_approval");
+  // trade_proposals' real pending status is "pending_review".
+  const pending = tradeQueue.filter(t => t.status === "pending_review");
+  const decided = tradeQueue.filter(t => t.status !== "pending_review");
 
   // Signal breakdown by asset class
   const byClass: Record<string, any[]> = {};
@@ -351,7 +349,7 @@ export default function SmartMoneyPage({ signals, tradeQueue, highInsider, marke
                         <td style={{ padding: "8px 12px 8px 0" }}>${t.limit_price?.toFixed(2)}</td>
                         <td style={{ padding: "8px 12px 8px 0", fontWeight: 600, color: (t.analyst_score ?? 0) >= 70 ? T.green : T.amber }}>{t.analyst_score}</td>
                         <td style={{ padding: "8px 12px 8px 0" }}>
-                          <span style={{ fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "4px", background: t.status === "executed" ? T.greenBg : t.status === "rejected" ? T.redBg : T.amberBg, color: t.status === "executed" ? T.green : t.status === "rejected" ? T.red : T.amber }}>
+                          <span style={{ fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "4px", background: t.status === "filled" ? T.greenBg : t.status === "rejected" ? T.redBg : T.amberBg, color: t.status === "filled" ? T.green : t.status === "rejected" ? T.red : T.amber }}>
                             {t.status}
                           </span>
                         </td>

@@ -7,6 +7,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { emitAlert } from "@/lib/alerts/emit";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { checkKillSwitches } from "@/lib/kill-switches";
+import { TRADE_PROPOSAL_STATUS } from "@/lib/trading/proposal-status";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest) {
       // later retry instead of creating a permanently split lifecycle.
       if (order.proposal_id) {
         const { error: proposalError } = await supabase.from("trade_proposals").update({
-          status: "filled",
+          status: TRADE_PROPOSAL_STATUS.FILLED,
           fill_price: res.avgFillPrice ?? null,
           fill_qty: res.filledQty ?? order.qty,
           filled_at: new Date().toISOString(),

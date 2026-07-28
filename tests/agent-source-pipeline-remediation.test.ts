@@ -24,15 +24,19 @@ describe("agent source pipeline remediation", () => {
   it("reconciles ambiguous broker cancellations instead of retrying forever", () => {
     const maintenance = read("lib/trading/order-maintenance.ts");
     const sync = read("app/api/broker/orders/sync/route.ts");
+    const smartMoney = read("app/api/markets/smart-money/route.ts");
     const robinhood = read("lib/robinhood-mcp.ts");
     expect(maintenance).toContain("cancel not confirmed; reconciliation required");
     expect(maintenance).toContain('resolveIssue(`order-cancel-failed:${row.id}`');
     expect(maintenance).toContain('issueKey: `order-needs-reconcile:${row.id}`');
-    expect(maintenance).toContain('status: "filled"');
+    expect(maintenance).toContain("status: TRADE_PROPOSAL_STATUS.FILLED");
     expect(maintenance).not.toContain('status: "executed"');
-    expect(sync).toContain('status: "filled"');
+    expect(sync).toContain("status: TRADE_PROPOSAL_STATUS.FILLED");
     expect(sync).not.toContain('status: "executed"');
     expect(sync).toContain("if (proposalError)");
+    expect(smartMoney).toContain("TRADE_PROPOSAL_VISIBLE_STATUSES");
+    expect(smartMoney).not.toContain('"executed"');
+    expect(smartMoney).not.toContain('"pending_approval"');
     expect(robinhood).toContain("arguments: { account_number: account }");
   });
 
