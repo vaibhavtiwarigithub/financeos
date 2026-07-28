@@ -153,21 +153,28 @@ export async function reconcileUnknownOrders(supabase: any): Promise<{ resolved:
         };
         if (r.filledQty != null) update.filled_qty = r.filledQty;
         if (r.avgFillPrice != null) update.avg_fill_price = r.avgFillPrice;
-        const { error: updateError } = await supabase.from("broker_orders").update(update).eq("id", row.id);
-        if (updateError) throw new Error(`reconciliation update failed: ${updateError.message}`);
 
         // The order ledger owns fill truth. Portfolio snapshots remain the
         // authoritative holdings/NAV source, but the proposal must reflect a
-        // confirmed broker fill rather than remain pending forever.
+        // confirmed broker fill rather than remain pending forever. Write the
+        // proposal first: if it fails, the order remains reconcileable and the
+        // next run retries both writes instead of stranding a filled order with
+        // a submitted proposal.
         if (newStatus === "filled" && row.proposal_id) {
           const { error: proposalError } = await supabase.from("trade_proposals").update({
-            status: "executed",
+            status: "filled",
             fill_price: r.avgFillPrice ?? null,
             fill_qty: r.filledQty ?? row.qty,
             filled_at: new Date().toISOString(),
           }).eq("id", row.proposal_id);
           if (proposalError) throw new Error(`proposal fill update failed: ${proposalError.message}`);
         }
+
+        const { error: updateError } = await supabase.from("broker_orders").update({
+          ...update,
+          error: null,
+        }).eq("id", row.id);
+        if (updateError) throw new Error(`reconciliation update failed: ${updateError.message}`);
 
         await resolveIssue(`order-needs-reconcile:${row.id}`, supabase);
         await resolveIssue(`order-cancel-failed:${row.id}`, supabase);

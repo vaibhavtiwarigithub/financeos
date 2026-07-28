@@ -5,7 +5,7 @@ import { fetchAlpacaAccount } from "@/lib/brokers/alpaca";
 import { getKiteHoldings } from "@/lib/kite";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { emitAlert } from "@/lib/alerts/emit";
-import { resolveIssue } from "@/lib/system-health";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { checkKillSwitches } from "@/lib/kill-switches";
 
 export const dynamic = "force-dynamic";
@@ -34,25 +34,51 @@ export async function POST(req: NextRequest) {
     const res = await broker.getOrder(order.broker_order_id, env);
     if (!res.ok || !res.status) continue;
 
-    await supabase.from("broker_orders").update({
-      status: res.status, filled_qty: res.filledQty ?? order.filled_qty,
-      avg_fill_price: res.avgFillPrice ?? order.avg_fill_price, raw_last_state: res.raw,
-      closed_at: ["filled", "canceled", "expired", "rejected"].includes(res.status) ? new Date().toISOString() : null,
-    }).eq("id", order.id);
-    updated++;
-
     if (res.status === "filled") {
-      filled++;
       // Write the real fill back to the originating proposal so the UI/ledger
-      // reflect the actual price/qty (not just the broker_orders row).
+      // reflect the actual price/qty (not just the broker_orders row). This goes
+      // first so a proposal-write failure leaves the broker order open for a
+      // later retry instead of creating a permanently split lifecycle.
       if (order.proposal_id) {
-        await supabase.from("trade_proposals").update({
-          status: "executed",
+        const { error: proposalError } = await supabase.from("trade_proposals").update({
+          status: "filled",
           fill_price: res.avgFillPrice ?? null,
           fill_qty: res.filledQty ?? order.qty,
           filled_at: new Date().toISOString(),
         }).eq("id", order.proposal_id);
+        if (proposalError) {
+          await reportIssue({
+            issueKey: `order-needs-reconcile:${order.id}`,
+            severity: "warn",
+            category: "trading",
+            title: `Order ${order.symbol} fill could not update its proposal`,
+            detail: proposalError.message,
+          }, supabase);
+          continue;
+        }
       }
+    }
+
+    const { error: orderUpdateError } = await supabase.from("broker_orders").update({
+      status: res.status, filled_qty: res.filledQty ?? order.filled_qty,
+      avg_fill_price: res.avgFillPrice ?? order.avg_fill_price, raw_last_state: res.raw,
+      closed_at: ["filled", "canceled", "expired", "rejected"].includes(res.status) ? new Date().toISOString() : null,
+      error: null,
+    }).eq("id", order.id);
+    if (orderUpdateError) {
+      await reportIssue({
+        issueKey: `order-needs-reconcile:${order.id}`,
+        severity: "warn",
+        category: "trading",
+        title: `Order ${order.symbol} broker state could not be persisted`,
+        detail: orderUpdateError.message,
+      }, supabase);
+      continue;
+    }
+    updated++;
+
+    if (res.status === "filled") {
+      filled++;
       await supabase.from("decision_journal").insert({
         entry_type: "broker_order_filled", symbol: order.symbol, market: order.market ?? null,
         summary: `${broker.id} order filled: ${order.side} ${res.filledQty ?? order.qty} × ${order.symbol} @ avg ${res.avgFillPrice ?? "?"}`,
