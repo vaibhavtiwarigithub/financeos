@@ -11,7 +11,7 @@ describe("evaluateGate", () => {
     expect(r.reasons).toEqual([]);
     expect(r.sample_n).toBe(3);
     expect(r.ic_stability_pass).toBe(true);
-    expect(r.dsr_z).toBeCloseTo(2.8, 5); // trialsRun=1 → no DSR penalty
+    expect(r.t_margin_vs_trials).toBeCloseTo(2.8, 5); // trialsRun=1 → no DSR penalty
   });
 
   it("rejects fewer than 3 IC windows without evaluating other gates", () => {
@@ -33,21 +33,21 @@ describe("evaluateGate", () => {
     expect(r.reasons.some((x) => x.startsWith("t_stat_below_hurdle"))).toBe(true);
   });
 
-  it("deflates the t-stat as variant count rises", () => {
+  it("subtracts a larger expected-max-t as variant count rises", () => {
     const at1 = evaluateGate({ ...PASSING, tStats: [2.4, 2.4, 2.4], trialsRun: 1 });
     const at20 = evaluateGate({ ...PASSING, tStats: [2.4, 2.4, 2.4], trialsRun: 20 });
-    expect(at1.dsr_z).toBeCloseTo(2.4, 5);        // S=1 → no penalty
-    expect(at20.dsr_z).toBeCloseTo(2.4 - 1.96, 2); // S=20 → E[max t] ≈ 1.96
-    expect(at20.dsr_z! < at1.dsr_z!).toBe(true);
+    expect(at1.t_margin_vs_trials).toBeCloseTo(2.4, 5);        // S=1 → no penalty
+    expect(at20.t_margin_vs_trials).toBeCloseTo(2.4 - 1.96, 2); // S=20 → E[max t] ≈ 1.96
+    expect(at20.t_margin_vs_trials! < at1.t_margin_vs_trials!).toBe(true);
   });
 
-  it("fails DSR when the penalty exceeds the best t-stat", () => {
+  it("fails the trial-count adjustment when the penalty exceeds the t-stat", () => {
     // Needs S > ~22 for E[max t] to clear the 2.0 hurdle, so this only bites
     // above the schema's variant_budget ceiling of 20 — see note in the route.
     const r = evaluateGate({ ...PASSING, tStats: [2.0, 2.1, 2.1], trialsRun: 200 });
     expect(r.pass).toBe(false);
-    expect(r.dsr_z! < 0).toBe(true);
-    expect(r.reasons.some((x) => x.startsWith("dsr_failed"))).toBe(true);
+    expect(r.t_margin_vs_trials! < 0).toBe(true);
+    expect(r.reasons.some((x) => x.startsWith("trial_adjusted_t_failed"))).toBe(true);
   });
 
   it("uses the LATEST window t-stat, never the max across windows", () => {
@@ -78,4 +78,19 @@ describe("evaluateGate", () => {
     expect(r.ic_stability_pass).toBe(false);
     expect(r.reasons.some((x) => x.startsWith("ic_stability_failed"))).toBe(true);
   });
+
+  it("fails closed on mismatched evidence arrays", () => {
+    const r = evaluateGate({ ics: [0.05, 0.06, 0.07], tStats: [2.5, 2.6], trialsRun: 1 });
+    expect(r.pass).toBe(false);
+    expect(r.reasons).toEqual(["invalid_gate_input"]);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "fails closed on invalid trial count %s",
+    (trialsRun) => {
+      const r = evaluateGate({ ...PASSING, trialsRun });
+      expect(r.pass).toBe(false);
+      expect(r.reasons).toEqual(["invalid_gate_input"]);
+    },
+  );
 });

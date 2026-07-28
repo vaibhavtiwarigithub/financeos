@@ -32,6 +32,15 @@ export interface PaperPerformanceTruthInput {
   resolvedTradeCount: number;
 }
 
+/** Count only terminal, classified outcomes; NULL/unknown is not breakeven. */
+export function resolvedPaperOutcomeCount(
+  outcomes: Array<{ outcome: string | null }>,
+): number {
+  return outcomes.filter(({ outcome }) =>
+    outcome === "win" || outcome === "loss" || outcome === "breakeven"
+  ).length;
+}
+
 /** Canonical derived fields shared by every writer of paper_performance. */
 export function paperPerformanceTruth(input: PaperPerformanceTruthInput) {
   const seed = paperStartNav(input.market);

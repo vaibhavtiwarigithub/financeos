@@ -7,7 +7,8 @@
 //   1. ≥ MIN_WINDOWS distinct IC windows
 //   2. latest-window IC ≥ IC_MIN
 //   3. latest-window Newey-West t_stat ≥ T_HURDLE, and DSR_z > 0 after deflating
-//      for the number of variants tested (Bailey 2014)
+//      for the number of variants tested. This is the trial-count adjustment
+//      term ONLY — it is NOT a Deflated Sharpe Ratio; see t_margin_vs_trials.
 //   4. IC estimate stability across windows (NOT walk-forward — see banner below)
 
 // ⚠ THESE WINDOWS ARE NOT WALK-FORWARD FOLDS. Measured in prod 2026-07-27:
@@ -82,8 +83,17 @@ export interface GateInput {
 
 export interface GateResult {
   pass: boolean;
-  /** DSR z-score: t_latest − E_max_t. Must be > 0 to pass. */
-  dsr_z: number | null;
+  /**
+   * `t_latest − E[max t over trialsRun]`. Must be > 0 to pass.
+   *
+   * NOT the Bailey/López de Prado Deflated Sharpe Ratio, despite an earlier
+   * comment in this file saying so. This is only the trial-count adjustment
+   * term. Real DSR additionally accounts for sample length and the skew and
+   * kurtosis of the return series, and is computed on cost-adjusted STRATEGY
+   * RETURNS — not on an information coefficient. Do not persist this value to
+   * a column named `dsr`, and do not describe it as DSR anywhere.
+   */
+  t_margin_vs_trials: number | null;
   /** Newey-West t-stat of the LATEST window — never the max across windows. */
   t_stat_latest: number | null;
   /**
@@ -102,10 +112,26 @@ export function evaluateGate(input: GateInput): GateResult {
   const n = ics.length;
   const reasons: string[] = [];
 
+  if (
+    tStats.length !== n ||
+    !Number.isFinite(trialsRun) ||
+    !Number.isInteger(trialsRun) ||
+    trialsRun < 1
+  ) {
+    return {
+      pass: false,
+      t_margin_vs_trials: null,
+      t_stat_latest: null,
+      ic_stability_pass: false,
+      sample_n: n,
+      reasons: ["invalid_gate_input"],
+    };
+  }
+
   if (n < MIN_WINDOWS) {
     return {
       pass: false,
-      dsr_z: null,
+      t_margin_vs_trials: null,
       t_stat_latest: null,
       ic_stability_pass: false,
       sample_n: n,
@@ -129,9 +155,9 @@ export function evaluateGate(input: GateInput): GateResult {
 
   // Gate 3: DSR — deflate t_stat for selection bias from variants_run
   const eMaxT = expectedMaxTStat(Math.max(1, trialsRun));
-  const dsrZ = Number.isFinite(tStatLatest) ? tStatLatest - eMaxT : null;
-  if (dsrZ === null || dsrZ <= 0) {
-    reasons.push(`dsr_failed:dsr_z=${dsrZ?.toFixed(2) ?? "null"}<=0 (eMaxT=${eMaxT.toFixed(2)},trials=${trialsRun})`);
+  const tMargin = Number.isFinite(tStatLatest) ? tStatLatest - eMaxT : null;
+  if (tMargin === null || tMargin <= 0) {
+    reasons.push(`trial_adjusted_t_failed:t_margin_vs_trials=${tMargin?.toFixed(2) ?? "null"}<=0 (eMaxT=${eMaxT.toFixed(2)},trials=${trialsRun})`);
   }
 
   // Gate 4: stability — IC positive in both endpoints and not halved
@@ -149,7 +175,7 @@ export function evaluateGate(input: GateInput): GateResult {
 
   return {
     pass: reasons.length === 0,
-    dsr_z: dsrZ,
+    t_margin_vs_trials: tMargin,
     t_stat_latest: Number.isFinite(tStatLatest) ? tStatLatest : null,
     ic_stability_pass: icStabilityPass,
     sample_n: n,

@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import { currentPaperTradePnl } from "@/lib/paper-current-pnl";
 import { SymbolLink } from "@/components/ui/SymbolLink";
 import PageHeader from "@/components/dashboard/PageHeader";
-import { useMarket } from "@/lib/market-context";
 import { fmtMoney } from "@/lib/format-money";
 import { paperExitPlanForTrade, type PaperExitPlan } from "@/lib/trading/paper-exit-plan";
 import InternationalExposurePanel from "@/components/dashboard/InternationalExposurePanel";
@@ -752,7 +751,8 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; 
 
 export interface TradeRecord { wins: number; losses: number; breakeven: number; closed: number }
 
-export default function PortfolioPage({ pools, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, tradeRecord, strategy, tradeQueue: allTradeQueue, exitPlans, internationalAllocationPolicy }: {
+export default function PortfolioPage({ pools, dataMarket, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, tradeRecord, strategy, tradeQueue: allTradeQueue, exitPlans, internationalAllocationPolicy }: {
+  dataMarket: "us" | "india";
   pools: any[]; positions: any[]; trades: any[]; perf: any[]; signals: any[];
   pendingSignals: any[]; tradeRecord: TradeRecord; strategy: any; tradeQueue: any[]; exitPlans: Record<string, PaperExitPlan>; internationalAllocationPolicy: InternationalAllocationPolicyRead | null;
 }) {
@@ -764,13 +764,13 @@ export default function PortfolioPage({ pools, positions: allPositions, trades: 
   // (US=USD, India=INR) — NEVER blend a $ value with a ₹ value. Pre-057 rows
   // have no market column: treat them as US (market ?? "us").
   //
-  // The GLOBAL header switcher (DashboardShell → useMarket) is the SOLE market
-  // selector for this page — there is no page-local toggle. When India isn't
-  // enabled, useMarket() returns "us" and this page behaves exactly as the
-  // US-only original.
+  // The global header switcher is the sole selector. This component renders the
+  // market attached to its server payload so refresh latency cannot mix books.
   const poolList = pools ?? [];
-  const { market } = useMarket();
-  const activeMarket = market === "india" ? "india" : "us";
+  // Use the market that owns this server payload. The shell switch updates
+  // before router.refresh() replaces these props; client state here could pair
+  // a new-market pool/currency with the previous market's aggregate record.
+  const activeMarket = dataMarket;
   const cur = CURRENCY[activeMarket] ?? "$";
   const inMarket = (row: any) => (row?.market ?? "us") === activeMarket;
   // Pick this market's pool; pre-057 (no market col) fall back to the sole row.

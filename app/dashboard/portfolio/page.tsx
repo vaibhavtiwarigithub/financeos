@@ -34,7 +34,9 @@ export default async function Page() {
     { data: pendingSignals },
     { data: strategyArr },
     { data: tradeQueueArr },
-    { data: closedOutcomes },
+    { count: winCount },
+    { count: lossCount },
+    { count: breakevenCount },
   ] = await Promise.all([
     // Phase 4: fetch ALL pools (US + India ₹ post-057). The client component
     // filters by selected market and shows each in its own currency — never blended.
@@ -51,9 +53,11 @@ export default async function Page() {
     // unscoped, it leaked India signals into the US queue.
     supabase.from("agent_signals").select("id, symbol, direction, analyst_score, conviction, rationale, created_at").eq("market", "us").eq("status", "pending").gte("analyst_score", 60).order("analyst_score", { ascending: false }).limit(20),
     // Win rate is a whole-book statistic, so it must NOT be derived from the
-    // 50-row trades slice above — that list is for display and will truncate
-    // again as the book grows. Outcomes only, unbounded, one narrow column.
-    supabase.from("paper_trades").select("outcome").eq("market", market).not("closed_at", "is", null),
+    // 50-row trades slice above. Exact head counts avoid both display truncation
+    // and PostgREST's row-return ceiling; unknown outcomes are not breakevens.
+    supabase.from("paper_trades").select("*", { count: "exact", head: true }).eq("market", market).eq("outcome", "win"),
+    supabase.from("paper_trades").select("*", { count: "exact", head: true }).eq("market", market).eq("outcome", "loss"),
+    supabase.from("paper_trades").select("*", { count: "exact", head: true }).eq("market", market).eq("outcome", "breakeven"),
   ]);
 
   const [exitPlans, internationalAllocationPolicy] = await Promise.all([
@@ -64,17 +68,18 @@ export default async function Page() {
   return (
     <PortfolioPage
       pools={pools ?? []}
+      dataMarket={market}
       positions={positions ?? []}
       trades={trades ?? []}
       perf={perf ?? []}
       signals={signals ?? []}
       pendingSignals={pendingSignals ?? []}
-      tradeRecord={(() => {
-        const outcomes = ((closedOutcomes ?? []) as { outcome: string | null }[]).map(t => t.outcome);
-        const wins = outcomes.filter(o => o === "win").length;
-        const losses = outcomes.filter(o => o === "loss").length;
-        return { wins, losses, breakeven: outcomes.length - wins - losses, closed: outcomes.length };
-      })()}
+      tradeRecord={{
+        wins: winCount ?? 0,
+        losses: lossCount ?? 0,
+        breakeven: breakevenCount ?? 0,
+        closed: (winCount ?? 0) + (lossCount ?? 0) + (breakevenCount ?? 0),
+      }}
       strategy={strategyArr?.[0] ?? null}
       tradeQueue={tradeQueueArr ?? []}
       exitPlans={exitPlans}

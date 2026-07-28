@@ -18,7 +18,7 @@ import { isPaused, isTradingEnabled } from "@/lib/market-controls";
 import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/trading/capital-rotation";
 import { selectBestPaperSignals } from "@/lib/trading/paper-signal-selection";
 import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
-import { paperPerformanceTruth } from "@/lib/paper-nav";
+import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 import { isMarketSessionOpen } from "@/lib/trading/market-calendar";
 import { paperEntryQuantity } from "@/lib/trading/paper-quantity";
@@ -969,7 +969,7 @@ export async function POST(req: NextRequest) {
         benchReturnPct,
         winCount: outcomes.filter((t) => t.outcome === "win").length,
         lossCount: outcomes.filter((t) => t.outcome === "loss").length,
-        resolvedTradeCount: outcomes.length,
+        resolvedTradeCount: resolvedPaperOutcomeCount(outcomes),
       });
 
       const perfRow: Record<string, any> = {

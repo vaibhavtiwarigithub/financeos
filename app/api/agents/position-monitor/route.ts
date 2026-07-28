@@ -11,7 +11,7 @@ import { setMarketPaused } from "@/lib/market-controls";
 import { computeExitFillPrice, getBatchQuotes, getQuote } from "@/lib/data/quotes";
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
-import { paperPerformanceTruth } from "@/lib/paper-nav";
+import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
 import { paperPartialTargetQuantity } from "@/lib/trading/paper-quantity";
 
@@ -547,7 +547,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       benchReturnPct,
       winCount: outcomes.filter((t) => t.outcome === "win").length,
       lossCount: outcomes.filter((t) => t.outcome === "loss").length,
-      resolvedTradeCount: outcomes.length,
+      resolvedTradeCount: resolvedPaperOutcomeCount(outcomes),
     });
 
     const perfRow: Record<string, any> = {

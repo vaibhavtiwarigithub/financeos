@@ -1,175 +1,346 @@
-# Feature Architecture: Walk-Forward IC Folds
+# Feature Architecture: Purged Out-of-Sample IC Validation
 
 ## Status
 
-Architecture status: Draft
+Architecture status: Draft, revised after adversarial review
 Architecture approved: No
 Approved scope: None
 Approved date: None
 Implementation allowed: No
 
-## Feature Purpose
+## Decision
 
-Make `edge_ic_history` windows actual out-of-sample folds, so the promotion gate
-in `lib/gates/promotion-gate.ts` can claim out-of-sample validation instead of
-estimate stability.
+Build this before any `strategy_policies` promotion is allowed.
 
-## The problem, measured
+The current `edge_ic_history` rows are useful retrospective diagnostics, but
+they are not promotion evidence. Splitting the same retrospective current-name
+dataset into date ranges would not repair point-in-time universe bias,
+experiment-selection bias, or the absence of a frozen train/test protocol.
 
-Discovered 2026-07-27 by running the promotion gate against prod data.
+Until this feature and the atomic promotion RPC are approved and shipped,
+`POST /api/agents/backtest/promote` must remain operationally dormant. A later
+approved implementation should make the route fail closed with
+`promotion_evidence_not_oos` rather than treating three rolling windows as an
+evidence minimum.
 
-Every `edge_ic_history` row is an IC computed over `history_days = 1000`. The six
-US windows for a given edge span **16 calendar days** end to end
-(2026-07-08 → 2026-07-24).
+## Purpose
 
-| Fact | Value |
+Create reproducible, market-local, point-in-time out-of-sample evidence for an
+edge before it can become a policy. The system must answer:
+
+1. What formula and trial family were fixed before evaluation?
+2. What symbols and inputs were knowable on each as-of date?
+3. Which observations trained or calibrated the formula?
+4. Which later observations tested it without label overlap?
+5. Does the combined out-of-sample evidence survive dependence, costs, and
+   multiple testing?
+6. Can promotion append a replacement policy atomically?
+
+## Measured Current State
+
+As of 2026-07-27:
+
+| Fact | Production value |
 |---|---|
-| `history_days` per window | 1000 |
-| Span, first → last window_end (US) | 16 days |
-| Implied data overlap between first and last window | **~98.4%** |
-| Rows vs distinct `window_end` (US, per edge/horizon) | 6 rows, **4** distinct |
-| Distinct `run_fingerprint` behind those 6 rows | 6 |
-| `universe_size` drift across them | 31 → 32 → 40 |
+| Rolling history per IC row | 1,000 calendar days |
+| US rows per edge/horizon vs distinct end dates | 6 vs 4 |
+| Span from first to last US end date | 16 calendar days |
+| Approximate overlap | 98.4% |
+| Best latest US market-wide t-stat | 1.73 |
+| Best latest India observation | 1.57, Financials sector, only 2 windows |
+| Active `strategy_policies` | 0 |
+| `backtest_experiments` | 0 |
+| Promotion-grade PIT universe | unavailable |
+| Regime rows allowed by `edge_ic_history` schema | no |
 
-Consecutive "windows" are the same 1000-day backtest re-run weekly with the end
-date nudged forward a few days. They are not folds.
+The current universe is documented in migration 132 and the EdgeIC response as
+a current-liquid snapshot. Replaying today's survivors through old dates is not
+point-in-time validation.
 
-**Three things this breaks:**
+## Corrections To The Previous Draft
 
-1. `MIN_WINDOWS = 3` claims to count "independent IC runs". It counts re-runs.
-2. The cross-window IC check was named `walk_forward_pass`. It compares an IC
-   over ~Oct-2023→08-Jul-2026 against one over ~Oct-2023→24-Jul-2026. Any
-   "decay" it detects is noise from a 16-day endpoint shift plus a changing
-   universe — not out-of-sample decay.
-3. Waiting does not fix it. Four more weeks moves the overlap from 98.4% to
-   ~95.6%. Genuinely disjoint 1000-day windows would need ~8 years.
+1. **Disjoint test slices are not automatically walk-forward.** For a fixed,
+   never-refit formula they are purged temporal out-of-sample folds. The term
+   walk-forward is reserved for a protocol that freezes each fold's formula or
+   parameters using only its earlier training/calibration interval and then
+   evaluates a later test interval.
+2. **Purge is measured in market sessions, not calendar days.** For horizon
+   `H`, no test origin may have a forward-return label extending beyond its test
+   interval. Training observations whose labels touch the test interval are
+   purged; an embargo is added only when the feature construction requires it.
+3. **A boolean `is_disjoint` is not proof.** Boundaries, label end dates,
+   fingerprints, and non-overlap validation are durable facts. The gate
+   recomputes their consistency.
+4. **Fold index is not a global identity.** It is unique only inside a frozen
+   experiment/validation plan.
+5. **Current-universe history cannot promote.** Point-in-time membership,
+   delistings, symbol changes, corporate-action adjustment policy, and input
+   availability are required.
+6. **Fold-over-fold endpoint decay is not the primary statistic.** The primary
+   evidence is the predeclared aggregate out-of-sample date-level rank-IC series
+   with a dependence-robust uncertainty estimate. Fold sign consistency and a
+   worst-fold guard are secondary diagnostics.
+7. **The current `t - expectedMaxT` value is not the Bailey/Lopez de Prado
+   Deflated Sharpe Ratio.** It is a trial-count-adjusted t margin. DSR also
+   accounts for sample length and non-normality of strategy returns. IC
+   discovery should use a declared multiple-testing procedure; DSR belongs on
+   cost-adjusted strategy-return evidence.
 
-**What is NOT broken:** the Newey-West `t_stat` *within* a single window,
-computed over that window's ~96 as-of dates. That is real evidence and is
-unaffected by cross-window overlap. It remains the gate's binding constraint
-(best latest t: US 1.73, India 1.04, against a 2.0 hurdle).
+## Statistical Contract
 
-## Interim measures already shipped (not this feature)
+### Unit of observation
 
-- Route dedupes by `window_end`, newest `created_at` wins.
-- `GateResult.walk_forward_pass` renamed to `ic_stability_pass`; failure code
-  `walk_forward_failed` → `ic_stability_failed`. The gate no longer claims a
-  property it does not have.
-- `strategy_policies.walk_forward_pass` **column** kept as-is; renaming it needs
-  a migration on an append-only governance table. Deferred to this feature.
+- Primary series: one cross-sectional rank IC per eligible market session/as-of
+  date.
+- The same-market cross section must meet a predeclared minimum symbol count.
+- US and India observations, calendars, universes, currencies, benchmarks, and
+  results are never pooled.
+- Sector evidence is a separate plan and must meet stricter sample floors.
+- Regime evidence is unavailable until a separate approved, PIT-safe regime
+  label exists. It must not silently fall back to market-wide evidence.
 
-## Scope
+### Frozen plan
 
-This feature includes:
-- An IC computation mode that emits **disjoint** folds: fold *k* evaluates only
-  as-of dates after fold *k−1*'s last as-of date, with a purge gap of at least
-  `horizon` days so a fold's forward-return window cannot leak into the next.
-- Persisting fold provenance on each row: `fold_index`, `fold_start`, `fold_end`,
-  `is_disjoint`, and the purge gap used.
-- Gate changes: require *N* disjoint folds; restore a real walk-forward check
-  (fold-over-fold IC decay) alongside the stability check.
-- Backfill of existing rows as `is_disjoint = false` so no historical row is ever
-  mistaken for fold evidence.
+Before any result is computed, an immutable experiment records:
 
-## Non-Goals
+- `edge_id` and exact `formula_version`
+- market, horizon, and exactly one segment dimension
+- trial-family identifier and total challengers considered since the current
+  champion was promoted
+- point-in-time universe policy/version and snapshot fingerprint
+- feature/input availability policy and adjustment policy
+- train/test boundaries expressed as market sessions
+- step size, purge sessions, optional embargo sessions, fold count
+- minimum as-of dates and minimum cross-section size
+- primary statistic, secondary diagnostics, and pass thresholds
+- data cutoff and code/config fingerprint
 
-- Does not change `analyst_score`, ResearchAgent, PaperTrader, or any order path.
-- Does not change the IC formula, the edge registry, or the Newey-West lag rule.
-- Does not lower `T_HURDLE`. If disjoint folds make promotion harder, that is the
-  correct outcome, not a reason to move the bar.
-- No LLM anywhere on this path.
+Changing any field creates a new experiment. It never edits a completed one.
 
-## Current Behavior
+### Fold construction
 
-`app/api/agents/edge-ic/route.ts` runs on a schedule and, per edge × market ×
-horizon × segment, computes one IC over the trailing `history_days = 1000` with
-`step_days = 5`, writing a single row keyed on `window_end = today`. Each run
-therefore re-reads nearly the same history as the previous run.
+For fold `k`:
 
-## Proposed Behavior
+1. Build or calibrate only from sessions at or before `train_end[k]`.
+2. Purge training origins whose `H`-session labels overlap the test interval.
+3. Freeze the selected formula/parameters.
+4. Evaluate consecutive later sessions from `test_start[k]` through
+   `test_end[k]`.
+5. Require every label to mature by `label_end[k] <= data_cutoff`.
+6. Append immutable date-level IC observations and one fold summary.
 
-Partition the available history into consecutive, non-overlapping fold windows
-and compute one IC per fold. Between folds, purge `horizon` days so a fold's
-forward-return labels cannot overlap the next fold's features.
+Test intervals do not overlap. Their label intervals do not cross fold
+boundaries. Folds are generated from an anchored plan, never from the cron's
+wall-clock execution date.
 
-```
-|<-- fold 1 -->|purge|<-- fold 2 -->|purge|<-- fold 3 -->|
-```
+If there is no training or calibration step because the formula was fixed
+externally before all folds, label the mode `purged_temporal_oos`, not
+`walk_forward`.
 
-Each scheduled run appends a new fold only when enough *new* data has accrued to
-fill one (`fold_days + horizon`). On a run that cannot fill a fold, it writes
-nothing new rather than re-emitting the trailing window.
+### Aggregation and pass criteria
 
-Open question for approval: `fold_days`. With ~1000 days of history and a 20-day
-horizon, `fold_days = 250` yields ~3 disjoint folds today; `fold_days = 125`
-yields ~7 but each has fewer as-of dates and a noisier per-fold t-stat. This
-trades fold count against per-fold power and should be decided explicitly, not
-defaulted.
+The gate consumes all matured OOS date-level IC observations for one frozen
+plan:
 
-## System Flow
+- minimum 3 completed test folds
+- minimum 24 eligible as-of dates per fold, subject to power analysis before
+  approval
+- minimum cross-section size per as-of date; sparse dates are excluded and
+  counted, never converted to zero IC
+- aggregate mean rank IC above the approved floor
+- Newey-West/HAC t-stat on the concatenated chronological OOS IC series above
+  the approved hurdle
+- positive fold sign in a predeclared majority and no catastrophic worst fold
+- multiple-testing control against the complete frozen trial family
+- cost-adjusted long-only bucket test and benchmark comparison before policy
+  promotion
+- no unresolved PIT, provider, adjustment, or provenance degradation
 
-1. edge-ic run starts for (edge, market, horizon, segment).
-2. Read the latest persisted `fold_end` for that key.
-3. If `today − fold_end ≥ fold_days + horizon`, compute the next fold; else exit
-   without writing.
-4. Compute IC + Newey-West t over the fold's as-of dates only.
-5. Insert with `fold_index`, `fold_start`, `fold_end`, `is_disjoint = true`.
-6. Promotion gate reads only `is_disjoint = true` rows when evaluating
-   walk-forward; stability continues to use all deduped rows.
+No single latest fold, maximum fold t-stat, or pooled standard error from
+overlapping windows may decide promotion.
 
-## Module Inventory
-
-| Module | Change |
-|---|---|
-| `lib/edges/ic.ts` | Add fold partitioning + purge gap; keep current mode behind a flag |
-| `app/api/agents/edge-ic/route.ts` | Fold-advance decision, write fold provenance |
-| `lib/gates/promotion-gate.ts` | Separate `walk_forward_pass` (disjoint folds only) from `ic_stability_pass` |
-| `app/api/agents/backtest/promote/route.ts` | Filter evidence to `is_disjoint` when the walk-forward gate is required |
-| `supabase/migrations/*` | `edge_ic_history`: `fold_index`, `fold_start`, `fold_end`, `is_disjoint`, `purge_days` |
-| `public/agent-diagrams/system-map.json` | Update EDGELAB → POLICYGATE edge semantics |
-| `docs/arch/09-learning-loop.md`, `04-database-schema.md` | Document folds |
+For factor discovery, use a predeclared false-discovery method appropriate to
+the trial dependence. Do not label the current expected-max-t subtraction as
+DSR. If DSR is later used, compute it from the strategy-return series with the
+paper's sample-length, skewness, kurtosis, and trial-selection inputs.
 
 ## Data Architecture
 
-- Required: existing `edge_signals` + candle history. No new provider.
-- New columns are additive and nullable; existing rows backfill to
-  `is_disjoint = false`.
-- Unique index on `(edge_id, market, horizon, segment_type, segment_value,
-  fold_index)` to make fold emission idempotent — this is the durable fix for the
-  duplicate-window problem the route currently patches at read time.
+### Reuse the existing lineage
 
-## Files / Behavior That Must Not Change
+Do not create a third experiment/provenance truth layer.
 
-- `strategy_policies` append-only triggers and the `promoted_by =
-  'deterministic_gate'` CHECK.
-- Any order-placement path.
-- `T_HURDLE`, `IC_MIN`.
+Extend `backtest_experiments` to be the immutable plan header with:
 
-## Risks
+- `edge_id`, `formula_version`, `horizon`
+- `validation_mode`
+- `trial_family_id`, `trials_considered`
+- `universe_policy_version`, `universe_fingerprint`
+- `dataset_fingerprint`, `code_version`
+- `validation_spec` JSONB with a schema/version CHECK
+- `data_cutoff`
 
-- **Fewer folds than expected.** If `fold_days` is set high, there may be only
-  2 disjoint folds — below `MIN_WINDOWS`. Promotion then stays blocked. This is
-  honest but means the feature does not immediately unblock anything.
-- **Per-fold t-stats get weaker,** because each fold has fewer as-of dates than
-  the current 1000-day window. Splitting 96 as-of dates across 3 folds leaves
-  ~32 each. Given the binding constraint today is already the t-hurdle, disjoint
-  folds will likely make promotion *harder*, not easier.
-- **Cost.** More IC computations per run.
+The plan references existing `edge_signal_inputs`, `edge_universe_members`, and
+evidence/provider fingerprints. It does not copy or reinterpret their
+provenance.
 
-## Open Questions For Owner
+### New result tables
 
-1. `fold_days` — fold count vs per-fold power (see above).
-2. Should `MIN_WINDOWS` for the walk-forward gate differ from the stability gate?
-3. Do we rename the `strategy_policies.walk_forward_pass` column in the same
-   migration, or keep it and add `ic_stability_pass` alongside?
-4. Given the risk section — this likely makes promotion strictly harder — is this
-   worth building now, or after there is enough history for it to plausibly pass?
+`edge_ic_fold_results`:
 
-## Recommendation
+- `experiment_id`, `fold_index`
+- train, purge, test, and label-end session boundaries
+- formula and dataset fingerprints
+- `as_of_dates`, `min_cross_section_n`, `excluded_dates`
+- mean IC, IC IR, HAC t-stat, confidence interval
+- status and machine-readable refusal reasons
+- unique `(experiment_id, fold_index)`
+- service-role only, append-only
 
-Build **after** there is more history, not now. The feature's value is letting
-the gate honestly claim out-of-sample validation; it does not unblock any
-promotion, and on current data it would reduce per-fold power and make promotion
-harder. The interim rename means nothing is currently overclaiming, which was the
-actual risk. Revisit when an edge is close to clearing `T_HURDLE` on a single
-window — at that point the walk-forward claim starts to matter.
+`edge_ic_oos_observations`:
+
+- `experiment_id`, `fold_index`, `as_of_date`
+- rank IC, cross-section count, input/universe fingerprint
+- unique `(experiment_id, as_of_date)`
+- service-role only, append-only
+
+`edge_ic_history` remains the retrospective diagnostic ledger. Do not add
+`is_disjoint` to it and then treat the same current-universe reconstruction as
+promotion-grade.
+
+### Strategy-policy schema repair
+
+The promotion migration must:
+
+1. add the correctly named `ic_stability_pass` and explicit
+   `validation_mode`; deprecate `walk_forward_pass`
+2. stop describing the trial-adjusted t margin as `dsr`
+3. harden the mutation trigger so every field except a one-way
+   `superseded_at: null -> timestamp` transition is immutable
+4. bind each policy to its exact experiment and fold result set
+5. make experiment `policy_id` a one-way null-to-value transition
+
+Production currently has zero policy rows, so this is the lowest-risk time to
+repair the schema semantics.
+
+## Atomic Promotion Boundary
+
+Supersede and insert must occur in one database transaction. A partial unique
+index prevents two active rows but cannot prevent zero active rows after
+supersede succeeds and insert fails.
+
+Add a service-role-only database RPC modeled on
+`promote_strategy_champion`:
+
+1. validate the experiment, segment, formula, market, horizon, trial family,
+   matured folds, and gate result inside the transaction
+2. acquire a transaction advisory lock for the exact policy segment
+3. lock the incumbent row
+4. append the new policy
+5. supersede the incumbent
+6. bind the experiment to the new policy
+7. return both IDs
+
+Revoke execution from `public`, `anon`, and `authenticated`; grant only the
+service role. The HTTP route remains cron-or-confirmed-owner gated and calls
+only this RPC.
+
+## Module Inventory
+
+| Module | Approved future change |
+|---|---|
+| `lib/edges/ic.ts` | Pure fold evaluator over frozen observations |
+| `lib/edges/validation-plan.ts` | Session-aware plan validation and fingerprints |
+| `app/api/agents/edge-ic/route.ts` | Keep retrospective diagnostics; do not overload it |
+| new validation route/worker | Execute approved frozen plans and append OOS results |
+| `lib/gates/promotion-gate.ts` | Consume aggregate OOS result, not rolling windows |
+| `app/api/agents/backtest/promote/route.ts` | Validate request, require bound experiment, call atomic RPC |
+| `supabase/migrations/*` | Extend lineage, add immutable results, repair policy semantics, add RPC |
+| `docs/arch/04-database-schema.md` | Canonical schema and immutability contract |
+| `docs/arch/09-learning-loop.md` | Discovery -> OOS validation -> promotion sequence |
+| `public/agent-diagrams/system-map.json` | Remove all current walk-forward/DSR overclaims |
+
+## Failure Modes And Required Refusals
+
+| Failure | Required outcome |
+|---|---|
+| Current-day universe replayed historically | refuse `universe_not_point_in_time` |
+| Feature observed/revised after as-of date | refuse `input_not_point_in_time` |
+| Formula/config changed after plan creation | refuse `plan_fingerprint_mismatch` |
+| Label crosses test boundary or is immature | refuse `label_overlap_or_immature` |
+| Fold/test range overlaps another result | refuse `test_fold_overlap` |
+| Too few dates or symbols | refuse `sample_floor_not_met` |
+| Experiment segment differs from request | refuse `experiment_scope_mismatch` |
+| Trial count absent or lower than family ledger | refuse `trial_family_incomplete` |
+| Any India/US mixing | refuse `market_scope_mismatch` |
+| Promotion insert/bind fails | transaction rolls back; incumbent remains active |
+
+## Validation Plan
+
+### Pure tests
+
+- US and India session calendars, including holidays
+- horizon-label purge at every fold boundary
+- no overlap in test origins or label intervals
+- immature labels rejected
+- exact rerun idempotency
+- changed formula/universe/config creates a different plan
+- sparse fold rejection
+- aggregate HAC statistic uses chronological OOS observations
+- no max-t or latest-fold cherry-pick
+- malformed/mismatched trial family fails closed
+
+### Database tests
+
+- anon/authenticated cannot read or mutate plan/results
+- result rows cannot update/delete
+- experiment and policy bindings are one-way
+- concurrent promotion leaves exactly one active policy
+- forced insert failure preserves the incumbent
+- null/value segment branches match the unique-index key exactly
+
+### Acceptance
+
+1. A synthetic known-positive factor passes only under clean PIT OOS data.
+2. The same factor fails when its universe or labels are contaminated.
+3. A known-null factor does not pass under repeated trial families.
+4. No policy can be created from legacy `edge_ic_history` alone.
+5. Full typecheck, tests, build, schema verification, RLS checks, and production
+   dry-run pass before activation.
+
+## Build Order
+
+1. Approve this architecture and thresholds/power analysis.
+2. Disable legacy-window promotion explicitly while the policy table is empty.
+3. Repair policy/experiment schema semantics and add the atomic RPC.
+4. Establish PIT universe and input eligibility for US and India separately.
+5. Extend the existing experiment lineage and add immutable OOS results.
+6. Build the session-aware fold engine and synthetic leakage tests.
+7. Backfill diagnostics only; never relabel legacy rows as OOS.
+8. Run paper-only validation plans and review at least one complete trial family.
+9. Wire the promotion route to the atomic RPC.
+10. Consider policy consumption only under a separate approved architecture.
+
+## Open Decisions For Approval
+
+1. Minimum dates and symbols per fold, determined by power analysis rather than
+   an arbitrary `fold_days`.
+2. Expanding-window calibration versus externally fixed formula mode.
+3. False-discovery procedure for correlated edge families.
+4. Required cost-adjusted portfolio test and benchmark.
+5. PIT-universe source and delisting/corporate-action policy for each market.
+
+## References
+
+- Bailey and Lopez de Prado, *The Deflated Sharpe Ratio: Correcting for
+  Selection Bias, Backtest Overfitting and Non-Normality*:
+  https://ssrn.com/abstract=2460551
+- Bailey, Borwein, Lopez de Prado, and Zhu, *The Probability of Backtest
+  Overfitting*: https://ssrn.com/abstract=2326253
+- Harvey, Liu, and Zhu, *... and the Cross-Section of Expected Returns*:
+  https://www.nber.org/papers/w20592
+
+These sources support multiple-testing and backtest-overfitting controls. The
+specific Kairos schema, market isolation, PIT requirements, and fail-closed
+design above are architectural decisions derived from the current code and
+production schema.

@@ -1,5 +1,11 @@
 # Kairos — Learning Loop
-> Last updated: 2026-07-27 (**Deterministic promotion gate wired.** `lib/gates/promotion-gate.ts` + `POST /api/agents/backtest/promote` turn IC evidence into a `strategy_policies` row with no LLM anywhere on the path. Four gates: ≥3 IC windows, latest IC ≥ 0.02, **latest-window** Newey-West t-stat ≥ 2.0, DSR z > 0, and IC-estimate stability (still positive, not halved from the earliest window — deliberately NOT called walk-forward, see below). A pass supersedes the incumbent policy for that segment and appends; a fail returns 200 with machine-readable reason codes and writes nothing. **Four defects found and fixed same day by running it against prod:** (1) market-wide evidence was matched on `segment_type is null` but every row is written as `('market','all')`, so the gate was a silent no-op; (2) the t-stat was `max()` across windows — a cherry-pick that read 2.83 where the latest window reads 0.55, now latest-only; (3) the horizon band interleaved 5d/10d/20d rows into one evidence array, now one `evidence_horizon` per evaluation; (4) duplicate `window_end` rows (6 rows across 4 distinct windows, 6 run_fingerprints, universe_size drifting 31→40) inflated `sample_n`, now deduped newest-run-wins. **Separately: these windows are NOT walk-forward folds** — each is a 1000-day IC and the six US windows span 16 days, so they overlap ~98.4%; the cross-window check is renamed `ic_stability_pass` so the gate stops overclaiming. Real folds are proposed in `features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` (draft, not approved). **First real run promotes nothing** — best latest t is 1.73 (US) / 1.04 (India) against a 2.0 hurdle; ~3 weeks of overlapping history is not enough. See "Promotion gate" below. Prior: 2026-07-22 ATR exit evidence layer: measure-only, three versioned candidates, label maturation writes ATR-normalized MAE/MFE + outcomes, evidence API, migration applied. No paper/live execution change. Prior: India macro contamination OPEN ITEM — taint proposal pending owner decision, no rows mutated; automated strategy validation + auto-shadow routing, migration 170; cross-sectional-rank genome param `entry.rank_pct_min`; PIT fundamentals ledger; historical replay harness — all OFF by default)
+> **PROMOTION IS DORMANT (2026-07-27).** `POST /api/agents/backtest/promote` fails closed with `promotion_evidence_not_oos` (503) before any write. Adversarial review found one P0 and three P1 issues that each independently disqualify the current path: promotion is non-atomic (supersede-then-insert can leave a segment with no active policy); the evidence is not out-of-sample (~98.4% window overlap AND a current-liquid universe replayed through past dates — survivorship bias that more weekly runs cannot fix); `dsr_z` was not a Deflated Sharpe Ratio and is renamed `t_margin_vs_trials`, with the `dsr` column now written NULL; and experiment lineage is optional and unbound to the edge/market/horizon/segment it justifies. Re-enable only after `features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` is approved and shipped: frozen experiment lineage → PIT universe/inputs → purged market-session OOS folds → aggregate HAC IC → multiple-testing + cost-adjusted validation → atomic promotion RPC.
+> Last updated: 2026-07-27. The deterministic promotion route is implemented
+> but is governance scaffolding only: production has zero policies, its rolling
+> IC windows are not OOS, its current-universe history is not PIT, its
+> trial-adjusted t margin is not DSR, and supersede/insert is not atomic. The
+> revised `features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` is a blocking
+> prerequisite before policy promotion or consumption.
 > Update this file when: the learning flow changes, new guardrails are added to weight mutation, genome parameters change, Phase 1 unlocks, the RAG pipeline changes, or Performance Truth Layer evaluation logic changes.
 
 ---
@@ -410,6 +416,7 @@ LLM's role ends at proposing a bounded hypothesis into `backtest_experiments`.
 `strategy_policies.promoted_by` is CHECK-constrained to `'deterministic_gate'`, so
 that boundary is enforced by the database rather than by convention.
 
+<!-- Superseded 2026-07-27 promotion-gate description retained in git history only.
 ### Inputs
 
 - `edge_ic_history` rows for one `edge_id` + `market`, scoped to the requested
@@ -513,3 +520,46 @@ The real fix is disjoint folds emitted by the IC engine, proposed in
 approved, not implemented**. Its own risk section notes it would likely make
 promotion *harder* (fewer as-of dates per fold), so the recommendation there is
 to build it once an edge is close to clearing the hurdle, not before.
+-->
+
+### Current implementation and audit status
+
+- The route reads one exact evidence horizon. Market-wide evidence is
+  `segment_type='market', segment_value='all'`; sector evidence is explicitly
+  sector-scoped. The production `edge_ic_history` constraint does not permit
+  regime rows, so regime promotion has no evidence and fails closed.
+- Duplicate `window_end` rows are collapsed newest-run-wins before evaluation.
+- Interactive access is confirmed-owner-only; cron access requires the cron
+  secret. There is no LLM on the path.
+- Current gates are at least three distinct rolling windows, latest IC ≥ 0.02,
+  latest-window Newey-West t ≥ 2.0, a trial-count-adjusted t margin above zero,
+  and positive/non-halving endpoint IC stability.
+- The expected-max-t subtraction is **not** the Bailey/Lopez de Prado Deflated
+  Sharpe Ratio. It omits strategy-return sample length, skewness, and kurtosis.
+  Existing `dsr` names are legacy/misnamed and must be repaired before promotion
+  becomes active.
+
+No edge promotes. Production has zero `strategy_policies` and zero
+`backtest_experiments`. The best latest US market-wide t-stat is 1.73. India's
+best latest observation is 1.57 in a Financials sector slice with only two
+distinct windows, so it fails the evidence-count gate.
+
+### Blocking governance defects
+
+The current route is scaffolding, not a production-grade promotion boundary:
+
+1. Rolling windows share about 98.4% of their 1,000-day history.
+2. The historical universe is a current-liquid snapshot, not point-in-time.
+3. Missing experiment lineage assumes one trial, and experiments are not bound
+   tightly enough to edge/formula/horizon/segment.
+4. Supersede then insert is not transactional. The unique index prevents two
+   active policies but cannot prevent zero active policies after insert failure.
+5. `strategy_policies.walk_forward_pass` stores stability, and the mutation
+   trigger does not protect every field described as immutable.
+
+No consumer may treat a policy row as approved evidence until the revised
+`features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` is approved and built.
+That design requires a frozen experiment, PIT universe and inputs, purged
+market-session OOS folds, aggregate OOS IC evidence, proper multiple-testing
+control, and one atomic service-role promotion RPC. Waiting for more overlapping
+weekly windows does not cure these defects.
