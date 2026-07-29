@@ -400,6 +400,21 @@ export type RobinhoodMcpCapabilitySnapshot = {
   schemaFingerprint: string;
 };
 
+export const ROBINHOOD_RESEARCH_READ_TOOLS = [
+  "get_earnings_calendar",
+  "get_earnings_results",
+  "get_option_chains",
+  "get_option_quotes",
+  "get_option_historicals",
+  "get_option_instruments",
+] as const;
+
+export type RobinhoodResearchReadTool = typeof ROBINHOOD_RESEARCH_READ_TOOLS[number];
+
+function isRobinhoodResearchReadTool(name: string): name is RobinhoodResearchReadTool {
+  return (ROBINHOOD_RESEARCH_READ_TOOLS as readonly string[]).includes(name);
+}
+
 // A deliberately non-executing capability probe. It only opens an MCP session
 // and asks for tools/list; it must never call a market-data, account, or order
 // tool. Persist hashes rather than untrusted tool descriptions/schemas.
@@ -431,6 +446,53 @@ export async function inspectRobinhoodMcpCapabilities(): Promise<
     const tools = await listTools(token.token, session.sessionId);
     if (!tools.ok || !Array.isArray(tools.tools)) return { ok: false, errorCode: "tools_list_failed" };
     return { ok: true, snapshot: fingerprintRobinhoodMcpTools(tools.tools) };
+  } catch {
+    return { ok: false, errorCode: "transport_failed" };
+  }
+}
+
+export async function inspectRobinhoodResearchReadSchemas(): Promise<
+  { ok: true; schemas: Array<{ name: RobinhoodResearchReadTool; inputSchema: unknown }>; schemaFingerprint: string }
+  | { ok: false; errorCode: string }
+> {
+  const svc = createServiceClient();
+  const token = await getValidAccessToken(svc);
+  if (!token.ok || !token.token) return { ok: false, errorCode: "not_connected" };
+  try {
+    const session = await openSession(token.token);
+    if (!session.ok) return { ok: false, errorCode: "initialize_failed" };
+    const tools = await listTools(token.token, session.sessionId);
+    if (!tools.ok || !Array.isArray(tools.tools)) return { ok: false, errorCode: "tools_list_failed" };
+    const schemas = tools.tools
+      .map((tool: any) => ({
+        name: String(tool?.name ?? ""),
+        inputSchema: tool?.inputSchema ?? null,
+      }))
+      .filter((tool): tool is { name: RobinhoodResearchReadTool; inputSchema: unknown } =>
+        isRobinhoodResearchReadTool(tool.name));
+    const schemaFingerprint = createHash("sha256")
+      .update(JSON.stringify([...schemas].sort((a, b) => a.name.localeCompare(b.name))))
+      .digest("hex");
+    return { ok: true, schemas, schemaFingerprint };
+  } catch {
+    return { ok: false, errorCode: "transport_failed" };
+  }
+}
+
+export async function callRobinhoodResearchReadTool(
+  name: RobinhoodResearchReadTool,
+  args: Record<string, unknown>,
+): Promise<{ ok: true; data: unknown } | { ok: false; errorCode: string }> {
+  if (!isRobinhoodResearchReadTool(name)) return { ok: false, errorCode: "tool_not_allowlisted" };
+  const svc = createServiceClient();
+  const token = await getValidAccessToken(svc);
+  if (!token.ok || !token.token) return { ok: false, errorCode: "not_connected" };
+  try {
+    const session = await openSession(token.token);
+    if (!session.ok) return { ok: false, errorCode: "initialize_failed" };
+    const result = await mcpRpc(token.token, "tools/call", { name, arguments: args }, session.sessionId);
+    if (!result.ok) return { ok: false, errorCode: "tool_call_failed" };
+    return { ok: true, data: mcpToolJson(result.result?.content ?? result.result) };
   } catch {
     return { ok: false, errorCode: "transport_failed" };
   }

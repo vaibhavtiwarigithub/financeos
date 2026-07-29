@@ -11,6 +11,13 @@ import { sendTradeAlertEmail } from "@/lib/trade-alert";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { isPaused } from "@/lib/market-controls";
+import {
+  annotateEarningsRisk,
+  earningsRiskVerdict,
+  recordEarningsRiskObservation,
+  resolveEarningsEventRisk,
+  type EarningsRiskAnnotation,
+} from "@/lib/risk/earnings-risk";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -280,6 +287,29 @@ async function buildProposals(supabase: any, isCron: boolean) {
               return diffDays >= -2 && diffDays <= 5; // 2 days past, 5 days upcoming
             });
             if (inBlackout) {
+              // Preserve the legacy AV blackout exactly. The new policy is only
+              // observed beside it so parity can be measured before cutover.
+              try {
+                const horizonSessions = Number(signal.resolved_horizon_days ?? tradingMandate.target_hold_days);
+                const event = await resolveEarningsEventRisk(supabase, signal.symbol, "us");
+                const annotation: EarningsRiskAnnotation = {
+                  policyVersion: 1,
+                  policyMode: "shadow",
+                  market: "us",
+                  symbol: signal.symbol,
+                  horizonSessions,
+                  event,
+                  moveProxy: null,
+                  ...earningsRiskVerdict(event, null, horizonSessions),
+                };
+                await recordEarningsRiskObservation(supabase, {
+                  environment: "live",
+                  decisionKind: "entry",
+                  signalId: signal.id,
+                  annotation,
+                  legacyGateBlocked: true,
+                });
+              } catch { /* measurement cannot weaken the existing blackout */ }
               skipped.push({ symbol: signal.symbol, reason: "earnings_blackout" });
               continue;
             }
@@ -323,6 +353,25 @@ async function buildProposals(supabase: any, isCron: boolean) {
         score_gate:    { pass: signal.analyst_score >= scoreThreshold, value: signal.analyst_score, threshold: scoreThreshold },
         price_fresh:   { pass: !quote.stale, value: null, threshold: null },
       };
+      let earningsRisk: Awaited<ReturnType<typeof annotateEarningsRisk>> | null = null;
+      try {
+        earningsRisk = await annotateEarningsRisk({
+          supabase,
+          symbol: signal.symbol,
+          market: "us",
+          horizonSessions: Number(signal.resolved_horizon_days ?? tradingMandate.target_hold_days),
+          spot: quote.price,
+          stopDistancePct: Number(tradingMandate.stop_loss_pct ?? 0) / 100,
+        });
+        riskReasons.earnings_risk = earningsRisk;
+      } catch {
+        riskReasons.earnings_risk = {
+          policyMode: "shadow",
+          counterfactualVerdict: "unknown",
+          behaviorChanged: false,
+          reason: "annotation_failed",
+        };
+      }
 
       const expiresAt = new Date(Date.now() + PROPOSAL_EXPIRY_MINUTES * 60 * 1000).toISOString();
 
@@ -346,6 +395,17 @@ async function buildProposals(supabase: any, isCron: boolean) {
         approval_expires_at: expiresAt,
         account_number:      AGENTIC_ACCOUNT,
       }).select().single();
+      if (earningsRisk) {
+        try {
+          await recordEarningsRiskObservation(supabase, {
+            environment: "live",
+            decisionKind: "entry",
+            signalId: signal.id,
+            proposalId: proposal?.id != null ? String(proposal.id) : null,
+            annotation: earningsRisk,
+          });
+        } catch { /* proposal behavior is independent of shadow persistence */ }
+      }
 
       created.push({ symbol: signal.symbol, qty, price: quote.price, risk_pass: riskPass });
       allocatedThisRun += qty * quote.price;

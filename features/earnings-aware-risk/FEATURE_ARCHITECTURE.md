@@ -2,13 +2,13 @@
 
 ## Status
 
-Architecture status: Draft - independently corrected 2026-07-29
-Architecture approved: No
-Approved scope: None
-Implementation allowed: No
+Architecture status: Approved P0 - implemented 2026-07-29
+Architecture approved: Yes
+Approved scope: Measure-only US paper/live annotations, India proximity,
+display-only holding warnings, normalized append-only evidence
+Implementation allowed: P0 only
 
-This document is design-only. It does not authorize a paper or live money-path
-change.
+No behavioral policy is approved. `block` and `size_down` remain unavailable.
 
 ## Decision
 
@@ -371,3 +371,10 @@ Recommended approval, when requested:
 - no scoring, sizing, entry, stop, target, or exit behavior change.
 
 Do not approve `block` or `size_down` yet.
+
+## P0 Implementation Result
+
+Implemented in `lib/risk/earnings-risk.ts` and recorded in
+`IMPLEMENTATION_RESULT.md`. Production is pinned to policy version 1
+`mode='shadow'`; the database rejects any other mode and rejects
+`behavior_changed=true`.

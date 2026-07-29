@@ -432,7 +432,7 @@ export function parseCapitalFlow(raw: any): WebullCapitalFlow | null {
   };
 }
 
-function parseEarningsCalendar(calRaw: any, alertRaw: any): WebullEarnings | null {
+export function parseEarningsCalendar(calRaw: any, alertRaw: any = null): WebullEarnings | null {
   const arr = Array.isArray(calRaw) ? calRaw : Array.isArray(calRaw?.data) ? calRaw.data : null;
   let nextDate: string | null = null;
   let nextEpsEst: number | null = null;
@@ -477,6 +477,25 @@ function parseEarningsCalendar(calRaw: any, alertRaw: any): WebullEarnings | nul
 
   if (!nextDate && lastEpsActual == null && epsYoY == null) return null;
   return { nextDate, nextEpsEst, nextRevEst, lastEpsActual, lastEpsBeat, epsYoY, revYoY };
+}
+
+export async function fetchWebullEarnings(symbol: string): Promise<WebullEarnings | null> {
+  const sym = String(symbol ?? "").trim().toUpperCase();
+  if (!sym) return null;
+  const cacheKey = `earnings-only:${sym}`;
+  const cached = cacheGet<WebullEarnings | null>(cacheKey);
+  if (cached !== undefined) return cached;
+  try {
+    const sess = await openWebull();
+    if (!sess) { cacheSet(cacheKey, null); return null; }
+    const raw = await callToolRaw(sess, "get_stock_earnings_calendar", { symbol: sym });
+    const parsed = parseEarningsCalendar(raw);
+    cacheSet(cacheKey, parsed);
+    return parsed;
+  } catch {
+    cacheSet(cacheKey, null);
+    return null;
+  }
 }
 
 function parseProfile(raw: any): WebullProfile | null {

@@ -365,6 +365,93 @@ function HealthHistoryPanel({ market }: { market: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+type EarningsRiskView = {
+  policyMode: "shadow";
+  behaviorChanged: false;
+  holdings: Array<{
+    symbol: string;
+    reportDate: string | null;
+    reportSession: string;
+    sessionsUntilReport: number | null;
+    optionsQuality: string;
+    moveProxyPct: number | null;
+    stopToMoveRatio: number | null;
+  }>;
+  measurement: {
+    entryDecisions: number;
+    distinctEvents: number;
+    requiredEntryDecisions: number;
+    requiredDistinctEvents: number;
+  };
+};
+
+function EarningsRiskPanel({ market }: { market: string }) {
+  const [data, setData] = useState<EarningsRiskView | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    setError("");
+    fetch(`/api/portfolio/earnings-risk?market=${market}`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await response.text());
+        return response.json();
+      })
+      .then((json) => { if (live) setData(json); })
+      .catch((reason) => { if (live) setError(String(reason?.message ?? reason)); });
+    return () => { live = false; };
+  }, [market]);
+  if (error) {
+    return <div style={{ color: T.red, fontSize: "12px", marginBottom: "20px" }}>Earnings risk unavailable: {error.slice(0, 120)}</div>;
+  }
+  if (!data) return <div style={{ color: T.muted, fontSize: "12px", marginBottom: "20px" }}>Loading earnings risk...</div>;
+  const upcoming = data.holdings.filter((row) =>
+    row.sessionsUntilReport != null && row.sessionsUntilReport >= 0 && row.sessionsUntilReport <= 20);
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "14px 16px", marginBottom: "22px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", marginBottom: "10px" }}>
+        <div>
+          <div style={{ color: T.text, fontSize: "13px", fontWeight: 700 }}>Earnings Event Risk</div>
+          <div style={{ color: T.muted, fontSize: "10px", marginTop: "3px" }}>
+            Shadow only. These warnings do not change trades, stops, targets, or exits.
+          </div>
+        </div>
+        <div style={{ color: T.sub, fontSize: "10px" }}>
+          Evidence {data.measurement.entryDecisions}/{data.measurement.requiredEntryDecisions} entries · {data.measurement.distinctEvents}/{data.measurement.requiredDistinctEvents} events
+        </div>
+      </div>
+      {upcoming.length === 0 ? (
+        <div style={{ color: T.muted, fontSize: "12px" }}>No cached earnings event within 20 sessions for current holdings.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px" }}>
+            <thead>
+              <tr style={{ color: T.muted, borderBottom: `1px solid ${T.border}` }}>
+                {["Symbol", "Report", "Sessions", "Move proxy", "Stop / move", "Quality"].map((label) => (
+                  <th key={label} style={{ textAlign: "left", padding: "6px 8px", fontWeight: 600 }}>{label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {upcoming.map((row) => (
+                <tr key={row.symbol} style={{ borderBottom: `1px solid ${T.border}55` }}>
+                  <td style={{ padding: "7px 8px", color: T.text, fontWeight: 700 }}>{row.symbol}</td>
+                  <td style={{ padding: "7px 8px", color: T.sub }}>{row.reportDate} · {row.reportSession}</td>
+                  <td style={{ padding: "7px 8px", color: (row.sessionsUntilReport ?? 99) <= 5 ? T.amber : T.text }}>{row.sessionsUntilReport}</td>
+                  <td style={{ padding: "7px 8px", color: T.text }}>{row.moveProxyPct == null ? "—" : `${(row.moveProxyPct * 100).toFixed(1)}%`}</td>
+                  <td style={{ padding: "7px 8px", color: row.stopToMoveRatio != null && row.stopToMoveRatio < 1 ? T.amber : T.text }}>
+                    {row.stopToMoveRatio == null ? "—" : `${row.stopToMoveRatio.toFixed(2)}x`}
+                  </td>
+                  <td style={{ padding: "7px 8px", color: row.optionsQuality === "usable" ? T.green : T.muted }}>{row.optionsQuality}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Daily Per-Holding Risk — driven by GET /api/portfolio/risk-daily. Deterministic
 // score + posture from the daily snapshot; the strategy_note is LLM prose that
 // cannot change either. Never aggregates across accounts or currencies. This is a
@@ -970,6 +1057,8 @@ export default function PortfolioRiskPage() {
           Health = 100 − Risk per account, daily. Worst health first. Top warning shown.
         </div>
         <HealthHistoryPanel market={market} />
+
+        <EarningsRiskPanel market={market} />
 
         {/* ── Daily Per-Holding Risk (historical run, separate from live Refresh) ── */}
         <div style={{ fontSize: "9px", color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 700, marginBottom: "4px" }}>

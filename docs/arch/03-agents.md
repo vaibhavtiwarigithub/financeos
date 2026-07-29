@@ -817,3 +817,17 @@ Health info alert when ≥ 20 accumulate.
 - Risk Analytics remains deliberately research-free in its risk formula. The UI
   may show the latest holding score and age beside the independent risk verdict;
   research cannot veto a concentration, drawdown, liquidity, or volatility risk.
+## Earnings-Aware Risk P0 (2026-07-29)
+
+PaperTrader annotates an otherwise-eligible entry after its fill-bound
+stop/target plan exists and before either capital rotation or
+`execute_paper_fill`. TraderAgent attaches the same normalized block to
+`trade_proposals.risk_check_reasons`; its existing Alpha Vantage earnings
+blackout remains unchanged and authoritative. Policy version 1 is shadow-only:
+no agent reads the counterfactual verdict to change a score, quantity, stop,
+target, fill, rotation, or exit. PositionMonitor is deliberately not wired.
+
+US event dates are cross-checked against the PIT calendar, Finnhub, Webull, and
+Robinhood. India records market-local proximity and always reports options as
+unavailable. Robinhood research tools are a hardcoded read allowlist disjoint
+from order/review/cancel tools.

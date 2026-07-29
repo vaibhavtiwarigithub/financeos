@@ -930,3 +930,31 @@ Files/features affected: `features/local-historical-replay/`, local replay CLI,
 `backtest_experiments`, Backtest result API/UI.
 Reversal cost: Low; stop the CLI and hide the read-only panel. Existing immutable
 research rows remain as audit history.
+
+### Decision 55: Earnings Options Data Is Risk Context, Not Alpha
+
+Date: 2026-07-29
+Status: Approved for P0 measure-only
+Category: Trading Risk / Data / Governance
+
+Decision: Record market-session earnings proximity and a validated
+same-expiry/same-strike ATM straddle move proxy as risk context. Keep production
+policy pinned to `shadow`; do not add options to `analyst_score`, and do not
+change entry eligibility, size, stops, targets, or exits.
+Reason: Short-dated option premiums price event magnitude more directly than
+direction. Treating unusual flow or the move proxy as bullish alpha would add an
+unvalidated factor, while comparing planned stop distance with priced event
+variance closes a real risk-observability gap.
+Safety: The existing live Alpha Vantage blackout remains authoritative.
+Robinhood calls use a read-only allowlist disjoint from every execution tool.
+The append-only ledger rejects non-shadow policy and any
+`behavior_changed=true` row at the database boundary. India never borrows US
+options evidence.
+Activation gate: Minimum 60 otherwise-eligible US entries and 20 distinct
+events, plus date coverage, quote quality, calibration, and counterfactual
+review. A separate owner decision is required for any block or size reduction.
+Files/features affected: `features/earnings-aware-risk/`,
+`lib/risk/earnings-risk.ts`, paper/live annotation points, Portfolio Risk, and
+`earnings_risk_observations`.
+Reversal cost: Low; remove the display and annotation calls. Existing rows remain
+immutable audit evidence and have no trading effect.

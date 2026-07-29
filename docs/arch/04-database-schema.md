@@ -1118,3 +1118,19 @@ markets, so an evaluation changes no score, signal, size, position, or order. Pe
 cannot activate anything — activation is the separate owner-gated `activate_evidence_policy_bound()`
 RPC, which additionally requires the evaluation's baseline to still be the active policy and
 every flagged divergence to carry an approving review row.
+## Earnings Risk Observations (P0)
+
+`earnings_risk_observations` is a compact normalized decision-context ledger,
+not a new source-of-truth store. Raw provider payloads stay in the existing
+evidence/cache layers. Rows reference the signal/proposal when available and
+carry market, event/session, normalized option quote, proxy/stop ratio, policy,
+counterfactual verdict, and legacy-blackout parity.
+
+The table is append-only and retry-idempotent. Owner-authenticated clients have
+`SELECT`; `service_role` has only `SELECT` and `INSERT`; anon has no grant.
+Database checks pin P0 to `policy_mode='shadow'` and
+`behavior_changed=false`. Migrations:
+`20260729200000_earnings_risk_observations.sql` and
+`20260729201000_harden_earnings_risk_observation_acl.sql`, with
+`20260729202000_optimize_earnings_risk_observations.sql` adding the
+proposal lookup index and init-plan-safe owner policy.

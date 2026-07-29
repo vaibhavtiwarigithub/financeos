@@ -698,3 +698,16 @@ reviewed live path, flip `protective_orders_enabled` to true, and run a single
 owner-approved small live test per market.
 
 **Order-maintenance and ETF-cap correction (2026-07-26):** A stale US-order cancel ACK is not a cancellation record. It becomes `unknown_needs_reconcile`; only a later read-only broker observation may set terminal state. The maintenance cron skips closed US sessions, bounds outbound cancellation and reconciliation to one item each, and the Trading dashboard offers an owner-triggered read-only refresh. A confirmed fill writes `filled_qty`, `avg_fill_price`, terminal time, and its proposal result without overwriting requested quantity. ETF allocation now fails closed on unavailable configuration, stale or unpriceable current marks, stale live snapshots, invalid NAV, or missing order price; it uses current marks, not cost basis. India remains outside the US ETF sleeve and SELLs bypass it.
+## Earnings Event Risk (P0 Shadow)
+
+Earnings proximity and the expiry-bounded ATM straddle proxy are risk
+annotations, never directional alpha. Exact-expiry selection requires a common
+call/put strike, valid non-crossed mids, liquidity, bounded spreads, and fresh
+timestamps. Unknown, conflict, stale, illiquid, or incomplete pagination remains
+unavailable and cannot be interpreted as no event.
+
+P0 is mechanically behavior-inert: the database permits only `shadow` rows and
+requires `behavior_changed=false`; paper/live hooks only log normalized context;
+the direct live Alpha Vantage blackout remains in force; PositionMonitor and
+live execution import no earnings-risk decision function. The Risk page exposes
+warnings and evidence counts without raw broker chains.

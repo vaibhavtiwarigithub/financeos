@@ -2,9 +2,9 @@ export interface OptionsSignal {
   symbol: string;
   putCallRatio: number;       // total put vol / total call vol (near-term)
   pcrSentiment: "Bullish" | "Bearish" | "Neutral";
-  unusualCalls: UnusualContract[];  // high-volume OTM calls (smart money bullish bets)
-  unusualPuts: UnusualContract[];   // high-volume OTM puts (hedging / bearish bets)
-  ivPercentile: number | null;      // rough percentile vs 52-week range (null if not enough data)
+  unusualCalls: UnusualContract[];  // high-volume OTM calls; direction is not inferable
+  unusualPuts: UnusualContract[];   // high-volume OTM puts; direction is not inferable
+  ivPercentile: number | null;      // legacy field: ATM rank inside this chain's strike-IV range
   nearestExpiry: string;
   totalCallVolume: number;
   totalPutVolume: number;
@@ -93,7 +93,8 @@ export async function fetchOptionsSignal(symbol: string): Promise<OptionsSignal 
       .sort((a, b) => b.volume - a.volume)
       .slice(0, 3);
 
-    // Rough IV percentile: compare ATM IV to min/max across all expirations
+    // Current-chain IV rank: compare ATM IV to min/max across this expiry's
+    // strikes. This is not a historical IV percentile.
     const allIVs = [...calls, ...puts]
       .map(c => c.impliedVolatility ?? 0)
       .filter(iv => iv > 0);
@@ -116,7 +117,7 @@ export async function fetchOptionsSignal(symbol: string): Promise<OptionsSignal 
 
     // Plain-English summary for LLM prompt
     const pcrLine = `Put/Call Ratio: ${putCallRatio.toFixed(2)} (${pcrSentiment} — ${totalCallVolume.toLocaleString()} calls vs ${totalPutVolume.toLocaleString()} puts)`;
-    const ivLine = ivPercentile !== null ? `IV Percentile: ~${ivPercentile}% (${ivPercentile > 70 ? "high — options expensive" : ivPercentile < 30 ? "low — calm expected" : "moderate"})` : "";
+    const ivLine = ivPercentile !== null ? `Current-chain ATM IV rank: ~${ivPercentile}% (not a historical IV percentile)` : "";
     const unusualCallLine = unusualCalls.length
       ? `Unusual calls: ${unusualCalls.map(c => `$${c.strike} ${c.expiry} (${c.volume.toLocaleString()} vol, ${c.volOiRatio}× OI, IV ${c.impliedVolatility}%)`).join("; ")}`
       : "";

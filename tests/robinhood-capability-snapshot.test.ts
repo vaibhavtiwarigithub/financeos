@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fingerprintRobinhoodMcpTools } from "@/lib/robinhood-mcp";
+import { fingerprintRobinhoodMcpTools, ROBINHOOD_RESEARCH_READ_TOOLS } from "@/lib/robinhood-mcp";
 
 describe("Robinhood MCP capability fingerprint", () => {
   it("is stable across server tool ordering and ignores untrusted descriptions", () => {
@@ -19,5 +19,11 @@ describe("Robinhood MCP capability fingerprint", () => {
     const original = fingerprintRobinhoodMcpTools([{ name: "get_financials", inputSchema: { type: "object", properties: { symbols: { type: "array" } } } }]);
     const changed = fingerprintRobinhoodMcpTools([{ name: "get_financials", inputSchema: { type: "object", properties: { ticker: { type: "string" } } } }]);
     expect(changed.schemaFingerprint).not.toBe(original.schemaFingerprint);
+  });
+
+  it("keeps research reads structurally separated from execution tools", () => {
+    expect(ROBINHOOD_RESEARCH_READ_TOOLS).toContain("get_option_quotes");
+    expect(ROBINHOOD_RESEARCH_READ_TOOLS).toContain("get_earnings_calendar");
+    expect(ROBINHOOD_RESEARCH_READ_TOOLS.some((name) => /order|cancel|review/i.test(name))).toBe(false);
   });
 });

@@ -47,6 +47,59 @@ export function daysFromToday(value: unknown, india = false): number | null {
   return Math.round((eventDay - marketTodayUtc(india)) / 86400000);
 }
 
+export type EarningsDateObservation = {
+  date: string;
+  session: "bmo" | "amc" | "during_session" | "unknown";
+  source: "finnhub" | "yahoo_india";
+  observedAt: string;
+  confirmed: boolean;
+};
+
+export async function fetchEarningsDateObservation(
+  symbol: string,
+  market: "us" | "india",
+): Promise<EarningsDateObservation | null> {
+  const observedAt = new Date().toISOString();
+  try {
+    if (market === "india") {
+      const date = await fetchIndiaEarningsDate(symbol).catch(() => null);
+      return date ? {
+        date: String(date).slice(0, 10),
+        session: "unknown",
+        source: "yahoo_india",
+        observedAt,
+        confirmed: false,
+      } : null;
+    }
+    const key = process.env.FINNHUB_API_KEY ?? "";
+    if (!key) return null;
+    const today = new Date();
+    const to = new Date(today.getTime() + 120 * 86400000);
+    const fmt = (x: Date) => x.toISOString().slice(0, 10);
+    const url = `https://finnhub.io/api/v1/calendar/earnings?symbol=${encodeURIComponent(symbol)}&from=${fmt(today)}&to=${fmt(to)}&token=${key}`;
+    const json = await providerCachedFetch("finnhub", `FINNHUB_EARN:${symbol}`, url, {
+      timeoutMs: 6000,
+      maxAgeDays: 1,
+      isThrottled: (j) => !j?.earningsCalendar,
+    });
+    const rows: any[] = json?.earningsCalendar ?? [];
+    const next = rows
+      .filter((row) => typeof row?.date === "string")
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
+    if (!next) return null;
+    const hour = String(next.hour ?? "").toLowerCase();
+    return {
+      date: String(next.date).slice(0, 10),
+      session: hour === "bmo" ? "bmo" : hour === "amc" ? "amc" : hour === "dmh" ? "during_session" : "unknown",
+      source: "finnhub",
+      observedAt,
+      confirmed: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchDaysToEarnings(symbol: string, india: boolean, preferredDate?: string | number): Promise<number | null> {
   try {
     if (!india && preferredDate != null) return daysFromToday(preferredDate, false);

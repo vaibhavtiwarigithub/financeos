@@ -22,6 +22,7 @@ import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-na
 import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 import { isMarketSessionOpen } from "@/lib/trading/market-calendar";
 import { paperEntryQuantity } from "@/lib/trading/paper-quantity";
+import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/earnings-risk";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -543,6 +544,38 @@ export async function POST(req: NextRequest) {
           price_target: priceTarget,
         },
       });
+      // P0 earnings risk is measurement-only. Failure is fail-soft and neither
+      // this annotation nor its counterfactual verdict is read by sizing/fill.
+      let earningsRisk: Awaited<ReturnType<typeof annotateEarningsRisk>> | null = null;
+      try {
+        earningsRisk = await annotateEarningsRisk({
+          supabase,
+          symbol: signal.symbol,
+          market: market as "us" | "india",
+          horizonSessions: resolvedHorizonDays,
+          spot: fillPrice,
+          stopDistancePct: Math.abs(fillPrice - stopLoss) / fillPrice,
+        });
+        await logStage(supabase, {
+          signal_id: signal.id, symbol: signal.symbol, market,
+          stage: "earnings_risk_shadow", outcome: "measured",
+          reason: earningsRisk.counterfactualReason,
+          detail: earningsRisk,
+        });
+        await recordEarningsRiskObservation(supabase, {
+          environment: "paper",
+          decisionKind: "entry",
+          signalId: signal.id,
+          annotation: earningsRisk,
+        });
+      } catch (error: any) {
+        await logStage(supabase, {
+          signal_id: signal.id, symbol: signal.symbol, market,
+          stage: "earnings_risk_shadow", outcome: "unavailable",
+          reason: "annotation_failed_without_behavior_change",
+          detail: { error: error?.message ?? String(error), behaviorChanged: false },
+        });
+      }
 
       // Conviction-scaled sizing (Phase 2): when a calibrated P(win) model
       // exists for this market, size via half-Kelly using this signal's own
@@ -635,6 +668,16 @@ export async function POST(req: NextRequest) {
       // (added — this is the trigger that actually binds in practice).
       const cashShort = !Number.isFinite(totalCost) || totalCost > portfolio.cash_balance;
       if (atNameCap || cashShort) {
+        if (earningsRisk) {
+          try {
+            await recordEarningsRiskObservation(supabase, {
+              environment: "paper",
+              decisionKind: "rotation",
+              signalId: signal.id,
+              annotation: earningsRisk,
+            });
+          } catch { /* measurement cannot block an atomic rotation */ }
+        }
         const rotCandidate = {
           signalId: signal.id,
           symbol: signal.symbol,
