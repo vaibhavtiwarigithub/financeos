@@ -38,6 +38,11 @@ export interface RawRecord {
   periodEnd?: string;
   // universe: the snapshot observation date
   observedAt?: string;
+  // macro: first day this vintage was publicly available
+  realtimeStart?: string;
+  // corporate action: announcement timestamp, or ex-date as conservative fallback
+  announcedAt?: string;
+  exDate?: string;
 }
 
 function sha256(v: unknown): string {
@@ -72,6 +77,13 @@ function deriveKnowableAt(
     case "universe":
       if (!r.observedAt) throw new Error("universe raw record requires `observedAt`");
       return { knowableAt: r.observedAt };
+    case "macro":
+      if (!r.realtimeStart) throw new Error("macro raw record requires `realtimeStart`");
+      return { knowableAt: r.realtimeStart };
+    case "corporate_action":
+      if (r.announcedAt) return { knowableAt: r.announcedAt };
+      if (r.exDate) return { knowableAt: r.exDate };
+      throw new Error("corporate_action raw record requires `announcedAt` or `exDate`");
     case "fundamental":
       if (r.filedAt) return { knowableAt: r.filedAt };
       if (r.periodEnd) return { knowableAt: addDays(r.periodEnd, lagDays), assumedLagDays: lagDays };

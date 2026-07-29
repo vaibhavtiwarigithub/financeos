@@ -9,6 +9,7 @@ import {
   type RawRecord,
 } from "@/lib/replay/packet-assembler";
 import type { LabeledObservation } from "@/lib/learning/dataset";
+import { SealedDataAccessor } from "@/lib/replay/sealed-accessor";
 
 function obs(id: number, ts: string): LabeledObservation {
   return {
@@ -77,6 +78,42 @@ describe("assemblePacket — freeze rules & immutability", () => {
       // @ts-expect-error — testing runtime immutability
       a.packet.items.push({});
     }).toThrow();
+  });
+
+  it("seals macro vintages and corporate actions on their public clocks", () => {
+    const { packet, excluded } = assemblePacket({
+      cohort: "macro-action",
+      symbol: "RELIANCE",
+      market: "india",
+      asOf: "2024-06-10",
+      raws: [
+        {
+          itemType: "macro",
+          symbol: "FEDFUNDS",
+          realtimeStart: "2024-06-01",
+          payload: { value: 5.33 },
+        },
+        {
+          itemType: "corporate_action",
+          symbol: "RELIANCE",
+          announcedAt: "2024-06-05T10:00:00Z",
+          exDate: "2024-06-20",
+          payload: { action: "split" },
+        },
+        {
+          itemType: "macro",
+          symbol: "CPIAUCSL",
+          realtimeStart: "2024-06-12",
+          payload: { value: 314 },
+        },
+      ],
+    });
+
+    expect(packet.items.map((item) => item.itemType)).toEqual(["macro", "corporate_action"]);
+    expect(excluded).toHaveLength(1);
+    const accessor = new SealedDataAccessor("2024-06-10", { items: packet.items });
+    expect(accessor.macro("FEDFUNDS")).toHaveLength(1);
+    expect(accessor.corporateActions("RELIANCE")).toHaveLength(1);
   });
 });
 

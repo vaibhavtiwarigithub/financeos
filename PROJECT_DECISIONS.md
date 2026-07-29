@@ -875,3 +875,32 @@ were invalid. See the correction immediately after this entry.
   prerequisites to any promotion.
 - **Operational effect:** None. This correction cannot buy, sell, promote a
   strategy, or change a production score.
+
+### Decision 53: Historical Bulk Evidence Is Local, Immutable, and Replay-Only
+
+Date: 2026-07-29
+Status: Approved
+Category: Data / Architecture / Security
+
+Context: Provider quotas and short entitlements constrain point-in-time validation,
+while arbitrary CSVs and current-universe history would introduce provenance,
+revision, and survivorship errors.
+Decision: Acquire official SEC, NSE, and FRED/ALFRED bulk history into a local
+hash-addressed evidence store outside the repository and OneDrive. Community or
+manual datasets are pinned and diagnostic-only by default. Only validated,
+manifest-bound records may enter the existing sealed replay assembler; no live
+scorer, agent cron, paper path, or broker path may read the store.
+Reason: This reuses free bulk sources without spending daily provider quotas or
+creating a parallel truth layer, while keeping every historical experiment
+reproducible and fail-closed.
+Alternatives considered: Upload all raw rows to Supabase (rejected: free-tier cost
+and unnecessary network dependency); dynamically execute GitHub projects (rejected:
+supply-chain and reproducibility risk); accept arbitrary user CSVs directly
+(rejected: silent schema and PIT failures).
+Impact: India price/universe, SEC fundamentals, and macro-vintage diagnostics can
+run offline. Older broad US promotion-grade price history remains blocked pending
+licensed survivor-safe data.
+Files/features affected: `features/historical-evidence-intake/`, local acquisition
+CLI, replay adapters, and experiment manifests.
+Reversal cost: Low; delete the local store and stop using its fingerprints. No
+trading rollback exists because the store is unreachable from trading.

@@ -9,7 +9,13 @@
 import type { LabeledObservation } from "@/lib/learning/dataset";
 
 // The four packet input categories (mirrors the proposed replay_packet_items.item_type).
-export type ReplayItemType = "ohlcv" | "fundamental" | "news" | "universe";
+export type ReplayItemType =
+  | "ohlcv"
+  | "fundamental"
+  | "news"
+  | "universe"
+  | "macro"
+  | "corporate_action";
 
 // A single frozen input inside a packet. `knowableAt` is the date this record was
 // PUBLIC — the sealed accessor enforces knowableAt <= asOf on every read.

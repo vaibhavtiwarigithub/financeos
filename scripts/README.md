@@ -8,6 +8,7 @@ PowerShell scripts for running Kairos agents via Windows Task Scheduler.
 |------|---------|
 | `run-agents.ps1` | Generic runner â€” call any agent by name via HTTP |
 | `setup-tasks.ps1` | Registers all tasks in Windows Task Scheduler (requires Admin) |
+| `evidence-data.mjs` | Explicit offline bulk-evidence acquisition, hashing, normalization, quarantine, and catalog CLI |
 | `logs/` | Per-agent, per-day log files written by the runner |
 
 ---
@@ -84,6 +85,32 @@ scripts/logs/stale-check-2026-06-29.log
 ```
 
 Format: `HH:mm:ss [agent] OK: <json response>` or `HH:mm:ss [agent] ERROR: <message>`
+
+## Historical evidence store
+
+The governed historical-data CLI writes outside the repository and OneDrive by
+default, under `%USERPROFILE%\.kairos\evidence`. It is offline/replay-only and is
+not imported by any scorer, cron, paper-trade, or broker route.
+
+```powershell
+node scripts/evidence-data.mjs fetch-fred
+node scripts/evidence-data.mjs fetch-sec --from 2024q1 --to 2026q1
+node scripts/evidence-data.mjs fetch-nse --from 2024-01-01 --to 2024-12-31
+node scripts/evidence-data.mjs fetch-nse-actions --from 2024-01-01 --to 2024-12-31
+node scripts/evidence-data.mjs fetch-sp500
+node scripts/evidence-data.mjs catalog
+```
+
+Set `KAIROS_EVIDENCE_DIR` to override the local store. Every accepted file is
+bound to its source URL, byte count, SHA-256, coverage, limitations, and dataset
+fingerprint. Failed runs write a quarantine record and never create a valid
+manifest.
+
+SEC intake retains only tested, non-dimensional primary-statement facts and uses
+the day after filing as the conservative daily availability date. NSE prices
+remain raw; splits, bonuses, dividends, and unsupported rights issues are stored
+separately, and no adjusted-return derivation may proceed through an ambiguous
+action.
 
 ---
 

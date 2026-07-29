@@ -87,6 +87,12 @@ export class SealedDataAccessor {
   universe(): ReplayPacketItem[] {
     return this.read("universe");
   }
+  macro(seriesId?: string): ReplayPacketItem[] {
+    return this.read("macro", seriesId).sort((a, b) => a.knowableAt.localeCompare(b.knowableAt));
+  }
+  corporateActions(symbol?: string): ReplayPacketItem[] {
+    return this.read("corporate_action", symbol).sort((a, b) => a.knowableAt.localeCompare(b.knowableAt));
+  }
   allItems(): ReplayPacketItem[] {
     return this.read();
   }
