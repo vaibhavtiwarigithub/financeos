@@ -13,4 +13,3 @@ alter table public.replay_packet_items
 comment on column public.replay_packet_items.item_type is
   'Frozen replay evidence type. macro uses source realtime_start as knowable_at; '
   'corporate_action uses announcement timestamp or conservative ex-date fallback.';
-

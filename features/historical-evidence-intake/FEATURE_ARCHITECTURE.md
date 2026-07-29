@@ -1,7 +1,7 @@
 # Governed Historical Evidence Intake
 
-**Status:** APPROVED for implementation by owner direction on 2026-07-29  
-**Scope:** offline acquisition, validation, normalization, and historical replay only  
+**Status:** APPROVED for implementation by owner direction on 2026-07-29
+**Scope:** offline acquisition, validation, normalization, and historical replay only
 **Money-path status:** unreachable; no scorer, trader, monitor, cron, or broker reads this store
 
 ## 1. Decision
@@ -233,3 +233,10 @@ There is no live-provider fallback inside a bound replay.
 5. Historical news/sentiment remains deferred because publication-time corrections,
    corpus selection, redistribution rights, and prompt-injection surfaces are harder
    than the incremental value currently justifies.
+
+## 12. Implementation Record
+
+Implemented on 2026-07-29. The exact current manifests, fingerprints, coverage,
+row counts, and residual exclusions are recorded in `ACQUISITION_RECORD.md`.
+Only entries marked `currentNormalizer: true` by the catalog are candidates for
+new experiment binding.
