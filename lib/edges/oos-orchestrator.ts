@@ -14,6 +14,9 @@
 
 import {
   resolvePitUniverse,
+  PIT_ADV_WINDOW_SESSIONS,
+  PIT_POLICY_VERSION,
+  PIT_SNAPSHOT_SIZE,
   type PitMember,
   type PitUniverseResult,
 } from "@/lib/edges/pit-universe";
@@ -25,6 +28,8 @@ import {
   type Fold,
 } from "@/lib/edges/folds";
 import { runOosFolds, type OosRunReport } from "@/lib/edges/oos-runner";
+import { loadPitSnapshot, persistPitSnapshot } from "@/lib/edges/pit-snapshot";
+import { createServiceClient } from "@/lib/supabase/service";
 import type { Candle } from "@/lib/data/technicals";
 import type { EdgeDef, Market } from "@/lib/edges/types";
 
@@ -55,7 +60,9 @@ export interface OrchestrationReport {
     source: string;
     fingerprint: string;
     members: PitMember[];
+    selectionSize: number;
   }>;
+  snapshotsConfirmed: number;
   symbolsFetched: number;
   symbolsMissingCandles: string[];
   sessionsAvailable: number;
@@ -105,15 +112,39 @@ export async function orchestrateOosRun(opts: {
   liquidityWindowSessions?: number;
   membershipCadence?: MembershipCadence;
   apiKey?: string;
+  /** Required for promotion-grade evidence; false is diagnostic-only. */
+  persistSnapshots?: boolean;
   onProgress?: (msg: string) => void;
 }): Promise<OrchestrationReport> {
   const cadence = opts.membershipCadence ?? "per_date";
   const log = opts.onProgress ?? (() => {});
   const approximations: string[] = [];
+  if (opts.universeSize > PIT_SNAPSHOT_SIZE) {
+    return {
+      reportSchemaVersion: 2,
+      run: null,
+      folds: [],
+      membershipCadence: cadence,
+      approximationsUsed: [],
+      universeErrors: [],
+      universeSnapshots: [],
+      snapshotsConfirmed: 0,
+      symbolsFetched: 0,
+      symbolsMissingCandles: [],
+      sessionsAvailable: 0,
+      fatal: `universeSize ${opts.universeSize} exceeds PIT snapshot cap ${PIT_SNAPSHOT_SIZE}`,
+    };
+  }
   if (cadence === "per_fold") {
     approximations.push(
       "membership resolved once per fold, not per as-of date — misses names that listed mid-fold; " +
       "NOT fully point-in-time",
+    );
+  }
+  if (!opts.persistSnapshots) {
+    approximations.push(
+      "PIT universe snapshots were returned in the artifact but not persisted; " +
+      "NOT promotion-grade",
     );
   }
 
@@ -125,7 +156,8 @@ export async function orchestrateOosRun(opts: {
   );
   if (!bench.length) {
     return { reportSchemaVersion: 2, run: null, folds: [], membershipCadence: cadence, approximationsUsed: approximations,
-             universeErrors: [], universeSnapshots: [], symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: 0,
+             universeErrors: [], universeSnapshots: [], snapshotsConfirmed: 0,
+             symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: 0,
              fatal: `benchmark ${opts.benchmarkSymbol} returned no candles` };
   }
   const allSessions = sessionsFromCandles(bench);
@@ -160,13 +192,15 @@ export async function orchestrateOosRun(opts: {
   });
   if (!built.ok) {
     return { reportSchemaVersion: 2, run: null, folds: [], membershipCadence: cadence, approximationsUsed: approximations,
-             universeErrors: [], universeSnapshots: [], symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
+             universeErrors: [], universeSnapshots: [], snapshotsConfirmed: 0,
+             symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
              fatal: `${built.reason}: ${built.detail}` };
   }
   const disj = validateFoldDisjointness(built.folds);
   if (!disj.ok) {
     return { reportSchemaVersion: 2, run: null, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
-             universeErrors: [], universeSnapshots: [], symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
+             universeErrors: [], universeSnapshots: [], snapshotsConfirmed: 0,
+             symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
              fatal: `folds not disjoint: ${disj.violations.join("; ")}` };
   }
   log(
@@ -178,15 +212,66 @@ export async function orchestrateOosRun(opts: {
   const universeByDate = new Map<string, string[]>();
   const universeErrors: OrchestrationReport["universeErrors"] = [];
   const universeSnapshots: OrchestrationReport["universeSnapshots"] = [];
+  const liquidityCache = new Map<string, Promise<Map<string, number> | null>>();
+  const sessionIndex = new Map(allSessions.map((date, index) => [date, index]));
+  const snapshotClient = opts.persistSnapshots ? createServiceClient() : null;
+  let snapshotsConfirmed = 0;
   for (const fold of built.folds) {
     const dates = cadence === "per_fold" ? [fold.asOfDates[0]] : fold.asOfDates;
     for (const asOf of dates) {
-      const u: PitUniverseResult = await resolvePitUniverse({
-        market: opts.market, asOf, size: opts.universeSize,
-        minSymbols: opts.minSymbols, apiKey: opts.apiKey,
-      });
+      const endIndex = sessionIndex.get(asOf) ?? -1;
+      const liquidityDates = endIndex >= PIT_ADV_WINDOW_SESSIONS - 1
+        ? allSessions.slice(endIndex - PIT_ADV_WINDOW_SESSIONS + 1, endIndex + 1)
+        : [];
+      let u: PitUniverseResult;
+      try {
+        const persisted = snapshotClient
+          ? await loadPitSnapshot(snapshotClient, {
+              market: opts.market,
+              asOf,
+              policyVersion: PIT_POLICY_VERSION,
+              minSymbols: PIT_SNAPSHOT_SIZE,
+            })
+          : null;
+        u = persisted ?? await resolvePitUniverse({
+          market: opts.market, asOf, size: PIT_SNAPSHOT_SIZE,
+          minSymbols: PIT_SNAPSHOT_SIZE, apiKey: opts.apiKey,
+          liquidityDates,
+          liquidityCache,
+        });
+        if (persisted) log(`universe ${asOf}: reused persisted snapshot`);
+      } catch (error) {
+        universeErrors.push({
+          asOf,
+          reason: "snapshot_read_failed",
+          detail: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
       if (!u.ok) { universeErrors.push({ asOf, reason: u.reason, detail: u.detail }); continue; }
-      const syms = u.members.map((m) => m.symbol);
+      if (snapshotClient) {
+        try {
+          await persistPitSnapshot(snapshotClient as any, u);
+          snapshotsConfirmed++;
+        } catch (error) {
+          universeErrors.push({
+            asOf,
+            reason: "snapshot_persistence_failed",
+            detail: error instanceof Error ? error.message : String(error),
+          });
+          continue;
+        }
+      }
+      const selectedMembers = u.members.slice(0, opts.universeSize);
+      if (selectedMembers.length < opts.minSymbols) {
+        universeErrors.push({
+          asOf,
+          reason: "universe_below_min_symbols",
+          detail: `Selected ${selectedMembers.length} members, below ${opts.minSymbols}.`,
+        });
+        continue;
+      }
+      const syms = selectedMembers.map((m) => m.symbol);
       const appliedDates = cadence === "per_fold" ? [...fold.asOfDates] : [asOf];
       for (const d of appliedDates) universeByDate.set(d, syms);
       universeSnapshots.push({
@@ -196,13 +281,15 @@ export async function orchestrateOosRun(opts: {
         source: u.source,
         fingerprint: u.fingerprint,
         members: u.members,
+        selectionSize: opts.universeSize,
       });
       log(`universe ${asOf}: ${syms.length} names (fp ${u.fingerprint.slice(0, 8)})`);
     }
   }
   if (!universeByDate.size) {
     return { reportSchemaVersion: 2, run: null, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
-             universeErrors, universeSnapshots, symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
+             universeErrors, universeSnapshots, snapshotsConfirmed,
+             symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
              fatal: "no PIT universe resolved for any as-of date" };
   }
 
@@ -222,7 +309,8 @@ export async function orchestrateOosRun(opts: {
   return {
     reportSchemaVersion: 2,
     run, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
-    universeErrors, universeSnapshots, symbolsFetched: series.size, symbolsMissingCandles: missing,
+    universeErrors, universeSnapshots, snapshotsConfirmed,
+    symbolsFetched: series.size, symbolsMissingCandles: missing,
     sessionsAvailable: sessions.length,
   };
 }

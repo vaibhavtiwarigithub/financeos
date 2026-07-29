@@ -478,7 +478,7 @@
     },
     "PITUNIV": {
       "label": "PIT universe resolver",
-      "description": "lib/edges/pit-universe.ts. Resolves which symbols were tradeable and liquid ON an as-of date using only information knowable then, replacing the hand-picked current-liquid list in lib/edges/universe.ts whose own header admits it is not point-in-time. US membership comes from Massive /v3/reference/tickers with date + active, which returns names active on that date - so later-delisted names are present and not-yet-listed names are absent. Liquidity rank comes from grouped daily aggregates (one call per session). FAILS CLOSED with a named reason on every path and NEVER falls back to the curated list, because a silent fallback reintroduces the survivorship bias it exists to remove. India is refused outright (no NSE coverage) until the NSE index-archive path 5D is built.",
+      "description": "lib/edges/pit-universe.ts + pit-snapshot.ts. US membership comes from Massive reference tickers at the as-of date, preserving later-delisted names and excluding not-yet-listed names. Policy us_pit_adv20_top400_v2 ranks only names with a complete 20-session point-in-time dollar-volume window, shares cached session reads, and persists one top-400 superset so n=200/n=400 tests use deterministic prefixes of the same snapshot. The service-role-only, advisory-locked persist_edge_pit_snapshot RPC is idempotent for exact reruns, refuses conflicts, and PIT rows are append-only. Per-date cadence plus required persistence is mandatory for promotion-grade output. India fails closed until an NSE PIT source exists.",
       "addedAt": "2026-07-28",
       "addReason": "Step 4 of features/walk-forward-ic-folds. Current-universe history cannot promote: replaying today's survivors through past dates measures IC on a population selected for having survived.",
       "status": "active",
@@ -1163,6 +1163,13 @@
       "nodeId": "POLICYGATE",
       "label": "Permanent closure reversed; promotion remains dormant",
       "reason": "Adversarial review found the n_eff~17 inversion invalid: observed temporal IC variance combines sampling noise, genuine factor variation, changing membership, and coverage, and h5 dispersion cannot set h20 power. The h5 negative result remains valid, but n=400 and point-in-time sector-neutral diagnostics were never measured and cannot be rejected. Promotion remains disabled and no scoring or trade behavior changed."
+    },
+    {
+      "date": "2026-07-28",
+      "event": "changed",
+      "nodeId": "PITUNIV",
+      "label": "US PIT universe uses trailing ADV and immutable persistence",
+      "reason": "Replaced one-session event-volume ranking with a complete 20-session trailing point-in-time dollar-volume policy. Added report-v2 universe provenance and a service-role-only atomic persistence RPC with idempotent exact replay, conflict refusal, and append-only PIT rows. Promotion remains disabled; India remains blocked on a PIT membership source."
     }
   ]
 }

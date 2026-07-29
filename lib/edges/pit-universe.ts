@@ -27,7 +27,10 @@ import crypto from "node:crypto";
 import type { Market } from "@/lib/edges/types";
 
 /** Bump when the selection RULES change. Snapshots are keyed by this. */
-export const PIT_POLICY_VERSION = "us_pit_v1";
+export const PIT_POLICY_VERSION = "us_pit_adv20_top400_v2";
+export const PIT_ADV_WINDOW_SESSIONS = 20;
+/** Persist one reusable ranked superset; experiments take deterministic prefixes. */
+export const PIT_SNAPSHOT_SIZE = 400;
 
 /** Massive `type` codes we accept. CS = common stock. */
 const ELIGIBLE_TYPES = new Set(["CS"]);
@@ -99,6 +102,29 @@ export function rankByLiquidity(
     }));
 }
 
+/** Mean point-in-time dollar volume across a complete session window. */
+export function averageDollarVolume(
+  sessions: Map<string, number>[],
+): Map<string, number> {
+  const sums = new Map<string, { sum: number; n: number }>();
+  for (const session of sessions) {
+    for (const [symbol, value] of session) {
+      if (!Number.isFinite(value) || value <= 0) continue;
+      const prior = sums.get(symbol) ?? { sum: 0, n: 0 };
+      prior.sum += value;
+      prior.n += 1;
+      sums.set(symbol, prior);
+    }
+  }
+  const means = new Map<string, number>();
+  for (const [symbol, value] of sums) {
+    // A name must have traded in every session. Newly listed/suspended names do
+    // not get a flattering average over only the days on which they appeared.
+    if (value.n === sessions.length) means.set(symbol, value.sum / value.n);
+  }
+  return means;
+}
+
 /**
  * Deterministic hash of the member set. Same policy + market + date + symbols
  * must always produce the same value, so a re-run that silently changed the
@@ -108,9 +134,14 @@ export function universeFingerprint(
   market: Market,
   asOf: string,
   policyVersion: string,
-  symbols: string[],
+  members: Array<Pick<PitMember, "symbol" | "advValue" | "advRank">>,
 ): string {
-  const payload = [market, asOf, policyVersion, ...[...symbols].sort()].join("|");
+  const ranked = [...members]
+    .sort((a, b) => a.advRank - b.advRank)
+    .map((member) =>
+      `${member.advRank}:${member.symbol}:${member.advValue.toPrecision(12)}`,
+    );
+  const payload = [market, asOf, policyVersion, ...ranked].join("|");
   return crypto.createHash("sha256").update(payload).digest("hex").slice(0, 32);
 }
 
@@ -237,6 +268,10 @@ export async function resolvePitUniverse(opts: {
   apiKey?: string;
   today?: Date;
   retry?: RetryOpts;
+  /** Exactly 20 market sessions ending at asOf, all knowable on that date. */
+  liquidityDates?: string[];
+  /** Shared across dates so overlapping ADV windows do not repeat provider calls. */
+  liquidityCache?: Map<string, Promise<Map<string, number> | null>>;
 }): Promise<PitUniverseResult> {
   const { market, asOf, size, minSymbols } = opts;
   const apiKey = opts.apiKey ?? process.env.MASSIVE_API_KEY ?? "";
@@ -254,14 +289,28 @@ export async function resolvePitUniverse(opts: {
   if (!apiKey) {
     return { ok: false, reason: "provider_unconfigured", detail: "MASSIVE_API_KEY is not set." };
   }
-  if (!liquidityAvailableFor(asOf, opts.today)) {
+  const liquidityDates = opts.liquidityDates ?? [];
+  if (
+    liquidityDates.length !== PIT_ADV_WINDOW_SESSIONS ||
+    liquidityDates[liquidityDates.length - 1] !== asOf ||
+    liquidityDates.some((date, i) => (i > 0 && date <= liquidityDates[i - 1]) || date > asOf)
+  ) {
+    return {
+      ok: false,
+      reason: "liquidity_window_invalid",
+      detail:
+        `Expected ${PIT_ADV_WINDOW_SESSIONS} strictly ascending market sessions ending ` +
+        `at ${asOf}; received ${liquidityDates.length}.`,
+    };
+  }
+  if (liquidityDates.some((date) => !liquidityAvailableFor(date, opts.today))) {
     return {
       ok: false,
       reason: "liquidity_not_available_for_date",
       detail:
-        `Grouped daily aggregates are entitled to ~2 years; ${asOf} is outside that window. ` +
-        `Membership is resolvable at this date but liquidity is not, and a rank will not be ` +
-        `fabricated from a later window.`,
+        `At least one session in the trailing ${PIT_ADV_WINDOW_SESSIONS}-session window ` +
+        `ending ${asOf} is outside the grouped-aggregate entitlement. Membership is ` +
+        `resolvable, but a later liquidity window will not be substituted.`,
     };
   }
 
@@ -284,14 +333,28 @@ export async function resolvePitUniverse(opts: {
   }
 
   const eligible = membership.tickers.filter(isEligibleTicker);
-  const dollarVol = await fetchGroupedDollarVolume(asOf, apiKey, opts.retry);
-  if (!dollarVol) {
+  const cache = opts.liquidityCache ?? new Map<string, Promise<Map<string, number> | null>>();
+  const daily: Array<Map<string, number> | null> = [];
+  for (const date of liquidityDates) {
+    let pending = cache.get(date);
+    if (!pending) {
+      pending = fetchGroupedDollarVolume(date, apiKey, opts.retry);
+      cache.set(date, pending);
+    }
+    // Sequential on a cold cache: the free provider is ~5 calls/minute. Shared
+    // cached promises make overlapping windows cheap without a request burst.
+    daily.push(await pending);
+  }
+  if (daily.some((row) => row === null)) {
     return {
       ok: false,
       reason: "liquidity_unavailable",
-      detail: `Grouped aggregates returned no usable rows for ${asOf}.`,
+      detail:
+        `At least one grouped aggregate was unavailable in the trailing ` +
+        `${PIT_ADV_WINDOW_SESSIONS}-session window ending ${asOf}.`,
     };
   }
+  const dollarVol = averageDollarVolume(daily as Map<string, number>[]);
 
   const ranked = rankByLiquidity(
     eligible.map((t) => ({
@@ -315,8 +378,8 @@ export async function resolvePitUniverse(opts: {
     market,
     asOf,
     policyVersion: PIT_POLICY_VERSION,
-    source: "massive_pit_tickers",
+    source: "massive_pit_tickers_trailing_adv20",
     members: ranked,
-    fingerprint: universeFingerprint(market, asOf, PIT_POLICY_VERSION, ranked.map((m) => m.symbol)),
+    fingerprint: universeFingerprint(market, asOf, PIT_POLICY_VERSION, ranked),
   };
 }

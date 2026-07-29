@@ -2,11 +2,21 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   isEligibleTicker,
   rankByLiquidity,
+  averageDollarVolume,
   universeFingerprint,
   liquidityAvailableFor,
   resolvePitUniverse,
   PIT_POLICY_VERSION,
+  PIT_ADV_WINDOW_SESSIONS,
 } from "./pit-universe";
+
+function datesEnding(end: string): string[] {
+  const endMs = Date.parse(`${end}T00:00:00Z`);
+  return Array.from({ length: PIT_ADV_WINDOW_SESSIONS }, (_, i) =>
+    new Date(endMs - (PIT_ADV_WINDOW_SESSIONS - 1 - i) * 86_400_000)
+      .toISOString().slice(0, 10),
+  );
+}
 
 describe("isEligibleTicker", () => {
   const base = { ticker: "AAPL", type: "CS", primary_exchange: "XNAS" };
@@ -68,20 +78,39 @@ describe("rankByLiquidity", () => {
   });
 });
 
+describe("averageDollarVolume", () => {
+  it("uses the complete trailing window and excludes partial-history names", () => {
+    const result = averageDollarVolume([
+      new Map([["FULL", 10], ["PARTIAL", 100]]),
+      new Map([["FULL", 30]]),
+    ]);
+    expect(result.get("FULL")).toBe(20);
+    expect(result.has("PARTIAL")).toBe(false);
+  });
+});
+
 describe("universeFingerprint", () => {
-  it("is order-independent but content-sensitive", () => {
-    const a = universeFingerprint("us", "2026-01-02", "v1", ["MSFT", "AAPL"]);
-    const b = universeFingerprint("us", "2026-01-02", "v1", ["AAPL", "MSFT"]);
+  const member = (symbol: string, advRank: number, advValue = 10) => ({ symbol, advRank, advValue });
+
+  it("is input-order independent but rank and liquidity sensitive", () => {
+    const rows = [member("MSFT", 1, 20), member("AAPL", 2, 10)];
+    const a = universeFingerprint("us", "2026-01-02", "v1", rows);
+    const b = universeFingerprint("us", "2026-01-02", "v1", [...rows].reverse());
     expect(a).toBe(b);
-    expect(universeFingerprint("us", "2026-01-02", "v1", ["AAPL"])).not.toBe(a);
+    expect(universeFingerprint("us", "2026-01-02", "v1", [
+      member("MSFT", 2, 20), member("AAPL", 1, 10),
+    ])).not.toBe(a);
+    expect(universeFingerprint("us", "2026-01-02", "v1", [
+      member("MSFT", 1, 21), member("AAPL", 2, 10),
+    ])).not.toBe(a);
   });
 
   it("separates market, date and policy version", () => {
-    const syms = ["AAPL"];
-    const base = universeFingerprint("us", "2026-01-02", "v1", syms);
-    expect(universeFingerprint("india", "2026-01-02", "v1", syms)).not.toBe(base);
-    expect(universeFingerprint("us", "2026-01-03", "v1", syms)).not.toBe(base);
-    expect(universeFingerprint("us", "2026-01-02", "v2", syms)).not.toBe(base);
+    const rows = [member("AAPL", 1)];
+    const base = universeFingerprint("us", "2026-01-02", "v1", rows);
+    expect(universeFingerprint("india", "2026-01-02", "v1", rows)).not.toBe(base);
+    expect(universeFingerprint("us", "2026-01-03", "v1", rows)).not.toBe(base);
+    expect(universeFingerprint("us", "2026-01-02", "v2", rows)).not.toBe(base);
   });
 });
 
@@ -115,6 +144,7 @@ describe("resolvePitUniverse — fails closed", () => {
   it("refuses a date outside the liquidity entitlement without calling the provider", async () => {
     const r = await resolvePitUniverse({
       market: "us", asOf: "2023-06-30", size: 200, minSymbols: 100, apiKey: "k", today,
+      liquidityDates: datesEnding("2023-06-30"),
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("liquidity_not_available_for_date");
@@ -129,7 +159,7 @@ describe("resolvePitUniverse — fails closed", () => {
   });
 
   it("pins the policy version — snapshots are keyed by it", () => {
-    expect(PIT_POLICY_VERSION).toBe("us_pit_v1");
+    expect(PIT_POLICY_VERSION).toBe("us_pit_adv20_top400_v2");
   });
 });
 
@@ -171,6 +201,7 @@ describe("fetchPitMembership completeness", () => {
     const r = await resolvePitUniverse({
       market: "us", asOf: "2026-07-24", size: 200, minSymbols: 1,
       apiKey: "k", today: new Date("2026-07-28T00:00:00Z"), retry: { retries: 0 },
+      liquidityDates: datesEnding("2026-07-24"),
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("membership_incomplete");

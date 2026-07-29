@@ -3,7 +3,7 @@
 ## Status
 
 Architecture status: **MEASURE-ONLY — promotion dormant**
-Architecture approved: Steps 2-3 shipped; step 4 partial; later work remains gated
+Architecture approved: Steps 2-3 shipped; US step 4 shipped; India step 4 blocked
 Approved scope: diagnostics and evidence hardening only
 Approved date: 2026-07-28
 Implementation allowed: Measurement work may continue; policy promotion may not.
@@ -31,16 +31,27 @@ artificial tail ties. This improves future diagnostics only.
 
 **Remaining order:**
 
-1. Complete step 4 with trailing PIT liquidity, immutable snapshot persistence,
-   and per-date membership for any promotion-grade run.
+1. Use per-date membership plus required snapshot persistence for every
+   promotion-grade run; India remains blocked on a PIT membership source.
 2. Bind experiments to edge id, formula version, market, horizon, and immutable
    OOS run fingerprint.
 3. Run matched-date n=200/n=400 and point-in-time sector-neutral diagnostics.
 4. Run a separately predeclared h20 design with HAC-lag sensitivity and costs.
 5. Only then decide whether a promotion statistic and floor are supportable.
 
-Items 1-4 are not interchangeable. Running the experiments before step 4 would
-spend provider quota to produce another non-promotion-grade artifact.
+Items 1-4 are not interchangeable. Running experiments without per-date
+membership and required persistence would spend provider quota on another
+non-promotion-grade artifact.
+
+**US step 4 shipped and verified:** `us_pit_adv20_top400_v2` computes average
+dollar volume over exactly 20 market sessions ending at each as-of date, shares
+session fetches across overlapping windows, fails closed on an incomplete
+window, and persists a top-400 superset whose deterministic prefixes support
+matched n=200/n=400 tests. `persist_edge_pit_snapshot()` writes through a service-role-only,
+advisory-locked RPC; exact reruns are idempotent, differing reruns conflict, and
+PIT rows are append-only. The orchestrator must set `persistSnapshots=true` and
+`membershipCadence="per_date"` for promotion-grade output. Defaults remain
+diagnostic-only.
 
 ## Implementation Status (2026-07-28)
 
@@ -113,7 +124,7 @@ As of 2026-07-27:
 | Best latest India observation | 1.57, Financials sector, only 2 windows |
 | Active `strategy_policies` | 0 |
 | `backtest_experiments` | 0 |
-| Promotion-grade PIT universe | unavailable |
+| Promotion-grade PIT universe | US infrastructure shipped; India unavailable; no promotion run accepted yet |
 | Regime rows allowed by `edge_ic_history` schema | no |
 
 The current universe is documented in migration 132 and the EdgeIC response as
