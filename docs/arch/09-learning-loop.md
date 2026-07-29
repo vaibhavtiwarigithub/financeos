@@ -293,6 +293,18 @@ Restatement-safe append-only vintage archive: fundamentals are captured on fetch
 
 An offline harness that freezes point-in-time input packets (`knowable_at <= as_of` enforced by a sealed data accessor that throws on any post-cursor datum) and replays the eligibility gates (`calibration_oos`, `thin_evidence`, `ic`, `validation`, `breakdown_veto`) to answer "on what date would this strategy first have been eligible?" (`first_eligible_asof = MIN(as_of) WHERE passed`). Reuses the live gate code (`fitCalibration` → `walkForwardFolds` → `acceptCalibrationOOS`, `computeWeightedAnalystScore`, `isThinEvidence`) unchanged so a replay grades on the identical rule that would run live. Runs on in-memory fixtures today; the migration-149 tables persist runs when wired.
 
+### Local bulk-evidence worker (measure-only)
+
+**Spec:** `features/local-historical-replay/FEATURE_ARCHITECTURE.md`.
+
+Large official datasets remain outside Supabase under the local Kairos evidence
+store. The worker verifies every manifest/file hash, predeclares the plan in the
+existing immutable `backtest_experiments` ledger, runs without provider access, and
+writes only compact results and fingerprints. Initial scope is an India NSE
+price-only OOS IC diagnostic. Backtest reads those results through an owner-only
+API; the browser cannot start the worker. These records are not promotion, scoring,
+or trading inputs.
+
 ## Performance Truth Layer
 
 **File:** `lib/evaluation/run-evaluation.ts`, `/api/agents/evaluation/*`

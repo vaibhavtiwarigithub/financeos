@@ -937,6 +937,16 @@ NSE/BSE holdings snapshot from Kite API.
 
 ## 8.11 Historical replay harness (measure-only, OFF)
 
+### Local bulk experiment lineage (2026-07-29)
+
+`backtest_experiments` also accepts `historical_replay` plans for the local
+bulk-evidence worker. A plan binds formula, horizon, validation mode, trial
+family/count, local PIT universe policy, data cutoff, exact git SHA,
+schema-versioned spec, unique plan fingerprint, and predeclared variants.
+Completion reuses the existing write-once result and universe/dataset/run
+fingerprints. RLS and grants remain service-role-only. Raw historical rows remain
+outside Supabase and are never returned to the browser.
+
 Four additive tables (migration 149) backing `features/historical-replay-harness`. Internal, server-side/offline analyst tooling — RLS enabled with **no policy** (service_role bypasses RLS; all other roles denied). The P0–P4 harness code (`lib/replay/*`) runs on in-memory fixtures and does **not** depend on these tables; they persist frozen point-in-time eligibility runs when the harness is wired to persist. `replay_packets`/`replay_packet_items` are write-once by convention (assembler deep-freezes in memory).
 
 ### `replay_packets`

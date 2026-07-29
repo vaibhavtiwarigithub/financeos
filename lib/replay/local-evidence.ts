@@ -91,6 +91,33 @@ export async function verifyLocalEvidenceManifest(manifestPath: string): Promise
   return manifest;
 }
 
+/**
+ * Verify once, then expose bounded normalized-row streams without re-hashing a
+ * multi-gigabyte dataset for each pass. The returned closure can resolve only
+ * files already named and hashed by this exact manifest.
+ */
+export async function openVerifiedLocalEvidenceDataset(manifestPath: string): Promise<{
+  manifest: LocalEvidenceManifest;
+  rows: (relativePathSuffix: string) => AsyncGenerator<Record<string, unknown>>;
+}> {
+  const manifest = await verifyLocalEvidenceManifest(manifestPath);
+  return {
+    manifest,
+    rows(relativePathSuffix: string) {
+      const matches = manifest.files.filter((entry) =>
+        entry.mediaType === "application/x-ndjson"
+        && entry.relativePath.endsWith(relativePathSuffix),
+      );
+      if (matches.length !== 1) {
+        throw new Error(
+          `Expected exactly one verified ${relativePathSuffix} file in ${manifest.datasetId}; found ${matches.length}`,
+        );
+      }
+      return jsonLines(resolveManifestFile(manifestPath, matches[0].relativePath));
+    },
+  };
+}
+
 async function* jsonLines(file: string): AsyncGenerator<Record<string, unknown>> {
   const lines = readline.createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity });
   for await (const line of lines) {

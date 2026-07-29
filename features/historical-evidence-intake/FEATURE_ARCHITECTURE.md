@@ -49,6 +49,12 @@ Supabase receives only the existing immutable experiment identity, dataset
 fingerprint, result summary, and (when explicitly materialized) sealed replay packet
 metadata. Raw bulk rows never enter a browser or Vercel runtime.
 
+The executable boundary is defined in
+`features/local-historical-replay/FEATURE_ARCHITECTURE.md`: a local, network-free
+worker verifies these manifests, predeclares one immutable experiment, computes the
+diagnostic, and uploads only compact fingerprints/results. The application does not
+read this directory and the raw store is not uploaded anywhere.
+
 ## 3. Source Decisions
 
 | Source | Capability | Authority | Intake decision | Evidence class |

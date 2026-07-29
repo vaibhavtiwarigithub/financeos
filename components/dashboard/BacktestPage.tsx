@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import PageHeader from "./PageHeader";
+import HistoricalReplayPanel from "./HistoricalReplayPanel";
 import { useMarket } from "@/lib/market-context";
 import { indiaScreenUniverse } from "@/lib/india-universe";
 
@@ -240,6 +241,7 @@ export default function BacktestPage() {
       />
 
       <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 40px" }}>
+        <HistoricalReplayPanel market={market} />
 
         {/* India universe note — the ₹ backtest replays India signals against free
             Yahoo .NS candles, drawn from the NIFTY-100 screen universe. */}

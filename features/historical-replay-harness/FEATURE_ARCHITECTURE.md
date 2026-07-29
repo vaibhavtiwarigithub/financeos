@@ -1,10 +1,14 @@
 # Historical Replay Harness — Frozen Point-in-Time Eligibility
 
-> **STATUS: DRAFT — awaiting owner approval.** This is an architecture proposal only.
-> No code, no migrations, no production changes. Tables described here are *proposed*,
-> not created. Do not implement until Vaibhav explicitly approves.
+> **STATUS: SUPERSEDED IN PART.** The sealed primitives were implemented. The
+> parallel storage proposal below is historical context and is not authoritative
+> for new bulk-data runs.
 
-Last updated: 2026-07-10
+> New bulk-data experiments follow
+> `features/local-historical-replay/FEATURE_ARCHITECTURE.md` and extend the existing
+> immutable `backtest_experiments` ledger.
+
+Last updated: 2026-07-29
 Owner: Vaibhav
 Requirement: `CLAUDE_CODE_POST_UPGRADE_FIX_PROMPT.md` — Required test **15**.
 

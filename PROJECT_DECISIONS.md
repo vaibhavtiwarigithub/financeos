@@ -904,3 +904,29 @@ Files/features affected: `features/historical-evidence-intake/`, local acquisiti
 CLI, replay adapters, and experiment manifests.
 Reversal cost: Low; delete the local store and stop using its fingerprints. No
 trading rollback exists because the store is unreachable from trading.
+
+### Decision 54: Local Historical Runs Extend Immutable Experiment Lineage
+
+Date: 2026-07-29
+Status: Approved
+Category: Architecture / Data / Security
+
+Context: The verified bulk evidence is too large for Supabase and Vercel, but
+results must be visible in Kairos without creating a third provenance system.
+Decision: Run manifest-bound historical diagnostics locally. Predeclare each plan
+in `backtest_experiments` before reading normalized rows, then complete that same
+write-once row with compact results and fingerprints. Keep raw data local. Expose
+only bounded results through a confirmed-owner read API on Backtest.
+Reason: This turns downloaded evidence into reproducible app-visible research while
+preserving the existing lineage, free-tier budget, and money-path isolation.
+Alternatives considered: Upload raw bulk rows (rejected for cost); start desktop
+jobs from Vercel/browser (rejected as an unsafe and unavailable runtime boundary);
+new replay-result tables (rejected as parallel truth); let results alter scoring or
+promotion (rejected until separate promotion-grade evidence gates pass).
+Impact: India official-price diagnostics can run now without provider quotas. US
+price replay remains blocked pending survivor-safe adjusted prices. No score,
+strategy, agent, paper/live trade, order, or broker behavior changes.
+Files/features affected: `features/local-historical-replay/`, local replay CLI,
+`backtest_experiments`, Backtest result API/UI.
+Reversal cost: Low; stop the CLI and hide the read-only panel. Existing immutable
+research rows remain as audit history.
