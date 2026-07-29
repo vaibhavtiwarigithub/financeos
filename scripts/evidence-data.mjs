@@ -41,6 +41,13 @@ const ALLOWED_HOSTS = new Set([
   "api.github.com",
   "raw.githubusercontent.com",
 ]);
+const CURRENT_NORMALIZER_SCHEMAS = new Map([
+  ["fred-alfred", "fred-vintages.jsonl.v1"],
+  ["sec-financial-statement-data-sets", "sec-primary-statement-facts.jsonl.v2"],
+  ["nse-bhavcopy", "nse-daily-bars.jsonl.v2"],
+  ["nse-corporate-actions", "nse-corporate-actions.jsonl.v1"],
+  ["hanshof-sp500-constituents", "community-sp500.csv.v1"],
+]);
 
 export const FRED_SERIES = [
   "DGS2", "DGS10", "UNRATE", "PAYEMS", "GDPC1", "CPIAUCSL",
@@ -63,6 +70,13 @@ export function canonicalJson(value) {
     ).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+export function isCurrentNormalizer(manifest) {
+  return (
+    manifest?.normalization?.status === "valid"
+    && CURRENT_NORMALIZER_SCHEMAS.get(manifest?.sourceId) === manifest?.normalization?.schemaVersion
+  );
 }
 
 export function assertAllowedUrl(rawUrl) {
@@ -1133,7 +1147,9 @@ async function catalog() {
     coverage: manifest.coverage,
     fingerprint: manifest.datasetFingerprint,
     status: manifest.normalization?.status,
-    currentNormalizer: manifest.normalization?.codeSha256 === RUN_CODE_SHA256,
+    // A change to one normalizer must not invalidate unrelated source types.
+    // Schema versions are source-specific; code SHA remains immutable provenance.
+    currentNormalizer: isCurrentNormalizer(manifest),
   }));
   await fsp.writeFile(path.join(STORE, "catalog.json"), `${JSON.stringify(summary, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify({ store: STORE, datasets: summary }, null, 2)}\n`);

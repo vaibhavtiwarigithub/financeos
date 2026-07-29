@@ -10,6 +10,7 @@ import {
   normalizeSecNumericFact,
   nseBhavcopyUrl,
   safeArchiveEntries,
+  isCurrentNormalizer,
 } from "../scripts/evidence-data.mjs";
 
 describe("governed historical evidence intake", () => {
@@ -29,6 +30,21 @@ describe("governed historical evidence intake", () => {
       coverage: { start: "2020-01-01", end: "2020-01-02", receivedFiles: 2 },
     };
     expect(buildManifest(input).datasetFingerprint).toBe(buildManifest({ ...input, files: [...input.files].reverse() }).datasetFingerprint);
+  });
+
+  it("tracks current normalizers per source schema, not whole-script hash", () => {
+    expect(isCurrentNormalizer({
+      sourceId: "nse-bhavcopy",
+      normalization: { status: "valid", schemaVersion: "nse-daily-bars.jsonl.v2", codeSha256: "old" },
+    })).toBe(true);
+    expect(isCurrentNormalizer({
+      sourceId: "nse-bhavcopy",
+      normalization: { status: "valid", schemaVersion: "nse-daily-bars.jsonl.v1", codeSha256: "new" },
+    })).toBe(false);
+    expect(isCurrentNormalizer({
+      sourceId: "fred-alfred",
+      normalization: { status: "valid", schemaVersion: "fred-vintages.jsonl.v1", codeSha256: "old" },
+    })).toBe(true);
   });
 
   it("allows only explicit HTTPS evidence hosts", () => {
