@@ -73,6 +73,56 @@ The new feature must not accidentally replace or weaken the existing live
 blackout. A unified policy can replace it only after shadow coverage parity and
 an explicit owner-approved cutover.
 
+## Verified Broker Data Surfaces
+
+The connected broker surfaces were re-probed on 2026-07-29. Availability is
+useful, but tool presence alone is not evidence that a field is correctly
+timestamped, complete, or stable enough for a money-path decision.
+
+| Source | Earnings | Options | Verified state | Intended role |
+|---|---|---|---|---|
+| Finnhub | Yes | No | Existing US `fetchDaysToEarnings()` source | Current US calendar source and independent fallback |
+| Alpha Vantage | Yes | No | Existing live TraderAgent blackout source | Preserve until unified resolver proves parity |
+| Webull MCP | Yes | No | Live `tools/list`: 71 tools. `get_stock_earnings_calendar` returned AAPL dates, actual/estimated EPS, and actual/estimated revenue | US earnings-date cross-check and optional estimate context |
+| Robinhood MCP | Yes | Yes | Live `tools/list`: 52 tools, including `get_earnings_calendar`, `get_earnings_results`, `get_option_chains`, `get_option_quotes`, and `get_option_historicals` | Candidate broker-backed earnings cross-check and preferred US options source after payload probe |
+| Yahoo | Yes for India; US fallback possible | Yes | Existing India calendar helper and current on-demand US options implementation | India calendar source; shadow-only US options fallback |
+
+Webull's published Cloud MCP surface does **not** expose an equity-options chain,
+despite exposing stock quotes and many fundamentals tools. Do not infer options
+support from Webull's brokerage product or separate trading documentation.
+
+Robinhood is the strongest candidate for the US move proxy because the connected
+MCP advertises contract discovery plus current quotes. Before selection as a
+provider, an owner-run allowlisted probe must verify:
+
+- exact expiry and strike fields;
+- same-contract bid, ask, sizes, timestamp, and open interest;
+- whether quotes are real-time, delayed, indicative, or entitlement-dependent;
+- response pagination and maximum contracts per request;
+- behavior outside market hours and for illiquid names;
+- rate limits and token/session failure behavior.
+
+Broker OAuth calls do not consume Finnhub, Alpha Vantage, or Yahoo quotas, but
+they are not quota-free by assumption. They require independent pacing,
+provider-call accounting, caching, and health monitoring. A disconnected broker
+must become `unavailable`; it must never silently change entry behavior.
+
+### Source resolution
+
+Earnings dates should be prewarmed and resolved from the existing point-in-time
+calendar cache rather than fan-out to three providers synchronously at every
+entry. Finnhub, Webull, and Robinhood observations retain source and as-of
+metadata. A disagreement beyond one market session is `conflict`, not a majority
+vote.
+
+For US option snapshots:
+
+1. Robinhood is the preferred candidate only after its payload probe passes.
+2. Yahoo remains a shadow-only fallback with an explicit unofficial-source tag.
+3. Webull returns `unsupported`, not `unavailable`, for options.
+4. No broker order or option-order tool is used. Read and execution allowlists
+   remain separate.
+
 ## Risk Contract
 
 ### Earnings event
@@ -147,8 +197,10 @@ volatility risk premium, rates/dividends, and bid/ask effects.
 6. Reject crossed, stale, zero-premium, missing-leg, or implausible results.
 7. Cache the raw normalized snapshot by `(symbol, expiry, observed market
    session)`. Never overwrite a snapshot used by a decision.
-8. Yahoo is unofficial and fail-soft. "Keyless" does not mean durable. A live
-   capability probe and provider-health metric are required before shadow runs.
+8. Every provider is fail-soft and source-labelled. Robinhood requires an
+   allowlisted payload probe; Yahoo is unofficial and remains a shadow fallback.
+   A capability probe and provider-health metric are required before shadow
+   runs.
 
 The first build must rename or remove the current `ivPercentile` label and remove
 "smart money" claims from unusual-flow summaries. Neither field is part of this
@@ -268,13 +320,17 @@ must default to no change when evidence is inconclusive.
 ## Build Order
 
 1. Correct misleading existing option labels and add golden parser tests.
-2. Add source-aware, session-aware earnings-event resolver.
-3. Add exact-expiry chain fetch and pure quote-quality/move-proxy calculation.
-4. Add pure `earningsRiskVerdict()` with `shadow` as the only enabled mode.
-5. Wire paper, rotation, and live annotation without changing behavior.
-6. Add owner-facing Backtest/Risk visibility and provider-health coverage.
-7. Accumulate the predeclared shadow record.
-8. Review evidence and separately decide whether to keep annotation-only,
+2. Add bounded read-only Robinhood earnings/options contract probes and persist
+   only schema fingerprints plus normalized test results.
+3. Add Webull earnings into the source-aware, session-aware earnings-event
+   resolver; retain Finnhub/Alpha Vantage observations through cutover.
+4. Add exact-expiry Robinhood fetch, Yahoo fallback, and pure
+   quote-quality/move-proxy calculation.
+5. Add pure `earningsRiskVerdict()` with `shadow` as the only enabled mode.
+6. Wire paper, rotation, and live annotation without changing behavior.
+7. Add owner-facing Backtest/Risk visibility and provider-health coverage.
+8. Accumulate the predeclared shadow record.
+9. Review evidence and separately decide whether to keep annotation-only,
    activate bounded size-down, or reject the behavioral feature.
 
 ## Tests Required Before P0 Ships
