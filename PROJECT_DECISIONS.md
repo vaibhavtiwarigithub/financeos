@@ -819,3 +819,35 @@ Category: Product / Architecture / Data / Safety
   Emit one-time informational milestones and collection-stall warnings. Neither
   milestone changes scoring, lifecycle, paper trading, or live trading.
 - **Shipped at:** 2026-07-21.
+
+## 2026-07-28 — Single-factor IC promotion is CLOSED; the edge lab is permanently diagnostic
+
+- **Context:** `features/walk-forward-ic-folds` built the full purged out-of-sample
+  stack (PIT universe, disjoint folds, no-lookahead runner, HAC aggregation) and
+  measured what it was built to measure.
+- **Measurement (Annex K):** cross-sectional rank-IC sigma is **stable at ~0.27**
+  across four independent periods (spread 1.36x, sd 0.038) — 3.77x the
+  theoretical 0.0712 at n=200. Inverting `sigma = 1/sqrt(n_eff-3)` gives an
+  **effective breadth of ~17 independent names** from a 200-name cross-section.
+  Correlation binds, not name count.
+- **Why the escape routes fail:**
+  - *More names:* sigma is set by `n_eff`, not `n`. Adding names adds correlated
+    names. The n=400 experiment was cancelled on this basis.
+  - *Sector-neutral IC:* reaching sigma <= 0.10 needs `n_eff >= 103`, a **6.1x**
+    breadth increase. Even an optimistic 3x gain leaves ~52 required as-of dates
+    against ~25 available. Quantified and rejected.
+  - *More history:* ~180 as-of dates at the measured sigma is roughly **7 years**
+    of non-overlapping 20-session evidence. The liquidity entitlement covers 2.
+- **Decision:** Do **not** re-derive the 1C floors and do **not** build build-order
+  steps 5-10. `POST /api/agents/backtest/promote` stays permanently disabled.
+  `strategy_policies` and `backtest_experiments` remain as empty governance
+  scaffolding; nothing writes to them.
+- **What continues unchanged:** EdgeScout and EdgeIC keep running as **advisory
+  diagnostics**. `edge_ic_history` remains a useful monitoring surface. None of
+  it may be cited as promotion evidence.
+- **What would reopen this:** a materially different statistic (portfolio-level
+  cost-adjusted returns rather than single-factor IC), or a data source giving
+  5+ years of whole-market liquidity history. Not a parameter change.
+- **Honest framing:** the machinery is correct and the refusal is correct. The
+  finding is that single-factor IC promotion is not reachable at this scale —
+  which is a real result, not a failure of the build.

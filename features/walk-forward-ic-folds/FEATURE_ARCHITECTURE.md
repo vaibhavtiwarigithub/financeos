@@ -2,16 +2,25 @@
 
 ## Status
 
-Architecture status: Approved
-Architecture approved: Yes
-Approved scope: Build-order steps 2 and 3 ONLY - disable legacy-window promotion,
-  repair policy/experiment schema semantics, and add the atomic promotion RPC.
+Architecture status: **CLOSED — measured, not abandoned**
+Architecture approved: Steps 2-4 shipped; steps 5-10 will NOT be built
+Approved scope: complete
 Approved date: 2026-07-28
-Implementation allowed: Steps 2-3 only. Steps 4-10 remain BLOCKED on the five
-  Open Decisions For Approval at the end of this document (sample floors from a
-  power analysis, calibration mode, false-discovery procedure, cost-adjusted
-  portfolio test, and the PIT-universe/corporate-action policy per market).
-  Nothing may claim out-of-sample evidence until those are answered and 4-10 ship.
+Implementation allowed: No further build. See PROJECT_DECISIONS.md 2026-07-28.
+
+**Outcome.** The stack was built far enough to measure the thing it existed to
+measure, and the measurement closed the question. Cross-sectional rank-IC sigma
+is stable at ~0.27 (Annex K), implying ~17 effective independent names from a
+200-name cross-section. Single-factor IC promotion needs ~180 as-of dates
+against ~25 available, and neither a larger universe (sigma is set by n_eff, not
+n) nor sector-neutral IC (needs a 6.1x breadth gain) closes that gap.
+
+`POST /api/agents/backtest/promote` is permanently disabled. EdgeScout/EdgeIC
+continue as advisory diagnostics and must never be cited as promotion evidence.
+
+Reopening requires a materially different statistic (portfolio-level
+cost-adjusted returns rather than single-factor IC) or 5+ years of whole-market
+liquidity history — an architecture decision, not a parameter change.
 
 ## Implementation Status (2026-07-28)
 
