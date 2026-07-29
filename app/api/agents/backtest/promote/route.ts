@@ -17,25 +17,18 @@ export const dynamic = "force-dynamic";
 // Failure returns 200 with pass=false + machine-readable reasons. A rejected
 // promotion is a normal outcome, not an error.
 //
-// ─── CLOSED — THIS ROUTE WILL NEVER WRITE A POLICY ──────────────────────────
-// Owner decision 2026-07-28 (PROJECT_DECISIONS.md): single-factor IC promotion
-// is not reachable at this scale. This is a MEASURED conclusion, not a pending
-// task.
+// ─── DORMANT — MEASURE-ONLY; THIS ROUTE MUST NOT WRITE A POLICY ─────────────
+// The 2026-07-28 permanent-closure conclusion was reversed after adversarial
+// review. The measured h5 IC dispersion (~0.27) is real, but it cannot be
+// inverted into an "effective breadth" estimate: temporal IC variance combines
+// cross-sectional sampling noise, time-varying true IC, changing membership,
+// and coverage. The h5 estimate also cannot be transferred to h20.
 //
-// The full purged-OOS stack was built and run. Cross-sectional rank-IC sigma is
-// stable at ~0.27 across four independent periods — 3.77x the theoretical 0.0712
-// at n=200 — implying an effective breadth of ~17 independent names from a
-// 200-name cross-section. Correlation binds, not name count, so:
-//   more names        -> sigma is set by n_eff, not n. Cancelled.
-//   sector-neutral IC -> needs n_eff >= 103, a 6.1x breadth gain. Rejected.
-//   more history      -> ~180 as-of dates ~ 7 years; entitlement covers 2.
-//
-// Build-order steps 5-10 are NOT being built. EdgeScout/EdgeIC continue as
-// advisory diagnostics and must never be cited as promotion evidence.
-//
-// Reopening requires a materially different statistic (portfolio-level
-// cost-adjusted returns, not single-factor IC) or a data source with 5+ years of
-// whole-market liquidity history — an architecture decision, not a flag flip.
+// The measurement is useful negative evidence for mom_12_1 at h5. It is not
+// evidence that universe-size or sector-neutral experiments cannot help.
+// Promotion remains disabled until the experiment lineage, PIT inputs,
+// matched-horizon evidence, dependence/cost adjustment, and atomic RPC contract
+// are all promotion-grade. EdgeScout/EdgeIC remain advisory diagnostics.
 //
 // ─── historical record: the 2026-07-27 review findings that first froze it ───
 // Adversarial review 2026-07-27 raised one P0 and three P1 findings that each
@@ -64,8 +57,9 @@ export const dynamic = "force-dynamic";
 //
 // Everything below the guard is retained deliberately: it still returns the gate
 // verdict, so the evidence can be inspected without any write being possible.
-// Permanently false. See the CLOSED banner above — this is a measured
-// conclusion recorded in PROJECT_DECISIONS.md, not a toggle awaiting work.
+// False until the evidence contract documented above is complete and approved.
+// This is deliberately not an environment toggle: deployment configuration
+// must never turn incomplete research evidence into trade authority.
 const PROMOTION_ENABLED = false;
 
 interface PromoteBody {

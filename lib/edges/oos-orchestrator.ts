@@ -12,7 +12,11 @@
 // Fetching candles per (symbol, date) would be ~24x the calls for identical
 // data, so the union of symbols is fetched once and sliced.
 
-import { resolvePitUniverse, type PitUniverseResult } from "@/lib/edges/pit-universe";
+import {
+  resolvePitUniverse,
+  type PitMember,
+  type PitUniverseResult,
+} from "@/lib/edges/pit-universe";
 import { fetchYahooCandles, yahooRange } from "@/lib/data/yahoo-candles";
 import {
   buildPurgedFolds,
@@ -38,11 +42,20 @@ import type { EdgeDef, Market } from "@/lib/edges/types";
 export type MembershipCadence = "per_date" | "per_fold";
 
 export interface OrchestrationReport {
+  reportSchemaVersion: 2;
   run: OosRunReport | null;
   folds: Fold[];
   membershipCadence: MembershipCadence;
   approximationsUsed: string[];
   universeErrors: Array<{ asOf: string; reason: string; detail: string }>;
+  universeSnapshots: Array<{
+    resolvedAsOf: string;
+    appliedDates: string[];
+    policyVersion: string;
+    source: string;
+    fingerprint: string;
+    members: PitMember[];
+  }>;
   symbolsFetched: number;
   symbolsMissingCandles: string[];
   sessionsAvailable: number;
@@ -111,8 +124,8 @@ export async function orchestrateOosRun(opts: {
     { adjusted: true },
   );
   if (!bench.length) {
-    return { run: null, folds: [], membershipCadence: cadence, approximationsUsed: approximations,
-             universeErrors: [], symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: 0,
+    return { reportSchemaVersion: 2, run: null, folds: [], membershipCadence: cadence, approximationsUsed: approximations,
+             universeErrors: [], universeSnapshots: [], symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: 0,
              fatal: `benchmark ${opts.benchmarkSymbol} returned no candles` };
   }
   const allSessions = sessionsFromCandles(bench);
@@ -146,14 +159,14 @@ export async function orchestrateOosRun(opts: {
     datesPerFold: opts.datesPerFold, stepSessions: opts.horizonSessions,
   });
   if (!built.ok) {
-    return { run: null, folds: [], membershipCadence: cadence, approximationsUsed: approximations,
-             universeErrors: [], symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
+    return { reportSchemaVersion: 2, run: null, folds: [], membershipCadence: cadence, approximationsUsed: approximations,
+             universeErrors: [], universeSnapshots: [], symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
              fatal: `${built.reason}: ${built.detail}` };
   }
   const disj = validateFoldDisjointness(built.folds);
   if (!disj.ok) {
-    return { run: null, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
-             universeErrors: [], symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
+    return { reportSchemaVersion: 2, run: null, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
+             universeErrors: [], universeSnapshots: [], symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
              fatal: `folds not disjoint: ${disj.violations.join("; ")}` };
   }
   log(
@@ -164,6 +177,7 @@ export async function orchestrateOosRun(opts: {
   // 3. PIT universe per as-of date (or per fold under the approximation).
   const universeByDate = new Map<string, string[]>();
   const universeErrors: OrchestrationReport["universeErrors"] = [];
+  const universeSnapshots: OrchestrationReport["universeSnapshots"] = [];
   for (const fold of built.folds) {
     const dates = cadence === "per_fold" ? [fold.asOfDates[0]] : fold.asOfDates;
     for (const asOf of dates) {
@@ -173,14 +187,22 @@ export async function orchestrateOosRun(opts: {
       });
       if (!u.ok) { universeErrors.push({ asOf, reason: u.reason, detail: u.detail }); continue; }
       const syms = u.members.map((m) => m.symbol);
-      if (cadence === "per_fold") for (const d of fold.asOfDates) universeByDate.set(d, syms);
-      else universeByDate.set(asOf, syms);
+      const appliedDates = cadence === "per_fold" ? [...fold.asOfDates] : [asOf];
+      for (const d of appliedDates) universeByDate.set(d, syms);
+      universeSnapshots.push({
+        resolvedAsOf: asOf,
+        appliedDates,
+        policyVersion: u.policyVersion,
+        source: u.source,
+        fingerprint: u.fingerprint,
+        members: u.members,
+      });
       log(`universe ${asOf}: ${syms.length} names (fp ${u.fingerprint.slice(0, 8)})`);
     }
   }
   if (!universeByDate.size) {
-    return { run: null, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
-             universeErrors, symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
+    return { reportSchemaVersion: 2, run: null, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
+             universeErrors, universeSnapshots, symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
              fatal: "no PIT universe resolved for any as-of date" };
   }
 
@@ -198,8 +220,9 @@ export async function orchestrateOosRun(opts: {
   });
 
   return {
+    reportSchemaVersion: 2,
     run, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
-    universeErrors, symbolsFetched: series.size, symbolsMissingCandles: missing,
+    universeErrors, universeSnapshots, symbolsFetched: series.size, symbolsMissingCandles: missing,
     sessionsAvailable: sessions.length,
   };
 }

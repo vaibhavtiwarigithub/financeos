@@ -2,25 +2,45 @@
 
 ## Status
 
-Architecture status: **CLOSED — measured, not abandoned**
-Architecture approved: Steps 2-4 shipped; steps 5-10 will NOT be built
-Approved scope: complete
+Architecture status: **MEASURE-ONLY — promotion dormant**
+Architecture approved: Steps 2-3 shipped; step 4 partial; later work remains gated
+Approved scope: diagnostics and evidence hardening only
 Approved date: 2026-07-28
-Implementation allowed: No further build. See PROJECT_DECISIONS.md 2026-07-28.
+Implementation allowed: Measurement work may continue; policy promotion may not.
 
-**Outcome.** The stack was built far enough to measure the thing it existed to
-measure, and the measurement closed the question. Cross-sectional rank-IC sigma
-is stable at ~0.27 (Annex K), implying ~17 effective independent names from a
-200-name cross-section. Single-factor IC promotion needs ~180 as-of dates
-against ~25 available, and neither a larger universe (sigma is set by n_eff, not
-n) nor sector-neutral IC (needs a 6.1x breadth gain) closes that gap.
+**Outcome.** The stack produced useful negative evidence: `mom_12_1` has no
+useful signal at h5 in this sample, and daily IC is noisy. The study did not
+prove an effective breadth of 17 or that universe size and sector neutralization
+cannot help. Temporal IC variance combines sampling noise, genuine factor
+variation, changing membership, and coverage; the current artifact does not
+identify those components.
 
-`POST /api/agents/backtest/promote` is permanently disabled. EdgeScout/EdgeIC
+`POST /api/agents/backtest/promote` remains disabled. EdgeScout/EdgeIC
 continue as advisory diagnostics and must never be cited as promotion evidence.
 
-Reopening requires a materially different statistic (portfolio-level
-cost-adjusted returns rather than single-factor IC) or 5+ years of whole-market
-liquidity history — an architecture decision, not a parameter change.
+Next measure-only work must record usable cross-section per date, compare
+universe sizes on matched dates, measure sector-neutral IC with point-in-time
+sector provenance, and obtain matched-horizon evidence. None of those results
+may change scoring or trade authority directly.
+
+**2026-07-28 correction build:** OOS report schema v2 now retains the usable
+cross-section for every successful date plus the resolved universe fingerprint,
+members, provenance, and dates to which each snapshot was applied. OOS Spearman
+IC now ranks raw finite edge values; it no longer winsorizes first and creates
+artificial tail ties. This improves future diagnostics only.
+
+**Remaining order:**
+
+1. Complete step 4 with trailing PIT liquidity, immutable snapshot persistence,
+   and per-date membership for any promotion-grade run.
+2. Bind experiments to edge id, formula version, market, horizon, and immutable
+   OOS run fingerprint.
+3. Run matched-date n=200/n=400 and point-in-time sector-neutral diagnostics.
+4. Run a separately predeclared h20 design with HAC-lag sensitivity and costs.
+5. Only then decide whether a promotion statistic and floor are supportable.
+
+Items 1-4 are not interchangeable. Running the experiments before step 4 would
+spend provider quota to produce another non-promotion-grade artifact.
 
 ## Implementation Status (2026-07-28)
 
@@ -654,23 +674,21 @@ this feature depends on — goes to Massive first and hits the 2-year wall. The
 Annex B conclusion for step 4 stands; the general claim about "US candles" did
 not, and is withdrawn.
 
-## C2. A second under-service, same class as the yahooRange defect
+## C2. Correction: the live US candle path is not under-served
 
-`fetchUsCandles()` calls `fetchYahooCandles(symbol)` with **no range argument**,
-so it takes the `"6mo"` default — roughly 125 sessions. `minCandles` defaults to
-60, so that passes the acceptance check and the shallow series is used.
+The earlier text described a stale API shape. `lib/data/candles.ts` owns a local
+`fetchYahooCandles(symbol)` that explicitly requests `range=1y`, returning
+roughly 251 sessions. It is not the market-agnostic deep-history function with a
+range argument.
 
-125 sessions is below the 273 needed for 12-1 momentum (252 + 21), the same
-failure mode as the `indiaRange` defect fixed in `5d48bd0e`, on the US side and
-in the live research path rather than the measure-only edge lab.
+The production technical score uses RSI14, EMA20/50, ATR14, 20-day trend, and
+20-day volume. One year is sufficient for those inputs. `mom_12_1` is an edge
+lab formula and uses the separate OOS candle resolver with explicitly requested
+deep history; it is not computed by the live ResearchAgent technical score.
 
-**Not fixed here.** Changing the depth of the main US research path changes
-`analyst_score` inputs and therefore what gets traded. It needs its own
-architecture decision, and it is not part of this feature. Recorded so it is not
-rediscovered a third time.
-
-Related: the `YAHOO` node in `system-map.json` claimed "251 adjusted bars",
-which does not match the `"6mo"` default in the code. Node corrected.
+Therefore there is no pending live candle-depth fix and no reason to change
+production scoring inputs. The system-map `YAHOO` node now records the actual
+one-year path and the separate deep-history role.
 
 ## C3. Step 4 is NOT unblocked by the 1C + 5A/5B approval alone
 
@@ -1222,7 +1240,7 @@ Primary references:
 
 ---
 
-# Annex K — Multi-period sigma study: STABLE, and universe size is not the lever (2026-07-28)
+# Annex K — Multi-period h5 dispersion diagnostic (2026-07-28, corrected)
 
 Design: `mom_12_1`, US, **horizon 5** (step 5), 4 folds x 20 dates = **80 as-of
 dates**, universe **held at 200**, `per_fold` cadence, adjusted prices. 320
@@ -1230,9 +1248,10 @@ symbols, **0 universe errors, 0 skipped dates**.
 
 Horizon 5 rather than 20 because the ~2-year entitlement holds ~100 as-of dates
 at h5 versus ~25 at h20 — four *independent* periods of 20 instead of four of 6.
-This measures STABILITY; h5 sigma need not equal h20 sigma in level.
+This measures h5 temporal dispersion. It does not estimate h20 dispersion or
+decompose the sources of variance.
 
-## Result 1 — sigma is STABLE
+## Result 1 — h5 dispersion is high and varies across folds
 
 | Fold | Period | mean IC | sigma |
 |---|---|---|---|
@@ -1243,29 +1262,39 @@ This measures STABILITY; h5 sigma need not equal h20 sigma in level.
 
 **spread 0.2287–0.3118, max/min = 1.36x, sd of sigma = 0.0377, mean = 0.2683.**
 
-The earlier apparent instability (0.1436 vs 0.2706 at h20) was **small-sample
-noise at n=12**, exactly as the overlapping CIs indicated. Sigma has a stable
-central value. The question that blocked the universe experiment is answered.
+The four estimates provide a useful range, but they rise monotonically and each
+uses only 20 dates. They do not prove stationarity, and they cannot explain
+whether the movement comes from market regimes, changing cross-sections,
+membership cadence, or sampling noise. The earlier h20 estimates remain too
+small to settle h20 dispersion.
 
-## Result 2 — the answer kills the universe experiment
+## Result 2 — effective breadth is not identified
 
 Realized sigma **0.2683** against a theoretical **0.0712** at n=200 — **3.77x**.
 
-Inverting `sigma = 1/sqrt(n_eff − 3)`:
+That comparison is diagnostic only. `1/sqrt(n-3)` is not an estimator that can
+turn observed time-series variance of Spearman IC into independent-name count.
+Observed variance includes cross-sectional sampling error, time-varying true
+IC, changing membership, and data attrition. The raw artifact also omitted
+successful-date cross-section counts, so those causes cannot be separated
+retrospectively.
 
-> **n_eff ≈ 17.** A 200-name cross-section behaves like ~17 independent names.
+The previous `n_eff ≈ 17` claim and the derived 180-date requirement are
+withdrawn. Test n=200 versus n=400 on the same dates and memberships before
+claiming how dispersion scales. This is a measure-only diagnostic, not a reason
+to enable promotion.
 
-Sigma is set by *effective breadth*, not name count. Correlation is binding, not
-sampling. Adding names adds correlated names, so the projected 1/sqrt(n) gains
-(n=400 → 0.0502, n=800 → 0.0354) will not be realized.
+Statistical basis for the correction:
 
-**Recommendation: do NOT run the n=400 experiment.** It was predicated on the
-excess dispersion being sampling noise. It is not — it is factor structure, and
-now quantified. Running it would cost ~30 minutes of rate-limited calls to
-confirm a number already derivable from this one.
-
-At sigma 0.2683, detecting a 0.04 IC at t=2.0 needs **180 as-of dates**. The
-entitled window holds ~25 at h20.
+- Ornstein and Lyhagen (2016), *Asymptotic Properties of Spearman's Rank
+  Correlation for Variables with Finite Support*, derives dependence-specific
+  asymptotic variance rather than treating the independence-null variance as a
+  general effective-sample-size estimator:
+  https://doi.org/10.1371/journal.pone.0145595
+- Moskowitz and Grinblatt (1999), *Do Industries Explain Momentum?*, documents
+  a strong industry component in stock momentum. That supports measuring a
+  sector-neutral specification; it does not justify predicting its result
+  without running it: https://doi.org/10.1111/0022-1082.00146
 
 ## Result 3 — `mom_12_1` shows no signal at h5
 
@@ -1278,26 +1307,25 @@ it does mean h5 carries nothing.)
 
 ## What this settles
 
-1. Sigma is stable at ~0.27 (h5, n=200). Not period-dependent.
-2. `SIGMA_PLAN_CEILING = 0.10` is unreachable by any universe size available
-   here, because effective breadth is ~17.
-3. The approved 1C floors assumed sigma ~0.071. That assumption is **refuted**,
-   not merely unmet.
-4. Single-factor IC promotion at this scale requires ~180 as-of dates — roughly
-   **7 years** of non-overlapping h20 evidence, or a materially different
-   statistic.
+1. `mom_12_1` is not useful at h5 in this sample.
+2. Daily h5 IC is much noisier than an independent-name null benchmark.
+3. The original fixed sample floors are not validated by this run.
+4. Promotion must remain disabled.
 
 ## What it does NOT settle
 
-- h20 sigma level (only h5 measured directly here; h20 point estimates remain
-  0.14–0.27 at n=12).
+- h20 sigma or power; h5 cannot be transferred to h20.
+- Effective breadth or the contribution of correlation versus factor
+  non-stationarity and changing coverage.
+- Whether n=400 reduces sampling variance on matched dates.
+- Whether point-in-time sector-neutral IC improves stability.
 - Whether a *different* edge has signal. Only `mom_12_1` was run.
 - `per_fold` cadence remains an approximation — this is a planning measurement,
   **not promotion evidence**.
 
 ## Consequence
 
-Promotion stays disabled. The approved sample floors rest on a refuted
-assumption and need re-derivation against sigma ~0.27 and n_eff ~17 — which is
-an architecture decision, not a parameter tweak. Open Decisions #3 and #4 stay
-moot until it is taken.
+Promotion stays disabled. Continue only bounded, predeclared measure-only
+experiments. Record per-date cross-section and provenance, compare matched
+universes, and do not derive production thresholds from this single edge and
+horizon.

@@ -49,4 +49,4 @@ CLAUDE_CODE_*.md
 
 # temporary OOS sigma measurement harness + its output
 lib/edges/__oos-measure.test.ts
-oos-sigma-result.json
+oos-sigma-*.json

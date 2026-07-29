@@ -163,6 +163,7 @@ describe("runOosFolds", () => {
     // Raw last-close ordering and next-day return ordering are opposed here.
     // A lower-is-better edge must invert that raw IC to positive evidence.
     expect(r.perDate[0].ic).toBeGreaterThan(0);
+    expect(r.perDate[0].crossSection).toBe(3);
   });
 });
 

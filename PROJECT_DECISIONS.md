@@ -822,6 +822,10 @@ Category: Product / Architecture / Data / Safety
 
 ## 2026-07-28 — Single-factor IC promotion is CLOSED; the edge lab is permanently diagnostic
 
+**Status: Superseded later on 2026-07-28.** The measurement remains part of the
+audit record, but the effective-breadth inference and permanent closure below
+were invalid. See the correction immediately after this entry.
+
 - **Context:** `features/walk-forward-ic-folds` built the full purged out-of-sample
   stack (PIT universe, disjoint folds, no-lookahead runner, HAC aggregation) and
   measured what it was built to measure.
@@ -851,3 +855,23 @@ Category: Product / Architecture / Data / Safety
 - **Honest framing:** the machinery is correct and the refusal is correct. The
   finding is that single-factor IC promotion is not reachable at this scale —
   which is a real result, not a failure of the build.
+
+## 2026-07-28 — Correction: IC promotion remains dormant and measure-only
+
+- **Error corrected:** The observed h5 time-series standard deviation of daily
+  Spearman IC cannot be inverted with `1/sqrt(n-3)` to estimate independent
+  breadth. It combines cross-sectional sampling error, true IC variation over
+  time, changing membership, and data coverage. The artifact did not retain
+  successful-date cross-section counts, so those components are not identified.
+- **Horizon safety:** An h5 dispersion estimate cannot determine h20 power or
+  sample requirements. `mom_12_1` showing no h5 signal does not resolve its h20
+  behavior.
+- **Decision:** Reverse permanent closure. Keep policy promotion fail-closed and
+  scoring unchanged. Permit bounded measure-only work: matched-date n=200 versus
+  n=400, point-in-time sector-neutral IC, and matched-horizon evidence.
+- **Evidence contract:** Future OOS artifacts must retain per-date usable
+  cross-section and provenance. Experiment lineage, PIT inputs, costs,
+  dependence adjustment, and matched edge/formula/market/horizon bindings remain
+  prerequisites to any promotion.
+- **Operational effect:** None. This correction cannot buy, sell, promote a
+  strategy, or change a production score.

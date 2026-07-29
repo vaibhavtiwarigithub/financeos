@@ -16,7 +16,6 @@
 
 import { spearman } from "@/lib/edges/ic";
 import { sliceAsOf } from "@/lib/edges/data";
-import { crossSectionalZ } from "@/lib/edges/standardize";
 import { aggregateOosIc, type Fold, type OosIcAggregate } from "@/lib/edges/folds";
 import type { Candle } from "@/lib/data/technicals";
 import type { EdgeDef, Market } from "@/lib/edges/types";
@@ -90,13 +89,14 @@ export function computeDateIc(input: DateIcInput): DateIcResult {
     return { ok: false, asOf, reason: "cross_section_below_min", crossSection: raw.length };
   }
 
-  // Winsorize + z-score across the cross-section, matching the standard IC path.
-  // Rank correlation is invariant to this, but it keeps one pipeline shape and
-  // drops the same outliers the production path drops.
-  const z = crossSectionalZ(raw);
-  const pairs = z
+  // Spearman already ranks observations, so magnitude outliers cannot dominate
+  // it. Winsorizing first is not invariant: clipping both tails creates
+  // artificial ties and can change the IC. Keep raw finite values here; z-scores
+  // remain useful for the edge display surface, but not for rank-correlation
+  // evidence.
+  const pairs = raw
     .map((v, i) => ({ v, r: fwd[i] }))
-    .filter((p): p is { v: number; r: number } => p.v != null && Number.isFinite(p.r));
+    .filter((p) => Number.isFinite(p.v) && Number.isFinite(p.r));
   if (pairs.length < minCrossSection) {
     return { ok: false, asOf, reason: "cross_section_below_min", crossSection: pairs.length };
   }
@@ -116,7 +116,7 @@ export interface OosRunReport {
   foldCount: number;
   datesEvaluated: number;
   /** Full audit series: enough to recompute aggregate mean/sigma/HAC externally. */
-  perDate: Array<{ date: string; ic: number; foldIndex: number }>;
+  perDate: Array<{ date: string; ic: number; foldIndex: number; crossSection: number }>;
   datesSkipped: Array<{ asOf: string; reason: string; crossSection: number }>;
   aggregate: OosIcAggregate | null;
   /** Plain-language verdict on the Annex F stop condition. */
@@ -143,7 +143,7 @@ export function runOosFolds(opts: {
 }): OosRunReport {
   const { folds, universeByDate, series, benchmark, edge, market, horizonSessions, stepSessions, minCrossSection } = opts;
 
-  const perDate: Array<{ date: string; ic: number; foldIndex: number }> = [];
+  const perDate: Array<{ date: string; ic: number; foldIndex: number; crossSection: number }> = [];
   const skipped: OosRunReport["datesSkipped"] = [];
 
   for (const fold of folds) {
@@ -164,6 +164,7 @@ export function runOosFolds(opts: {
           date: r.asOf,
           ic: edge.expectedSign < 0 ? -r.ic : r.ic,
           foldIndex: fold.index,
+          crossSection: r.crossSection,
         });
       }
       else skipped.push({ asOf: r.asOf, reason: r.reason, crossSection: r.crossSection });
