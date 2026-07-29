@@ -1214,6 +1214,38 @@ question is resolved.
 
 ---
 
+# Annex L - Immutable bounded OOS runs (2026-07-29)
+
+The first two runs under the immutable manifest contract completed in
+production. Both used code `cb538a77b8572ba76739faffc321cec9990ddb27`,
+adjusted candles bounded at `2026-07-28`, persisted per-date PIT membership,
+and no approximations. They are evidence collection only. Promotion remains
+dormant.
+
+| Experiment | Variant | Dates | Mean IC | Sigma | HAC t | Universe errors |
+|---|---:|---:|---:|---:|---:|---:|
+| `d61c4990-f03a-4b0d-919f-a3d4e604428b` h5 | n=200 | 3 | -0.1934 | 0.4404 | -0.93 | 0 |
+| same dates/snapshots | n=400 | 3 | -0.1678 | 0.4323 | -0.82 | 0 |
+| `b7a1eba5-70eb-4d48-8f76-6e16582b431b` h20 | n=200 | 3 | -0.0902 | 0.4681 | -0.44 | 0 |
+
+The matched h5 result does not support the claim that increasing the
+cross-section from 200 to 400 will normalize temporal IC dispersion: sigma
+changed by only 0.0081 on the same dates. The direct h20 result is also noisy,
+so h5 dispersion must not be transferred to h20. Three dates are far below a
+decision-grade sample and the recent negative means do not establish that the
+factor is permanently dead. The correct next action is to accumulate more
+predeclared PIT dates and test sector-neutral IC before any strategy-return or
+promotion work.
+
+Plan fingerprints:
+
+- h5 matched family:
+  `43775a8d831304c5fc3552e3c2d3c3b134e9ad4bd6f0052bc4b4df8eb3bb64ae`
+- h20 family:
+  `59d2f383e546bd2e27f718a35f0206fc83eec004100679ec843c6ef94b621ae0`
+
+---
+
 # Annex J — 2026-07-28 adversarial review blockers
 
 The following are hard blockers before promotion can be enabled:
