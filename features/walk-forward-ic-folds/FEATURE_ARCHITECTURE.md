@@ -1237,6 +1237,12 @@ factor is permanently dead. The correct next action is to accumulate more
 predeclared PIT dates and test sector-neutral IC before any strategy-return or
 promotion work.
 
+Annex K's corrected 80-date raw-rank rerun later measured pooled h5 sigma
+`0.2639`. This does not conflict with the three-date `0.4404`: the latter is a
+very wide recent-window estimate. The rerun does not support winsorization as
+the explanation, although the old artifact lacks enough universe provenance
+for a clean method-only comparison.
+
 Plan fingerprints:
 
 - h5 matched family:
@@ -1286,15 +1292,22 @@ Primary references:
 
 ---
 
-# Annex K — Multi-period h5 dispersion diagnostic (2026-07-28, invalidated)
+# Annex K — Multi-period h5 dispersion diagnostic (corrected 2026-07-29)
 
-**Invalidated 2026-07-29:** the values in this annex were computed after
-2%-tail winsorization. Spearman correlation already ranks observations;
-clipping created artificial ties and changed the statistic. The permanent
-closure and `n_eff ≈ 17` inference were already superseded in
-`PROJECT_DECISIONS.md`; the numeric `0.2683` estimate below is now retained only
-as an audit record and must not be compared as a valid estimate against Annex
-L. A corrected, immutable 80-date diagnostic is required.
+The original run applied 2%-tail winsorization before Spearman. That was
+unnecessary because Spearman already ranks observations, and clipping creates
+artificial ties. The design was rerun with raw finite values under immutable
+diagnostic experiment `2b7cf834-b516-48bd-9533-d2511229e7f6`, fixed cutoff
+`2026-07-28`, persisted fold-anchor snapshots, and code
+`88c963f14ef6e8651076055b774b10628b844771`.
+
+The corrected run measured pooled sigma **0.2639**, close to the old 0.2665.
+This does not support winsorization as the explanation for Annex L's three-date
+sigma of 0.4404; the shorter, recent date sample is the material design
+difference. This is not a clean one-variable comparison because the old
+artifact omitted its members and its four universe fingerprints differ from
+the newly persisted trailing-ADV snapshots. The permanent closure and
+`n_eff ≈ 17` inference remain superseded in `PROJECT_DECISIONS.md`.
 
 Design: `mom_12_1`, US, **horizon 5** (step 5), 4 folds x 20 dates = **80 as-of
 dates**, universe **held at 200**, `per_fold` cadence, adjusted prices. 320
@@ -1309,12 +1322,13 @@ decompose the sources of variance.
 
 | Fold | Period | mean IC | sigma |
 |---|---|---|---|
-| 0 | 2024-12-13 .. 2025-05-05 | −0.0138 | 0.2287 |
-| 1 | 2025-05-13 .. 2025-09-29 | +0.0385 | 0.2462 |
-| 2 | 2025-10-07 .. 2026-02-24 | −0.0222 | 0.2863 |
-| 3 | 2026-03-04 .. 2026-07-21 | +0.0333 | 0.3118 |
+| 0 | 2024-12-13 .. 2025-05-05 | -0.0124 | 0.2286 |
+| 1 | 2025-05-13 .. 2025-09-29 | +0.0331 | 0.2254 |
+| 2 | 2025-10-07 .. 2026-02-24 | -0.0069 | 0.2818 |
+| 3 | 2026-03-04 .. 2026-07-21 | +0.0423 | 0.3235 |
 
-**spread 0.2287–0.3118, max/min = 1.36x, sd of sigma = 0.0377, mean = 0.2683.**
+**Pooled n=80: mean IC 0.0140, sigma 0.2639, HAC t 0.51. Fold sigma
+spread: 0.2254-0.3235.**
 
 The four estimates provide a useful range, but they rise monotonically and each
 uses only 20 dates. They do not prove stationarity, and they cannot explain
@@ -1324,7 +1338,7 @@ small to settle h20 dispersion.
 
 ## Result 2 — effective breadth is not identified
 
-Realized sigma **0.2683** against a theoretical **0.0712** at n=200 — **3.77x**.
+Realized pooled sigma **0.2639** against a theoretical **0.0712** at n=200.
 
 That comparison is diagnostic only. `1/sqrt(n-3)` is not an estimator that can
 turn observed time-series variance of Spearman IC into independent-name count.
@@ -1352,8 +1366,8 @@ Statistical basis for the correction:
 
 ## Result 3 — `mom_12_1` shows no signal at h5
 
-Fold signs **[−1, +1, −1, +1]** — alternating across four independent periods.
-Pooled mean IC **0.0089**, t_HAC **0.32**.
+Fold signs **[-1, +1, -1, +1]** - alternating across four independent periods.
+Pooled mean IC **0.0140**, t_HAC **0.51**.
 
 Not weak-but-positive. No consistent sign at all. (The h20 runs were [+1, +1],
 so this is horizon-specific and does not condemn the factor at 20 sessions — but
