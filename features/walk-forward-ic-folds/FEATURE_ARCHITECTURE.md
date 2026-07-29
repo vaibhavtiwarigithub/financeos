@@ -1218,10 +1218,13 @@ question is resolved.
 
 The following are hard blockers before promotion can be enabled:
 
-1. **Experiment lineage is scope-only today.** `backtest_experiments` binds
-   market and segment, but not `edge_id`, evidence horizon, formula version, or
-   the immutable OOS run fingerprint. The route and RPC must both verify all of
-   those fields. Same-market/same-segment experiments are not interchangeable.
+1. **Experiment lineage implementation (completed 2026-07-29).**
+   `backtest_experiments` now binds `edge_id`, evidence horizon, formula
+   version, trial family, universe policy, cutoff, code version, the canonical
+   immutable plan hash, and write-once realized universe/dataset/run hashes.
+   `runBoundOosVariant()` constructs the provider run from that manifest and
+   enforces the data cutoff. The dormant promotion boundary still needs to
+   independently verify these identities before it may ever be enabled.
 2. **Liquidity is not trailing ADV.** `resolvePitUniverse()` currently ranks one
    session's adjusted close times volume. The approved contract says trailing
    PIT dollar volume. An event-volume spike can therefore enter the universe

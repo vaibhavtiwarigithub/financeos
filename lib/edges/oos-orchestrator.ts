@@ -30,6 +30,7 @@ import {
 import { runOosFolds, type OosRunReport } from "@/lib/edges/oos-runner";
 import { loadPitSnapshot, persistPitSnapshot } from "@/lib/edges/pit-snapshot";
 import { createServiceClient } from "@/lib/supabase/service";
+import { sha256Fingerprint } from "@/lib/edges/fingerprint";
 import type { Candle } from "@/lib/data/technicals";
 import type { EdgeDef, Market } from "@/lib/edges/types";
 
@@ -47,7 +48,13 @@ import type { EdgeDef, Market } from "@/lib/edges/types";
 export type MembershipCadence = "per_date" | "per_fold";
 
 export interface OrchestrationReport {
-  reportSchemaVersion: 2;
+  reportSchemaVersion: 3;
+  dataCutoff: string;
+  datasetFingerprint?: string;
+  universeFingerprint?: string;
+  planFingerprint?: string;
+  runFingerprint?: string;
+  variantId?: string;
   run: OosRunReport | null;
   folds: Fold[];
   membershipCadence: MembershipCadence;
@@ -77,6 +84,7 @@ export function sessionsFromCandles(candles: Candle[]): string[] {
 async function fetchSeries(
   symbols: string[],
   rangeDays: number,
+  dataCutoff: string,
   concurrency = 6,
 ): Promise<{ series: Map<string, Candle[]>; missing: string[] }> {
   const series = new Map<string, Candle[]>();
@@ -89,7 +97,8 @@ async function fetchSeries(
       const sym = queue.shift();
       if (!sym) return;
       const c = await fetchYahooCandles(sym, range, { adjusted: true }).catch(() => [] as Candle[]);
-      if (c.length) series.set(sym, c);
+      const bounded = c.filter((row) => row.date <= dataCutoff);
+      if (bounded.length) series.set(sym, bounded);
       else missing.push(sym);
     }
   }
@@ -114,14 +123,18 @@ export async function orchestrateOosRun(opts: {
   apiKey?: string;
   /** Required for promotion-grade evidence; false is diagnostic-only. */
   persistSnapshots?: boolean;
+  /** Inclusive immutable data boundary. No candle after this date may enter the run. */
+  dataCutoff?: string;
   onProgress?: (msg: string) => void;
 }): Promise<OrchestrationReport> {
   const cadence = opts.membershipCadence ?? "per_date";
+  const dataCutoff = opts.dataCutoff ?? new Date().toISOString().slice(0, 10);
   const log = opts.onProgress ?? (() => {});
   const approximations: string[] = [];
   if (opts.universeSize > PIT_SNAPSHOT_SIZE) {
     return {
-      reportSchemaVersion: 2,
+      reportSchemaVersion: 3,
+      dataCutoff,
       run: null,
       folds: [],
       membershipCadence: cadence,
@@ -149,13 +162,13 @@ export async function orchestrateOosRun(opts: {
   }
 
   // 1. Session calendar from the benchmark. step = horizon => no label overlap.
-  const bench = await fetchYahooCandles(
+  const bench = (await fetchYahooCandles(
     opts.benchmarkSymbol,
     yahooRange(opts.historyDays),
     { adjusted: true },
-  );
+  )).filter((row) => row.date <= dataCutoff);
   if (!bench.length) {
-    return { reportSchemaVersion: 2, run: null, folds: [], membershipCadence: cadence, approximationsUsed: approximations,
+    return { reportSchemaVersion: 3, dataCutoff, run: null, folds: [], membershipCadence: cadence, approximationsUsed: approximations,
              universeErrors: [], universeSnapshots: [], snapshotsConfirmed: 0,
              symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: 0,
              fatal: `benchmark ${opts.benchmarkSymbol} returned no candles` };
@@ -191,14 +204,14 @@ export async function orchestrateOosRun(opts: {
     datesPerFold: opts.datesPerFold, stepSessions: opts.horizonSessions,
   });
   if (!built.ok) {
-    return { reportSchemaVersion: 2, run: null, folds: [], membershipCadence: cadence, approximationsUsed: approximations,
+    return { reportSchemaVersion: 3, dataCutoff, run: null, folds: [], membershipCadence: cadence, approximationsUsed: approximations,
              universeErrors: [], universeSnapshots: [], snapshotsConfirmed: 0,
              symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
              fatal: `${built.reason}: ${built.detail}` };
   }
   const disj = validateFoldDisjointness(built.folds);
   if (!disj.ok) {
-    return { reportSchemaVersion: 2, run: null, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
+    return { reportSchemaVersion: 3, dataCutoff, run: null, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
              universeErrors: [], universeSnapshots: [], snapshotsConfirmed: 0,
              symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
              fatal: `folds not disjoint: ${disj.violations.join("; ")}` };
@@ -287,7 +300,7 @@ export async function orchestrateOosRun(opts: {
     }
   }
   if (!universeByDate.size) {
-    return { reportSchemaVersion: 2, run: null, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
+    return { reportSchemaVersion: 3, dataCutoff, run: null, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
              universeErrors, universeSnapshots, snapshotsConfirmed,
              symbolsFetched: 0, symbolsMissingCandles: [], sessionsAvailable: sessions.length,
              fatal: "no PIT universe resolved for any as-of date" };
@@ -296,7 +309,7 @@ export async function orchestrateOosRun(opts: {
   // 4. Candles once per symbol across the union, then sliced per date.
   const union = [...new Set([...universeByDate.values()].flat())];
   log(`fetching candles for ${union.length} symbols`);
-  const { series, missing } = await fetchSeries(union, opts.historyDays);
+  const { series, missing } = await fetchSeries(union, opts.historyDays, dataCutoff);
   log(`candles: ${series.size} ok, ${missing.length} missing`);
 
   // 5. Run.
@@ -306,8 +319,32 @@ export async function orchestrateOosRun(opts: {
     stepSessions: opts.horizonSessions, minCrossSection: opts.minCrossSection,
   });
 
+  const universeFingerprint = sha256Fingerprint(
+    universeSnapshots
+      .map((snapshot) => ({
+        resolvedAsOf: snapshot.resolvedAsOf,
+        fingerprint: snapshot.fingerprint,
+        selectionSize: snapshot.selectionSize,
+      }))
+      .sort((a, b) => a.resolvedAsOf.localeCompare(b.resolvedAsOf)),
+  );
+  const datasetFingerprint = sha256Fingerprint({
+    market: opts.market,
+    dataCutoff,
+    benchmark: bench.map((c) => [c.date, c.open, c.high, c.low, c.close, c.volume]),
+    symbols: [...series.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([symbol, candles]) => [
+        symbol,
+        candles.map((c) => [c.date, c.open, c.high, c.low, c.close, c.volume]),
+      ]),
+  });
+
   return {
-    reportSchemaVersion: 2,
+    reportSchemaVersion: 3,
+    dataCutoff,
+    datasetFingerprint,
+    universeFingerprint,
     run, folds: built.folds, membershipCadence: cadence, approximationsUsed: approximations,
     universeErrors, universeSnapshots, snapshotsConfirmed,
     symbolsFetched: series.size, symbolsMissingCandles: missing,

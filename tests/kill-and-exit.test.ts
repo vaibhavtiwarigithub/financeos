@@ -250,7 +250,20 @@ describe("Test 9a — real checkKillSwitches auto-disables on a breach (blocks n
       if (q.table === "strategy_config") return { data: { ks_daily_loss_pct: -20, ks_drawdown_pct: 25, ks_accuracy_pct: 40 }, error: null };
       if (q.table === "paper_portfolio") return { data: { nav: 1000000 }, error: null };
       if (q.table === "paper_performance") return { data: [{ date: "2026-01-01", nav: 1000000, market: "india" }], error: null };
-      if (q.table === "paper_trades") return { data: outcomes.map(outcome => ({ outcome, market: "india" })), error: null };
+      if (q.table === "paper_trades") return {
+        data: outcomes.map((outcome, index) => ({
+          outcome,
+          market: "india",
+          symbol: `TEST${index}`,
+          qty: 1,
+          fill_price: 100,
+          realized_pnl: outcome === "win" ? 2 : outcome === "loss" ? -2 : 0,
+          executed_at: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
+          closed_at: new Date(Date.now() - index * 60_000).toISOString(),
+          tainted: false,
+        })),
+        error: null,
+      };
       if (q.table === "broker_orders") return { data: [], error: null };
       return { data: null, error: null };
     };
@@ -275,6 +288,33 @@ describe("Test 9a — real checkKillSwitches auto-disables on a breach (blocks n
     ]);
     expect(result).toMatchObject({ safe: false, tripped: "accuracy" });
     expect(result.reason).toContain("(20 trades)");
+  });
+
+  it("does not let pyramid lots from one exit satisfy the 20-episode floor", async () => {
+    const closedAt = new Date().toISOString();
+    const resolver: Resolver = (q) => {
+      if (q.table === "strategy_config") return { data: { ks_daily_loss_pct: -20, ks_drawdown_pct: 25, ks_accuracy_pct: 40 }, error: null };
+      if (q.table === "paper_portfolio") return { data: { nav: 1000000 }, error: null };
+      if (q.table === "paper_performance") return { data: [{ date: "2026-01-01", nav: 1000000, market: "india" }], error: null };
+      if (q.table === "paper_trades") return {
+        data: Array.from({ length: 25 }, (_, index) => ({
+          symbol: "PYRAMID.NS",
+          qty: 1,
+          fill_price: 100 + index,
+          realized_pnl: -2,
+          closed_at: closedAt,
+          executed_at: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString(),
+          tainted: false,
+          market: "india",
+        })),
+        error: null,
+      };
+      if (q.table === "broker_orders") return { data: [], error: null };
+      return { data: null, error: null };
+    };
+    const real = await vi.importActual<typeof import("@/lib/kill-switches")>("@/lib/kill-switches");
+    const result = await real.checkKillSwitches(makeClient(resolver) as any, { market: "india", book: "paper" });
+    expect(result.safe).toBe(true);
   });
 
   it("fails closed when kill-switch configuration cannot be read", async () => {

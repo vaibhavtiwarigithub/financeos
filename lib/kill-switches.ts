@@ -18,6 +18,7 @@
 import { DEFAULT_KILL_SWITCH_DIALS } from "@/lib/risk-profiles";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { setMarketTrading } from "@/lib/market-controls";
+import { classifyOutcome } from "@/lib/trade-outcome";
 
 export type TradingBook = "paper" | "live";
 
@@ -57,6 +58,63 @@ const LIVE_SNAPSHOT_MAX_AGE_MS =
 // noisy to halt a whole market. Breakevens are excluded from both numerator and
 // denominator. Daily-loss/drawdown brakes remain immediate at every sample size.
 export const MIN_ACCURACY_SAMPLE = 20;
+const MAX_PAPER_OUTCOME_ROWS = 5000;
+
+type PaperOutcomeRow = {
+  symbol?: string | null;
+  qty?: number | string | null;
+  quantity?: number | string | null;
+  fill_price?: number | string | null;
+  entry_price?: number | string | null;
+  realized_pnl?: number | string | null;
+  closed_at?: string | null;
+  exit_at?: string | null;
+  executed_at?: string | null;
+  tainted?: boolean | null;
+};
+
+/** Aggregate pyramid lots closed together into one independent exit episode. */
+export function aggregatePaperExitAccuracy(
+  rows: PaperOutcomeRow[],
+  nowMs = Date.now(),
+): { wins: number; total: number; episodes: number } | null {
+  const cutoffMs = nowMs - 30 * 24 * 60 * 60 * 1000;
+  const episodes = new Map<string, { pnl: number; cost: number }>();
+
+  for (const row of rows) {
+    if (row.tainted === true) continue;
+    const eventAt = row.closed_at ?? row.exit_at ?? row.executed_at;
+    const eventMs = eventAt ? new Date(eventAt).getTime() : NaN;
+    if (!Number.isFinite(eventMs) || eventMs < cutoffMs || eventMs > nowMs) continue;
+
+    const symbol = String(row.symbol ?? "").trim().toUpperCase();
+    const qty = Number(row.qty ?? row.quantity);
+    const entry = Number(row.fill_price ?? row.entry_price);
+    const pnl = Number(row.realized_pnl);
+    if (!symbol || !Number.isFinite(qty) || qty <= 0 ||
+        !Number.isFinite(entry) || entry <= 0 || !Number.isFinite(pnl)) continue;
+
+    const key = `${symbol}|${eventAt}`;
+    const episode = episodes.get(key) ?? { pnl: 0, cost: 0 };
+    episode.pnl += pnl;
+    episode.cost += entry * qty;
+    episodes.set(key, episode);
+  }
+
+  let wins = 0;
+  let directional = 0;
+  for (const episode of episodes.values()) {
+    if (!(episode.cost > 0)) continue;
+    const outcome = classifyOutcome((episode.pnl / episode.cost) * 100);
+    if (outcome === "breakeven") continue;
+    directional++;
+    if (outcome === "win") wins++;
+  }
+
+  return directional >= MIN_ACCURACY_SAMPLE
+    ? { wins, total: directional, episodes: episodes.size }
+    : null;
+}
 
 // Per-market scope helper. The production schema has required market columns;
 // an unscoped retry would mix USD/INR risk truth and is forbidden.
@@ -120,65 +178,6 @@ async function getLiveNavSeries(
   const peak90 = navs.length > 0 ? Math.max(...navs) : current;
 
   return { current, yesterday, peak90, newestAt };
-}
-
-// Estimate live trade accuracy from broker_orders filled pairs.
-// Approximation: most recent prior BUY avg_fill_price vs SELL avg_fill_price.
-// Returns null when fewer than MIN_ACCURACY_SAMPLE directional pairs exist.
-async function getLiveAccuracy(
-  supabase: any,
-  market: string,
-): Promise<{ wins: number; total: number } | null> {
-  const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: sells, error: sellsError } = await supabase
-    .from("broker_orders")
-    .select("symbol, avg_fill_price, created_at")
-    .eq("market", market)
-    .eq("broker_env", "live")
-    .eq("side", "sell")
-    .eq("status", "filled")
-    .gte("created_at", since30);
-
-  if (sellsError) throw new Error(`live sell-history read failed (${market}): ${sellsError.message}`);
-
-  if (!sells || (sells as any[]).length < MIN_ACCURACY_SAMPLE) return null;
-
-  const symbols = [...new Set((sells as any[]).map((s: any) => s.symbol as string))];
-  const since180 = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: buys, error: buysError } = await supabase
-    .from("broker_orders")
-    .select("symbol, avg_fill_price, created_at")
-    .eq("market", market)
-    .eq("broker_env", "live")
-    .eq("side", "buy")
-    .eq("status", "filled")
-    .in("symbol", symbols)
-    .gte("created_at", since180);
-
-  if (buysError) throw new Error(`live buy-history read failed (${market}): ${buysError.message}`);
-
-  const buysBySymbol: Record<string, any[]> = {};
-  for (const b of (buys ?? []) as any[]) {
-    (buysBySymbol[b.symbol] ??= []).push(b);
-  }
-
-  let wins = 0;
-  let counted = 0;
-  for (const sell of (sells as any[])) {
-    const prior = (buysBySymbol[sell.symbol] ?? [])
-      .filter((b: any) => b.created_at < sell.created_at)
-      .sort((a: any, b: any) =>
-        (b.created_at as string).localeCompare(a.created_at),
-      )[0];
-    if (!prior) continue;
-    const sellPrice = Number(sell.avg_fill_price);
-    const buyPrice = Number(prior.avg_fill_price);
-    if (!Number.isFinite(sellPrice) || !Number.isFinite(buyPrice) || sellPrice === buyPrice) continue;
-    counted++;
-    if (sellPrice > buyPrice) wins++;
-  }
-
-  return counted >= MIN_ACCURACY_SAMPLE ? { wins, total: counted } : null;
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -287,16 +286,11 @@ export async function checkKillSwitches(
     nav = liveSeries.current;
     yesterday = liveSeries.yesterday;
     peak = liveSeries.peak90;
-    try {
-      accuracyData = await getLiveAccuracy(supabase, market);
-    } catch (error) {
-      return {
-        safe: false,
-        sellAllowed: true,
-        tripped: "no_baseline",
-        reason: `${error instanceof Error ? error.message : "Live trade-history read failed"} — BUY fail-closed. (SELL still permitted with held-qty verification.)`,
-      };
-    }
+    // Filled broker orders do not provide reconciled tax-lot/position episodes.
+    // Pairing each SELL with the latest BUY is wrong under pyramiding and partial
+    // fills, so it must not halt real trading. Daily-loss and drawdown continue
+    // to use broker-confirmed account NAV.
+    accuracyData = null;
   } else {
     // Paper path (original): paper_portfolio, paper_performance, paper_trades.
     const [portfolioResult, performanceResult, tradesResult] =
@@ -318,12 +312,12 @@ export async function checkKillSwitches(
         scoped(
           supabase
             .from("paper_trades")
-            .select("outcome, executed_at, realized_pnl, market")
+            .select(
+              "symbol,qty,quantity,fill_price,entry_price,realized_pnl,closed_at,exit_at,executed_at,tainted,market",
+            )
             .not("outcome", "is", null)
-            .gte(
-              "executed_at",
-              new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-            ),
+            .order("closed_at", { ascending: false, nullsFirst: false })
+            .limit(MAX_PAPER_OUTCOME_ROWS + 1),
           market,
         ),
       ]);
@@ -340,6 +334,14 @@ export async function checkKillSwitches(
     const portfolio = portfolioResult.data;
     const recentPerf = performanceResult.data;
     const closedTrades = tradesResult.data;
+    if ((closedTrades ?? []).length > MAX_PAPER_OUTCOME_ROWS) {
+      return {
+        safe: false,
+        sellAllowed: false,
+        tripped: "no_baseline",
+        reason: `Paper outcome history exceeded the bounded ${MAX_PAPER_OUTCOME_ROWS}-row safety read for ${market.toUpperCase()} — trading fail-closed until the risk query is paginated.`,
+      };
+    }
 
     nav = Number(portfolio.nav);
     if (!Number.isFinite(nav) || nav <= 0) {
@@ -359,13 +361,7 @@ export async function checkKillSwitches(
     peak =
       navHistory.length > 0 ? Math.max(...navHistory, startNav) : null;
 
-    const directionalOutcomes = (closedTrades ?? []).filter(
-      (trade: any) => trade.outcome === "win" || trade.outcome === "loss",
-    );
-    if (directionalOutcomes.length >= MIN_ACCURACY_SAMPLE) {
-      const wins = directionalOutcomes.filter((trade: any) => trade.outcome === "win").length;
-      accuracyData = { wins, total: directionalOutcomes.length };
-    }
+    accuracyData = aggregatePaperExitAccuracy(closedTrades ?? []);
   }
 
   // A live risk-switch trip halts NEW exposure (BUY) but must not block a
