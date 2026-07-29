@@ -60,7 +60,13 @@ describe("governed historical evidence intake", () => {
 
     const newHeaders = ["TradDt", "TckrSymb", "SctySrs", "OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol", "TtlTrfVal"];
     const current = normalizeNseRow(newHeaders, ["2025-07-29", "TCS", "EQ", "3000", "3100", "2990", "3050", "50", "152500"], "def");
-    expect(current).toMatchObject({ symbol: "TCS", session_date: "2025-07-29", high: 3100 });
+    expect(current).toMatchObject({
+      symbol: "TCS",
+      session_date: "2025-07-29",
+      high: 3100,
+      volume: 50,
+      turnover: 152500,
+    });
     expect(() => assertNseSessionDate(current!, "2025-07-28", "stale.zip")).toThrow(
       /contains 2025-07-29; expected 2025-07-28/,
     );

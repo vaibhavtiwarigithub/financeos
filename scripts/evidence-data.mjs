@@ -841,7 +841,7 @@ export function normalizeNseRow(headers, values, sourceHash) {
     high: numberField(udiff ? row.HGHPRIC : row.HIGH),
     low: numberField(udiff ? row.LWPRIC : row.LOW),
     close: numberField(udiff ? row.CLSPRIC : row.CLOSE),
-    volume: numberField(udiff ? row.TTLTRDGVOL : row.TOTTRDQTY),
+    volume: numberField(udiff ? row.TTLTRADGVOL : row.TOTTRDQTY),
     turnover: numberField(udiff ? row.TTLTRFVAL : row.TOTTRDVAL),
     currency: "INR",
     price_basis: "raw",
@@ -927,7 +927,7 @@ async function fetchNse(args) {
   }
   if (!files.length) throw new Error("NSE returned no files for the requested range");
 
-  const normalizedDir = path.join(STORE, "normalized", "nse-bhavcopy", `${from}-${to}-v5`);
+  const normalizedDir = path.join(STORE, "normalized", "nse-bhavcopy", `${from}-${to}-v6`);
   await ensureDir(normalizedDir);
   const normalizedPath = path.join(normalizedDir, "daily-bars.jsonl");
   const normalizedPartial = `${normalizedPath}.partial`;
@@ -967,7 +967,7 @@ async function fetchNse(args) {
     mediaType: "application/x-ndjson",
   });
   return writeManifest(buildManifest({
-    datasetId: `nse-bhavcopy-${from}-${to}-v5`,
+    datasetId: `nse-bhavcopy-${from}-${to}-v6`,
     sourceId: "nse-bhavcopy",
     sourceAuthority: "official",
     evidenceClass: "diagnostic",
@@ -976,7 +976,7 @@ async function fetchNse(args) {
     sourceVersion: `${from}..${to}`,
     files,
     coverage: { start: from, end: to, expectedFiles: candidates.length, receivedFiles: files.length - 1 },
-    normalization: normalizerIdentity("nse-daily-bars.jsonl.v1"),
+    normalization: normalizerIdentity("nse-daily-bars.jsonl.v2"),
     limitations: [
       `Unreconciled non-weekend dates without files: ${missingWeekdays.join(",") || "none"}.`,
       "Raw prices are not corporate-action-adjusted.",

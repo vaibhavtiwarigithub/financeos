@@ -29,7 +29,7 @@ const STORE = path.resolve(process.env.KAIROS_EVIDENCE_DIR || path.join(os.homed
 const DEFAULT_PRICE_MANIFEST = path.join(
   STORE,
   "manifests",
-  "nse-bhavcopy-2020-01-01-2026-07-29-v5.json",
+  "nse-bhavcopy-2020-01-01-2026-07-29-v6.json",
 );
 const DEFAULT_ACTION_MANIFEST = path.join(
   STORE,
