@@ -10,7 +10,7 @@
  */
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
-import { loadEnvConfig } from "@next/env";
+import nextEnv from "@next/env";
 import { EDGES } from "../lib/edges/registry";
 import {
   completeOosExperiment,
@@ -26,7 +26,7 @@ function readEnvValue(name: string): string | undefined {
 }
 
 async function main(): Promise<void> {
-  loadEnvConfig(process.cwd());
+  nextEnv.loadEnvConfig(process.cwd());
   const path = process.argv[2];
   if (!path) throw new Error("Manifest path is required.");
   const manifest = JSON.parse(fs.readFileSync(path, "utf8")) as OosExperimentManifest;
