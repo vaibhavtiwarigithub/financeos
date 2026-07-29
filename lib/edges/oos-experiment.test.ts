@@ -64,7 +64,15 @@ describe("OOS experiment manifest", () => {
     expect(() => validateOosManifest({
       ...manifest(),
       membershipCadence: "per_fold" as "per_date",
-    })).toThrow("persisted per-date");
+    })).toThrow("per-date PIT");
+  });
+
+  it("permits an explicitly diagnostic per-fold plan without upgrading its evidence class", () => {
+    expect(() => validateOosManifest({
+      ...manifest(),
+      evidenceClass: "diagnostic",
+      membershipCadence: "per_fold",
+    })).not.toThrow();
   });
 
   it("registers the complete immutable identity before execution", async () => {

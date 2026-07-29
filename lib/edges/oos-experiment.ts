@@ -16,6 +16,8 @@ export interface OosVariant {
 
 export interface OosExperimentManifest {
   schemaVersion: 1;
+  /** Omitted by the two initial manifests; defaults to promotion_candidate. */
+  evidenceClass?: "diagnostic" | "promotion_candidate";
   hypothesis: string;
   author: "human" | "llm";
   edgeId: string;
@@ -33,7 +35,7 @@ export interface OosExperimentManifest {
   stepSessions: number;
   historyDays: number;
   liquidityWindowSessions: number;
-  membershipCadence: "per_date";
+  membershipCadence: "per_date" | "per_fold";
   persistSnapshots: true;
   minimumEvaluatedDates: number;
   dataCutoff: string;
@@ -73,8 +75,12 @@ export function validateOosManifest(manifest: OosExperimentManifest): void {
   if (manifest.universePolicyVersion !== PIT_POLICY_VERSION) {
     throw new Error(`Universe policy must be ${PIT_POLICY_VERSION}.`);
   }
-  if (manifest.membershipCadence !== "per_date" || manifest.persistSnapshots !== true) {
-    throw new Error("OOS evidence requires persisted per-date PIT membership.");
+  const evidenceClass = manifest.evidenceClass ?? "promotion_candidate";
+  if (manifest.persistSnapshots !== true) {
+    throw new Error("OOS evidence requires persisted PIT membership.");
+  }
+  if (evidenceClass === "promotion_candidate" && manifest.membershipCadence !== "per_date") {
+    throw new Error("Promotion-candidate OOS evidence requires per-date PIT membership.");
   }
   if (manifest.horizonSessions < 1 || manifest.stepSessions !== manifest.horizonSessions) {
     throw new Error("stepSessions must equal horizonSessions to avoid label overlap.");
@@ -238,6 +244,10 @@ export async function completeOosExperiment(opts: {
     || !report.datasetFingerprint
     || !report.universeFingerprint
     || (report.run?.datesEvaluated ?? 0) < opts.manifest.minimumEvaluatedDates
+    || (
+      (opts.manifest.evidenceClass ?? "promotion_candidate") === "promotion_candidate"
+      && report.approximationsUsed.length > 0
+    )
   )) {
     throw new Error("OOS experiment is incomplete or does not match its immutable plan.");
   }

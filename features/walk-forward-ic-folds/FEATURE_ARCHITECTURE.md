@@ -1286,7 +1286,15 @@ Primary references:
 
 ---
 
-# Annex K — Multi-period h5 dispersion diagnostic (2026-07-28, corrected)
+# Annex K — Multi-period h5 dispersion diagnostic (2026-07-28, invalidated)
+
+**Invalidated 2026-07-29:** the values in this annex were computed after
+2%-tail winsorization. Spearman correlation already ranks observations;
+clipping created artificial ties and changed the statistic. The permanent
+closure and `n_eff ≈ 17` inference were already superseded in
+`PROJECT_DECISIONS.md`; the numeric `0.2683` estimate below is now retained only
+as an audit record and must not be compared as a valid estimate against Annex
+L. A corrected, immutable 80-date diagnostic is required.
 
 Design: `mom_12_1`, US, **horizon 5** (step 5), 4 folds x 20 dates = **80 as-of
 dates**, universe **held at 200**, `per_fold` cadence, adjusted prices. 320
