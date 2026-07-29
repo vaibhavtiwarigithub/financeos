@@ -30,6 +30,12 @@ interface HistoricalRun {
   result_summary: HistoricalSummary | null;
   dataset_fingerprint: string | null;
   run_fingerprint: string | null;
+  quality_review: {
+    verdict: "accepted_diagnostic" | "invalidated";
+    reason_code: string;
+    detail: string;
+    superseded_by_experiment_id: string | null;
+  } | null;
 }
 
 function number(value: number | null | undefined, digits = 3) {
@@ -94,8 +100,18 @@ export default function HistoricalReplayPanel({ market }: { market: "us" | "indi
         const summary = run.result_summary;
         const aggregate = summary?.aggregate;
         const complete = Boolean(run.completed_at && summary);
+        const invalidated = run.quality_review?.verdict === "invalidated";
+        const accepted = run.quality_review?.verdict === "accepted_diagnostic";
+        const statusColor = invalidated ? T.red : accepted ? T.green : T.amber;
+        const statusLabel = invalidated
+          ? "INVALIDATED"
+          : accepted
+            ? "ACCEPTED · DIAGNOSTIC"
+            : complete
+              ? "AWAITING QUALITY REVIEW"
+              : "INCOMPLETE";
         return (
-          <div key={run.id} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "14px 16px", marginTop: "10px" }}>
+          <div key={run.id} style={{ background: T.card, border: `1px solid ${invalidated ? T.red : T.border}`, borderRadius: "8px", padding: "14px 16px", marginTop: "10px", opacity: invalidated ? 0.72 : 1 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
               <div>
                 <div style={{ fontSize: "13px", color: T.text, fontWeight: 700 }}>{run.edge_id.replaceAll("_", " ")}</div>
@@ -103,13 +119,18 @@ export default function HistoricalReplayPanel({ market }: { market: "us" | "indi
                   {summary?.plan?.dateFrom ?? "Unknown"} to {summary?.plan?.dateThrough ?? run.data_cutoff} · {run.horizon_sessions} sessions · {run.market.toUpperCase()}
                 </div>
               </div>
-              <span style={{ fontSize: "10px", fontWeight: 700, color: complete ? T.green : T.amber, border: `1px solid ${complete ? T.green : T.amber}55`, borderRadius: "4px", padding: "3px 7px" }}>
-                {complete ? "COMPLETED · DIAGNOSTIC" : "INCOMPLETE"}
+              <span style={{ fontSize: "10px", fontWeight: 700, color: statusColor, border: `1px solid ${statusColor}55`, borderRadius: "4px", padding: "3px 7px" }}>
+                {statusLabel}
               </span>
             </div>
 
             {complete && (
               <>
+                {run.quality_review?.detail && (
+                  <div style={{ fontSize: "11px", color: invalidated ? T.red : T.sub, marginTop: "10px" }}>
+                    {run.quality_review.detail}
+                  </div>
+                )}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(105px, 1fr))", gap: "8px", marginTop: "13px" }}>
                   {[
                     ["Dates", String(summary?.coverage?.evaluatedDates ?? aggregate?.n ?? 0)],

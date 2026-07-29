@@ -51,6 +51,11 @@ An experiment is inserted before normalized market rows are read. Its plan fixes
 `plan_fingerprint` is unique. A completed plan is never overwritten. Re-running
 the same plan returns the existing result; changing any input creates a new plan.
 
+Post-run defects do not rewrite that result. An append-only
+`backtest_experiment_quality_reviews` row marks the artifact
+`accepted_diagnostic` or `invalidated`, records the reason, and may point to its
+replacement. Backtest must show this review state prominently.
+
 ## 4. India Replay Method
 
 1. Verify the NSE daily-bar and corporate-action manifests byte-for-byte.

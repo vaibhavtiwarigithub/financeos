@@ -24,11 +24,26 @@ export async function GET() {
     return NextResponse.json({ error: "Historical experiment ledger unavailable" }, { status: 500 });
   }
 
+  const experimentIds = (data ?? []).map((row: Record<string, any>) => row.id);
+  const { data: reviews, error: reviewError } = experimentIds.length
+    ? await service
+        .from("backtest_experiment_quality_reviews")
+        .select("experiment_id,verdict,reason_code,detail,superseded_by_experiment_id,created_at")
+        .in("experiment_id", experimentIds)
+    : { data: [], error: null };
+  if (reviewError) {
+    return NextResponse.json({ error: "Historical quality ledger unavailable" }, { status: 500 });
+  }
+  const reviewByExperiment = new Map(
+    (reviews ?? []).map((review: Record<string, any>) => [review.experiment_id, review]),
+  );
+
   return NextResponse.json({
     runs: (data ?? []).map((row: Record<string, any>) => ({
       ...row,
       // The local path and service credentials are never stored or returned.
       result_summary: row.result_summary ?? null,
+      quality_review: reviewByExperiment.get(row.id) ?? null,
     })),
   });
 }

@@ -947,6 +947,12 @@ Completion reuses the existing write-once result and universe/dataset/run
 fingerprints. RLS and grants remain service-role-only. Raw historical rows remain
 outside Supabase and are never returned to the browser.
 
+`backtest_experiment_quality_reviews` is a one-row-per-experiment, append-only
+operator review. It records `accepted_diagnostic` or `invalidated`, a bounded
+reason/detail, and an optional replacement experiment. It never edits the
+immutable result. RLS is enabled; browser roles have no grants; service role can
+select/insert but cannot update/delete.
+
 Four additive tables (migration 149) backing `features/historical-replay-harness`. Internal, server-side/offline analyst tooling — RLS enabled with **no policy** (service_role bypasses RLS; all other roles denied). The P0–P4 harness code (`lib/replay/*`) runs on in-memory fixtures and does **not** depend on these tables; they persist frozen point-in-time eligibility runs when the harness is wired to persist. `replay_packets`/`replay_packet_items` are write-once by convention (assembler deep-freezes in memory).
 
 ### `replay_packets`
