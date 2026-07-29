@@ -1210,3 +1210,85 @@ Primary references:
 - Bailey, D.H., Borwein, J., López de Prado, M., and Zhu, Q.J. (2015), “The
   Probability of Backtest Overfitting,” *Journal of Computational Finance*,
   https://ssrn.com/abstract=2326253
+
+---
+
+# Annex K — Multi-period sigma study: STABLE, and universe size is not the lever (2026-07-28)
+
+Design: `mom_12_1`, US, **horizon 5** (step 5), 4 folds x 20 dates = **80 as-of
+dates**, universe **held at 200**, `per_fold` cadence, adjusted prices. 320
+symbols, **0 universe errors, 0 skipped dates**.
+
+Horizon 5 rather than 20 because the ~2-year entitlement holds ~100 as-of dates
+at h5 versus ~25 at h20 — four *independent* periods of 20 instead of four of 6.
+This measures STABILITY; h5 sigma need not equal h20 sigma in level.
+
+## Result 1 — sigma is STABLE
+
+| Fold | Period | mean IC | sigma |
+|---|---|---|---|
+| 0 | 2024-12-13 .. 2025-05-05 | −0.0138 | 0.2287 |
+| 1 | 2025-05-13 .. 2025-09-29 | +0.0385 | 0.2462 |
+| 2 | 2025-10-07 .. 2026-02-24 | −0.0222 | 0.2863 |
+| 3 | 2026-03-04 .. 2026-07-21 | +0.0333 | 0.3118 |
+
+**spread 0.2287–0.3118, max/min = 1.36x, sd of sigma = 0.0377, mean = 0.2683.**
+
+The earlier apparent instability (0.1436 vs 0.2706 at h20) was **small-sample
+noise at n=12**, exactly as the overlapping CIs indicated. Sigma has a stable
+central value. The question that blocked the universe experiment is answered.
+
+## Result 2 — the answer kills the universe experiment
+
+Realized sigma **0.2683** against a theoretical **0.0712** at n=200 — **3.77x**.
+
+Inverting `sigma = 1/sqrt(n_eff − 3)`:
+
+> **n_eff ≈ 17.** A 200-name cross-section behaves like ~17 independent names.
+
+Sigma is set by *effective breadth*, not name count. Correlation is binding, not
+sampling. Adding names adds correlated names, so the projected 1/sqrt(n) gains
+(n=400 → 0.0502, n=800 → 0.0354) will not be realized.
+
+**Recommendation: do NOT run the n=400 experiment.** It was predicated on the
+excess dispersion being sampling noise. It is not — it is factor structure, and
+now quantified. Running it would cost ~30 minutes of rate-limited calls to
+confirm a number already derivable from this one.
+
+At sigma 0.2683, detecting a 0.04 IC at t=2.0 needs **180 as-of dates**. The
+entitled window holds ~25 at h20.
+
+## Result 3 — `mom_12_1` shows no signal at h5
+
+Fold signs **[−1, +1, −1, +1]** — alternating across four independent periods.
+Pooled mean IC **0.0089**, t_HAC **0.32**.
+
+Not weak-but-positive. No consistent sign at all. (The h20 runs were [+1, +1],
+so this is horizon-specific and does not condemn the factor at 20 sessions — but
+it does mean h5 carries nothing.)
+
+## What this settles
+
+1. Sigma is stable at ~0.27 (h5, n=200). Not period-dependent.
+2. `SIGMA_PLAN_CEILING = 0.10` is unreachable by any universe size available
+   here, because effective breadth is ~17.
+3. The approved 1C floors assumed sigma ~0.071. That assumption is **refuted**,
+   not merely unmet.
+4. Single-factor IC promotion at this scale requires ~180 as-of dates — roughly
+   **7 years** of non-overlapping h20 evidence, or a materially different
+   statistic.
+
+## What it does NOT settle
+
+- h20 sigma level (only h5 measured directly here; h20 point estimates remain
+  0.14–0.27 at n=12).
+- Whether a *different* edge has signal. Only `mom_12_1` was run.
+- `per_fold` cadence remains an approximation — this is a planning measurement,
+  **not promotion evidence**.
+
+## Consequence
+
+Promotion stays disabled. The approved sample floors rest on a refuted
+assumption and need re-derivation against sigma ~0.27 and n_eff ~17 — which is
+an architecture decision, not a parameter tweak. Open Decisions #3 and #4 stay
+moot until it is taken.

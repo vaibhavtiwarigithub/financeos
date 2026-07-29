@@ -449,8 +449,8 @@
       "addedAt": "2026-07-27",
       "addReason": "Create a deterministic promotion boundary, while keeping it blocked until its evidence and transaction contracts are promotion-grade.",
       "status": "inactive",
-      "changedAt": "2026-07-27",
-      "changeReason": "DORMANT. Fails closed with promotion_evidence_not_oos (503) before any write. Adversarial review found promotion non-atomic (P0) plus three P1 evidence defects: windows overlap ~98.4% and the universe is a current-liquid snapshot replayed through past dates (survivorship), the reported 'DSR' was only a trial-count-adjusted t margin, and experiment lineage was optional and unbound. The gate still evaluates and returns its verdict so evidence stays inspectable; only the write is disabled. Re-enable after features/walk-forward-ic-folds ships.",
+      "changedAt": "2026-07-28",
+      "changeReason": "DORMANT, now on MEASURED evidence rather than its absence. The multi-period OOS study (Annex K) found the cross-sectional rank-IC sigma stable at ~0.27 across four independent periods (spread 1.36x), which is 3.77x the theoretical 0.0712 at n=200 and implies an effective breadth of only ~17 independent names. Correlation binds, not name count, so enlarging the universe cannot reduce sigma. The approved 1C sample floors assumed sigma ~0.071 and that assumption is REFUTED: detecting a 0.04 IC at t=2.0 needs ~180 as-of dates against ~25 available. Re-deriving the floors is an architecture decision, not a parameter change.",
       "removedAt": null,
       "removeReason": null
     },
@@ -1142,6 +1142,13 @@
       "nodeId": "PITUNIV",
       "label": "Point-in-time universe resolver (step 4), fail-closed",
       "reason": "Resolves as-of-date membership plus a point-in-time liquidity rank, so IC can eventually be measured on the population that actually existed. Every failure path refuses with a named reason rather than falling back to the curated current-liquid list. Verification against the live provider hit a real 429 mid-pagination, exposing a defect where a truncated page walk was ranked as if complete - a smaller universe with a different fingerprint and no error; the walk now reports completeness and the resolver refuses on membership_incomplete. Also measured a hard constraint: grouped aggregates are entitled to ~2 years, so the usable OOS window is ~25 non-overlapping as-of dates at h20 against the 36 that approved option 1C requires. Migration 20260728120000 written but NOT applied; snapshot persistence not yet built."
+    },
+    {
+      "date": "2026-07-28",
+      "event": "changed",
+      "nodeId": "POLICYGATE",
+      "label": "Multi-period study: sigma stable at ~0.27, effective breadth ~17, approved floors refuted",
+      "reason": "mom_12_1, US, horizon 5, 4 folds x 20 dates = 80 as-of dates, universe held at 200, adjusted prices, 0 universe errors, 0 skipped dates. Per-fold sigma 0.2287/0.2462/0.2863/0.3118 - max/min 1.36x, sd 0.038 - so sigma is STABLE and the earlier 0.14-vs-0.27 swing was n=12 noise. Inverting sigma = 1/sqrt(n_eff-3) gives n_eff ~ 17: a 200-name cross-section behaves like ~17 independent names, so the planned n=400 universe experiment is not worth running. Separately mom_12_1 at h5 showed alternating fold signs [-1,+1,-1,+1] with pooled IC 0.0089 and t_HAC 0.32 - no signal at that horizon. Promotion stays disabled."
     }
   ]
 }
