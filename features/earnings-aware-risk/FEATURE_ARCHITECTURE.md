@@ -1,162 +1,317 @@
-# Feature Architecture: Earnings-Aware Risk (options-implied move)
+# Feature Architecture: Earnings-Aware Risk
 
 ## Status
 
-Architecture status: Draft
+Architecture status: Draft - independently corrected 2026-07-29
 Architecture approved: No
 Approved scope: None
-Approved date: None
 Implementation allowed: No
 
-## Feature Purpose
+This document is design-only. It does not authorize a paper or live money-path
+change.
 
-Stop the paper/live book from entering and holding positions blind through
-earnings prints, by using the one thing the options market prices well: the
-**expected magnitude** of the next move.
+## Decision
 
-## The distinction this feature is built on
+Use earnings proximity and an options-derived move proxy as **risk context**, not
+as a sixth alpha score.
 
-**Options price magnitude well and direction badly.** A straddle says "±7% is
-expected"; it deliberately says nothing about which way, because the market
-maker setting that price is delta-neutral.
+Build the first release as measure-only:
 
-Kairos is long-only, directional, 2–20 market-day swing. So options are close to
-worthless as a directional alpha input and genuinely valuable as a **risk**
-input. This feature takes only the second interpretation.
+- US paper: annotate every otherwise-eligible entry.
+- US live: annotate, while preserving the existing Alpha Vantage earnings
+  blackout exactly as-is.
+- India: annotate earnings proximity when available; options risk is
+  `unavailable`.
+- Existing positions: surface a warning only. PositionMonitor and live exits do
+  not change.
 
-## NON-GOAL — options as a sixth scoring dimension
+No block, size reduction, stop widening, score change, promotion input, or
+automated exit is allowed until the shadow record passes the acceptance gates in
+this document and the owner separately approves the behavior.
 
-Explicitly out of scope, and not merely deferred.
+## Why This Belongs In Risk, Not Alpha
 
-The 2026-07-28 OOS work established that a single factor cannot be validated at
-this scale: realized IC sigma ~0.26, effective breadth ~17 names, ~180 as-of
-dates needed against ~25 available (`features/walk-forward-ic-folds` Annex K/L).
-Adding options to the weighted score would introduce a **sixth unvalidatable
-alpha claim**, with less supporting evidence than the five already there.
+Short-dated option prices around a known earnings event contain information about
+the market price of uncertainty. They do not provide a reliable sign for the
+stock's next move. Skew and flow may contain directional information in some
+settings, but retail-visible volume cannot reliably identify opening versus
+closing trades, buyer versus seller initiation, or multi-leg hedges.
 
-An implied-move risk estimate makes **no directional prediction**, so it needs no
-IC validation. That is why it is buildable now and a scoring dimension is not.
+Kairos may therefore use:
 
-The dead `buildStockPrompt` instruction — *"unusual call activity boosts
-conviction for longs"* — is the weakest available use of options data: visible
-flow cannot distinguish opening from closing, buying from selling, or a naked
-bet from a delta-hedged leg. It should be deleted, not revived.
+- earnings timing as event-risk metadata;
+- a same-expiry ATM straddle as an expiry-bounded move proxy;
+- the ratio of that proxy to the planned stop distance as context.
 
-## Current Behavior
+Kairos must not use:
 
-| Piece | State |
+- put/call ratio, "unusual calls", or skew as automatic long conviction;
+- the move proxy as a directional forecast;
+- options fields in `analyst_score` or the LearnerAgent objective.
+
+This feature does not need directional IC validation because it makes no
+directional alpha claim. It **does** need operational and calibration validation:
+coverage, quote quality, date accuracy, implied-versus-realized move calibration,
+and counterfactual effects on entries and outcomes.
+
+## Verified Current State
+
+| Area | Current behavior |
 |---|---|
-| `lib/options-signal.ts` | Fetches Yahoo chain; computes put/call ratio, unusual contracts, IV percentile, nearest expiry, ATM contract |
-| `fetchOptionsSignal()` callers | **Only** `app/api/options/signal/route.ts` — on-demand, never in the scoring or trading path |
-| `buildStockPrompt` / `buildSynthesisPrompt` | **Dead code — zero call sites.** The options prompt block never renders |
-| `"options"` in `Dimension` union + `applicableDimensions()` | Declared, added to the set, **never read**. Verified inert: no `.has("options")`, no `.size`, no enumeration, no field maps to it, not in the weighted mask |
-| `lib/data/earnings.ts` | `fetchDaysToEarnings(symbol, india, preferredDate)` already exists |
-| `lib/data/earnings-pit.ts` | PIT vintage capture already exists |
-| PaperTrader entry | **No earnings awareness.** A 2–20 day hold spans an earnings cycle, so roughly 1 position in 6 holds through a print blind |
+| US PaperTrader | No earnings gate or annotation at the fill choke point |
+| US TraderAgent | Already blocks proposals from 2 calendar days after through 5 calendar days before an Alpha Vantage earnings date |
+| Existing live gate | Fetches Alpha Vantage directly, fails open on timeout/unavailable data, and is not shared with PaperTrader |
+| `lib/data/earnings.ts` | Finnhub US and Yahoo India proximity helper; returns days only and loses source/as-of/confidence metadata |
+| `lib/data/earnings-pit.ts` | Captures point-in-time earnings vintages |
+| `lib/options-signal.ts` | On-demand Yahoo nearest-expiry chain; not on a trading path |
+| Current `ivPercentile` | Not a 52-week IV percentile. It locates ATM IV inside the current chain's strike-IV range |
+| Current unusual-flow labels | Comments and summary overstate contracts as "smart money" evidence |
+| Paper audit | `pipeline_stage_events` records stage decisions |
+| Live audit | `trade_proposals.risk_check_reasons` records proposal risk checks |
 
-## Proposed Behavior
+The new feature must not accidentally replace or weaken the existing live
+blackout. A unified policy can replace it only after shadow coverage parity and
+an explicit owner-approved cutover.
 
-Two components. Component A is useful alone; B sharpens it.
+## Risk Contract
 
-### A. Earnings-proximity gate at entry
+### Earnings event
 
-At paper/live entry, resolve days-to-earnings for the candidate. If a print
-falls inside the intended holding horizon, the entry is **gated by policy**, not
-silently taken.
-
-Policy options for owner decision (see Open Questions):
-- `block` — no new long when earnings fall within the horizon
-- `size_down` — permitted at reduced size
-- `annotate_only` — recorded on the proposal, no behavioural change (shadow mode)
-
-Fails **open** on unavailable earnings data — an unknown date must not silently
-block trading, but must be recorded as unknown rather than treated as "no
-earnings".
-
-### B. Options-implied move
-
-Extend `lib/options-signal.ts` with an ATM-straddle implied move for the expiry
-that brackets the earnings date:
-
-```
-impliedMovePct ≈ (ATM call mid + ATM put mid) / spot
+```ts
+type EarningsEventRisk = {
+  market: "us" | "india";
+  symbol: string;
+  reportDate: string | null;
+  reportSession: "bmo" | "amc" | "during_session" | "unknown";
+  sessionsUntilReport: number | null;
+  source: string | null;
+  observedAt: string;
+  confidence: "confirmed" | "estimated" | "unknown";
+  status: "available" | "unknown" | "conflict";
+};
 ```
 
-Surfaced as risk context, and compared against the position's stop distance. The
-decision-grade output is the comparison, not the number:
+Calendar sessions, not UTC duration or raw calendar-day subtraction, determine
+proximity. If sources disagree beyond one market session, status is `conflict`;
+the system must not silently choose the more convenient date.
 
-> *"stop is 7%, implied move is 9% — the stop is inside the noise band"*
+### Options move proxy
 
-## System Flow
+```ts
+type EarningsMoveProxy = {
+  market: "us";
+  symbol: string;
+  observedAt: string;
+  quoteAsOf: string | null;
+  reportDate: string;
+  reportSession: EarningsEventRisk["reportSession"];
+  expiry: string;
+  spot: number;
+  strike: number;
+  callBid: number;
+  callAsk: number;
+  putBid: number;
+  putAsk: number;
+  callMid: number;
+  putMid: number;
+  moveProxyPct: number;
+  stopDistancePct: number | null;
+  stopToMoveRatio: number | null;
+  quality: "usable" | "wide_spread" | "stale" | "illiquid" | "unavailable";
+  reason: string;
+};
+```
 
-1. Candidate reaches entry with a resolved horizon.
-2. `fetchDaysToEarnings()` → days to next print (or unknown).
-3. If a print falls inside the horizon → fetch chain, compute implied move.
-4. Compare implied move to the proposal's stop distance.
-5. Apply the approved policy; record the reason on the proposal either way.
+The calculation is:
 
-## Module Inventory
+```text
+moveProxyPct = (ATM call mid + ATM put mid) / contemporaneous spot
+```
 
-| Module | Change |
-|---|---|
-| `lib/options-signal.ts` | Add `impliedMove(symbol, targetDate)`; keep existing exports untouched |
-| `lib/data/earnings.ts` | Reuse `fetchDaysToEarnings` as-is |
-| `lib/trading/` entry policy | New pure `earningsRiskVerdict()` — inputs in, verdict out, no fetching |
-| `app/api/agents/paper-trade/route.ts` | Call the verdict at the existing entry choke point |
-| `trade_proposals` | Persist verdict + implied move + stop-vs-move comparison |
-| `docs/arch/03-agents.md`, `08-risk-and-safety.md` | Gate documented as a risk control |
-| `public/agent-diagrams/system-map.json` | New edge into the trading path |
+It is labelled **expiry-bounded ATM straddle move proxy**, not "earnings implied
+move". The premium contains event variance, non-event variance through expiry,
+volatility risk premium, rates/dividends, and bid/ask effects.
 
-## Data Architecture
+## Deterministic Chain Rules
 
-- Required: earnings date (exists), options chain (exists).
-- No new provider, no new key. Yahoo chain is keyless; the earnings path already
-  has its own sourcing.
-- Cache the chain per (symbol, day) — it is only consulted near a print, so
-  volume is low.
-- Validation: an implied move outside a sane band (say 0.5%–50%) is treated as
-  unavailable rather than trusted.
+1. Select the earliest standard expiry that is after the earnings event and
+   leaves at least one tradable post-event session. Account for BMO versus AMC;
+   unknown timing makes the proxy lower-confidence.
+2. Fetch that exact expiry. The current Yahoo call only reads `options[0]` and
+   is insufficient.
+3. Select the nearest strike present in both calls and puts.
+4. Use mids only when both bid and ask are finite, non-negative, and ask is not
+   below bid. Last trade is never a substitute.
+5. Require a configurable maximum spread-to-mid ratio on each leg, nonzero open
+   interest or quoted size, a fresh quote timestamp, and a contemporaneous spot.
+6. Reject crossed, stale, zero-premium, missing-leg, or implausible results.
+7. Cache the raw normalized snapshot by `(symbol, expiry, observed market
+   session)`. Never overwrite a snapshot used by a decision.
+8. Yahoo is unofficial and fail-soft. "Keyless" does not mean durable. A live
+   capability probe and provider-health metric are required before shadow runs.
 
-## Files / Behavior That Must NOT Change
+The first build must rename or remove the current `ivPercentile` label and remove
+"smart money" claims from unusual-flow summaries. Neither field is part of this
+feature's decision contract.
 
-- The five weighted scoring dimensions and `analyst_score`. This feature does
-  **not** touch scoring.
-- `strategy_policies` / promotion. Unrelated and still dormant.
-- Long-only enforcement, kill switches, notional caps.
-- India: no options source exists. India must return `unavailable` and fail
-  open, never borrow US options data.
+## Policy
 
-## Risks
+```ts
+type EarningsRiskPolicy = {
+  version: number;
+  mode: "shadow" | "block" | "size_down";
+  market: "us" | "india";
+  proximitySessions: number;
+  maxLegSpreadToMid: number;
+  maxQuoteAgeSeconds: number;
+  minOpenInterest: number;
+  sizeMultiplier: number;
+};
+```
 
-- **Earnings dates are unreliable.** Providers disagree and dates move. A gate
-  keyed to a wrong date blocks or permits wrongly — hence fail-open plus an
-  explicit `unknown` state.
-- **Scope creep into alpha.** Once implied move exists, the temptation to feed
-  it into scoring is obvious. The non-goal above is the guard.
-- **`block` reduces trade count.** With US at 8 closed trades, further
-  suppressing entries slows the already-thin evidence accumulation. This argues
-  for `annotate_only` first.
-- **FinancialDatasets is out of credit** (observed 2026-07-29) — confirm which
-  provider actually backs `fetchDaysToEarnings` before relying on it.
+Initial production configuration is permanently pinned to `shadow` until an
+owner-approved migration/config change activates another mode.
 
-## Open Questions For Owner
+`earningsRiskVerdict()` is pure and deterministic. It may only preserve or
+reduce entry eligibility/size. It can never:
 
-1. **Policy:** `block`, `size_down`, or `annotate_only` to start? Recommend
-   `annotate_only` — it collects evidence on how often the case arises without
-   suppressing an already-thin trade record.
-2. **Horizon test:** gate on the mandate's `max_hold_days`, or on the specific
-   proposal's resolved horizon?
-3. **Existing positions:** does PositionMonitor act on an approaching print for
-   an open position, or is this entry-only in v1? (Recommend entry-only.)
-4. **Delete the dead code** — `buildStockPrompt`, `buildSynthesisPrompt`, and
-   `"options"` from the `Dimension` union — in this change or separately?
+- increase a score, size, price target, or holding horizon;
+- widen or remove a stop;
+- suppress a sell or any PositionMonitor/live-exit action;
+- convert unknown data into "no earnings";
+- borrow US options evidence for India.
 
-## Recommendation
+In shadow mode, unavailable data records `unknown` and does not block. In a
+future active mode, unavailable behavior must be decided explicitly; it cannot
+inherit a generic fail-open default.
 
-Approve **A in `annotate_only` mode + B**, entry-only, India returning
-`unavailable`. That produces real decision-grade context and a measurable record
-of how often earnings risk actually bites, without changing what gets traded
-until there is evidence to justify it.
+## Money-Path Integration
 
-Revisit `block` / `size_down` once the annotation record shows the frequency and
-the stop-vs-implied-move relationship on real candidates.
+### Paper
+
+Run the pure verdict after the fill-bound stop/target plan exists and before the
+atomic `execute_paper_fill` call. In P0, only log the counterfactual verdict to
+`pipeline_stage_events`; do not alter the RPC inputs or claim lifecycle.
+
+Capital rotation must use the same annotation contract. A rotation cannot bypass
+measurement merely because it enters through the slot/cash replacement path.
+
+### Live
+
+Run the shared annotation before proposal insertion and persist it inside
+`trade_proposals.risk_check_reasons`.
+
+The existing Alpha Vantage `-2/+5` blackout remains authoritative during P0.
+The new resolver must not catch an error and skip that existing gate. Replacement
+requires:
+
+1. coverage parity over predeclared observations;
+2. no regression in known-date blocking;
+3. an owner-approved policy version;
+4. one atomic cutover that removes the direct Alpha Vantage path.
+
+Autonomous live execution must re-check the persisted policy version and verdict
+freshness before submitting an approved proposal, just as it re-checks other
+latched money-path controls.
+
+### Existing positions
+
+P0 may show:
+
+- earnings date/session;
+- sessions remaining;
+- usable move proxy;
+- stop-to-move ratio;
+- data-quality state.
+
+It must not cause PositionMonitor or the live exit monitor to trim, close, move a
+stop, or alter a target. Gaps can jump resting or synthetic stops, so
+`stopToMoveRatio < 1` is a warning, not proof that the stop is wrong.
+
+## Persistence And Provenance
+
+Do not create a parallel evidence truth layer.
+
+- Source payload/fingerprint references use existing `evidence_records`.
+- Paper decision context uses `pipeline_stage_events.detail`.
+- Live decision context uses `trade_proposals.risk_check_reasons`.
+- If cross-flow analytics cannot be made reliable over those ledgers, add one
+  append-only `earnings_risk_observations` table only after schema approval. It
+  must reference the existing signal, paper event/proposal, evidence record,
+  policy version, and source snapshot rather than duplicating source truth.
+
+No raw option chain is exposed to the browser. Owner-facing APIs return only the
+normalized fields above. RLS is owner-read; writes are service-only and
+append-only.
+
+## Shadow Metrics And Acceptance Gates
+
+Predeclare the shadow window before collecting outcomes. Minimum gates:
+
+1. At least 60 otherwise-eligible US entry decisions and at least 20 distinct
+   earnings events.
+2. Earnings-date coverage at least 95% for symbols where the legacy live gate
+   found a date.
+3. Date disagreement, reschedule, and unknown rates reported separately.
+4. Usable option snapshot coverage reported by liquidity tier; no silent
+   exclusion of thin names.
+5. Compare proxy with absolute close-to-close and close-to-next-open event moves.
+6. Report empirical exceedance rates for `0.5x`, `1.0x`, and `1.5x` proxy bands.
+7. Counterfactual report: entries blocked/sized down, later P&L, MAE/MFE,
+   stop-outs, and sample sizes. No claim based only on average P&L.
+8. No paper/live eligibility or size change while mode is `shadow`.
+
+These observations test calibration and product usefulness, not directional IC.
+A future block/size-down proposal must specify its expected trade-count cost and
+must default to no change when evidence is inconclusive.
+
+## Build Order
+
+1. Correct misleading existing option labels and add golden parser tests.
+2. Add source-aware, session-aware earnings-event resolver.
+3. Add exact-expiry chain fetch and pure quote-quality/move-proxy calculation.
+4. Add pure `earningsRiskVerdict()` with `shadow` as the only enabled mode.
+5. Wire paper, rotation, and live annotation without changing behavior.
+6. Add owner-facing Backtest/Risk visibility and provider-health coverage.
+7. Accumulate the predeclared shadow record.
+8. Review evidence and separately decide whether to keep annotation-only,
+   activate bounded size-down, or reject the behavioral feature.
+
+## Tests Required Before P0 Ships
+
+- BMO, AMC, unknown timing, weekend, holiday, and rescheduled event cases.
+- Exact expiry selection and same-strike call/put pairing.
+- Missing leg, zero bid, crossed quote, stale quote, wide spread, and no-OI cases.
+- US/India isolation.
+- Paper fill and capital-rotation paths both produce annotation.
+- Existing live blackout still blocks every case it blocked before.
+- Annotation failure cannot alter eligibility, sizing, or exits.
+- Idempotent retries do not create conflicting observations.
+- Browser payload excludes raw chain data.
+
+## Sources
+
+- Cboe explains that short-dated options around earnings primarily indicate the
+  magnitude, not direction, of the expected reaction and compares straddle
+  pricing with historical moves:
+  https://www.cboe.com/insights/posts/what-options-data-may-indicate-about-mag-7-earnings
+- Chung and Louis document that earnings-event option returns and implied versus
+  realized volatility vary with pre-event conditions, which is why calibration
+  cannot be assumed:
+  https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2886040
+- SEC material notes that disseminated option quotes can be stale during market
+  data stress, supporting explicit freshness and quote-quality gates:
+  https://www.sec.gov/rules-regulations/2001/09/firm-quote-trade-through-disclosure-rules-options
+
+## Owner Decision
+
+Recommended approval, when requested:
+
+- P0 measure-only implementation;
+- US paper + US live annotation;
+- India proximity annotation only;
+- existing live blackout preserved;
+- existing positions display-only;
+- no scoring, sizing, entry, stop, target, or exit behavior change.
+
+Do not approve `block` or `size_down` yet.
