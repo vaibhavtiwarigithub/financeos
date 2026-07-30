@@ -114,6 +114,32 @@ No behavioural change to trading: the value was already shadow-only.
   `get_option_chains`, `get_option_instruments` (up to 5 sequential pages) and
   `get_option_quotes` are not. Fail-soft, so it cannot break a fill, but it adds
   real latency and broker quota per entry.
-- **Provider parsers (priority 3): partially verified.** Numeric coercion and
-  `null` returns are correct on the paths read; not every provider parser was
-  exhaustively audited.
+### Priority 3 completed — provider parsers audited
+
+Date-format validation is applied **inconsistently** across the four earnings
+observation parsers:
+
+| Parser | Validates the date? |
+|---|---|
+| `robinhoodEarningsObservation` | **Yes** — `if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null` |
+| `earnings_calendar` cache | **No** — `String(data.report_date)` accepted as-is |
+| Webull | **No** — `String(row.nextDate).slice(0, 10)` accepted as-is |
+| Finnhub / Yahoo base | Relies on the shared helper, not re-checked here |
+
+Not currently exploitable, because the Finding 1 fix closes it at the gate:
+`tradingSessionsBetween` validates **before** the `from === to` shortcut, so a
+single malformed observation compared against itself returns `null`, the conflict
+check treats `null` as a conflict, and `resolveEarningsEventRisk` returns
+`status: "conflict"` with `reportDate: null`. A bad date from any parser now
+fails closed rather than propagating.
+
+That is defence-in-depth, not a substitute for validating at the parser. The
+per-parser gap is recorded here and pinned by a regression test
+(`treats a self-comparison of a malformed date as unknown, not zero`) so the
+protection cannot be removed silently. Normalizing validation into a single
+shared date parser is the tidier fix and is left as a follow-up, since it touches
+all four collectors.
+
+Numeric coercion elsewhere is sound: quote legs coerce with `Number(...)` and
+`calculateMoveProxy` rejects non-finite, crossed, or stale inputs rather than
+computing through them.
