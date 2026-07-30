@@ -52,6 +52,7 @@ import { fetchUpstoxCandles } from "@/lib/data/upstox";
 import { scoreAnalyst } from "@/lib/data/analyst";
 import { fetchWebullAnalyst, webullAnalystLine, fetchWebullExtended, webullExtendedLine, type WebullAnalyst, type WebullExtended } from "@/lib/data/webull-data";
 import { fetchDaysToEarnings } from "@/lib/data/earnings";
+import { resolveEarningsRepricingBarrier } from "@/lib/risk/earnings-repricing";
 import { getBenchmarkSeries } from "@/lib/data/benchmark-series";
 import { captureReturnObservation } from "@/lib/data/return-observations";
 import { writeEvidence, type SourceName } from "@/lib/data/evidence";
@@ -1795,10 +1796,20 @@ export async function processSymbol(
     client: supabase,
   });
 
-  const signalDirection: string = guardRun.direction;
-  const directionNote: string = gate.note + guardRun.note;
-  const entryEligible = signalDirection === "long" && analystScore >= (scoreThreshold ?? 60);
   const latestCandle = candles.length > 0 ? candles[candles.length - 1] : null;
+  // Do not turn a pre-event daily technical score into an exit or new entry after
+  // an earnings result. The first strictly post-report daily candle is the
+  // minimum evidence required to resume ordinary score/direction decisions.
+  const earningsRepricing = await resolveEarningsRepricingBarrier(supabase, {
+    symbol,
+    market: market as "us" | "india",
+    latestDailyCandleDate: latestCandle?.date ?? null,
+  });
+  const signalDirection: string = earningsRepricing.pending ? "neutral" : guardRun.direction;
+  const directionNote: string = gate.note + guardRun.note + (earningsRepricing.pending
+    ? ` [earnings repricing barrier: reported ${earningsRepricing.reportDate}; no post-event daily candle]`
+    : "");
+  const entryEligible = !earningsRepricing.pending && signalDirection === "long" && analystScore >= (scoreThreshold ?? 60);
   const researchHorizonDays = resolveHorizonDays(
     tradingMandate,
     (champion as any)?.genome?.horizon_days ?? null,
@@ -1845,12 +1856,18 @@ export async function processSymbol(
         _options_signal: null,
         _using_champion_weights: usingChampion,
         _trading_mandate: tradingMandate,
+        _earnings_repricing: earningsRepricing,
       },
     })
     .select()
     .single();
 
   const signalStatus = writeContext?.status ?? "pending";
+  // This is a current session result with an explicitly neutralized direction.
+  // Keep it session-validated so PositionMonitor observes the neutral signal
+  // instead of falling back to an older, pre-earnings directional score.
+  // PaperTrader cannot enter because `entryEligible` is false; mechanical exits
+  // remain independent of score direction.
   const sessionValidated = writeContext?.sessionValidated ?? true;
   const signalRow: Record<string, any> = {
     symbol,
@@ -1877,7 +1894,7 @@ export async function processSymbol(
     rationale: (thesis.summary ?? `Score: ${analystScore}/100`) + directionNote,
     stop_loss_pct: stopLossPct,
     take_profit_pct: targetPct,
-    signal_breakdown: { trade_plan: tradePlan },
+    signal_breakdown: { trade_plan: tradePlan, earnings_repricing: earningsRepricing },
     // NOTE: no price_target / stop_loss here — those columns don't exist on
     // agent_signals (only stop_loss_pct / take_profit_pct do). Including them made
     // every PostgREST insert fail with PGRST204, and the undefined-column recovery
@@ -2070,6 +2087,9 @@ export async function processSymbol(
         ...(analystResult?.available ? { analyst: { score: analystResult.score, ...analystResult.evidence } } : {}),
         // Event proximity for the "buy the rumor, sell the news" learnable pattern.
         ...(daysToEarnings != null ? { days_to_earnings: daysToEarnings } : {}),
+        // A post-report daily candle is required before this run's technical
+        // direction may be used again. This is provenance, not a score input.
+        ...(earningsRepricing.pending ? { earnings_repricing: earningsRepricing } : {}),
         // Smart-money capital flow (Webull) — institutional $ in/out over 5 days.
         // Logged for LearnerAgent to correlate large-cap flow direction with returns.
         ...(webullExtended?.capitalFlow ? {
@@ -2133,7 +2153,9 @@ export async function processSymbol(
           outcome: entryEligible ? "passed" : "rejected",
           reason: entryEligible
             ? `Eligible: long direction and score ${analystScore} >= threshold ${scoreThreshold ?? 60}`
-            : thinEvidence
+            : earningsRepricing.pending
+              ? `Abstained: reported earnings on ${earningsRepricing.reportDate} needs a post-event daily candle`
+              : thinEvidence
               ? `Abstained: thin evidence (${includedDims.length}/5 usable dimensions)`
               : llmParseFailed
                 ? "Abstained: thesis response was missing a parseable direction"
@@ -2144,6 +2166,7 @@ export async function processSymbol(
             analyst_score: analystScore, score_threshold: scoreThreshold ?? 60,
             direction: signalDirection, screener, included_dimensions: includedDims,
             thin_evidence: thinEvidence, thesis_parse_failed: llmParseFailed,
+            earnings_repricing: earningsRepricing,
           },
         });
       } catch { /* fail-soft — pre-migration schema or transient error */ }

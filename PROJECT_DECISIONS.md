@@ -1010,3 +1010,27 @@ disabled.
 
 Reversal cost: Low. Disable the control-plane interlock only by a reviewed source
 change; no broker state is created by P1.
+
+### Decision 58: Post-Earnings Daily Scores Must Reprice Before Directional Use
+
+Date: 2026-07-30
+Status: Approved corrective safety change, implemented
+Category: Trading Risk / Data Freshness
+
+Decision: When a first-reported earnings actual exists in the point-in-time
+calendar during the prior seven days, no daily-score direction may authorize a
+new entry or score/direction exit until a daily candle strictly after the report
+date is available. ResearchAgent records a current, session-validated `neutral`
+signal with the barrier provenance. Price stops, targets, trailing stops, and
+time exits remain active.
+
+Reason: A daily technical score calculated from the pre-event close is not a
+post-earnings assessment. The MSFT July 30, 2026 stale `short` exposed that this
+could otherwise generate a misleading held-position trim/exit recommendation.
+
+Non-goals: This does not predict earnings direction, score options flow, add a
+provider request, change score weights, or create an order. The existing
+earnings-options policy remains P0 shadow-only.
+
+Reversal cost: Low. Remove the read-only guard; existing signals retain their
+recorded provenance. No broker or position state is changed.

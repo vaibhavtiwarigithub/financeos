@@ -722,3 +722,16 @@ requires `behavior_changed=false`; paper/live hooks only log normalized context;
 the direct live Alpha Vantage blackout remains in force; PositionMonitor and
 live execution import no earnings-risk decision function. The Risk page exposes
 warnings and evidence counts without raw broker chains.
+
+### Post-Report Daily-Price Repricing Barrier (2026-07-30)
+
+Options risk context remains measure-only, but daily technical direction cannot
+be trusted immediately after a reported result. When the point-in-time earnings
+calendar has an actual from the last seven days and the latest daily candle is
+not strictly after that report date, ResearchAgent writes a **current,
+session-validated `neutral`** signal. This is a subtractive data-freshness guard:
+it blocks new paper/live entries and score/direction exits from that stale daily
+score, while mechanical stop, target, trailing-stop, and time exits continue.
+The existing calendar is read only; no provider or options call is added, and no
+earnings beat/miss is inferred as directional alpha. Normal scoring resumes on
+the first post-report daily bar.
