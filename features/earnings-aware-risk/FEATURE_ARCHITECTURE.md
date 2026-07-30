@@ -378,3 +378,16 @@ Implemented in `lib/risk/earnings-risk.ts` and recorded in
 `IMPLEMENTATION_RESULT.md`. Production is pinned to policy version 1
 `mode='shadow'`; the database rejects any other mode and rejects
 `behavior_changed=true`.
+
+### Holdings coverage extension (2026-07-30)
+
+The original P0 hooks observed an options move proxy only after an entry reached
+PaperTrader or TraderAgent. A bounded weekday US holdings monitor now reads open
+paper positions plus the latest complete per-account live-risk snapshots and
+records `decision_kind='holding'` observations. Event discovery merges the
+persisted PIT cache with one bounded Robinhood calendar read, so a cache miss
+does not hide a known holding's earnings date. Per-symbol earnings/options calls
+are requested only when that event is inside the holding horizon. This extends
+risk visibility to names already owned without turning options into an
+all-watchlist provider fan-out or a directional score. India remains
+proximity-only and has no scheduled options leg.

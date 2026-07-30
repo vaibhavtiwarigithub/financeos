@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
+import {
+  evaluatePlanCalibration,
+  loadPlanCalibration,
+} from "@/lib/learning/plan-calibration";
 
 export const dynamic = "force-dynamic";
 
@@ -65,12 +69,10 @@ type LabelRow = {
 };
 
 export async function GET(req: NextRequest) {
-  // Owner gate — same pattern as neighboring dashboard routes: an authenticated
-  // session is required; unauthenticated callers get 401. Data reads use the
-  // service client; auth uses the user client.
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Owner gate. Data reads use the service client, so a merely authenticated
+  // non-owner session must never be enough to reach this personal ledger.
+  const gate = await requireOwner();
+  if (gate) return gate;
 
   const url = new URL(req.url);
   const market: "us" | "india" = url.searchParams.get("market") === "india" ? "india" : "us";
@@ -78,13 +80,17 @@ export async function GET(req: NextRequest) {
   const recentLimit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 60) || 60, 1), 200);
 
   const svc = createServiceClient();
+  const planCalibrationPromise = loadPlanCalibration(svc, market).catch(() => ({
+    outcomes: [],
+    summaries: [],
+  }));
 
   // 1) Observations for THIS market only (never mixed). Bounded read; the whole
   //    ledger for one market is small. Ordered newest-first.
   let obsQuery = svc.from("decision_observations")
     .select("id,ts,market,symbol,analyst_score,score_threshold,direction,entry_eligible,action," +
       "fundamental_score,technical_score,sentiment_score,macro_score,insider_score," +
-      "weights_used,availability_mask,price_at_decision,currency,signal_id,mandate_id")
+      "weights_used,availability_mask,price_at_decision,currency,signal_id,mandate_id,features")
     .eq("market", market)
     .order("ts", { ascending: false })
     .order("id", { ascending: false })
@@ -206,6 +212,7 @@ export async function GET(req: NextRequest) {
       // the realized move agreed with our directional call; negative => it
       // disagreed. Null for neutral/hold (no directional stake).
       const delta = exp !== 0 && alpha !== null ? Number((exp * alpha).toFixed(4)) : null;
+      const planOutcome = evaluatePlanCalibration(obs.features, l);
       return {
         horizon_days: h,
         matured: true,
@@ -219,8 +226,20 @@ export async function GET(req: NextRequest) {
         matured_at: l.matured_at,
         directional_hit: exp !== 0 && alpha !== null ? (exp > 0 ? alpha > 0 : alpha < 0) : null,
         delta,
+        plan_outcome: planOutcome,
       };
     });
+    const storedPlan = obs.features?.trade_plan;
+    const tradePlan = storedPlan?.kind === "indicative_research_plan" ? {
+      status: storedPlan.status ?? null,
+      reference_price: num(storedPlan.reference_price),
+      initial_risk_floor: num(storedPlan.initial_risk_floor),
+      profit_objective: num(storedPlan.profit_objective),
+      stop_loss_pct: num(storedPlan.stop_loss_pct),
+      target_pct: num(storedPlan.target_pct),
+      horizon_sessions: num(storedPlan.horizon_sessions),
+      reference_as_of: storedPlan.reference_as_of ?? null,
+    } : null;
     return {
       id: Number(obs.id),
       ts: obs.ts,
@@ -233,6 +252,7 @@ export async function GET(req: NextRequest) {
       entry_eligible: obs.entry_eligible,
       action: obs.action,
       price_at_decision: num(obs.price_at_decision),
+      trade_plan: tradePlan,
       dimension_scores: Object.fromEntries(DIMS.map(d => [d, num(obs[`${d}_score`])])),
       confidence_band: q?.confidence_band ?? null,
       decisive_dim: q?.decisive_dim ?? null,
@@ -289,6 +309,7 @@ export async function GET(req: NextRequest) {
     total_decisions: observations.filter(o => scoreBand(num(o.analyst_score)) === band).length,
     horizons: cohortStats(observations.filter(o => scoreBand(num(o.analyst_score)) === band)),
   }));
+  const planCalibration = await planCalibrationPromise;
 
   return NextResponse.json({
     market,
@@ -302,6 +323,11 @@ export async function GET(req: NextRequest) {
       matured_labels: labels.length,
     },
     recent,
-    aggregates: { floor: MATURED_FLOOR, byDirection, byScoreBand },
+    aggregates: {
+      floor: MATURED_FLOOR,
+      byDirection,
+      byScoreBand,
+      planCalibration: planCalibration.summaries,
+    },
   });
 }

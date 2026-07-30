@@ -10,17 +10,54 @@ const actual = {
 
 describe("earnings repricing barrier", () => {
   it("blocks a daily score based on the earnings-day close after an AMC result", () => {
-    expect(evaluateEarningsRepricingBarrier({ latestDailyCandleDate: "2026-07-29", earnings: actual }))
+    expect(evaluateEarningsRepricingBarrier({
+      latestDailyCandleDate: "2026-07-29",
+      earnings: actual,
+      market: "us",
+      now: new Date("2026-07-30T14:00:00.000Z"),
+    }))
       .toMatchObject({ pending: true, reason: "post_event_daily_bar_missing" });
   });
 
   it("releases only after a strictly post-event daily bar exists", () => {
-    expect(evaluateEarningsRepricingBarrier({ latestDailyCandleDate: "2026-07-30", earnings: actual }))
+    expect(evaluateEarningsRepricingBarrier({
+      latestDailyCandleDate: "2026-07-30",
+      earnings: actual,
+      market: "us",
+      now: new Date("2026-07-30T21:00:00.000Z"),
+    }))
       .toMatchObject({ pending: false, reason: "post_event_daily_bar_available" });
   });
 
   it("does not invent a barrier from absent or malformed calendar data", () => {
     expect(evaluateEarningsRepricingBarrier({ latestDailyCandleDate: "2026-07-29", earnings: null }).pending).toBe(false);
     expect(evaluateEarningsRepricingBarrier({ latestDailyCandleDate: "2026-07-29", earnings: { ...actual, report_date: "bad" } }).pending).toBe(false);
+  });
+
+  it("uses the report-day close for a before-open event", () => {
+    expect(evaluateEarningsRepricingBarrier({
+      latestDailyCandleDate: "2026-07-29",
+      earnings: { ...actual, announcement_session: "before_open" },
+      market: "us",
+      now: new Date("2026-07-29T21:00:00.000Z"),
+    })).toMatchObject({ pending: false, reason: "post_event_daily_bar_available" });
+  });
+
+  it("blocks after a scheduled event even when the actual feed is late", () => {
+    expect(evaluateEarningsRepricingBarrier({
+      latestDailyCandleDate: "2026-07-29",
+      earnings: { ...actual, actual_available_at: null },
+      market: "us",
+      now: new Date("2026-07-30T14:00:00.000Z"),
+    })).toMatchObject({ pending: true, reason: "post_event_daily_bar_missing", actualAvailableAt: null });
+  });
+
+  it("does not block an after-close event before it has occurred", () => {
+    expect(evaluateEarningsRepricingBarrier({
+      latestDailyCandleDate: "2026-07-28",
+      earnings: { ...actual, actual_available_at: null },
+      market: "us",
+      now: new Date("2026-07-29T15:00:00.000Z"),
+    })).toMatchObject({ pending: false, reason: "event_not_occurred" });
   });
 });

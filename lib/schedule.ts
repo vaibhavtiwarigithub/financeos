@@ -284,6 +284,18 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: null,
   },
   {
+    name: "earnings-risk-monitor-us",
+    agent: "earnings-risk-monitor",
+    time: "15:00 UTC (10/11 AM ET)",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "US holdings-only earnings/options shadow. Reads open paper positions and latest complete live-risk snapshots; records event magnitude context without changing scores, positions, or trades.",
+    handoff: "to Portfolio Risk / Upgrade Path evidence",
+    agentRunsType: "earnings_risk_monitor",
+  },
+  {
     name: "label-maturation",
     agent: "label-maturation",
     time: "6:00 PM ET",

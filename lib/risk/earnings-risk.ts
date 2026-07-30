@@ -147,6 +147,27 @@ async function robinhoodCalendarRows(): Promise<{ observedAt: string; rows: any[
   return robinhoodCalendarCache;
 }
 
+/**
+ * One bounded calendar read discovers relevant holdings before any per-symbol
+ * earnings or options calls. This is deliberately fail-soft: the caller still
+ * has the persisted earnings_calendar cache when Robinhood is unavailable.
+ */
+export async function fetchRobinhoodUpcomingEarnings(): Promise<Array<{
+  symbol: string;
+  reportDate: string;
+}>> {
+  const calendar = await robinhoodCalendarRows();
+  if (!calendar) return [];
+  const bySymbol = new Map<string, string>();
+  for (const row of calendar.rows) {
+    const symbol = String(row?.symbol ?? "").trim().toUpperCase();
+    const reportDate = String(row?.report?.date ?? "").slice(0, 10);
+    if (!symbol || !isRealDate(reportDate) || bySymbol.has(symbol)) continue;
+    bySymbol.set(symbol, reportDate);
+  }
+  return [...bySymbol].map(([symbol, reportDate]) => ({ symbol, reportDate }));
+}
+
 async function robinhoodEarningsObservation(symbol: string): Promise<EarningsEventRisk["observations"][number] | null> {
   const calendar = await robinhoodCalendarRows();
   if (!calendar) return null;

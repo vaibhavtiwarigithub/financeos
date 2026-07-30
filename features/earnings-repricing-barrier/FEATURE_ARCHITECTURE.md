@@ -11,9 +11,12 @@ That is a stale-data decision, not an informed reaction.
 
 ## Rule
 
-When the existing PIT earnings calendar has a first-reported actual from the last
-seven days, a research score cannot direct an entry or a score/direction exit until
-the daily candle series has a date strictly after the report date.
+When the existing PIT earnings calendar has a recent event that has already
+occurred, a research score cannot direct an entry or a score/direction exit until
+the daily candle series contains the event reaction. A before-open report may
+use the completed report-date bar; an after-close or unknown-session report
+requires a later bar. A known past event activates the barrier even when the
+actual-result feed is late.
 
 - New candidate: direction becomes `neutral` and is ineligible for PaperTrader.
   The signal remains session-validated so consumers see this current

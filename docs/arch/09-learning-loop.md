@@ -35,6 +35,27 @@ The loop is:
 6. If the Challenger passes, you promote it to Champion. ResearchAgent uses the new weights
    on its very next run.
 
+### Plan calibration and the LLM boundary (2026-07-30)
+
+Every new ResearchAgent decision stores an indicative stop/objective/horizon in
+`decision_observations.features.trade_plan`. Nightly label maturation already
+stores immutable 2/5/10/20-session forward return, benchmark-neutral return,
+MFE, and MAE in `observation_labels`.
+
+`lib/learning/plan-calibration.ts` joins those two truths only when the label
+horizon exactly matches the original plan horizon. It reports objective reach,
+stop breach, and realized path statistics. The objective is an exit-policy
+level, not a predicted terminal price; MAE/MFE cannot establish which level was
+touched first.
+
+Decision Review shows per-symbol paths as illustrative. LearnerAgent receives
+only same-market aggregate summaries through `query_plan_calibration`. The LLM
+may explain the cohort and write a hypothesis, but it has no tool that changes
+stop, target, or horizon. The existing deterministic MAE/MFE policy remains the
+only automatic risk-parameter adjustment path and requires at least 60
+same-market, exact-horizon eligible-long labels. US and India never share a
+cohort.
+
 ### Benchmark-alpha scorecard boundary (2026-07-13)
 
 `/api/agents/benchmark-scorecard` writes Phase-1 measurement rows to

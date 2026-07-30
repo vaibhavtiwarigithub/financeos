@@ -1017,12 +1017,14 @@ Date: 2026-07-30
 Status: Approved corrective safety change, implemented
 Category: Trading Risk / Data Freshness
 
-Decision: When a first-reported earnings actual exists in the point-in-time
-calendar during the prior seven days, no daily-score direction may authorize a
-new entry or score/direction exit until a daily candle strictly after the report
-date is available. ResearchAgent records a current, session-validated `neutral`
-signal with the barrier provenance. Price stops, targets, trailing stops, and
-time exits remain active.
+Decision: When a recent point-in-time calendar event has occurred, no daily-score
+direction may authorize a new entry or score/direction exit until the candle
+series contains the event reaction. A completed report-date bar is sufficient
+for before-open events; after-close or unknown-session events require a later
+bar. A known past event activates the barrier even when the actual feed is late.
+ResearchAgent records a current, session-validated `neutral` signal with the
+barrier provenance. Price stops, targets, trailing stops, and time exits remain
+active.
 
 Reason: A daily technical score calculated from the pre-event close is not a
 post-earnings assessment. The MSFT July 30, 2026 stale `short` exposed that this
@@ -1034,3 +1036,32 @@ earnings-options policy remains P0 shadow-only.
 
 Reversal cost: Low. Remove the read-only guard; existing signals retain their
 recorded provenance. No broker or position state is changed.
+
+### Decision 59: Calibrate Trade Plans Deterministically; Keep Options Out of Alpha
+
+Date: 2026-07-30
+Status: Approved and implemented
+Category: Learning / Earnings Risk / Governance
+
+Decision: Join each original indicative stop/objective/horizon with immutable
+same-market realized return/MFE/MAE labels. Show per-symbol paths as illustrative
+and expose only aggregate calibration to LearnerAgent. The LLM may explain and
+write hypotheses but cannot change risk parameters. Keep the existing
+deterministic 60-label exact-horizon MAE/MFE gate as the only automatic
+stop/objective adjustment path.
+
+Options remain magnitude/risk evidence, not a score. Add a bounded weekday US
+holdings shadow over open paper positions and latest complete live-risk
+snapshots. It merges the point-in-time cache with one bounded Robinhood calendar
+read, calls per-symbol earnings/options sources only when the discovered event
+falls inside the holding horizon, and always records
+`behavior_changed=false`. India has no options leg.
+
+Reason: This provides the retrospective and LLM interpretation the owner expects
+without mistaking a take-profit level for a terminal-price forecast, letting one
+dramatic event tune a strategy, or spending option calls across the entire
+research universe.
+
+Reversal cost: Low. Remove the read-only display/tool and unschedule the holding
+shadow. Immutable historical evidence remains; no score, position, or broker
+state requires rollback.

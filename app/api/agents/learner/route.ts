@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadTradingMandate } from "@/lib/trading-mandate";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireOwner } from "@/lib/auth/require-owner";
 import { fetchQuote } from "@/lib/market-data";
 import { runAgentLoop, ToolCall } from "@/lib/llm-router";
 import { loadLabeledDataset } from "@/lib/learning/dataset";
+import { loadPlanCalibration } from "@/lib/learning/plan-calibration";
 import { validateFeatureInputs } from "@/lib/validation/feature-compiler";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
@@ -22,9 +23,8 @@ export async function POST(req: NextRequest) {
   try {
     const isCron = verifyCronSecret(req);
     if (!isCron) {
-      const userClient = await createClient();
-      const { data: { user } } = await userClient.auth.getUser();
-      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      const gate = await requireOwner();
+      if (gate) return gate;
     }
 
     // Cron-triggered learner runs WEEKLY on Fridays only.
@@ -341,6 +341,17 @@ export async function POST(req: NextRequest) {
               caveat: result.source === "observation_ledger"
                 ? "INTERIM: univariate correlation on all scored candidates (incl. rejected). Phase 2 replaces this with a regularized multivariate walk-forward fit + validation gate before any weight change is trusted."
                 : "Legacy paper_trades fallback — filled trades only, smaller sample than the observation ledger. NOTE: update_signal_weight refuses to mutate on this source; the ledger (10+ matured observations) is required for an actual weight change.",
+            });
+          }
+
+          case "query_plan_calibration": {
+            const result = await loadPlanCalibration(svc, LEARN_MARKET);
+            return JSON.stringify({
+              market: LEARN_MARKET,
+              semantics: "Profit objective is an exit-policy level, not a predicted terminal price.",
+              summaries: result.summaries,
+              mutation_authority: "none",
+              guidance: "Use reviewable cohorts to write hypotheses. Stop/target admission remains deterministic and requires the separate 60-label same-market/same-horizon gate.",
             });
           }
 
@@ -730,13 +741,14 @@ AVAILABLE TOOLS:
 2. query_learner_config — see current weights, strategy, dimension config, and auto-guard status
 3. query_signals_with_outcomes — signals + their trade outcomes (filter by days, min_score, asset_class)
 4. query_score_correlation — Pearson correlation between a score dimension and P&L (respects learner_config)
-5. query_macro_context — recent macro signals and geopolitical/economic data from MacroSentinel
-6. read_past_learnings — your previous hypotheses and weight changes
-7. query_trade_decisions — REAL historical trades (10 years of CSV history + Robinhood MCP). Returns outcome_score per decision, regime breakdown, behavioral win/loss patterns. Use this to find what the user does right/wrong across market regimes.
-8. write_hypothesis — save a finding (include category: "fundamental"|"technical"|"macro"|"insider"|"general")
-9. update_signal_weight — propose a weight change. Creates an immutable CHALLENGER in strategy_versions. NOT applied until user promotes it via Strategy Registry. Gated: phase gate + per-dim config + auto-guard.
-10. semantic_search_decisions — vector similarity search over enriched trade decisions (RAG). Find past trades matching a situation ("rate-hike sell-off", "earnings miss hold", "momentum break"). Returns top-K decisions with outcome_score. Use AFTER query_trade_decisions to drill into specific scenarios.
-11. finish — complete run with summary, hypotheses array, and Mermaid diagram
+5. query_plan_calibration — deterministic original stop/objective/horizon versus matured path cohorts. Read-only; cannot mutate risk settings.
+6. query_macro_context — recent macro signals and geopolitical/economic data from MacroSentinel
+7. read_past_learnings — your previous hypotheses and weight changes
+8. query_trade_decisions — REAL historical trades (10 years of CSV history + Robinhood MCP). Returns outcome_score per decision, regime breakdown, behavioral win/loss patterns. Use this to find what the user does right/wrong across market regimes.
+9. write_hypothesis — save a finding (include category: "fundamental"|"technical"|"macro"|"insider"|"general")
+10. update_signal_weight — propose a weight change. Creates an immutable CHALLENGER in strategy_versions. NOT applied until user promotes it via Strategy Registry. Gated: phase gate + per-dim config + auto-guard.
+11. semantic_search_decisions — vector similarity search over enriched trade decisions (RAG). Find past trades matching a situation ("rate-hike sell-off", "earnings miss hold", "momentum break"). Returns top-K decisions with outcome_score. Use AFTER query_trade_decisions to drill into specific scenarios.
+12. finish — complete run with summary, hypotheses array, and Mermaid diagram
 
 MERMAID DIAGRAM REQUIREMENTS — the finish.mermaid MUST follow this structure:
 flowchart TD
@@ -755,21 +767,23 @@ REASONING APPROACH:
 2. Check query_learner_config to see current state
 3. Query signals_with_outcomes for recent paper trade performance
 4. Run query_score_correlation for each ENABLED dimension
-5. Check query_macro_context — does macro explain wins/losses?
-6. Call query_trade_decisions — analyze real historical trade patterns across ALL regimes. Look for: regime-specific win rates, buy vs sell accuracy, stocks the user consistently loses on, macro periods where decisions were best/worst.
-6b. Use semantic_search_decisions for drill-down: if you see a pattern (e.g. losses during rate hikes), run semantic_search to find semantically similar past decisions and check if they share a common failure mode.
-7. Read past learnings to avoid repeating old hypotheses
-8. Form hypotheses with evidence + confidence (ground in both paper trades AND real trade history)
-9. Mutate weights only if: N≥10 trades + confidence ≥ dim_min_confidence + not auto-guarded
-10. Call finish with complete structured Mermaid`;
+5. Query plan calibration; treat an individual target hit/miss as illustrative and use only aggregate cohorts for hypotheses.
+6. Check query_macro_context — does macro explain wins/losses?
+7. Call query_trade_decisions — analyze real historical trade patterns across ALL regimes. Look for: regime-specific win rates, buy vs sell accuracy, stocks the user consistently loses on, macro periods where decisions were best/worst.
+7b. Use semantic_search_decisions for drill-down: if you see a pattern (e.g. losses during rate hikes), run semantic_search to find semantically similar past decisions and check if they share a common failure mode.
+8. Read past learnings to avoid repeating old hypotheses
+9. Form hypotheses with evidence + confidence (ground in both paper trades AND real trade history)
+10. Mutate weights only if: N≥10 trades + confidence ≥ dim_min_confidence + not auto-guarded
+11. Call finish with complete structured Mermaid`;
 
-      const initialMessage = `Run your weekly ${LEARN_MARKET.toUpperCase()} learning analysis under this immutable user Trading Mandate: ${JSON.stringify(tradingMandate)}. You may propose challengers but cannot change the mandate; any proposed horizon must remain inside ${tradingMandate.min_hold_days}-${tradingMandate.max_hold_days} market days. Start with read_priors to load background context, then check learner_config for current state. Query all enabled signal dimensions for correlation with P&L. Check macro context to understand if external factors explain performance. Form grounded hypotheses. Only mutate weights if evidence is sufficient. Finish with a complete Mermaid diagram showing ALL inputs consumed this run.`;
+      const initialMessage = `Run your weekly ${LEARN_MARKET.toUpperCase()} learning analysis under this immutable user Trading Mandate: ${JSON.stringify(tradingMandate)}. You may propose challengers but cannot change the mandate; any proposed horizon must remain inside ${tradingMandate.min_hold_days}-${tradingMandate.max_hold_days} market days. Start with read_priors to load background context, then check learner_config for current state. Query all enabled signal dimensions for correlation with P&L and query the deterministic plan calibration. Check macro context to understand if external factors explain performance. Form grounded hypotheses. Only mutate weights if evidence is sufficient. Finish with a complete Mermaid diagram showing ALL inputs consumed this run.`;
 
       const LEARNER_TOOLS = [
         { name: "read_priors", description: "Read human-written Bayesian market principles as background context", parameters: { type: "object", properties: { category: { type: "string", enum: ["fundamental", "technical", "macro", "insider", "general"] } } } },
         { name: "query_learner_config", description: "Read current signal weights, strategy config, dimension enable/freeze config, and auto-guard status", parameters: { type: "object", properties: {} } },
         { name: "query_signals_with_outcomes", description: "Get signals joined with trade outcomes. Filter by days, min score, or asset_class", parameters: { type: "object", properties: { days: { type: "number" }, min_analyst_score: { type: "number" }, asset_class: { type: "string", enum: ["us_equity", "etf", "metal"] } } } },
         { name: "query_score_correlation", description: "Pearson correlation between a score dimension and P&L. Skipped if dimension disabled in config.", parameters: { type: "object", properties: { dimension: { type: "string", enum: ["fundamental_score", "technical_score", "sentiment_score", "macro_score", "insider_score", "analyst_score"] }, days: { type: "number" } }, required: ["dimension"] } },
+        { name: "query_plan_calibration", description: "Read deterministic same-market stop/objective/horizon versus matured-path cohorts. The objective is a policy level, not a terminal-price prediction. Read-only: this tool cannot change weights, risk settings, or positions.", parameters: { type: "object", properties: {} } },
         { name: "query_macro_context", description: "Get recent macro signals (rates, geopolitical events, sector rotations) from MacroSentinel", parameters: { type: "object", properties: { days: { type: "number" } } } },
         { name: "read_past_learnings", description: "Read past learning log and previous learner run summaries", parameters: { type: "object", properties: { limit: { type: "number" } } } },
         { name: "write_hypothesis", description: "Save a finding or hypothesis", parameters: { type: "object", properties: { claim: { type: "string" }, evidence: { type: "string" }, confidence: { type: "number" }, action_taken: { type: "string" }, category: { type: "string", enum: ["fundamental", "technical", "macro", "insider", "general"] } }, required: ["claim", "evidence", "confidence"] } },

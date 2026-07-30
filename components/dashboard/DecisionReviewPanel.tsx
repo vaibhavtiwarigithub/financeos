@@ -29,6 +29,11 @@ type Horizon = {
   max_favorable_excursion?: number | null;
   directional_hit?: boolean | null;
   delta?: number | null;
+  plan_outcome?: {
+    objectiveReached: boolean;
+    stopBreached: boolean;
+    objectiveReachRatio: number;
+  } | null;
 };
 type Attribution = {
   horizon_days: number;
@@ -48,6 +53,16 @@ type Decision = {
   entry_eligible: boolean | null;
   confidence_band: string | null;
   price_at_decision: number | null;
+  trade_plan: {
+    status: string | null;
+    reference_price: number | null;
+    initial_risk_floor: number | null;
+    profit_objective: number | null;
+    stop_loss_pct: number | null;
+    target_pct: number | null;
+    horizon_sessions: number | null;
+    reference_as_of: string | null;
+  } | null;
   horizons: Horizon[];
   attribution: Attribution | null;
 };
@@ -61,6 +76,16 @@ type CohortHorizon = {
   avg_alpha?: number | null;
 };
 type Cohort = { key: string; label: string; total_decisions: number; horizons: CohortHorizon[] };
+type PlanCalibration = {
+  horizonDays: number;
+  n: number;
+  adjustmentFloor: number;
+  reviewable: boolean;
+  adjustmentReady: boolean;
+  objectiveHitRate: number | null;
+  stopBreachRate: number | null;
+  averageObjectiveReachRatio: number | null;
+};
 type Resp = {
   market: string;
   currency_symbol: string;
@@ -68,7 +93,12 @@ type Resp = {
   matured_floor: number;
   counts: { observations_in_scope: number; observations_returned: number; matured_labels: number };
   recent: Decision[];
-  aggregates: { floor: number; byDirection: Cohort[]; byScoreBand: Cohort[] };
+  aggregates: {
+    floor: number;
+    byDirection: Cohort[];
+    byScoreBand: Cohort[];
+    planCalibration: PlanCalibration[];
+  };
 };
 
 function pct(v: number | null | undefined, digits = 1): string {
@@ -212,6 +242,30 @@ export default function DecisionReviewPanel() {
 
           {/* ── Recent decisions (per-symbol; attribution is decorative n=1) ── */}
           <Card
+            title="Entry-plan calibration"
+            sub="The profit objective is an exit-policy level, not a predicted terminal price. This compares the original stop/objective/horizon with the realized path. Review begins at 20 matured plans; automatic risk-policy readiness keeps the stricter 60-plan floor."
+          >
+            <div style={{ display: "grid", gap: "9px" }}>
+              {(data.aggregates.planCalibration ?? []).map(row => (
+                <div key={row.horizonDays} style={{ background: T.dim, borderRadius: "8px", padding: "10px 12px", display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "baseline" }}>
+                  <span style={{ color: T.text, fontWeight: 700, width: "30px" }}>{row.horizonDays}d</span>
+                  <span style={{ color: row.reviewable ? T.textSub : T.amber }}>n={row.n}</span>
+                  {row.n > 0 && (
+                    <>
+                      <span style={{ color: T.textSub }}>objective reached <b style={{ color: T.text }}>{row.objectiveHitRate == null ? "-" : `${Math.round(row.objectiveHitRate * 100)}%`}</b></span>
+                      <span style={{ color: T.textSub }}>stop touched <b style={{ color: T.text }}>{row.stopBreachRate == null ? "-" : `${Math.round(row.stopBreachRate * 100)}%`}</b></span>
+                      <span style={{ color: T.textSub }}>avg objective reached <b style={{ color: T.text }}>{row.averageObjectiveReachRatio == null ? "-" : `${Math.round(row.averageObjectiveReachRatio * 100)}%`}</b></span>
+                    </>
+                  )}
+                  <span style={{ color: row.adjustmentReady ? T.green : T.muted, fontSize: "10px", marginLeft: "auto" }}>
+                    {row.adjustmentReady ? "risk-policy sample ready" : `${row.n}/${row.adjustmentFloor} adjustment floor`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card
             title="Recent decisions vs actual move"
             sub={`${data.counts.observations_returned} most recent scored decisions in this market. "Actual" is the matured forward return from the ledger; a horizon that hasn't elapsed shows "maturing". Δ = our directional call × realized alpha (positive means the move agreed with us).`}
           >
@@ -234,12 +288,21 @@ export default function DecisionReviewPanel() {
                         <span style={{ fontSize: "11px", color: T.muted }}>{fmtDate(d.ts)}</span>
                       </div>
 
+                      {d.trade_plan && (
+                        <div style={{ fontSize: "11px", color: T.textSub, marginBottom: "9px", lineHeight: 1.5 }}>
+                          Original plan: {d.trade_plan.horizon_sessions ?? "-"} sessions
+                          {" / "}floor {d.trade_plan.initial_risk_floor == null ? "-" : `${cur}${d.trade_plan.initial_risk_floor}`}
+                          {" / "}objective {d.trade_plan.profit_objective == null ? "-" : `${cur}${d.trade_plan.profit_objective}`}
+                          <span style={{ color: T.muted }}> (policy bounds, not a terminal-price prediction)</span>
+                        </div>
+                      )}
+
                       {/* Per-horizon outcome grid */}
                       <div style={{ overflowX: "auto" }}>
-                        <table style={{ width: "100%", minWidth: "440px", borderCollapse: "collapse", fontSize: "12px" }}>
+                        <table style={{ width: "100%", minWidth: "560px", borderCollapse: "collapse", fontSize: "12px" }}>
                           <thead>
                             <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-                              {["Horizon", "Forward", "Alpha", "MAE / MFE", "Δ vs call"].map((h, i) => (
+                              {["Horizon", "Forward", "Alpha", "MAE / MFE", "Plan path", "Δ vs call"].map((h, i) => (
                                 <th key={h} style={{ padding: "5px 8px", textAlign: i === 0 ? "left" : "right", fontSize: "9px", color: T.muted, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>{h}</th>
                               ))}
                             </tr>
@@ -253,6 +316,11 @@ export default function DecisionReviewPanel() {
                                     <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700, color: retColor(h.fwd_return) }}>{pct(h.fwd_return)}</td>
                                     <td style={{ padding: "6px 8px", textAlign: "right", color: retColor(h.benchmark_neutral_return) }}>{pct(h.benchmark_neutral_return)}</td>
                                     <td style={{ padding: "6px 8px", textAlign: "right", color: T.muted }}>{pct(h.max_adverse_excursion)} / {pct(h.max_favorable_excursion)}</td>
+                                    <td style={{ padding: "6px 8px", textAlign: "right", color: T.textSub }}>
+                                      {h.plan_outcome
+                                        ? `${h.plan_outcome.objectiveReached ? "objective reached" : `${Math.round(h.plan_outcome.objectiveReachRatio * 100)}% of objective`}${h.plan_outcome.stopBreached ? " · stop touched" : ""}`
+                                        : "—"}
+                                    </td>
                                     <td style={{ padding: "6px 8px", textAlign: "right" }}>
                                       {h.delta == null ? <span style={{ color: T.muted }}>—</span> : (
                                         <span style={{ color: h.directional_hit ? T.green : T.red, fontWeight: 700 }}>
@@ -262,7 +330,7 @@ export default function DecisionReviewPanel() {
                                     </td>
                                   </>
                                 ) : (
-                                  <td colSpan={4} style={{ padding: "6px 8px", textAlign: "right", color: T.amber, fontSize: "11px" }}>maturing — horizon not yet elapsed</td>
+                                  <td colSpan={5} style={{ padding: "6px 8px", textAlign: "right", color: T.amber, fontSize: "11px" }}>maturing — horizon not yet elapsed</td>
                                 )}
                               </tr>
                             ))}
