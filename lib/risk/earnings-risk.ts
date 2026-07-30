@@ -83,17 +83,40 @@ function isTradingDay(market: Market, date: string): boolean {
   return day !== 0 && day !== 6 && !isMarketHoliday(market, date);
 }
 
-export function tradingSessionsBetween(market: Market, from: string, to: string): number {
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Real calendar date (rejects 2026-02-31 and other well-formed impossibilities). */
+function isRealDate(value: string): boolean {
+  if (!ISO_DATE.test(value)) return false;
+  const d = new Date(`${value}T12:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+/**
+ * Trading sessions from `from` to `to`, signed by direction. NULL means the
+ * distance is UNKNOWN — never a fabricated number.
+ *
+ * The previous version walked a 400-iteration guard and returned whatever it had
+ * counted when the target was never reached, which produced confident-looking
+ * garbage: a malformed `to` gave 282, a date beyond the guard gave 282, and an
+ * empty string gave -280. Both callers persist or render that value, and the
+ * conflict check below compared two such numbers — so two unparseable dates
+ * scored 282 each and read as AGREEING. That contradicts this feature's own rule
+ * that unknown or conflicting data must never become a confident date.
+ */
+export function tradingSessionsBetween(market: Market, from: string, to: string): number | null {
+  if (!isRealDate(from) || !isRealDate(to)) return null;
   if (from === to) return 0;
   const direction = from < to ? 1 : -1;
   const cursor = new Date(`${from}T12:00:00Z`);
   let count = 0;
-  for (let guard = 0; guard < 400 && cursor.toISOString().slice(0, 10) !== to; guard++) {
+  for (let guard = 0; guard < 400; guard++) {
     cursor.setUTCDate(cursor.getUTCDate() + direction);
     const date = cursor.toISOString().slice(0, 10);
     if (isTradingDay(market, date)) count += direction;
+    if (date === to) return count;
   }
-  return count;
+  return null; // target not reached inside the guard — distance is unknown
 }
 
 function normalizeSession(value: unknown): ReportSession {
@@ -195,8 +218,13 @@ export async function resolveEarningsEventRisk(
       confidence: "unknown", status: "unknown", observations: [],
     };
   }
-  const conflict = observations.some((left) => observations.some((right) =>
-    Math.abs(tradingSessionsBetween(market, left.date, right.date)) > 1));
+  // An UNMEASURABLE gap is a conflict, not agreement. Math.abs(null) is 0, so
+  // treating null as "0 sessions apart" would silently reconcile two dates whose
+  // distance could not be computed at all.
+  const conflict = observations.some((left) => observations.some((right) => {
+    const gap = tradingSessionsBetween(market, left.date, right.date);
+    return gap === null || Math.abs(gap) > 1;
+  }));
   if (conflict) {
     return {
       market, symbol, reportDate: null, reportSession: "unknown",

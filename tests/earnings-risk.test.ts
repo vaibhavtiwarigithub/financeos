@@ -44,6 +44,26 @@ describe("earnings-aware risk", () => {
   it("counts market sessions rather than calendar days and skips holidays", () => {
     expect(tradingSessionsBetween("us", "2026-07-02", "2026-07-06")).toBe(1);
     expect(tradingSessionsBetween("india", "2026-10-19", "2026-10-21")).toBe(1);
+    expect(tradingSessionsBetween("us", "2026-07-06", "2026-07-06")).toBe(0);
+  });
+
+  it("returns null instead of a fabricated session count when the gap is unknowable", () => {
+    // Regression. The 400-iteration guard used to return whatever it had counted
+    // when the target was never reached, so these produced 282, 282 and -280 —
+    // confident-looking numbers that the Risk page rendered and the ledger stored.
+    expect(tradingSessionsBetween("us", "2026-07-02", "not-a-date")).toBeNull();
+    expect(tradingSessionsBetween("us", "2026-07-02", "")).toBeNull();
+    expect(tradingSessionsBetween("us", "2026-07-02", "2030-01-01")).toBeNull(); // beyond the guard
+    expect(tradingSessionsBetween("us", "bad-input", "2026-07-06")).toBeNull();
+    // Well-formed but impossible dates must not pass the regex alone.
+    expect(tradingSessionsBetween("us", "2026-07-02", "2026-02-31")).toBeNull();
+  });
+
+  it("signs the count by direction so a past report reads negative", () => {
+    const fwd = tradingSessionsBetween("us", "2026-07-02", "2026-07-06");
+    const back = tradingSessionsBetween("us", "2026-07-06", "2026-07-02");
+    expect(fwd).toBe(1);
+    expect(back).toBe(-1);
   });
 
   it("uses same-day expiry for BMO but requires a later expiry for AMC/unknown", () => {
