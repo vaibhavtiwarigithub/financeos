@@ -286,7 +286,7 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
   {
     name: "earnings-risk-monitor-us",
     agent: "earnings-risk-monitor",
-    time: "15:00 UTC (10/11 AM ET)",
+    time: "16:00 UTC (11 AM/12 PM ET)",
     days: "Weekdays",
     runner: "Supabase pg_cron → Vercel",
     editable: false,
