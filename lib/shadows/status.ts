@@ -139,7 +139,7 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
     svc.from("provider_call_ledger")
       .select("id", { count: "exact", head: true })
       .gte("created_at", since7)
-      .or("and(run_id.like.shadow:%,lease_outcome.eq.acquired),and(run_id.like.shadow:%,transport_status.not.is.null),and(run_id.like.cohort:%,lease_outcome.eq.acquired),and(run_id.like.cohort:%,transport_status.not.is.null)"),
+      .or("and(run_id.like.shadow:%,lease_outcome.neq.skipped),and(run_id.like.shadow:%,transport_status.not.is.null),and(run_id.like.cohort:%,lease_outcome.neq.skipped),and(run_id.like.cohort:%,transport_status.not.is.null)"),
     svc.from("provider_call_ledger")
       .select("id", { count: "exact", head: true })
       .gte("created_at", since7)
