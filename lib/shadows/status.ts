@@ -38,7 +38,7 @@ export interface ShadowProgramStatus extends ShadowProgramDefinition {
   available: boolean;
 }
 
-type QueryResult<T> = { data: T | null; error: { message?: string } | null };
+type QueryResult<T> = { data: T | null; count?: number | null; error: { message?: string } | null };
 
 function daysEstimate(completed: number, target: number | null, ratePerDay: number | null): number | null {
   if (target == null || completed >= target || ratePerDay == null || ratePerDay <= 0) return null;
@@ -108,6 +108,8 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
     policyVersionsRes,
     evaluationRes,
     callLedgerRes,
+    networkCallRes,
+    cacheHitRes,
     degradationRes,
     shadowDecisionRes,
     edgeSignalRes,
@@ -132,14 +134,23 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
       .select("market,passed,safety_pass,quality_pass,eligibility_flips,requires_owner_review,created_at,expires_at,market_session_date")
       .gte("created_at", since45).order("created_at", { ascending: false }).limit(300),
     svc.from("provider_call_ledger")
-      .select("run_id,cache_outcome,lease_outcome,transport_status,created_at")
-      .gte("created_at", since7).or("run_id.like.shadow:%,run_id.like.cohort:%").limit(5000),
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", since7).or("run_id.like.shadow:%,run_id.like.cohort:%"),
+    svc.from("provider_call_ledger")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", since7)
+      .or("and(run_id.like.shadow:%,lease_outcome.eq.acquired),and(run_id.like.shadow:%,transport_status.not.is.null),and(run_id.like.cohort:%,lease_outcome.eq.acquired),and(run_id.like.cohort:%,transport_status.not.is.null)"),
+    svc.from("provider_call_ledger")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", since7)
+      .or("run_id.like.shadow:%,run_id.like.cohort:%")
+      .eq("cache_outcome", "fresh"),
     svc.from("evidence_degradation_events")
       .select("market,action,created_at").gte("created_at", since7).limit(2000),
     svc.from("shadow_decisions")
       .select("market,setup_type,would_enter,ts").gte("ts", since7).limit(5000),
     svc.from("edge_signals")
-      .select("market,edge_id,created_at")
+      .select("market,edge_id,created_at", { count: "exact" })
       .in("edge_id", ["kairos_technical_score_v1", "macd_atr_12_26_9", "signed_adx_14"])
       .gte("created_at", since7).limit(10000),
     svc.from("edge_readiness_status")
@@ -176,7 +187,7 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
   const activePolicies = activePolicyRes.data ?? [];
   const policyVersions = policyVersionsRes.data ?? [];
   const evaluations = evaluationRes.data ?? [];
-  const ledger = callLedgerRes.data ?? [];
+  const ledgerCount = callLedgerRes.count ?? 0;
   const degradation = degradationRes.data ?? [];
   const shadowDecisions = shadowDecisionRes.data ?? [];
   const edgeSignals = edgeSignalRes.data ?? [];
@@ -211,13 +222,13 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
         row: evaluations.find((candidate: any) => candidate.market === market),
       }));
       const sessions = new Set(evaluations.map((row: any) => `${row.market}:${row.market_session_date}`).filter((value: string) => !value.endsWith(":null")));
-      const network = ledger.filter((row: any) => row.lease_outcome === "acquired" || row.transport_status != null).length;
-      const cacheHits = ledger.filter((row: any) => row.cache_outcome === "fresh").length;
+      const network = networkCallRes.count ?? 0;
+      const cacheHits = cacheHitRes.count ?? 0;
       status.lifecycle = validPasses.length >= 2 ? "ready_for_review" : "blocked";
       status.benefitVerdict = "operational_only";
       status.benefitEvidence = `${validPasses.length} valid passing market evaluation(s); router remains disabled in ${active.filter((row: any) => !row.enabled).length}/2 markets.`;
       status.progress = progress(sessions.size, 20, "market-session proofs", 45);
-      status.calls = calls("tracked", "Router ledger rows over the last 7 days; network attempts are separated from cache-only resolutions.", ledger.length, network, cacheHits);
+      status.calls = calls("tracked", "Exact Router ledger counts over the last 7 days; network attempts are separated from cache-only resolutions.", ledgerCount, network, cacheHits);
       status.latestAt = latestIso(evaluations, "created_at");
       status.blockers = latestByMarket
         .filter(({ row }: any) => !row || row.passed !== true || row.safety_pass !== true || row.quality_pass !== true)
@@ -228,7 +239,7 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
         : "Repair failing coverage/quality dimensions and continue daily cohort proofs.";
       status.details = latestByMarket.map(({ market, row }: any) =>
         `${String(market).toUpperCase()} latest: ${row?.passed ? "pass" : "fail or unavailable"}`);
-      status.available = !evaluationRes.error && !callLedgerRes.error;
+      status.available = !evaluationRes.error && !callLedgerRes.error && !networkCallRes.error && !cacheHitRes.error;
       return status;
     }
 
@@ -277,7 +288,7 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
       status.benefitVerdict = ready ? "promising" : "insufficient";
       status.benefitEvidence = ready
         ? "At least one technical edge reached a review milestone; no scoring change is authorized."
-        : `${edgeSignals.length} technical edge observations in 7 days; weekly stability windows remain incomplete.`;
+        : `${edgeSignalRes.count ?? edgeSignals.length} technical edge observations in 7 days; weekly stability windows remain incomplete.`;
       status.progress = {
         ...progress(completed, target, "weekly stability windows", Math.max(7, completed * 7 || 7)),
         ratePerDay: completed > 0 ? 1 / 7 : null,
@@ -292,7 +303,7 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
       status.latestAt = latestIso(edgeSignals, "created_at") ?? latestIso(readiness, "evaluated_at");
       status.blockers = ready ? ["Owner review and a separate shadow-admission decision remain required."] : ["Stable weekly and point-in-time cost/FDR windows are incomplete."];
       status.nextAction = ready ? "Review the edge diagnostics; do not edit scoring directly." : "Continue EdgeScout/EdgeIC collection.";
-      status.details = [`${edgeSignals.length} US/India technical observations in the last 7 days.`, `${readiness.length} readiness cells tracked.`];
+      status.details = [`${edgeSignalRes.count ?? edgeSignals.length} US/India technical observations in the last 7 days.`, `${readiness.length} readiness cells tracked.`];
       status.available = !edgeSignalRes.error && !edgeReadinessRes.error;
       return status;
     }
