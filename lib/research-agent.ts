@@ -3,7 +3,6 @@ import { getConfiguredModel } from "@/lib/agent-model-config";
 import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 import { retrieveSimilarTrades, summarizeMemories } from "@/lib/rag/trade-memory";
 import { fetchSocialSentiment, shrinkSentimentScore, SocialSentiment } from "@/lib/social-sentiment";
-import type { OptionsSignal } from "@/lib/options-signal";
 import { computeScores, type ComputedScores } from "@/lib/data/scores";
 import type { Candle } from "@/lib/data/technicals";
 import { isIndia, fetchIndiaOverview, fetchYahooCandles } from "@/lib/india-data";
@@ -790,7 +789,7 @@ const DOCTRINE_PREAMBLE = `## Reasoning doctrine (non-negotiable)
 
 Scope: long-only US equities/ETFs, 2–20 market-day swing. Never propose options, crypto, shorting, leverage, or intraday.`;
 
-function buildStockPrompt(symbol: string, isHeld: boolean, social: SocialSentiment | null, options: OptionsSignal | null, insider: { score: number; summary: string } | null = null): string {
+function buildStockPrompt(symbol: string, isHeld: boolean, social: SocialSentiment | null, insider: { score: number; summary: string } | null = null): string {
   const heldNote = isHeld
     ? `\nIMPORTANT: This is a CURRENTLY HELD position. If analysis is bearish, set direction to "short" as an exit signal. Do NOT override to neutral.`
     : `\nNew candidate position. Only output direction "long" or "neutral" — never "short".`;
@@ -805,19 +804,6 @@ Use this to inform sentiment_score (scale 0–100: Bullish≈70+, Neutral≈50, 
 `
     : "";
 
-  const optionsBlock = options
-    ? `
-## Pre-fetched options flow (nearest expiry: ${options.nearestExpiry})
-${options.summary}
-Interpretation guide:
-- PCR < 0.7 = bullish (market buying calls). PCR > 1.2 = bearish (hedging with puts).
-- Unusual call volume (vol >> open interest) on OTM strikes = institutional bullish bet.
-- Unusual put volume on OTM strikes = hedging or directional bear bet.
-- High IV (>70th pct) = market pricing in a big move — be cautious entering before catalyst.
-Factor options flow into sentiment_score and conviction. Unusual call activity boosts conviction for longs; unusual put sweeps reduce it.
-`
-    : "";
-
   const insiderBlock = insider
     ? `
 ## Pre-fetched insider transactions (past 90 days — do NOT call INSIDER_TRANSACTIONS again)
@@ -828,7 +814,7 @@ Use this score directly as insider_score in your output. Do not override it unle
     : "";
 
   return `${DOCTRINE_PREAMBLE}
-${socialBlock}${optionsBlock}${insiderBlock}
+${socialBlock}${insiderBlock}
 You are a professional equity analyst. Research ${symbol} using these tools in order:
 
 1. Call get_financial_metrics_snapshot (FinancialDatasets) for fundamentals: P/E, revenue growth, margins, FCF yield, ROE
@@ -961,7 +947,6 @@ function buildSynthesisPrompt(
   rsi: number | null,
   overview: Record<string, string>,
   social: SocialSentiment | null,
-  options: OptionsSignal | null,
   insider: { score: number; summary: string } | null,
 ): string {
   const heldNote = isHeld
@@ -986,10 +971,6 @@ Fundamentals (Alpha Vantage Overview):
     ? `Social: ${social.overall_sentiment} — StockTwits ${social.stocktwits_bullish_pct ?? "n/a"}% bullish/${social.stocktwits_bearish_pct ?? "n/a"}% bearish (${social.stocktwits_message_count ?? 0} msgs). AV news sentiment: ${social.av_news_sentiment?.toFixed(3) ?? "n/a"} (${social.av_news_articles ?? 0} articles).`
     : "Social sentiment: not available";
 
-  const optionsBlock = options
-    ? `Options flow (nearest expiry ${options.nearestExpiry}): ${options.summary}`
-    : "";
-
   const insiderBlock = insider
     ? `Insider (90 days): score ${insider.score}/100. ${insider.summary}`
     : "";
@@ -1003,7 +984,6 @@ Technical:
 ${techBlock}
 ${fundBlock}
 ${socialBlock}
-${optionsBlock}
 ${insiderBlock}
 
 ## Scoring rubric

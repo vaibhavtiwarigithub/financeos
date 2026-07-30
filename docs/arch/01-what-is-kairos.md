@@ -135,6 +135,7 @@ All pages under `app/dashboard/`. All require auth (Supabase middleware).
 | `/dashboard/research` | Research | Signal list, symbol cards, score breakdown, thesis |
 | `/dashboard/learning` | Learning | LearnerAgent controls, Champion/Challenger, strategy versions, Performance Truth panel, mandate selector |
 | `/dashboard/agents` | Agents | Agent status grid, System Map diagram (Mermaid, from `system-map.json`), per-agent diagrams |
+| `/dashboard/upgrade-path` | Upgrade Path | Owner-only live inventory of shadow/paper experiments: evidence counts, provider-call accounting, benefit verdict, blockers, schedule truth, and review ETA |
 | `/dashboard/markets` | Markets | Macro sentinel gauge, sector TradingView chart, insider trades, breadth |
 | `/dashboard/smart-money` | Smart Money | Options flow, insider signals, trade queue; 4 tabs; both markets |
 | `/dashboard/india` | India | NSE score tracker, ₹ paper portfolio, Kite live holdings, India order form |

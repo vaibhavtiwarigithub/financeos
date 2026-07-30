@@ -25,7 +25,9 @@ export interface UnusualContract {
 
 export async function fetchOptionsSignal(symbol: string): Promise<OptionsSignal | null> {
   try {
-    const url = `https://query1.finance.yahoo.com/v7/finance/options/${symbol.toUpperCase()}`;
+    const canonicalSymbol = symbol.trim().toUpperCase();
+    if (!/^[A-Z][A-Z0-9.-]{0,14}$/.test(canonicalSymbol)) return null;
+    const url = `https://query1.finance.yahoo.com/v7/finance/options/${encodeURIComponent(canonicalSymbol)}`;
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0" },
       signal: AbortSignal.timeout(10000),
@@ -130,7 +132,7 @@ export async function fetchOptionsSignal(symbol: string): Promise<OptionsSignal 
       .join("\n");
 
     return {
-      symbol: symbol.toUpperCase(),
+      symbol: canonicalSymbol,
       putCallRatio: Math.round(putCallRatio * 100) / 100,
       pcrSentiment,
       unusualCalls,

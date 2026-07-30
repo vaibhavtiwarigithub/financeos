@@ -1,5 +1,6 @@
 # Kairos — Crons & Scheduling
-> Last updated: 2026-07-21 (PaperTrader is standalone-only: one in-session attempt per market, with US at 15:15 UTC and India at 04:10 UTC. Research no longer tail-calls it. The route independently refuses weekends, holidays, and outside-session execution.)
+> Last updated: 2026-07-29 (Removed the idle `kairos-shadow-us` and `kairos-shadow-india` pg_cron jobs. Their routes remain available for a future approved campaign. Productive Router, degradation, technical, earnings, allocation, and validation schedules remain active and are visible on Upgrade Path.)
+> Previously: 2026-07-21 (PaperTrader is standalone-only: one in-session attempt per market, with US at 15:15 UTC and India at 04:10 UTC. Research no longer tail-calls it. The route independently refuses weekends, holidays, and outside-session execution.)
 > Previously: 2026-07-19 (Per-market ResearchAgent catch-up now runs on supported market-closed days: weekends plus verified full NYSE/NSE equity holidays. Daily triggers self-skip on trading days, special sessions, and unsupported calendar years. Results remain `weekend_staged` under the legacy status name, `session_validated=false`, and never chain a trader.)
 > Previously: 2026-07-17 (Documented the two `macro-read` crons, which were missing from this table entirely. `macro-read-india` is now a **no-op** — the route refuses `market=india` — and is flagged for removal.)
 > Previously: 2026-07-17 (`kairos-price-cache-fill` now also backfills ~400d of sector-XL daily history — one paced, resumable provider call per symbol on the existing schedule. No new cron, no schema change.)
@@ -20,7 +21,6 @@ Defined in `vercel.json`. Fire against the Vercel deployment URL regardless of l
 | Endpoint | Schedule (UTC) | What it does |
 |---|---|---|
 | `/api/agents/evaluation/p1-gate/cron` | Sundays 02:00 UTC | Count closed evaluable trades per market; fire System Health info alert when ≥ 20 |
-| `/api/agents/autonomous-shadow/cron` | Weekdays 07:30 UTC | Run execution kernel over qualifying signals; create shadow `trade_proposals` with Kelly sizing; no broker submission |
 | `/api/agents/autonomous-live/cron?market=us` | Weekdays 15:00 UTC (~10–11 AM ET, in US session) | Per-market run: 9-gate kernel + fresh kill-switch + session-window guard + per-market USD NAV + Kelly; submit live US orders via Robinhood REST; no-op when `AUTONOMOUS_LIVE_ENABLED=false`, market not autonomous, or session closed |
 | `/api/agents/autonomous-live/cron?market=india` | Weekdays 06:00 UTC (11:30 AM IST, in NSE session) | Same, India: INR NAV from Kite margins+holdings; Kite REST |
 | `/api/agents/live-exit-monitor/cron` | Every 30 min, 13:00–20:00 UTC weekdays (US session) | Protective exits for LIVE positions: reconstructs open live positions from filled broker_orders; SELLs via the gateway on stop (−8%) / target (+20%) / time (15d). No-op unless live-auto armed |
@@ -154,7 +154,6 @@ Cron routes do NOT require an owner session — they accept the cron secret as a
 5:00 PM ET  — learner (Fri only)
 Every 4h    — stale-check (cloud, Vercel)
 Sun 8 PM ET — theme-scout
-7:30 AM UTC  — autonomous-shadow (cloud, Vercel, weekdays)
 2:00 PM UTC  — autonomous-live (cloud, Vercel, weekdays; after research+signals at 1 PM UTC)
 Sun 2 AM UTC — p1-gate (cloud, Vercel)
 1st of month 3 AM UTC — db-cleanup (cloud, Vercel)

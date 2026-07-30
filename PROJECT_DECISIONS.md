@@ -958,3 +958,30 @@ Files/features affected: `features/earnings-aware-risk/`,
 `earnings_risk_observations`.
 Reversal cost: Low; remove the display and annotation calls. Existing rows remain
 immutable audit evidence and have no trading effect.
+
+### Decision 56: One Read-Only Registry Governs All Shadow and Upgrade Programs
+
+Date: 2026-07-29
+Status: Approved
+Category: Architecture / Governance / Operations
+
+Decision: Maintain a typed code registry for every shadow, counterfactual,
+paper experiment, armed validator, and dormant upgrade path. Build an owner-only
+Upgrade Path page over existing authoritative ledgers and service-only pg_cron
+schedule truth. Do not create another evidence table or activation API.
+Reason: The owner needs one current answer for what each program provides, what
+it has collected, its provider cost, whether it helped, and the exact remaining
+gate. A code registry makes future additions reviewable while ledger adapters
+avoid parallel truth.
+Safety: The page is read-only. It cannot score, promote, trade, toggle a feature,
+or call a provider. Market-local evidence remains separate. Unknown call cost
+is labelled unmetered, and unknown completion time has no fabricated ETA.
+Operational change: Remove the zero-output `kairos-shadow-us` and
+`kairos-shadow-india` jobs. Keep their routes for a future declared campaign.
+All productive Router, degradation, setup, technical, earnings, allocation,
+rotation, and validation flows retain their existing behavior.
+Files/features affected: `features/shadow-registry/`, `lib/shadows/`,
+`/api/upgrade-path`, `/dashboard/upgrade-path`, and migration
+`20260729210000_shadow_registry_cron_status.sql`.
+Reversal cost: Low; restore the two jobs and remove the read-only surface. No
+evidence ledger or money-path rollback is required.

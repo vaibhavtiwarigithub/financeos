@@ -1,0 +1,407 @@
+import {
+  SHADOW_PROGRAMS,
+  type BenefitVerdict,
+  type CallAccountingMode,
+  type ShadowLifecycle,
+  type ShadowProgramDefinition,
+} from "@/lib/shadows/registry";
+
+export interface ShadowCallMetrics {
+  mode: CallAccountingMode;
+  recorded: number | null;
+  networkAttempts: number | null;
+  cacheHits: number | null;
+  note: string;
+}
+
+export interface ShadowProgress {
+  completed: number;
+  target: number | null;
+  unit: string;
+  secondary?: { completed: number; target: number; unit: string } | null;
+  windowDays: number;
+  ratePerDay: number | null;
+  estimatedDays: number | null;
+}
+
+export interface ShadowProgramStatus extends ShadowProgramDefinition {
+  lifecycle: ShadowLifecycle;
+  benefitVerdict: BenefitVerdict;
+  benefitEvidence: string;
+  progress: ShadowProgress;
+  calls: ShadowCallMetrics;
+  schedules: Array<{ job: string; schedule: string | null; active: boolean }>;
+  latestAt: string | null;
+  blockers: string[];
+  nextAction: string;
+  details: string[];
+  available: boolean;
+}
+
+type QueryResult<T> = { data: T | null; error: { message?: string } | null };
+
+function daysEstimate(completed: number, target: number | null, ratePerDay: number | null): number | null {
+  if (target == null || completed >= target || ratePerDay == null || ratePerDay <= 0) return null;
+  return Math.ceil((target - completed) / ratePerDay);
+}
+
+function progress(
+  completed: number,
+  target: number | null,
+  unit: string,
+  windowDays: number,
+  secondary?: ShadowProgress["secondary"],
+): ShadowProgress {
+  const rate = windowDays > 0 ? completed / windowDays : null;
+  return {
+    completed,
+    target,
+    unit,
+    secondary,
+    windowDays,
+    ratePerDay: rate,
+    estimatedDays: daysEstimate(completed, target, rate),
+  };
+}
+
+function calls(mode: CallAccountingMode, note: string, recorded: number | null = null, networkAttempts: number | null = null, cacheHits: number | null = null): ShadowCallMetrics {
+  return { mode, note, recorded, networkAttempts, cacheHits };
+}
+
+function base(program: ShadowProgramDefinition): ShadowProgramStatus {
+  return {
+    ...program,
+    lifecycle: "idle",
+    benefitVerdict: "insufficient",
+    benefitEvidence: "No trustworthy status could be derived.",
+    progress: progress(0, null, "observations", 7),
+    calls: calls(program.callAccounting, "Call accounting unavailable."),
+    schedules: program.cronJobs.map((job) => ({ job, schedule: null, active: false })),
+    latestAt: null,
+    blockers: ["Status adapter unavailable."],
+    nextAction: "Inspect the source ledger and System Health.",
+    details: [],
+    available: false,
+  };
+}
+
+function latestIso(rows: any[], field: string): string | null {
+  const values = rows.map((row) => row?.[field]).filter(Boolean).sort();
+  return values.length ? values[values.length - 1] : null;
+}
+
+function scheduleFor(program: ShadowProgramDefinition, cronRows: any[]): ShadowProgramStatus["schedules"] {
+  return program.cronJobs.map((job) => {
+    const row = cronRows.find((item) => item?.jobname === job);
+    return { job, schedule: row?.schedule ?? null, active: row?.active === true };
+  });
+}
+
+export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramStatus[]> {
+  const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
+  const since45 = new Date(Date.now() - 45 * 86400_000).toISOString();
+  const since90 = new Date(Date.now() - 90 * 86400_000).toISOString();
+
+  const [
+    cronRes,
+    activePolicyRes,
+    policyVersionsRes,
+    evaluationRes,
+    callLedgerRes,
+    degradationRes,
+    shadowDecisionRes,
+    edgeSignalRes,
+    edgeReadinessRes,
+    rotationConfigRes,
+    rotationEventRes,
+    paperTradeRes,
+    earningsRiskRes,
+    allocationPolicyRes,
+    allocationAssessmentRes,
+    strategyConfigRes,
+    autonomousProposalRes,
+    validationPolicyRes,
+    shadowVersionRes,
+    downsideConfigRes,
+    downsideEventRes,
+  ] = await Promise.all([
+    svc.rpc("get_shadow_cron_status"),
+    svc.from("active_evidence_policy").select("market,policy_version_id"),
+    svc.from("evidence_policy_versions").select("id,market,version,router_enabled,change_note"),
+    svc.from("evidence_policy_evaluations")
+      .select("market,passed,safety_pass,quality_pass,eligibility_flips,requires_owner_review,created_at,expires_at,market_session_date")
+      .gte("created_at", since45).order("created_at", { ascending: false }).limit(300),
+    svc.from("provider_call_ledger")
+      .select("run_id,cache_outcome,lease_outcome,transport_status,created_at")
+      .gte("created_at", since7).or("run_id.like.shadow:%,run_id.like.cohort:%").limit(5000),
+    svc.from("evidence_degradation_events")
+      .select("market,action,created_at").gte("created_at", since7).limit(2000),
+    svc.from("shadow_decisions")
+      .select("market,setup_type,would_enter,ts").gte("ts", since7).limit(5000),
+    svc.from("edge_signals")
+      .select("market,edge_id,created_at")
+      .in("edge_id", ["kairos_technical_score_v1", "macd_atr_12_26_9", "signed_adx_14"])
+      .gte("created_at", since7).limit(10000),
+    svc.from("edge_readiness_status")
+      .select("market,edge_id,horizon,windows_observed,windows_required,validation_windows_observed,validation_windows_required,stage,next_action,evaluated_at")
+      .in("edge_id", ["kairos_technical_score_v1", "macd_atr_12_26_9", "signed_adx_14"]).limit(200),
+    svc.from("rotation_config")
+      .select("market,book_type,rotation_shadow_enabled,rotation_paper_execute_enabled,rotation_live_proposals_enabled"),
+    svc.from("rotation_events")
+      .select("market,status,created_at,candidate_symbol,source_symbol").gte("created_at", since45).limit(2000),
+    svc.from("paper_trades")
+      .select("market,exit_reason,realized_pnl,pnl_pct,closed_at").eq("exit_reason", "capital_rotation").gte("closed_at", since90).limit(500),
+    svc.from("earnings_risk_observations")
+      .select("market,environment,decision_kind,report_date,options_quality,counterfactual_verdict,behavior_changed,created_at")
+      .gte("created_at", since90).limit(5000),
+    svc.from("international_allocation_policies")
+      .select("status,target_pct,deadband_pct,updated_at").order("updated_at", { ascending: false }).limit(5),
+    svc.from("international_allocation_assessments")
+      .select("assessment_status,proposed_action,created_at").gte("created_at", since90).limit(500),
+    svc.from("strategy_config")
+      .select("live_auto_enabled,live_auto_mode_us,live_auto_mode_india,allocation_enabled").limit(1).maybeSingle(),
+    svc.from("trade_proposals")
+      .select("market,status,execution_mode,created_at").eq("execution_mode", "autonomous_shadow").gte("created_at", since45).limit(2000),
+    svc.from("strategy_validation_automation")
+      .select("market,enabled,auto_shadow_enabled,max_active_shadows,updated_at"),
+    svc.from("strategy_versions")
+      .select("id,market,state,created_at").eq("state", "shadow_paper").limit(20),
+    svc.from("downside_hedge_config")
+      .select("market,enabled,paper_execute_enabled,updated_at").limit(10),
+    svc.from("downside_hedge_events")
+      .select("created_at,event_type,decision").gte("created_at", since90).limit(1000),
+  ]) as Array<QueryResult<any>>;
+
+  const cronRows = cronRes.data ?? [];
+  const activePolicies = activePolicyRes.data ?? [];
+  const policyVersions = policyVersionsRes.data ?? [];
+  const evaluations = evaluationRes.data ?? [];
+  const ledger = callLedgerRes.data ?? [];
+  const degradation = degradationRes.data ?? [];
+  const shadowDecisions = shadowDecisionRes.data ?? [];
+  const edgeSignals = edgeSignalRes.data ?? [];
+  const readiness = edgeReadinessRes.data ?? [];
+  const rotationConfig = rotationConfigRes.data ?? [];
+  const rotationEvents = rotationEventRes.data ?? [];
+  const rotationTrades = paperTradeRes.data ?? [];
+  const earnings = earningsRiskRes.data ?? [];
+  const allocationPolicies = allocationPolicyRes.data ?? [];
+  const allocationAssessments = allocationAssessmentRes.data ?? [];
+  const strategyConfig = strategyConfigRes.data ?? null;
+  const autonomousProposals = autonomousProposalRes.data ?? [];
+  const validationPolicies = validationPolicyRes.data ?? [];
+  const shadowVersions = shadowVersionRes.data ?? [];
+  const downsideConfigs = downsideConfigRes.data ?? [];
+  const downsideEvents = downsideEventRes.data ?? [];
+
+  return SHADOW_PROGRAMS.map((program) => {
+    const status = base(program);
+    status.schedules = scheduleFor(program, cronRows);
+
+    if (program.id === "evidence-router") {
+      const active = activePolicies.map((pointer: any) => {
+        const version = policyVersions.find((row: any) => row.id === pointer.policy_version_id);
+        return { market: pointer.market, enabled: version?.router_enabled === true };
+      });
+      const validPasses = evaluations.filter((row: any) =>
+        row.passed === true && row.safety_pass === true && row.quality_pass === true
+        && row.expires_at && new Date(row.expires_at).getTime() > Date.now());
+      const latestByMarket = ["us", "india"].map((market) => ({
+        market,
+        row: evaluations.find((candidate: any) => candidate.market === market),
+      }));
+      const sessions = new Set(evaluations.map((row: any) => `${row.market}:${row.market_session_date}`).filter((value: string) => !value.endsWith(":null")));
+      const network = ledger.filter((row: any) => row.lease_outcome === "acquired" || row.transport_status != null).length;
+      const cacheHits = ledger.filter((row: any) => row.cache_outcome === "fresh").length;
+      status.lifecycle = validPasses.length >= 2 ? "ready_for_review" : "blocked";
+      status.benefitVerdict = "operational_only";
+      status.benefitEvidence = `${validPasses.length} valid passing market evaluation(s); router remains disabled in ${active.filter((row: any) => !row.enabled).length}/2 markets.`;
+      status.progress = progress(sessions.size, 20, "market-session proofs", 45);
+      status.calls = calls("tracked", "Router ledger rows over the last 7 days; network attempts are separated from cache-only resolutions.", ledger.length, network, cacheHits);
+      status.latestAt = latestIso(evaluations, "created_at");
+      status.blockers = latestByMarket
+        .filter(({ row }: any) => !row || row.passed !== true || row.safety_pass !== true || row.quality_pass !== true)
+        .map(({ market }: any) => `${String(market).toUpperCase()} latest parity evaluation is not a full safety+quality pass.`);
+      if (!status.blockers.length && validPasses.length < 2) status.blockers.push("Both markets need fresh, unexpired passing evaluations.");
+      status.nextAction = status.lifecycle === "ready_for_review"
+        ? "Review flagged divergences and prepare a separate market-local activation decision."
+        : "Repair failing coverage/quality dimensions and continue daily cohort proofs.";
+      status.details = latestByMarket.map(({ market, row }: any) =>
+        `${String(market).toUpperCase()} latest: ${row?.passed ? "pass" : "fail or unavailable"}`);
+      status.available = !evaluationRes.error && !callLedgerRes.error;
+      return status;
+    }
+
+    if (program.id === "degradation-guard") {
+      const wouldAbstain = degradation.filter((row: any) => row.action === "abstain_new_long").length;
+      status.lifecycle = degradation.length ? "collecting" : "idle";
+      status.benefitVerdict = "operational_only";
+      status.benefitEvidence = `${wouldAbstain} new-long abstention(s) would have fired in the last 7 days; none changed behavior.`;
+      status.progress = progress(degradation.length, null, "counterfactual events", 7);
+      status.calls = calls("zero_incremental", "Uses the evidence mask already produced by ResearchAgent; no additional provider fetch.");
+      status.latestAt = latestIso(degradation, "created_at");
+      status.blockers = ["False-positive review and a stable market-local baseline are not complete."];
+      status.nextAction = "Review the would-abstain sample before considering enforce mode.";
+      status.details = ["Mode remains measure_only.", "Only long-to-neutral could ever be permitted."];
+      status.available = !degradationRes.error;
+      return status;
+    }
+
+    if (program.id === "setup-experts") {
+      const wouldEnter = shadowDecisions.filter((row: any) => row.would_enter).length;
+      const setups = new Map<string, number>();
+      shadowDecisions.forEach((row: any) => setups.set(row.setup_type ?? "strategy_version", (setups.get(row.setup_type ?? "strategy_version") ?? 0) + 1));
+      status.lifecycle = shadowDecisions.length ? "collecting" : "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${shadowDecisions.length} comparable decisions and ${wouldEnter} would-enter decisions in 7 days; forward outcome comparison is not mature.`;
+      status.progress = progress(shadowDecisions.length, null, "shadow decisions", 7);
+      status.calls = calls("zero_incremental", "Replays formulas from the same ResearchAgent inputs; no second provider call.");
+      status.latestAt = latestIso(shadowDecisions, "ts");
+      status.blockers = ["No approved minimum labelled sample or promotion gate exists for setup experts."];
+      status.nextAction = "Accumulate matured labels, then define a predeclared walk-forward comparison.";
+      status.details = [...setups.entries()].map(([name, count]) => `${name}: ${count} decisions`);
+      status.available = !shadowDecisionRes.error;
+      return status;
+    }
+
+    if (program.id === "technical-calibration") {
+      const best = [...readiness].sort((a: any, b: any) => {
+        const ar = Number(a.windows_observed ?? 0) / Math.max(1, Number(a.windows_required ?? 6));
+        const br = Number(b.windows_observed ?? 0) / Math.max(1, Number(b.windows_required ?? 6));
+        return br - ar;
+      })[0];
+      const completed = Number(best?.windows_observed ?? 0);
+      const target = Number(best?.windows_required ?? 6);
+      const ready = readiness.some((row: any) => ["ready_for_shadow_review", "ready_for_validation_build"].includes(row.stage));
+      status.lifecycle = ready ? "ready_for_review" : edgeSignals.length ? "collecting" : "idle";
+      status.benefitVerdict = ready ? "promising" : "insufficient";
+      status.benefitEvidence = ready
+        ? "At least one technical edge reached a review milestone; no scoring change is authorized."
+        : `${edgeSignals.length} technical edge observations in 7 days; weekly stability windows remain incomplete.`;
+      status.progress = {
+        ...progress(completed, target, "weekly stability windows", Math.max(7, completed * 7 || 7)),
+        ratePerDay: completed > 0 ? 1 / 7 : null,
+        estimatedDays: completed < target ? (target - completed) * 7 : null,
+        secondary: best ? {
+          completed: Number(best.validation_windows_observed ?? 0),
+          target: Number(best.validation_windows_required ?? 4),
+          unit: "cost/FDR validation windows",
+        } : null,
+      };
+      status.calls = calls("unmetered", "EdgeScout fetches are not consistently written to provider_call_ledger; the page refuses to report them as zero.");
+      status.latestAt = latestIso(edgeSignals, "created_at") ?? latestIso(readiness, "evaluated_at");
+      status.blockers = ready ? ["Owner review and a separate shadow-admission decision remain required."] : ["Stable weekly and point-in-time cost/FDR windows are incomplete."];
+      status.nextAction = ready ? "Review the edge diagnostics; do not edit scoring directly." : "Continue EdgeScout/EdgeIC collection.";
+      status.details = [`${edgeSignals.length} US/India technical observations in the last 7 days.`, `${readiness.length} readiness cells tracked.`];
+      status.available = !edgeSignalRes.error && !edgeReadinessRes.error;
+      return status;
+    }
+
+    if (program.id === "capital-rotation") {
+      const paperEnabled = rotationConfig.some((row: any) => row.book_type === "paper" && row.rotation_paper_execute_enabled === true);
+      const liveEnabled = rotationConfig.some((row: any) => row.book_type === "live" && row.rotation_live_proposals_enabled === true);
+      const paperExecuted = rotationEvents.filter((row: any) => row.status === "paper_executed").length;
+      const closedOutcomes = rotationTrades.filter((row: any) => row.closed_at != null);
+      const pnl = closedOutcomes.reduce((sum: number, row: any) => sum + Number(row.realized_pnl ?? 0), 0);
+      status.lifecycle = paperEnabled ? "paper_active" : rotationEvents.length ? "collecting" : "idle";
+      status.benefitVerdict = closedOutcomes.length >= 10 ? (pnl > 0 ? "promising" : "not_beneficial") : "insufficient";
+      status.benefitEvidence = `${paperExecuted} paper rotation(s) in 45 days; ${closedOutcomes.length} closed rotation outcome(s) available for net-benefit review.`;
+      status.progress = progress(rotationEvents.length, null, "rotation evaluations", 45);
+      status.calls = calls("zero_incremental", "Uses candidate/holding scores and prices already fetched by the paper-trade flow.");
+      status.latestAt = latestIso(rotationEvents, "created_at");
+      status.blockers = liveEnabled ? [] : ["Live rotation proposals are disabled.", "Closed net-of-cost/tax outcome sample is thin."];
+      status.nextAction = "Keep paper execution bounded; review churn, realized outcomes and two-leg reconciliation before any live proposal.";
+      status.details = [`Paper execution: ${paperEnabled ? "enabled" : "disabled"}.`, `Live proposals: ${liveEnabled ? "enabled" : "disabled"}.`];
+      status.available = !rotationConfigRes.error && !rotationEventRes.error;
+      return status;
+    }
+
+    if (program.id === "earnings-risk") {
+      const entries = earnings.filter((row: any) => row.decision_kind === "entry");
+      const events = new Set(entries.filter((row: any) => row.report_date).map((row: any) => `${row.market}:${row.report_date}`));
+      const usable = entries.filter((row: any) => row.options_quality === "usable").length;
+      const changed = earnings.filter((row: any) => row.behavior_changed).length;
+      status.lifecycle = entries.length ? "collecting" : "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${entries.length}/60 eligible-entry observations, ${events.size}/20 distinct events and ${usable} usable move proxies; ${changed} behavior changes.`;
+      status.progress = progress(entries.length, 60, "eligible entry observations", 90, { completed: events.size, target: 20, unit: "distinct earnings events" });
+      if (events.size < 20 && entries.length > 0) {
+        const eventRate = events.size / 90;
+        const eventEta = eventRate > 0 ? Math.ceil((20 - events.size) / eventRate) : null;
+        status.progress.estimatedDays = Math.max(status.progress.estimatedDays ?? 0, eventEta ?? 0) || null;
+      }
+      status.calls = calls("unmetered", "Robinhood/Yahoo earnings-option reads are bounded but not yet written to provider_call_ledger.");
+      status.latestAt = latestIso(earnings, "created_at");
+      status.blockers = ["The 60-entry and 20-event evidence floors are not met.", "Quote-quality and calibration review remain pending."];
+      status.nextAction = "Let paper/live candidate traffic collect observations; do not add options to analyst_score.";
+      status.details = ["US can measure a same-strike move proxy.", "India records event proximity only."];
+      status.available = !earningsRiskRes.error;
+      return status;
+    }
+
+    if (program.id === "international-allocation") {
+      const policy = allocationPolicies[0];
+      const targetSet = policy?.target_pct != null && policy?.deadband_pct != null;
+      status.lifecycle = targetSet ? "ready_for_review" : allocationAssessments.length ? "collecting" : "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${allocationAssessments.length} weekly/diagnostic assessment(s) in 90 days; target and deadband are ${targetSet ? "set" : "unset"}.`;
+      status.progress = progress(allocationAssessments.length, null, "allocation assessments", 90);
+      status.calls = calls("zero_incremental", "Reads persisted positions and policy snapshots; the weekly operational shadow makes no provider call.");
+      status.latestAt = latestIso(allocationAssessments, "created_at") ?? policy?.updated_at ?? null;
+      status.blockers = targetSet ? ["Paper allocation policy still requires owner approval."] : ["No target allocation or deadband is approved.", "Broader family/cost/tax comparison is incomplete."];
+      status.nextAction = "Keep observing VXUS; define a target only after the broader policy review.";
+      status.details = [`Latest policy status: ${policy?.status ?? "unavailable"}.`, "India/INR is not read or cross-summed."];
+      status.available = !allocationPolicyRes.error && !allocationAssessmentRes.error;
+      return status;
+    }
+
+    if (program.id === "autonomous-live") {
+      const enabled = strategyConfig?.live_auto_enabled === true;
+      const anyScheduled = status.schedules.some((row) => row.active);
+      status.lifecycle = enabled ? (autonomousProposals.length ? "collecting" : "idle") : "off";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${autonomousProposals.length} autonomous-shadow proposal(s) in 45 days; live_auto_enabled=${enabled}.`;
+      status.progress = progress(autonomousProposals.length, null, "kernel evaluations", 45);
+      status.calls = calls("unmetered", "The campaign is off. Quote calls would need ledger instrumentation before a future restart.");
+      status.latestAt = latestIso(autonomousProposals, "created_at");
+      status.blockers = ["No approved evidence campaign is active.", "Broker canaries and kill-switch drills are pending."];
+      status.nextAction = anyScheduled ? "Disable the idle schedules." : "Leave off until a new campaign with a declared sample target is approved.";
+      status.details = [`US mode: ${strategyConfig?.live_auto_mode_us ?? "unknown"}.`, `India mode: ${strategyConfig?.live_auto_mode_india ?? "unknown"}.`];
+      status.available = !strategyConfigRes.error && !autonomousProposalRes.error;
+      return status;
+    }
+
+    if (program.id === "challenger-validation") {
+      const armed = validationPolicies.some((row: any) => row.enabled && row.auto_shadow_enabled);
+      status.lifecycle = shadowVersions.length ? "collecting" : armed ? "armed" : "off";
+      status.benefitVerdict = "operational_only";
+      status.benefitEvidence = `${shadowVersions.length} active shadow_paper challenger(s); automation is ${armed ? "armed" : "disabled"}.`;
+      status.progress = progress(shadowVersions.length, null, "active shadow challengers", 45);
+      status.calls = calls("zero_incremental", "Validation reuses persisted observations and labels; it does not repair inputs with provider calls.");
+      status.latestAt = latestIso(shadowVersions, "created_at") ?? latestIso(validationPolicies, "updated_at");
+      status.blockers = shadowVersions.length ? ["Shadow outcome evidence must mature before any promotion review."] : ["No passing challenger currently occupies a shadow slot."];
+      status.nextAction = shadowVersions.length ? "Collect matched shadow outcomes." : "Wait for a learner challenger that passes deterministic validation.";
+      status.details = validationPolicies.map((row: any) => `${String(row.market).toUpperCase()}: ${row.enabled && row.auto_shadow_enabled ? "armed" : "off"}`);
+      status.available = !validationPolicyRes.error && !shadowVersionRes.error;
+      return status;
+    }
+
+    if (program.id === "downside-hedge") {
+      const enabled = downsideConfigs.some((row: any) => row.enabled);
+      const paperEnabled = downsideConfigs.some((row: any) => row.paper_execute_enabled);
+      status.lifecycle = enabled ? (downsideEvents.length ? "collecting" : "idle") : "off";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${downsideEvents.length} event(s) in 90 days; shadow enabled=${enabled}, paper execution=${paperEnabled}.`;
+      status.progress = progress(downsideEvents.length, null, "hedge evaluations", 90);
+      status.calls = calls("zero_incremental", "Uses persisted portfolio/macro inputs; no separate provider call is required.");
+      status.latestAt = latestIso(downsideEvents, "created_at") ?? latestIso(downsideConfigs, "updated_at");
+      status.blockers = ["Shadow collection is disabled.", "Hedge precision and drag have not been measured."];
+      status.nextAction = "Leave off until an explicit hedge evidence campaign is approved.";
+      status.details = ["No live path exists."];
+      status.available = !downsideConfigRes.error && !downsideEventRes.error;
+      return status;
+    }
+
+    return status;
+  });
+}

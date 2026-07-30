@@ -66,6 +66,7 @@ const NAV_SECTIONS = [
     items: [
       { href: "/dashboard/agents",       label: "Agents",           icon: "⬡", hint: "Run agents manually, view status, run history (History tab), config", alertCat: "" },
       { href: "/dashboard/research-journal", label: "Research", icon: "🔬", hint: "Daily funnel (why each symbol passed/failed), learning evolution, and the Score Tracker tab", alertCat: "" },
+      { href: "/dashboard/upgrade-path", label: "Upgrade Path", icon: "⇧", hint: "Live shadow evidence, provider cost, benefit verdicts, blockers and activation readiness", alertCat: "" },
     ],
   },
   {

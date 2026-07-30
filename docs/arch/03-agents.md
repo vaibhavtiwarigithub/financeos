@@ -831,3 +831,19 @@ US event dates are cross-checked against the PIT calendar, Finnhub, Webull, and
 Robinhood. India records market-local proximity and always reports options as
 unavailable. Robinhood research tools are a hardcoded read allowlist disjoint
 from order/review/cancel tools.
+
+## Shadow Registry and Upgrade Path (2026-07-29)
+
+`lib/shadows/registry.ts` is the descriptive inventory for every active,
+paper-active, armed, idle, or disabled evidence program. `/api/upgrade-path`
+adapts existing truth ledgers into a read-only status model; it does not create
+a parallel evidence table. `/dashboard/upgrade-path` refreshes that model every
+minute and reports market scope, schedule state, progress, collection rate,
+provider-call accounting, benefit evidence, blockers, and the separate
+activation gate.
+
+The registry has no write or activation capability. Estimated days are shown
+only for a declared target with a non-zero observed rate. Uninstrumented calls
+are labelled unmetered rather than zero. Capital rotation is labelled
+`paper_active`, not shadow-only. Any future shadow producer is incomplete until
+its ledger, schedule, safety boundary, and activation gate are registered.
