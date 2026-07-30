@@ -39,6 +39,7 @@ export interface ShadowProgramStatus extends ShadowProgramDefinition {
 }
 
 type QueryResult<T> = { data: T | null; count?: number | null; error: { message?: string } | null };
+export type ShadowMarket = "us" | "india";
 
 function daysEstimate(completed: number, target: number | null, ratePerDay: number | null): number | null {
   if (target == null || completed >= target || ratePerDay == null || ratePerDay <= 0) return null;
@@ -90,14 +91,19 @@ function latestIso(rows: any[], field: string): string | null {
   return values.length ? values[values.length - 1] : null;
 }
 
-function scheduleFor(program: ShadowProgramDefinition, cronRows: any[]): ShadowProgramStatus["schedules"] {
-  return program.cronJobs.map((job) => {
+function scheduleFor(program: ShadowProgramDefinition, cronRows: any[], market: ShadowMarket): ShadowProgramStatus["schedules"] {
+  const marketJobs = program.cronJobs.filter((job) => {
+    const indiaJob = /(^|-)india($|-)/.test(job);
+    const usJob = /(^|-)us($|-)/.test(job);
+    return market === "india" ? indiaJob || (!indiaJob && !usJob) : usJob || (!indiaJob && !usJob);
+  });
+  return marketJobs.map((job) => {
     const row = cronRows.find((item) => item?.jobname === job);
     return { job, schedule: row?.schedule ?? null, active: row?.active === true };
   });
 }
 
-export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramStatus[]> {
+export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): Promise<ShadowProgramStatus[]> {
   const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
   const since45 = new Date(Date.now() - 45 * 86400_000).toISOString();
   const since90 = new Date(Date.now() - 90 * 86400_000).toISOString();
@@ -128,43 +134,45 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
     downsideEventRes,
   ] = await Promise.all([
     svc.rpc("get_shadow_cron_status"),
-    svc.from("active_evidence_policy").select("market,policy_version_id"),
-    svc.from("evidence_policy_versions").select("id,market,version,router_enabled,change_note"),
+    svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
+    svc.from("evidence_policy_versions").select("id,market,version,router_enabled,change_note").eq("market", market),
     svc.from("evidence_policy_evaluations")
       .select("market,passed,safety_pass,quality_pass,eligibility_flips,requires_owner_review,created_at,expires_at,market_session_date")
-      .gte("created_at", since45).order("created_at", { ascending: false }).limit(300),
+      .eq("market", market).gte("created_at", since45).order("created_at", { ascending: false }).limit(300),
     svc.from("provider_call_ledger")
       .select("id", { count: "exact", head: true })
-      .gte("created_at", since7).or("run_id.like.shadow:%,run_id.like.cohort:%"),
+      .eq("market", market).gte("created_at", since7).or("run_id.like.shadow:%,run_id.like.cohort:%"),
     svc.from("provider_call_ledger")
       .select("id", { count: "exact", head: true })
-      .gte("created_at", since7)
+      .eq("market", market).gte("created_at", since7)
       .or("and(run_id.like.shadow:%,lease_outcome.neq.skipped),and(run_id.like.shadow:%,transport_status.not.is.null),and(run_id.like.cohort:%,lease_outcome.neq.skipped),and(run_id.like.cohort:%,transport_status.not.is.null)"),
     svc.from("provider_call_ledger")
       .select("id", { count: "exact", head: true })
-      .gte("created_at", since7)
+      .eq("market", market).gte("created_at", since7)
       .or("run_id.like.shadow:%,run_id.like.cohort:%")
       .eq("cache_outcome", "fresh"),
     svc.from("evidence_degradation_events")
-      .select("market,action,created_at").gte("created_at", since7).limit(2000),
+      .select("market,action,created_at").eq("market", market).gte("created_at", since7).limit(2000),
     svc.from("shadow_decisions")
-      .select("market,setup_type,would_enter,ts").gte("ts", since7).limit(5000),
+      .select("market,setup_type,would_enter,ts").eq("market", market).gte("ts", since7).limit(5000),
     svc.from("edge_signals")
       .select("market,edge_id,created_at", { count: "exact" })
+      .eq("market", market)
       .in("edge_id", ["kairos_technical_score_v1", "macd_atr_12_26_9", "signed_adx_14"])
       .gte("created_at", since7).limit(10000),
     svc.from("edge_readiness_status")
       .select("market,edge_id,horizon,windows_observed,windows_required,validation_windows_observed,validation_windows_required,stage,next_action,evaluated_at")
+      .eq("market", market)
       .in("edge_id", ["kairos_technical_score_v1", "macd_atr_12_26_9", "signed_adx_14"]).limit(200),
     svc.from("rotation_config")
-      .select("market,book_type,rotation_shadow_enabled,rotation_paper_execute_enabled,rotation_live_proposals_enabled"),
+      .select("market,book_type,rotation_shadow_enabled,rotation_paper_execute_enabled,rotation_live_proposals_enabled").eq("market", market),
     svc.from("rotation_events")
-      .select("market,status,created_at,candidate_symbol,source_symbol").gte("created_at", since45).limit(2000),
+      .select("market,status,created_at,candidate_symbol,source_symbol").eq("market", market).gte("created_at", since45).limit(2000),
     svc.from("paper_trades")
-      .select("market,exit_reason,realized_pnl,pnl_pct,closed_at").eq("exit_reason", "capital_rotation").gte("closed_at", since90).limit(500),
+      .select("market,exit_reason,realized_pnl,pnl_pct,closed_at").eq("market", market).eq("exit_reason", "capital_rotation").gte("closed_at", since90).limit(500),
     svc.from("earnings_risk_observations")
       .select("market,environment,decision_kind,report_date,options_quality,counterfactual_verdict,behavior_changed,created_at")
-      .gte("created_at", since90).limit(5000),
+      .eq("market", market).gte("created_at", since90).limit(5000),
     svc.from("international_allocation_policies")
       .select("status,target_pct,deadband_pct,updated_at").order("updated_at", { ascending: false }).limit(5),
     svc.from("international_allocation_assessments")
@@ -172,15 +180,15 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
     svc.from("strategy_config")
       .select("live_auto_enabled,live_auto_mode_us,live_auto_mode_india,allocation_enabled").limit(1).maybeSingle(),
     svc.from("trade_proposals")
-      .select("market,status,execution_mode,created_at").eq("execution_mode", "autonomous_shadow").gte("created_at", since45).limit(2000),
+      .select("market,status,execution_mode,created_at").eq("market", market).eq("execution_mode", "autonomous_shadow").gte("created_at", since45).limit(2000),
     svc.from("strategy_validation_automation")
-      .select("market,enabled,auto_shadow_enabled,max_active_shadows,updated_at"),
+      .select("market,enabled,auto_shadow_enabled,max_active_shadows,updated_at").eq("market", market),
     svc.from("strategy_versions")
-      .select("id,market,state,created_at").eq("state", "shadow_paper").limit(20),
+      .select("id,market,state,created_at").eq("market", market).eq("state", "shadow_paper").limit(20),
     svc.from("downside_hedge_config")
-      .select("market,enabled,paper_execute_enabled,updated_at").limit(10),
+      .select("market,enabled,paper_execute_enabled,updated_at").eq("market", market).limit(10),
     svc.from("downside_hedge_events")
-      .select("created_at,event_type,decision").gte("created_at", since90).limit(1000),
+      .select("created_at,event_type,decision").eq("market", market).gte("created_at", since90).limit(1000),
   ]) as Array<QueryResult<any>>;
 
   const cronRows = cronRes.data ?? [];
@@ -207,7 +215,20 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
 
   return SHADOW_PROGRAMS.map((program) => {
     const status = base(program);
-    status.schedules = scheduleFor(program, cronRows);
+    status.schedules = scheduleFor(program, cronRows, market);
+
+    if (!program.markets.includes(market)) {
+      status.lifecycle = "not_applicable";
+      status.benefitVerdict = "operational_only";
+      status.benefitEvidence = `${program.name} is not designed for the ${market === "india" ? "India" : "US"} pipeline.`;
+      status.progress = progress(0, null, "not applicable", 0);
+      status.calls = calls("not_applicable", "No provider calls are made for this market.");
+      status.blockers = [];
+      status.nextAction = "No action. This program is intentionally market-specific.";
+      status.details = [];
+      status.available = true;
+      return status;
+    }
 
     if (program.id === "evidence-router") {
       const active = activePolicies.map((pointer: any) => {
@@ -217,28 +238,24 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
       const validPasses = evaluations.filter((row: any) =>
         row.passed === true && row.safety_pass === true && row.quality_pass === true
         && row.expires_at && new Date(row.expires_at).getTime() > Date.now());
-      const latestByMarket = ["us", "india"].map((market) => ({
-        market,
-        row: evaluations.find((candidate: any) => candidate.market === market),
-      }));
-      const sessions = new Set(evaluations.map((row: any) => `${row.market}:${row.market_session_date}`).filter((value: string) => !value.endsWith(":null")));
+      const latest = evaluations[0];
+      const sessions = new Set(evaluations.map((row: any) => row.market_session_date).filter(Boolean));
       const network = networkCallRes.count ?? 0;
       const cacheHits = cacheHitRes.count ?? 0;
-      status.lifecycle = validPasses.length >= 2 ? "ready_for_review" : "blocked";
+      status.lifecycle = validPasses.length >= 1 ? "ready_for_review" : "blocked";
       status.benefitVerdict = "operational_only";
-      status.benefitEvidence = `${validPasses.length} valid passing market evaluation(s); router remains disabled in ${active.filter((row: any) => !row.enabled).length}/2 markets.`;
-      status.progress = progress(sessions.size, 20, "market-session proofs", 45);
+      status.benefitEvidence = `${validPasses.length} valid passing ${market.toUpperCase()} evaluation(s); router remains ${active.some((row: any) => row.enabled) ? "enabled" : "disabled"} for this market.`;
+      status.progress = progress(sessions.size, 10, "market-session proofs", 45);
       status.calls = calls("tracked", "Exact Router ledger counts over the last 7 days; network attempts are separated from cache-only resolutions.", ledgerCount, network, cacheHits);
       status.latestAt = latestIso(evaluations, "created_at");
-      status.blockers = latestByMarket
-        .filter(({ row }: any) => !row || row.passed !== true || row.safety_pass !== true || row.quality_pass !== true)
-        .map(({ market }: any) => `${String(market).toUpperCase()} latest parity evaluation is not a full safety+quality pass.`);
-      if (!status.blockers.length && validPasses.length < 2) status.blockers.push("Both markets need fresh, unexpired passing evaluations.");
+      status.blockers = !latest || latest.passed !== true || latest.safety_pass !== true || latest.quality_pass !== true
+        ? [`${market.toUpperCase()} latest parity evaluation is not a full safety+quality pass.`]
+        : [];
+      if (!status.blockers.length && validPasses.length < 1) status.blockers.push(`${market.toUpperCase()} needs a fresh, unexpired passing evaluation.`);
       status.nextAction = status.lifecycle === "ready_for_review"
         ? "Review flagged divergences and prepare a separate market-local activation decision."
         : "Repair failing coverage/quality dimensions and continue daily cohort proofs.";
-      status.details = latestByMarket.map(({ market, row }: any) =>
-        `${String(market).toUpperCase()} latest: ${row?.passed ? "pass" : "fail or unavailable"}`);
+      status.details = [`${market.toUpperCase()} latest: ${latest?.passed ? "pass" : "fail or unavailable"}`];
       status.available = !evaluationRes.error && !callLedgerRes.error && !networkCallRes.error && !cacheHitRes.error;
       return status;
     }
@@ -334,18 +351,26 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
       const changed = earnings.filter((row: any) => row.behavior_changed).length;
       status.lifecycle = entries.length ? "collecting" : "idle";
       status.benefitVerdict = "insufficient";
-      status.benefitEvidence = `${entries.length}/60 eligible-entry observations, ${events.size}/20 distinct events and ${usable} usable move proxies; ${changed} behavior changes.`;
-      status.progress = progress(entries.length, 60, "eligible entry observations", 90, { completed: events.size, target: 20, unit: "distinct earnings events" });
-      if (events.size < 20 && entries.length > 0) {
+      status.benefitEvidence = market === "us"
+        ? `${entries.length}/60 eligible-entry observations, ${events.size}/20 distinct events and ${usable} usable move proxies; ${changed} behavior changes.`
+        : `${entries.length} eligible-entry observations and ${events.size} distinct India earnings events; options-implied move is intentionally unavailable.`;
+      status.progress = market === "us"
+        ? progress(entries.length, 60, "eligible entry observations", 90, { completed: events.size, target: 20, unit: "distinct earnings events" })
+        : progress(entries.length, null, "India earnings-proximity observations", 90);
+      if (market === "us" && events.size < 20 && entries.length > 0) {
         const eventRate = events.size / 90;
         const eventEta = eventRate > 0 ? Math.ceil((20 - events.size) / eventRate) : null;
         status.progress.estimatedDays = Math.max(status.progress.estimatedDays ?? 0, eventEta ?? 0) || null;
       }
       status.calls = calls("unmetered", "Robinhood/Yahoo earnings-option reads are bounded but not yet written to provider_call_ledger.");
       status.latestAt = latestIso(earnings, "created_at");
-      status.blockers = ["The 60-entry and 20-event evidence floors are not met.", "Quote-quality and calibration review remain pending."];
-      status.nextAction = "Let paper/live candidate traffic collect observations; do not add options to analyst_score.";
-      status.details = ["US can measure a same-strike move proxy.", "India records event proximity only."];
+      status.blockers = market === "us"
+        ? ["The 60-entry and 20-event evidence floors are not met.", "Quote-quality and calibration review remain pending."]
+        : ["No India behavior-change target is approved; options-implied movement is not available for India."];
+      status.nextAction = market === "us"
+        ? "Let US candidate traffic collect observations; do not add options to analyst_score."
+        : "Continue India earnings-proximity measurement without borrowing US options evidence.";
+      status.details = market === "us" ? ["US can measure a same-strike move proxy."] : ["India records event proximity only."];
       status.available = !earningsRiskRes.error;
       return status;
     }
@@ -377,7 +402,7 @@ export async function getShadowProgramStatuses(svc: any): Promise<ShadowProgramS
       status.latestAt = latestIso(autonomousProposals, "created_at");
       status.blockers = ["No approved evidence campaign is active.", "Broker canaries and kill-switch drills are pending."];
       status.nextAction = anyScheduled ? "Disable the idle schedules." : "Leave off until a new campaign with a declared sample target is approved.";
-      status.details = [`US mode: ${strategyConfig?.live_auto_mode_us ?? "unknown"}.`, `India mode: ${strategyConfig?.live_auto_mode_india ?? "unknown"}.`];
+      status.details = [`${market.toUpperCase()} mode: ${market === "us" ? strategyConfig?.live_auto_mode_us ?? "unknown" : strategyConfig?.live_auto_mode_india ?? "unknown"}.`];
       status.available = !strategyConfigRes.error && !autonomousProposalRes.error;
       return status;
     }

@@ -9,6 +9,8 @@ describe("shadow registry governance contract", () => {
   const optionsSource = readFileSync("lib/options-signal.ts", "utf8");
   const research = readFileSync("lib/research-agent.ts", "utf8");
   const shell = readFileSync("components/dashboard/DashboardShell.tsx", "utf8");
+  const upgradePage = readFileSync("components/dashboard/UpgradePathPage.tsx", "utf8");
+  const statusAdapter = readFileSync("lib/shadows/status.ts", "utf8");
 
   it("uses stable unique IDs and complete descriptive boundaries", () => {
     const ids = SHADOW_PROGRAMS.map((program) => program.id);
@@ -56,6 +58,8 @@ describe("shadow registry governance contract", () => {
 
   it("owner-gates the read model and options inspection endpoint", () => {
     expect(route).toContain("requireOwner()");
+    expect(route).toContain('market !== "us" && market !== "india"');
+    expect(route).toContain("getShadowProgramStatuses(svc, market)");
     expect(optionsRoute).toContain("requireOwner()");
     expect(optionsRoute).toContain("invalid symbol");
     expect(optionsSource).toContain("encodeURIComponent(canonicalSymbol)");
@@ -72,5 +76,16 @@ describe("shadow registry governance contract", () => {
     expect(shell).toContain("localDate: clock.localDate");
     expect(shell).toContain("<span>{localDate}</span>");
     expect(shell).not.toContain("<span>{new Date().toLocaleDateString");
+  });
+
+  it("uses the shared market switch and scopes evidence before aggregation", () => {
+    expect(upgradePage).toContain("const { market } = useMarket()");
+    expect(upgradePage).toContain("/api/upgrade-path?market=${market}");
+    expect(upgradePage).not.toContain("Filter by market");
+    expect(upgradePage).not.toContain("<option value=\"all\">All markets");
+    expect(statusAdapter).toContain('export async function getShadowProgramStatuses(svc: any, market: ShadowMarket)');
+    expect(statusAdapter).toContain('.eq("market", market)');
+    expect(statusAdapter).toContain('status.lifecycle = "not_applicable"');
+    expect(statusAdapter).toContain('progress(sessions.size, 10, "market-session proofs", 45)');
   });
 });

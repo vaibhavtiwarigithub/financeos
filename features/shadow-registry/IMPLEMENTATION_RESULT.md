@@ -11,7 +11,10 @@ Status: COMPLETE
 - Live adapters over existing evidence ledgers; no parallel evidence table.
 - Lifecycle, benefit, market, schedule, progress, collection-rate, provider-call,
   blocker, safety-boundary, next-action, and defensible-ETA reporting.
-- 60-second page refresh plus manual refresh and lifecycle/market filters.
+- 60-second page refresh plus manual refresh and lifecycle filters.
+- DashboardShell's US/India switch is authoritative. Every ledger query and
+  derived metric is scoped to that market; unsupported programs remain visible
+  as `Not applicable`.
 - Service-only `get_shadow_cron_status()` RPC.
 - Removal of the zero-output `kairos-shadow-us` and `kairos-shadow-india`
   recurring jobs. Their routes remain available for a future approved campaign.

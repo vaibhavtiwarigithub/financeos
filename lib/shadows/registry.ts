@@ -5,7 +5,8 @@ export type ShadowLifecycle =
   | "armed"
   | "paper_active"
   | "idle"
-  | "off";
+  | "off"
+  | "not_applicable";
 
 export type BenefitVerdict =
   | "benefited"

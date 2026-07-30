@@ -842,6 +842,11 @@ minute and reports market scope, schedule state, progress, collection rate,
 provider-call accounting, benefit evidence, blockers, and the separate
 activation gate.
 
+The DashboardShell market switch is the only market selector. The API requires
+`market=us|india` and applies it to every market-bearing ledger query before
+aggregation. It never combines US and India readiness. A US-only program stays
+visible in the India view as `not_applicable`.
+
 The registry has no write or activation capability. Estimated days are shown
 only for a declared target with a non-zero observed rate. Uninstrumented calls
 are labelled unmetered rather than zero. Capital rotation is labelled

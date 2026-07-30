@@ -43,11 +43,16 @@ Do not create a parallel evidence table. The page reads:
 
 The left navigation gains `Upgrade Path` under Research.
 
+The shared DashboardShell US/India switch is the sole market authority. The
+page must not add a second market picker. Every evidence query, count, verdict,
+blocker, and ETA is scoped to the selected market before aggregation. Programs
+that do not support the selected market remain visible as `not_applicable`.
+
 The page contains:
 
 - a compact status bar: total programs, actively collecting, review-ready,
   blocked/idle, and provider calls recorded over seven days;
-- filters for lifecycle and market;
+- lifecycle filters;
 - one un-nested program row/panel per registry entry;
 - purpose and concrete value to Kairos;
 - market scope and safety boundary;

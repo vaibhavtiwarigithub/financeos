@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Database, RefreshCw, ShieldCheck } from "lucide-react";
 import type { ShadowProgramStatus } from "@/lib/shadows/status";
 import type { ShadowLifecycle } from "@/lib/shadows/registry";
+import { MARKET_LABEL, useMarket } from "@/lib/market-context";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#2B2F3D",
@@ -13,11 +14,11 @@ const T = {
 
 type ApiResponse = {
   generatedAt: string;
+  market: "us" | "india";
   summary: { total: number; collecting: number; readyForReview: number; blockedOrIdle: number; trackedCalls7d: number };
   programs: ShadowProgramStatus[];
 };
 type LifecycleFilter = "all" | "active" | "review" | "blocked" | "off";
-type MarketFilter = "all" | "us" | "india";
 
 const LIFECYCLE_META: Record<ShadowLifecycle, { label: string; color: string }> = {
   collecting: { label: "Collecting", color: T.blue },
@@ -27,6 +28,7 @@ const LIFECYCLE_META: Record<ShadowLifecycle, { label: string; color: string }> 
   paper_active: { label: "Paper active", color: T.green },
   idle: { label: "Idle", color: T.yellow },
   off: { label: "Off", color: T.muted },
+  not_applicable: { label: "Not applicable", color: T.muted },
 };
 const BENEFIT_META = {
   benefited: { label: "Benefited", color: T.green },
@@ -57,6 +59,7 @@ function fmtDate(value: string | null) {
   return new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 function etaLabel(program: ShadowProgramStatus) {
+  if (program.lifecycle === "not_applicable") return "Not applicable";
   if (program.progress.target != null && program.progress.completed >= program.progress.target) return "Evidence floor met";
   if (program.progress.estimatedDays == null) return "No defensible ETA";
   return `About ${program.progress.estimatedDays} day${program.progress.estimatedDays === 1 ? "" : "s"}`;
@@ -103,7 +106,7 @@ function ProgressBar({ program }: { program: ShadowProgramStatus }) {
   </div>;
 }
 
-function ProgramPanel({ program, mobile }: { program: ShadowProgramStatus; mobile: boolean }) {
+function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatus; mobile: boolean; market: "us" | "india" }) {
   const lifecycle = LIFECYCLE_META[program.lifecycle];
   const benefit = BENEFIT_META[program.benefitVerdict];
   return <section style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", overflow: "hidden", opacity: program.available ? 1 : 0.72 }}>
@@ -118,7 +121,7 @@ function ProgramPanel({ program, mobile }: { program: ShadowProgramStatus; mobil
           <StatusPill label={benefit.label} color={benefit.color} />
         </div>
         <div style={{ color: T.muted, fontSize: "12px", marginTop: "7px" }}>
-          {program.category} · {program.markets.map((market) => market.toUpperCase()).join(" + ")} · Owner: {program.owner}
+          {program.category} · {market.toUpperCase()} view · Supports: {program.markets.map((supported) => supported.toUpperCase()).join(" + ")} · Owner: {program.owner}
         </div>
       </div>
       <div style={{ color: T.textSub, fontSize: "12px", whiteSpace: "nowrap" }}>Latest: {fmtDate(program.latestAt)}</div>
@@ -185,12 +188,12 @@ export default function UpgradePathPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [lifecycle, setLifecycle] = useState<LifecycleFilter>("all");
-  const [market, setMarket] = useState<MarketFilter>("all");
+  const { market } = useMarket();
   const mobile = useIsMobile();
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/upgrade-path", { cache: "no-store" });
+      const response = await fetch(`/api/upgrade-path?market=${market}`, { cache: "no-store" });
       if (!response.ok) throw new Error(`Status request failed (${response.status})`);
       setData(await response.json());
       setError("");
@@ -199,22 +202,23 @@ export default function UpgradePathPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [market]);
   useEffect(() => {
+    setLoading(true);
+    setData(null);
     load();
     const timer = window.setInterval(load, 60_000);
     return () => window.clearInterval(timer);
   }, [load]);
 
   const filtered = useMemo(() => (data?.programs ?? []).filter((program) => {
-    const marketMatch = market === "all" || program.markets.includes(market);
     const lifecycleMatch = lifecycle === "all"
       || (lifecycle === "active" && ["collecting", "paper_active", "armed"].includes(program.lifecycle))
       || (lifecycle === "review" && program.lifecycle === "ready_for_review")
       || (lifecycle === "blocked" && ["blocked", "idle"].includes(program.lifecycle))
       || (lifecycle === "off" && program.lifecycle === "off");
-    return marketMatch && lifecycleMatch;
-  }), [data, lifecycle, market]);
+    return lifecycleMatch;
+  }), [data, lifecycle]);
 
   return <main style={{ minHeight: "100vh", background: T.bg, color: T.text, padding: mobile ? "18px 14px 36px" : "24px 28px 48px" }}>
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "18px", marginBottom: "20px" }}>
@@ -222,7 +226,7 @@ export default function UpgradePathPage() {
         <div style={{ color: T.accent, fontSize: "11px", fontWeight: 800, textTransform: "uppercase", marginBottom: "7px" }}>Research governance</div>
         <h1 style={{ fontSize: mobile ? "24px" : "28px", lineHeight: 1.2, margin: 0, letterSpacing: 0 }}>Upgrade Path</h1>
         <p style={{ color: T.textSub, fontSize: "13px", lineHeight: 1.55, margin: "8px 0 0", maxWidth: "780px" }}>
-          Live evidence, cost, benefit and activation boundaries for every registered shadow, paper experiment and dormant upgrade path.
+          {MARKET_LABEL[market]} evidence, cost, benefit and activation boundaries for every registered shadow, paper experiment and dormant upgrade path.
         </p>
       </div>
       <button type="button" onClick={load} title="Refresh status" aria-label="Refresh status" style={{
@@ -257,13 +261,9 @@ export default function UpgradePathPage() {
         background: lifecycle === value ? `${T.accent}1F` : T.surface, color: lifecycle === value ? T.text : T.textSub,
         padding: "7px 10px", fontSize: "12px", cursor: "pointer",
       }}>{label}</button>)}
-      <select aria-label="Filter by market" value={market} onChange={(event) => setMarket(event.target.value as MarketFilter)} style={{
-        marginLeft: mobile ? 0 : "auto", border: `1px solid ${T.border}`, borderRadius: "6px",
-        background: T.surface, color: T.text, padding: "7px 30px 7px 10px", fontSize: "12px",
-      }}>
-        <option value="all">All markets</option><option value="us">US</option><option value="india">India</option>
-      </select>
-      {data && <span style={{ color: T.muted, fontSize: "11px" }}>Updated {fmtDate(data.generatedAt)} · auto-refreshes every minute</span>}
+      {data && <span style={{ marginLeft: mobile ? 0 : "auto", color: T.muted, fontSize: "11px" }}>
+        {MARKET_LABEL[data.market]} · Updated {fmtDate(data.generatedAt)} · auto-refreshes every minute
+      </span>}
     </section>
 
     {error && <div style={{
@@ -272,7 +272,7 @@ export default function UpgradePathPage() {
     }}>{error}. Existing values remain visible where available.</div>}
 
     {loading && !data ? <div style={{ color: T.textSub, padding: "40px 0" }}>Loading live evidence ledgers...</div> : <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-      {filtered.map((program) => <ProgramPanel key={program.id} program={program} mobile={mobile} />)}
+      {filtered.map((program) => <ProgramPanel key={program.id} program={program} mobile={mobile} market={market} />)}
       {!filtered.length && <div style={{ border: `1px solid ${T.border}`, borderRadius: "8px", padding: "30px", textAlign: "center", color: T.muted }}>No programs match these filters.</div>}
     </div>}
 
