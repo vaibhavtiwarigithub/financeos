@@ -7,6 +7,7 @@ import PageHeader from "@/components/dashboard/PageHeader";
 import AgentDiagram from "@/components/dashboard/AgentDiagram";
 import AgentHistoryPanel from "@/components/dashboard/AgentHistoryPanel";
 import InfoTooltip from "@/components/dashboard/InfoTooltip";
+import SystemReferencePanel from "@/components/dashboard/SystemReferencePanel";
 import { fmtMoney } from "@/lib/format-money";
 import { paperStartNav } from "@/lib/paper-nav";
 import type { AgentCapacityRow } from "@/lib/agents/capacity";
@@ -419,7 +420,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           { key: "log", label: "Learning Log" },
           { key: "history", label: "History" },
           { key: "backtest", label: "Backtest" },
-          { key: "architecture", label: "Architecture" },
+          { key: "architecture", label: "System Reference" },
           { key: "brain", label: "🧠 Learner Brain" },
           { key: "learner-ctrl", label: "🎛 Learner Controls" },
           { key: "weight-history", label: "📜 Weight History" },
@@ -944,8 +945,10 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         );
       })()}
 
-      {/* Architecture tab */}
-      {tab === "architecture" && (
+      {tab === "architecture" && <SystemReferencePanel />}
+
+      {/* Retained temporarily for source-history comparison; never rendered. */}
+      {false && (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
 
           {/* Section 1: Agent Pipeline */}
@@ -1823,7 +1826,7 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
       })()}
 
       {/* Agent & Flow Architecture Section */}
-      <div style={{ marginTop: 24, borderRadius: 12, border: "1px solid #1E2130", background: "#13151C", overflow: "hidden" }}>
+      <div id="agent-flow-architecture" style={{ marginTop: 24, borderRadius: 12, border: "1px solid #1E2130", background: "#13151C", overflow: "hidden" }}>
         <div style={{ padding: "12px 16px", borderBottom: "1px solid #1E2130", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: "#E2E8F0" }}>Agent &amp; Flow Architecture</span>
