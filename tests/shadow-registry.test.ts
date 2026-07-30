@@ -8,6 +8,7 @@ describe("shadow registry governance contract", () => {
   const optionsRoute = readFileSync("app/api/options/signal/route.ts", "utf8");
   const optionsSource = readFileSync("lib/options-signal.ts", "utf8");
   const research = readFileSync("lib/research-agent.ts", "utf8");
+  const shell = readFileSync("components/dashboard/DashboardShell.tsx", "utf8");
 
   it("uses stable unique IDs and complete descriptive boundaries", () => {
     const ids = SHADOW_PROGRAMS.map((program) => program.id);
@@ -65,5 +66,11 @@ describe("shadow registry governance contract", () => {
     expect(research).not.toContain("Pre-fetched options flow");
     expect(research).not.toContain("institutional bullish bet");
     expect(research).not.toContain("Options flow (nearest expiry");
+  });
+
+  it("does not server-render a timezone-dependent dashboard clock", () => {
+    expect(shell).toContain("localDate: clock.localDate");
+    expect(shell).toContain("<span>{localDate}</span>");
+    expect(shell).not.toContain("<span>{new Date().toLocaleDateString");
   });
 });

@@ -150,21 +150,40 @@ function getIndiaMarketStatus(): { label: string; color: string; bg: string; det
 }
 
 function useMarketClock() {
-  const [times, setTimes] = useState({ us: "", india: "" });
+  const pendingStatus = { label: "Checking", color: T.muted, bg: "#1A1D27", detail: "Checking market session" };
+  const [clock, setClock] = useState({
+    us: "",
+    india: "",
+    localDate: "",
+    status: pendingStatus,
+    indiaStatus: pendingStatus,
+  });
   useEffect(() => {
     function update() {
       const now = new Date();
       const options: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true };
-      setTimes({
+      setClock({
         us: now.toLocaleTimeString("en-US", { ...options, timeZone: "America/New_York" }),
         india: now.toLocaleTimeString("en-US", { ...options, timeZone: "Asia/Kolkata" }),
+        localDate: now.toLocaleDateString("en-US", {
+          weekday: "short", month: "short", day: "numeric", year: "numeric",
+          timeZone: "America/Chicago",
+        }),
+        status: getMarketStatus(),
+        indiaStatus: getIndiaMarketStatus(),
       });
     }
     update();
     const id = setInterval(update, 30000);
     return () => clearInterval(id);
   }, []);
-  return { timeStr: times.us, indiaTimeStr: times.india, status: getMarketStatus(), indiaStatus: getIndiaMarketStatus() };
+  return {
+    timeStr: clock.us,
+    indiaTimeStr: clock.india,
+    localDate: clock.localDate,
+    status: clock.status,
+    indiaStatus: clock.indiaStatus,
+  };
 }
 
 const TIER_COLORS: Record<string, string> = { free: T.muted, pro: T.accent, elite: T.yellow };
@@ -216,7 +235,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
   const [marketPauses, setMarketPauses] = useState<{ market: string; paused: boolean; paused_reason: string | null }[]>([]);
   const bellRef = useRef<HTMLDivElement>(null);
   const seenProposalIds = useRef<Set<string>>(new Set());
-  const { timeStr, indiaTimeStr, status: mktStatus, indiaStatus } = useMarketClock();
+  const { timeStr, indiaTimeStr, localDate, status: mktStatus, indiaStatus } = useMarketClock();
   const isMobile = useIsMobile();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // Close the drawer automatically on navigation — otherwise it stays open
@@ -747,7 +766,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
 
           {/* Date + time ET */}
           <div style={{ fontSize: "11px", color: T.muted, display: "flex", gap: "10px", alignItems: "center" }}>
-            <span>{new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}</span>
+            <span>{localDate}</span>
             <span style={{ color: T.textSub, fontVariantNumeric: "tabular-nums" }}>{timeStr} ET</span>
           </div>
         </div>
