@@ -632,7 +632,18 @@ Webull Cloud MCP remains query-only and advertises no order scopes or tools. A
 future Webull Trading API adapter is a separate, signed, sandbox-first money-path
 feature and is currently unapproved and disabled.
 
-## Hybrid protective-stop shadow scaffold (2026-07-18)
+## Hybrid protective-stop control plane (2026-07-30)
+
+The earlier shadow scaffold is now reconciled with production schema truth:
+`protective_orders`, `protective_order_events`, and the false-by-default
+`protective_orders_enabled` flag are applied. Direct production verification on
+2026-07-30 found the flag false and zero protection rows. P1 adds read-only
+full-quantity coverage evaluation plus an autonomous-live entry interlock. A
+configuration flag alone cannot permit a BUY: the source-level placement worker is
+false until a separately reviewed broker-specific lifecycle exists. P1 neither
+places nor modifies a broker order, and it does not change manual live, paper, or
+the synthetic live-exit monitor. The older prose below is historical scaffolding;
+references to the migration as unapplied are superseded.
 
 Built UP TO the placement line and STOPPED. **No live broker order is ever placed
 by this scaffold — not a $1 test.** It is a set of pure, deterministic modules

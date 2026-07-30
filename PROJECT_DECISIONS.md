@@ -985,3 +985,28 @@ Files/features affected: `features/shadow-registry/`, `lib/shadows/`,
 `20260729210000_shadow_registry_cron_status.sql`.
 Reversal cost: Low; restore the two jobs and remove the read-only surface. No
 evidence ledger or money-path rollback is required.
+
+### Decision 57: Broker Protection Is a Hard Prerequisite for Autonomous Live Entry
+
+Date: 2026-07-30
+Status: Approved and implemented as P1 control plane
+Category: Trading Risk / Execution Safety
+
+Decision: New autonomous live BUYs require an enabled protection policy, a
+broker-specific placement and reconciliation worker, and full active protection
+coverage for every managed live position. P1 is read-only and source-default-deny;
+it cannot create, change, cancel, or query a broker order.
+
+Reason: A database feature flag and a planned order ledger cannot protect a held
+position. Requiring reconciled broker proof prevents an accidental configuration
+change from creating a growing set of positions that only a scheduled synthetic
+exit monitor can protect.
+
+Scope: P1 does not affect paper trading, manual live orders, scoring, learning,
+or current synthetic exits. P2 needs separate broker capability proof, sandbox or
+manual canary, lifecycle reconciliation, and owner approval. Robinhood stop-order
+support is not verified; Kite GTT remains weaker limit-child protection; Webull is
+disabled.
+
+Reversal cost: Low. Disable the control-plane interlock only by a reviewed source
+change; no broker state is created by P1.

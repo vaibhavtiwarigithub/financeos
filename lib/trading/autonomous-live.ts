@@ -19,6 +19,13 @@ import { loadChampionGenome } from "@/lib/validation/genome-live";
 import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
 import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 import { reconstructAccountLivePositions } from "@/lib/trading/live-position-ledger";
+import {
+  evaluateAutonomousEntryProtection,
+  evaluateProtectionCoverage,
+  managedLivePositionId,
+  type ManagedLivePosition,
+  type ProtectiveOrderCoverageRow,
+} from "@/lib/protective/coverage";
 
 const SIGNAL_LOOKBACK_HOURS = 24;
 
@@ -68,6 +75,7 @@ export async function runAutonomousLive(
       "live_auto_max_open_positions,live_auto_max_orders_per_day,score_threshold,position_size_pct," +
       "live_auto_mode_us,live_auto_mode_india," +
       "max_daily_notional_usd,max_daily_notional_inr,max_daily_trades," +
+      "protective_orders_enabled," +
       "app_paused,security_locked,trading_enabled,trading_enabled_us,trading_enabled_india," +
       "active_account_us,active_account_india"
     )
@@ -84,6 +92,18 @@ export async function runAutonomousLive(
 
   // G3: DB master toggle
   if (!cfg.live_auto_enabled) return { ...earlyExit("db_toggle_off"), run_id: runId };
+
+  // G3a: a configuration flag is never sufficient to create an unprotected
+  // autonomous position. The placement worker is deliberately unavailable until
+  // a broker-specific implementation has passed its own canary/reconciliation
+  // gate. This is evaluated before any provider work or proposal write.
+  const protectionBootstrap = evaluateAutonomousEntryProtection({
+    placementEnabled: cfg.protective_orders_enabled === true,
+    coverage: { protected: true, findings: [] },
+  });
+  if (!protectionBootstrap.ok) {
+    return { ...earlyExit(`protective_entry_interlock:${protectionBootstrap.reason}`), run_id: runId };
+  }
 
   // G4: lease — require a VALID FUTURE lease. A null/absent lease must NOT pass
   // on a live-money path (fail closed).
@@ -276,6 +296,7 @@ export async function runAutonomousLive(
   // max-open cap permanently, and mixed US+India into one number.
   const openByMarket: Record<string, number> = {};
   const ordersTodayByMarket: Record<string, number> = {};
+  const managedPositions: ManagedLivePosition[] = [];
   for (const m of autonomousMarkets) {
     const [{ data: fills, error: fillsError }, { data: todayOrders, error: todayError }] = await Promise.all([
       svc.from("broker_orders")
@@ -308,10 +329,40 @@ export async function runAutonomousLive(
         mandateVersion: mandate.version,
       },
     });
+    const broker = m === "india" ? "kite" : "robinhood";
+    managedPositions.push(...reconstructed.map((position) => ({
+      market: m as "us" | "india",
+      broker,
+      brokerAccountId: account,
+      symbol: position.symbol,
+      qty: position.qty,
+    })));
     openByMarket[m] = Math.max(reconstructed.length, brokerHoldingCountByMarket[m] ?? 0);
     ordersTodayByMarket[m] = (todayOrders ?? []).filter((row: any) =>
       row.proposal_id != null && proposalById.get(String(row.proposal_id))?.account_number === account
     ).length;
+  }
+
+  // Future placement workers must keep existing managed positions fully
+  // reconciled before opening another autonomous position. This is a read-only
+  // database check and deliberately cannot repair/cancel/place a broker order.
+  const positionIds = managedPositions.map(managedLivePositionId);
+  let protectiveOrders: ProtectiveOrderCoverageRow[] = [];
+  if (positionIds.length) {
+    const { data, error } = await svc.from("protective_orders")
+      .select("position_id,broker,broker_account_id,market,symbol,protected_qty,reconciled_held_qty,status,broker_order_id,kite_trigger_id,expiry")
+      .in("position_id", positionIds);
+    if (error) {
+      return { ...earlyExit(`protective_entry_interlock: protective-order read failed: ${error.message}`), run_id: runId };
+    }
+    protectiveOrders = (data ?? []) as ProtectiveOrderCoverageRow[];
+  }
+  const protectionGate = evaluateAutonomousEntryProtection({
+    placementEnabled: cfg.protective_orders_enabled === true,
+    coverage: evaluateProtectionCoverage({ positions: managedPositions, protectiveOrders }),
+  });
+  if (!protectionGate.ok) {
+    return { ...earlyExit(`protective_entry_interlock:${protectionGate.reason}`), run_id: runId };
   }
 
   // Query qualifying signals for autonomous markets only

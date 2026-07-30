@@ -1,7 +1,32 @@
 # Hybrid Protective Stops
 
-> Status: DRAFT, design only. Not approved for implementation. Money path.
+> Status: P1 implemented: read-only coverage and autonomous-entry interlock.
+> Broker placement/cancel/replace remains deliberately unimplemented and disabled.
 > Scope: US and India live positions. Paper remains unchanged unless separately approved.
+
+## Current status and phasing (2026-07-30)
+
+The production schema was checked directly on 2026-07-30. `protective_orders`,
+`protective_order_events`, and `strategy_config.protective_orders_enabled` exist;
+the flag is false and there are zero protective-order rows. Migration presence is
+not treated as deployment proof.
+
+P1 is active but cannot send broker traffic:
+
+- `lib/protective/coverage.ts` accepts protection only when exactly one matching
+  broker order is active, unexpired, has exactly one broker identifier, and
+  covers the entire reconstructed held quantity. Partial, duplicate, expired, or
+  unreconciled records are unprotected.
+- `runAutonomousLive()` blocks new autonomous live BUYs before provider work or a
+  proposal write unless the feature flag, a future broker-specific placement and
+  reconciliation worker, and full coverage for all managed live positions pass.
+- The worker availability is a source-level false constant. A Settings, database,
+  environment, or LLM change cannot turn it on.
+
+P1 does not place, amend, cancel, or query a broker order. It does not alter
+PaperTrader, PositionMonitor, manual live orders, scoring, learning, or the
+existing synthetic live-exit monitor. Broker-hosted protection remains a separate
+P2 activation and canary decision.
 
 ## Shadow scaffold status (2026-07-18)
 
@@ -30,8 +55,10 @@ records what shipped as inert scaffolding.
   `protective_orders_enabled` flag gates ALL placement and stays false;
   `planProtectivePlacement()` never calls a broker.
 
-**Migration (PROPOSAL — not applied):**
-`supabase/migrations/20260718000000_protective_orders_shadow.sql`.
+**Schema (applied, still inert):**
+`supabase/migrations/20260718000000_protective_orders_shadow.sql`, hardened by
+`20260718130000_harden_protective_orders_invariants.sql`. The schema is only a
+ledger/control plane until a separately approved P2 broker worker exists.
 
 **Tests:** `tests/protective-hybrid-stop.test.ts` — all 14 spec acceptance tests,
 each falsifiable (mutation-verified).
@@ -54,8 +81,8 @@ of the analytical stop:
 - Broker fills are reconciled back into the Performance Truth Layer.
 - A broker floor may only move upward and may never increase risk.
 
-Do not build until the owner explicitly approves touch semantics, floor distance,
-and post-fill protection policy.
+Do not activate placement until the owner explicitly approves touch semantics,
+floor distance, post-fill policy, and the relevant broker-specific P2 canary.
 
 ## Verified Broker Capabilities
 
