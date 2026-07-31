@@ -1,6 +1,6 @@
 # Kairos Architecture Chapter Index
 
-> Last updated: 2026-07-30
+> Last updated: 2026-07-31
 
 This directory is the definitive chapter-by-chapter operational architecture. Each
 chapter is independently updateable: a broker change does not require editing the

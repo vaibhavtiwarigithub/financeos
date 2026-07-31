@@ -217,7 +217,7 @@ makes it a harmless no-op meanwhile.
 ### ResearchAgent — the analyst (the brain)
 
 **File:** `app/api/agents/research/route.ts`, `lib/research-agent.ts`
-**Schedule:** Weekdays 9:00 AM ET (US), Weekdays 6:15 AM ET post-NSE-close (India)
+**Schedule:** US 09:00 + 14:00 ET and India 09:30 + 12:30 IST on trading weekdays. US slots are DST-safe paired UTC jobs admitted by exact New York local time. Closed-day catch-up is non-executable.
 **LLM:** per-flow from Settings → AI Models (`agent_config` row `research`, read via `getConfiguredModel`), default `deepseek-v4-pro` with thinking enabled. Writes thesis text only — scores are deterministic. (Was hardcoded Groq Llama pre-2026-07-12.)
 
 **Inputs:**
@@ -230,7 +230,7 @@ makes it a harmless no-op meanwhile.
 5. Champion weights from `strategy_versions WHERE is_champion = true AND market = ?`
 6. Macro regime from the most recent **usable** `macro_regime` row — **US symbols only**. A row is usable only if it has a real verdict (`regime != 'unknown'`), is within `MAX_MACRO_AGE_DAYS` (10) of `week_of`, and rests on >= 3 real indicators. Otherwise macro is UNAVAILABLE (excluded, never defaulted to calm). India never reads this table. (`lib/data/scores.ts`, 2026-07-16)
 7. RAG memory via `retrieveSimilarTrades()` (if Jina embeddings are configured — Voyage was replaced by Jina free tier 2026-07)
-8. India news sentiment — GDELT DOC 2.0 article tone (`lib/india-news.ts`), free/no-key (2026-07-12)
+8. India news/event replacement shadow — NSE corporate announcements + bounded Google News RSS, persisted to the canonical evidence cache but **not read by scoring** (2026-07-31). The old zero-output GDELT dimension is retired.
 9. India FII/DII net cash flows — live NSE (`lib/india-macro.ts`), injected into the India thesis prompt (2026-07-12)
 
 **Current production baseline (`deterministic_v1`) — 5 dimensions:**
@@ -238,8 +238,8 @@ makes it a harmless no-op meanwhile.
 | Dimension | Source | What it measures |
 |---|---|---|
 | `fundamental_score` | AV OVERVIEW (US) / Yahoo quoteSummary (India) | **P/E vs sector norm** (`SECTOR_PE_NORM`, not an absolute band), profit margin, ROE, EPS sign, rev-growth YoY, **analyst target upside** (target vs live close / 200-DMA proxy) |
-| `technical_score` | AV RSI + EMA + SMA (US) / Yahoo candles (India) | RSI(14) **continuous curve** (interpolated anchors, no bucket cliffs), price vs EMA20/50, 20d trend, **volume confirmation** (elevated volume ±8 in the prevailing direction) |
-| `sentiment_score` | AV NEWS_SENTIMENT + StockTwits (US) / **GDELT India news tone** (India, `lib/india-news.ts`) | Weighted news bullishness. India: aggregate tone of recent GDELT articles → 0-100; dimension stays *unavailable* (not faked) when GDELT returns < 3 articles (2026-07-12). |
+| `technical_score` | Multi-provider completed daily candles (US and India) | RSI(14) continuous curve, EMA20/50, 20d trend, and volume confirmation. Research filters the provider-normalized series to completed regular sessions before every score/evidence/trade-plan calculation; a still-forming daily bar never enters scoring. |
+| `sentiment_score` | AV NEWS_SENTIMENT + StockTwits/GDELT fallback (US only) | Weighted US news/social bullishness. **India: structurally not applicable in the active scorer** after production showed 0/310 usable GDELT observations. Replacement headline/event evidence is shadow-only and cannot be interpreted as neutral sentiment. |
 | `macro_score` | `macro_regime.danger_score` — **US ONLY** | Macro backdrop from MacroSentinel. **India: dimension is UNAVAILABLE and excluded — weights renormalize onto the remaining dimensions** (2026-07-16). MacroSentinel is US-only by construction (8 US FRED series) and `macro_regime` has no `market` column, so scoring an India symbol from it stamped the US Fed's verdict onto Indian equities. India research still injects a factual **FII/DII net-flow line** (`lib/india-macro.ts`, live NSE) into the thesis prompt — narrative grounding only, deliberately NOT wired into `macro_score`; a real India regime is a separate build. FII/DII is null (line omitted) when NSE geo-throttles Vercel. (2026-07-12) |
 | `insider_score` | **US:** Massive Form 4 → SEC EDGAR Form 4 → AV INSIDER_TRANSACTIONS (cascade, `resolveInsider`, first `available:true` wins). **India: none wired** — the dimension is excluded, not scored. | 90-day open-market (P/S only) buy/sell **value** ratio. India's SEBI PIT feed (`fetchNseInsider`) was evaluated as the analog on 2026-07-17 and **rejected**: 0/34 live India symbols clear the US ≥3-open-market-txn bar at 90d, and only ~30% of PIT rows are open-market at all (ESOP allotments are marked "Buy"). See the India insider block below. Its `agent_signals.insider_score` default-fills `50`, but `decision_observations.availability_mask.insider` is `false`, which is the honest record — do not read the 50 as neutral evidence. (2026-07-17) |
 

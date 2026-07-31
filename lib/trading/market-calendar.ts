@@ -66,6 +66,36 @@ function marketDateParts(market: string, now: Date): { ymd: string; weekday: str
   return { ymd: `${get("year")}-${get("month")}-${get("day")}`, weekday: get("weekday") };
 }
 
+export type LocalSlotDecision =
+  | { admitted: true; localTime: string }
+  | { admitted: false; localTime: string; reason: "invalid_slot" | "slot_mismatch" };
+
+/**
+ * Admit a paired seasonal UTC cron only at its declared exchange-local time.
+ * The second UTC invocation exits before provider or database work.
+ */
+export function admitMarketLocalSlot(
+  market: string,
+  expected: string,
+  now: Date = new Date(),
+): LocalSlotDecision {
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(expected)) {
+    return { admitted: false, localTime: "invalid", reason: "invalid_slot" };
+  }
+  const tz = market === "india" ? "Asia/Kolkata" : "America/New_York";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  const localTime = `${String(Number.parseInt(get("hour"), 10) % 24).padStart(2, "0")}:${get("minute")}`;
+  return localTime === expected
+    ? { admitted: true, localTime }
+    : { admitted: false, localTime, reason: "slot_mismatch" };
+}
+
 export function isMarketWeekend(market: string, now: Date = new Date()): boolean {
   return ["Sat", "Sun"].includes(marketDateParts(market, now).weekday);
 }

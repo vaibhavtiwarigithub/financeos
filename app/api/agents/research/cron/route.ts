@@ -14,6 +14,7 @@ import {
   getMarketDayStatus,
   isMarketWeekend,
   lastCompletedMarketSession,
+  admitMarketLocalSlot,
 } from "@/lib/trading/market-calendar";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +68,15 @@ export async function POST(req: NextRequest) {
   const closedDayCatchup = catchupMode === "closed_day_catchup" || catchupMode === "weekend_catchup";
   if (closedDayCatchup && !marketScope) {
     return NextResponse.json({ error: "Closed-day catch-up requires market=us|india" }, { status: 400 });
+  }
+
+  const localSlot = url.searchParams.get("local_slot");
+  if (localSlot) {
+    if (!marketScope) return NextResponse.json({ error: "local_slot requires market=us|india" }, { status: 400 });
+    const slot = admitMarketLocalSlot(marketScope, localSlot);
+    if (!slot.admitted) {
+      return NextResponse.json({ skipped: true, reason: slot.reason, expected: localSlot, local_time: slot.localTime });
+    }
   }
 
   const supabase = createServiceClient();

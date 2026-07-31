@@ -132,6 +132,10 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     shadowVersionRes,
     downsideConfigRes,
     downsideEventRes,
+    indiaNewsCacheRes,
+    indiaNewsLedgerRes,
+    indiaNewsNetworkRes,
+    indiaNewsHistoryRes,
   ] = await Promise.all([
     svc.rpc("get_shadow_cron_status"),
     svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
@@ -189,6 +193,27 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       .select("market,enabled,paper_execute_enabled,updated_at").eq("market", market).limit(10),
     svc.from("downside_hedge_events")
       .select("created_at,event_type,decision").eq("market", market).gte("created_at", since90).limit(1000),
+    market === "india"
+      ? svc.from("evidence_cache_v2")
+        .select("symbol,intent,quality_state,fetched_at")
+        .eq("market", "india")
+        .in("intent", ["sentiment.news_headlines_shadow", "event.corporate_announcement_shadow"])
+        .gte("fetched_at", since45).limit(10000)
+      : Promise.resolve({ data: [] as any[], error: null }),
+    market === "india"
+      ? svc.from("provider_call_ledger").select("id", { count: "exact", head: true })
+        .eq("market", "india").gte("created_at", since7).like("run_id", "india-news-shadow:%")
+      : Promise.resolve({ data: [] as any[], count: 0, error: null }),
+    market === "india"
+      ? svc.from("provider_call_ledger").select("id", { count: "exact", head: true })
+        .eq("market", "india").gte("created_at", since7).like("run_id", "india-news-shadow:%")
+        .eq("cache_outcome", "miss")
+      : Promise.resolve({ data: [] as any[], count: 0, error: null }),
+    market === "india"
+      ? svc.from("provider_call_ledger").select("created_at")
+        .eq("market", "india").gte("created_at", since45).like("run_id", "india-news-shadow:%")
+        .eq("lease_outcome", "completed").limit(10000)
+      : Promise.resolve({ data: [] as any[], error: null }),
   ]) as Array<QueryResult<any>>;
 
   const cronRows = cronRes.data ?? [];
@@ -212,6 +237,8 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const shadowVersions = shadowVersionRes.data ?? [];
   const downsideConfigs = downsideConfigRes.data ?? [];
   const downsideEvents = downsideEventRes.data ?? [];
+  const indiaNewsRows = indiaNewsCacheRes.data ?? [];
+  const indiaNewsHistory = indiaNewsHistoryRes.data ?? [];
 
   return SHADOW_PROGRAMS.map((program) => {
     const status = base(program);
@@ -272,6 +299,48 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.nextAction = "Review the would-abstain sample before considering enforce mode.";
       status.details = ["Mode remains measure_only.", "Only long-to-neutral could ever be permitted."];
       status.available = !degradationRes.error;
+      return status;
+    }
+
+    if (program.id === "india-news-evidence") {
+      const rssRows = indiaNewsRows.filter((row: any) => row.intent === "sentiment.news_headlines_shadow");
+      const freshRssSymbols = new Set(rssRows.filter((row: any) => row.quality_state === "fresh").map((row: any) => row.symbol));
+      const observedSymbols = new Set(rssRows.map((row: any) => row.symbol));
+      const dates = new Set<string>(indiaNewsHistory.map((row: any) => String(row.created_at ?? "").slice(0, 10)).filter(Boolean));
+      const coverage = observedSymbols.size > 0 ? freshRssSymbols.size / observedSymbols.size : 0;
+      const sortedDates = [...dates].sort();
+      const observationWindowDays = sortedDates.length > 1
+        ? Math.max(1, Math.ceil((new Date(sortedDates[sortedDates.length - 1]).getTime() - new Date(sortedDates[0]).getTime()) / 86400_000) + 1)
+        : 1;
+      status.lifecycle = dates.size >= 20 && coverage >= 0.7 ? "ready_for_review" : "collecting";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${freshRssSymbols.size}/${observedSymbols.size || 0} recently observed symbols have relevant headlines; ${dates.size}/20 collection dates.`;
+      status.progress = progress(dates.size, 20, "collection dates", observationWindowDays, {
+        completed: freshRssSymbols.size,
+        target: observedSymbols.size || 1,
+        unit: "symbols with relevant headlines",
+      });
+      status.calls = calls(
+        "tracked",
+        "Exact India news-shadow ledger counts over the last 7 days. No app research-provider API key is used.",
+        indiaNewsLedgerRes.count ?? 0,
+        indiaNewsNetworkRes.count ?? 0,
+        0,
+      );
+      status.latestAt = latestIso(indiaNewsRows, "fetched_at");
+      status.blockers = [
+        ...(dates.size < 20 ? [`Needs ${20 - dates.size} more distinct collection dates.`] : []),
+        ...(coverage < 0.7 ? [`Relevant-headline coverage is ${(coverage * 100).toFixed(0)}%; review at 70% or higher.`] : []),
+        "No deterministic sentiment classifier has passed PIT walk-forward validation.",
+      ];
+      status.nextAction = status.lifecycle === "ready_for_review"
+        ? "Review source relevance and design a separate historical classifier experiment; do not activate directly."
+        : "Continue bounded daily collection and inspect false matches/provider failures.";
+      status.details = [
+        "Official NSE announcements and unofficial Google News RSS are stored as separate providers.",
+        "The active India score does not read either shadow intent.",
+      ];
+      status.available = !indiaNewsCacheRes.error && !indiaNewsLedgerRes.error && !indiaNewsNetworkRes.error && !indiaNewsHistoryRes.error;
       return status;
     }
 

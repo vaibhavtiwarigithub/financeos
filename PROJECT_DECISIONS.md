@@ -1088,3 +1088,29 @@ proposals. No historical signal or trade is rewritten.
 
 Reversal cost: Low in code, but reversal would restore known silent data corruption
 and is not recommended.
+
+### Decision 61: Completed Sessions, Market-Local Schedules, and India News Shadow
+
+Date: 2026-07-31
+Status: Approved corrective safety change, implemented 2026-07-31
+Category: Research Data / Scheduling / Evidence Governance
+
+Decision: Filter all daily scoring inputs to completed regular-market sessions;
+represent US agent schedules as New York local-time contracts admitted through
+paired seasonal UTC crons; remove the proven-zero India GDELT sentiment dimension
+from active applicability; and collect NSE corporate announcements plus bounded
+Google News RSS only as behavior-neutral canonical shadow evidence.
+
+Reason: Intraday daily bars can mutate technical scores before settlement, fixed
+UTC jobs shift by an hour at DST boundaries, and India sentiment was unavailable
+for 0 of the latest 310 decisions while the GDELT access pattern was rate-limited.
+Unknown data must remain unavailable rather than consume repeated calls or imply
+neutral evidence.
+
+Non-goals: No score weight, threshold, historical signal, position, cash, paper or
+live order changes. The India shadow has no directional classifier and cannot be
+read by a decision or money path. Historical replay remains diagnostic-only.
+
+Reversal cost: Low. The local-time and completed-session guards are pure boundary
+checks. The shadow can be unscheduled without changing decision state; its
+append-only provenance can remain for audit.

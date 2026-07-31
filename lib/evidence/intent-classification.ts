@@ -96,9 +96,9 @@ export const INTENT_CLASSIFICATION: Record<EvidenceIntent, IntentClassification>
   },
   "sentiment.news": {
     intent: "sentiment.news",
-    byMarket: { us: "score_affecting", india: "score_affecting" },
+    byMarket: { us: "score_affecting", india: "unsupported" },
     alsoGates: false,
-    note: "Sentiment dimension. India (GDELT) is genuinely sparse — expected absence, not starvation.",
+    note: "US sentiment dimension. India GDELT scoring was retired; replacement news/event evidence has separate shadow-only intents.",
   },
   "insider.transactions": {
     intent: "insider.transactions",
@@ -270,10 +270,10 @@ export const SCORER_FIELD_CONTRACTS: readonly ScorerFieldContract[] = [
     dimension: "sentiment",
     intent: "sentiment.news",
     requiredClass: "score_affecting",
-    markets: ["us", "india"],
+    markets: ["us"],
     applicableShapes: ["equity", "etf", "adr", "metal"],
-    // Genuinely sparse (India GDELT barely covers NSE names). Expected absence —
-    // requiring it would abstain on healthy runs.
+    // Optional US evidence. India replacement collection is a separate shadow
+    // and is not represented by this scoring field contract.
     // "metal" included: commodity ETFs (GLD, SLV, IAU) have news coverage and
     // legacy scoring included sentiment for them via sentimentDataAvailable.
     // Excluding "metal" caused a persistent −12 score delta for GLD because the
@@ -285,7 +285,7 @@ export const SCORER_FIELD_CONTRACTS: readonly ScorerFieldContract[] = [
     allowedBases: ["spot"],
     unit: "ratio",
     legacy: { module: "lib/data/scores.ts", symbol: "scoreSentiment", qualityFlag: "dataQuality.sentimentDataAvailable" },
-    note: "Optional. EXPECTED_SPARSE for india:sentiment.",
+    note: "Optional US sentiment evidence. Unsupported for active India scoring.",
   },
   {
     fieldId: "insider.net_flow",

@@ -394,11 +394,13 @@ describe("intent classification (§3)", () => {
     expect(contractClassViolations()).toEqual([]);
   });
 
-  it("classifies shared scoring intents in both markets and macro only in the US", () => {
-    for (const i of ["price.daily_bars", "fundamentals.reported", "sentiment.news"] as const) {
+  it("classifies shared scoring intents in both markets and retired dimensions only where active", () => {
+    for (const i of ["price.daily_bars", "fundamentals.reported"] as const) {
       expect(classifyIntent(i, "us")).toBe("score_affecting");
       expect(classifyIntent(i, "india")).toBe("score_affecting");
     }
+    expect(classifyIntent("sentiment.news", "us")).toBe("score_affecting");
+    expect(classifyIntent("sentiment.news", "india")).toBe("unsupported");
     expect(classifyIntent("macro.regime_inputs", "us")).toBe("score_affecting");
     expect(classifyIntent("macro.regime_inputs", "india")).toBe("unsupported");
   });

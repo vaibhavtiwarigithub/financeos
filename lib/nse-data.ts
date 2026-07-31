@@ -115,6 +115,41 @@ export async function fetchNseEarnings(): Promise<EarningsEvent[]> {
     }));
 }
 
+export type CorporateAnnouncement = {
+  symbol: string;
+  company: string;
+  headline: string;
+  category: string | null;
+  announcedAt: string | null;
+  attachmentUrl: string | null;
+};
+
+/** Official NSE corporate-announcement feed. Shadow/event use only; fails soft. */
+export async function fetchNseCorporateAnnouncements(): Promise<CorporateAnnouncement[]> {
+  const now = new Date();
+  const from = new Date(now.getTime() - 7 * 86400_000);
+  const fmt = (date: Date) => `${String(date.getUTCDate()).padStart(2, "0")}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${date.getUTCFullYear()}`;
+  const j = await nseApi(`/api/corporate-announcements?index=equities&from_date=${fmt(from)}&to_date=${fmt(now)}`);
+  const rows = Array.isArray(j) ? j : (j?.data ?? []);
+  return (Array.isArray(rows) ? rows : []).slice(0, 500).flatMap((row: any) => {
+    const bare = String(row.symbol ?? row.sm_symbol ?? "").trim().toUpperCase();
+    const headline = String(row.desc ?? row.subject ?? row.attchmntText ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
+    if (!bare || !headline) return [];
+    const rawUrl = String(row.attchmntFile ?? row.attachment ?? "").trim();
+    const attachmentUrl = /^https:\/\//i.test(rawUrl)
+      ? rawUrl.slice(0, 800)
+      : rawUrl ? `https://nsearchives.nseindia.com/corporate/${rawUrl.replace(/^\/+/, "")}`.slice(0, 800) : null;
+    return [{
+      symbol: `${bare}.NS`,
+      company: String(row.sm_name ?? row.companyName ?? bare).replace(/\s+/g, " ").trim().slice(0, 160),
+      headline,
+      category: row.an_dt ? String(row.an_dt).slice(0, 100) : row.category ? String(row.category).slice(0, 100) : null,
+      announcedAt: row.sort_date ? String(row.sort_date).slice(0, 40) : row.an_dt ? String(row.an_dt).slice(0, 40) : null,
+      attachmentUrl,
+    }];
+  });
+}
+
 // Option chain for a symbol (index like NIFTY/BANKNIFTY, or an equity). Returns
 // put/call OI, PCR, and the top OI strikes = the free stand-in for "options flow".
 export type OptionFlow = { symbol: string; underlying: number | null; pcr: number | null; totalCallOI: number; totalPutOI: number; topStrikes: { strike: number; callOI: number; putOI: number }[] };

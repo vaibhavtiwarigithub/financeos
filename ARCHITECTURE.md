@@ -1,6 +1,6 @@
 # Kairos Architecture Portal
 
-> Last updated: 2026-07-30
+> Last updated: 2026-07-31
 > Purpose: the stable entry point to Kairos architecture. It explains where truth
 > lives; it does not duplicate the implementation detail held by the documents it links.
 
@@ -24,6 +24,8 @@ and broker execution.
    promotion are distinct lifecycle states.
 5. Broker credentials, account identifiers, and raw provider responses do not belong
    in client bundles or reference documentation.
+6. Daily technical scoring consumes completed regular-market sessions only, and
+   scheduled agent slots are expressed in exchange-local time rather than assumed UTC.
 
 ## Documentation hierarchy
 

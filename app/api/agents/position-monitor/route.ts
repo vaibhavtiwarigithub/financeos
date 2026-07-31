@@ -14,6 +14,7 @@ import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolveP
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
 import { paperPartialTargetQuantity } from "@/lib/trading/paper-quantity";
+import { admitMarketLocalSlot } from "@/lib/trading/market-calendar";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -673,6 +674,14 @@ export async function POST(req: NextRequest) {
 
     const mp = new URL(req.url).searchParams.get("market");
     const scope = mp === "india" ? "india" : mp === "us" ? "us" : null;
+    const localSlot = new URL(req.url).searchParams.get("local_slot");
+    if (isCron && localSlot) {
+      if (!scope) return NextResponse.json({ error: "local_slot requires market=us|india" }, { status: 400 });
+      const slot = admitMarketLocalSlot(scope, localSlot);
+      if (!slot.admitted) {
+        return NextResponse.json({ skipped: true, reason: slot.reason, expected: localSlot, local_time: slot.localTime });
+      }
+    }
     const startedAt = new Date().toISOString();
     try {
       const result = await runMonitor(scope, startedAt);
@@ -700,6 +709,14 @@ export async function GET(req: NextRequest) {
   }
   const mp = new URL(req.url).searchParams.get("market");
   const scope = mp === "india" ? "india" : mp === "us" ? "us" : null;
+  const localSlot = new URL(req.url).searchParams.get("local_slot");
+  if (isCron && localSlot) {
+    if (!scope) return NextResponse.json({ error: "local_slot requires market=us|india" }, { status: 400 });
+    const slot = admitMarketLocalSlot(scope, localSlot);
+    if (!slot.admitted) {
+      return NextResponse.json({ skipped: true, reason: slot.reason, expected: localSlot, local_time: slot.localTime });
+    }
+  }
   const startedAt = new Date().toISOString();
   try {
     const result = await runMonitor(scope, startedAt);

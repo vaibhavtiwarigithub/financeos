@@ -39,8 +39,8 @@ export interface ScheduledJob {
 
 /**
  * Every scheduled job, mirroring the live `kairos-*` pg_cron jobs (Supabase).
- * Times are US-Eastern; pg_cron itself is scheduled in UTC assuming EDT
- * (summer) — needs a 1h shift when clocks change in November.
+ * Times are exchange-local. US jobs use paired EDT/EST UTC hours plus a strict
+ * route-level local_slot guard, so no manual November shift is required.
  */
 export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
   {
@@ -147,33 +147,66 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "Pre-market signal generation (US). ResearchAgent scores existing holdings (SELL allowed) and dual-bucket screener candidates (LONG only), writing signals scored ≥60 as buy candidates. Also fires Theme Scout automatically. Still chains a $ paper-trade fill at its end, but that chain is now a BACKSTOP — the standalone kairos-paper-trade-us cron is the primary fill path (added 2026-07-08, migration 128) so a hung research run no longer starves US fills.",
+      "US signal generation at a DST-safe 09:00 New York local slot. Daily technicals use completed sessions only. ResearchAgent scores holdings (SELL allowed) and candidates (LONG only); PaperTrader is a separate scheduled consumer.",
     handoff: "→ PaperTrader US (standalone cron + chain backstop; signals scored ≥60 become buy candidates)",
     agentRunsType: "research",
   },
   {
     name: "paper-trade-us",
     agent: "paper-trade-us",
-    time: "10:05 AM ET",
+    time: "11:15 AM ET",
     days: "Weekdays",
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "Standalone US ($) paper fill (added 2026-07-08, migration 128). Fills only FRESH same-trading-day pending long signals (America/New_York calendar day) — older pending signals are EXPIRED, never filled. Decoupled from research so a hung research run can't zero out US fills; claim ownership (migration 126) + two CAS gates (migration 127) make it safe to run alongside research's own chained fill without double-filling.",
+      "Standalone US ($) paper fill at a DST-safe 11:15 New York local slot. Fills only fresh same-session deterministic long signals; stale rows expire and the exchange-session guard remains independent.",
     handoff: "→ PositionMonitor (open positions tracked for exits)",
     agentRunsType: "paper_trader",
   },
   {
     name: "paper-trade-india",
     agent: "paper-trade-india",
-    time: "4:35 PM IST (~7:05 AM ET)",
+    time: "9:40 AM IST",
     days: "Weekdays",
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "Standalone India (₹) paper fill (added 2026-07-08, migration 128) — a backstop; India research already chains its own fill reliably. Same freshness contract: only fresh same-IST-day (Asia/Kolkata) pending long signals fill; stale pending are expired.",
+      "Standalone India (₹) paper fill inside the NSE session. Only fresh same-IST-day deterministic long signals fill; stale pending rows expire.",
     handoff: "→ PositionMonitor (India)",
     agentRunsType: "paper_trader",
+  },
+  {
+    name: "research-us-pm",
+    agent: "research-us-pm",
+    time: "2:00 PM ET",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description: "Second DST-safe US research pass. Uses completed daily sessions only; the current intraday daily bar cannot change technical scoring.",
+    handoff: "→ PaperTrader US PM",
+    agentRunsType: "research",
+  },
+  {
+    name: "paper-trade-us-pm",
+    agent: "paper-trade-us-pm",
+    time: "3:15 PM ET",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description: "Second DST-safe US paper-entry/rotation attempt inside the regular session.",
+    handoff: "→ PositionMonitor",
+    agentRunsType: "paper_trader",
+  },
+  {
+    name: "india-news-shadow",
+    agent: "india-news-shadow",
+    time: "5:45 PM IST",
+    days: "Daily",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description: "India-only NSE corporate-announcement and Google News RSS coverage shadow. Canonical evidence/audit writes only; no score or execution reader.",
+    handoff: "→ Upgrade Path evidence review",
+    agentRunsType: "india_news_shadow",
   },
   {
     name: "trader",
@@ -219,7 +252,7 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "End-of-day exit and stop checks (US). Reviews every open position against stop-loss, take-profit and thesis-invalidation rules and flags exits.",
+      "DST-safe 4:15 PM ET exit and stop checks (US), always after the regular close. Reviews open positions against deterministic score, stop, target, time and partial-profit rules.",
     handoff: "→ LearnerAgent (closed trades become learning outcomes)",
     agentRunsType: "position_monitor",
   },

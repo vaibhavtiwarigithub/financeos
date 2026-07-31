@@ -2,11 +2,11 @@ import { callLLM } from "@/lib/llm-router";
 import { getConfiguredModel } from "@/lib/agent-model-config";
 import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 import { retrieveSimilarTrades, summarizeMemories } from "@/lib/rag/trade-memory";
-import { fetchSocialSentiment, shrinkSentimentScore, SocialSentiment } from "@/lib/social-sentiment";
+import { fetchSocialSentiment, SocialSentiment } from "@/lib/social-sentiment";
 import { computeScores, type ComputedScores } from "@/lib/data/scores";
 import type { Candle } from "@/lib/data/technicals";
+import { completedSessionCandles } from "@/lib/data/completed-candles";
 import { isIndia, fetchIndiaOverview, fetchYahooCandles } from "@/lib/india-data";
-import { fetchIndiaNewsSentiment, type IndiaNewsSentiment } from "@/lib/india-news";
 import { fetchFiiDiiFlows, fiiDiiMacroLine } from "@/lib/india-macro";
 import { niftyCandidates } from "@/lib/india-universe";
 import { getKiteHoldings } from "@/lib/kite";
@@ -177,11 +177,9 @@ export function applicableDimensions(entry: SymbolEntry): Set<Dimension> {
   const dims = new Set<Dimension>(["technical"]); // every tradable symbol has price evidence
   if (india) {
     dims.add("fundamental"); // Yahoo/Upstox fundamentals; no US-style insider/options/analyst
-    // Sentiment: India equities get a real news-tone signal from GDELT (free, no
-    // key). Structurally applicable to non-ETF India names; per-run availability
-    // is still decided by whether GDELT returns enough toned articles (the
-    // availability mask via dataQuality.sentimentDataAvailable) — never faked.
-    if (!entry.isEtf) dims.add("sentiment");
+    // India news evidence is collected in a separate shadow. It is deliberately
+    // not applicable to scoring until a validated feature is promoted.
+    // Replacement India news evidence is shadow-only until separately promoted.
     return dims;
   }
   // MacroSentinel is backed by US-only FRED series and macro_regime has no
@@ -1009,7 +1007,6 @@ function buildThesisOnlyPrompt(
   analystScore: number,
   scoreThreshold: number,
   marketFocus?: string,
-  indiaNews?: IndiaNewsSentiment | null,
   indiaMacroLine?: string | null,
   webullLine?: string | null,
 ): string {
@@ -1040,19 +1037,6 @@ function buildThesisOnlyPrompt(
     ? `\nMarket focus: ${marketFocus}. Where relevant, frame risks/catalysts in context of these regions (macro exposure, currency risk, ADR premiums, regulatory environment).`
     : "";
 
-  // India names carry NO StockTwits / Alpha Vantage sentiment (US-only). Their
-  // Sentiment score above is derived from GDELT news TONE — surface the aggregate
-  // tone + recent headlines so the thesis narrative is grounded in the same
-  // evidence that produced the pre-computed Sentiment score (mirrors the US
-  // socialBlock). Only shown when GDELT returned usable data; omitted otherwise.
-  const indiaNewsBlock = indiaNews && indiaNews.available
-    ? `\n\n## India news sentiment (GDELT — recent India news headlines, aggregate tone)
-Aggregate tone: ${indiaNews.avgTone.toFixed(2)} (GDELT scale ~ -10 to +10; 0 = neutral) across ${indiaNews.articleCount} articles → Sentiment ${indiaNews.score}/100.
-Recent headlines:
-${indiaNews.headlines.map(h => `- ${h}`).join("\n")}
-These are India news headlines with an aggregate tone; the Sentiment score above is derived from this news tone. Use them to ground the sentiment reasoning in your thesis (do NOT override the pre-computed Sentiment score).`
-    : "";
-
   return `${DOCTRINE_PREAMBLE}
 
 You are a professional equity analyst. All quantitative scores for ${symbol} were pre-computed from real fetched market data (no LLM estimation). Your ONLY job: write a coherent investment thesis, assign direction, and identify specific key risks and catalysts grounded in the data below.${focusNote}
@@ -1063,7 +1047,7 @@ Technical:   ${technical_score}/100 | ${techLines}
 Sentiment:   ${sentiment_score}/100
 Macro:       ${macro_score}/100 | regime: ${(evidence.macro as Record<string, unknown>).regime ?? "unknown"}${indiaMacroLine ? `\n             India flows: ${indiaMacroLine} (ground macro/flow reasoning in this; do NOT override the pre-computed Macro score)` : ""}
 Insider:     ${insider_score}/100
-Weighted analyst score: ${analystScore}/100 (threshold for trade: ${scoreThreshold})${webullLine ? `\n${webullLine} (external analyst evidence — ground the analyst/target reasoning in this; do NOT override the pre-computed scores)` : ""}${indiaNewsBlock}
+Weighted analyst score: ${analystScore}/100 (threshold for trade: ${scoreThreshold})${webullLine ? `\n${webullLine} (external analyst evidence — ground the analyst/target reasoning in this; do NOT override the pre-computed scores)` : ""}
 
 ${heldNote}
 
@@ -1148,16 +1132,14 @@ const DIM_AVAIL_CRIT = 0.70;
 
 // `${market}:${dim}` combos whose SOURCE is sparse by nature — absence is EXPECTED,
 // not a starvation fault. For these the availability alert is capped at "info"
-// with honest wording, so a genuinely-sparse source (India news-tone via GDELT
-// barely covers individual NSE names) never cries critical. The score already
+// with honest wording, so a genuinely-sparse source never cries critical. The score already
 // renormalizes over the remaining applicable dimensions when one is absent. Real
 // breakage in a dense source (US fundamentals/technical at 0%) still goes critical.
-// india:sentiment — GDELT barely covers NSE names.
 // us:insider — insider is genuinely sparse: SEC Form 4 open-market P/S trades are
 //   rare (most companies have <3 in 90d; awards/options/tax are excluded), so a
 //   low availability rate is EXPECTED absence, not provider starvation. The
 //   availability mask already renormalizes; alerting critical here is false noise.
-const EXPECTED_SPARSE_DIMS = new Set<string>(["india:sentiment", "us:insider"]);
+const EXPECTED_SPARSE_DIMS = new Set<string>(["us:insider"]);
 
 // Record one symbol's evidence availability and (idempotently) surface a
 // low-confidence alert when a meaningful fraction of the run was scored on thin
@@ -1197,7 +1179,7 @@ async function recordRunEvidence(market: string, runKey: string, includedDims: S
     const DIM_PROVIDER: Record<string, string> = {
       fundamental: market === "india" ? "Yahoo quoteSummary" : "Finnhub → Yahoo → SEC EDGAR",
       technical:   market === "india" ? "Upstox → Yahoo chart" : "Massive → AV",
-      sentiment:   market === "india" ? "GDELT tonechart" : "StockTwits → GDELT → AV NEWS",
+      sentiment:   market === "india" ? "not applicable (replacement shadow only)" : "StockTwits → GDELT → AV NEWS",
       insider:     market === "india" ? "NSE PIT" : "Massive Form 4 → SEC EDGAR → AV",
       macro:       "macro_regime table",
     };
@@ -1266,42 +1248,11 @@ async function recordRunEvidence(market: string, runKey: string, includedDims: S
   } catch { /* health reporting must never break a research run */ }
 }
 
-// Adapt a GDELT India news result into the SocialSentiment shape so India flows
-// through the SAME scoreSentiment / dataQuality path US social sentiment uses.
-// Returns null unless the result is "available" (>=3 toned articles) so a thin or
-// empty GDELT response leaves the sentiment dimension genuinely unavailable
-// (excluded from the weighted score) rather than faked as a neutral 50.
-function indiaNewsToSocial(symbol: string, news: IndiaNewsSentiment | null): SocialSentiment | null {
-  if (!news || !news.available) return null;
-  // GDELT tone (~ -10..+10) → AV's -1..+1 news-sentiment scale. scoreSentiment's
-  // AV path then computes (sent+1)*50 = 50 + tone*5 — the identical 0-100 mapping
-  // toneToScore uses. StockTwits fields are null (India has no StockTwits), so the
-  // AV-news branch is the one taken.
-  const avScaled = Math.max(-1, Math.min(1, news.avgTone / 10));
-  const shrunkScore = shrinkSentimentScore(news.score, news.articleCount, 5);
-  return {
-    symbol,
-    stocktwits_bullish_pct: null,
-    stocktwits_bearish_pct: null,
-    stocktwits_message_count: null,
-    stocktwits_sample_size: null,
-    av_news_sentiment: avScaled,
-    av_news_articles: news.articleCount,
-    gdelt_score: news.score,
-    gdelt_articles: news.articleCount,
-    // scoreSentiment reads sentiment_score first — feed the GDELT 0-100 directly.
-    sentiment_score: shrunkScore,
-    overall_sentiment: shrunkScore > 60 ? "Bullish" : shrunkScore < 40 ? "Bearish" : "Neutral",
-    fetched_at: new Date().toISOString(),
-    has_data: true,
-  };
-}
-
 // Prewarm one symbol's evidence caches WITHOUT scoring. Calls the same fundamentals
 // / sentiment / insider fetchers processSymbol uses — each is cache-first + paced,
 // so this just populates av_cache ahead of the scoring run. No LLM, no scoring, no
 // signal/packet writes. Used by the prewarm cron so a cold-start scoring run gets
-// cache hits instead of bursting Massive/GDELT past their limits mid-run.
+// cache hits instead of bursting hard-limited providers mid-run.
 // Fully fail-soft: every fetch is caught; a warm failure just leaves that key cold.
 export async function prewarmSymbol(entry: SymbolEntry): Promise<void> {
   const symbol = entry.symbol;
@@ -1314,10 +1265,10 @@ export async function prewarmSymbol(entry: SymbolEntry): Promise<void> {
     jobs.push(india ? fetchIndiaOverview(symbol).catch(() => ({}))
                     : fetchUsOverview(symbol, () => fetchAVOverview(symbol, avKey)).catch(() => ({})));
   }
-  // Sentiment (US: StockTwits+GDELT+AV-reserve; India: GDELT news tone).
-  if (applicable.has("sentiment")) {
-    jobs.push(india ? fetchIndiaNewsSentiment(symbol).catch(() => null)
-                    : fetchSocialSentiment(symbol).catch(() => null));
+  // Sentiment is currently active only for US instruments. India replacement
+  // evidence is collected by a separate behavior-neutral shadow.
+  if (applicable.has("sentiment") && !india) {
+    jobs.push(fetchSocialSentiment(symbol).catch(() => null));
   }
   // Insider (US equities only; Massive Form 4 → EDGAR → AV, all cache-warmed).
   if (applicable.has("insider") && !india) {
@@ -1352,7 +1303,7 @@ export async function processSymbol(
   const applicable = applicableDimensions(entry);
 
   // Phase 0: fetch all real data in parallel — no LLM-generated numbers
-  const [socialResult, insiderResult, fundamentalResult, candleResult, indiaNews, fiiDii] = await Promise.all([
+  const [socialResult, insiderResult, fundamentalResult, candleResult, fiiDii] = await Promise.all([
     applicable.has("sentiment") && !india ? fetchSocialSentiment(symbol).catch(() => null) : Promise.resolve(null),
     // Insider: SEC EDGAR Form 4 primary (free, official, unlimited) → Alpha
     // Vantage INSIDER_TRANSACTIONS fallback. Skipped for ETFs/India/ADRs (no
@@ -1392,13 +1343,6 @@ export async function processSymbol(
       // the scarce AV 25/day budget is no longer spent on candles.
       : fetchUsCandles(symbol, () => fetchAVCandles(symbol, avKey))
           .catch(() => ({ candles: [] as Candle[], source: "unavailable" })),
-    // India news sentiment (GDELT, free/no-key) — the India equivalent of the
-    // US social/news sentiment fetch above. Non-ETF India names only; US falls
-    // through null (US uses fetchSocialSentiment). Company name isn't known yet
-    // (overview fetches in parallel), so the de-suffixed symbol is the query.
-    india && applicable.has("sentiment")
-      ? fetchIndiaNewsSentiment(symbol).catch(() => null)
-      : Promise.resolve(null),
     // India macro backdrop: live FII/DII institutional cash-market flows (NSE,
     // free). Market-wide, not per-symbol — run-level in-memory cached so it's one
     // real NSE hit per pass. Fails soft to null (NSE blocks datacenter IPs), in
@@ -1407,7 +1351,10 @@ export async function processSymbol(
     india ? fetchFiiDiiFlows().catch(() => null) : Promise.resolve(null),
   ]);
   const avOverview = fundamentalResult.overview;
-  const candles: Candle[] = candleResult.candles;
+  const candles: Candle[] = completedSessionCandles(
+    candleResult.candles,
+    india ? "india" : "us",
+  );
   const indiaMacroLine = india ? fiiDiiMacroLine(fiiDii) : null;
 
   // Return-observation capture (features/correlation-aware-construction §0 item 1).
@@ -1430,14 +1377,7 @@ export async function processSymbol(
       .catch(() => null)
     : Promise.resolve(null);
 
-  // For India, synthesize a SocialSentiment-shaped object from the GDELT news
-  // tone so it flows through the EXACT same scoreSentiment / dataQuality path US
-  // social sentiment uses. has_data drives dataQuality.sentimentDataAvailable →
-  // the availability mask: only "available" (>=3 toned articles) counts as real
-  // evidence, so a thin/empty GDELT result leaves sentiment unavailable, not faked.
-  const effectiveSocial: SocialSentiment | null = india
-    ? indiaNewsToSocial(symbol, indiaNews)
-    : socialResult;
+  const effectiveSocial: SocialSentiment | null = socialResult;
   const sentimentProviders: SourceName[] = [];
   if (effectiveSocial?.stocktwits_sample_size && effectiveSocial.stocktwits_sample_size >= 5) sentimentProviders.push("stocktwits");
   if (effectiveSocial?.gdelt_articles && effectiveSocial.gdelt_articles > 0) sentimentProviders.push("gdelt");
@@ -1705,7 +1645,7 @@ export async function processSymbol(
   const webullLine = !india
     ? [webullAnalystLine(webullAnalyst), webullExtendedLine(webullExtended)].filter(Boolean).join(" | ") || null
     : null;
-  const thesisPrompt = isHeld ? "" : buildThesisOnlyPrompt(symbol, false, scores, analystScore, scoreThreshold, marketFocus, india ? indiaNews : null, indiaMacroLine, webullLine) + trendNote + memoryNote;
+  const thesisPrompt = isHeld ? "" : buildThesisOnlyPrompt(symbol, false, scores, analystScore, scoreThreshold, marketFocus, indiaMacroLine, webullLine) + trendNote + memoryNote;
   const llmResult = isHeld ? {
     text: JSON.stringify({
       direction: analystScore < scoreThreshold ? "short" : "long",
@@ -1850,7 +1790,6 @@ export async function processSymbol(
         _direction_override: thesis.direction !== signalDirection,
         _data_quality: scores.dataQuality,
         _social_sentiment: effectiveSocial ?? null,
-        _india_news: india ? (indiaNews ?? null) : null,
         // Options are not a scored dimension. Keep the packet field stable but
         // do not spend an API call on data that cannot affect this decision.
         _options_signal: null,

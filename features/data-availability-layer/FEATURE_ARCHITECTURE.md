@@ -1,5 +1,7 @@
 # Feature Architecture — Data Availability Layer
 
+> 2026-07-31 correction: the India GDELT sentiment assumptions in this historical design did not survive production evidence (0/310 usable observations). Active India scoring no longer calls or applies that dimension. The approved replacement is the shadow-only NSE-announcement + Google News RSS plan in `features/pipeline-data-and-timing/FEATURE_ARCHITECTURE.md`; this document must not be used to re-enable GDELT.
+
 > Status: **PROPOSAL — draft, Codex-reviewed, not built.** Needs owner sign-off. NOTHING here is wired into the running app yet — the shipped US fundamentals chain is still Finnhub → FMP → AV; SEC + US-Yahoo fundamentals are proposal-only. "Endpoint returns data" ≠ "integrated + correct metric".
 > Scope: guarantee no scoring dimension / agent flow is ever starved of input data on a max-symbol day, using only free + already-keyed sources.
 > Last updated: 2026-07-13

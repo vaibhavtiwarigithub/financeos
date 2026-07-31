@@ -1,5 +1,7 @@
 # Data Source Policy + Canonical Evidence Router — Feature Architecture
 
+> 2026-07-31 current-state correction: India per-symbol GDELT sentiment is retired from active scoring after zero usable production coverage. Replacement NSE/Google headline evidence is a separate shadow and is not an active `sentiment.news` provider policy. See `features/pipeline-data-and-timing/FEATURE_ARCHITECTURE.md`.
+
 > Status: **DRAFT FOR CLAUDE + OWNER REVIEW. DESIGN ONLY.**
 > Date: 2026-07-13
 > Owner request: stop rewriting agent code and quota logic whenever a provider or

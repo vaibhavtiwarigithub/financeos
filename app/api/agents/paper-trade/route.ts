@@ -20,7 +20,7 @@ import { selectBestPaperSignals } from "@/lib/trading/paper-signal-selection";
 import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
-import { isMarketSessionOpen } from "@/lib/trading/market-calendar";
+import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-calendar";
 import { paperEntryQuantity } from "@/lib/trading/paper-quantity";
 import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/earnings-risk";
 
@@ -63,6 +63,15 @@ export async function POST(req: NextRequest) {
       const userClient = await createClient();
       const { data: { user } } = await userClient.auth.getUser();
       if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const localSlot = new URL(req.url).searchParams.get("local_slot");
+    if (isCron && localSlot) {
+      if (!marketScope) return NextResponse.json({ error: "local_slot requires market=us|india" }, { status: 400 });
+      const slot = admitMarketLocalSlot(marketScope, localSlot);
+      if (!slot.admitted) {
+        return NextResponse.json({ skipped: true, reason: slot.reason, expected: localSlot, local_time: slot.localTime });
+      }
     }
 
     const { data: cfg } = await supabase
