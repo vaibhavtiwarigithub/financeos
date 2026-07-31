@@ -12,6 +12,7 @@ Markets: US and India, always isolated
 - India GDELT sentiment is unsupported by the active scorer. The replacement India news/event collector writes shadow-only intents that no decision or money path reads.
 - Production migration `20260731210000_market_local_crons_and_india_news_shadow.sql` is applied.
 - Verification passed on 2026-07-31: 168 test files passed (1 skipped), 1,466 tests passed (7 skipped), TypeScript passed, and the Next.js production build completed.
+- The first production India shadow canary processed 12 symbols, found relevant RSS headlines for 9, wrote 13 append-only provider-call rows and 24 canonical cache rows, and created zero signals and zero paper positions. The run recorded `behavior changed=false`.
 
 ## Problem
 
