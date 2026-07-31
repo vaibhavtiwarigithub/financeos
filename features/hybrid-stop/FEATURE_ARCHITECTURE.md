@@ -15,13 +15,19 @@ P1 is active but cannot send broker traffic:
 
 - `lib/protective/coverage.ts` accepts protection only when exactly one matching
   broker order is active, unexpired, has exactly one broker identifier, and
-  covers the entire reconstructed held quantity. Partial, duplicate, expired, or
-  unreconciled records are unprotected.
+  has protected and reconciled quantities that exactly match the reconstructed
+  holding. Partial, oversized, duplicate, expired, or unreconciled records are
+  unprotected; an oversized SELL floor could create a short after a trigger.
 - `runAutonomousLive()` blocks new autonomous live BUYs before provider work or a
   proposal write unless the feature flag, a future broker-specific placement and
   reconciliation worker, and full coverage for all managed live positions pass.
 - The worker availability is a source-level false constant. A Settings, database,
   environment, or LLM change cannot turn it on.
+
+The existing-position interlock is necessary but not sufficient for P2. A future
+BUY workflow must prove how the newly filled quantity becomes broker-protected
+without an unbounded gap; merely changing the source constant to true is not an
+approved placement implementation.
 
 P1 does not place, amend, cancel, or query a broker order. It does not alter
 PaperTrader, PositionMonitor, manual live orders, scoring, learning, or the

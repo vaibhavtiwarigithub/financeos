@@ -3,6 +3,7 @@ import { fetchEarningsDateObservation } from "@/lib/data/earnings";
 import { fetchWebullEarnings } from "@/lib/data/webull-data";
 import { isMarketHoliday } from "@/lib/trading/market-calendar";
 import { callRobinhoodResearchReadTool } from "@/lib/robinhood-mcp";
+import { isRealIsoDate, normalizeRealIsoDate } from "@/lib/date-only";
 
 export type Market = "us" | "india";
 export type ReportSession = "bmo" | "amc" | "during_session" | "unknown";
@@ -83,15 +84,6 @@ function isTradingDay(market: Market, date: string): boolean {
   return day !== 0 && day !== 6 && !isMarketHoliday(market, date);
 }
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Real calendar date (rejects 2026-02-31 and other well-formed impossibilities). */
-function isRealDate(value: string): boolean {
-  if (!ISO_DATE.test(value)) return false;
-  const d = new Date(`${value}T12:00:00Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
-}
-
 /**
  * Trading sessions from `from` to `to`, signed by direction. NULL means the
  * distance is UNKNOWN — never a fabricated number.
@@ -105,7 +97,7 @@ function isRealDate(value: string): boolean {
  * that unknown or conflicting data must never become a confident date.
  */
 export function tradingSessionsBetween(market: Market, from: string, to: string): number | null {
-  if (!isRealDate(from) || !isRealDate(to)) return null;
+  if (!isRealIsoDate(from) || !isRealIsoDate(to)) return null;
   if (from === to) return 0;
   const direction = from < to ? 1 : -1;
   const cursor = new Date(`${from}T12:00:00Z`);
@@ -161,8 +153,8 @@ export async function fetchRobinhoodUpcomingEarnings(): Promise<Array<{
   const bySymbol = new Map<string, string>();
   for (const row of calendar.rows) {
     const symbol = String(row?.symbol ?? "").trim().toUpperCase();
-    const reportDate = String(row?.report?.date ?? "").slice(0, 10);
-    if (!symbol || !isRealDate(reportDate) || bySymbol.has(symbol)) continue;
+    const reportDate = normalizeRealIsoDate(row?.report?.date);
+    if (!symbol || !reportDate || bySymbol.has(symbol)) continue;
     bySymbol.set(symbol, reportDate);
   }
   return [...bySymbol].map(([symbol, reportDate]) => ({ symbol, reportDate }));
@@ -172,8 +164,8 @@ async function robinhoodEarningsObservation(symbol: string): Promise<EarningsEve
   const calendar = await robinhoodCalendarRows();
   if (!calendar) return null;
   const row = calendar.rows.find((candidate: any) => String(candidate?.symbol ?? "").toUpperCase() === symbol);
-  const date = String(row?.report?.date ?? "").slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const date = normalizeRealIsoDate(row?.report?.date);
+  if (!date) return null;
   return {
     date,
     session: normalizeSession(row?.report?.timing),
@@ -200,7 +192,7 @@ export async function resolveEarningsEventRisk(
     .order("report_date", { ascending: true })
     .limit(1)
     .maybeSingle()
-    .then(({ data }: any) => data ? {
+    .then(({ data }: any) => data && isRealIsoDate(String(data.report_date)) ? {
       date: String(data.report_date),
       session: normalizeSession(data.announcement_session ?? data.report_time),
       source: "earnings_calendar_cache",
@@ -208,7 +200,7 @@ export async function resolveEarningsEventRisk(
       confirmed: Boolean(data.actual_available_at),
     } : null)
     .catch(() => null);
-  const basePromise = fetchEarningsDateObservation(symbol, market).then((row) => row ? {
+  const basePromise = fetchEarningsDateObservation(symbol, market).then((row) => row && isRealIsoDate(row.date) ? {
     date: row.date,
     session: row.session,
     source: row.source,
@@ -216,13 +208,16 @@ export async function resolveEarningsEventRisk(
     confirmed: row.confirmed,
   } : null);
   const webullPromise = market === "us"
-    ? fetchWebullEarnings(symbol).then((row) => row?.nextDate ? {
-        date: String(row.nextDate).slice(0, 10),
+    ? fetchWebullEarnings(symbol).then((row) => {
+        const date = normalizeRealIsoDate(row?.nextDate);
+        return date ? {
+        date,
         session: "unknown" as const,
         source: "webull",
         observedAt,
         confirmed: false,
-      } : null)
+      } : null;
+      })
     : Promise.resolve(null);
   const robinhoodPromise = market === "us" ? robinhoodEarningsObservation(symbol) : Promise.resolve(null);
   const observations = (await Promise.all([

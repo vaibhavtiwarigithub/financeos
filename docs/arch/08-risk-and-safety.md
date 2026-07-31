@@ -652,6 +652,12 @@ places nor modifies a broker order, and it does not change manual live, paper, o
 the synthetic live-exit monitor. The older prose below is historical scaffolding;
 references to the migration as unapplied are superseded.
 
+Coverage requires exact equality between reconstructed held quantity,
+reconciled held quantity, and broker-protected quantity. Under-protection leaves
+risk uncovered; over-protection can create an accidental short. Both fail closed.
+P2 must also define an atomic or bounded-compensation workflow for protecting a
+newly filled BUY; changing the source availability constant is not sufficient.
+
 Built UP TO the placement line and STOPPED. **No live broker order is ever placed
 by this scaffold — not a $1 test.** It is a set of pure, deterministic modules
 under `lib/protective/` plus an UNAPPLIED migration proposal. Nothing here is
@@ -730,6 +736,13 @@ the direct live Alpha Vantage blackout remains in force; PositionMonitor and
 live execution import no earnings-risk decision function. The Risk page exposes
 warnings and evidence counts without raw broker chains.
 
+The scheduled US holdings monitor is also fail-loud on canonical state reads:
+errors reading holding-risk runs/snapshots, paper positions, or the PIT earnings
+calendar mark the agent run `error` instead of reporting a successful zero-coverage
+sample. A paper stop at or above spot is stale/malformed and is recorded with no
+stop-distance comparison; it is never converted with an absolute value into a
+plausible risk annotation.
+
 ### Post-Report Daily-Price Repricing Barrier (2026-07-30)
 
 Options risk context remains measure-only, but daily technical direction cannot
@@ -742,5 +755,10 @@ feed does not reopen stale scoring for a known past event. This is a subtractive
 it blocks new paper/live entries and score/direction exits from that stale daily
 score, while mechanical stop, target, trailing-stop, and time exits continue.
 The existing calendar is read only; no provider or options call is added, and no
-earnings beat/miss is inferred as directional alpha. Normal scoring resumes on
+earnings beat/miss is inferred as directional alpha. A calendar read error is an
+unknown control-plane state and writes a current neutral abstention rather than
+authorizing stale direction. The latest prior event remains checked until a
+qualifying post-event bar exists; it does not silently expire after seven calendar
+days. All earnings collectors share one real ISO-date validator, so impossible
+provider dates cannot normalize into another session. Normal scoring resumes on
 the first post-report daily bar.

@@ -25,6 +25,12 @@ actual-result feed is late.
   exits. Price stops, targets, trailing stops, and time exits are unchanged.
 - The calendar lookup is read-only and provider-free. It never infers that an
   earnings beat means buy, and it never uses options as directional alpha.
+- Calendar read failure is an unknown control-plane state and therefore writes a
+  current neutral abstention. It cannot authorize a stale score. The lookup has
+  no seven-calendar-day expiry: the most recent prior event remains checked until
+  a qualifying post-event bar exists.
+- Every collector uses the same real `YYYY-MM-DD` validator. Impossible values
+  such as `2026-02-31` are unavailable, never normalized into another day.
 
 ## Scope
 

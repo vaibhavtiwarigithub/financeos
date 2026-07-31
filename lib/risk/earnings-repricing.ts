@@ -3,6 +3,8 @@
 // alpha: it can only suppress a stale score/direction decision. Mechanical
 // price exits remain outside this module.
 
+import { isRealIsoDate } from "@/lib/date-only";
+
 export interface EarningsActualRow {
   report_date: string | null;
   actual_available_at: string | null;
@@ -12,11 +14,7 @@ export interface EarningsActualRow {
 
 export type EarningsRepricingState =
   | { pending: false; reason: "no_recent_event" | "event_not_occurred" | "post_event_daily_bar_available"; reportDate: string | null; actualAvailableAt: string | null }
-  | { pending: true; reason: "post_event_daily_bar_missing"; reportDate: string; actualAvailableAt: string | null };
-
-function isIsoDay(value: unknown): value is string {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00.000Z`));
-}
+  | { pending: true; reason: "post_event_daily_bar_missing" | "calendar_unavailable"; reportDate: string | null; actualAvailableAt: string | null };
 
 function normalizedSession(value: unknown): "before_open" | "after_close" | "unknown" {
   const text = String(value ?? "").trim().toLowerCase();
@@ -50,7 +48,7 @@ export function evaluateEarningsRepricingBarrier(input: {
 }): EarningsRepricingState {
   const reportDate = input.earnings?.report_date ?? null;
   const actualAvailableAt = input.earnings?.actual_available_at ?? null;
-  if (!isIsoDay(reportDate)) {
+  if (!isRealIsoDate(reportDate)) {
     return { pending: false, reason: "no_recent_event", reportDate: null, actualAvailableAt: null };
   }
   const hasActual = Boolean(actualAvailableAt && Number.isFinite(Date.parse(actualAvailableAt)));
@@ -60,7 +58,7 @@ export function evaluateEarningsRepricingBarrier(input: {
   if (!eventOccurred) {
     return { pending: false, reason: "event_not_occurred", reportDate, actualAvailableAt: hasActual ? actualAvailableAt : null };
   }
-  const latest = isIsoDay(input.latestDailyCandleDate) ? input.latestDailyCandleDate : null;
+  const latest = isRealIsoDate(input.latestDailyCandleDate) ? input.latestDailyCandleDate : null;
   const barContainsReaction = latest != null && (
     session === "before_open" ? latest >= reportDate : latest > reportDate
   );
@@ -77,19 +75,17 @@ export async function resolveEarningsRepricingBarrier(
 ): Promise<EarningsRepricingState> {
   const now = new Date();
   const today = marketDay(now, input.market);
-  const cutoffDay = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   try {
     const { data, error } = await supabase
       .from("earnings_calendar")
       .select("report_date,actual_available_at,announcement_session,eps_actual_first")
       .eq("symbol", input.symbol)
       .eq("market", input.market)
-      .gte("report_date", cutoffDay)
       .lte("report_date", today)
       .order("report_date", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (error) return { pending: false, reason: "no_recent_event", reportDate: null, actualAvailableAt: null };
+    if (error) return { pending: true, reason: "calendar_unavailable", reportDate: null, actualAvailableAt: null };
     return evaluateEarningsRepricingBarrier({
       latestDailyCandleDate: input.latestDailyCandleDate,
       earnings: data,
@@ -97,7 +93,8 @@ export async function resolveEarningsRepricingBarrier(
       now,
     });
   } catch {
-    // The guard must never fabricate an earnings event from a failed read.
-    return { pending: false, reason: "no_recent_event", reportDate: null, actualAvailableAt: null };
+    // Unknown calendar state cannot authorize a score/direction decision. This
+    // abstains without pretending that an earnings event occurred.
+    return { pending: true, reason: "calendar_unavailable", reportDate: null, actualAvailableAt: null };
   }
 }

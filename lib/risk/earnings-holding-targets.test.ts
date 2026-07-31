@@ -38,6 +38,15 @@ describe("earnings holding targets", () => {
     expect(targets.every(row => row.horizonSessions === 20)).toBe(true);
   });
 
+  it("does not turn a stale stop above spot into a plausible distance", () => {
+    const [target] = buildEarningsHoldingTargets({
+      paperPositions: [{ symbol: "MSFT", current_price: 400, stop_loss: 465 }],
+      liveSnapshots: [],
+      defaultHorizonSessions: 10,
+    });
+    expect(target.stopDistancePct).toBeNull();
+  });
+
   it("admits provider work only for cached events inside each horizon", () => {
     const targets = buildEarningsHoldingTargets({
       paperPositions: [

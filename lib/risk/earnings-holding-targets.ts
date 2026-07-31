@@ -40,7 +40,8 @@ export function buildEarningsHoldingTargets(input: {
       environment: "paper",
       symbol,
       spot,
-      stopDistancePct: stop == null ? null : Math.abs(spot - stop) / spot,
+      // A stop at/above spot is stale or malformed, not a meaningful distance.
+      stopDistancePct: stop == null || stop >= spot ? null : (spot - stop) / spot,
       horizonSessions: boundedHorizon(position?.resolved_horizon_days, input.defaultHorizonSessions),
     });
   }

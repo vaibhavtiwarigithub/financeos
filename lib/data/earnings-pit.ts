@@ -1,5 +1,6 @@
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
 import { createServiceClient } from "@/lib/supabase/service";
+import { isRealIsoDate, normalizeRealIsoDate } from "@/lib/date-only";
 
 // Point-in-time earnings DATA CAPTURE (features/known-anomalies §3, build steps
 // 2 & 3). This is the enabler for a FUTURE PEAD / revision-momentum feature — it
@@ -61,7 +62,7 @@ export function isStrictlyPreAnnouncementVintage(
   availableAt: string | Date,
   reportDate: string,
 ): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) return false;
+  if (!isRealIsoDate(reportDate)) return false;
   const d = availableAt instanceof Date ? availableAt : new Date(availableAt);
   if (!Number.isFinite(d.getTime())) return false;
   return dateInTimeZone(d, US_MARKET_TZ) < reportDate;
@@ -131,7 +132,7 @@ export async function captureEarningsPit(
       if (!Array.isArray(rows) || rows.length === 0) { res.skipped++; continue; }
 
       for (const row of rows) {
-        const reportDate = String(row.date ?? "").slice(0, 10);
+        const reportDate = normalizeRealIsoDate(row.date);
         if (!reportDate) continue;
         const fiscalPeriod = row.year != null && row.quarter != null
           ? `${row.year}Q${row.quarter}` : null;

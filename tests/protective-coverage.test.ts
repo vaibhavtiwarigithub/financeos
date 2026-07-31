@@ -54,7 +54,17 @@ describe("protective coverage control plane", () => {
       now: new Date("2026-07-30T00:00:00.000Z"),
     });
     expect(coverage.protected).toBe(false);
-    expect(coverage.findings[0].reason).toMatch(/does not fully cover/);
+    expect(coverage.findings[0].reason).toMatch(/exactly match/);
+  });
+
+  it("rejects an oversized stale stop that could sell more than is currently held", () => {
+    const coverage = evaluateProtectionCoverage({
+      positions: [{ ...position, qty: 5 }],
+      protectiveOrders: [row({ protected_qty: 10, reconciled_held_qty: 10 })],
+      now: new Date("2026-07-30T00:00:00.000Z"),
+    });
+    expect(coverage.protected).toBe(false);
+    expect(coverage.findings[0].reason).toMatch(/exactly match/);
   });
 
   it("fails closed for terminal, expired, or malformed active broker state", () => {

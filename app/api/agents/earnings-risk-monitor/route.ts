@@ -29,13 +29,14 @@ function usMarketDay(now: Date): string {
 }
 
 async function latestLiveHoldingRows(supabase: any): Promise<any[]> {
-  const { data: runs } = await supabase
+  const { data: runs, error: runsError } = await supabase
     .from("holding_risk_runs")
     .select("id,account_id,completed_at")
     .eq("market", "us")
     .eq("status", "complete")
     .order("completed_at", { ascending: false })
     .limit(50);
+  if (runsError) throw new Error(`holding_risk_runs read failed: ${runsError.message}`);
   const latestByAccount = new Map<string, string>();
   for (const run of runs ?? []) {
     const account = String((run as any).account_id ?? "");
@@ -43,10 +44,11 @@ async function latestLiveHoldingRows(supabase: any): Promise<any[]> {
   }
   const runIds = [...latestByAccount.values()];
   if (runIds.length === 0) return [];
-  const { data } = await supabase
+  const { data, error: snapshotsError } = await supabase
     .from("holding_risk_snapshots")
     .select("run_id,symbol,current_price,source_captured_at")
     .in("run_id", runIds);
+  if (snapshotsError) throw new Error(`holding_risk_snapshots read failed: ${snapshotsError.message}`);
   return data ?? [];
 }
 
@@ -69,7 +71,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const mandate = await loadTradingMandate(supabase, "us");
-    const [{ data: paperPositions }, liveSnapshots] = await Promise.all([
+    const [paperResult, liveSnapshots] = await Promise.all([
       supabase.from("paper_positions")
         .select("symbol,current_price,stop_loss,resolved_horizon_days")
         .eq("market", "us")
@@ -78,6 +80,8 @@ export async function POST(req: NextRequest) {
         .limit(50),
       latestLiveHoldingRows(supabase),
     ]);
+    if (paperResult.error) throw new Error(`paper_positions read failed: ${paperResult.error.message}`);
+    const paperPositions = paperResult.data;
     const targets = buildEarningsHoldingTargets({
       paperPositions: paperPositions ?? [],
       liveSnapshots,
@@ -87,7 +91,7 @@ export async function POST(req: NextRequest) {
     const today = usMarketDay(new Date());
     const through = new Date(Date.now() + 35 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const symbols = [...new Set(targets.map(target => target.symbol))];
-    const [{ data: calendarRows }, robinhoodEvents] = await Promise.all([
+    const [calendarResult, robinhoodEvents] = await Promise.all([
       symbols.length
         ? supabase.from("earnings_calendar")
           .select("symbol,report_date")
@@ -99,6 +103,8 @@ export async function POST(req: NextRequest) {
         : Promise.resolve({ data: [] as any[] }),
       symbols.length ? fetchRobinhoodUpcomingEarnings().catch(() => []) : Promise.resolve([]),
     ]);
+    if (calendarResult.error) throw new Error(`earnings_calendar read failed: ${calendarResult.error.message}`);
+    const calendarRows = calendarResult.data;
     const nextEventBySymbol = new Map<string, string>();
     // Prefer the persisted PIT calendar when both exist; Robinhood fills cache
     // misses with a single batch calendar read rather than N symbol calls.

@@ -32,6 +32,14 @@ describe("deep-dive keys the provider it is CONFIGURED for", () => {
     expect(src).not.toMatch(/getProviderKey\(\s*["']deepseek["']/);
     expect(src).toMatch(/providerForModel\(/);
   });
+
+  it("owner-gates service-role reads and accepts the canonical India symbol grammar", () => {
+    const src = code("app/api/agents/deep-dive/route.ts");
+    expect(src).toMatch(/requireOwner\(\)/);
+    expect(src).toMatch(/isPlausibleWatchlistSymbol\(symbol\)/);
+    expect(src).toMatch(/fetchIndiaQuote\(symbol\)/);
+    expect(src).toMatch(/fetchIndiaOverview\(symbol\)/);
+  });
 });
 
 describe("learner routes only models this app can serve", () => {

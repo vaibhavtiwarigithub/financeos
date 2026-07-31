@@ -1,28 +1,173 @@
 {
   "agentId": "deep-dive",
   "agentLabel": "Deep-Dive Debate",
-  "diagram": "flowchart TD\n  TRIG[\"▶ On-demand (symbol page)\\nUS tickers only · Settings-gated · DeepSeek key required\"] --> BUNDLE[\"📦 Data bundle\\nquote · AV OVERVIEW · signal scores · macro · holding · watchlist\"]\n  BUNDLE --> A1[\"📈 Market/Technical\"]\n  BUNDLE --> A2[\"💬 Sentiment/News\"]\n  BUNDLE --> A3[\"📊 Fundamentals\"]\n  BUNDLE --> A4[\"🌐 Macro\"]\n  A1 --> BULL[\"🐂 Bull advocate\"]\n  A2 --> BULL\n  A3 --> BULL\n  A4 --> BULL\n  A1 --> BEAR[\"🐻 Bear advocate\"]\n  A2 --> BEAR\n  A3 --> BEAR\n  A4 --> BEAR\n  BULL --> EVAL[\"⚖️ Research Evaluator\"]\n  BEAR --> EVAL\n  EVAL --> RISK[\"🛡️ Risk desk\\nRisky / Neutral / Safe\"]\n  RISK --> PM[\"🎯 Portfolio Manager\\nVERDICT + conviction\"]\n  PM --> STORE[\"💾 deep_analyses\\nadvisory only — writes NO signal, NO trade\"]\n  MODEL[\"🤖 ONE model for all 7 roles\\nagent_config 'deep-dive' · prod: deepseek-reasoner\"] -.-> EVAL",
+  "diagram": "flowchart TD\n  TRIG[\"On-demand owner action\\nUS or India symbol - Settings gated\"] --> BUNDLE[\"Market-local data bundle\\nquote - fundamentals - scores - holding context\"]\n  BUNDLE --> A1[\"Market / Technical\"]\n  BUNDLE --> A2[\"Sentiment / News\"]\n  BUNDLE --> A3[\"Fundamentals\"]\n  BUNDLE --> A4[\"Macro context\"]\n  A1 --> BULL[\"Bull advocate\"]\n  A2 --> BULL\n  A3 --> BULL\n  A4 --> BULL\n  A1 --> BEAR[\"Bear advocate\"]\n  A2 --> BEAR\n  A3 --> BEAR\n  A4 --> BEAR\n  BULL --> EVAL[\"Research evaluator\"]\n  BEAR --> EVAL\n  EVAL --> RISK[\"Risk desk\\nRisky / Neutral / Safe\"]\n  RISK --> PM[\"Portfolio manager\\nVERDICT + conviction\"]\n  PM --> STORE[\"deep_analyses\\nadvisory only - no signal or trade\"]\n  MODEL[\"One configured LLM\\nprovider key follows model\"] -.-> EVAL",
   "nodes": {
-    "TRIG": { "label": "On-demand", "description": "Runs only when the user clicks 'Run Deep Analysis' on a symbol page. Never on a cron — no vercel.json or pg_cron entry exists (the route does accept a cron secret, but nothing schedules it). Three gates the diagram never showed: it 503s without a DeepSeek provider key, it refuses to run when disabled in Settings → Agents → LLM Config, and its ticker regex accepts US symbols ONLY — India names are rejected outright.", "addedAt": "2026-07-04", "addReason": "Deep multi-agent debate is valuable but costs LLM calls; on-demand keeps it cheap.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "'On-demand, never on a cron' verified accurate. Added the three undrawn gates (DeepSeek key, Settings enable, US-only regex) and dropped the unverifiable per-run cost figure.", "removedAt": null, "removeReason": null },
-    "BUNDLE": { "label": "Data bundle", "description": "Six inputs: live quote (Massive, falling back to price_cache), Alpha Vantage OVERVIEW fundamentals, our own agent_signals dimension scores, current macro regime, holding status, and watchlist status. It costs 1 Alpha Vantage call per run — it does NOT use zero AV budget.", "addedAt": "2026-07-04", "addReason": "Reasoning over our own numbers avoids external API cost and reuses the system's scoring.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "'Uses zero Alpha Vantage budget' is false — it spends 1 AV OVERVIEW call per run, and the code says so. Two of six inputs were undrawn.", "removedAt": null, "removeReason": null },
-    "MODEL": { "label": "One configurable model", "description": "All seven roles — the four analysts, both advocates, the evaluator, the risk desk, and the PM — run on ONE model resolved from agent_config where agent_name='deep-dive'. Prod row: deepseek-reasoner. There is no chat/reasoner split; migration 087 deleted the hardcoded one. Caveat: the route hard-requires a DeepSeek provider key regardless of which model is configured, so selecting a non-DeepSeek model still 503s.", "addedAt": "2026-07-17", "addReason": "The per-node model labels were fiction and would silently rot on any Settings change; the real fact is one model for the whole debate.", "status": "new", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "A1": { "label": "Market/Technical analyst", "description": "One of four analysts run in parallel. Assesses price action, momentum, technical posture; states one bull + one bear technical point.", "addedAt": "2026-07-04", "addReason": "Structured multi-lens analysis before the debate.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "Role and parallelism verified accurate; the '(deepseek-chat)' model attribution was false and is now stated once on MODEL.", "removedAt": null, "removeReason": null },
-    "A2": { "label": "Sentiment/News analyst", "description": "Parallel analyst — sentiment picture and what would shift it.", "addedAt": "2026-07-04", "addReason": "Sentiment lens.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "A3": { "label": "Fundamentals analyst", "description": "Parallel analyst — core bull thesis and main fundamental risk. Reads the Alpha Vantage OVERVIEW block from the bundle.", "addedAt": "2026-07-04", "addReason": "Fundamental lens.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "A4": { "label": "Macro analyst", "description": "Parallel analyst — is the current regime a tailwind or headwind for this name/sector.", "addedAt": "2026-07-04", "addReason": "Macro lens.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "BULL": { "label": "Bull advocate", "description": "Builds the strongest evidence-based case to BUY, citing the analyst reports. Runs in parallel with the bear.", "addedAt": "2026-07-04", "addReason": "Adversarial debate surfaces both sides better than a single score.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "Role verified accurate; the '(deepseek-chat)' attribution was false.", "removedAt": null, "removeReason": null },
-    "BEAR": { "label": "Bear advocate", "description": "Builds the strongest evidence-based case to AVOID/SELL, focusing on real risks.", "addedAt": "2026-07-04", "addReason": "The counter-case is where blind spots surface.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "EVAL": { "label": "Research Evaluator", "description": "Weighs bull vs bear and states a lean (Bullish/Bearish/Neutral) with the single most decisive factor. Same model as every other role.", "addedAt": "2026-07-04", "addReason": "A neutral judge prevents either advocate from dominating.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "The 'deepseek-reasoner' label happens to match prod but only by coincidence — the model is configurable and the label would rot silently on a Settings change.", "removedAt": null, "removeReason": null },
-    "RISK": { "label": "Risk desk", "description": "Three perspectives — Risky / Neutral / Safe — plus the one key risk to watch, produced in a single call.", "addedAt": "2026-07-04", "addReason": "Mirrors a real desk's risk debate.", "status": "active", "changedAt": null, "changeReason": null, "removedAt": null, "removeReason": null },
-    "PM": { "label": "Portfolio Manager", "description": "Final verdict: BUY/HOLD/SELL/PASS + conviction 0-100 + rationale. Long-only enforced deterministically after the model answers — an unheld name's SELL is rewritten to PASS in code, not merely asked for in the prompt.", "addedAt": "2026-07-04", "addReason": "One accountable decision-maker synthesizes the debate.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "Verified accurate; amended to record that long-only is enforced in code after the fact rather than trusted to the prompt, and that the model attribution belongs on MODEL.", "removedAt": null, "removeReason": null },
-    "STORE": { "label": "deep_analyses", "description": "Inserts symbol, verdict, conviction, summary, all agent reports, model, tokens in/out, and cost_usd. A GET returns the latest cached analysis per symbol. ADVISORY ONLY, and structurally so: the route writes to no other table — no agent_signals, no paper_trades, no order path. Nothing downstream reads deep_analyses to make a decision.", "addedAt": "2026-07-04", "addReason": "Governance: an LLM debate advises, it does not execute.", "status": "changed", "changedAt": "2026-07-17", "changeReason": "Advisory-only verified accurate and strengthened from a promise to a structural fact; the 'approval-required order flow' it cited as the backstop does not exist.", "removedAt": null, "removeReason": null }
+    "TRIG": {
+      "label": "On-demand owner action",
+      "description": "Runs only from an owner action or a valid cron-secret caller; no schedule currently invokes it. Both POST and cached GET are owner-gated before service-role reads. Canonical US class tickers and India .NS/.BO symbols are accepted; malformed symbols are rejected before provider calls.",
+      "addedAt": "2026-07-04",
+      "addReason": "The multi-call debate is useful as optional research, not as an automatic money-path dependency.",
+      "status": "changed",
+      "changedAt": "2026-07-31",
+      "changeReason": "Closed the authenticated-non-owner service-data leak and replaced the US-only ticker grammar with the canonical US/India validator.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "BUNDLE": {
+      "label": "Market-local data bundle",
+      "description": "US uses Massive with price-cache fallback for quotes and Alpha Vantage OVERVIEW for fundamentals. India uses Yahoo INR quotes and Yahoo India fundamentals. Prior signals and paper holdings are scoped by both symbol and market. India never inherits the US FRED macro regime. Provider text is context for the LLM and cannot become an executable score.",
+      "addedAt": "2026-07-04",
+      "addReason": "Ground the debate in current app evidence instead of model memory.",
+      "status": "changed",
+      "changedAt": "2026-07-31",
+      "changeReason": "Made the previously partial India wiring real: valid symbols now reach India-capable quote and fundamental sources.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "MODEL": {
+      "label": "One configurable model",
+      "description": "All analyst, advocate, evaluator, risk, and PM calls use the one model configured for agent_name=deep-dive. The route resolves that model to its provider and checks the matching provider key; it does not hardcode DeepSeek.",
+      "addedAt": "2026-07-17",
+      "addReason": "One source of model truth avoids per-node labels drifting after a Settings change.",
+      "status": "active",
+      "changedAt": "2026-07-31",
+      "changeReason": "Verified the configured-provider key fix remains intact.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "A1": {
+      "label": "Market / Technical analyst",
+      "description": "Assesses price action and the recorded technical context. It may explain evidence but cannot alter the deterministic technical score.",
+      "addedAt": "2026-07-04",
+      "addReason": "Structured technical lens before the debate.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "A2": {
+      "label": "Sentiment / News analyst",
+      "description": "Explains the recorded sentiment score and rationale and must state when evidence is thin.",
+      "addedAt": "2026-07-04",
+      "addReason": "Structured sentiment lens.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "A3": {
+      "label": "Fundamentals analyst",
+      "description": "Reads the market-local fundamental block: Alpha Vantage for US and Yahoo India for NSE/BSE names.",
+      "addedAt": "2026-07-04",
+      "addReason": "Structured fundamental lens.",
+      "status": "changed",
+      "changedAt": "2026-07-31",
+      "changeReason": "India no longer attempts a US-only Alpha Vantage path.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "A4": {
+      "label": "Macro analyst",
+      "description": "US receives the recorded US macro regime. India is explicitly told that the US FRED regime is unavailable rather than receiving cross-market context as if it were domestic evidence.",
+      "addedAt": "2026-07-04",
+      "addReason": "Structured macro lens with explicit market limits.",
+      "status": "changed",
+      "changedAt": "2026-07-31",
+      "changeReason": "Verified market isolation and documented the India unavailable state.",
+      "removedAt": null,
+      "removeReason": null
+    },
+    "BULL": {
+      "label": "Bull advocate",
+      "description": "Builds the strongest evidence-based BUY case from the analyst reports.",
+      "addedAt": "2026-07-04",
+      "addReason": "Force a concrete positive case.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "BEAR": {
+      "label": "Bear advocate",
+      "description": "Builds the strongest evidence-based avoid or sell case and identifies concrete risks.",
+      "addedAt": "2026-07-04",
+      "addReason": "Force an adversarial counter-case.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "EVAL": {
+      "label": "Research evaluator",
+      "description": "Weighs the bull and bear cases and states a non-executable lean plus the decisive evidence.",
+      "addedAt": "2026-07-04",
+      "addReason": "Synthesize conflicting research arguments.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "RISK": {
+      "label": "Risk desk",
+      "description": "Produces aggressive, conservative, and balanced perspectives plus the principal risk to monitor.",
+      "addedAt": "2026-07-04",
+      "addReason": "Make risk disagreement visible.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "PM": {
+      "label": "Portfolio manager",
+      "description": "Produces BUY, HOLD, SELL, or PASS with conviction. A SELL for an unheld name is deterministically rewritten to PASS, but every verdict remains advisory.",
+      "addedAt": "2026-07-04",
+      "addReason": "Produce one readable synthesis while retaining a code-enforced long-only boundary.",
+      "status": "active",
+      "changedAt": null,
+      "changeReason": null,
+      "removedAt": null,
+      "removeReason": null
+    },
+    "STORE": {
+      "label": "deep_analyses",
+      "description": "Stores the advisory report, model, token counts, and cost. The route writes no agent_signals, positions, proposals, orders, or fills, and no money-path consumer reads this table.",
+      "addedAt": "2026-07-04",
+      "addReason": "Keep optional research auditable without granting execution authority.",
+      "status": "active",
+      "changedAt": "2026-07-31",
+      "changeReason": "Both write and read surfaces are now owner-only.",
+      "removedAt": null,
+      "removeReason": null
+    }
   },
   "history": [
-    { "date": "2026-07-04", "event": "add", "nodeId": "TRIG", "label": "Deep-Dive", "reason": "Phase 1: adversarial per-symbol debate (closes competitive gap vs trading-agents.ai)" },
-    { "date": "2026-07-17", "event": "add", "nodeId": "MODEL", "label": "One configurable model for all 7 roles — the per-node chat/reasoner split is fiction", "reason": "The diagram attributed models per role: analysts and advocates on 'deepseek-chat', evaluator and PM on 'deepseek-reasoner'. No such split exists — migration 087 deleted the hardcoded chat/reasoner split and its own note says so. All seven roles resolve ONE model via getConfiguredModel(svc,'deep-dive'); prod is deepseek-reasoner. The evaluator/PM labels were therefore right by coincidence and the analyst/advocate labels simply wrong, which is the worse failure mode: half the page corroborates itself while the underlying claim is void, and every label would rot silently the moment the model is changed in Settings. Stated once on a MODEL node rather than repeated across seven, so there is one place to be wrong. Recorded the latent code bug found while verifying: the route hard-requires a DeepSeek provider key regardless of the configured model, so choosing a non-DeepSeek model 503s. Reported, not fixed — documentation-only task." },
-    { "date": "2026-07-17", "event": "modify", "nodeId": "BUNDLE", "label": "'Uses zero Alpha Vantage budget' is false — it spends 1 AV call per run", "reason": "The node claimed the bundle is assembled purely from data we already have and 'uses zero Alpha Vantage budget (free tier is 25/day)'. It calls Alpha Vantage OVERVIEW once per run, and the code comment states it plainly: 'Real fundamentals via Alpha Vantage OVERVIEW (1 call per deep-dive)'. This is a real operational claim, not a nit: AV is a hard-capped shared budget that ThemeScout and the research sentiment path also draw on, and a diagram promising a zero-cost button invites exactly the repeated clicking that starves the agents which cannot degrade gracefully. Also drew the two undrawn inputs (watchlist status; the price_cache fallback behind the Massive quote) — six inputs, not three. Note the fundamentals analyst was never analyzing our own numbers as the addReason implied; it reads this AV block." },
-    { "date": "2026-07-17", "event": "modify", "nodeId": "STORE", "label": "Advisory-only verified — but its stated backstop, the 'approval-required order flow', does not exist", "reason": "The core claim is TRUE and now stated more strongly than the original: advisory-only is not a policy here, it is structural. The route writes to deep_analyses and nothing else — no agent_signals, no paper_trades, no order path — and no consumer reads deep_analyses to make a decision, so there is no mechanism by which a debate verdict could move money. Corrected the justification rather than the verdict: the node reassured the reader that 'the deterministic risk gate and approval-required order flow remain authoritative', and the approval-required order flow is fiction — the same trader_proposals fabrication removed from paper-trader.json today. Citing a non-existent control as your safety backstop is dangerous even when the conclusion is right, because it survives being checked. Also recorded the GET path returning the latest cached analysis per symbol, and cost_usd being computed per run — which is why the old '~$0.004/run' constant was dropped from TRIG as unverifiable rather than restated." },
-    { "date": "2026-07-17", "event": "modify", "nodeId": "TRIG", "label": "Verified on-demand; added the three undrawn gates (DeepSeek key, Settings enable, US-only)", "reason": "'Runs only when the user clicks Run Deep Analysis, never on a cron' is verified ACCURATE — the button posts to the route, and there is no vercel.json or pg_cron entry (the route does accept a cron secret, but nothing schedules it, which is worth knowing before someone wires one up). Three gates were missing, each of which changes what a failed click means: a missing DeepSeek provider key 503s; being disabled in Settings → Agents → LLM Config refuses the run; and the ticker regex accepts US symbols ONLY, so India names are rejected outright — a market boundary the diagram gave no hint of, on a page where every other agent is now per-market. Dropped the '~$0.004/run' figure: cost_usd is computed per run from real token counts, so a hardcoded constant on the diagram is an invented number." },
-    { "date": "2026-07-17", "event": "modify", "nodeId": "PM", "label": "Verified accurate — long-only is enforced in CODE after the model answers, not by the prompt", "reason": "Verdict shape (BUY/HOLD/SELL/PASS + conviction 0-100 + rationale), the four parallel analysts, the parallel bull/bear pair, the single-call three-perspective risk desk, and long-only enforcement are ALL verified accurate against code and unchanged. No churn invented on the debate structure — it is the one part of this diagram that was already true. The single amendment worth making: long-only is not merely requested in the prompt, it is enforced deterministically afterwards — an unheld name's SELL verdict is rewritten to PASS in code. The prompt asks; the code guarantees. That distinction is exactly what the rest of this audit found missing elsewhere, and here it was already right and simply under-claimed. Model attributions stripped from this and the other role nodes and consolidated onto MODEL." }
+    {
+      "date": "2026-07-04",
+      "event": "add",
+      "nodeId": "TRIG",
+      "label": "Deep-Dive Debate",
+      "reason": "Added an on-demand adversarial research report with no execution authority."
+    },
+    {
+      "date": "2026-07-17",
+      "event": "modify",
+      "nodeId": "MODEL",
+      "label": "One configurable model",
+      "reason": "Removed fictional per-role model assignments and bound provider-key validation to the configured model."
+    },
+    {
+      "date": "2026-07-31",
+      "event": "modify",
+      "nodeId": "TRIG",
+      "label": "Owner-only and genuinely market-aware",
+      "reason": "An adversarial review found that any authenticated user could reach service-role reads and that the claimed India support was blocked by a 1-5-letter US regex. Both GET and POST now enforce owner access; canonical India symbols use Yahoo INR quotes and fundamentals, while US behavior is unchanged."
+    }
   ]
 }

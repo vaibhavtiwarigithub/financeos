@@ -117,8 +117,8 @@ export function evaluateProtectionCoverage(input: {
     if (stateFailure) return { positionId, market: position.market, symbol: position.symbol, protected: false, reason: stateFailure };
     const protectedQty = finitePositive(row.protected_qty);
     const reconciledHeldQty = finitePositive(row.reconciled_held_qty);
-    if (protectedQty == null || reconciledHeldQty == null || protectedQty + 1e-9 < qty || reconciledHeldQty + 1e-9 < qty) {
-      return { positionId, market: position.market, symbol: position.symbol, protected: false, reason: "protective quantity does not fully cover the reconstructed holding" };
+    if (protectedQty == null || reconciledHeldQty == null || Math.abs(protectedQty - qty) > 1e-9 || Math.abs(reconciledHeldQty - qty) > 1e-9) {
+      return { positionId, market: position.market, symbol: position.symbol, protected: false, reason: "protective and reconciled quantities must exactly match the reconstructed holding" };
     }
     return { positionId, market: position.market, symbol: position.symbol, protected: true, reason: "active full-quantity broker protection reconciled" };
   });

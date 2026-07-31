@@ -1,5 +1,6 @@
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
 import { fetchIndiaEarningsDate } from "@/lib/india-data";
+import { normalizeRealIsoDate } from "@/lib/date-only";
 
 // Event-proximity feature: days until a symbol's next earnings report. Captured
 // into the decision_observations ledger so the LearnerAgent can test the "buy
@@ -32,6 +33,8 @@ export function daysFromToday(value: unknown, india = false): number | null {
     const isoDay = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
     const usDay = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(date);
     if (isoDay) {
+      const normalized = normalizeRealIsoDate(date);
+      if (!normalized) return null;
       time = Date.UTC(Number(isoDay[1]), Number(isoDay[2]) - 1, Number(isoDay[3]));
       isMarketLocalDate = true;
     } else if (usDay) {
@@ -63,8 +66,9 @@ export async function fetchEarningsDateObservation(
   try {
     if (market === "india") {
       const date = await fetchIndiaEarningsDate(symbol).catch(() => null);
-      return date ? {
-        date: String(date).slice(0, 10),
+      const normalized = normalizeRealIsoDate(date);
+      return normalized ? {
+        date: normalized,
         session: "unknown",
         source: "yahoo_india",
         observedAt,
@@ -86,10 +90,11 @@ export async function fetchEarningsDateObservation(
     const next = rows
       .filter((row) => typeof row?.date === "string")
       .sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
-    if (!next) return null;
+    const reportDate = normalizeRealIsoDate(next?.date);
+    if (!next || !reportDate) return null;
     const hour = String(next.hour ?? "").toLowerCase();
     return {
-      date: String(next.date).slice(0, 10),
+      date: reportDate,
       session: hour === "bmo" ? "bmo" : hour === "amc" ? "amc" : hour === "dmh" ? "during_session" : "unknown",
       source: "finnhub",
       observedAt,

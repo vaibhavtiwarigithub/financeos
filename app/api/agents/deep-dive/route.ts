@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
 import { avCachedFetch } from "@/lib/av-cache";
 import { getConfiguredModel, isAgentEnabled } from "@/lib/agent-model-config";
 import { getProviderKey, providerForModel, LLM_PROVIDERS } from "@/lib/llm-keys";
 import { verifyCronSecret } from "@/lib/auth/cron";
-import { isIndia } from "@/lib/india-data";
+import { requireOwner } from "@/lib/auth/require-owner";
+import { fetchIndiaOverview, fetchIndiaQuote, isIndia } from "@/lib/india-data";
+import { isPlausibleWatchlistSymbol } from "@/lib/watchlist-symbols";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +52,12 @@ async function fetchFundamentals(symbol: string): Promise<string | null> {
   } catch { return null; }
 }
 
+function formatOverview(overview: Record<string, string>): string | null {
+  if (Object.keys(overview).length <= 1) return null;
+  const pick = (key: string) => overview[key] && overview[key] !== "None" ? overview[key] : "n/a";
+  return `sector=${pick("Sector")}, industry=${pick("Industry")}, PE=${pick("PERatio")}, PEG=${pick("PEGRatio")}, profitMargin=${pick("ProfitMargin")}, marketCap=${pick("MarketCapitalization")}, 52wHigh=${pick("52WeekHigh")}, 52wLow=${pick("52WeekLow")}, analystTarget=${pick("AnalystTargetPrice")}, EPS=${pick("EPS")}`;
+}
+
 interface Acc { tokensIn: number; tokensOut: number; costUsd: number; }
 function tally(acc: Acc, r: { tokensIn: number; tokensOut: number; costUsd: number }) {
   acc.tokensIn += r.tokensIn; acc.tokensOut += r.tokensOut; acc.costUsd += r.costUsd;
@@ -59,16 +66,13 @@ function tally(acc: Acc, r: { tokensIn: number; tokensOut: number; costUsd: numb
 export async function POST(req: NextRequest) {
   const isCron = verifyCronSecret(req);
   if (!isCron) {
-    const userClient = await createClient();
-    const { data: { user } } = await userClient.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await requireOwner();
+    if (gate) return gate;
   }
 
   const body = await req.json().catch(() => ({}));
   const symbol = String(body.symbol ?? "").toUpperCase().trim();
-  // Canonical US ticker grammar (1-5 alnum + optional .X/-X class), so junk like
-  // "AAPL/?x" can't reach the provider URL path.
-  if (!/^[A-Z]{1,5}([.-][A-Z]{1,2})?$/.test(symbol)) return NextResponse.json({ error: "valid ticker required" }, { status: 400 });
+  if (!isPlausibleWatchlistSymbol(symbol)) return NextResponse.json({ error: "valid ticker required" }, { status: 400 });
   const signalMarket = isIndia(symbol) ? "india" : "us";
 
   const svc = createServiceClient();
@@ -99,8 +103,12 @@ export async function POST(req: NextRequest) {
 
   // ── Data bundle: quote + fundamentals + our signal scores + macro + holding ──
   const [quote, fundamentals, { data: sig }, { data: macro }, { data: pos }, { data: wl }] = await Promise.all([
-    fetchQuote(symbol),
-    fetchFundamentals(symbol),
+    signalMarket === "india"
+      ? fetchIndiaQuote(symbol).then(row => row ? { price: row.price, changePct: row.changePct, source: "yahoo" } : null)
+      : fetchQuote(symbol),
+    signalMarket === "india"
+      ? fetchIndiaOverview(symbol).then(formatOverview).catch(() => null)
+      : fetchFundamentals(symbol),
     svc.from("agent_signals").select("direction, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, rationale, created_at").eq("symbol", symbol).eq("market", signalMarket).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     signalMarket === "us"
       ? svc.from("macro_signals").select("regime, summary, created_at").order("created_at", { ascending: false }).limit(1).maybeSingle()
@@ -116,7 +124,7 @@ export async function POST(req: NextRequest) {
   const bundle = [
     `SYMBOL: ${symbol} (${companyName}) | MARKET: ${signalMarket}`,
     quote ? `PRICE: ${signalMarket === "india" ? "INR " : "$"}${quote.price?.toFixed(2)} (${quote.changePct >= 0 ? "+" : ""}${quote.changePct?.toFixed(2)}% last session, src=${quote.source})` : `PRICE: unavailable`,
-    fundamentals ? `FUNDAMENTALS (Alpha Vantage): ${fundamentals}` : `FUNDAMENTALS: unavailable`,
+    fundamentals ? `FUNDAMENTALS (${signalMarket === "india" ? "Yahoo India" : "Alpha Vantage"}): ${fundamentals}` : `FUNDAMENTALS: unavailable`,
     `HELD IN PAPER PORTFOLIO: ${isHeld ? "YES" : "NO"}`,
     s ? `PRIOR RESEARCH SIGNAL (${new Date(s.created_at).toISOString().slice(0,10)}): direction=${s.direction}, analyst_score=${s.analyst_score}/100 | dims: fundamental=${s.fundamental_score ?? "?"}, technical=${s.technical_score ?? "?"}, sentiment=${s.sentiment_score ?? "?"}, macro=${s.macro_score ?? "?"}, insider=${s.insider_score ?? "?"}\n  rationale: ${(s.rationale ?? "").slice(0, 400)}` : `PRIOR RESEARCH SIGNAL: none on record`,
     macro
@@ -200,12 +208,12 @@ export async function POST(req: NextRequest) {
 
 // GET latest stored analysis for a symbol
 export async function GET(req: NextRequest) {
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const gate = await requireOwner();
+  if (gate) return gate;
 
   const symbol = req.nextUrl.searchParams.get("symbol")?.toUpperCase().trim();
   if (!symbol) return NextResponse.json({ error: "symbol required" }, { status: 400 });
+  if (!isPlausibleWatchlistSymbol(symbol)) return NextResponse.json({ error: "valid ticker required" }, { status: 400 });
 
   const svc = createServiceClient();
   const { data } = await svc.from("deep_analyses").select("*").eq("symbol", symbol).order("created_at", { ascending: false }).limit(1).maybeSingle();

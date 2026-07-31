@@ -306,8 +306,8 @@
       "addedAt": "2026-07-10",
       "addReason": "PA3 autonomous live execution — agents evaluate signals and submit live orders directly (no per-order owner click) when deployment flag + DB toggle + 9 gates all clear.",
       "status": "active",
-      "changedAt": null,
-      "changeReason": null,
+      "changedAt": "2026-07-31",
+      "changeReason": "Autonomous BUYs also require protective_orders_enabled, a source-available broker placement/reconciliation worker, and exact full-quantity protection for every managed holding. The worker remains unavailable in source, so configuration alone cannot activate entries. Over-sized protection fails closed because it could sell more than is held. Exits remain in the separate live-exit path.",
       "removedAt": null,
       "removeReason": null
     },
@@ -1199,6 +1199,20 @@
       "nodeId": "EARNRISK",
       "label": "Shadow earnings event risk + options move proxy (measure-only)",
       "reason": "Approved P0 of features/earnings-aware-risk. Session-aware earnings resolution across the earnings_calendar cache, Finnhub, Webull and Robinhood (Yahoo for India), plus a US ATM-straddle move proxy on an expiry that covers the report session, compared to the planned stop distance. Annotates paper entry/rotation and live proposals; the legacy Alpha Vantage blackout is preserved byte-for-byte in effect beside it. No sizing, entry, rotation, stop, target, exit or order path reads the verdict. Independent review of 65c1c5be verified shadow isolation, blackout parity, allowlist enforcement, owner gating and the production DB invariants, and fixed one MED defect: tradingSessionsBetween returned fabricated session counts (282 for a malformed date, -280 for an empty one) instead of null, which also made two unparseable dates compare as agreeing. It now validates before comparing and an unmeasurable gap is a conflict."
+    },
+    {
+      "date": "2026-07-31",
+      "event": "changed",
+      "nodeId": "AUTOLIVE",
+      "label": "Protective coverage rejects both under-sized and over-sized floors",
+      "reason": "The autonomous entry interlock remains source-disabled and cannot suppress exits. Coverage now requires the broker-protected quantity and reconciled held quantity to exactly equal the reconstructed holding; accepting an old larger stop after a partial exit could otherwise create an accidental short. A future P2 must protect each newly filled BUY through a separately reviewed lifecycle; changing the availability constant is not an implementation."
+    },
+    {
+      "date": "2026-07-31",
+      "event": "changed",
+      "nodeId": "EARNRISK",
+      "label": "Shared real-date validation and fail-closed repricing state",
+      "reason": "All earnings collectors now share one real ISO calendar-date validator. The post-report daily-price barrier no longer expires after seven calendar days and a calendar read failure produces a current neutral abstention rather than authorizing stale score direction. The options shadow remains behavior-inert."
     }
   ]
 }

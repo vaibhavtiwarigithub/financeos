@@ -860,3 +860,16 @@ only for a declared target with a non-zero observed rate. Uninstrumented calls
 are labelled unmetered rather than zero. Capital rotation is labelled
 `paper_active`, not shadow-only. Any future shadow producer is incomplete until
 its ledger, schedule, safety boundary, and activation gate are registered.
+
+## Deep-Dive Debate (2026-07-31 correction)
+
+`/api/agents/deep-dive` is an owner-only, on-demand LLM research surface. Both
+POST and cached GET use the owner gate before service-role reads. It remains
+advisory: only `deep_analyses` is written and no signal, score, paper position,
+proposal, or broker path consumes its verdict.
+
+The route accepts canonical US class tickers and NSE/BSE `.NS`/`.BO` symbols.
+US uses Massive/cache quotes plus Alpha Vantage fundamentals; India uses Yahoo
+INR quotes and Yahoo India fundamentals and never borrows the US macro regime.
+The configured LLM provider is resolved before its key is checked. The diagram
+source is `public/agent-diagrams/deep-dive.json`.

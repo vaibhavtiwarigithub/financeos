@@ -2,118 +2,112 @@
 
 ## Status
 
-Architecture status: Draft
+Architecture status: Reviewed and rejected in current form (2026-07-31)
+
 Architecture approved: No
+
 Implementation allowed: No
 
-Follows proposal #2 in `CODEX_SCORING_DATA_TRUTH_AUDIT_RESULT.md`.
+No score threshold or trading configuration changed during this review.
 
-## The trap in the word "calibration"
+## Review correction: the proposal read the wrong control plane
 
-"Threshold calibration" normally means *find the cutoff that maximises outcome*.
-That requires knowing how score relates to forward return — which is exactly what
-this codebase has already proven it cannot measure at its current scale
-(`features/walk-forward-ic-folds` Annex K: realized IC sigma ~0.26, effective
-breadth ~17 names, ~180 as-of dates required against ~25 available).
+Production has two threshold-shaped values:
 
-Measured 2026-07-31, matured closed trades available to fit against:
+| Source | Value | Authority |
+|---|---:|---|
+| `strategy_config.score_threshold` | 52 | Legacy global risk-profile value; not the current market-local entry authority |
+| `trading_mandates.score_threshold` | US 60 / India 60 | Current ResearchAgent, PaperTrader, PositionMonitor, Router cohort, and AutonomousLive authority |
 
-| Market | Closed trades |
-|---|---|
-| US | **8** |
-| India | 50 |
+The original 21-day counts were computed at **60**, not 52. In the frozen cohort,
+`640 / 1,461 = 43.8%` was the US score-at-least-60 rate. A refreshed production
+query showed that score-at-least-52 would instead pass 64.4% in the US and 92.1%
+in India. The proposal attached a useful distribution count to the wrong field and
+incorrectly described 52 as the owner's active choice.
 
-**Any threshold fitted to 8 outcomes is overfitting**, and would be a worse
-decision procedure than the arbitrary constant it replaced. This proposal
-therefore does **not** attempt outcome-based calibration, and recommends that it
-not be attempted until the outcome record is an order of magnitude larger.
+This is load-bearing. Writing `strategy_config` would not recalibrate the active
+market-local gate. Silently writing `trading_mandates` would change a contract the
+original proposal did not identify.
 
-## The question that IS answerable
+## Evidence that is available
 
-The `df479bdc` data-truth fixes corrected the score inputs. They did not change
-`score_threshold`, which stayed at **52**. So the distribution moved and the
-cutoff did not:
+The paper book has only 8 completed US trade rows and 50 India rows. That is not
+enough to fit a threshold. However, saying outcome evidence is impossible was too
+broad. The immutable observation ledger already contains matured forward returns:
 
-| Market | n (21d) | Old pass | New pass | Old selectivity | New selectivity |
+| Market | h2 | h5 | h10 |
+|---|---:|---:|---:|
+| US | 536 labels / 14 as-of dates | 338 / 11 | 74 / 7 |
+| India | 151 / 13 | 125 / 12 | 65 / 7 |
+
+These labels support diagnostics, not a decision-grade threshold optimization.
+They repeat symbols inside a small number of cross-sections, most observations use
+the pre-fix scorer, and only 7-14 independent dates exist per horizon. One filled
+US live BUY and zero live SELLs add no calibration power.
+
+## What the data-truth correction changed
+
+At the unchanged authoritative threshold of 60, the one-off corrected-score
+reconstruction estimated:
+
+| Market | n (21d) | Old pass | Estimated corrected pass | Old rate | Corrected rate |
 |---|---:|---:|---:|---:|---:|
-| US | 1,461 | 640 | 741 | **43.8%** | **50.7%** |
+| US | 1,461 | 640 | 741 | 43.8% | 50.7% |
 | India | 368 | 274 | 284 | 74.5% | 77.2% |
 
-The owner chose 52 against the *old* distribution. The distribution then shifted
-for reasons unrelated to the owner's risk preference — a 68% silent P/E default,
-invalid P/E penalties, and a spurious hard veto were removed. **The resulting
-~16% wider US gate is a side effect, not a decision.**
-
-So the answerable question is not "what threshold is optimal" but:
-
-> What threshold reproduces the selectivity the owner actually chose, under the
-> corrected distribution?
-
-That is quantile matching. It needs **no outcome data** and makes **no alpha
-claim** — the same epistemic category as the earnings-risk work.
+The distribution moved because the audit removed a 68% silent P/E default,
+invalid-P/E penalties, and an ordinary-weak-close hard veto. Those defects did not
+express risk preference. But the old 43.8% rate was also not an explicit product
+decision; it was an incidental output of a default threshold applied to a
+corrupted scorer. Quantile matching can reproduce that statistic, but cannot show
+that it is desirable.
 
 ## Options
 
-### Option A — Quantile-match to restore intended selectivity (recommended)
+### Option A: quantile-match the old pass rate
 
-Find `t_us` such that the corrected scorer passes 43.8% of US signals, and
-`t_india` for 74.5%. Preserves the owner's revealed selectivity while keeping the
-input fixes.
+Not recommended now. It would preserve an artifact without outcome evidence. A
+future owner-approved version would need a reusable read-only reconstruction, full
+per-market score distributions, frozen flip tables, and an explicit decision about
+the target admission rate. Any write belongs in market-local `trading_mandates`,
+not the legacy global field.
 
-- Pro: undoes an unintended loosening; no new claim; reversible; explainable.
-- Con: assumes the *old* selectivity was itself sensible. It was chosen under a
-  biased distribution, so it is a defensible anchor, not a proven one.
+### Option B: keep the active threshold at 60
 
-### Option B — Keep 52 and accept the loosening deliberately
+Recommended as a no-change observation period.
 
-Make the ~16% wider gate an explicit decision rather than a side effect.
+- The counterfactual adds 101 US score passes over 21 days, about 4.8 gross
+  candidates per day before direction and downstream gates.
+- The US paper book currently holds 15 names against a cap of 15. Immediate
+  incremental entry capacity is therefore zero; exits, not candidate supply, bind
+  the trade-evidence rate.
+- The first post-fix US day produced 60 eligible long signals out of 135. The
+  earnings repricing barrier separately neutralized two high-scoring stale AAPL
+  holding reassessments. Candidate supply is not currently scarce.
+- Keeping 60 avoids changing scorer inputs and risk posture in the same evidence
+  window. It does not claim that 60 is optimal.
 
-- Pro: more entries means faster accumulation of the closed-trade record, which
-  is the binding constraint on *every* validation question in this system. With
-  8 US trades, evidence starvation is arguably a larger risk than mild
-  over-admission.
-- Con: more capital deployed sooner into a population with no outcome evidence,
-  through an unvalidated composite score. `max_open_positions` is now 15 per
-  market, so the practical effect is faster deployment.
+### Option C: outcome-optimize the threshold
 
-### Option C — Outcome-calibrated threshold
+Not decision-grade yet. Use matured labels diagnostically, but do not fit a cutoff
+until there are enough independent post-fix market dates, meaningful exit turnover,
+and a predeclared objective that includes return, drawdown, turnover, and costs.
 
-**Not possible.** 8 US closed trades. Recorded here so it is not re-proposed
-without the arithmetic being re-checked.
+## India is a separate problem
 
-## What Option A needs built
-
-The counterfactual in the audit was a one-off reconstruction; `df479bdc` left no
-reusable tool. Option A requires:
-
-1. A **read-only** reconstruction that scores historical `agent_signals` through
-   the corrected scorer and emits the full score distribution per market — not
-   just the pass count at one cutoff.
-2. Quantile lookup for the target selectivity.
-3. A frozen before/after table (threshold, pass rate, flips up/down) for owner
-   review **before** any config write.
-4. The threshold change itself applied as an owner-approved `strategy_config`
-   edit, journaled like the India `max_open_positions` change was.
-
-Nothing writes to `strategy_config` without a separate approval of the resulting
-number.
-
-## Caveat worth surfacing independently
-
-India already passes **74.5%** of scored signals. A gate that admits three names
-in four is barely a filter, and this is true both before and after the fixes. It
-may indicate an India threshold set for a different score distribution, or a
-scorer that does not discriminate on India inputs. Either way it is a separate
-finding from the US loosening and should not be bundled into the same change.
+India passed 74.5% at the real threshold of 60 before the correction and an
+estimated 77.2% after it. A gate admitting roughly three names in four may mean the
+India scorer lacks discrimination under its smaller availability set. Do not
+preserve that rate by quantile and do not copy a US threshold. Diagnose India with
+its own post-fix score distribution, forward labels, and entry/exit capacity.
 
 ## Recommendation
 
-Adopt **Option A** for US, and treat India separately — its 74.5% pass rate is a
-prior problem that quantile-matching would merely preserve.
+Keep both market-local thresholds at 60. Revisit US after at least 20 post-fix
+market sessions and meaningful exit turnover. Revisit India as a separate scorer
+discrimination study. The 15-name cap and downstream portfolio gates remain the
+capital-deployment controls during this observation period.
 
-If the owner prefers **Option B**, that is a legitimate call given how badly this
-system needs closed trades. It should be recorded as a deliberate risk-posture
-decision in `PROJECT_DECISIONS.md`, not left implicit.
-
-Either way, the current state — a threshold chosen for a distribution that no
-longer exists — should not be the resting position.
+`strategy_config.score_threshold` is legacy ambiguity. Removing or aliasing it is
+a separate schema/contract proposal because older UI and backtest surfaces may
+still read it; do not silently synchronize the two fields.
