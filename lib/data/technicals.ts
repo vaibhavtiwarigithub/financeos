@@ -185,11 +185,12 @@ const VETO_CLOSE_LOCATION = 0.25;  // close in the bottom quartile of the bar's 
  * heavy selling volume gets read as bullish confirmation — producing a false
  * high score. This runs as a hard gate BEFORE any momentum math.
  *
- * Vetoes when ANY condition fires. Exported so it can be unit-tested and reused
- * by an exit/quarantine monitor. Returns the fired reasons for auditability.
+ * Vetoes when either strong condition fires. A weak close is returned separately
+ * as a warning. Exported for unit tests and auditability.
  */
-export function detectBreakdownVeto(t: TechnicalResult): { vetoed: boolean; reasons: string[] } {
+export function detectBreakdownVeto(t: TechnicalResult): { vetoed: boolean; reasons: string[]; warnings: string[] } {
   const reasons: string[] = [];
+  const warnings: string[] = [];
 
   // 1) Volatility-adjusted crash: an abnormally large down-move relative to the
   //    stock's own recent volatility (ATR). Down day AND >= 2.5 ATRs of range.
@@ -203,13 +204,14 @@ export function detectBreakdownVeto(t: TechnicalResult): { vetoed: boolean; reas
     reasons.push(`High-volume breakdown: ${t.lastReturnPct.toFixed(1)}% drop on ${t.volumeVsAvg20.toFixed(1)}x volume`);
   }
 
-  // 3) Close in bottom quartile after a down day: sellers controlled the close,
-  //    price finished near the low of its range — weak, not a dip to buy.
+  // Close in the bottom quartile remains diagnostic context, not a hard veto.
   if (t.lastReturnPct != null && t.lastReturnPct < 0 && t.lastRangeLocation != null && t.lastRangeLocation <= VETO_CLOSE_LOCATION) {
-    reasons.push(`Weak close: finished at ${(t.lastRangeLocation * 100).toFixed(0)}% of bar range (bottom quartile) on a down day`);
+    // Diagnostic only. Production outcome labels did not support treating an
+    // ordinary weak close as equivalent to an ATR/volume-confirmed breakdown.
+    warnings.push(`Weak close: finished at ${(t.lastRangeLocation * 100).toFixed(0)}% of bar range (bottom quartile) on a down day`);
   }
 
-  return { vetoed: reasons.length > 0, reasons };
+  return { vetoed: reasons.length > 0, reasons, warnings };
 }
 
 /** Score cap applied when the breakdown veto fires (quarantine, not zero). */

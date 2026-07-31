@@ -438,3 +438,11 @@ Require statistically and economically positive OOF/paper evidence, stable perfo
 - Do not make Yahoo/TradingView scraping a live dependency.
 - Do not train a complex model on the current handful of paper trades.
 - Do not make any scoring change affect live trading until its migration, tests, shadow evidence, and owner promotion exist.
+
+## 16. Provider Data-Truth Amendment (2026-07-31)
+
+Formula review is not sufficient acceptance for a scoring feature. Every dimension
+must publish provider taxonomy/units, availability semantics, silent-default hit rate,
+production distribution including floor/ceiling mass, and a market-local frozen
+counterfactual. The corrective baseline and remaining semantic proposals are recorded
+in `features/scoring-data-truth/FEATURE_ARCHITECTURE.md`.

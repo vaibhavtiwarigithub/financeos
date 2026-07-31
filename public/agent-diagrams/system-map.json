@@ -16,7 +16,7 @@
     },
     "RESEARCH": {
       "label": "ResearchAgent",
-      "description": "Daily per market. Scores each tracked symbol deterministically across fundamental, technical, sentiment, macro, and insider evidence using market-local champion weights. Watchlists are partitioned by market and research_enabled; holdings persist is_holding=true and are staleness-ordered. Held rows skip optional LLM narrative to protect coverage; new candidates may receive narrative that cannot alter scores or directions. Sentiment is sample-shrunk, analyst targets are observational only, and India never inherits the US macro regime. Writes agent_signals, signal_score_history, and decision observations.",
+      "description": "Daily per market and the sole authoritative scorer. Scores each tracked symbol deterministically across explicitly available fundamental, technical, sentiment, macro, and insider evidence using market-local champion weights. Provider taxonomies are stamped; unknown sector mappings and invalid P/E values are omitted rather than silently defaulted. Only ATR-scaled or high-volume declines can hard-veto; an ordinary weak close is diagnostic. Watchlists are partitioned by market and research_enabled; holdings persist is_holding=true and are staleness-ordered. LLM narrative cannot alter scores or directions. India never inherits the US macro regime. Writes agent_signals, signal_score_history, and decision observations.",
       "addedAt": "2026-06-25",
       "addReason": "Central scoring engine — everything downstream keys off its analyst_score.",
       "status": "changed",

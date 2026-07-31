@@ -242,3 +242,17 @@ describe("a 'green' verdict with zero indicators is a failed run, not calm marke
     expect(r.dataQuality.macroDataAvailable).toBe(false);
   });
 });
+
+describe("macro danger-score data contract", () => {
+  it("rejects a known regime whose danger score is missing or invalid", async () => {
+    for (const danger_score of [null, Number.NaN, -1, 101]) {
+      const rows = [{
+        week_of: "2026-07-13", regime: "green", danger_score,
+        signals_triggered: 0, raw_indicators: new Array(8).fill({ signal: "green" }),
+      }];
+      const r = await run({ symbol: "AAPL", rows, now: NOW_0713 });
+      expect(r.dataQuality.macroDataAvailable).toBe(false);
+      expect(r.macro_score).toBe(50);
+    }
+  });
+});

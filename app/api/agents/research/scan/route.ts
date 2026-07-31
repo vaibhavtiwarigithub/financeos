@@ -152,8 +152,8 @@ export async function POST(req: NextRequest) {
     // Fallback: use recent watchlist + signals
     if (!candidates.length) {
       const [wlRes, sigRes] = await Promise.all([
-        supabase.from("watchlist").select("symbol").limit(20),
-        supabase.from("agent_signals").select("symbol").eq("direction", "long").order("created_at", { ascending: false }).limit(20),
+        supabase.from("watchlist").select("symbol").eq("market", "us").limit(20),
+        supabase.from("agent_signals").select("symbol").eq("market", "us").eq("direction", "long").order("created_at", { ascending: false }).limit(20),
       ]);
       const wl: string[] = (wlRes.data ?? []).map((r: any) => r.symbol);
       const sig: string[] = (sigRes.data ?? []).map((r: any) => r.symbol);

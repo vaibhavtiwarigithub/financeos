@@ -216,7 +216,10 @@ export async function fetchIndiaOverview(symbol: string): Promise<Record<string,
     const num = (v: any) => (v && typeof v === "object" && "raw" in v ? v.raw : v);
     const ov: Record<string, string> = {};
     ov.Symbol = symbol;
-    if (ap.sector) ov.Sector = String(ap.sector);
+    if (ap.sector) {
+      ov.Sector = String(ap.sector);
+      ov.SectorTaxonomy = "yahoo_sector";
+    }
     if (ap.industry) ov.Industry = String(ap.industry);
     const pe = num(sd.trailingPE) ?? num(ks.trailingPE);
     if (pe != null) ov.PERatio = String(pe);

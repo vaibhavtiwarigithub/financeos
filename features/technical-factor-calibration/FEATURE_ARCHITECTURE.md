@@ -145,3 +145,15 @@ paper validation, and owner approval.
 - No automatic selection of the best in-sample trial.
 - No claim that retrospective current-universe history is point-in-time or free of
   survivorship bias.
+
+## 11. Data-Truth Finding (2026-07-31)
+
+Production distributions show the live technical score is heavily saturated: exactly
+100 on 19.3% of US observations and 40.2% of India observations over 45 days. Exactly
+20 occurred on 19.6% US and 13.6% India. The standalone bottom-quartile weak-close veto
+was removed after matured cohorts failed to support it as a hard breakdown classifier;
+ATR-scaled and high-volume breakdown conditions remain.
+
+The 100 ceiling is not changed here. Add it to the versioned measure-only comparison
+and require market-local out-of-sample evidence before proposing a new live formula.
+Full production audit: `features/scoring-data-truth/FEATURE_ARCHITECTURE.md`.

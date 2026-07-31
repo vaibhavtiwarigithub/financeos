@@ -1065,3 +1065,26 @@ research universe.
 Reversal cost: Low. Remove the read-only display/tool and unschedule the holding
 shadow. Immutable historical evidence remains; no score, position, or broker
 state requires rollback.
+
+### Decision 60: Enforce Provider Data Truth Before Scoring
+
+Date: 2026-07-31
+Status: Approved corrective safety change, implemented
+Category: Research Scoring / Data Safety
+
+Decision: Stamp provider sector taxonomy, crosswalk only explicit Finnhub industry
+labels, omit relative-P/E scoring for unknown sectors and P/E outside `(0, 200]`,
+require explicit dimension availability, and restrict the breakdown hard veto to
+ATR-scaled or high-volume declines. Retire the duplicate Supabase Edge Function
+scorer; the Next.js ResearchAgent is authoritative.
+
+Reason: Production SQL proved that 68% of Finnhub rows silently received the wrong
+P/E norm, provider outliers reached 8,827, and ordinary weak closes forced score 20.
+Static review had validated formulas without validating real provider distributions.
+
+Non-goals: No insider formula, market threshold, PEAD dimension, India exit policy,
+or technical-ceiling change is approved by this decision. Those remain measured
+proposals. No historical signal or trade is rewritten.
+
+Reversal cost: Low in code, but reversal would restore known silent data corruption
+and is not recommended.

@@ -6,6 +6,7 @@ import { avCachedFetch } from "@/lib/av-cache";
 import { getConfiguredModel, isAgentEnabled } from "@/lib/agent-model-config";
 import { getProviderKey, providerForModel, LLM_PROVIDERS } from "@/lib/llm-keys";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { isIndia } from "@/lib/india-data";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +68,8 @@ export async function POST(req: NextRequest) {
   const symbol = String(body.symbol ?? "").toUpperCase().trim();
   // Canonical US ticker grammar (1-5 alnum + optional .X/-X class), so junk like
   // "AAPL/?x" can't reach the provider URL path.
-  if (!/^[A-Z]{1,5}([.-][A-Z]{1,2})?$/.test(symbol)) return NextResponse.json({ error: "valid US ticker required" }, { status: 400 });
+  if (!/^[A-Z]{1,5}([.-][A-Z]{1,2})?$/.test(symbol)) return NextResponse.json({ error: "valid ticker required" }, { status: 400 });
+  const signalMarket = isIndia(symbol) ? "india" : "us";
 
   const svc = createServiceClient();
   if (!(await isAgentEnabled(svc, "deep-dive"))) {
@@ -99,9 +101,11 @@ export async function POST(req: NextRequest) {
   const [quote, fundamentals, { data: sig }, { data: macro }, { data: pos }, { data: wl }] = await Promise.all([
     fetchQuote(symbol),
     fetchFundamentals(symbol),
-    svc.from("agent_signals").select("direction, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, rationale, created_at").eq("symbol", symbol).order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    svc.from("macro_signals").select("regime, summary, created_at").order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    svc.from("paper_positions").select("qty").eq("symbol", symbol).maybeSingle(),
+    svc.from("agent_signals").select("direction, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, rationale, created_at").eq("symbol", symbol).eq("market", signalMarket).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    signalMarket === "us"
+      ? svc.from("macro_signals").select("regime, summary, created_at").order("created_at", { ascending: false }).limit(1).maybeSingle()
+      : Promise.resolve({ data: null }),
+    svc.from("paper_positions").select("qty").eq("symbol", symbol).eq("market", signalMarket).maybeSingle(),
     svc.from("watchlist_items").select("company_name").eq("symbol", symbol).limit(1).maybeSingle(),
   ]);
 
@@ -110,12 +114,14 @@ export async function POST(req: NextRequest) {
   const s = sig as any;
 
   const bundle = [
-    `SYMBOL: ${symbol} (${companyName})`,
-    quote ? `PRICE: $${quote.price?.toFixed(2)} (${quote.changePct >= 0 ? "+" : ""}${quote.changePct?.toFixed(2)}% last session, src=${quote.source})` : `PRICE: unavailable`,
+    `SYMBOL: ${symbol} (${companyName}) | MARKET: ${signalMarket}`,
+    quote ? `PRICE: ${signalMarket === "india" ? "INR " : "$"}${quote.price?.toFixed(2)} (${quote.changePct >= 0 ? "+" : ""}${quote.changePct?.toFixed(2)}% last session, src=${quote.source})` : `PRICE: unavailable`,
     fundamentals ? `FUNDAMENTALS (Alpha Vantage): ${fundamentals}` : `FUNDAMENTALS: unavailable`,
     `HELD IN PAPER PORTFOLIO: ${isHeld ? "YES" : "NO"}`,
     s ? `PRIOR RESEARCH SIGNAL (${new Date(s.created_at).toISOString().slice(0,10)}): direction=${s.direction}, analyst_score=${s.analyst_score}/100 | dims: fundamental=${s.fundamental_score ?? "?"}, technical=${s.technical_score ?? "?"}, sentiment=${s.sentiment_score ?? "?"}, macro=${s.macro_score ?? "?"}, insider=${s.insider_score ?? "?"}\n  rationale: ${(s.rationale ?? "").slice(0, 400)}` : `PRIOR RESEARCH SIGNAL: none on record`,
-    macro ? `MACRO REGIME: ${(macro as any).regime} — ${((macro as any).summary ?? "").slice(0, 300)}` : `MACRO REGIME: unknown`,
+    macro
+      ? `MACRO REGIME: ${(macro as any).regime} — ${((macro as any).summary ?? "").slice(0, 300)}`
+      : `MACRO REGIME: ${signalMarket === "india" ? "unavailable (US FRED regime is not applied to India)" : "unknown"}`,
   ].join("\n");
 
   const acc: Acc = { tokensIn: 0, tokensOut: 0, costUsd: 0 };

@@ -107,6 +107,31 @@ Skip logging for: tiny wording changes, obvious bug fixes, test file edits, conf
 
 Only log meaningful project-shaping instructions.
 
+## Scoring Data-Truth Review Protocol
+
+Any review of a score, eligibility gate, risk posture, or learning feature is
+incomplete until it tests the real provider-to-decision contract in production.
+Static code review and fixture-only tests are necessary but insufficient.
+
+Required, per market and per provider:
+
+1. Query production distributions: n, nulls, availability, min/p10/median/p90/max,
+   exact floor/ceiling rates, and threshold-near counts.
+2. Enumerate every default/fallback and report its production hit fraction. A silent
+   money-path default requires explicit evidence provenance or removal.
+3. Compare provider taxonomy, units, and enums with the scorer's expected key space.
+   Report mapping coverage and unknown keys.
+4. Read availability from the authoritative mask/evidence state, never from a non-null
+   placeholder score.
+5. Join guardrail cohorts to matured outcomes before calling a condition protective.
+6. Produce a frozen, read-only counterfactual showing expected threshold flips before
+   changing a live formula. Do not rewrite historical decisions.
+7. Prove US and India separately. Cross-market aggregates cannot validate a money-path rule.
+8. Search for duplicate scorers, schedulers, Edge Functions, and legacy endpoints.
+
+A scoring review may not be marked complete without SQL/query evidence, or an explicit
+blocker stating why production evidence could not be obtained.
+
 ## Architecture-First Mode
 
 **Prime directive: Architecture before code.**

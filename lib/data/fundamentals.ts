@@ -82,7 +82,11 @@ export async function fetchFinnhubOverview(symbol: string): Promise<Overview> {
     setFrac("QuarterlyRevenueGrowthYOY", m.revenueGrowthQuarterlyYoy ?? m.revenueGrowthTTMYoy);
     if (typeof m["52WeekHigh"] === "number") ov["52WeekHigh"] = String(m["52WeekHigh"]);
     if (typeof m["52WeekLow"] === "number") ov["52WeekLow"] = String(m["52WeekLow"]);
-    if (p.finnhubIndustry) ov.Sector = String(p.finnhubIndustry);
+    if (p.finnhubIndustry) {
+      // Profile 2 exposes Finnhub's industry classification, not a GICS sector.
+      ov.Sector = String(p.finnhubIndustry);
+      ov.SectorTaxonomy = "finnhub_industry";
+    }
     return ov;
   } catch { return {}; }
 }

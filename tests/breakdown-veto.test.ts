@@ -34,10 +34,10 @@ describe("detectBreakdownVeto", () => {
     expect(v.reasons.join(" ")).toMatch(/High-volume breakdown/);
   });
 
-  it("fires on a weak bottom-quartile close after a down day", () => {
+  it("records but does not veto a weak bottom-quartile close after an ordinary down day", () => {
     const v = detectBreakdownVeto(t({ lastReturnPct: -1.5, lastRangeLocation: 0.1, atrMultipleMove: 0.5 }));
-    expect(v.vetoed).toBe(true);
-    expect(v.reasons.join(" ")).toMatch(/Weak close/);
+    expect(v.vetoed).toBe(false);
+    expect(v.warnings.join(" ")).toMatch(/Weak close/);
   });
 
   it("does NOT fire on a genuine up-bar with a strong close", () => {

@@ -4,7 +4,7 @@
  * LLM only receives computed scores + evidence to write thesis and direction.
  */
 
-import { computeTechnicals, scoreTechnicals } from "./technicals";
+import { computeTechnicals, detectBreakdownVeto, scoreTechnicals } from "./technicals";
 import type { DeterministicQuote } from "./quotes";
 import { writeEvidence, writeBatchEvidence, type SourceName } from "./evidence";
 import { isIndia } from "@/lib/india-data";
@@ -49,7 +49,9 @@ export function hasMinFundamentalFields(overview: Record<string, string> | null 
   let count = 0;
   for (const f of FUNDAMENTAL_FIELDS) {
     const v = parseFloat(overview[f] ?? "");
-    if (!isNaN(v)) count++;
+    if (f === "PERatio") {
+      if (isScorablePe(v)) count++;
+    } else if (Number.isFinite(v)) count++;
   }
   return count >= min;
 }
@@ -57,8 +59,8 @@ export function hasMinFundamentalFields(overview: Record<string, string> | null 
 // Rough sector median P/E — used to score valuation RELATIVE to sector rather
 // than one absolute band (a P/E of 30 is cheap for software, rich for a
 // utility). Deliberately coarse priors; the IC-gated path can refine per market
-// once there's enough data. Unknown sector falls back to 20 ≈ the prior
-// absolute behavior, so this is near-backward-compatible for unclassified names.
+// once there's enough data. Unknown taxonomy is omitted rather than assigned a
+// plausible-looking default benchmark.
 const SECTOR_PE_NORM: Record<string, number> = {
   "technology": 30, "communication services": 20,
   "health care": 25, "healthcare": 25,
@@ -68,9 +70,46 @@ const SECTOR_PE_NORM: Record<string, number> = {
   "energy": 12, "financials": 14, "financial services": 14,
   "utilities": 18, "real estate": 30,
 };
-function sectorPeNorm(sector: string | undefined): number {
-  if (!sector) return 20;
-  return SECTOR_PE_NORM[sector.trim().toLowerCase()] ?? 20;
+export const MAX_SCORABLE_PE = 200;
+
+const FINNHUB_INDUSTRY_TO_SECTOR: Record<string, string> = {
+  technology: "technology",
+  semiconductors: "technology",
+  media: "communication services",
+  biotechnology: "health care",
+  "metals & mining": "materials",
+  beverages: "consumer staples",
+  banking: "financials",
+  insurance: "financials",
+  "financial services": "financial services",
+  energy: "energy",
+  "textiles, apparel & luxury": "consumer discretionary",
+  automobiles: "consumer discretionary",
+  "electrical equipment": "industrials",
+};
+
+export interface SectorPeBenchmark {
+  norm: number | null;
+  normalizedSector: string | null;
+  mappingStatus: "direct" | "crosswalk" | "missing" | "unmapped";
+}
+
+export function resolveSectorPeBenchmark(sector: string | undefined, taxonomy?: string): SectorPeBenchmark {
+  const key = sector?.trim().toLowerCase();
+  if (!key) return { norm: null, normalizedSector: null, mappingStatus: "missing" };
+  if (taxonomy === "finnhub_industry") {
+    const normalizedSector = FINNHUB_INDUSTRY_TO_SECTOR[key];
+    if (!normalizedSector) return { norm: null, normalizedSector: null, mappingStatus: "unmapped" };
+    return { norm: SECTOR_PE_NORM[normalizedSector], normalizedSector, mappingStatus: "crosswalk" };
+  }
+  const norm = SECTOR_PE_NORM[key];
+  return norm == null
+    ? { norm: null, normalizedSector: null, mappingStatus: "unmapped" }
+    : { norm, normalizedSector: key, mappingStatus: "direct" };
+}
+
+function isScorablePe(pe: number): boolean {
+  return Number.isFinite(pe) && pe > 0 && pe <= MAX_SCORABLE_PE;
 }
 
 export function scoreFundamentals(overview: Record<string, string>, isEtf: boolean, currentPrice?: number): { score: number; evidence: Record<string, unknown> } {
@@ -89,20 +128,35 @@ export function scoreFundamentals(overview: Record<string, string>, isEtf: boole
   const evidence: Record<string, unknown> = {};
 
   const pe = parseFloat(overview.PERatio ?? "");
-  if (!isNaN(pe) && pe > 0) {
+  evidence.sector_taxonomy = overview.SectorTaxonomy ?? "provider_sector_unspecified";
+  if (isScorablePe(pe)) {
     evidence.pe_ratio = pe;
     // Sector-relative valuation: P/E vs the sector's normal P/E, not one
     // absolute band. ratio < 0.7 (cheap vs sector) → +18; > 2.0 (rich) → -22.
-    // Unknown sector → norm 20, which recovers roughly the prior absolute bands.
-    const norm = sectorPeNorm(overview.Sector);
-    const ratio = pe / norm;
-    evidence.pe_sector_norm = norm;
-    evidence.pe_vs_sector_ratio = parseFloat(ratio.toFixed(2));
-    if (ratio < 0.7) score += 18;
-    else if (ratio < 1.0) score += 8;
-    else if (ratio < 1.4) score -= 3;
-    else if (ratio < 2.0) score -= 12;
-    else score -= 22;
+    // Unknown sector/taxonomy omits this component; it never receives a default.
+    const benchmark = resolveSectorPeBenchmark(overview.Sector, overview.SectorTaxonomy);
+    evidence.pe_sector_mapping_status = benchmark.mappingStatus;
+    if (benchmark.norm != null) {
+      const ratio = pe / benchmark.norm;
+      evidence.pe_scoring_status = "applied";
+      evidence.pe_normalized_sector = benchmark.normalizedSector;
+      evidence.pe_sector_norm = benchmark.norm;
+      evidence.pe_vs_sector_ratio = parseFloat(ratio.toFixed(2));
+      if (ratio < 0.7) score += 18;
+      else if (ratio < 1.0) score += 8;
+      else if (ratio < 1.4) score -= 3;
+      else if (ratio < 2.0) score -= 12;
+      else score -= 22;
+    } else {
+      evidence.pe_scoring_status = "omitted_unmapped_sector";
+    }
+  } else if (Number.isFinite(pe)) {
+    evidence.pe_ratio = pe;
+    evidence.pe_scoring_status = pe <= 0 ? "omitted_nonpositive" : "omitted_outlier";
+    evidence.pe_sector_mapping_status = "not_evaluated";
+  } else {
+    evidence.pe_scoring_status = "omitted_missing";
+    evidence.pe_sector_mapping_status = "not_evaluated";
   }
 
   const profitMargin = parseFloat(overview.ProfitMargin ?? "");
@@ -361,8 +415,10 @@ async function fetchMacroScore(supabase: any, market: MarketScope, now: Date): P
       const regime = String(r.regime ?? "").toLowerCase();
       const ageDays = macroRowAgeDays(r.week_of, now);
       const indicators = macroIndicatorCount(r.raw_indicators);
+      const dangerScore = r.danger_score == null ? Number.NaN : Number(r.danger_score);
       let reason: string | null = null;
       if (regime === "unknown" || regime === "") reason = "no verdict (regime unknown)";
+      else if (!Number.isFinite(dangerScore) || dangerScore < 0 || dangerScore > 100) reason = "danger score missing or outside 0..100";
       else if (ageDays > MAX_MACRO_AGE_DAYS) reason = `stale: ${Math.floor(ageDays)}d old > ${MAX_MACRO_AGE_DAYS}d bound`;
       else if (indicators < MIN_MACRO_INDICATORS) {
         reason = `only ${indicators < 0 ? "unverifiable" : indicators} indicator(s) < ${MIN_MACRO_INDICATORS} — failed run, not a real verdict`;
@@ -391,7 +447,7 @@ async function fetchMacroScore(supabase: any, market: MarketScope, now: Date): P
       };
     }
 
-    const dangerScore = chosen.danger_score ?? 50;
+    const dangerScore = Number(chosen.danger_score);
     // Convert danger score (0-100 where 100 = most dangerous) to macro_score (0-100 where 100 = bullish)
     const macroScore = Math.round(100 - dangerScore);
 
@@ -418,16 +474,24 @@ async function fetchMacroScore(supabase: any, market: MarketScope, now: Date): P
 
 export function normalizeInsiderScore(insiderResult: any): { score: number; evidence: Record<string, unknown>; available: boolean } {
   if (!insiderResult) return { score: 50, evidence: { note: "no insider data" }, available: false };
-  if (typeof insiderResult === "number") return { score: Math.max(0, Math.min(100, insiderResult)), evidence: {}, available: true };
-  const score = insiderResult.score ?? insiderResult.insider_score ?? 50;
+  if (typeof insiderResult === "number" && Number.isFinite(insiderResult)) return { score: Math.max(0, Math.min(100, insiderResult)), evidence: {}, available: true };
+  const rawScore = insiderResult.score ?? insiderResult.insider_score;
   // scoreInsider() (research-agent.ts) sets `available: false` for no-data/
   // fetch-failed/rate-limited outcomes, which all otherwise return the same
   // neutral score:50 shape — `available` is the only field that tells them
   // apart from genuinely-balanced real insider activity. Fail CLOSED when the
   // field is missing entirely (an unrecognized shape is a data-quality
   // problem, not evidence of real balanced insider activity).
-  const available = typeof insiderResult.available === "boolean" ? insiderResult.available : false;
-  return { score: Math.max(0, Math.min(100, Math.round(score))), evidence: insiderResult, available };
+  const validScore = typeof rawScore === "number" && Number.isFinite(rawScore) && rawScore >= 0 && rawScore <= 100;
+  const available = insiderResult.available === true && validScore;
+  return {
+    score: available ? Math.round(rawScore) : 50,
+    evidence: available ? insiderResult : {
+      ...insiderResult,
+      ...(insiderResult.available === true ? { data_contract_error: "available=true without a valid 0..100 score" } : {}),
+    },
+    available,
+  };
 }
 
 // ── Master score computation ──────────────────────────────────────────────────
@@ -462,7 +526,7 @@ export async function computeScores(opts: {
 
   const technicals = computeTechnicals(candles);
   const technical_score = scoreTechnicals(technicals);
-  const techEvidence = { ...technicals, dataPoints: candles.length };
+  const techEvidence = { ...technicals, dataPoints: candles.length, breakdown_veto: detectBreakdownVeto(technicals) };
 
   const { score: sentiment_score, evidence: sentEvidence } = scoreSentiment(socialResult);
 

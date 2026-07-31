@@ -1620,15 +1620,15 @@ export async function processSymbol(
   // challenger is validated against the SAME scoring rule that runs live.
   const dq = scores.dataQuality ?? ({} as any);
   const included: DimensionRecord<boolean> = {
-    fundamental: !isEtf && (dq.fundamentalDataAvailable ?? true),
+    fundamental: !isEtf && dq.fundamentalDataAvailable === true,
     // scoreTechnicals/computeTechnicals both require >=15 candles before
     // computing a real RSI(14)/EMA20 — below that they already return neutral
     // 50 internally, but this check previously only required >0 candles, so a
     // 1-14 candle sliver counted as "available" real technical evidence.
     technical: (dq.technicalDataPoints ?? 0) >= 15,
-    sentiment: dq.sentimentDataAvailable ?? true,
-    macro: dq.macroDataAvailable ?? true,
-    insider: dq.insiderDataAvailable ?? true,
+    sentiment: dq.sentimentDataAvailable === true,
+    macro: dq.macroDataAvailable === true,
+    insider: dq.insiderDataAvailable === true,
   };
   const weightOf = applyStrategyTilt<ScoreDimension>(
     { fundamental: fw, technical: tw, sentiment: sw, macro: mw, insider: iw },
