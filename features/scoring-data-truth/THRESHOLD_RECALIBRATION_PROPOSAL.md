@@ -31,14 +31,15 @@ original proposal did not identify.
 
 ## Evidence that is available
 
-The paper book has only 8 completed US trade rows and 50 India rows. That is not
+The original review found 8 completed US trade rows and 50 India rows. A direct
+production recheck later on 2026-07-31 found 20 US and 50 India rows. That is still not
 enough to fit a threshold. However, saying outcome evidence is impossible was too
 broad. The immutable observation ledger already contains matured forward returns:
 
 | Market | h2 | h5 | h10 |
 |---|---:|---:|---:|
 | US | 536 labels / 14 as-of dates | 338 / 11 | 74 / 7 |
-| India | 151 / 13 | 125 / 12 | 65 / 7 |
+| India | 151 / 13 | 130 / 12 | 65 / 7 |
 
 These labels support diagnostics, not a decision-grade threshold optimization.
 They repeat symbols inside a small number of cross-sections, most observations use
@@ -78,9 +79,9 @@ Recommended as a no-change observation period.
 
 - The counterfactual adds 101 US score passes over 21 days, about 4.8 gross
   candidates per day before direction and downstream gates.
-- The US paper book currently holds 15 names against a cap of 15. Immediate
-  incremental entry capacity is therefore zero; exits, not candidate supply, bind
-  the trade-evidence rate.
+- The first review found 15 US names against a cap of 15. A later production
+  recheck found 10 open US names, leaving five slots. That makes admission risk
+  relevant again, but it does not make candidate supply scarce.
 - The first post-fix US day produced 60 eligible long signals out of 135. The
   earnings repricing barrier separately neutralized two high-scoring stale AAPL
   holding reassessments. Candidate supply is not currently scarce.

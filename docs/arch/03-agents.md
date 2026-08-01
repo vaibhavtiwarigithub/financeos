@@ -223,7 +223,7 @@ makes it a harmless no-op meanwhile.
 **Inputs:**
 1. Account-scoped holdings snapshots. Research may analyze approved holdings, but only holdings verified on the actual order account can authorize a SELL.
 2. Watchlist from `watchlist` table
-3. Screener candidates from FinancialDatasets `screen_stocks` (US) or NSE universe cache (India) — dual buckets:
+3. Screener candidates from FinancialDatasets `screen_stocks` (US) or NSE universe cache (India) — dual buckets. FinancialDatasets is supplemental discovery only: missing credentials, exhausted credits, HTTP failures, and timeouts open a self-healing System Health warning and return no screener candidates; holdings/watchlist/carry-forward research continues, and scoring fundamentals are unaffected:
    - *Momentum*: RSI > 60, price > 50-day MA, revenue acceleration, positive earnings revision
    - *Value*: P/E < sector median, high FCF yield, insider buying, recent analyst upgrades
 4. Score trend from `signal_score_history` (last 5 rows per symbol)
@@ -232,6 +232,8 @@ makes it a harmless no-op meanwhile.
 7. RAG memory via `retrieveSimilarTrades()` (if Jina embeddings are configured — Voyage was replaced by Jina free tier 2026-07)
 8. India news/event replacement shadow — NSE corporate announcements + bounded Google News RSS, persisted to the canonical evidence cache but **not read by scoring** (2026-07-31). The old zero-output GDELT dimension is retired.
 9. India FII/DII net cash flows — live NSE (`lib/india-macro.ts`), injected into the India thesis prompt (2026-07-12)
+
+**Webull boundary:** Webull analyst/extended research is collected by the Evidence Router shadow, not called synchronously by `processSymbol`. The old inline path could issue up to nine MCP tool calls per US symbol and repeatedly exhausted the per-symbol deadline. Authoritative research may consume Webull only after a separately approved cache-only reader passes Router parity; until then it cannot consume scoring capacity, alter scores/directions, or delay holdings research.
 
 **Current production baseline (`deterministic_v1`) — 5 dimensions:**
 

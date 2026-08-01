@@ -143,7 +143,10 @@ export function evaluateAutonomousEntryProtection(input: {
     return { ok: false, reason: "protective placement worker is not implemented" };
   }
   const uncovered = input.coverage.findings.filter((finding) => !finding.protected);
-  if (uncovered.length) {
+  if (!input.coverage.protected || uncovered.length) {
+    if (uncovered.length === 0) {
+      return { ok: false, reason: "protective coverage is unknown or internally inconsistent" };
+    }
     return { ok: false, reason: `unprotected managed live position(s): ${uncovered.map((finding) => `${finding.market}/${finding.symbol}`).join(", ")}` };
   }
   return { ok: true };

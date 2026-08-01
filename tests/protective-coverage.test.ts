@@ -90,4 +90,15 @@ describe("protective coverage control plane", () => {
       coverage: { protected: false, findings: [{ positionId: "us:robinhood:a:ABC", market: "us", symbol: "ABC", protected: false, reason: "missing" }] },
     })).toMatchObject({ ok: false, reason: expect.stringContaining("unprotected managed") });
   });
+
+  it("blocks an explicit unknown aggregate even when no per-position finding was produced", () => {
+    expect(evaluateAutonomousEntryProtection({
+      placementEnabled: true,
+      placementWorkerAvailable: true,
+      coverage: { protected: false, findings: [] },
+    })).toMatchObject({
+      ok: false,
+      reason: "protective coverage is unknown or internally inconsistent",
+    });
+  });
 });

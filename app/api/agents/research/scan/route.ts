@@ -5,6 +5,12 @@ import { avCachedFetch } from "@/lib/av-cache";
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
+import {
+  classifyFinancialDatasetsFailure,
+  financialDatasetsFailureDetail,
+  type FinancialDatasetsFailure,
+} from "@/lib/data/financialdatasets-status";
 
 export const dynamic = "force-dynamic";
 
@@ -29,8 +35,8 @@ async function screenFundamentals(
   filters: Array<{ field: string; operator: string; value: number }>,
   fdKey: string,
   limit = 20
-): Promise<string[]> {
-  if (!fdKey) return [];
+): Promise<{ symbols: string[]; failure: FinancialDatasetsFailure | null }> {
+  if (!fdKey) return { symbols: [], failure: { code: "unauthorized" } };
   try {
     const res = await fetch("https://api.financialdatasets.ai/stocks/screener/", {
       method: "POST",
@@ -38,15 +44,21 @@ async function screenFundamentals(
       body: JSON.stringify({ filters, limit }),
       signal: AbortSignal.timeout(10000),
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      const responseBody = await res.text().catch(() => "");
+      return { symbols: [], failure: classifyFinancialDatasetsFailure(res.status, responseBody) };
+    }
     const data = await res.json();
     // FinancialDatasets returns { results: [{ticker, ...}] } or similar
     const results: any[] = data?.results ?? data?.data ?? data?.stocks ?? [];
-    return results
-      .map((r: any) => (r.ticker ?? r.symbol ?? "").toUpperCase())
-      .filter(Boolean)
-      .slice(0, limit);
-  } catch { return []; }
+    return {
+      symbols: results
+        .map((r: any) => (r.ticker ?? r.symbol ?? "").toUpperCase())
+        .filter(Boolean)
+        .slice(0, limit),
+      failure: null,
+    };
+  } catch { return { symbols: [], failure: { code: "network_error" } }; }
 }
 
 // Fetch RSI-14 daily for a symbol from Alpha Vantage (day-cached — AV is 25/day).
@@ -145,8 +157,26 @@ export async function POST(req: NextRequest) {
     // Get candidate symbols
     let candidates: string[] = manualSymbols ?? [];
 
+    let fdFailure: FinancialDatasetsFailure | null = null;
+    let fdScreenProbed = false;
     if (!candidates.length && fdKey && scanFilters.length) {
-      candidates = await screenFundamentals(scanFilters, fdKey, Math.min(limit * 2, 40));
+      fdScreenProbed = true;
+      const screenResult = await screenFundamentals(scanFilters, fdKey, Math.min(limit * 2, 40));
+      candidates = screenResult.symbols;
+      fdFailure = screenResult.failure;
+    }
+
+    const fdIssueKey = "provider-unavailable:financialdatasets";
+    if (fdFailure) {
+      await reportIssue({
+        issueKey: fdIssueKey,
+        severity: "warn",
+        category: "data_provider",
+        title: "FinancialDatasets screener unavailable - US discovery using other queues",
+        detail: `${financialDatasetsFailureDetail(fdFailure)} The manual Scanner and ResearchAgent fall back without treating missing provider data as a passing fundamental result.`,
+      }, supabase);
+    } else if (fdScreenProbed) {
+      await resolveIssue(fdIssueKey, supabase);
     }
 
     // Fallback: use recent watchlist + signals
@@ -287,7 +317,13 @@ export async function POST(req: NextRequest) {
       passing: results.filter(r => r.passes_filters).length,
       results: results.slice(0, limit),
       data_sources: {
-        fundamentals: fdKey ? "FinancialDatasets" : "unavailable (no FD key)",
+        fundamentals: !fdKey
+          ? "unavailable (no FD key)"
+          : fdFailure
+            ? `unavailable (${fdFailure.code})`
+            : fdScreenProbed
+              ? "FinancialDatasets (available)"
+              : "FinancialDatasets (configured; fail-soft per symbol)",
         technicals:   avKey ? "Alpha Vantage"     : "unavailable (no AV key)",
       },
     });

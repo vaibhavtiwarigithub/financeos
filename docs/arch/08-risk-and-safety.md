@@ -663,6 +663,8 @@ references to the migration as unapplied are superseded.
 Coverage requires exact equality between reconstructed held quantity,
 reconciled held quantity, and broker-protected quantity. Under-protection leaves
 risk uncovered; over-protection can create an accidental short. Both fail closed.
+The aggregate coverage verdict must be explicitly true; false/unknown state cannot
+pass merely because a failing reader returned no per-position findings.
 P2 must also define an atomic or bounded-compensation workflow for protecting a
 newly filled BUY; changing the source availability constant is not sufficient.
 

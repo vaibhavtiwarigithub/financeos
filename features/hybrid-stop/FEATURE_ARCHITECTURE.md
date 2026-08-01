@@ -17,7 +17,9 @@ P1 is active but cannot send broker traffic:
   broker order is active, unexpired, has exactly one broker identifier, and
   has protected and reconciled quantities that exactly match the reconstructed
   holding. Partial, oversized, duplicate, expired, or unreconciled records are
-  unprotected; an oversized SELL floor could create a short after a trigger.
+  unprotected; an oversized SELL floor could create a short after a trigger. The
+  aggregate coverage result must also be explicitly true: unknown/inconsistent
+  aggregate state with no per-position detail still blocks entry.
 - `runAutonomousLive()` blocks new autonomous live BUYs before provider work or a
   proposal write unless the feature flag, a future broker-specific placement and
   reconciliation worker, and full coverage for all managed live positions pass.

@@ -27,6 +27,18 @@ import { isEtfSymbol as canonicalIsEtfSymbol } from "@/lib/asset-classification"
 import { applyStrategyTilt, loadTradingMandate, resolveHorizonDays } from "@/lib/trading-mandate";
 import { symbolsFromLatestLiveSnapshots, symbolsFromPaperPositions, unionHoldingSymbols, orderHoldingsByStaleness, partitionWatchlistByMarket } from "@/lib/research/holding-symbols";
 import { buildIndicativeTradePlan } from "@/lib/trading/trade-plan";
+import {
+  classifyFinancialDatasetsFailure,
+  financialDatasetsFailureDetail,
+  type FinancialDatasetsFailure,
+} from "@/lib/data/financialdatasets-status";
+
+// Webull research belongs to the Evidence Router shadow. Calling its nine MCP
+// tools per symbol inside the scoring deadline caused repeated 30s symbol
+// timeouts and let an observational source consume authoritative pipeline
+// capacity. Keep the adapter code available for the shadow/cutover work, but do
+// not put it back inline without an approved cache-only reader and parity gate.
+const INLINE_WEBULL_RESEARCH_AVAILABLE = false;
 
 // Module-level cache: market → default investment_mandates.id.
 // Populated once per process; safe because seed mandates never change name.
@@ -371,7 +383,7 @@ async function screenBucket(
   // acceleration), not price/RSI momentum; the per-symbol scorer downstream
   // still applies true price-based momentum via buildStockPrompt.
   sortBy?: { field: string; desc: boolean }
-): Promise<string[]> {
+): Promise<{ symbols: string[]; failure: FinancialDatasetsFailure | null }> {
   try {
     const res = await fetch("https://api.financialdatasets.ai/stocks/screener/", {
       method: "POST",
@@ -379,7 +391,10 @@ async function screenBucket(
       body: JSON.stringify({ filters, limit }),
       signal: AbortSignal.timeout(10000),
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return { symbols: [], failure: classifyFinancialDatasetsFailure(res.status, body) };
+    }
     const data = await res.json();
     const results: any[] = data?.results ?? data?.stocks ?? [];
     const ranked = sortBy
@@ -394,9 +409,12 @@ async function screenBucket(
           return sortBy.desc ? bv - av : av - bv;
         })
       : results;
-    return ranked.map((r: any) => String(r.ticker ?? r.symbol ?? "").toUpperCase()).filter(Boolean);
+    return {
+      symbols: ranked.map((r: any) => String(r.ticker ?? r.symbol ?? "").toUpperCase()).filter(Boolean),
+      failure: null,
+    };
   } catch {
-    return [];
+    return { symbols: [], failure: { code: "network_error" } };
   }
 }
 
@@ -409,9 +427,19 @@ async function screenBucket(
 // app/api/agents/research/scan/route.ts.
 export async function runScreener(supabase: any): Promise<{ symbol: string; bucket: "momentum" | "value" }[]> {
   const fdKey = await getFDKey(supabase);
-  if (!fdKey) return [];
+  const issueKey = "provider-unavailable:financialdatasets";
+  if (!fdKey) {
+    await reportIssue({
+      issueKey,
+      severity: "warn",
+      category: "data_provider",
+      title: "FinancialDatasets screener unavailable - US discovery using other queues",
+      detail: "No FinancialDatasets credential is configured. Research scoring fundamentals are unaffected; US discovery continues from holdings, watchlist, themes, and carry-forward candidates.",
+    }, supabase);
+    return [];
+  }
 
-  const [momentum, value] = await Promise.all([
+  const [momentumResult, valueResult] = await Promise.all([
     // Momentum bucket ranked by revenue_growth desc — an explicit momentum
     // signal (revenue acceleration, per doctrine §8) from data already fetched
     // by this screen, replacing the provider's default order so the strongest
@@ -434,6 +462,22 @@ export async function runScreener(supabase: any): Promise<{ symbol: string; buck
       { field: "market_cap", operator: "gt", value: 1_000_000_000 },
     ], fdKey, 10, { field: "pe_ratio", desc: false }),
   ]);
+
+  const failure = momentumResult.failure ?? valueResult.failure;
+  if (failure) {
+    await reportIssue({
+      issueKey,
+      severity: "warn",
+      category: "data_provider",
+      title: "FinancialDatasets screener unavailable - US discovery using other queues",
+      detail: `${financialDatasetsFailureDetail(failure)} Research scoring fundamentals are unaffected; US discovery continues from holdings, watchlist, themes, and carry-forward candidates.`,
+    }, supabase);
+  } else {
+    await resolveIssue(issueKey, supabase);
+  }
+
+  const momentum = momentumResult.symbols;
+  const value = valueResult.symbols;
 
   // Interleave momentum/value round-robin before capping at 6 — a flat
   // momentum-then-value order with slice(6) let momentum silently crowd out
@@ -1396,15 +1440,10 @@ export async function processSymbol(
     ? await scoreAnalyst(symbol).catch(() => null)
     : null;
 
-  // Webull MCP as a FREE, read-only research DATA provider (US symbols ONLY).
-  // Additive + absolutely fail-soft: when Webull isn't connected (or any call
-  // fails) this resolves to null and nothing downstream changes — research runs
-  // exactly as before. It contributes a grounding "Webull analyst: rating X,
-  // target $Y, EPS fcst Z" line to the thesis prompt's evidence section (like
-  // the India FII/DII flow line), NOT a new weighted scoring dimension — same
-  // conservative posture as the Finnhub analyst evidence above. India names skip
-  // it entirely (Webull MCP covers US symbols). Off the AV/provider budget.
-  const [webullAnalyst, webullExtended] = !india
+  // The direct MCP path is source-disabled. Router shadow jobs collect Webull
+  // evidence separately; authoritative research must eventually consume only a
+  // validated cache snapshot, never burst broker MCP calls per symbol.
+  const [webullAnalyst, webullExtended] = !india && !isHeld && INLINE_WEBULL_RESEARCH_AVAILABLE
     ? await Promise.all([
         fetchWebullAnalyst(symbol).catch(() => null) as Promise<WebullAnalyst | null>,
         fetchWebullExtended(symbol).catch(() => null) as Promise<WebullExtended | null>,
