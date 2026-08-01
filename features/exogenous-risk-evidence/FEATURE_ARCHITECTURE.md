@@ -320,3 +320,73 @@ monthly/event-driven, so reliable validation cannot be compressed into a week.
 - EIA oil data: https://www.eia.gov/dnav/pet/pet_pri_spt_s1_w.htm
 - PPAC Indian Basket: https://ppac.gov.in/index.php/prices/international-prices-of-crude-oil
 - USTR Section 301 source: https://ustr.gov/issue-areas/enforcement/section-301-investigations
+
+
+---
+
+## Independent review of `57c63cf3` — 2026-08-01
+
+Adversarial pass over the commit and its production effects.
+
+### Finding 1 (HIGH, fixed) — append-only was breakable by TRUNCATE
+
+`20260801150000` protected both tables with a **BEFORE ROW UPDATE OR DELETE**
+trigger. A row-level trigger **does not fire on TRUNCATE**, and `service_role`
+retained the TRUNCATE grant. Confirmed against production by decoding
+`pg_trigger.tgtype`:
+
+```
+exogenous_observations_no_mutation -> BEFORE ROW DELETE UPDATE   (no TRUNCATE)
+market_regime_runs_no_mutation     -> BEFORE ROW DELETE UPDATE   (no TRUNCATE)
+```
+
+Failure scenario: any code path or operator holding the service key could
+`TRUNCATE public.exogenous_observations`, erasing the entire point-in-time
+evidence ledger, while the table comment, the migration, the feature doc and the
+Upgrade Path all still asserted append-only. No error, no trigger, no trace.
+
+**Fix** — `20260801160000_exogenous_risk_truncate_guard.sql`, applied and
+verified: statement-level `BEFORE TRUNCATE` triggers on both tables, and
+UPDATE/DELETE/TRUNCATE revoked from `service_role`. Grants and triggers are now
+two independent barriers rather than one, matching `earnings_risk_observations`.
+
+### No issue found
+
+- **Migration idempotency.** `create table if not exists`, `create index if not
+  exists`, `create or replace function`, `drop … if exists` before every trigger
+  and policy. The `cron.unschedule` runs in a `DO` block that swallows its own
+  error, so re-running is safe.
+- **RLS and grants.** RLS enabled on both. Owner policy is
+  `(select auth.jwt() ->> 'email') = 'vterminater@gmail.com'`. `authenticated` =
+  SELECT only; `anon` has **no grant at all** and is refused with `42501`.
+  `20260801150500` correctly repairs the first migration's over-revoke — RLS
+  filters rows but does not grant table privileges, so the owner-read policy
+  would otherwise have been inert.
+- **Trigger function safety.** `exogenous_risk_append_only()` is SECURITY
+  **INVOKER** (not DEFINER) with `search_path` pinned, and EXECUTE is revoked
+  from public/anon/authenticated (`proacl` = postgres, service_role only).
+- **Constraint correctness.** `check ((market = 'global') = (scope =
+  'global_spillover'))` is a biconditional, so it enforces **both** directions in
+  one clause: a global row must be `global_spillover`, and a `global_spillover`
+  row cannot be domestic. `available_at >= published_at` blocks inverted
+  provenance. Fingerprints are `^[a-f0-9]{64}$`; `source_url` must be `https://`.
+- **India cron absent in production.** `cron.job` matching `%macro-read%` returns
+  exactly one row — `kairos-macro-read-us`. `kairos-macro-read-india` is gone.
+- **Money path.** No reference to either table outside `lib/shadows/`. No scorer,
+  signal, PaperTrader, PositionMonitor, TraderAgent, sizing, Router or broker
+  consumer.
+- **Upgrade Path honesty.** `lifecycle` resolves only to `idle` or `collecting` —
+  it cannot render "active". `cronJobs: []`, `callAccounting:
+  "not_applicable"`, and `currentInfluence` states no reader exists. Global rows
+  are fetched alongside the market but the surfaced text states they are context
+  only and never cross-summed with a market book; the series set is keyed
+  `market:series_key`, so US/USD and India/INR cannot merge.
+
+### Verification limit worth recording
+
+UPDATE and DELETE were probed through PostgREST against a predicate matching
+**zero rows**, which returns 204 without the trigger ever firing. That is
+inconclusive as a runtime proof. The append-only guarantee is evidenced instead
+by trigger presence and type in `pg_trigger` plus the revoked grants — not by an
+executed mutation. Exercising it properly would require inserting a throwaway row
+into an immutable ledger, which is not worth the permanent artifact.
