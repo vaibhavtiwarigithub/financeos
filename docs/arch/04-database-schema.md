@@ -981,6 +981,17 @@ One row per replay execution. `packet_manifest_hash` + `code_git_sha` make a run
 ### `replay_eligibility_events`
 Per (run, scope, as-of) gate verdict. `gate ∈ {calibration_oos, thin_evidence, ic, validation, breakdown_veto}`; `passed` boolean. The reporter's `first_eligible_asof` is `MIN(as_of) WHERE passed` over this table. FK → `replay_eligibility_runs` ON DELETE CASCADE.
 
+### Exogenous-risk P0 ledgers
+
+Migration `20260801150000_exogenous_risk_p0` adds two append-only, record-only
+tables. `exogenous_observations` stores source facts with market (`us`, `india`, or
+`global`), domestic/global-spillover scope, observed/published/available times, source
+URL, source revision, and a SHA-256 payload fingerprint. `market_regime_runs` stores a
+market-local deterministic shadow result with separate domestic and global-spillover
+states. Both have owner-read RLS, service-only writes, mutation-blocking triggers, and
+no current scorer, paper, live, exit, sizing, broker, or Router reader. Empty is
+unavailable, never neutral.
+
 ### `universe_snapshot_scores` (columns added — migration 151)
 Cross-sectional rank provenance added to the migration-137 table: `rank_quality` (`ok` \| `degraded` \| `excluded_*`), `comparable_group_key` (`market:asset-type:sector`; ETFs never grouped with single names), `group_n` (eligible names in the final group that day), `rank_eligible` (passed §4.1 data-quality gates). All nullable/additive.
 

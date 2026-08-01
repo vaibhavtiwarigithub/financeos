@@ -216,9 +216,9 @@ absent verdict is never described as calm. `MAX_MACRO_AGE_DAYS` is imported from
 indicator floor is restated in `lib/macro-read.ts` (it is module-private in `scores.ts`) and **must be
 kept in sync**.
 
-**Known-open:** the `kairos-macro-read-india` cron (jobid 47, `30 4 * * 1-5`) is **still active** and
-should be dropped — a prod DB mutation, so it is flagged rather than done. The route-level refusal
-makes it a harmless no-op meanwhile.
+**2026-08-01 correction:** the obsolete `kairos-macro-read-india` cron was removed.
+India remains without a macro narrative by design until market-local, source-backed
+exogenous observations exist; the route-level refusal remains defence in depth.
 
 ---
 

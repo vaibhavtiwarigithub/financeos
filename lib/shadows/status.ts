@@ -136,6 +136,8 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     indiaNewsLedgerRes,
     indiaNewsNetworkRes,
     indiaNewsHistoryRes,
+    exogenousObservationRes,
+    marketRegimeRunRes,
   ] = await Promise.all([
     svc.rpc("get_shadow_cron_status"),
     svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
@@ -214,6 +216,12 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         .eq("market", "india").gte("created_at", since45).like("run_id", "india-news-shadow:%")
         .eq("lease_outcome", "completed").limit(10000)
       : Promise.resolve({ data: [] as any[], error: null }),
+    svc.from("exogenous_observations")
+      .select("market,series_key,quality,available_at,created_at")
+      .in("market", [market, "global"]).gte("created_at", since90).limit(5000),
+    svc.from("market_regime_runs")
+      .select("market,domestic_state,global_spillover_state,computed_at")
+      .eq("market", market).gte("computed_at", since90).limit(500),
   ]) as Array<QueryResult<any>>;
 
   const cronRows = cronRes.data ?? [];
@@ -239,6 +247,8 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const downsideEvents = downsideEventRes.data ?? [];
   const indiaNewsRows = indiaNewsCacheRes.data ?? [];
   const indiaNewsHistory = indiaNewsHistoryRes.data ?? [];
+  const exogenousObservations = exogenousObservationRes.data ?? [];
+  const marketRegimeRuns = marketRegimeRunRes.data ?? [];
 
   return SHADOW_PROGRAMS.map((program) => {
     const status = base(program);
@@ -441,6 +451,32 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         : "Continue India earnings-proximity measurement without borrowing US options evidence.";
       status.details = market === "us" ? ["US can measure a same-strike move proxy."] : ["India records event proximity only."];
       status.available = !earningsRiskRes.error;
+      return status;
+    }
+
+    if (program.id === "exogenous-risk") {
+      const fresh = exogenousObservations.filter((row: any) => row.quality === "fresh");
+      const series = new Set(exogenousObservations.map((row: any) => `${row.market}:${row.series_key}`));
+      const latestObservation = latestIso(exogenousObservations, "available_at") ?? latestIso(exogenousObservations, "created_at");
+      const latestRun = latestIso(marketRegimeRuns, "computed_at");
+      status.lifecycle = exogenousObservations.length ? "collecting" : "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${fresh.length}/${exogenousObservations.length} fresh source observation(s) across ${series.size} market-series; ${marketRegimeRuns.length} regime shadow run(s).`;
+      status.progress = progress(exogenousObservations.length, null, "source observations", 90);
+      status.calls = calls("not_applicable", "P0 only persists governed evidence ledgers; no source adapter or network collection is enabled yet.");
+      status.latestAt = latestObservation ?? latestRun;
+      status.blockers = [
+        "No stable, timestamped official source adapter is enabled.",
+        "No point-in-time coverage or market-local validation evidence exists.",
+        "No score, signal, paper/live trade, exit, sizing, or broker reader is approved.",
+      ];
+      status.nextAction = "Verify official machine-readable source contracts, then start bounded source collection without adding a decision consumer.";
+      status.details = [
+        `${market.toUpperCase()} is displayed independently; global observations are context only and are never cross-summed with a market book.`,
+        `${marketRegimeRuns.length} market-local regime shadow run(s) are retained for review only.`,
+        "Missing observations remain unavailable, not a neutral regime.",
+      ];
+      status.available = !exogenousObservationRes.error && !marketRegimeRunRes.error;
       return status;
     }
 

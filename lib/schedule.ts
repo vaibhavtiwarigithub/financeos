@@ -401,18 +401,6 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: null,
   },
   {
-    name: "macro-read-india",
-    agent: "macro-read",
-    time: "10:00 AM IST",
-    days: "Weekdays",
-    runner: "Supabase pg_cron → Vercel",
-    editable: false,
-    description:
-      "Agent Mind Phase 3: India macro-to-holdings read (market=india). Same cheap cached daily call, scoped to the India book and regime.",
-    handoff: "→ Markets page (India)",
-    agentRunsType: null,
-  },
-  {
     name: "price-cache-fill",
     agent: "price-cache-fill",
     time: "9:25 AM ET (retry 9:45)",

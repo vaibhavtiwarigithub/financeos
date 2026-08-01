@@ -74,8 +74,8 @@ export const INDIA_NO_MACRO_READ_REASON =
 /**
  * The macro read is US-only BY CONSTRUCTION. This is the single gate: the route
  * refuses `market=india` on both GET and POST before any LLM call or DB write,
- * so even if the (still-active) kairos-macro-read-india cron fires, it burns
- * zero LLM spend and writes zero rows.
+ * and the obsolete India cron is removed. The refusal remains defence in depth
+ * against an accidental direct invocation.
  */
 export function isMacroReadSupported(market: MarketScope): boolean {
   return market === "us";

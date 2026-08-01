@@ -1,9 +1,9 @@
 # Exogenous Risk Evidence Layer
 
-> Status: **DESIGN DRAFT. NOT APPROVED FOR IMPLEMENTATION.**
+> Status: **P0 FOUNDATION BUILT; P1-P3 INGESTION NOT YET ENABLED.**
 > Date: 2026-07-26
-> Owner decision required: approve the phased, observation-first build before code
-> or migrations begin.
+> Owner approval: observation-first build approved 2026-08-01. No scoring, paper,
+> live, exit, sizing, or broker activation is approved.
 
 ## 1. Decision
 
@@ -22,6 +22,13 @@ The first releases are record-only and shadow-only. They cannot alter a score,
 direction, position size, paper trade, live trade, stop, target, or broker order.
 Admission to a money path requires separately measured, point-in-time,
 market-and-sector-specific incremental value.
+
+**P0 implementation (2026-08-01):** migration `20260801150000_exogenous_risk_p0`
+adds the two append-only, owner-read/service-write-only ledgers described below and
+removes the obsolete India Macro Read cron, which had already refused its market
+before an LLM call or write. No ingestion adapter is enabled until an official source
+exposes a stable, timestamped machine-readable contract. Empty ledgers are intentional
+and are not treated as neutral macro evidence.
 
 ## 2. Why This Is Needed
 

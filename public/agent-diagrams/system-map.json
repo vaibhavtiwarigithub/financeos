@@ -412,12 +412,12 @@
     },
     "MACROREAD": {
       "label": "Macro read (Agent Mind Phase 3)",
-      "description": "Weekdays. Turns the US macro regime + the US book + the system's US macro priors into a plain-English 'what this means for your book' narrative, cached once/day in macro_interpretations and rendered by MacroReadCard on /dashboard/markets. NARRATIVE ONLY — macro_interpretations is written by this route and read back by its own GET alone; no scoring, sizing, gate, order or exit path reads it. US ONLY: the route refuses market=india on both GET and POST before any LLM call or DB write, so the still-active kairos-macro-read-india cron is a no-op.",
+      "description": "Weekdays. Turns the US macro regime + the US book + the system's US macro priors into a plain-English 'what this means for your book' narrative, cached once/day in macro_interpretations and rendered by MacroReadCard on /dashboard/markets. NARRATIVE ONLY — macro_interpretations is written by this route and read back by its own GET alone; no scoring, sizing, gate, order or exit path reads it. US ONLY: the route refuses market=india on both GET and POST before any LLM call or DB write; the obsolete India cron was removed on 2026-08-01.",
       "addedAt": "2026-07-17",
       "addReason": "The agent already existed with two active crons (kairos-macro-read-us, kairos-macro-read-india) and a real table dependency, but was never on the map — so the India contamination it wrote every weekday was invisible here. Added as part of the fix that scoped it to US-only.",
       "status": "active",
-      "changedAt": null,
-      "changeReason": null,
+      "changedAt": "2026-08-01",
+      "changeReason": "Removed the obsolete kairos-macro-read-india cron after the route had already refused India before any LLM call or write. Macro Read remains active for the US only.",
       "removedAt": null,
       "removeReason": null
     },
