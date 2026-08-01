@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { gatherSymbols, processSymbol } from "@/lib/research-agent";
+import { buildDiscoverySnapshotMembers } from "@/lib/research/discovery-ledger";
 import { computeComparableRank, isRankRejected, type RankCandidate } from "@/lib/scoring/rank";
 import { isIndia } from "@/lib/india-data";
 import { completeDeferred, enqueueDeferred, readDeferredCandidates } from "@/lib/research-queue";
@@ -231,6 +232,32 @@ export async function POST(req: NextRequest) {
   // finish in ceil(42/N) rounds instead of serially. Default 5 keeps well inside
   // the 150s maxDuration (42/5 rounds × ~8s each ≈ 72s). Raise carefully: AV free
   // tier is 5 req/min, but av-cache absorbs repeat calls so burst is rare.
+  // Preserve batch admission before scoring. This lets Miss Review distinguish
+  // never-admitted symbols from later score, gate, or portfolio rejections.
+  // The ledger is audit-only and cannot affect research, scoring, or execution.
+  if (universeSnapshotId && marketScope) {
+    const members = buildDiscoverySnapshotMembers(universeSnapshotId, marketScope, entries);
+    if (members.length > 0) {
+      const { error: ledgerError } = await supabase
+        .from("discovery_snapshot_members")
+        .insert(members);
+      if (ledgerError) {
+        const detail = sanitizeResearchError(ledgerError.message ?? ledgerError);
+        console.error("[research-cron] discovery ledger insert failed:", detail);
+        await reportIssue({
+          issueKey: `research-discovery-ledger:${marketScope}`,
+          severity: "warn",
+          category: "data",
+          title: `${marketScope.toUpperCase()} discovery provenance was not recorded`,
+          detail: `Research continued, but this run cannot be fully reconstructed in Miss Review: ${detail}`,
+          autoExpireAt: new Date(new Date().setUTCHours(24, 0, 0, 0)).toISOString(),
+        }, supabase).catch(() => {});
+      } else {
+        await resolveIssue(`research-discovery-ledger:${marketScope}`, supabase).catch(() => {});
+      }
+    }
+  }
+
   const configuredConcurrency = Number.parseInt(process.env.RESEARCH_PARALLEL ?? "5", 10);
   const concurrency = Number.isFinite(configuredConcurrency)
     ? Math.min(10, Math.max(1, configuredConcurrency))
