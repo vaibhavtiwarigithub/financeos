@@ -36,4 +36,10 @@ describe("paper signal selection", () => {
     expect(selectBestPaperSignals(rows, "us", 10).selected.map(signal => signal.id)).toEqual(["us"]);
     expect(selectBestPaperSignals(rows, "india", 10).selected.map(signal => signal.id)).toEqual(["in"]);
   });
+
+  it("keeps an ADR in the US paper candidate pool", () => {
+    const adr = { ...row("adr", "SKHY", 82, "2026-07-31T20:00:00Z"), asset_class: "adr" };
+    expect(selectBestPaperSignals([adr], "us", 10).selected).toEqual([adr]);
+    expect(selectBestPaperSignals([adr], "india", 10).selected).toEqual([]);
+  });
 });

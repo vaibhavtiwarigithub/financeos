@@ -96,6 +96,10 @@ export interface ProviderFetchOpts {
   // data (fundamentals ~14d, news ~2d) that need not be re-fetched daily. Default
   // 0 = today-only (re-fetch each day), preserving prior behavior for prices/quotes.
   maxAgeDays?: number;
+  // Maximum age allowed for a failure/throttle fallback. Defaults to the
+  // historical seven-day bound. Event-sensitive callers set this equal to
+  // maxAgeDays so an outage cannot resurrect pre-report facts as current.
+  maxStaleAgeDays?: number;
 }
 
 // Cache key MUST be globally unique across providers. Callers pass a
@@ -117,6 +121,7 @@ export async function providerCachedFetch(
   // the single biggest AV-budget saver, since the same symbols are scored daily but
   // their fundamentals change quarterly. Default 0 = today-only (prices/quotes).
   const maxAgeDays = opts.maxAgeDays ?? 0;
+  const maxStaleAgeDays = opts.maxStaleAgeDays ?? MAX_STALE_CACHE_DAYS;
   if (maxAgeDays > 0) {
     const fresh = await lastCached(svc, cacheKey, maxAgeDays);
     if (fresh) return fresh;
@@ -134,7 +139,7 @@ export async function providerCachedFetch(
   if (cfg.dailyBudget != null) {
     try {
       const { data: count, error } = await svc.rpc("provider_budget_increment", { p_provider: provider, p_date: todayStr });
-      if (error) return lastCached(svc, cacheKey); // fail closed
+      if (error) return lastCached(svc, cacheKey, maxStaleAgeDays); // fail closed
       // Early warning at 80% of the daily cap — see pressure BEFORE it exhausts,
       // so a provider trending toward its ceiling is actionable (add a free
       // alternate) rather than a surprise at 100%. Auto-clears at UTC midnight.
@@ -163,9 +168,9 @@ export async function providerCachedFetch(
           autoExpireAt: nextUtcMidnight(),
         }, svc);
         await resolveIssue(`provider-budget-pressure:${provider}`, svc);
-        return lastCached(svc, cacheKey);
+        return lastCached(svc, cacheKey, maxStaleAgeDays);
       }
-    } catch { return lastCached(svc, cacheKey); }
+    } catch { return lastCached(svc, cacheKey, maxStaleAgeDays); }
   } else {
     // No daily cap: still log the call so the capacity dashboard shows real
     // usage/averages. Awaited (non-fatal) so a serverless function that
@@ -182,8 +187,8 @@ export async function providerCachedFetch(
   if (pace) {
     try {
       const { data: slot } = await svc.rpc("try_acquire_provider_slot", { p_provider: provider, p_min_interval_ms: pace });
-      if (slot !== true) return lastCached(svc, cacheKey);
-    } catch { return lastCached(svc, cacheKey); /* fail closed to cache, never burst */ }
+      if (slot !== true) return lastCached(svc, cacheKey, maxStaleAgeDays);
+    } catch { return lastCached(svc, cacheKey, maxStaleAgeDays); /* fail closed to cache, never burst */ }
   }
 
   // 3. Spend one real call.
@@ -201,8 +206,11 @@ export async function providerCachedFetch(
   // handful of real keys into ~200 "calls". Only writes when we actually have a
   // prior payload; a brand-new symbol with no history still just returns null.
   if (!json || isThrottled(json)) {
-    const carried = await lastCached(svc, cacheKey);
-    if (carried != null) {
+    const carried = await lastCached(svc, cacheKey, maxStaleAgeDays);
+    // Do not rewrite a slow-moving payload into today's slot: doing so resets
+    // cache_date and can make stale facts look perpetually fresh across outages.
+    // Today-only callers retain carry-forward to suppress same-day retry storms.
+    if (carried != null && maxAgeDays === 0) {
       await svc.from("av_cache").upsert(
         { cache_key: cacheKey, cache_date: todayStr, payload: carried },
         { onConflict: "cache_key,cache_date" },

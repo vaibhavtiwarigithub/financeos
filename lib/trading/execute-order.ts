@@ -53,7 +53,7 @@ async function classifyUsFund(svc: any, symbol: string): Promise<FundClassificat
     if (error) return { ok: false, error: `asset classification read failed: ${error.message}` };
     const assetClass = String((data as any)?.asset_class ?? "");
     if (assetClass === "etf" || assetClass === "metal") return { ok: true, isFund: true };
-    if (assetClass === "us_equity") return { ok: true, isFund: false };
+    if (assetClass === "us_equity" || assetClass === "adr") return { ok: true, isFund: false };
     return { ok: false, error: `asset class for ${symbol} is unknown; refresh research before buying` };
   } catch (e) {
     return { ok: false, error: `asset classification error: ${String(e)}` };

@@ -79,7 +79,9 @@ describe("agent source pipeline remediation", () => {
     expect(cron).not.toContain("/api/agents/theme-scout");
     expect(scout).toContain('providerCachedFetch(\n      "gdelt"');
     expect(scout).toContain('const movers = news ? "" : await fetchTopGainersLosers()');
-    expect(scout).toContain("fetchUsOverview(symbol");
+    expect(scout).toContain('fetchYahooQuote(symbol, "us")');
+    expect(scout).not.toContain("fetchUsOverview");
+    expect(scout).not.toContain("getQuote(symbol");
     expect(migration).toContain("kairos-theme-scout");
   });
 

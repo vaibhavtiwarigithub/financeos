@@ -5,6 +5,7 @@
 // layers: research candidate selection, paper/trader eligibility, and the live
 // execution gateway (defense in depth).
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isUnsupportedAdrProxy } from "@/lib/instruments/adrs";
 
 // Leveraged (2x/3x) + inverse US ETFs. NSE has effectively no leveraged ETFs, so
 // this is US-centric; the DB blocklist covers any India-specific names.
@@ -40,6 +41,9 @@ export async function isSymbolBlocked(
   opts: { failClosed?: boolean } = {},
 ): Promise<{ blocked: boolean; reason?: string }> {
   const sym = symbol.trim().toUpperCase();
+  if (market === "us" && isUnsupportedAdrProxy(sym)) {
+    return { blocked: true, reason: "retired or unsupported OTC ADR proxy; use the reviewed US exchange listing" };
+  }
   if (market === "us" && isLeveragedInverseEtf(sym)) {
     return { blocked: true, reason: "leveraged/inverse ETF (unfit for swing hold; long-only)" };
   }

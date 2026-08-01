@@ -76,6 +76,30 @@ describe("providerCachedFetch free-tier and degradation contract", () => {
     expect(await providerCachedFetch("alpha_vantage", "AV:X", "https://example.test")).toEqual({ stale: true });
   });
 
+  it("does not reset stale slow-data age or exceed an event-sensitive fallback bound", async () => {
+    h.stalePayload = { preEvent: true };
+    h.staleDate = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ Note: "rate limit" }), { status: 200 }));
+
+    expect(await providerCachedFetch("alpha_vantage", "AV:EVENT", "https://example.test", {
+      maxAgeDays: 1,
+      maxStaleAgeDays: 1,
+    })).toBeNull();
+    expect(h.upserts).toEqual([]);
+  });
+
+  it("returns a bounded slow-data fallback without carrying it into today's slot", async () => {
+    h.stalePayload = { recent: true };
+    h.staleDate = new Date(Date.now() - 12 * 60 * 60_000).toISOString();
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ Note: "rate limit" }), { status: 200 }));
+
+    expect(await providerCachedFetch("alpha_vantage", "AV:EVENT", "https://example.test", {
+      maxAgeDays: 1,
+      maxStaleAgeDays: 1,
+    })).toEqual({ recent: true });
+    expect(h.upserts).toEqual([]);
+  });
+
   it("returns null rather than fabricated data when provider and cache both fail", async () => {
     vi.mocked(fetch).mockRejectedValue(new Error("offline"));
     expect(await providerCachedFetch("alpha_vantage", "AV:X", "https://example.test")).toBeNull();

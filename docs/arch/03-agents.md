@@ -1,4 +1,6 @@
 # Kairos — Agents
+> 2026-07-31 event-aware/ADR correction: ResearchAgent batch-annotates company symbols from `earnings_calendar` before fetching fundamentals (1-day cache inside -3/+14 report window; otherwise/unknown 7 days; Finnhub profile 30 days). Theme Scout only proves a ticker with quote data. Reviewed US exchange ADRs persist `asset_class='adr'`, skip structurally inapplicable Form 4 evidence, and use ADS-compatible Yahoo fundamentals without foreign-underlying fallthrough. `SKHY` is the reviewed Nasdaq SK hynix ADS; `SKHYV`, `HXSCL`, and `HXSCF` are blocked substitutes.
+>
 > 2026-07-31 scoring data-truth correction: ResearchAgent is the sole authoritative
 > scorer; the legacy Supabase `research-agent` function is a 410 tombstone. Provider
 > sector taxonomies are explicit. Finnhub industries are crosswalked only when
@@ -239,7 +241,7 @@ makes it a harmless no-op meanwhile.
 
 | Dimension | Source | What it measures |
 |---|---|---|
-| `fundamental_score` | AV OVERVIEW (US) / Yahoo quoteSummary (India) | **P/E vs sector norm** (`SECTOR_PE_NORM`, not an absolute band), profit margin, ROE, EPS sign, rev-growth YoY, **analyst target upside** (target vs live close / 200-DMA proxy) |
+| `fundamental_score` | Finnhub → Yahoo → FMP → AV (domestic US); Yahoo-only ADS basis (reviewed ADR); Yahoo (India) | **P/E vs sector norm** (`SECTOR_PE_NORM`, not an absolute band), profit margin, ROE, EPS sign, rev-growth YoY, **analyst target upside** (target vs live close / 200-DMA proxy). Cache is 1d near earnings, otherwise 7d. |
 | `technical_score` | Multi-provider completed daily candles (US and India) | RSI(14) continuous curve, EMA20/50, 20d trend, and volume confirmation. Research filters the provider-normalized series to completed regular sessions before every score/evidence/trade-plan calculation; a still-forming daily bar never enters scoring. |
 | `sentiment_score` | AV NEWS_SENTIMENT + StockTwits/GDELT fallback (US only) | Weighted US news/social bullishness. **India: structurally not applicable in the active scorer** after production showed 0/310 usable GDELT observations. Replacement headline/event evidence is shadow-only and cannot be interpreted as neutral sentiment. |
 | `macro_score` | `macro_regime.danger_score` — **US ONLY** | Macro backdrop from MacroSentinel. **India: dimension is UNAVAILABLE and excluded — weights renormalize onto the remaining dimensions** (2026-07-16). MacroSentinel is US-only by construction (8 US FRED series) and `macro_regime` has no `market` column, so scoring an India symbol from it stamped the US Fed's verdict onto Indian equities. India research still injects a factual **FII/DII net-flow line** (`lib/india-macro.ts`, live NSE) into the thesis prompt — narrative grounding only, deliberately NOT wired into `macro_score`; a real India regime is a separate build. FII/DII is null (line omitted) when NSE geo-throttles Vercel. (2026-07-12) |
@@ -323,6 +325,8 @@ Each dimension outputs 0–100, clamped. Source of truth: `lib/data/scores.ts`, 
 **Macro** (`fetchMacroScore`) — **US symbols only** (India → UNAVAILABLE, excluded, weights renormalize). `100 − danger_score` from the newest `macro_regime` row that satisfies the full consumer contract above: real verdict (`regime != 'unknown'`) **and** `week_of` within `MAX_MACRO_AGE_DAYS` = 10 **and** `raw_indicators` length >= 3. Nothing qualifies → UNAVAILABLE, never a calm default. (Corrected 2026-07-17: this line previously said "looks back up to 3 weeks", contradicting the 10-day bound documented in the consumer-contract table in this same chapter — the unbounded reach-back was the 2026-07-13 prod bug, not the intended behavior.)
 
 **Insider** (`resolveInsider` → Massive / EDGAR / AV) — `10 + buyRatio×80` where `buyRatio = buyValue/(buyValue+sellValue)` over 90 days, counting only open-market P/S codes (awards `A`, exercises `M`, gifts `G`, tax-withholding `F` are `other` and excluded — they are not conviction trades). Requires ≥3 transactions; <3, no data, ADRs, or fetch-fail → `available:false` (excluded).
+
+**Reviewed ADR contract (2026-07-31):** `lib/instruments/adrs.ts` is the explicit identity registry; suffix guessing is forbidden. ADRs run in the US/USD research and paper pools and are segmented as `adr` for evidence/learning. Because foreign private issuers generally have no Section 16 Form 4 stream, insider is not fetched and remaining applicable dimensions are renormalized. Live execution recognizes ADR as a non-fund equity but adds no permission: broker review, account allowlist, market controls, kill switches, portfolio gates, and broker acknowledgement all remain mandatory.
 
 > **Insider is expected to be sparse, and that is correct** (`EXPECTED_SPARSE_DIMS` holds `us:insider`). Most Form 4 activity is compensation-related, not open-market buying, so an empty insider result is usually a real finding rather than a fault. That is exactly why a *failure* must never render as one — see below.
 

@@ -68,6 +68,11 @@ import { resolveEarningsRepricingBarrier } from "@/lib/risk/earnings-repricing";
 import { getBenchmarkSeries } from "@/lib/data/benchmark-series";
 import { captureReturnObservation } from "@/lib/data/return-observations";
 import { writeEvidence, type SourceName } from "@/lib/data/evidence";
+import { isReviewedAdr } from "@/lib/instruments/adrs";
+import {
+  annotateFundamentalFreshness,
+  DEFAULT_FUNDAMENTAL_MAX_AGE_DAYS,
+} from "@/lib/data/fundamental-freshness";
 
 // Phase 3 learning-core: per-run cache for benchmark regime features (SPY for
 // US, ^NSEI for India) — computed once per market per process, not per symbol.
@@ -168,15 +173,6 @@ const LEVERAGED_BEAR_ETFS = new Set([
 
 const TRADING_ACCOUNT = process.env.TRADING_ACCOUNT_NUMBER ?? "965848641";
 
-// US-listed foreign companies (ADRs). Foreign private issuers are EXEMPT from
-// SEC Section 16 — they do NOT file Form 4s — so an insider fetch always returns
-// empty and wastes the SEC EDGAR + AV fallback calls. Mark insider N/A for them.
-const US_ADRS = new Set([
-  "INFY","WIT","HDB","IBN","RDY","SIFY","WNS","MMYT","VEDL","AZRE",  // India
-  "BABA","JD","PDD","BIDU","NIO","LI","XPEV","TCOM","BILI","TME",    // China
-  "TSM","ASML","SAP","SHOP","SE","MELI","NVO","TM","SONY","UL",      // other
-]);
-
 // Which scoring/evidence dimensions a symbol CAN structurally have. Fetching a
 // dimension a symbol can never possess just wastes provider calls (and every
 // missing dimension is already excluded from the weighted score via the
@@ -204,7 +200,7 @@ export function applicableDimensions(entry: SymbolEntry): Set<Dimension> {
   }
   // US individual equity — all dimensions, except insider for ADRs (no Form 4).
   dims.add("fundamental"); dims.add("sentiment"); dims.add("options"); dims.add("analyst");
-  if (!US_ADRS.has(entry.symbol.toUpperCase())) dims.add("insider");
+  if (!isReviewedAdr(entry.symbol)) dims.add("insider");
   return dims;
 }
 
@@ -223,10 +219,20 @@ export type SymbolEntry = {
   symbol: string;
   isHeld: boolean;
   isEtf: boolean;
-  assetClass?: string; // "us_equity" | "etf" | "metal"
+  assetClass?: string; // "us_equity" | "adr" | "etf" | "metal" | "india"
+  fundamentalMaxAgeDays?: number;
   screenerBucket?: "momentum" | "value"; // which dual-bucket screener flagged this (Research Journal)
   discovery_source?: DiscoverySource;    // how this symbol entered the research batch
 };
+
+export function classifyResearchAssetClass(symbol: string): "india" | "metal" | "etf" | "adr" | "us_equity" {
+  const sym = symbol.trim().toUpperCase();
+  if (isIndia(sym)) return "india";
+  if (METAL_ETF_SYMBOLS.has(sym)) return "metal";
+  if (isEtfSymbol(sym)) return "etf";
+  if (isReviewedAdr(sym)) return "adr";
+  return "us_equity";
+}
 
 export type ResearchSignalWriteContext = {
   sessionValidated: boolean;
@@ -512,18 +518,19 @@ export async function gatherSymbols(
   marketScope?: Market,
 ): Promise<SymbolEntry[]> {
   if (manualOverride && manualOverride.length > 0) {
-    return manualOverride.map(s => {
+    const manualEntries = manualOverride.map(s => {
       const sym = s.toUpperCase();
       return {
         symbol: sym,
         isHeld: false,
         isEtf: isEtfSymbol(sym),
-        assetClass: isIndia(sym) ? "india" : (isEtfSymbol(sym) ? "etf" : "us_equity"),
+        assetClass: classifyResearchAssetClass(sym),
         discovery_source: "manual" as DiscoverySource,
       };
     }).filter(entry => marketScope === "india" ? entry.assetClass === "india"
       : marketScope === "us" ? entry.assetClass !== "india"
       : true);
+    return annotateFundamentalFreshness(manualEntries, supabase);
   }
 
   const includeUs = marketScope !== "india";
@@ -571,8 +578,7 @@ export async function gatherSymbols(
   const holdingEntries: SymbolEntry[] = [];
   const holdingSet = new Set<string>();
   for (const sym of await orderHoldingsByLastScored(supabase, holdings, "us")) {
-    const isMetal = METAL_ETF_SYMBOLS.has(sym);
-    holdingEntries.push({ symbol: sym, isHeld: true, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: "holding" });
+    holdingEntries.push({ symbol: sym, isHeld: true, isEtf: isEtfSymbol(sym), assetClass: classifyResearchAssetClass(sym), discovery_source: "holding" });
     holdingSet.add(sym);
   }
 
@@ -582,8 +588,7 @@ export async function gatherSymbols(
   const candidateMap = new Map<string, SymbolEntry>();
   const addCandidate = (sym: string, source: DiscoverySource) => {
     if (holdingSet.has(sym) || candidateMap.has(sym)) return;
-    const isMetal = METAL_ETF_SYMBOLS.has(sym);
-    candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: isMetal ? "metal" : isEtfSymbol(sym) ? "etf" : "us_equity", discovery_source: source });
+    candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: classifyResearchAssetClass(sym), discovery_source: source });
   };
 
   // PRIORITY 1 — owner MANUAL watchlist adds. Explicit "research this now" intent
@@ -603,7 +608,7 @@ export async function gatherSymbols(
   let screenerAdded = 0;
   for (const { symbol: sym, bucket } of screenerSymbols) {
     if (holdingSet.has(sym) || candidateMap.has(sym) || screenerAdded >= screenerMax) continue;
-    candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: false, assetClass: "us_equity", screenerBucket: bucket, discovery_source: bucket === "momentum" ? "screener_momentum" : "screener_value" });
+    candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: false, assetClass: classifyResearchAssetClass(sym), screenerBucket: bucket, discovery_source: bucket === "momentum" ? "screener_momentum" : "screener_value" });
     screenerAdded++;
   }
 
@@ -710,7 +715,10 @@ export async function gatherSymbols(
     }
   }
 
-  return [...nonMetals, ...metals, ...regionEtfs, ...indiaSymbols];
+  return annotateFundamentalFreshness(
+    [...nonMetals, ...metals, ...regionEtfs, ...indiaSymbols],
+    supabase,
+  );
 }
 
 // Real India holdings from Kite (/portfolio/holdings), mapped to the .NS
@@ -926,15 +934,15 @@ ${heldNote}`;
 }
 
 // Fetch company overview from Alpha Vantage (fundamentals for scoring)
-async function fetchAVOverview(symbol: string, avKey: string): Promise<Record<string, string>> {
+async function fetchAVOverview(symbol: string, avKey: string, maxAgeDays = 7): Promise<Record<string, string>> {
   if (!avKey) return {};
   try {
-    // Fundamentals change quarterly, not daily — cache 14d so the same symbol's
-    // OVERVIEW isn't re-fetched every research run (the biggest AV-budget drain).
+    // The caller supplies the shared one-/seven-day earnings-aware TTL so AV
+    // remains a bounded reserve without serving pre-report facts as current.
     const json = await avCachedFetch(
       `OVERVIEW:${symbol}`,
       `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${avKey}`,
-      6000, undefined, 14
+      6000, undefined, maxAgeDays, maxAgeDays
     );
     return json?.Symbol ? (json as Record<string, string>) : {};
   } catch { return {}; }
@@ -1221,7 +1229,7 @@ async function recordRunEvidence(market: string, runKey: string, includedDims: S
     // Fire/clear a per-dimension starvation alert when a dim's availability drops
     // among enough applicable symbols. Names the likely starving provider chain.
     const DIM_PROVIDER: Record<string, string> = {
-      fundamental: market === "india" ? "Yahoo quoteSummary" : "Finnhub → Yahoo → SEC EDGAR",
+      fundamental: market === "india" ? "Yahoo quoteSummary" : "Finnhub -> Yahoo -> FMP -> AV reserve (ADR: Yahoo only)",
       technical:   market === "india" ? "Upstox → Yahoo chart" : "Massive → AV",
       sentiment:   market === "india" ? "not applicable (replacement shadow only)" : "StockTwits → GDELT → AV NEWS",
       insider:     market === "india" ? "NSE PIT" : "Massive Form 4 → SEC EDGAR → AV",
@@ -1303,11 +1311,16 @@ export async function prewarmSymbol(entry: SymbolEntry): Promise<void> {
   const india = isIndia(symbol);
   const applicable = applicableDimensions(entry);
   const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
+  const maxAgeDays = entry.fundamentalMaxAgeDays ?? DEFAULT_FUNDAMENTAL_MAX_AGE_DAYS;
   const jobs: Promise<unknown>[] = [];
   // Fundamentals (skip ETFs — no company fundamentals).
   if (applicable.has("fundamental")) {
-    jobs.push(india ? fetchIndiaOverview(symbol).catch(() => ({}))
-                    : fetchUsOverview(symbol, () => fetchAVOverview(symbol, avKey)).catch(() => ({})));
+    jobs.push(india ? fetchIndiaOverview(symbol, { maxAgeDays }).catch(() => ({}))
+                    : fetchUsOverview(
+                        symbol,
+                        () => fetchAVOverview(symbol, avKey, maxAgeDays),
+                        { isAdr: isReviewedAdr(symbol), maxAgeDays },
+                      ).catch(() => ({})));
   }
   // Sentiment is currently active only for US instruments. India replacement
   // evidence is collected by a separate behavior-neutral shadow.
@@ -1335,6 +1348,7 @@ export async function processSymbol(
   const { symbol, isHeld, isEtf, assetClass = "us_equity" } = entry;
   const source: string = isHeld ? "holding" : "screener";
   const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
+  const fundamentalMaxAgeDays = entry.fundamentalMaxAgeDays ?? DEFAULT_FUNDAMENTAL_MAX_AGE_DAYS;
 
   // India (.NS/.BO) uses Yahoo (free) for fundamentals + candles instead of
   // Alpha Vantage/FinancialDatasets, which are US-only. Social sentiment and
@@ -1358,14 +1372,18 @@ export async function processSymbol(
       // via isEtf; skip the fetch (don't waste an FMP/AV call).
       ? Promise.resolve({ overview: {} as Record<string, string>, source: "unavailable" as SourceName })
       : india
-        ? fetchIndiaOverview(symbol)
+        ? fetchIndiaOverview(symbol, { maxAgeDays: fundamentalMaxAgeDays })
             // PIT capture-on-fetch (additive, non-blocking, fail-open): archive a
             // fundamental_facts vintage. Never awaited, never throws into scoring.
             .then(ov => { void captureFundamentalsFact(supabase, { symbol, market: "india", values: ov, source: "yahoo" }); return { overview: ov, source: "yahoo" as SourceName }; })
             .catch(() => ({ overview: {} as Record<string, string>, source: "unavailable" as SourceName }))
-        // US equities: FMP (own 250/day budget) → Alpha Vantage OVERVIEW
-        // fallback, mapped to the same OVERVIEW shape scoreFundamentals reads.
-        : fetchUsOverview(symbol, () => fetchAVOverview(symbol, avKey))
+        // US equities: Finnhub -> Yahoo -> FMP -> AV reserve. Reviewed ADRs use
+        // Yahoo only so foreign-underlying per-share units cannot enter scoring.
+        : fetchUsOverview(
+            symbol,
+            () => fetchAVOverview(symbol, avKey, fundamentalMaxAgeDays),
+            { isAdr: isReviewedAdr(symbol), maxAgeDays: fundamentalMaxAgeDays },
+          )
             .then(r => { void captureFundamentalsFact(supabase, { symbol, market: "us", values: r.overview, source: r.source }); return { overview: r.overview, source: r.source as SourceName }; })
             .catch(() => ({ overview: {} as Record<string, string>, source: "unavailable" as SourceName })),
     // The resolved candle SOURCE is carried alongside the bars now (it was
@@ -1517,7 +1535,7 @@ export async function processSymbol(
   const instrument = classifyInstrument({
     symbol,
     market,
-    isAdr: US_ADRS.has(symbol.toUpperCase()),
+    isAdr: isReviewedAdr(symbol),
   });
   const instrumentRegistryWrite = persistInstrumentClassification(supabase, instrument)
     .catch((error) => console.error("[research-agent] instrument registry write failed:", error instanceof Error ? error.message : error));
@@ -1757,11 +1775,11 @@ export async function processSymbol(
   const guardRun = await runDegradationGuard({
     market: market as Market,
     symbol,
-    shape: symbolShapeOf({ isEtf, isAdr: US_ADRS.has(symbol.toUpperCase()), isMetal: assetClass === "metal" }),
+    shape: symbolShapeOf({ isEtf, isAdr: isReviewedAdr(symbol), isMetal: assetClass === "metal" }),
     isHeld,
     observations: observationsFromLegacyMask({
       isEtf,
-      isAdr: US_ADRS.has(symbol.toUpperCase()),
+      isAdr: isReviewedAdr(symbol),
       isMetal: assetClass === "metal",
       applicable: applicable as Set<string>,
       included: included as Record<string, boolean>,

@@ -1114,3 +1114,31 @@ read by a decision or money path. Historical replay remains diagnostic-only.
 Reversal cost: Low. The local-time and completed-session guards are pure boundary
 checks. The shadow can be unscheduled without changing decision state; its
 append-only provenance can remain for audit.
+
+### Decision 62: Event-Aware Fundamentals and Exchange-Listed ADRs
+
+Date: 2026-07-31
+Status: Implemented and production-verified
+Category: Research Data / Instrument Governance / Trading Safety
+
+Decision: Share one earnings-aware reported-fundamental freshness policy across
+agents, stop ThemeScout from using full fundamentals as a ticker-existence probe,
+and introduce a reviewed `adr` asset class for US exchange-listed depositary
+receipts. Add Nasdaq-listed SK hynix (`SKHY`) to that registry; explicitly reject
+legacy OTC proxies as substitutes. ADRs may enter the US paper path. Live
+compatibility remains behind all existing controls and mandatory broker review.
+
+Reason: Daily polling wastes calls between reports, but blanket long TTLs miss
+event changes and stale valuation. ADR providers can return foreign-underlying
+units under a US ticker; a distinct source/applicability contract prevents unit
+mixing and false insider-data starvation.
+
+Non-goals: No OTC automation, foreign-exchange execution, live enablement,
+threshold/weight change, ADR-specific alpha claim, or broker-support promise.
+
+Files/features affected: `features/event-aware-fundamentals-adr/`, ResearchAgent,
+fundamentals/Yahoo adapters, ThemeScout, instrument registry, paper/live asset
+classification, architecture chapters, and agent diagrams.
+
+Reversal cost: Low. Remove registry entries and restore cache constants; no
+historical decision or trade is rewritten.

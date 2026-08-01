@@ -16,7 +16,7 @@
     },
     "RESEARCH": {
       "label": "ResearchAgent",
-      "description": "Runs per market and is the sole authoritative scorer. Provider-normalized daily candles are filtered to completed regular sessions before scoring/evidence/trade plans. Scores each symbol only across structurally applicable and available evidence using market-local champion weights. FinancialDatasets is supplemental US discovery only: provider failures alert System Health and fall back to holdings/watchlist/carry-forward queues without changing score inputs. Webull research stays in the Evidence Router shadow and is never called inline per symbol. India sentiment is currently excluded after the zero-output GDELT path was retired; NSE/Google replacement evidence is shadow-only. Provider taxonomies are stamped; unknown mappings and invalid P/E values are omitted. Only ATR-scaled or high-volume declines can hard-veto. Holdings are staleness-ordered. LLM narrative cannot alter scores or directions. India never inherits US macro. Writes agent_signals, signal_score_history, and decision observations.",
+      "description": "Runs per market and is the sole authoritative scorer. Provider-normalized daily candles are filtered to completed regular sessions before scoring/evidence/trade plans. Scores each symbol only across structurally applicable and available evidence using market-local champion weights. Fundamentals use event-aware 1/7-day freshness from one earnings-calendar batch read; profiles use 30 days. Reviewed ADRs such as SKHY persist separately, skip Form 4, and use ADS-compatible Yahoo fundamentals without foreign-underlying fallthrough. FinancialDatasets is supplemental US discovery only: provider failures alert System Health and fall back to holdings/watchlist/carry-forward queues without changing score inputs. Webull research stays in the Evidence Router shadow and is never called inline per symbol. India sentiment is currently excluded after the zero-output GDELT path was retired; NSE/Google replacement evidence is shadow-only. Provider taxonomies are stamped; unknown mappings and invalid P/E values are omitted. Only ATR-scaled or high-volume declines can hard-veto. Holdings are staleness-ordered. LLM narrative cannot alter scores or directions. India never inherits US macro. Writes agent_signals, signal_score_history, and decision observations.",
       "addedAt": "2026-06-25",
       "addReason": "Central scoring engine — everything downstream keys off its analyst_score.",
       "status": "changed",
@@ -1245,6 +1245,13 @@
       "nodeId": "EARNRISK",
       "label": "Shared real-date validation and fail-closed repricing state",
       "reason": "All earnings collectors now share one real ISO calendar-date validator. The post-report daily-price barrier no longer expires after seven calendar days and a calendar read failure produces a current neutral abstention rather than authorizing stale score direction. The options shadow remains behavior-inert."
+    },
+    {
+      "date": "2026-07-31",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "Event-aware fundamentals and reviewed exchange-listed ADRs",
+      "reason": "ResearchAgent now assigns fundamental cache freshness from one batched earnings-calendar read, and Theme Scout validates with quotes rather than full fundamental calls. Reviewed ADRs are a distinct evidence class: SKHY uses Yahoo ADS-basis values, skips structurally inapplicable Form 4 evidence, and can flow through the US paper path. Retired/OTC proxies are blocked. No live permission or safety gate changed."
     }
   ]
 }

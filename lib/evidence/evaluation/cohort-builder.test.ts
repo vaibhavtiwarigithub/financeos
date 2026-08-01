@@ -299,6 +299,7 @@ describe("cohort builder — shapeOf", () => {
     expect(shapeOf("metal", "GLD")).toBe("metal");
     expect(shapeOf("etf", "XLK")).toBe("etf");
     expect(shapeOf("us_equity", "AAPL")).toBe("equity");
+    expect(shapeOf("adr", "SKHY")).toBe("adr");
     expect(shapeOf("india", "RELIANCE")).toBe("equity");
   });
 

@@ -20,8 +20,8 @@ type Overview = Record<string, string>;
 const FMP_STABLE = "https://financialmodelingprep.com/stable";
 
 // FMP fundamentals: ratios-ttm (P/E, margin, EPS) + key-metrics-ttm (ROE).
-// Two day-cached calls per symbol → ~2×universe/day, far under the 240 budget.
-export async function fetchFmpOverview(symbol: string): Promise<Overview> {
+// Two event-aware cached calls per symbol; normally seven days, one day around reports.
+export async function fetchFmpOverview(symbol: string, maxAgeDays = 7): Promise<Overview> {
   const key = process.env.FMP_API_KEY ?? "";
   if (!key) return {};
   const badShape = (j: any): boolean => {
@@ -32,10 +32,10 @@ export async function fetchFmpOverview(symbol: string): Promise<Overview> {
     const [ratios, metrics] = await Promise.all([
       providerCachedFetch("fmp", `FMP_RATIOS:${symbol}`,
         `${FMP_STABLE}/ratios-ttm?symbol=${encodeURIComponent(symbol)}&apikey=${key}`,
-        { timeoutMs: 8000, isThrottled: badShape }),
+        { timeoutMs: 8000, isThrottled: badShape, maxAgeDays, maxStaleAgeDays: maxAgeDays }),
       providerCachedFetch("fmp", `FMP_KEYMETRICS:${symbol}`,
         `${FMP_STABLE}/key-metrics-ttm?symbol=${encodeURIComponent(symbol)}&apikey=${key}`,
-        { timeoutMs: 8000, isThrottled: badShape }),
+        { timeoutMs: 8000, isThrottled: badShape, maxAgeDays, maxStaleAgeDays: maxAgeDays }),
     ]);
     const r = Array.isArray(ratios) ? ratios[0] : null;
     const m = Array.isArray(metrics) ? metrics[0] : null;
@@ -58,17 +58,17 @@ export async function fetchFmpOverview(symbol: string): Promise<Overview> {
 // primary US fundamentals source. Percent-scaled Finnhub fields (margin/ROE/
 // growth) are divided by 100 to match AV's fraction convention that
 // scoreFundamentals reads (ProfitMargin 0.27 = 27%).
-export async function fetchFinnhubOverview(symbol: string): Promise<Overview> {
+export async function fetchFinnhubOverview(symbol: string, maxAgeDays = 7): Promise<Overview> {
   const key = process.env.FINNHUB_API_KEY ?? "";
   if (!key) return {};
   try {
     const [metricRes, profileRes] = await Promise.all([
       providerCachedFetch("finnhub", `FINNHUB_METRIC:${symbol}`,
         `https://finnhub.io/api/v1/stock/metric?symbol=${encodeURIComponent(symbol)}&metric=all&token=${key}`,
-        { timeoutMs: 8000 }),
+        { timeoutMs: 8000, maxAgeDays, maxStaleAgeDays: maxAgeDays }),
       providerCachedFetch("finnhub", `FINNHUB_PROFILE:${symbol}`,
         `https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(symbol)}&token=${key}`,
-        { timeoutMs: 8000 }),
+        { timeoutMs: 8000, maxAgeDays: 30 }),
     ]);
     const m = (metricRes as any)?.metric ?? {};
     const p = (profileRes as any) ?? {};
@@ -104,16 +104,28 @@ export async function fetchFinnhubOverview(symbol: string): Promise<Overview> {
 export async function fetchUsOverview(
   symbol: string,
   avFallback: () => Promise<Overview>,
+  opts: { isAdr?: boolean; maxAgeDays?: number } = {},
 ): Promise<{ overview: Overview; source: string }> {
   const realFields = (ov: Overview) => Object.keys(ov).filter(k => k !== "Symbol").length;
+  const maxAgeDays = opts.maxAgeDays ?? 7;
 
-  const finnhub = await fetchFinnhubOverview(symbol).catch(() => ({} as Overview));
+  // Reviewed ADRs use only an ADS-compatible source. A provider resolving the
+  // ticker to its foreign ordinary share can return plausible but unit-incompatible
+  // EPS/P-E values; unavailable is safer than cross-basis fallback.
+  if (opts.isAdr) {
+    const yahooAdr = await fetchYahooOverview(symbol, { maxAgeDays }).catch(() => ({} as Overview));
+    return realFields(yahooAdr) >= 2
+      ? { overview: yahooAdr, source: "yahoo" }
+      : { overview: {}, source: "unavailable" };
+  }
+
+  const finnhub = await fetchFinnhubOverview(symbol, maxAgeDays).catch(() => ({} as Overview));
   if (realFields(finnhub) >= 2) return { overview: finnhub, source: "finnhub" };
 
-  const yahoo = await fetchYahooOverview(symbol).catch(() => ({} as Overview));
+  const yahoo = await fetchYahooOverview(symbol, { maxAgeDays }).catch(() => ({} as Overview));
   if (realFields(yahoo) >= 2) return { overview: yahoo, source: "yahoo" };
 
-  const fmp = await fetchFmpOverview(symbol);
+  const fmp = await fetchFmpOverview(symbol, maxAgeDays);
   if (realFields(fmp) >= 2) return { overview: fmp, source: "fmp" };
 
   const av = await avFallback().catch(() => ({} as Overview));

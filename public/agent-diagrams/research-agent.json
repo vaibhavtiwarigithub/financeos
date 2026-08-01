@@ -60,12 +60,12 @@
     },
     "SCORE": {
       "label": "Score 5 dimensions",
-      "description": "The deterministic v1 vocabulary is fundamental, technical, sentiment, macro, and insider, but only structurally applicable and available dimensions enter a symbol's composite. India sentiment is now structurally excluded after GDELT produced 0/310 usable observations; NSE/Google replacement evidence is shadow-only. India macro is also unavailable. Options and analyst evidence are logged only and never weighted.",
+      "description": "Before provider work, one earnings_calendar batch read assigns company fundamentals a 1-day cache inside the prior-3/next-14-day report window and 7 days otherwise or when unknown; issuer profiles use 30 days. Theme Scout validates with keyless quotes, not fundamentals. Reviewed ADRs are explicit, skip structurally inapplicable Form 4, and use ADS-compatible Yahoo values without foreign-underlying fallthrough. The deterministic v1 vocabulary is fundamental, technical, sentiment, macro, and insider, but only structurally applicable and available dimensions enter a symbol's composite. India sentiment and macro are unavailable; options and analyst evidence are logged only and never weighted.",
       "addedAt": "2026-06-25",
       "addReason": "Multi-dimensional scoring is the core of the strategy.",
       "status": "changed",
-      "changedAt": "2026-07-17",
-      "changeReason": "Node asserted the dimensions are 'combined by the current signal_weights' — false, and the exact class of claim this diagram exists to prevent. Weighting moved to its own WEIGHTS node. Also documented the insider cascade, the India macro exclusion, GDELT/FII-DII, and the availability mask, all of which shipped without a diagram update.",
+      "changedAt": "2026-07-31",
+      "changeReason": "Added event-aware fundamental cache ownership and reviewed ADR data/applicability boundaries; scoring formula and weights are unchanged.",
       "removedAt": null,
       "removeReason": null
     },
@@ -258,6 +258,13 @@
       "nodeId": "ANALYST",
       "label": "Verified accurate — champion/promotion claim unchanged",
       "reason": "'Weights are tuned over time by the LearnerAgent (via promoted challengers)' is TRUE and matches the code comment at the champion read: LearnerAgent proposes weight challengers → user promotes one to champion → this is where that approved learning gets consumed. Only amendment: the composite is over INCLUDED dimensions with renormalized effective weights, not over all five unconditionally. No churn invented."
+    },
+    {
+      "date": "2026-07-31",
+      "event": "add",
+      "nodeId": "SCORE",
+      "label": "Event-aware fundamental freshness and reviewed ADR identity",
+      "reason": "Fundamentals now reuse one-/seven-day provider cache windows derived from one earnings-calendar batch read, while Theme Scout uses quotes only. SKHY is a reviewed Nasdaq ADR, scored from ADS-compatible Yahoo fundamentals and persisted as asset_class=adr; insider is structurally inapplicable and obsolete/OTC substitutes are blocked. Paper and live safety gates are unchanged."
     }
   ]
 }

@@ -554,10 +554,8 @@ export function shapeOf(assetClass: string | null | undefined, symbol: string): 
   const ac = String(assetClass ?? "").toLowerCase();
   if (ac === "metal") return "metal";
   if (ac === "etf") return "etf";
-  // us_equity / india / anything else → equity. (ADR distinction is a future
-  // refinement; contractsFor(equity) is the strictly broader field set, so an
-  // ADR mis-shaped as equity only over-includes insider — a coverage miss the
-  // gate treats conservatively, never a fabricated eligibility.)
+  if (ac === "adr") return "adr";
+  // us_equity / india / anything else → equity.
   return "equity";
 }
 

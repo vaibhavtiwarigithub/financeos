@@ -18,12 +18,13 @@ export function isEtfSymbol(symbol: string): boolean {
   return KNOWN_US_ETFS.has(symbol.trim().toUpperCase());
 }
 
-export type JournalAssetType = "company" | "etf" | "india_company" | "metal_fund";
+export type JournalAssetType = "company" | "adr" | "etf" | "india_company" | "metal_fund";
 
 export function classifyJournalAsset(symbol: string, recordedClass?: string | null): JournalAssetType {
   const upper = symbol.trim().toUpperCase();
   if (recordedClass === "metal") return "metal_fund";
   if (recordedClass === "etf" || isEtfSymbol(upper)) return "etf";
   if (recordedClass === "india" || upper.endsWith(".NS") || upper.endsWith(".BO")) return "india_company";
+  if (recordedClass === "adr") return "adr";
   return "company";
 }

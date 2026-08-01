@@ -273,7 +273,7 @@ One row per symbol per research run. The "today's score" table.
 | `symbol` | text | Ticker |
 | `agent_label` | text | `claude` \| `deepseek` |
 | `market` | text | `us` \| `india` |
-| `asset_class` | text | `equity` \| `etf` \| `india` \| `metals_basket` |
+| `asset_class` | text | Current authoritative values: `us_equity` \| `adr` \| `etf` \| `india` \| `metal`. `adr` is a reviewed US exchange-listed depositary receipt and remains in the US/USD book. |
 | `analyst_score` | numeric | 0–100 composite |
 | `fundamental_score` | numeric | |
 | `technical_score` | numeric | |
@@ -752,6 +752,8 @@ Immutable evidence ledger. `payload_hash` deduplicates re-imports.
 
 ### `fundamental_facts`
 Point-in-time (PIT) fundamentals vintage ledger (migration 150). Append-only: one immutable row per (symbol, market, report_period, restatement vintage). A later restatement of the same `report_period` inserts a NEW row with `restatement_seq = prev+1` and flips the prior row's `is_latest=false` — nothing is mutated in place, so "fundamentals as known on date D" is reconstructable and a restatement can never retroactively change a past as-of read. **OFF by default:** written by the capture-on-fetch hook in `lib/research-agent.ts` (fail-open), read via `lib/data/pit-fundamentals.ts::getFundamentalsAsOf`. Not yet wired into live scoring — `scoreFundamentals` is unchanged. RLS: `ff_service_all` (service_role ALL) + `ff_owner_read` (authenticated, owner email); anon REVOKEd.
+
+The active provider cache is `av_cache`, shared through `providerCachedFetch`; it is not a second fundamental truth table. ResearchAgent derives a request freshness hint from `earnings_calendar` in one batch read: 1 day for report dates in the prior 3/next 14 calendar days and 7 days otherwise or when unknown. The fetched payload is still captured into `fundamental_facts` with source provenance. No schema migration was required for event-aware freshness or `asset_class='adr'` because both are application-level contracts over existing text/cache columns.
 
 | Column | Type | Notes |
 |---|---|---|

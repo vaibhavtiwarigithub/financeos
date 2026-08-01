@@ -6,6 +6,7 @@
 // cookie+crumb handshake; the chart endpoint (price + candles) does not.
 
 import type { Candle } from "@/lib/data/technicals";
+import { providerCachedFetch } from "@/lib/data/provider-fetch";
 // Candle fetching moved to lib/data/yahoo-candles.ts — it was never India-specific.
 // Re-exported here so existing India call sites keep one import, but new code
 // (especially US) should import fetchYahooCandles directly.
@@ -201,16 +202,25 @@ export async function fetchIndiaEarningsDate(symbol: string): Promise<string | n
 // QuarterlyRevenueGrowthYOY, 52WeekHigh, Sector, Symbol) so India stocks run
 // through the exact same computeScores path as US stocks. Missing fields are
 // left blank so the scorer falls back to its neutral baseline honestly.
-export async function fetchIndiaOverview(symbol: string): Promise<Record<string, string>> {
+export async function fetchIndiaOverview(
+  symbol: string,
+  opts: { maxAgeDays?: number } = {},
+): Promise<Record<string, string>> {
   const c = await getCrumb();
   if (!c) return {};
   try {
-    const res = await fetch(
+    const json = await providerCachedFetch(
+      "yahoo",
+      `YAHOO_OVERVIEW:${symbol.toUpperCase()}`,
       `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=defaultKeyStatistics,financialData,summaryDetail,assetProfile,price&crumb=${encodeURIComponent(c.crumb)}`,
-      { headers: { "User-Agent": "Mozilla/5.0", Cookie: c.cookie }, next: { revalidate: 86400 }, signal: AbortSignal.timeout(8000) }
+      {
+        headers: { "User-Agent": "Mozilla/5.0", Cookie: c.cookie },
+        timeoutMs: 8000,
+        maxAgeDays: opts.maxAgeDays ?? 1,
+        maxStaleAgeDays: opts.maxAgeDays ?? 1,
+      },
     );
-    if (!res.ok) return {};
-    const r = (await res.json())?.quoteSummary?.result?.[0];
+    const r = json?.quoteSummary?.result?.[0];
     if (!r) return {};
     const sd = r.summaryDetail ?? {}, fd = r.financialData ?? {}, ks = r.defaultKeyStatistics ?? {}, ap = r.assetProfile ?? {}, pr = r.price ?? {};
     const num = (v: any) => (v && typeof v === "object" && "raw" in v ? v.raw : v);

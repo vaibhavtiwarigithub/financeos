@@ -11,6 +11,7 @@ describe("asset classification", () => {
 
   it("keeps operating companies and India listings distinct", () => {
     expect(classifyJournalAsset("MU", "us_equity")).toBe("company");
+    expect(classifyJournalAsset("SKHY", "adr")).toBe("adr");
     expect(classifyJournalAsset("HDFCBANK.NS", "india")).toBe("india_company");
   });
 

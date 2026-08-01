@@ -8,7 +8,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { avCachedFetch } from "@/lib/av-cache";
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
-import { fetchUsOverview } from "@/lib/data/fundamentals";
+import { fetchYahooQuote } from "@/lib/india-data";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -78,23 +78,13 @@ async function fetchTopGainersLosers(): Promise<string> {
 
 // Deterministic existence check — the LLM can hallucinate a plausible-looking
 // ticker (wrong exchange, delisted, wrong company). Confirms the symbol
-// resolves through the shared US fundamentals chain before it can enter the
-// research universe; Alpha Vantage is only that chain's final reserve.
+// resolves to a real market quote before it can enter the research universe.
+// Theme discovery does not need margins/EPS and must not spend fundamental calls.
 async function tickerExists(symbol: string): Promise<boolean> {
   try {
-    // Use the same redundant resolver as research. Its provider caches prevent
-    // duplicate network work when the symbol was already resolved recently.
-    const resolved = await fetchUsOverview(symbol, async () => {
-      if (!AV_KEY) return {};
-      return avCachedFetch(
-        `OVERVIEW:${symbol.toUpperCase()}`,
-        `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(symbol)}&apikey=${AV_KEY}`,
-        8000,
-      );
-    });
-    return resolved.source !== "unavailable"
-      && typeof resolved.overview.Symbol === "string"
-      && resolved.overview.Symbol.length > 0;
+    if (!/^[A-Z][A-Z.\-]{0,9}$/.test(symbol)) return false;
+    const quote = await fetchYahooQuote(symbol, "us");
+    return quote !== null && Number.isFinite(quote.price) && quote.price > 0;
   } catch { return false; }
 }
 
@@ -233,8 +223,8 @@ Rules:
         // Tag the market EXPLICITLY rather than inheriting the column default.
         // Relying on the default is what produced capitalized 'US' rows that the
         // watchlist GET's lowercase filter couldn't match. This scout prompts for
-        // and existence-checks US equities only (tickerExists → Alpha Vantage
-        // OVERVIEW), so 'us' is correct; a .NS/.BO name would still classify
+        // and existence-checks US equities only (tickerExists via a keyless
+        // Yahoo quote), so 'us' is correct; a .NS/.BO name would still classify
         // correctly if the prompt ever changes.
         market: /\.(NS|BO)$/i.test(clean) ? "india" : "us",
       });
