@@ -1589,8 +1589,8 @@ export async function processSymbol(
   // Champion weights take priority when a promoted champion exists. The snapshot
   // may use either short keys ({fundamental: 0.3}) from the seed row or the
   // *_weight keys ({fundamental_weight: 0.3}) LearnerAgent's challengers write —
-  // read both. Falls back to the static profile table (then signal_weights) when
-  // no champion is promoted, preserving prior behavior.
+  // read both. Falls back to the static profile table when no champion is
+  // promoted; the legacy global signal_weights row is intentionally not read.
   const champWeights = (champion as any)?.weights_snapshot ?? null;
   const cw = (short: string, full: string): number | undefined => {
     if (!champWeights) return undefined;

@@ -41,6 +41,7 @@ document cannot silently override a shared chapter or approved decision.
 | Change | Update |
 |---|---|
 | New or changed agent | `03-agents.md`; topology JSON/history; `05-crons-and-scheduling.md` when scheduled |
+| Scoring dimension, formula, source, weight, applicability, missing-data rule, veto, or cap | `03-agents.md` plain-English explanation + exact formula contract; `02-tech-stack.md`, `04-database-schema.md`, and `08-risk-and-safety.md` when their ownership changes |
 | New table, column, index, trigger, or RPC | `04-database-schema.md` |
 | New provider, broker, or runtime integration | `02-tech-stack.md` |
 | New or changed schedule | `05-crons-and-scheduling.md` |

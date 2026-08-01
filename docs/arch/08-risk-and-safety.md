@@ -1,5 +1,10 @@
 # Kairos — Risk & Safety
 
+> 2026-08-01 documentation truth audit: the technical breakdown guard is a hard
+> cap only for an ATR-scaled fall or a 7% high-volume fall. A bottom-quartile weak
+> close is warning-only. This chapter now matches the exact scoring contract in
+> chapter 03 and `lib/data/technicals.ts`.
+>
 > 2026-07-31 scoring input safety: unknown provider taxonomy cannot receive a
 > fabricated P/E benchmark; implausible P/E is omitted; missing availability metadata
 > cannot include a dimension; malformed macro/insider payloads remain unavailable;
@@ -88,12 +93,16 @@ Live BUY requires:
 A score threshold or `eligible_for_live_review` flag alone never grants live eligibility.
 
 **Breakdown veto (deterministic, runs before momentum math).** `scoreTechnicals`
-(`lib/data/technicals.ts`) evaluates `detectBreakdownVeto` first: a crash/meme
-reversal — last bar down ≥2.5 ATR, or ≤−7% on ≥1.5× volume, or a bottom-quartile
-close — caps the technical score at 20 regardless of RSI/EMA. Closes the prior bug
-where a −12% high-volume reversal scored ~100 because RSI had fallen into the
-preferred band while price was still above the EMAs. Thresholds are v0 guardrails
-needing prospective validation per liquidity bucket.
+(`lib/data/technicals.ts`) evaluates `detectBreakdownVeto` first. A last bar down
+at least 2.5 ATR, or down at least 7% on at least 1.5x normal volume, caps the
+technical score at 20 regardless of RSI/EMA. A bottom-quartile close on a down
+bar is recorded as a warning but does **not** trigger the cap. In plain language:
+an unusually large, well-confirmed fall can block a misleadingly strong momentum
+score; a merely weak close supplies context rather than pretending to prove a
+breakdown. This closes the prior bug where a 12% high-volume reversal scored about
+100 because RSI had fallen into the preferred band while price was still above
+the EMAs. Thresholds remain v0 guardrails needing prospective validation per
+liquidity bucket.
 
 **Promotion governance** (`app/api/strategies/versions/route.ts`). A champion can
 only be promoted with a PASSED validation experiment: the `force_unvalidated`

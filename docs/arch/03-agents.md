@@ -1,4 +1,9 @@
 # Kairos — Agents
+> 2026-08-01 documentation truth audit: reconciled the ResearchAgent screener,
+> five scoring dimensions, provider order, exact formulas, availability rules,
+> weight resolution, and breakdown veto against production code. Added a
+> plain-English report-card explanation beside the exact quantitative contract.
+>
 > 2026-07-31 event-aware/ADR correction: ResearchAgent batch-annotates company symbols from `earnings_calendar` before fetching fundamentals (1-day cache inside -3/+14 report window; otherwise/unknown 7 days; Finnhub profile 30 days). Theme Scout only proves a ticker with quote data. Reviewed US exchange ADRs persist `asset_class='adr'`, skip structurally inapplicable Form 4 evidence, and use ADS-compatible Yahoo fundamentals without foreign-underlying fallthrough. `SKHY` is the reviewed Nasdaq SK hynix ADS; `SKHYV`, `HXSCL`, and `HXSCF` are blocked substitutes.
 >
 > 2026-07-31 scoring data-truth correction: ResearchAgent is the sole authoritative
@@ -226,8 +231,9 @@ makes it a harmless no-op meanwhile.
 1. Account-scoped holdings snapshots. Research may analyze approved holdings, but only holdings verified on the actual order account can authorize a SELL.
 2. Watchlist from `watchlist` table
 3. Screener candidates from FinancialDatasets `screen_stocks` (US) or NSE universe cache (India) — dual buckets. FinancialDatasets is supplemental discovery only: missing credentials, exhausted credits, HTTP failures, and timeouts open a self-healing System Health warning and return no screener candidates; holdings/watchlist/carry-forward research continues, and scoring fundamentals are unaffected:
-   - *Momentum*: RSI > 60, price > 50-day MA, revenue acceleration, positive earnings revision
-   - *Value*: P/E < sector median, high FCF yield, insider buying, recent analyst upgrades
+   - *US fundamental-momentum screen*: revenue growth >15%, earnings growth >10%, gross margin >25%, ROE >15%, market cap >$2B; ranked by revenue growth. It does **not** use RSI or a moving average.
+   - *US value screen*: 0 < P/E <18, FCF yield >4%, debt/equity <1, market cap >$1B; ranked by lowest P/E. It does **not** compare P/E with a sector median or require insider/analyst activity.
+   - The two US lists are interleaved before the six-name screener cap, so one bucket cannot silently crowd out the other. India candidates come from the separately scored rotating `india_screen_cache`; the US criteria above are not applied to India.
 4. Score trend from `signal_score_history` (last 5 rows per symbol)
 5. Champion weights from `strategy_versions WHERE is_champion = true AND market = ?`
 6. Macro regime from the most recent **usable** `macro_regime` row — **US symbols only**. A row is usable only if it has a real verdict (`regime != 'unknown'`), is within `MAX_MACRO_AGE_DAYS` (10) of `week_of`, and rests on >= 3 real indicators. Otherwise macro is UNAVAILABLE (excluded, never defaulted to calm). India never reads this table. (`lib/data/scores.ts`, 2026-07-16)
@@ -239,15 +245,34 @@ makes it a harmless no-op meanwhile.
 
 **Current production baseline (`deterministic_v1`) — 5 dimensions:**
 
+#### Plain-English model: a five-subject report card
+
+Think of each stock as receiving a report card. ResearchAgent, not the LLM, is the
+teacher doing the arithmetic:
+
+| Subject | Child-friendly question | Important limitation |
+|---|---|---|
+| Fundamentals | "Is the business healthy and reasonably priced?" | Quarterly company facts move slowly. An analyst target is written in the evidence, but currently earns **zero points**. |
+| Technicals | "Is the settled price trend healthy, or did the stock just break down?" | Uses completed daily bars, not today's unfinished candle. It describes price behavior; it does not know the business. |
+| Sentiment | "Are enough real news/social observations leaning positive or negative?" | Tiny samples are pulled toward 50. No data means the subject is omitted, not treated as a neutral vote. |
+| Macro | "Is the current US economic weather supportive?" | US only. India does not inherit the Fed/FRED result. |
+| Insider | "Are US insiders spending more money buying than selling in real open-market trades?" | US domestic issuers only; sparse data and ADR/India inapplicability are omitted. |
+
+Every available subject receives 0–100. A missing or structurally meaningless
+subject is removed and the remaining weights are rescaled. Fewer than two usable
+subjects means **abstain**. The resulting `analyst_score` is a ranking/eligibility
+input, not a promised return or a predicted price. The configured LLM may explain
+the facts, but it cannot change any subject score, weight, direction gate, or order.
+
 | Dimension | Source | What it measures |
 |---|---|---|
-| `fundamental_score` | Finnhub → Yahoo → FMP → AV (domestic US); Yahoo-only ADS basis (reviewed ADR); Yahoo (India) | **P/E vs sector norm** (`SECTOR_PE_NORM`, not an absolute band), profit margin, ROE, EPS sign, rev-growth YoY, **analyst target upside** (target vs live close / 200-DMA proxy). Cache is 1d near earnings, otherwise 7d. |
-| `technical_score` | Multi-provider completed daily candles (US and India) | RSI(14) continuous curve, EMA20/50, 20d trend, and volume confirmation. Research filters the provider-normalized series to completed regular sessions before every score/evidence/trade-plan calculation; a still-forming daily bar never enters scoring. |
-| `sentiment_score` | AV NEWS_SENTIMENT + StockTwits/GDELT fallback (US only) | Weighted US news/social bullishness. **India: structurally not applicable in the active scorer** after production showed 0/310 usable GDELT observations. Replacement headline/event evidence is shadow-only and cannot be interpreted as neutral sentiment. |
+| `fundamental_score` | Finnhub → Yahoo → FMP → AV reserve (domestic US); Yahoo-only ADS basis (reviewed ADR); Yahoo (India) | Sector-relative P/E when taxonomy maps safely, profit margin, ROE, EPS sign, and revenue growth YoY. Analyst target upside is persisted as `observational_only` and contributes no points. Cache is 1d near earnings, otherwise 7d. |
+| `technical_score` | Yahoo → Massive → EODHD → Twelve Data → AV reserve (US); Upstox → Yahoo (India), all normalized to completed daily candles | RSI(14) continuous curve, EMA20/50, 20d trend, volume confirmation, and an ATR/high-volume breakdown veto. A weak bottom-quartile close is warning-only. A still-forming daily bar never enters scoring. |
+| `sentiment_score` | StockTwits + GDELT first; AV NEWS_SENTIMENT only when both free sources are unusable (US only) | Sample-shrunk US news/social bullishness. StockTwits requires ≥5 tagged messages. When both social and news exist they blend 40%/60%. **India: structurally not applicable in the active scorer**; replacement headline/event evidence is shadow-only. |
 | `macro_score` | `macro_regime.danger_score` — **US ONLY** | Macro backdrop from MacroSentinel. **India: dimension is UNAVAILABLE and excluded — weights renormalize onto the remaining dimensions** (2026-07-16). MacroSentinel is US-only by construction (8 US FRED series) and `macro_regime` has no `market` column, so scoring an India symbol from it stamped the US Fed's verdict onto Indian equities. India research still injects a factual **FII/DII net-flow line** (`lib/india-macro.ts`, live NSE) into the thesis prompt — narrative grounding only, deliberately NOT wired into `macro_score`; a real India regime is a separate build. FII/DII is null (line omitted) when NSE geo-throttles Vercel. (2026-07-12) |
 | `insider_score` | **US:** Massive Form 4 → SEC EDGAR Form 4 → AV INSIDER_TRANSACTIONS (cascade, `resolveInsider`, first `available:true` wins). **India: none wired** — the dimension is excluded, not scored. | 90-day open-market (P/S only) buy/sell **value** ratio. India's SEBI PIT feed (`fetchNseInsider`) was evaluated as the analog on 2026-07-17 and **rejected**: 0/34 live India symbols clear the US ≥3-open-market-txn bar at 90d, and only ~30% of PIT rows are open-market at all (ESOP allotments are marked "Buy"). See the India insider block below. Its `agent_signals.insider_score` default-fills `50`, but `decision_observations.availability_mask.insider` is `false`, which is the honest record — do not read the 50 as neutral evidence. (2026-07-17) |
 
-Sub-score formulas are deterministic and **fixed** (hand-tuned priors in `lib/data/scores.ts` + `lib/data/technicals.ts`) — they are NOT agent/genome-mutable. Only the dimension **weights** evolve (champion loop). New candidate features flow through the IC-gated Feature Registry, not by editing these formulas. (2026-07-10: scored the previously-dead volume + analyst-target signals, made RSI continuous, made P/E sector-relative.)
+Sub-score formulas are deterministic and **fixed** (hand-tuned priors in `lib/data/scores.ts` + `lib/data/technicals.ts`) — they are NOT agent/genome-mutable. Only the dimension **weights** evolve through an explicitly promoted champion. New candidate features flow through the validation/registry process, not by silently editing these formulas. Volume is scored; analyst-target upside is intentionally observational-only.
 
 **Technical calibration shadow (2026-07-21):** EdgeScout now measures the exact
 `kairos_technical_score_v1` composite beside bounded `macd_atr_12_26_9` and
@@ -269,7 +294,7 @@ emits a one-time informational notice plus a warning if collection is stale >10 
 ```
 analyst_score = Σ (dimension_score × effective_weight[dimension])
 ```
-Missing/inapplicable dimensions are EXCLUDED and the remaining weights renormalized to sum to 1.0 (`lib/scoring/weighted-score.ts`); `< 2` usable dimensions → abstain (thin evidence), never a low score. Base weights: champion `weights_snapshot` → risk-profile static → `learning_priors`/`signal_weights` → default F.30/T.25/S.20/M.15/I.10.
+Missing/inapplicable dimensions are EXCLUDED and the remaining weights renormalized to sum to 1.0 (`lib/scoring/weighted-score.ts`); `< 2` usable dimensions → abstain (thin evidence), never a low score. Weight source: this market's promoted champion `weights_snapshot`; if none exists, the selected risk-profile static weights; if the profile is invalid, balanced F.30/T.25/S.20/M.15/I.10. The mandate's strategy tilt is then applied. The legacy `signal_weights` and `learning_priors` tables are not live-score fallbacks.
 
 **ETF score cap (2026-07-22):** ETFs exclude fundamental + insider dimensions; after renorm, technical carries ~62% weight. Low-volatility ETFs (SGOV, VTV, SCHD) were scoring 77–80 — above single-name equities — and the capital-rotation shadow proposed selling PLTR to buy SGOV. A hard cap of `ETF_SCORE_CAP = 65` is applied post-computation in both `lib/research-agent.ts` (main analystScore + challenger shadowScore) and `lib/scoring/archetypes.ts` (`computeArchetypeScore` for `etf_trend`). ETFs can still surface as SELL targets for held positions and can enter the book up to score 65; they cannot displace an equity candidate scoring ≥ 66.
 
@@ -297,7 +322,7 @@ Holdings lead the batch and are exempt from the candidate cap, but they are **no
 
 Each dimension outputs 0–100, clamped. Source of truth: `lib/data/scores.ts`, `lib/data/technicals.ts`.
 
-**Fundamental** (`scoreFundamentals`) — base 50; ETF → flat 55; missing OVERVIEW → 55 (low-confidence). Additive:
+**Fundamental** (`scoreFundamentals`) — base 50. At least two real fields among P/E, margin, ROE, EPS, and revenue growth are required before the dimension is marked available. The function emits a display placeholder of 55 for an ETF or missing overview, but that placeholder is excluded from the composite and is not evidence. Additive when available:
 | Field | Bands → points |
 |---|---|
 | P/E (sector-relative) | `ratio = pe / SECTOR_PE_NORM[sector]`. <0.7 → +18 · <1.0 → +8 · <1.4 → −3 · <2.0 → −12 · ≥2.0 → −22 |
@@ -305,9 +330,9 @@ Each dimension outputs 0–100, clamped. Source of truth: `lib/data/scores.ts`, 
 | ROE (TTM) | >0.20 → +15 · >0.10 → +8 · <0 → −10 |
 | EPS | >0 → +5 · ≤0 → −10 |
 | Rev growth YoY | >0.20 → +15 · >0.10 → +8 · <0 → −10 |
-| Analyst target upside `(target−price)/price` (price = live close, else 200-DMA) | >25% → +12 · >10% → +6 · <−10% → −8 |
+| Analyst target upside `(target−price)/price` | **0 points.** Stored as `analyst_target_mode='observational_only'` for audit/display only. |
 
-`SECTOR_PE_NORM`: technology 30 · communication 20 · health care 25 · consumer disc. 24 · staples 22 · industrials 20 · materials 16 · energy 12 · financials 14 · utilities 18 · real estate 30 · unknown → 20.
+`SECTOR_PE_NORM`: technology 30 · communication 20 · health care 25 · consumer disc. 24 · staples 22 · industrials 20 · materials 16 · energy 12 · financials 14 · utilities 18 · real estate 30. Missing/unmapped sector taxonomy omits the P/E component; it does **not** receive a made-up default norm. Nonpositive P/E and P/E >200 are also omitted.
 
 **Technical** (`scoreTechnicals`) — base 50; <15 candles → flat 50. Additive:
 | Signal | Contribution |
@@ -318,9 +343,9 @@ Each dimension outputs 0–100, clamped. Source of truth: `lib/data/scores.ts`, 
 | 20-day trend (±3% band) | up +10 · down −10 |
 | Volume vs 20d avg (direction-confirming) | in-direction ≥1.5× → ±8 · ≥1.2× → ±4 (direction from EMA20/trend; neutral context → 0) |
 
-**Breakdown veto** (`detectBreakdownVeto`, runs FIRST) — before the additive math, a deterministic crash/meme-reversal check caps the technical score at 20: last bar down ≥2.5 ATR, or ≤−7% on ≥1.5× volume, or a bottom-quartile close on a down bar. Fixes the case where a −12% high-volume reversal scored ~100 (RSI fell into the preferred band while price stayed above the EMAs). Uses new `computeATR14` + last-bar diagnostics on `TechnicalResult`.
+**Breakdown veto** (`detectBreakdownVeto`, runs FIRST) — before the additive math, a deterministic crash/meme-reversal check caps the technical score at 20 when the last bar is down ≥2.5 ATR, or ≤−7% on ≥1.5× volume. A bottom-quartile close on a down bar is persisted as a **warning only** and does not veto. This fixed the case where a −12% high-volume reversal scored ~100 because RSI fell into the preferred band while price remained above its EMAs.
 
-**Sentiment** (`scoreSentiment`) — bullish fraction Bayesian-shrunk toward neutral by real `stocktwits_message_count` (prior K=10): `(bullFrac·N + 0.5·K)/(N + K)`, so 1 bullish message → 55 not 100, 500 msgs @90% → 89. Falls back to AV news `(sent+1)×50`; else label (bull 65 / bear 35); else 50. Excluded from weighting unless `has_data`.
+**Sentiment** (`fetchSocialSentiment` + `scoreSentiment`) — StockTwits and GDELT are fetched first. Fewer than 5 sentiment-tagged StockTwits messages is unavailable. Each available component is shrunk toward 50: social uses neutral prior K=10; news uses K=5. If both exist, `sentiment = 0.4×social + 0.6×news`; otherwise the available component wins. AV NEWS_SENTIMENT (`(sent+1)×50`) is called only when both free sources fail. The final value is excluded unless `has_data=true`; the label fallback exists for legacy shapes but cannot make a failed current fetch available.
 
 **Macro** (`fetchMacroScore`) — **US symbols only** (India → UNAVAILABLE, excluded, weights renormalize). `100 − danger_score` from the newest `macro_regime` row that satisfies the full consumer contract above: real verdict (`regime != 'unknown'`) **and** `week_of` within `MAX_MACRO_AGE_DAYS` = 10 **and** `raw_indicators` length >= 3. Nothing qualifies → UNAVAILABLE, never a calm default. (Corrected 2026-07-17: this line previously said "looks back up to 3 weeks", contradicting the 10-day bound documented in the consumer-contract table in this same chapter — the unbounded reach-back was the 2026-07-13 prod bug, not the intended behavior.)
 
@@ -579,8 +604,10 @@ promoted `weights_snapshot` is read by ResearchAgent on its next run.
 
 **Inputs:** Broad GDELT market headlines first. Alpha Vantage NEWS_SENTIMENT is
 a cached fallback; TOP_GAINERS_LOSERS is used only when neither news source
-returns usable headlines. Candidate existence is checked through the shared US
-fundamentals resolver (Finnhub/Yahoo/FMP, with Alpha Vantage as reserve).
+returns usable headlines. Every LLM-suggested candidate must then pass a
+deterministic Yahoo US quote lookup. That lookup proves the ticker currently
+resolves to a positive market price; it deliberately does **not** fetch
+fundamentals, because discovery should not spend scarce fundamentals calls.
 
 **Key behavior:** Identifies emerging themes (e.g. `ai_infrastructure`, `clean_energy`). Adds
 at most six verified US symbols to owner-scoped `watchlist` rows tagged by theme,

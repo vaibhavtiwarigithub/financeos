@@ -70,6 +70,21 @@ Every meaningful change follows this sequence:
    approved deviation rather than silently editing history.
 6. Verify the rendered diagram and architecture drift tests before shipping.
 
+For a scoring-dimension change, "update the architecture" specifically means all
+of the following must agree with production code in the same commit:
+
+- plain-English meaning: what question the dimension is trying to answer;
+- source order, market applicability, freshness, and fallback behavior;
+- exact formula, constants, thresholds, clamps, and any veto/cap;
+- missing-data behavior and whether the dimension is excluded or merely displayed;
+- whether the value can affect eligibility, sizing, exits, learning, or only explanation.
+
+The definitive home for those facts is `docs/arch/03-agents.md` under
+ResearchAgent. Provider mechanics belong in chapter 02, persisted fields in chapter
+04, and money-path consequences in chapter 08. A feature document may explain why
+a change was proposed, but it must not become the only place where the active
+formula is documented.
+
 Changes to a money path additionally require the applicable risk chapter, schema
 chapter (when persistence changes), migration verification, and an explicit
 fail-closed review. A feature is not complete merely because code compiles.
