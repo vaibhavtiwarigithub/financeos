@@ -44,6 +44,19 @@ proximity z-scores. It makes no provider call, changes no score or threshold, an
 recorded as `edge_relative_strength` with its exact input provenance. India remains
 unchanged because an equivalent candidate contract has not been verified.
 
+**2026-08-01 Journal refinement:** the Miss Review surface exposes the persisted
+admission metrics (and only those metrics) for an EdgeScout-admitted symbol. It must
+label them as research-admission provenance, never score contribution, prediction, or
+trade rationale. This adds no provider call and has no reader on any money path.
+
+**Earnings/revision admission remains blocked:** the current free earnings capture
+correctly preserves first-observed actuals and pre-announcement consensus vintages,
+but does not carry a provider-confirmed common EPS basis. Observed pairs can therefore
+be incomparable. Do not rank or admit candidates from `actual / consensus` until the
+capture contract records comparable basis, currency, fiscal period, and availability
+for both values, then passes a separate point-in-time review. The existing calendar
+and repricing safety readers remain unchanged.
+
 ## 1. Problem Statement
 
 Recent US production evidence shows that the system did research MSFT and MU but did

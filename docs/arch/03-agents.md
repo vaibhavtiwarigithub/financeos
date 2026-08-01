@@ -291,6 +291,10 @@ provenance, never added to `analyst_score`, thresholds, sizing, exits, or orders
 usual deterministic scoring and portfolio gates remain authoritative. India is not
 included until an equivalent candidate contract is verified.
 
+The Research Journal renders those immutable admission measurements beside the decision
+as **Admission evidence**. They explain why the candidate was researched, not why a
+trade was eligible; the canonical score and downstream terminal state remain separate.
+
 **Calibration readiness monitor (2026-07-21):** A weekly deterministic monitor
 collapses same-window provider revisions, counts only market-wide windows at least
 five calendar days apart, and publishes progress per edge/market/horizon. Six stable

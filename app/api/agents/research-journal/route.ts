@@ -12,6 +12,7 @@ import {
   reconstructAccountLivePositions,
 } from "@/lib/trading/live-position-ledger";
 import { JOURNAL_ALL_DATES_LIMIT, normalizeJournalSymbol } from "@/lib/research/journal-controls";
+import { discoveryProvenanceItems, discoverySelectionReason } from "@/lib/research/discovery-provenance";
 
 export const dynamic = "force-dynamic";
 
@@ -322,11 +323,10 @@ export async function GET(req: NextRequest) {
     const weakDimensions = DIMS.filter(dim => dimensions[dim].state === "ok" && Number(dimensions[dim].score) < 50);
     const screener = obs.features?.screener ?? null;
     const discoverySource = obs.discovery_source ?? signal?.source ?? null;
+    const discovery = obs.features?.discovery ?? null;
     const selectionReason = screener
       ? `Screened into ${screener.bucket}: ${(screener.criteria_matched ?? []).join(", ") || "bucket criteria matched"}.`
-      : packet?.is_held_position ? "Existing holding was reassessed as part of portfolio monitoring."
-      : discoverySource ? `Entered research from ${String(discoverySource).replaceAll("_", " ")}.`
-      : "Research provenance was not recorded for this historical observation.";
+      : discoverySelectionReason(discoverySource, Boolean(packet?.is_held_position));
     const events = eventsBySignal.get(obs.signal_id) ?? [];
     const history = (historyBySymbol.get(obs.symbol) ?? []).filter(row =>
       row.ts < obs.ts || (row.ts === obs.ts && Number(row.id) <= Number(obs.id))
@@ -476,7 +476,12 @@ export async function GET(req: NextRequest) {
           : "Wait for the failed evidence or direction gate to improve before considering an entry.",
       },
       external_links: externalLinks(obs.symbol, market, assetType),
-      selection: { source: discoverySource, reason: selectionReason, screener },
+      selection: {
+        source: discoverySource,
+        reason: selectionReason,
+        screener,
+        provenance: discoveryProvenanceItems(discoverySource, discovery),
+      },
       thesis: {
         summary: thesisSummary,
         catalysts: Array.isArray(packet?.catalysts) ? packet.catalysts : [],

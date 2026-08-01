@@ -189,6 +189,10 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
                 <div style={{ fontSize: "12px", color: T.textSub, lineHeight: 1.5 }}><span style={{ color: T.green }}>STRONGEST EVIDENCE</span><br />{s.novice.strongest_evidence}</div>
                 <div style={{ fontSize: "12px", color: T.textSub, lineHeight: 1.5 }}><span style={{ color: T.red }}>MAIN GAP / RISK</span><br />{s.novice.main_risk}</div>
               </div>
+              {s.selection.provenance?.length > 0 && <div style={{ marginTop: "10px", display: "flex", gap: "7px", flexWrap: "wrap", alignItems: "center" }}>
+                <span style={{ color: T.muted, fontSize: "10px", letterSpacing: ".08em", textTransform: "uppercase" }}>Admission evidence</span>
+                {s.selection.provenance.map((item: any) => <span key={item.label} style={{ color: T.textSub, fontSize: "10px", border: `1px solid ${T.blue}44`, padding: "4px 7px", borderRadius: "6px" }}>{item.label}: <b style={{ color: T.blue }}>{item.value}</b></span>)}
+              </div>}
               <div style={{ marginTop: "10px", color: T.textSub, fontSize: "12px" }}><b style={{ color: T.text }}>Next:</b> {s.novice.next_step}</div>
             </button>
 
