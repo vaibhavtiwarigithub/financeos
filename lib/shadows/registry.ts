@@ -126,10 +126,10 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     productBenefit: "Prevents indicator changes from being made because they sound plausible rather than because they improve ranking.",
     traderBenefit: "May identify a more robust entry/exit timing feature by market without hand-tuning every sector.",
     evidenceSource: "edge_signals + edge_ic_history + edge_readiness_status",
-    currentInfluence: "Measure-only EdgeScout and weekly IC diagnostics.",
+    currentInfluence: "Calibration remains measure-only; fresh US relative-strength rows may admit up to four candidates, then normal scoring and portfolio gates decide eligibility.",
     maximumInfluence: "A validated feature may request shadow review; it still cannot self-promote.",
     activationGate: "Six stable weekly windows plus four point-in-time, cost/FDR-adjusted validation windows.",
-    safetyBoundary: "Edge readiness is advisory and cannot score, size, promote or trade.",
+    safetyBoundary: "Edge values cannot change score, size, promotion, exits, or orders; candidate admission is bounded, US-only, and provenance-recorded.",
     cronJobs: [
       "kairos-edge-scout-us", "kairos-edge-scout-india",
       "kairos-edge-ic-us", "kairos-edge-ic-india", "kairos-edge-readiness",

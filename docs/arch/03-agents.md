@@ -48,6 +48,7 @@ arrows exist.
 | `agent_signals` | ResearchAgent, DeepSeekAgent | PaperTrader, TraderAgent, Dashboard |
 | `signal_score_history` | ResearchAgent | ResearchAgent (trend), Dashboard charts |
 | `decision_observations` | ResearchAgent | LearnerAgent, Validation Engine, PerformanceTruth |
+| `edge_signals` | EdgeScout | ResearchAgent (**US candidate admission only**; fresh relative-strength provenance only), EdgeIC, Edge dashboard |
 | `paper_positions` | PaperTrader | PositionMonitor, LearnerAgent, Dashboard |
 | `paper_trades` | PaperTrader, PositionMonitor | LearnerAgent, MentorAgent, PerformanceTruth, **lane-comparison API** (closed trades → strategy lane NAV curves + Monte Carlo) |
 | `strategy_versions` | LearnerAgent, User | ResearchAgent, Dashboard |
@@ -281,6 +282,14 @@ and emits market-wide plus sufficiently broad sector diagnostic rows from the sa
 already-fetched candles. This is measure-only: it does not add MACD/ADX to the
 score, create sector-specific parameters, or change any agent decision. Formula,
 dataset, segment, and run fingerprints preserve later recalibration history.
+
+**US relative-strength discovery (2026-08-01):** ResearchAgent may read a fresh
+completed-session EdgeScout snapshot to add at most four non-ETF US symbols to its
+candidate batch when both six-month relative strength and 52-week-high proximity are
+positive within that snapshot. This is *admission only*: the edge values are stored as
+provenance, never added to `analyst_score`, thresholds, sizing, exits, or orders. The
+usual deterministic scoring and portfolio gates remain authoritative. India is not
+included until an equivalent candidate contract is verified.
 
 **Calibration readiness monitor (2026-07-21):** A weekly deterministic monitor
 collapses same-window provider revisions, counts only market-wide windows at least

@@ -8,9 +8,14 @@ import { liquidUniverse } from "@/lib/edges/universe";
 import type { Market } from "@/lib/edges/types";
 import { edgeHealthKey, inputFingerprint, provenanceMode, universeFingerprint } from "@/lib/edges/evidence";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { rotatingLiquidOffset } from "@/lib/research/relative-strength-discovery";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
+
+// EdgeScout writes only edge tables. Its calibration remains measure-only; the
+// bounded ResearchAgent relative-strength reader may use fresh rows for batch
+// admission only and can never use them as score, sizing, or order inputs.
 
 // EdgeScout — deterministic price/volume edge computation. MEASURE-ONLY (P0).
 //
@@ -101,7 +106,8 @@ export async function POST(req: NextRequest) {
     const to = url.searchParams.get("to");
     const maxDays = Math.max(1, Math.min(MAX_DAYS_CAP, Number(url.searchParams.get("maxDays") ?? 5) || 5));
     const universeMode = url.searchParams.get("universe") === "liquid" ? "liquid" : "watchlist";
-    const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
+    const hasRequestedOffset = url.searchParams.has("offset");
+    const requestedOffset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
     const historyDays = url.searchParams.get("historyDays") ? Math.max(120, Math.min(1600, Number(url.searchParams.get("historyDays")))) : undefined;
     markets = marketParam === "us" ? ["us"] : marketParam === "india" ? ["india"] : ["us", "india"];
 
@@ -116,8 +122,13 @@ export async function POST(req: NextRequest) {
 
     const results: Record<string, any> = {};
     for (const market of markets) {
-      const { symbols, source } = await buildUniverse(svc, market, maxSymbols, universeMode, offset);
       const runDate = new Date().toISOString().slice(0, 10);
+      // Rotate bounded liquid-universe pages across sessions. This is current
+      // discovery coverage only; it is never treated as a historical PIT universe.
+      const offset = universeMode === "liquid" && !hasRequestedOffset
+        ? rotatingLiquidOffset(market, maxSymbols, new Date(`${runDate}T00:00:00Z`))
+        : requestedOffset;
+      const { symbols, source } = await buildUniverse(svc, market, maxSymbols, universeMode, offset);
       const universeId = `${market}:${universeMode}:${runDate}:${universeFingerprint(market, symbols)}`;
 
       if (symbols.length) {
@@ -182,7 +193,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      results[market] = { universeId, universeSize: symbols.length, universeSource: source, signalsWritten, inputsWritten, providerReport: report };
+      results[market] = { universeId, universeSize: symbols.length, universeSource: source, offset, signalsWritten, inputsWritten, providerReport: report };
       if (report.rows === 0) {
         await reportIssue({
           issueKey: edgeHealthKey("scout", market), severity: "warn", category: "data",

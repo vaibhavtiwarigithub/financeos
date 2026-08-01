@@ -35,6 +35,15 @@ classification metadata**, while sizing activation, intraday exits, leveraged-pa
 entries, and live protective orders remain deliberately blocked by evidence or a
 separate owner approval.
 
+**2026-08-01 implementation:** the US relative-strength candidate bucket now reuses
+fresh, completed-session `edge_signals` already collected by EdgeScout. Its existing
+bounded US post-close run rotates through the current liquid universe rather than only
+the watchlist. It admits at
+most four non-ETF symbols with positive six-month relative-strength and 52-week-high
+proximity z-scores. It makes no provider call, changes no score or threshold, and is
+recorded as `edge_relative_strength` with its exact input provenance. India remains
+unchanged because an equivalent candidate contract has not been verified.
+
 ## 1. Problem Statement
 
 Recent US production evidence shows that the system did research MSFT and MU but did
@@ -119,6 +128,11 @@ equivalents only where point-in-time data coverage exists:
 | Earnings / revisions | Known earnings result, surprise/guidance/revision evidence and `available_at` | Shadow / candidate only |
 | Relative strength / breakout | Liquid point-in-time universe, completed-session price/volume, sector and benchmark-relative ranks | Shadow / candidate only |
 | Quality acceleration | Existing fundamentals screen, but batched/cache-backed and ranked by acceleration rather than only value | Candidate only |
+
+The first row shipped is the **US candidate-only** relative-strength half. It uses
+the current EdgeScout universe and is explicitly not an alpha claim or a point-in-time
+historical backtest universe. The canonical score and every portfolio gate remain the
+sole determinant of a trade.
 
 Rules:
 - Each bucket produces a bounded daily snapshot (for example, 10 names), expires in

@@ -18,6 +18,9 @@
 > ResearchAgent batch before scoring. It deliberately does not store a score,
 > eligibility, position, P&L, or order state: those remain in their canonical
 > ledgers. No scoring, paper, live, or broker path reads it.
+> Migration `20260801130000_add_edge_relative_strength_discovery_source.sql` adds
+> `edge_relative_strength` as a permitted admission source only; no table shape,
+> RLS policy, or money-path behavior changes.
 >
 > Update this file when: any migration adds, removes, or modifies a table, column, index, trigger, or RLS policy.
 > Latest schema addition: migration `20260716013000_mandate_capacity_and_score_freshness.sql` adds per-market paper capacity and score-evidence age policy and hardens the fill RPC against caller-side cap loosening.

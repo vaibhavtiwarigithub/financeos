@@ -18,6 +18,7 @@ import type { Market } from "@/lib/evidence/contracts";
 import { resolveSignalDirection } from "@/lib/signal-direction";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { readDeferredCandidates, applyCandidateCarryForward } from "@/lib/research-queue";
+import { fetchRelativeStrengthCandidates, type RelativeStrengthDiscoveryContext } from "@/lib/research/relative-strength-discovery";
 import { ETF_SCORE_CAP, routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
 import { classifyInstrument, persistInstrumentClassification } from "@/lib/scoring/instrument-registry";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
@@ -213,6 +214,7 @@ export type DiscoverySource =
   | "region_etf"      // region ETF added for non-US market focus
   | "india_holding"   // live Kite India position
   | "india_screener"  // india_screen_cache candidate
+  | "edge_relative_strength" // completed-session EdgeScout candidate; admission only
   | "manual";         // manualOverride caller (e.g. ad-hoc research run)
 
 export type SymbolEntry = {
@@ -223,6 +225,7 @@ export type SymbolEntry = {
   fundamentalMaxAgeDays?: number;
   screenerBucket?: "momentum" | "value"; // which dual-bucket screener flagged this (Research Journal)
   discovery_source?: DiscoverySource;    // how this symbol entered the research batch
+  discoveryContext?: RelativeStrengthDiscoveryContext; // provenance only; never a score input
 };
 
 export function classifyResearchAssetClass(symbol: string): "india" | "metal" | "etf" | "adr" | "us_equity" {
@@ -549,12 +552,13 @@ export async function gatherSymbols(
   // an expired Theme Scout pick kept getting re-researched
   // forever instead of retiring, since only the Watchlist UI page enforced it.
   const nowIso = new Date().toISOString();
-  const [holdings, watchlistResult, screenerSymbols, profileResult] = await Promise.all([
+  const [holdings, watchlistResult, screenerSymbols, relativeStrengthCandidates, profileResult] = await Promise.all([
     includeUs ? fetchHoldings(supabase) : Promise.resolve([]),
     supabase.from("watchlist").select("symbol, source, market, created_at")
       .eq("research_enabled", true)
       .or(`expires_at.is.null,expires_at.gt.${nowIso}`),
     includeUs ? runScreener(supabase) : Promise.resolve([]),
+    includeUs ? fetchRelativeStrengthCandidates(supabase, Number.parseInt(process.env.RESEARCH_EDGE_DISCOVERY_MAX ?? "4", 10)) : Promise.resolve([]),
     supabase.from("profiles").select("market_focus").limit(1).single(),
   ]);
 
@@ -610,6 +614,23 @@ export async function gatherSymbols(
     if (holdingSet.has(sym) || candidateMap.has(sym) || screenerAdded >= screenerMax) continue;
     candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: false, assetClass: classifyResearchAssetClass(sym), screenerBucket: bucket, discovery_source: bucket === "momentum" ? "screener_momentum" : "screener_value" });
     screenerAdded++;
+  }
+
+  // Deterministic price/volume discovery. EdgeScout is completed-session,
+  // persisted evidence; this is candidate admission only, not an analyst-score
+  // input. It follows manual, deferred, watchlist, and fundamentals screens so
+  // it cannot crowd out explicit owner intent or recovery work.
+  for (const candidate of relativeStrengthCandidates) {
+    const sym = candidate.symbol;
+    if (holdingSet.has(sym) || candidateMap.has(sym) || isEtfSymbol(sym)) continue;
+    candidateMap.set(sym, {
+      symbol: sym,
+      isHeld: false,
+      isEtf: false,
+      assetClass: classifyResearchAssetClass(sym),
+      discovery_source: "edge_relative_strength",
+      discoveryContext: candidate.context,
+    });
   }
 
   // Cap selected candidates per run. Safe to keep high (40) now that the cron
@@ -2019,6 +2040,9 @@ export async function processSymbol(
     const screener = entry.screenerBucket
       ? { bucket: entry.screenerBucket, criteria_matched: BUCKET_CRITERIA[entry.screenerBucket] }
       : undefined;
+    const discovery = entry.discoveryContext
+      ? { source: entry.discovery_source, ...entry.discoveryContext }
+      : undefined;
     // Phase 3: log (never score with) any 'active' feature_registry formula's
     // value for this decision. Building the IC track record that would justify
     // eventually promoting a feature into the real weighting formula is a
@@ -2073,7 +2097,7 @@ export async function processSymbol(
           review_status: "observe",
           new_entry_allowed: false,
         },
-        ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}),
+        ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}), ...(discovery ? { discovery } : {}),
         weighting: { renormalized, included_dims: includedDims, base_weights: weightOf, applied_weights: effWeights },
         trading_mandate: tradingMandate,
         trade_plan: tradePlan,
@@ -2160,7 +2184,7 @@ export async function processSymbol(
                   : `Abstained: score passed but direction was ${signalDirection}; score alone cannot authorize entry`,
           detail: {
             analyst_score: analystScore, score_threshold: scoreThreshold ?? 60,
-            direction: signalDirection, screener, included_dimensions: includedDims,
+            direction: signalDirection, screener, discovery, included_dimensions: includedDims,
             thin_evidence: thinEvidence, thesis_parse_failed: llmParseFailed,
             earnings_repricing: earningsRepricing,
           },
