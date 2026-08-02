@@ -2043,16 +2043,16 @@ export async function processSymbol(
     const discovery = entry.discoveryContext
       ? { source: entry.discovery_source, ...entry.discoveryContext }
       : undefined;
-    // Phase 3: log (never score with) any 'active' feature_registry formula's
-    // value for this decision. Building the IC track record that would justify
+    // Log (never score with) each measure-only feature_registry formula's value
+    // for this decision. Building the IC track record that would justify
     // eventually promoting a feature into the real weighting formula is a
     // separate, evidence-gated decision — not this one. Fail-soft: an invalid
     // formula or DB miss must never block the actual research decision.
-    let activeFeatureValues: Record<string, number | null> | undefined;
+    let measuredFeatureValues: Record<string, number | null> | undefined;
     try {
-      const { data: activeFeatures } = await supabase.from("feature_registry")
-        .select("name, spec").eq("status", "active");
-      if (activeFeatures?.length) {
+      const { data: measuredFeatures } = await supabase.from("feature_registry")
+        .select("name, spec").eq("status", "measure_only");
+      if (measuredFeatures?.length) {
         const ctxValues: Record<string, number> = {
           fundamental_score: scores.fundamental_score, technical_score: scores.technical_score,
           sentiment_score: scores.sentiment_score, macro_score: scores.macro_score, insider_score: scores.insider_score,
@@ -2062,11 +2062,11 @@ export async function processSymbol(
             if (typeof v === "number") ctxValues[`${dim}.${k}`] = v;
           }
         }
-        activeFeatureValues = {};
-        for (const feat of activeFeatures as any[]) {
+        measuredFeatureValues = {};
+        for (const feat of measuredFeatures as any[]) {
           try {
-            activeFeatureValues[feat.name] = evaluateFeature(feat.spec?.formula ?? "", { values: ctxValues });
-          } catch { activeFeatureValues[feat.name] = null; }
+            measuredFeatureValues[feat.name] = evaluateFeature(feat.spec?.formula ?? "", { values: ctxValues });
+          } catch { measuredFeatureValues[feat.name] = null; }
         }
       }
     } catch { /* feature_registry may not exist pre-064 — never block research */ }
@@ -2101,7 +2101,7 @@ export async function processSymbol(
         weighting: { renormalized, included_dims: includedDims, base_weights: weightOf, applied_weights: effWeights },
         trading_mandate: tradingMandate,
         trade_plan: tradePlan,
-        ...(activeFeatureValues ? { active_feature_values: activeFeatureValues } : {}),
+        ...(measuredFeatureValues ? { measured_feature_values: measuredFeatureValues } : {}),
         // Analyst consensus (Finnhub) — LOGGED evidence for the learner to grade,
         // not fed into the live weighted score yet (see fetch site).
         ...(analystResult?.available ? { analyst: { score: analystResult.score, ...analystResult.evidence } } : {}),

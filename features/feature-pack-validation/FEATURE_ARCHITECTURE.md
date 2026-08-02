@@ -1,6 +1,7 @@
 # Feature-Pack Validation Architecture
 
-> Status: P0 BUILT (catalog and audit surfaces); P1-P5 remain design-gated.
+> Status: P0 built; P1 technical measurement already collecting; feature-registry
+> lifecycle hardened to measure-only. P2-P5 remain design-gated.
 >
 > Date: 2026-08-02
 > Owner decision required before P1 or any feature can influence a decision.
@@ -10,6 +11,13 @@
 > It has no data fetcher and no score, signal, paper, live, exit, sizing, broker
 > or feature-registry writer. Strategy templates are explicitly reference/manual
 > tools until a later bounded shadow compiler accepts their supported rules.
+>
+> Governance correction (2026-08-02): the legacy registry had an automatic
+> `quarantined -> active` transition after a small IC screen. `active` was only
+> an observational logger in current code, but its name contradicted the
+> architecture and invited misuse. The lifecycle is now
+> `proposed -> quarantined -> measure_only -> retired`; legacy rows migrate to
+> `measure_only`. This changes no scoring or trade behavior.
 
 ## 1. Decision
 

@@ -5,13 +5,14 @@ import { evaluateFeature, validateFeatureInputs } from "@/lib/validation/feature
 import { computeSpearmanIC, passesPromotionRule, shouldRetire, type ICResult } from "@/lib/validation/feature-check";
 import { walkForwardFolds, loadLabeledDataset, type LabeledObservation } from "@/lib/learning/dataset";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { featureRegistryTransitionReason, nextFeatureRegistryStatus, type FeatureRegistryStatus } from "@/lib/feature-packs/lifecycle";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// Phase 3 learning-core: nightly-ish job that moves feature_registry rows
-// through proposed -> quarantined -> active -> retired based on rolling
-// out-of-sample Spearman IC vs benchmark_neutral_return. Never executes
+// The registry is an observational lifecycle: proposed -> quarantined ->
+// measure_only -> retired. Passing IC evidence never turns a formula into a
+// score input; strategy promotion is separately owner-gated. Never executes
 // arbitrary code — evaluateFeature only interprets the whitelisted grammar.
 export async function POST(req: NextRequest) {
   const isCron = verifyCronSecret(req);
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
   const markets: ("us" | "india")[] = ["us", "india"];
   const results: Record<string, any> = {};
 
-  const { data: features } = await supabase.from("feature_registry").select("*").in("status", ["proposed", "quarantined", "active"]);
+  const { data: features } = await supabase.from("feature_registry").select("*").in("status", ["proposed", "quarantined", "measure_only"]);
   if (!features?.length) return NextResponse.json({ success: true, checked: 0 });
 
   for (const feature of features as any[]) {
@@ -60,12 +61,12 @@ export async function POST(req: NextRequest) {
     }
 
     const icHistory: number[] = [...(feature.ic_history ?? []), ...foldICs.map(f => f.ic)].slice(-30);
-    let newStatus = feature.status;
-    if (feature.status === "active" && shouldRetire(icHistory)) {
-      newStatus = "retired";
-    } else if ((feature.status === "proposed" || feature.status === "quarantined") && passesPromotionRule(foldICs)) {
-      newStatus = feature.status === "proposed" ? "quarantined" : "active";
-    }
+    const currentStatus = feature.status as FeatureRegistryStatus;
+    const newStatus = nextFeatureRegistryStatus(
+      currentStatus,
+      passesPromotionRule(foldICs),
+      shouldRetire(icHistory),
+    );
 
     await supabase.from("feature_registry").update({
       status: newStatus, ic_history: icHistory, updated_at: new Date().toISOString(),
@@ -73,7 +74,7 @@ export async function POST(req: NextRequest) {
     if (newStatus !== feature.status) {
       await supabase.from("feature_registry_history").insert({
         feature_id: feature.id, from_status: feature.status, to_status: newStatus,
-        reason: newStatus === "retired" ? "rolling IC decayed below retirement threshold" : `IC promotion rule passed (${foldICs.length} folds)`,
+        reason: featureRegistryTransitionReason(currentStatus, newStatus, foldICs.length),
       }).then(() => {}, () => {});
     }
     results[feature.name] = { status: newStatus, folds: foldICs };

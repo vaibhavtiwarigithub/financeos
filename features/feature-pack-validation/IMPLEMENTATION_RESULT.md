@@ -27,6 +27,19 @@
   P4 paper champion, and P5 specialist packs remain governed by the architecture
   and their existing feature specifications.
 
+## Follow-up governance hardening (2026-08-02)
+
+- Replaced the legacy automatic `active` status with `measure_only`. The database
+  migration renames legacy rows and the weekly evaluator can no longer create a
+  score-eligible lifecycle state.
+- Research evidence now writes `measured_feature_values`, an explicit
+  observation-only payload. No current reader uses it for score, eligibility,
+  sizing, paper/live proposals, exits, or broker execution.
+- The existing EdgeScout/EdgeIC technical trial family remains the P1 source of
+  truth. P2 needs source-qualified market-local reported facts, P3 needs the
+  sealed walk-forward gate, P4 remains disabled, and P5 needs specialist data
+  contracts; none are represented as completed functionality.
+
 ## Verification
 
 - `npx vitest run tests/feature-pack-catalog.test.ts tests/research-journal-controls.test.ts tests/scoring-evidence-contract.test.ts`

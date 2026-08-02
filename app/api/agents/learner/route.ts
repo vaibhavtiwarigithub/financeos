@@ -705,7 +705,7 @@ export async function POST(req: NextRequest) {
 
             return JSON.stringify({
               feature_created: true, feature_id: (row as any).id, name,
-              note: "Status 'proposed' — the feature-check job will test its out-of-sample IC before it can ever influence scoring. It does NOT affect analyst_score until it reaches 'active'.",
+              note: "Status 'proposed' — the feature-check job may advance it to measure-only after bounded IC screens. It never affects analyst_score, eligibility, sizing, paper, live, exits, or broker orders.",
             });
           }
 
