@@ -1,10 +1,15 @@
 # Feature-Pack Validation Architecture
 
-> Status: DRAFT - design only; no scoring, paper, live, execution, or broker
-> behavior changes.
+> Status: P0 BUILT (catalog and audit surfaces); P1-P5 remain design-gated.
 >
 > Date: 2026-08-02
-> Owner decision required before P0 implementation.
+> Owner decision required before P1 or any feature can influence a decision.
+
+> P0 result (2026-08-02): `lib/feature-packs/catalog.ts` is the typed
+> applicability/status read model used by Research Journal and Strategy Library.
+> It has no data fetcher and no score, signal, paper, live, exit, sizing, broker
+> or feature-registry writer. Strategy templates are explicitly reference/manual
+> tools until a later bounded shadow compiler accepts their supported rules.
 
 ## 1. Decision
 

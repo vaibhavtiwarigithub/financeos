@@ -3,11 +3,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import PageHeader from "./PageHeader";
 import { ALGO_STRATEGIES, type AlgoStrategy } from "@/lib/strategy-definitions";
+import { strategySupport } from "@/lib/feature-packs/catalog";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
   text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280",
-  accent: "#6366F1", green: "#34D399", amber: "#FBBF24", red: "#F87171",
+  accent: "#6366F1", green: "#34D399", amber: "#FBBF24", red: "#F87171", blue: "#60A5FA",
   greenBg: "#052E16", amberBg: "#2D1B00",
 };
 
@@ -59,6 +60,7 @@ function StrategyCard({ strategy, onScan }: { strategy: AlgoStrategy; onScan: (i
   }
 
   const wr = strategy.typical;
+  const support = strategySupport(strategy);
 
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", overflow: "hidden" }}>
@@ -149,6 +151,16 @@ function StrategyCard({ strategy, onScan }: { strategy: AlgoStrategy; onScan: (i
             <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>{strategy.kelly_note}</div>
           </div>
 
+          <div style={{ background: T.amberBg, border: `1px solid ${T.amber}44`, borderRadius: "8px", padding: "10px 14px", marginBottom: "14px" }}>
+            <div style={{ fontSize: "10px", color: T.amber, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "5px" }}>Kairos use</div>
+            <div style={{ fontSize: "12px", color: T.sub, lineHeight: 1.5 }}>
+              Reference template only. It does not select, score, buy, sell, size, or promote trades automatically.
+            </div>
+            {support.scannerSupported.length > 0 && <div style={{ fontSize: "11px", color: T.sub, marginTop: "6px" }}>Manual Scanner can evaluate: {support.scannerSupported.join(", ")}.</div>}
+            {support.shadowOnly.length > 0 && <div style={{ fontSize: "11px", color: T.blue, marginTop: "4px" }}>Shadow evidence required before use: {support.shadowOnly.join(", ")}.</div>}
+            {support.unsupported.length > 0 && <div style={{ fontSize: "11px", color: T.red, marginTop: "4px" }}>Not evaluated by the Scanner: {support.unsupported.join(", ")}.</div>}
+          </div>
+
           {/* Backtest defaults */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: "6px", marginBottom: "16px" }}>
             {Object.entries(strategy.backtest_defaults).map(([k, v]) => (
@@ -164,13 +176,13 @@ function StrategyCard({ strategy, onScan }: { strategy: AlgoStrategy; onScan: (i
               onClick={() => onScan(strategy.id)}
               style={{ flex: 1, padding: "10px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
             >
-              ⟐ Find Candidates
+              Open Manual Scan
             </button>
             <button
               onClick={goBacktest}
               style={{ flex: 1, padding: "10px", background: T.accent, border: "none", borderRadius: "8px", color: "#fff", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
             >
-              ⏮ Backtest
+              Open Manual Backtest
             </button>
           </div>
         </div>
@@ -190,14 +202,13 @@ export default function StrategyLibraryPage() {
     <div>
       <PageHeader
         title="Strategy Library"
-        subtitle="8 pre-defined algo strategies — conditions, edge explanation, typical Sharpe, failure modes"
+        subtitle="Reference templates with conditions, evidence status and manual research tools"
         cadence="as-needed"
-        whatItDoes="Encyclopedic reference for 8 core algo trading strategies. Each shows the regime it works in, why the edge exists (academic citations), typical win rate and Sharpe range, failure modes, and pre-loaded backtest parameters. Click 'Find Candidates' to scan for symbols that match the strategy conditions. Click 'Backtest' to pre-fill the backtest page with optimal params for that strategy."
+        whatItDoes="Reference library for strategy hypotheses. It shows conditions, failure modes and manual Scanner/Backtest shortcuts. These templates are not active agents and cannot change ResearchAgent, PaperTrader, PositionMonitor or any broker path until a bounded market-local shadow is validated."
         whatToLookFor={[
-          "Match strategy to current macro regime — Momentum in bull, Mean Reversion in high-VIX, Value in late cycle.",
-          "Sharpe < 0.5 in typical range = strategy needs combination with other signals to be viable.",
-          "Failure modes tell you WHEN to stop using a strategy — as important as when to use it.",
-          "Edge explanation = the academic or behavioral reason the alpha exists. If you can't explain it, don't trade it.",
+          "Use the Kairos use panel to distinguish manual Scanner support from shadow-only and unsupported conditions.",
+          "The displayed ranges are reference material, not Kairos performance or a promise of expected return.",
+          "A template becomes eligible for comparison only through the bounded Strategy Portfolio Lab shadow lifecycle.",
         ]}
       />
 

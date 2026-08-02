@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMarket } from "@/lib/market-context";
+import { featureAuditForInstrument } from "@/lib/feature-packs/catalog";
 
 const T = {
   surface: "#13151C", card: "#1A1D27", border: "#252836", text: "#ECEDEF",
@@ -164,6 +165,10 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
           const open = expanded.has(rowKey);
           const terminal = terminalBadge(s.terminal);
           const ac = actionColor(s.novice.action);
+          const featureAudit = featureAuditForInstrument({
+            assetClass: s.identity.asset_type,
+            instrumentKind: s.identity.instrument_kind,
+          });
           return <article key={rowKey} style={{ background: T.card, border: `1px solid ${open ? T.accent + "77" : T.border}`, borderRadius: "12px", overflow: "hidden", boxShadow: open ? "0 18px 44px rgba(0,0,0,.22)" : "none" }}>
             <button type="button" aria-expanded={open} onClick={() => toggle(rowKey)} style={{ width: "100%", background: "transparent", border: 0, color: T.text, padding: "16px", cursor: "pointer", textAlign: "left" }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: "14px", alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -309,6 +314,21 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
                     {item.summary && <div style={{ color: T.textSub, fontSize: "11px", lineHeight: 1.45, marginTop: "3px" }}>{item.summary}</div>}
                   </div>) : <div style={{ color: T.muted, fontSize: "11px", lineHeight: 1.5 }}>{contexts[s.symbol].message}</div>}
                   {contexts[s.symbol].provider && <div style={{ color: T.muted, fontSize: "9px", marginTop: "7px" }}>Provider: {contexts[s.symbol].provider} · fetched {formatDate(contexts[s.symbol].fetched_at)}</div>}
+                </div>}
+              </section>
+
+              <section style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "9px", padding: "12px", marginBottom: "14px" }}>
+                <div style={{ color: T.muted, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: "6px" }}>Feature applicability · {featureAudit.family.replaceAll("_", " ")}</div>
+                <div style={{ color: T.textSub, fontSize: "11px", lineHeight: 1.55 }}>
+                  <span style={{ color: T.green, fontWeight: 700 }}>Current v1 facts:</span>{" "}
+                  {featureAudit.active.map(feature => feature.label).join(", ") || "No specialized v1 pack applies."}
+                </div>
+                {featureAudit.measured.length > 0 && <div style={{ color: T.blue, fontSize: "11px", lineHeight: 1.55, marginTop: "4px" }}>
+                  <span style={{ fontWeight: 700 }}>Measured only:</span>{" "}
+                  {featureAudit.measured.map(feature => feature.label).join(", ")}. These did not affect this decision.
+                </div>}
+                {featureAudit.inapplicable.length > 0 && <div style={{ color: T.muted, fontSize: "10px", lineHeight: 1.5, marginTop: "4px" }}>
+                  Inapplicable here: {featureAudit.inapplicable.map(feature => feature.label).join(", ")}.
                 </div>}
               </section>
 
