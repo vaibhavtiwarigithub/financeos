@@ -1,6 +1,6 @@
 # Kairos Architecture Portal
 
-> Last updated: 2026-07-31
+> Last reviewed: 2026-08-02 (current through `6d14af12`)
 > Purpose: the stable entry point to Kairos architecture. It explains where truth
 > lives; it does not duplicate the implementation detail held by the documents it links.
 
@@ -69,6 +69,12 @@ Every meaningful change follows this sequence:
 5. Add an implementation result when a feature architecture is shipped; record an
    approved deviation rather than silently editing history.
 6. Verify the rendered diagram and architecture drift tests before shipping.
+
+The top-level overview and index are not rewritten for every implementation detail.
+They are updated when the reading path, system orientation, or documentation ownership
+changes. The owning chapter and feature implementation result are mandatory whenever a
+change affects their contract. A completed `WORK_LOG.md` entry is not evidence that a
+feature shipped until those required records and production migration state agree.
 
 For a scoring-dimension change, "update the architecture" specifically means all
 of the following must agree with production code in the same commit:

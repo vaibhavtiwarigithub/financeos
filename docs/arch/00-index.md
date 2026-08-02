@@ -1,6 +1,6 @@
 # Kairos Architecture Chapter Index
 
-> Last updated: 2026-07-31
+> Last reviewed: 2026-08-02 (current through `6d14af12`)
 
 This directory is the definitive chapter-by-chapter operational architecture. Each
 chapter is independently updateable: a broker change does not require editing the
@@ -35,6 +35,10 @@ hierarchy and [SYSTEM_OVERVIEW.md](../../SYSTEM_OVERVIEW.md) for a short orienta
 
 When these sources disagree, reconcile the conflict in the same change. A feature
 document cannot silently override a shared chapter or approved decision.
+
+The overview and this index change only when the reading path or ownership changes.
+The affected chapter and feature implementation result change with the implementation
+that changes their underlying contract.
 
 ## Update rules
 

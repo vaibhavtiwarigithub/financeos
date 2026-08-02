@@ -1,6 +1,6 @@
 # Kairos System Overview
 
-> Last updated: 2026-07-30
+> Last reviewed: 2026-08-02 (current through `6d14af12`)
 > Audience: an engineer or operator who needs a quick orientation before reading the
 > canonical architecture chapters.
 
@@ -34,6 +34,9 @@ Dashboard -> Agents is the single source for agent-to-agent edges and history.
   explicit conditions rather than silently fabricated data.
 - Shadows and historical replay are observation systems until their own evidence and
   approval gates are satisfied.
+- The exogenous-risk foundation records future India domestic and global-spillover
+  evidence only. It has no source adapter or decision consumer; missing evidence is
+  unavailable rather than neutral.
 - Live actions are subject to the active autonomy, market-control, kill-switch,
   mandate, and broker-account controls.
 
@@ -48,3 +51,8 @@ choices were made.
 When this overview and a chapter disagree, the chapter wins for subsystem behavior;
 when a chapter and the live diagram disagree about topology, the diagram source and its
 history must be reconciled in the same change.
+
+This overview is updated only when the reader's orientation changes. A provider,
+schema, schedule, money-path, or feature-state change updates its owning chapter and
+feature implementation result in the same commit; see the contract in
+[ARCHITECTURE.md](ARCHITECTURE.md).
