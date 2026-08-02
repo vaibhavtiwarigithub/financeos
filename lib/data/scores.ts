@@ -526,7 +526,16 @@ export async function computeScores(opts: {
 
   const technicals = computeTechnicals(candles);
   const technical_score = scoreTechnicals(technicals);
-  const techEvidence = { ...technicals, dataPoints: candles.length, breakdown_veto: detectBreakdownVeto(technicals) };
+  // Keep the exact price and completed candle date beside the derived indicators.
+  // The score is still computed solely from `technicals`; these two fields make a
+  // later Journal / Score Tracker review auditable without refetching a quote.
+  const techEvidence = {
+    ...technicals,
+    price: latestClose ?? null,
+    as_of: candles[candles.length - 1]?.date ?? null,
+    dataPoints: candles.length,
+    breakdown_veto: detectBreakdownVeto(technicals),
+  };
 
   const { score: sentiment_score, evidence: sentEvidence } = scoreSentiment(socialResult);
 

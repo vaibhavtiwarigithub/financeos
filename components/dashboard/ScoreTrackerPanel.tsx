@@ -223,7 +223,9 @@ function explainDimension(dim: string, evidence: any, score: number | null, mark
   }
 
   if (dim === "technical") {
-    const rsi = num(evidence.rsi);
+    // `computeTechnicals()` persists RSI under its explicit period name. Keep
+    // the old alias for historical packets written before that contract settled.
+    const rsi = num(evidence.rsi14 ?? evidence.rsi);
     if (rsi !== null) {
       const tone = rsi > 70 ? "amber" : rsi > 55 ? "green" : rsi < 45 ? "red" : "muted";
       const tag = rsi > 70 ? "overbought" : rsi > 55 ? "bullish momentum, not yet overbought" : rsi < 45 ? "bearish momentum" : "neutral";
@@ -297,7 +299,7 @@ function evidenceDeltaClause(dim: string, cur: any, prv: any): string | null {
     const r = chg("ROE", cur.roe, prv.roe, 0); if (r) clauses.push(r);
     const g = chg("rev growth", cur.revenue_growth_yoy, prv.revenue_growth_yoy, 0); if (g) clauses.push(g);
   } else if (dim === "technical") {
-    const rsi = chg("RSI", cur.rsi, prv.rsi, 0); if (rsi) clauses.push(rsi);
+    const rsi = chg("RSI", cur.rsi14 ?? cur.rsi, prv.rsi14 ?? prv.rsi, 0); if (rsi) clauses.push(rsi);
     const pc = num(cur.price), pp = num(prv.price);
     const ec = num(cur.ema50) ?? num(cur.ema), ep = num(prv.ema50) ?? num(prv.ema);
     if (pc !== null && ec !== null && pp !== null && ep !== null) {
