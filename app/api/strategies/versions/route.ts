@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
       new URL(req.url).searchParams.get("market") === "india" ? "india" : "us";
     const { data: versions, error } = await supabase.from("strategy_versions").select(`
       *, experiment_runs (
-        id, run_type, win_rate, avg_return_pct, sharpe_ratio, gate_pass,
+        id, run_type, win_rate, avg_return_pct, sharpe_ratio, max_drawdown_pct, gate_pass,
         signal_count, alpha_pct, benchmark_return_pct, completed_at, status
       )
     `).eq("market", market).order("created_at", { ascending: false });

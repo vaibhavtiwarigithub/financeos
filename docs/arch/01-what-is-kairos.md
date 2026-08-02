@@ -42,7 +42,7 @@ flowchart LR
   MONITOR --> OUTCOMES[Closed trades\nwin/loss]
   OUTCOMES --> LEARNER[LearnerAgent\nproposes a better strategy]
   LEARNER --> VALIDATE[Validation Engine\ntest on history]
-  VALIDATE -.you promote.-> CHAMPION[Champion strategy]
+  VALIDATE -.owner-approved activation.-> CHAMPION[Champion strategy]
   CHAMPION --> RESEARCH
 ```
 
@@ -59,7 +59,7 @@ ResearchAgent. That feedback arrow is the whole point.
 | Screening & research | Scans US + India universes, scores candidates across 5 dimensions, tracks score trend |
 | Paper trading | Simulated portfolios per market ($US, ₹India) — realistic fills, stops, targets |
 | Live trading | Real orders via Robinhood (US) + Zerodha Kite (India), human-gated |
-| Evolution loop | Turns closed outcomes into Challenger strategies; human promotes to Champion |
+| Evolution loop | Turns closed outcomes into challengers, validates and shadows them automatically; owner-approved activation is the separate protected switch to Champion |
 | RAG trade memory | Semantic recall of past setups at scoring time |
 | Performance Truth | Mandate-aware Sharpe/Sortino/alpha/drawdown evaluation ledger |
 | Coaching & briefings | MentorAgent coaching notes + daily email briefings |
@@ -120,8 +120,7 @@ Step by step:
    `indexClosedTrade()` embeds the setup and stores in `trade_memories`.
 7. **Friday 5 PM (after 10+ trades):** LearnerAgent reads the closed cohort, proposes a
    Challenger with slightly higher technical weight.
-8. **Owner reviews:** Validation Engine confirms Sharpe 0.72, win_rate 58%. Owner promotes
-   Challenger to Champion. ResearchAgent's next Monday run uses the new weights.
+8. **Owner activation:** Validation Engine confirms Sharpe 0.72, win_rate 58%. The system keeps learning and collecting challenger evidence regardless; an owner-approved activation then promotes the Challenger to Champion. ResearchAgent's next Monday run uses the new weights.
 
 ---
 
@@ -133,7 +132,7 @@ All pages under `app/dashboard/`. All require auth (Supabase middleware).
 |---|---|---|
 | `/dashboard` | Home | Portfolio summary, live account, macro regime banner, System Health card, agent status |
 | `/dashboard/research` | Research | Signal list, symbol cards, score breakdown, thesis |
-| `/dashboard/learning` | Learning | LearnerAgent controls, Champion/Challenger, strategy versions, Performance Truth panel, mandate selector |
+| `/dashboard/learning` | Learning | Current champion/baseline, all challengers, historical champions, validation and experiment evidence, plus Performance Truth |
 | `/dashboard/agents` | Agents | Agent status grid, System Map diagram (Mermaid, from `system-map.json`), per-agent diagrams |
 | `/dashboard/upgrade-path` | Upgrade Path | Owner-only live inventory of shadow/paper experiments: evidence counts, provider-call accounting, benefit verdict, blockers, schedule truth, and review ETA |
 | `/dashboard/markets` | Markets | Macro sentinel gauge, sector TradingView chart, insider trades, breadth |
@@ -144,7 +143,6 @@ All pages under `app/dashboard/`. All require auth (Supabase middleware).
 | `/dashboard/mentor` | Mentor | MentorAgent coaching insights |
 | `/dashboard/briefing` | Briefing | Latest briefing, send history |
 | `/dashboard/backtest` | Backtest | Validation Engine replay, results |
-| `/dashboard/strategies` | Strategies | Strategy Registry (Champion/Challenger list + promote/retire/reject) |
 | `/dashboard/scanner` | Scanner | US + India universe scan, NIFTY-100 live fallback |
 | `/dashboard/settings` | Settings | Risk profile, market focus, live order limits, broker connections |
 | `/dashboard/admin` | Admin | User management, role/tier updates, DB cleanup |

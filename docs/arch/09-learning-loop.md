@@ -25,7 +25,7 @@ flowchart LR
   LEARNER[LearnerAgent\nproposes] --> CHALLENGER[Challenger\na tweaked strategy]
   CHALLENGER --> SHADOW[Shadow test\nscore-only replay, no money]
   CHALLENGER --> VALIDATE[Validation Engine\nreplay on held-out folds]
-  VALIDATE -- passes gates --> PROMOTE{You promote?}
+  VALIDATE -- passes gates --> PROMOTE{Owner-approved activation?}
   PROMOTE -- yes --> CHAMPION[Champion\nthe live strategy]
   PROMOTE -- no --> ARCHIVE[stays a proposal]
   CHAMPION --> RESEARCH[ResearchAgent uses it]
@@ -38,7 +38,9 @@ The loop is:
 3. Closed trades become training data for **LearnerAgent**.
 4. LearnerAgent proposes a **Challenger** strategy with adjusted weights + genome.
 5. The **Validation Engine** replays the Challenger on held-out data.
-6. If the Challenger passes, you promote it to Champion. ResearchAgent uses the new weights
+6. If the Challenger passes, it may enter a non-executing shadow automatically. Learning and
+   evidence collection continue without intervention. A separate owner-approved activation is
+   required before it becomes Champion and ResearchAgent uses the new weights
    on its very next run.
 
 ### Plan calibration and the LLM boundary (2026-07-30)
@@ -88,7 +90,7 @@ One row per strategy version. At most one `is_champion = true` per market at any
 | `genome` | Trading parameters (see below) |
 | `proposed_by` | `learner` or `user` |
 | `backtest_result` | Sharpe, Sortino, win_rate, max_dd from Validation Engine |
-| `promoted_at` | Set when you click "Promote to Champion" |
+| `promoted_at` | Set only when an owner-approved activation succeeds |
 
 ### The genome
 
@@ -111,6 +113,15 @@ What a Challenger can evolve:
 and proposes challengers only for that market. A bad India run cannot shift US scoring weights.
 India starts on a clone of the US champion as a prior and diverges once it clears the same
 10+ closed-trade phase gate.
+
+### User visibility
+
+**Dashboard → Learning → Active strategy and challengers** is the user-facing,
+market-scoped strategy view. It shows the active champion (or the default baseline
+when none is promoted), every challenger, its validation verdict and latest
+experiment metrics, plus prior champions. It is read-only: learning, validation,
+and non-executing shadow collection continue automatically; activation remains the
+separate owner-only protected action.
 
 ---
 
