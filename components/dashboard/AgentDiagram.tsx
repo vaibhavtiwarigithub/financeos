@@ -44,6 +44,7 @@ export default function AgentDiagram({ agentId }: { agentId: string }) {
   const [tab, setTab] = useState<"diagram" | "history">("diagram");
   const [selected, setSelected] = useState<{ id: string; node: DiagramNode } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [renderError, setRenderError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1.0);
   const [rendering, setRendering] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -64,6 +65,7 @@ export default function AgentDiagram({ agentId }: { agentId: string }) {
   useEffect(() => {
     setData(null);
     setError(null);
+    setRenderError(null);
     setSelected(null);
     setZoom(1.0);
     renderedRef.current = null;
@@ -107,7 +109,12 @@ export default function AgentDiagram({ agentId }: { agentId: string }) {
         const mmd = `${data.diagram}\n${classDefs}\n${classLines}`;
         const uid = `agd_${agentId.replace(/[^a-z0-9]/gi, "_")}_${Date.now()}`;
         setRendering(true);
+        const valid = await mermaid.parse(mmd, { suppressErrors: true });
+        if (!valid) throw new Error("Diagram source is invalid.");
         const { svg } = await mermaid.render(uid, mmd);
+        if (/syntax error in text|mermaid version/i.test(svg)) {
+          throw new Error("Diagram renderer returned an error graphic.");
+        }
         if (cancelled || !containerRef.current) { setRendering(false); return; }
 
         containerRef.current.innerHTML = svg;
@@ -131,6 +138,7 @@ export default function AgentDiagram({ agentId }: { agentId: string }) {
         svgEl.addEventListener("click", () => setSelected(null));
       } catch (err) {
         console.error("Mermaid render error", err);
+        if (!cancelled) setRenderError("Diagram unavailable for this view.");
         setRendering(false);
       }
     })();
@@ -185,7 +193,9 @@ export default function AgentDiagram({ agentId }: { agentId: string }) {
                 <button onClick={() => setZoom(1.0)} style={zoomBtnStyle}>⊡ Fit</button>
                 <button onClick={handleExport} style={{ ...zoomBtnStyle, marginLeft: "auto" }}>⬇ Export SVG</button>
               </div>
-              <div ref={containerRef} style={{ transform: `scale(${zoom})`, transformOrigin: "top left", transition: "transform 0.1s" }} />
+              {renderError
+                ? <div style={{ color: T.muted, fontSize: 12, padding: "18px 4px" }}>{renderError}</div>
+                : <div ref={containerRef} style={{ transform: `scale(${zoom})`, transformOrigin: "top left", transition: "transform 0.1s" }} />}
               {rendering && (
                 <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center",
                   justifyContent: "center", background: "#0D0F1480", zIndex: 5, fontSize: 12, color: "#64748B" }}>

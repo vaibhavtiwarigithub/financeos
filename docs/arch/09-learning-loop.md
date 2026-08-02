@@ -119,9 +119,13 @@ India starts on a clone of the US champion as a prior and diverges once it clear
 **Dashboard → Learning → Active strategy and challengers** is the user-facing,
 market-scoped strategy view. It shows the active champion (or the default baseline
 when none is promoted), every challenger, its validation verdict and latest
-experiment metrics, plus prior champions. It is read-only: learning, validation,
-and non-executing shadow collection continue automatically; activation remains the
-separate owner-only protected action.
+experiment metrics, plus prior champions. A challenger with a passed validation
+shows an owner-only **Request champion activation** control. The server remains the
+authority and refuses it unless every promotion gate passes; the current OOS
+promotion gate is dormant, so the control reports that refusal rather than changing
+the champion. Learning, validation, and non-executing shadow collection continue
+automatically. A champion has no fixed expiry: weekly learning and continuous outcome
+monitoring decide when a new challenger is worth evaluating.
 
 ---
 
