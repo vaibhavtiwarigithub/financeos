@@ -1159,15 +1159,15 @@ export default function SettingsPage() {
 
           {/* Risk Profile Card */}
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
-            <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Risk Profile</div>
-            <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "20px" }}>How aggressive should the agent be when picking and sizing trades?</div>
+            <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Global risk baseline</div>
+            <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "20px" }}>Fallback scoring weights, the flat position-size cap, and time-bound risk posture. Entry score, stop, target, and holding horizon are market-local and controlled by the Trading Mandate below.</div>
 
             {championMarkets.length > 0 && (
               <div style={{ background: T.amberBg, border: `1px solid ${T.amber}44`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.amber }}>
                 ⚠ A promoted champion overrides this profile&apos;s scoring weights in{" "}
                 <b>{championMarkets.map(m => (m === "india" ? "India" : "US")).join(" and ")}</b>
                 {championMarkets.length === 1 && <> (the other market still uses this profile&apos;s weights)</>}.
-                {" "}The profile still controls sizing/exits/kill-switches in both markets.
+                {" "}The profile remains the fallback scoring-weight source and flat size cap; market-local trade timing remains governed by the Trading Mandate below.
               </div>
             )}
 
@@ -1217,7 +1217,7 @@ export default function SettingsPage() {
                   <div key={key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: `1px solid ${T.border}`, color: isActive ? T.text : T.muted, fontWeight: isActive ? 600 : 400 }}>
                     <span>{p.icon} {p.label}</span>
                     <span style={{ color: T.textSub, fontFamily: "monospace" }}>
-                      Score ≥{p.score_threshold} &nbsp;|&nbsp; {p.position_size_pct}% pos &nbsp;|&nbsp; -{p.stop_loss_pct}% stop &nbsp;|&nbsp; +{p.target_pct}% target
+                      Fallback baseline &nbsp;|&nbsp; flat size cap {p.position_size_pct}%
                     </span>
                   </div>
                 );
@@ -1226,13 +1226,11 @@ export default function SettingsPage() {
 
             {/* Custom overrides */}
             <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "16px", marginBottom: "20px" }}>
-              <div style={{ fontSize: "12px", color: T.muted, marginBottom: "14px", letterSpacing: "0.06em", textTransform: "uppercase" as const }}>Custom overrides</div>
+              <div style={{ fontSize: "12px", color: T.muted, marginBottom: "6px", letterSpacing: "0.06em", textTransform: "uppercase" as const }}>Flat position-size cap</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "14px" }}>Used by paper and live execution as the cap before any learned sizing reduction. Per-market thresholds, exits, and horizons are configured in Trading Mandate.</div>
               <div style={{ display: "grid", gap: "12px" }}>
                 {[
-                  { label: "Min score threshold", value: scoreThreshold, set: (v: number) => setScoreThreshold(v), step: 1, min: 0, max: 100 },
                   { label: "Position size %", value: positionSizePct, set: (v: number) => setPositionSizePct(v), step: 0.5, min: 1, max: 30 },
-                  { label: "Stop loss %", value: stopLossPct, set: (v: number) => setStopLossPct(v), step: 0.5, min: 1, max: 25 },
-                  { label: "Target %", value: targetPct, set: (v: number) => setTargetPct(v), step: 1, min: 5, max: 100 },
                 ].map(({ label, value, set, step, min, max }) => (
                   <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <label style={{ fontSize: "13px", color: T.textSub }}>{label}</label>
