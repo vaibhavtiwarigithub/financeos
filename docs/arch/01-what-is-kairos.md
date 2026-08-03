@@ -144,6 +144,6 @@ All pages under `app/dashboard/`. All require auth (Supabase middleware).
 | `/dashboard/briefing` | Briefing | Latest briefing, send history |
 | `/dashboard/backtest` | Backtest | Validation Engine replay, results |
 | `/dashboard/scanner` | Scanner | US + India universe scan, NIFTY-100 live fallback |
-| `/dashboard/settings` | Settings | Risk profile, market focus, live order limits, broker connections |
-| `/dashboard/admin` | Admin | User management, role/tier updates, DB cleanup |
-| `/dashboard/admin/vault` | API Vault | Runtime API key management |
+| `/dashboard/settings` | Settings | Account preferences and access, trading controls, AI/provider keys, automation, data routing/capacity, and system maintenance |
+| `/dashboard/admin` | Legacy redirect | Redirects to Settings → System so old links continue to work |
+| `/dashboard/admin/vault` | API Vault | Runtime API key management, linked from Settings → System |

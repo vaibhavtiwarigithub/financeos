@@ -132,7 +132,7 @@ async function buildProposals(supabase: any, isCron: boolean) {
     // Support both old trading_enabled boolean and new trading_mode tristate
     const tradingMode = (cfg as any)?.trading_mode ?? ((cfg as any)?.trading_enabled ? "manual" : "disabled");
     if (tradingMode === "disabled") {
-      return NextResponse.json({ skipped: true, reason: "trading_mode = disabled — set to manual in Settings → Agents to generate proposals" });
+      return NextResponse.json({ skipped: true, reason: "trading_mode = disabled — set the US proposal queue to Manual in Settings → Trading" });
     }
 
     const tradingMandate = await loadTradingMandate(supabase, "us");

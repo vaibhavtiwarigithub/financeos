@@ -102,14 +102,13 @@ type LLMCosts = {
 export default function SettingsPage() {
   const supabase = createClient();
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [tab, setTab] = useState("profile");
+  const [tab, setTab] = useState("account");
   const [privacyEnabled, setPrivacyEnabled] = usePrivacySetting();
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
 
   // Trading + broker state
   const [tradingMode, setTradingMode] = useState<"disabled" | "manual" | "auto">("manual");
-  const [broker, setBroker] = useState<"robinhood" | "alpaca_paper" | "alpaca_live">("robinhood");
   const [savingTrading, setSavingTrading] = useState(false);
 
   // Broker registry (Ops spec Part 2) — per-market active broker
@@ -234,7 +233,12 @@ export default function SettingsPage() {
     });
     const params = new URLSearchParams(window.location.search);
     const t = params.get("tab");
-    if (t) setTab(t);
+    // Preserve old deep links while keeping the settings vocabulary aligned to
+    // what each page actually controls.
+    const tabAliases: Record<string, string> = {
+      profile: "account", preferences: "account", access: "account", agents: "trading",
+    };
+    if (t) setTab(tabAliases[t] ?? t);
     // Post-Kite-redirect status flag
     const k = params.get("kite");
     if (k) {
@@ -242,10 +246,10 @@ export default function SettingsPage() {
         connected: "Zerodha Kite connected — token valid for today.",
         login_failed: "Kite login failed or was cancelled.",
         exchange_failed: "Kite token exchange failed — check API secret in the Vault.",
-        missing_key: "Add KITE_API_KEY and KITE_API_SECRET to Admin → API Vault first.",
+        missing_key: "Add KITE_API_KEY and KITE_API_SECRET in Settings → System → API Vault first.",
       };
       setKiteMsg(map[k] ?? "");
-      setTab("agents");
+      setTab("trading");
     }
     // Post-Robinhood-MCP-OAuth status flag
     const rh = params.get("rhmcp");
@@ -258,7 +262,7 @@ export default function SettingsPage() {
         no_client: "No registered client — retry the connect.",
       };
       setRhMcpMsg(rmap[rh] ?? "");
-      setTab("agents");
+      setTab("trading");
     }
     // Post-OAuth status flag for any config-driven MCP broker (?<id>=<status>).
     for (const [id, cfg] of Object.entries(MCP_BROKERS)) {
@@ -272,7 +276,7 @@ export default function SettingsPage() {
         no_client: "No registered client — retry the connect.",
       };
       setMcpMsgs(prev => ({ ...prev, [id]: smap[s] ?? "" }));
-      setTab("agents");
+      setTab("trading");
     }
 
     // Load current risk profile
@@ -280,7 +284,6 @@ export default function SettingsPage() {
       .then(r => r.json())
       .then(d => {
         if (d.trading_mode) setTradingMode(d.trading_mode as any);
-        if (d.broker) setBroker(d.broker as any);
         if (d.risk_profile) setRiskProfile(d.risk_profile as RiskProfileKey);
         if (d.score_threshold != null) setScoreThreshold(d.score_threshold);
         if (d.position_size_pct != null) setPositionSizePct(parseFloat(d.position_size_pct));
@@ -501,9 +504,9 @@ export default function SettingsPage() {
     } finally { setSavingPosture(false); }
   }
 
-  // Fetch LLM costs + Kite status when agents tab becomes active
+  // Fetch broker and autonomy state only when the trading surface is opened.
   useEffect(() => {
-    if (tab !== "agents") return;
+    if (tab !== "trading") return;
     loadKite();
     loadRhMcp();
     loadMcpBrokers();
@@ -532,7 +535,7 @@ export default function SettingsPage() {
       await fetch("/api/settings/risk-profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trading_mode: tradingMode, broker }),
+        body: JSON.stringify({ trading_mode: tradingMode }),
       });
       setToast("Trading config saved!");
       setTimeout(() => setToast(""), 2500);
@@ -604,7 +607,14 @@ export default function SettingsPage() {
   const inp: React.CSSProperties = { width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", padding: "10px 13px", outline: "none" };
   const sel: React.CSSProperties = { ...inp, cursor: "pointer" };
   const numInp: React.CSSProperties = { width: "90px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", padding: "8px 10px", outline: "none", textAlign: "right" as const };
-  const tabs = ["profile", "preferences", "agents", "models", "automation", "admin", "data", "access"];
+  const tabs = [
+    { id: "account", label: "Account" },
+    { id: "trading", label: "Trading" },
+    { id: "models", label: "AI & keys" },
+    { id: "automation", label: "Automation" },
+    { id: "data", label: "Data" },
+    { id: "admin", label: "System" },
+  ];
 
   useEffect(() => {
     if (tab !== "data" || providers) return;
@@ -624,24 +634,22 @@ export default function SettingsPage() {
 
       <PageHeader
         title="Settings"
-        subtitle="Profile, preferences, and access"
+        subtitle="Account, trading controls, automation, and system configuration"
         cadence="as-needed"
-        whatItDoes="Everything configurable, grouped into tabs: Profile, Preferences, Agents, AI Models, Automation, Admin, Data, and Access."
+        whatItDoes="Everything configurable, grouped by the part of Kairos it changes: Account, Trading, AI & keys, Automation, Data, and System."
         whatToLookFor={[
-          "Profile: display name, market focus (US / India / Both — drives which data the agents prioritize), and knowledge level (changes how the Mentor explains things).",
-          "Preferences: theme and the legacy per-user chat model, plus Privacy Mode to hide live dollar amounts.",
-          "Agents: trading mode, broker selection, per-market auto-trading toggles, and the Robinhood MCP / Zerodha Kite connections.",
-          "AI Models: pick which LLM runs each flow (research, trader, mentor, etc.) and set provider API keys.",
-          "Automation: the scheduled jobs (crons) that run the agents day to day.",
-          "Admin: the encrypted API-key vault and other keys; Data: data-provider capacity/usage; Access: your role and tier.",
+          "Account: identity, markets enabled, explanation level, display theme, privacy, and your access level.",
+          "Trading: proposal mode, live execution route, broker connections, safety latches, mandate, and order limits.",
+          "AI & keys: per-flow LLM selection and encrypted provider keys.",
+          "Automation: the scheduled jobs that run the agents day to day. Data: provider routing and capacity. System: vault, user administration, and maintenance.",
         ]}
       />
 
       <div style={{ padding: "0 clamp(12px,4vw,28px) 28px" }}>
 
-      <div style={{ display: "flex", gap: "6px", marginBottom: "24px", borderBottom: `1px solid ${T.border}`, paddingBottom: "0" }}>
+      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" as const, marginBottom: "24px", borderBottom: `1px solid ${T.border}`, paddingBottom: "0" }}>
         {tabs.map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ background: "none", border: "none", borderBottom: tab === t ? `2px solid ${T.accent}` : "2px solid transparent", color: tab === t ? T.accent : T.muted, padding: "8px 16px", fontSize: "14px", cursor: "pointer", textTransform: "capitalize", marginBottom: "-1px" }}>{t}</button>
+          <button key={t.id} onClick={() => setTab(t.id)} style={{ background: "none", border: "none", borderBottom: tab === t.id ? `2px solid ${T.accent}` : "2px solid transparent", color: tab === t.id ? T.accent : T.muted, padding: "8px 16px", fontSize: "14px", cursor: "pointer", marginBottom: "-1px" }}>{t.label}</button>
         ))}
       </div>
 
@@ -654,7 +662,7 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {tab === "profile" && (
+      {tab === "account" && (
         <div style={{ maxWidth: "520px" }}>
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)" }}>
             <div style={{ marginBottom: "16px" }}>
@@ -704,7 +712,7 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {tab === "preferences" && (
+      {tab === "account" && (
         <div style={{ maxWidth: "520px" }}>
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)" }}>
             <div style={{ marginBottom: "16px" }}>
@@ -713,15 +721,8 @@ export default function SettingsPage() {
                 <option value="dark">Dark</option><option value="light">Light</option><option value="midnight">Midnight</option>
               </select>
             </div>
-            <div style={{ marginBottom: "24px" }}>
-              <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>AI Model</label>
-              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px" }}>
-                This is a legacy per-user chat preference. To set the LLM for each agent/flow (research, trader, mentor, etc.) and manage provider API keys, use the <button onClick={() => setTab("models")} style={{ background: "none", border: "none", color: T.accent, padding: 0, font: "inherit", cursor: "pointer", textDecoration: "underline" }}>AI Models</button> tab.
-              </div>
-              <select value={profile.ai_model} onChange={e => setProfile({ ...profile, ai_model: e.target.value })} style={sel}>
-                <option value="claude-sonnet">Claude Sonnet (requires ANTHROPIC_API_KEY — not configured)</option>
-                <option value="claude-haiku">Claude Haiku (requires ANTHROPIC_API_KEY — not configured)</option>
-              </select>
+            <div style={{ marginBottom: "24px", fontSize: "12px", color: T.muted, lineHeight: 1.5 }}>
+              Agent models are configured per flow in <button onClick={() => setTab("models")} style={{ background: "none", border: "none", color: T.accent, padding: 0, font: "inherit", cursor: "pointer", textDecoration: "underline" }}>AI &amp; keys</button>. The retired per-user chat-model preference is intentionally not shown because it does not control any agent.
             </div>
             <button onClick={saveProfile} disabled={saving} style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "11px 28px", fontSize: "14px", fontWeight: 600, cursor: "pointer" }}>
               {saving ? "Saving..." : "Save preferences"}
@@ -753,33 +754,31 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {tab === "agents" && (
+      {tab === "trading" && (
         <div style={{ maxWidth: "560px" }}>
 
           {/* Trading Mode + Broker Card */}
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
-            <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Live Trading</div>
-            <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "20px" }}>Controls whether the agent generates and executes real orders, and which broker to use.</div>
+            <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Proposal and execution controls</div>
+            <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "20px" }}>Paper trading stays autonomous. The controls below govern the legacy US proposal queue and the separately gated live execution routes.</div>
 
             {/* Trading mode */}
             <div style={{ marginBottom: "20px" }}>
-              <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "10px" }}>Trading Mode</label>
+              <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "10px" }}>US proposal queue</label>
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" as const }}>
                 {([
-                  { key: "disabled", label: "Disabled", desc: "No proposals generated", icon: "⛔", color: T.red },
-                  { key: "manual",   label: "Manual",   desc: "Proposals require your approval", icon: "👁", color: T.yellow },
-                  { key: "auto",     label: "Auto",     desc: "Auto-approve — future feature", icon: "⚡", color: T.green },
+                  { key: "disabled", label: "Disabled", desc: "No manual proposals generated", icon: "⛔", color: T.red },
+                  { key: "manual",   label: "Manual",   desc: "Create proposals for your approval", icon: "👁", color: T.yellow },
                 ] as const).map(m => (
                   <button
                     key={m.key}
                     onClick={() => setTradingMode(m.key)}
-                    disabled={m.key === "auto"}
                     style={{
-                      flex: "1 1 140px", padding: "12px 10px", borderRadius: "10px", cursor: m.key === "auto" ? "not-allowed" : "pointer",
+                      flex: "1 1 140px", padding: "12px 10px", borderRadius: "10px", cursor: "pointer",
                       background: tradingMode === m.key ? m.color + "22" : T.surface,
                       border: `2px solid ${tradingMode === m.key ? m.color : T.border}`,
                       color: tradingMode === m.key ? m.color : T.textSub,
-                      textAlign: "left" as const, opacity: m.key === "auto" ? 0.5 : 1,
+                      textAlign: "left" as const,
                     }}
                   >
                     <div style={{ fontSize: "16px", marginBottom: "3px" }}>{m.icon}</div>
@@ -790,49 +789,18 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            {/* Broker */}
-            <div style={{ marginBottom: "20px" }}>
-              <label style={{ fontSize: "12px", color: T.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginBottom: "10px" }}>Execution Broker</label>
-              <div style={{ display: "flex", flexDirection: "column" as const, gap: "8px" }}>
-                {([
-                  { key: "robinhood",    label: "Robinhood (via Claude MCP)", desc: "Official Robinhood MCP — requires Claude Code session. Slow (70-84s). No API key needed.", icon: "🐦" },
-                  { key: "alpaca_paper", label: "Alpaca Paper", desc: "Alpaca paper trading — fast REST API. Add ALPACA_PAPER_API_KEY to Admin → Vault.", icon: "🦙" },
-                  { key: "alpaca_live",  label: "Alpaca Live", desc: "Alpaca live trading — real money. Add ALPACA_API_KEY to Admin → Vault.", icon: "🦙💰" },
-                ] as const).map(b => (
-                  <button
-                    key={b.key}
-                    onClick={() => setBroker(b.key)}
-                    style={{
-                      padding: "12px 16px", borderRadius: "10px", cursor: "pointer", textAlign: "left" as const,
-                      background: broker === b.key ? T.accentBg : T.surface,
-                      border: `2px solid ${broker === b.key ? T.accent : T.border}`,
-                      color: broker === b.key ? T.accent : T.textSub,
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                      <span style={{ fontSize: "18px" }}>{b.icon}</span>
-                      <div>
-                        <div style={{ fontSize: "13px", fontWeight: 700 }}>{b.label}</div>
-                        <div style={{ fontSize: "11px", opacity: 0.75, marginTop: "2px" }}>{b.desc}</div>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
             <button
               onClick={saveTradingConfig}
               disabled={savingTrading}
               style={{ background: T.accent, border: "none", borderRadius: "8px", color: "#fff", padding: "11px 28px", fontSize: "14px", fontWeight: 600, cursor: "pointer", opacity: savingTrading ? 0.7 : 1 }}
             >
-              {savingTrading ? "Saving..." : "Save Trading Config"}
+              {savingTrading ? "Saving..." : "Save proposal mode"}
             </button>
 
             {/* Broker registry (Ops spec Part 2) — per-market execution adapter */}
             <div style={{ borderTop: `1px solid ${T.border}`, marginTop: "20px", paddingTop: "16px" }}>
-              <div style={{ fontSize: "12px", color: T.muted, marginBottom: "10px", letterSpacing: "0.06em", textTransform: "uppercase" as const }}>Execution Gateway broker (per market)</div>
-              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "10px" }}>Keys go in Admin → Vault / .env — never entered here.</div>
+              <div style={{ fontSize: "12px", color: T.muted, marginBottom: "10px", letterSpacing: "0.06em", textTransform: "uppercase" as const }}>Live execution route (per market)</div>
+              <div style={{ fontSize: "11px", color: T.muted, marginBottom: "10px" }}>This is the actual order-route selection. Credentials are managed in System → API Vault; an unconfigured selection cannot submit an order.</div>
               <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" as const }}>
                 <div>
                   <label style={{ fontSize: "12px", color: T.textSub, display: "block", marginBottom: "6px" }}>US</label>
@@ -1071,7 +1039,7 @@ export default function SettingsPage() {
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Zerodha Kite · India</div>
             <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "16px" }}>
-              Connects Indian-market (NSE/BSE) execution. Kite's token expires daily — click Connect each trading morning to refresh it. Requires KITE_API_KEY / KITE_API_SECRET in Admin → API Vault.
+              Connects Indian-market (NSE/BSE) execution. Kite's token expires daily — click Connect each trading morning to refresh it. Requires KITE_API_KEY / KITE_API_SECRET in Settings → System → API Vault.
             </div>
 
             {kiteMsg && (
@@ -1815,7 +1783,7 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {tab === "access" && (
+      {tab === "account" && (
         <div style={{ maxWidth: "520px" }}>
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)" }}>
             <div style={{ marginBottom: "20px" }}>

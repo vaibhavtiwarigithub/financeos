@@ -65,13 +65,13 @@ export async function POST(req: NextRequest) {
     // requires L3_live_manual+; L4/L5 autonomous are not honored (owner click
     // stays mandatory via requireOwner). See lib/autonomy.ts.
     if (!liveOrdersAllowed((gate as any)?.autonomy_level)) {
-      return NextResponse.json({ error: `Live orders blocked by autonomy level '${(gate as any)?.autonomy_level ?? "unset"}' — live requires L3_live_manual or higher (raise it in Settings → Agents).` }, { status: 403 });
+      return NextResponse.json({ error: `Live orders blocked by autonomy level '${(gate as any)?.autonomy_level ?? "unset"}' — live requires L3_live_manual or higher (raise it in Settings → Trading).` }, { status: 403 });
     }
     if (!(await isTradingEnabled(svc, "india"))) {
       return NextResponse.json({ error: "Live trading is disabled (global master or per-market control)" }, { status: 403 });
     }
     if ((gate as any)?.trading_enabled_india === false) {
-      return NextResponse.json({ error: "Live trading is disabled for INDIA (view-only mode — re-enable in Settings → Agents)" }, { status: 403 });
+      return NextResponse.json({ error: "Live trading is disabled for INDIA (view-only mode — re-enable in Settings → Trading)" }, { status: 403 });
     }
     // Side-aware: a trip blocks a BUY (new exposure) but not a risk-reducing
     // SELL (held-qty is verified separately below on the live path).

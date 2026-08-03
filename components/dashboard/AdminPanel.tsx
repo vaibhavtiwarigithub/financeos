@@ -14,7 +14,7 @@ interface UserRow {
   xp: number; analysis_count: number; created_at: string;
 }
 
-// AdminPanel renders no <PageHeader> (it uses a small inline "Admin Dashboard"
+// AdminPanel renders no <PageHeader> (it uses a small inline "System maintenance"
 // title), so there is no double-PageHeader stacking to suppress. The `embedded`
 // prop is accepted for API parity with the other tab panels and so the Settings
 // container can pass it uniformly.
@@ -88,13 +88,13 @@ export default function AdminPanel({ embedded: _embedded }: { embedded?: boolean
   return (
     <div style={{ padding: "28px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
-        <div style={{ fontSize: "20px", fontWeight: 600 }}>Admin Dashboard</div>
+        <div style={{ fontSize: "20px", fontWeight: 600 }}>System maintenance</div>
         <Link href="/dashboard/admin/vault"
           style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "#252836", border: "1px solid #363a4d", borderRadius: "8px", padding: "7px 14px", fontSize: "13px", fontWeight: 600, color: T.accent, textDecoration: "none" }}>
           🔐 API Vault
         </Link>
       </div>
-      <div style={{ fontSize: "13px", color: T.muted, marginBottom: "24px" }}>Manage users, roles, and subscriptions</div>
+      <div style={{ fontSize: "13px", color: T.muted, marginBottom: "24px" }}>Secure credentials, maintenance, and owner-only account administration</div>
 
       {/* Stats */}
       {stats && (

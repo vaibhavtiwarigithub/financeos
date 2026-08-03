@@ -30,8 +30,8 @@ const SEV: Record<string, { color: string; dot: string; bg: string }> = {
 };
 
 // â"€â"€ Nav sections â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-// Sidebar follows the user funnel top→bottom: Overview → Signals → Portfolio →
-// Research → Discovery → Learn → Settings. Page-merges done: Live Portfolio =
+// Sidebar follows the user funnel top→bottom: Overview → Portfolio →
+// Research & decisions → Explore → Review → Settings. Page-merges done: Live Portfolio =
 // US+India (market switch); Signals = Intelligence + Smart Money (tab); Research =
 // Research Journal + Score Tracker (tab); Agents absorbs Agent History (tab);
 // Settings absorbs Automation + Admin + LLM Config (tabs). Old routes redirect in.
@@ -45,13 +45,6 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: "Signals",
-    hint: "What the agents want to act on",
-    items: [
-      { href: "/dashboard/intelligence", label: "Signals",          icon: "◆", hint: "Agent signals + research runs, plus the Smart Money tab (trade queue, insider flow, multi-asset)", alertCat: "cron" },
-    ],
-  },
-  {
     label: "Portfolio",
     hint: "Positions across every market",
     items: [
@@ -61,9 +54,10 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: "Research",
-    hint: "How the agents are scoring and evolving",
+    label: "Research & decisions",
+    hint: "What the system sees, decides, and learns",
     items: [
+      { href: "/dashboard/intelligence", label: "Signals",          icon: "◆", hint: "Agent signals + research runs, plus the Smart Money tab (trade queue, insider flow, multi-asset)", alertCat: "cron" },
       { href: "/dashboard/agents",       label: "Agents",           icon: "⬡", hint: "Run agents manually, view status, run history (History tab), config", alertCat: "" },
       { href: "/dashboard/learning",     label: "Learning",         icon: "◌", hint: "Current champion, challengers, validation evidence, and learning outcomes", alertCat: "" },
       { href: "/dashboard/research-journal", label: "Research", icon: "🔬", hint: "Daily funnel (why each symbol passed/failed), learning evolution, and the Score Tracker tab", alertCat: "" },
@@ -71,8 +65,8 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: "Discovery",
-    hint: "Find and evaluate new candidates",
+    label: "Explore",
+    hint: "Find and test ideas outside the automatic loop",
     items: [
       { href: "/dashboard/watchlist",  label: "Watchlist",        icon: "◎", hint: "AI-curated + manual symbols to track",alertCat: "watchlist" },
       { href: "/dashboard/scanner",            label: "Scanner",           icon: "⟐", hint: "Screen stocks by technical + fundamental conditions", alertCat: "" },
@@ -82,8 +76,8 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: "Learn",
-    hint: "Improve your judgment",
+    label: "Review",
+    hint: "Review decisions and improve judgment",
     items: [
       { href: "/dashboard/mentor",     label: "Mentor",           icon: "🎓", hint: "Learn trading principles, get scored on your calls", alertCat: "" },
       { href: "/dashboard/journal",    label: "Decision Journal",  icon: "📓", hint: "Audit trail of every signal, fill, exit, and experiment decision", alertCat: "" },
@@ -93,12 +87,10 @@ const NAV_SECTIONS = [
     label: "Settings",
     hint: "",
     items: [
-      { href: "/dashboard/settings",              label: "Settings",   icon: "⚙", hint: "Profile, preferences, agents, AI Models (LLM per flow + API keys), Automation, Admin, data & access — all as tabs", alertCat: "" },
+      { href: "/dashboard/settings",              label: "Settings",   icon: "⚙", hint: "Account, trading, AI & keys, automation, data, and system controls", alertCat: "" },
     ],
   },
 ];
-
-const ADMIN_ITEM = { href: "/dashboard/settings?tab=admin", label: "Admin", icon: "☆", hint: "API keys, vault, agent config — now a tab in Settings", alertCat: "admin" };
 
 // â"€â"€ Market status â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 function getMarketStatus(): { label: string; color: string; bg: string; detail: string } {
@@ -349,7 +341,6 @@ export default function DashboardShell({ profile, children }: { profile: Profile
     router.push("/login");
   }
 
-  const isAdmin = ["admin", "superadmin"].includes(profile.role);
   const unreadCount = alerts.length;
 
   const worstSeverity = alerts.find(a => a.severity === "critical") ? "critical"
@@ -641,26 +632,6 @@ export default function DashboardShell({ profile, children }: { profile: Profile
                 );
               })}
 
-              {/* Admin item at end of Settings section */}
-              {section.label === "Settings" && isAdmin && (
-                <button
-                  key={ADMIN_ITEM.href}
-                  onClick={() => router.push(ADMIN_ITEM.href)}
-                  title={ADMIN_ITEM.hint}
-                  style={{
-                    width: "100%", display: "flex", alignItems: "center", gap: "9px",
-                    padding: "8px 10px", borderRadius: "7px", border: "none",
-                    background: pathname.startsWith(ADMIN_ITEM.href) ? T.accent + "1A" : "none",
-                    color: pathname.startsWith(ADMIN_ITEM.href) ? T.accent : T.textSub,
-                    fontSize: "13px", fontWeight: pathname.startsWith(ADMIN_ITEM.href) ? 600 : 400,
-                    cursor: "pointer", textAlign: "left", marginBottom: "1px",
-                    borderLeft: pathname.startsWith(ADMIN_ITEM.href) ? `2px solid ${T.accent}` : "2px solid transparent",
-                  }}
-                >
-                  <span style={{ fontSize: "13px", width: "16px", textAlign: "center", flexShrink: 0 }}>{ADMIN_ITEM.icon}</span>
-                  {ADMIN_ITEM.label}
-                </button>
-              )}
             </div>
           ))}
         </nav>

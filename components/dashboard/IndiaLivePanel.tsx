@@ -203,7 +203,7 @@ export default function IndiaLivePanel() {
       return (
         <div style={{ fontSize: "13px", color: T.red, display: "flex", alignItems: "center", gap: "8px" }}>
           <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: T.red, flexShrink: 0 }} />
-          Add <strong style={{ color: T.text }}>KITE_API_KEY</strong> / <strong style={{ color: T.text }}>KITE_API_SECRET</strong> in Admin → API Vault to connect Zerodha.
+          Add <strong style={{ color: T.text }}>KITE_API_KEY</strong> / <strong style={{ color: T.text }}>KITE_API_SECRET</strong> in Settings → System → API Vault to connect Zerodha.
         </div>
       );
     }

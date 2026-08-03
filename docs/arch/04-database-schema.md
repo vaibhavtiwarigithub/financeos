@@ -103,7 +103,7 @@ Single-row table: the live risk profile + trading parameters.
 |---|---|---|---|
 | `id` | uuid PK | | |
 | `risk_profile` | text | `Balanced` | `Conservative` \| `Balanced` \| `Aggressive` (sizing/thresholds) |
-| `trading_style` | text | `position` | **Migration 167 (2026-07-12).** `swing` \| `position` \| `long_term` — Settings → Agents preset that sets the four knobs below + `target_hold_days`. Orthogonal to `risk_profile` (style = horizon/tempo, profile = sizing). |
+| `trading_style` | text | `position` | **Migration 167 (2026-07-12).** `swing` \| `position` \| `long_term` — Settings → Trading preset that sets the four knobs below + `target_hold_days`. Orthogonal to `risk_profile` (style = horizon/tempo, profile = sizing). |
 | `target_hold_days` | int | null | **Migration 167.** Holding horizon the PositionMonitor time-stop prefers ONLY before a champion genome is promoted; a promoted champion's learned `horizon_days` always wins. null = let the genome decide. |
 | `score_threshold` | numeric | 60 | Minimum `analyst_score` to open a paper position |
 | `position_size_pct` | numeric | 10 | % of pool NAV per trade (hard cap for genome) |

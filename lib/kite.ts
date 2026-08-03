@@ -289,7 +289,7 @@ export async function verifyKiteTradingIdentity(
   }
   const indiaAccount = (acctCfg as any)?.active_account_india;
   if (!indiaAccount) {
-    return { ok: false, status: 403, error: "No active India trading account set — refusing live India order. Set it in Settings → Agents." };
+    return { ok: false, status: 403, error: "No active India trading account set — refusing live India order. Set it in Settings → Trading." };
   }
 
   const { data: allowed, error: allowErr } = await s

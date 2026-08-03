@@ -42,7 +42,7 @@
 ## 3. AI / LLM
 
 **Per-flow model selection (2026-07-12).** Every agent/flow's model is chosen from
-**Settings → Agents → LLM Config** (`agent_config` table), NOT hardcoded. Routes read
+**Settings → AI & keys** (`agent_config` table), NOT hardcoded. Routes read
 `getConfiguredModel(svc, agentName, fallback)` (`lib/agent-model-config.ts`) and pass the
 result to `callLLM({ model })`. `MODEL_ROUTING` in `lib/llm-router.ts` is now only the
 DEFAULT when no model is passed. **Policy: default OFF Claude** — hard-reasoning flows

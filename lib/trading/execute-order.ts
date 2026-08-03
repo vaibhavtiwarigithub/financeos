@@ -260,13 +260,13 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
     cfg = cfgRes.data;
 
     if (!liveOrdersAllowed((cfg as any)?.autonomy_level)) {
-      return { ok: false, status: 403, error: `Live orders blocked by autonomy level '${(cfg as any)?.autonomy_level ?? "unset"}' — live requires L3_live_manual or higher (raise it in Settings → Agents).` };
+      return { ok: false, status: 403, error: `Live orders blocked by autonomy level '${(cfg as any)?.autonomy_level ?? "unset"}' — live requires L3_live_manual or higher (raise it in Settings → Trading).` };
     }
     // Autonomous worker requires L4_live_small_auto or higher.
     // L3_live_manual permits owner clicks only — the autonomous path must be
     // explicitly unlocked at L4. Unknown/null levels fail closed to L3.
     if (!isOwner && !autonomousWorkerAllowed((cfg as any)?.autonomy_level)) {
-      return { ok: false, status: 403, error: `Autonomous orders require autonomy_level L4_live_small_auto or higher (current: '${(cfg as any)?.autonomy_level ?? "unset"}') — raise it in Settings → Agents.` };
+      return { ok: false, status: 403, error: `Autonomous orders require autonomy_level L4_live_small_auto or higher (current: '${(cfg as any)?.autonomy_level ?? "unset"}') — raise it in Settings → Trading.` };
     }
 
     const marketFlag = market === "india" ? (cfg as any)?.trading_enabled_india : (cfg as any)?.trading_enabled_us;
@@ -274,11 +274,11 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
       return { ok: false, status: 403, error: "Live trading is disabled (global master or per-market control)" };
     }
     if (marketFlag === false) {
-      return { ok: false, status: 403, error: `Live trading is disabled for ${market.toUpperCase()} (view-only mode — turn it back on in Settings → Agents)` };
+      return { ok: false, status: 403, error: `Live trading is disabled for ${market.toUpperCase()} (view-only mode — turn it back on in Settings → Trading)` };
     }
 
     if ((broker.id === "robinhood_mcp" || broker.id === "robinhood") && (cfg as any)?.robinhood_mcp_enabled !== true) {
-      return { ok: false, status: 403, error: "Robinhood live is disabled (enable it in Settings → Agents before placing live orders)" };
+      return { ok: false, status: 403, error: "Robinhood live is disabled (enable it in Settings → Trading before placing live orders)" };
     }
 
     // G1: signal data-quality gate for live BUY.
