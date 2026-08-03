@@ -1,0 +1,45 @@
+# Lane B — heavy/slow Python on GitHub Actions (free tier).
+# For analysis that cannot finish inside a serverless timeout. Measure-only:
+# this workflow must never touch scoring, sizing, entry/exit, promotion or the
+# broker. See features/python-runtime/FEATURE_ARCHITECTURE.md.
+name: Lane B Python analysis
+
+on:
+  # Conservative: weekly, off-hours UTC. Idempotent — reruns upsert on run_key.
+  schedule:
+    - cron: "30 4 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: lane-b-python
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Self-check
+        run: python scripts/python/lane_b_analysis.py --self-check
+
+      - name: Run analysis
+        env:
+          # Add these under Settings -> Secrets and variables -> Actions.
+          # Missing/empty => the script prints its payload and exits 0 (dry run).
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Repository *variable*, not a secret — the target table name.
+          LANE_B_TABLE: ${{ vars.LANE_B_TABLE }}
+        run: python scripts/python/lane_b_analysis.py
