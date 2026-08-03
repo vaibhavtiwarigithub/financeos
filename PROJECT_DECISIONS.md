@@ -1142,3 +1142,54 @@ classification, architecture chapters, and agent diagrams.
 
 Reversal cost: Low. Remove registry entries and restore cache constants; no
 historical decision or trade is rewritten.
+
+---
+
+## Decision: US candidate discovery moves to the keyless Yahoo screener (2026-08-02)
+
+**Context.** The FinancialDatasets balance reached $0.00 on 2026-07-29.
+`runScreener()` failed soft and the research run continued from other queues, so
+nothing alerted. `decision_observations` for 2026-07-23..2026-08-02 shows US
+`holding` 600, `watchlist` 151, `manual` 48, `screener_momentum`/`screener_value`
+**0**. For ten days every US decision concerned a name already held or already
+watched — a closed loop over prior selections, not merely a smaller sample, and
+invisible in any row count. India was unaffected; it never used the provider.
+
+**Decision.** Yahoo's custom screener (`POST /v1/finance/screener`, crumb-only,
+keyless) becomes the primary US discovery source. FinancialDatasets is retained
+as the fallback rather than deleted, so funding the key restores a second path.
+
+**Why not simply top up the key.** The failure mode is a paid provider going
+quiet while every component reports healthy; topping up restores discovery until
+the next exhaustion. It also holds the standing $0-cloud rule for this project.
+
+**Deliberate omission — the free-cash-flow leg.** The value bucket previously
+required `free_cash_flow_yield > 0.04`. No Yahoo criterion expresses it:
+`freecashflow.lasttwelvemonths` is absolute dollars, and measurement proved the
+provider **accepts that criterion and silently discards it** — filtering at one
+quadrillion dollars returns the same count as no filter. Market-cap banding does
+not recover it, and the response payload omits `freeCashflow` so the yield cannot
+be derived client-side. The leg is therefore **dropped, not approximated**.
+`netincomemargin.lasttwelvemonths` is honoured and would look like a substitute,
+but it is earnings-derived, and cross-checking earnings against earnings is
+circular — precisely the independence the FCF leg provided. What is lost is the
+cash-conversion check on reported earnings; P/E still carries valuation and
+debt/equity still carries balance-sheet quality.
+
+**Do not "restore" this by adding the field back.** It does not work. Any future
+restoration needs a different provider or a per-symbol fundamentals call.
+
+**Guardrail adopted.** `POST /api/validation/screener-contract`
+(cron `kairos-screener-contract`, 11:10 UTC weekdays) re-probes every shipped
+criterion with an absurd threshold against the same bucket minus that criterion,
+and raises `screener-field-degraded:<field>` at critical when one stops
+filtering. A silently-discarded criterion produces no error and no failing test;
+this is the only reliable detector.
+
+**Scope.** Discovery only. No score, weight, threshold, direction, eligibility,
+sizing, entry, exit, promotion or broker behaviour changed. Thresholds carried
+over unchanged apart from percent conversion. The 3-candidates-per-day cap is
+untouched.
+
+**Architecture:** `features/us-keyless-screener/FEATURE_ARCHITECTURE.md` (rev 3).
+
