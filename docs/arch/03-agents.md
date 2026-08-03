@@ -231,7 +231,7 @@ exogenous observations exist; the route-level refusal remains defence in depth.
 **Inputs:**
 1. Account-scoped holdings snapshots. Research may analyze approved holdings, but only holdings verified on the actual order account can authorize a SELL.
 2. Watchlist from `watchlist` table
-3. Screener candidates from FinancialDatasets `screen_stocks` (US) or NSE universe cache (India) — dual buckets. FinancialDatasets is supplemental discovery only: missing credentials, exhausted credits, HTTP failures, and timeouts open a self-healing System Health warning and return no screener candidates; holdings/watchlist/carry-forward research continues, and scoring fundamentals are unaffected:
+3. Screener candidates from FinancialDatasets `POST /financials/search/screener` (US) or NSE universe cache (India) — dual buckets. FinancialDatasets is supplemental discovery only: missing credentials, exhausted credits, HTTP failures, and timeouts open a self-healing System Health warning and return no screener candidates; holdings/watchlist/carry-forward research continues, and scoring fundamentals are unaffected:
    - *US fundamental-momentum screen*: revenue growth >15%, earnings growth >10%, gross margin >25%, ROE >15%, market cap >$2B; ranked by revenue growth. It does **not** use RSI or a moving average.
    - *US value screen*: 0 < P/E <18, FCF yield >4%, debt/equity <1, market cap >$1B; ranked by lowest P/E. It does **not** compare P/E with a sector median or require insider/analyst activity.
    - The two US lists are interleaved before the six-name screener cap, so one bucket cannot silently crowd out the other. India candidates come from the separately scored rotating `india_screen_cache`; the US criteria above are not applied to India.

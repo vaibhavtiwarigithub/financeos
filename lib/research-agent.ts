@@ -33,6 +33,11 @@ import {
   financialDatasetsFailureDetail,
   type FinancialDatasetsFailure,
 } from "@/lib/data/financialdatasets-status";
+import {
+  FD_SCREENER_FIELD,
+  FINANCIAL_DATASETS_SCREENER_URL,
+  financialDatasetsScreenerRows,
+} from "@/lib/data/financialdatasets-screener";
 
 // Webull research belongs to the Evidence Router shadow. Calling its nine MCP
 // tools per symbol inside the scoring deadline caused repeated 30s symbol
@@ -394,7 +399,7 @@ async function screenBucket(
   sortBy?: { field: string; desc: boolean }
 ): Promise<{ symbols: string[]; failure: FinancialDatasetsFailure | null }> {
   try {
-    const res = await fetch("https://api.financialdatasets.ai/stocks/screener/", {
+    const res = await fetch(FINANCIAL_DATASETS_SCREENER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-API-KEY": fdKey },
       body: JSON.stringify({ filters, limit }),
@@ -405,7 +410,7 @@ async function screenBucket(
       return { symbols: [], failure: classifyFinancialDatasetsFailure(res.status, body) };
     }
     const data = await res.json();
-    const results: any[] = data?.results ?? data?.stocks ?? [];
+    const results = financialDatasetsScreenerRows(data);
     const ranked = sortBy
       ? [...results].sort((a, b) => {
           const av = Number(a?.[sortBy.field]);
@@ -455,21 +460,21 @@ export async function runScreener(supabase: any): Promise<{ symbol: string; buck
     // accelerators survive the downstream candidate cap instead of whichever
     // names the API happened to list first.
     screenBucket([
-      { field: "revenue_growth", operator: "gt", value: 0.15 },
-      { field: "earnings_growth", operator: "gt", value: 0.10 },
-      { field: "gross_margin", operator: "gt", value: 0.25 },
-      { field: "return_on_equity", operator: "gt", value: 0.15 },
-      { field: "market_cap", operator: "gt", value: 2_000_000_000 },
-    ], fdKey, 10, { field: "revenue_growth", desc: true }),
+      { field: FD_SCREENER_FIELD.revenueGrowth, operator: "gt", value: 0.15 },
+      { field: FD_SCREENER_FIELD.earningsGrowth, operator: "gt", value: 0.10 },
+      { field: FD_SCREENER_FIELD.grossMargin, operator: "gt", value: 0.25 },
+      { field: FD_SCREENER_FIELD.returnOnEquity, operator: "gt", value: 0.15 },
+      { field: FD_SCREENER_FIELD.marketCap, operator: "gt", value: 2_000_000_000 },
+    ], fdKey, 10, { field: FD_SCREENER_FIELD.revenueGrowth, desc: true }),
     // Value bucket ranked by pe_ratio asc (cheapest first) — mirrors the India
     // path (fetchIndiaScreenCandidates sorts value by ascending P/E).
     screenBucket([
-      { field: "pe_ratio", operator: "gt", value: 0 },
-      { field: "pe_ratio", operator: "lt", value: 18 },
-      { field: "free_cash_flow_yield", operator: "gt", value: 0.04 },
-      { field: "debt_to_equity", operator: "lt", value: 1.0 },
-      { field: "market_cap", operator: "gt", value: 1_000_000_000 },
-    ], fdKey, 10, { field: "pe_ratio", desc: false }),
+      { field: FD_SCREENER_FIELD.priceToEarnings, operator: "gt", value: 0 },
+      { field: FD_SCREENER_FIELD.priceToEarnings, operator: "lt", value: 18 },
+      { field: FD_SCREENER_FIELD.freeCashFlowYield, operator: "gt", value: 0.04 },
+      { field: FD_SCREENER_FIELD.debtToEquity, operator: "lt", value: 1.0 },
+      { field: FD_SCREENER_FIELD.marketCap, operator: "gt", value: 1_000_000_000 },
+    ], fdKey, 10, { field: FD_SCREENER_FIELD.priceToEarnings, desc: false }),
   ]);
 
   const failure = momentumResult.failure ?? valueResult.failure;
@@ -1724,7 +1729,7 @@ export async function processSymbol(
     ? [webullAnalystLine(webullAnalyst), webullExtendedLine(webullExtended)].filter(Boolean).join(" | ") || null
     : null;
   const thesisPrompt = isHeld ? "" : buildThesisOnlyPrompt(symbol, false, scores, analystScore, scoreThreshold, marketFocus, indiaMacroLine, webullLine) + trendNote + memoryNote;
-  const llmResult = isHeld ? {
+  const deterministicHoldingThesis = {
     text: JSON.stringify({
       direction: analystScore < scoreThreshold ? "short" : "long",
       summary: `Deterministic holding reassessment: score ${analystScore}/100 from ${includedDims.join(", ") || "no usable dimensions"}.`,
@@ -1733,18 +1738,51 @@ export async function processSymbol(
     }),
     tokensIn: 0,
     tokensOut: 0,
-  } : await callLLM({
-    task: "screen",
-    model: await getConfiguredModel(supabase, "research", "deepseek-reasoner"),
-    prompt: thesisPrompt,
-    symbol,
-    agentLabel: "research",
-    // deepseek-reasoner emits a long chain-of-thought BEFORE the answer; 512 tokens
-    // let the reasoning consume the budget and truncated the JSON thesis, so most
-    // symbols hit "[abstained: thesis parse failed]". 1500 leaves room for the
-    // reasoning + the small JSON payload to complete.
-    maxTokens: 1500,
-  });
+    model: "deterministic-holding",
+    cacheWriteTokens: 0,
+    cacheReadTokens: 0,
+    costUsd: 0,
+    durationMs: 0,
+  };
+  // Narrative is advisory only. A slow model used to consume the entire 30-second
+  // per-symbol budget and discard valid deterministic scores, which starved the
+  // queue. Bound narrative latency below that hard deadline; the stored signal
+  // retains the deterministic direction with an explicit no-narrative note.
+  const thesisTimeoutMs = 10_000;
+  let thesisTimer: ReturnType<typeof setTimeout> | undefined;
+  let thesisTimedOut = false;
+  const narrativeFallback = {
+    text: "",
+    model: "narrative-timeout",
+    tokensIn: 0,
+    tokensOut: 0,
+    cacheWriteTokens: 0,
+    cacheReadTokens: 0,
+    costUsd: 0,
+    durationMs: thesisTimeoutMs,
+  };
+  const llmResult = isHeld
+    ? deterministicHoldingThesis
+    : await Promise.race([
+      getConfiguredModel(supabase, "research", "deepseek-reasoner")
+        .then(model => callLLM({
+          task: "screen",
+          model,
+          prompt: thesisPrompt,
+          symbol,
+          agentLabel: "research",
+          maxTokens: 1500,
+        }))
+        .catch(() => narrativeFallback),
+      new Promise<typeof narrativeFallback>((resolve) => {
+        thesisTimer = setTimeout(() => {
+          thesisTimedOut = true;
+          resolve(narrativeFallback);
+        }, thesisTimeoutMs);
+      }),
+    ]).finally(() => {
+      if (thesisTimer) clearTimeout(thesisTimer);
+    });
 
   const rawText = llmResult.text;
   const tokenUsage = { input: llmResult.tokensIn, output: llmResult.tokensOut };
@@ -1874,6 +1912,7 @@ export async function processSymbol(
         _using_champion_weights: usingChampion,
         _trading_mandate: tradingMandate,
         _earnings_repricing: earningsRepricing,
+        _thesis_timed_out: thesisTimedOut,
       },
     })
     .select()

@@ -11,6 +11,11 @@ import {
   financialDatasetsFailureDetail,
   type FinancialDatasetsFailure,
 } from "@/lib/data/financialdatasets-status";
+import {
+  FINANCIAL_DATASETS_SCREENER_URL,
+  financialDatasetsScreenerRows,
+  normalizeFinancialDatasetsScreenerFilters,
+} from "@/lib/data/financialdatasets-screener";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +43,7 @@ async function screenFundamentals(
 ): Promise<{ symbols: string[]; failure: FinancialDatasetsFailure | null }> {
   if (!fdKey) return { symbols: [], failure: { code: "unauthorized" } };
   try {
-    const res = await fetch("https://api.financialdatasets.ai/stocks/screener/", {
+    const res = await fetch(FINANCIAL_DATASETS_SCREENER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-API-KEY": fdKey },
       body: JSON.stringify({ filters, limit }),
@@ -50,7 +55,7 @@ async function screenFundamentals(
     }
     const data = await res.json();
     // FinancialDatasets returns { results: [{ticker, ...}] } or similar
-    const results: any[] = data?.results ?? data?.data ?? data?.stocks ?? [];
+    const results = financialDatasetsScreenerRows(data);
     return {
       symbols: results
         .map((r: any) => (r.ticker ?? r.symbol ?? "").toUpperCase())
@@ -161,7 +166,11 @@ export async function POST(req: NextRequest) {
     let fdScreenProbed = false;
     if (!candidates.length && fdKey && scanFilters.length) {
       fdScreenProbed = true;
-      const screenResult = await screenFundamentals(scanFilters, fdKey, Math.min(limit * 2, 40));
+      const screenResult = await screenFundamentals(
+        normalizeFinancialDatasetsScreenerFilters(scanFilters),
+        fdKey,
+        Math.min(limit * 2, 40),
+      );
       candidates = screenResult.symbols;
       fdFailure = screenResult.failure;
     }
