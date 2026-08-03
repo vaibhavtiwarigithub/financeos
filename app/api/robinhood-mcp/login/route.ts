@@ -20,9 +20,22 @@ export async function GET(req: NextRequest) {
     [
       redirectUri,
       appBase ? `${appBase}/api/robinhood-mcp/callback` : null,
-      // Only register the plaintext-HTTP localhost redirect in non-production —
-      // a real-money client shouldn't carry a localhost redirect in prod.
-      process.env.NODE_ENV !== "production" ? "http://localhost:3000/api/robinhood-mcp/callback" : null,
+      // ALWAYS register the localhost loopback, including in production.
+      //
+      // The original rule here excluded it in prod on the reasoning that a
+      // real-money client should not carry a plaintext-HTTP redirect. That
+      // inverted the actual constraint: Robinhood's agentic OAuth refuses to
+      // issue the grant to a remote https redirect at all — consent and phone
+      // 2FA both succeed and it then dead-ends at robinhood.com/oauth/error.
+      // The loopback is the ONLY redirect that can complete a grant, so
+      // omitting it in production made the connect flow unrecoverable there:
+      // if the cached client_id were ever cleared while pointed at prod, no
+      // re-registration could produce a usable client without a code change.
+      //
+      // The exclusion also bought nothing. Robinhood returns a generic shared
+      // client regardless of the redirect_uris sent, so the client registration
+      // is not what gates trust; the access token in the vault is.
+      "http://localhost:3000/api/robinhood-mcp/callback",
     ].filter(Boolean) as string[]
   )];
 
