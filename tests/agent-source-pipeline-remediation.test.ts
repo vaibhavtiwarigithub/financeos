@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { computeExitFillPrice } from "@/lib/data/quotes";
 
-const read = (path: string) => readFileSync(path, "utf8");
+// Normalise CRLF to LF. These are source-text assertions, and on Windows a
+// fresh checkout (a git worktree, a colleague's clone, CI) can land the same
+// bytes with different line endings — which failed an assertion containing a
+// literal "\n" while the code was byte-identical. The line ending is never what
+// these tests are actually about.
+const read = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
 describe("agent source pipeline remediation", () => {
   it("applies conservative paper sell slippage", () => {
