@@ -26,6 +26,13 @@ describe("shadow registry governance contract", () => {
     }
   });
 
+  it("registers the outstanding feature-pack gates rather than hiding them in docs", () => {
+    const ids = new Set(SHADOW_PROGRAMS.map((program) => program.id));
+    expect(ids.has("technical-calibration")).toBe(true);
+    expect(ids.has("pit-fundamental-qualification")).toBe(true);
+    expect(ids.has("specialist-feature-packs")).toBe(true);
+  });
+
   it("maps every known shadow and evidence cron to a registry program", () => {
     const jobs = new Set(SHADOW_PROGRAMS.flatMap((program) => program.cronJobs));
     [

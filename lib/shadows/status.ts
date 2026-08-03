@@ -138,6 +138,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     indiaNewsHistoryRes,
     exogenousObservationRes,
     marketRegimeRunRes,
+    fundamentalFactsRes,
   ] = await Promise.all([
     svc.rpc("get_shadow_cron_status"),
     svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
@@ -222,6 +223,9 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("market_regime_runs")
       .select("market,domestic_state,global_spillover_state,computed_at")
       .eq("market", market).gte("computed_at", since90).limit(500),
+    svc.from("fundamental_facts")
+      .select("symbol,source,filing_date,captured_at")
+      .eq("market", market).gte("captured_at", since90).limit(10000),
   ]) as Array<QueryResult<any>>;
 
   const cronRows = cronRes.data ?? [];
@@ -249,6 +253,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const indiaNewsHistory = indiaNewsHistoryRes.data ?? [];
   const exogenousObservations = exogenousObservationRes.data ?? [];
   const marketRegimeRuns = marketRegimeRunRes.data ?? [];
+  const fundamentalFacts = fundamentalFactsRes.data ?? [];
 
   return SHADOW_PROGRAMS.map((program) => {
     const status = base(program);
@@ -401,6 +406,51 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.nextAction = ready ? "Review the edge diagnostics; do not edit scoring directly." : "Continue EdgeScout/EdgeIC collection.";
       status.details = [`${edgeSignalRes.count ?? edgeSignals.length} US/India technical observations in the last 7 days.`, `${readiness.length} readiness cells tracked.`];
       status.available = !edgeSignalRes.error && !edgeReadinessRes.error;
+      return status;
+    }
+
+    if (program.id === "pit-fundamental-qualification") {
+      const symbols = new Set(fundamentalFacts.map((row: any) => row.symbol).filter(Boolean));
+      const sources = new Set(fundamentalFacts.map((row: any) => row.source).filter(Boolean));
+      const dated = fundamentalFacts.filter((row: any) => row.filing_date != null).length;
+      status.lifecycle = fundamentalFacts.length ? "collecting" : "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${fundamentalFacts.length} captured ${market.toUpperCase()} fundamental vintages across ${symbols.size} symbols; ${dated} include a provider filing date.`;
+      status.progress = progress(fundamentalFacts.length, null, "captured vintages", 90, {
+        completed: dated,
+        target: Math.max(1, fundamentalFacts.length),
+        unit: "vintages with a filing date",
+      });
+      status.calls = calls("zero_incremental", "Capture reuses the fundamentals already fetched for research; the dashboard makes no provider request.");
+      status.latestAt = latestIso(fundamentalFacts, "captured_at");
+      status.blockers = [
+        "No market-local source qualification record exists yet for gross profitability, debt/equity, FCF yield, or acceleration.",
+        "A captured current snapshot is not valid historical evidence until known-at, units, restatements and taxonomy are reviewed.",
+      ];
+      status.nextAction = "Qualify one small per-market reported-fundamental trial family before creating replay inputs; do not backfill current snapshots as past facts.";
+      status.details = [
+        `${sources.size} source label(s) observed in the last 90 days.`,
+        "No candidate fundamental metric is in the canonical score.",
+      ];
+      status.available = !fundamentalFactsRes.error;
+      return status;
+    }
+
+    if (program.id === "specialist-feature-packs") {
+      status.lifecycle = "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = "No specialist pack is collecting evidence yet; generic price/liquidity rules remain the only applicable contract.";
+      status.progress = progress(0, null, "qualified specialist contracts", 0);
+      status.calls = calls("not_applicable", "No specialist source is called until a per-instrument data contract is approved.");
+      status.latestAt = null;
+      status.blockers = [
+        "Banks need capital, asset-quality and net-interest-margin data.",
+        "REITs need FFO/AFFO, occupancy, leverage and rate-sensitivity data.",
+        "Leveraged ETFs need underlying-trend, volatility, gap and holding-duration controls.",
+      ];
+      status.nextAction = "Select one instrument family only after its raw data source and market-local risk contract are qualified.";
+      status.details = ["No generic-company fundamental is silently applied to an ETF, bank or REIT."];
+      status.available = true;
       return status;
     }
 

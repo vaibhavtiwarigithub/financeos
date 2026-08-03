@@ -39,6 +39,11 @@
   truth. P2 needs source-qualified market-local reported facts, P3 needs the
   sealed walk-forward gate, P4 remains disabled, and P5 needs specialist data
   contracts; none are represented as completed functionality.
+- Dashboard -> Upgrade Path now registers all of these gates separately for the
+  selected US or India market: technical calibration, PIT fundamental
+  qualification, specialist packs, and challenger validation. The page reports
+  actual ledger coverage where one exists and an explicit idle state where no
+  evidence collection has been approved.
 
 ## Verification
 
