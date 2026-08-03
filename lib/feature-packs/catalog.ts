@@ -49,10 +49,14 @@ const FUNDAMENTAL_CONDITION_STATE: Record<keyof NonNullable<StrategyConditions["
   revenue_growth_min: "manual_only",
   pe_max: "manual_only",
   pe_min: "manual_only",
-  fcf_yield_min: "measure_only",
-  debt_equity_max: "measure_only",
+  // Every fundamental condition below is carried into `AlgoStrategy.scan_filters`
+  // and sent to the Financial Datasets screener by the manual scan route, so the
+  // Scanner does evaluate them. `measure_only` here would have told the owner a
+  // condition needs shadow evidence when the manual tool already applies it.
+  fcf_yield_min: "manual_only",
+  debt_equity_max: "manual_only",
   roe_min: "manual_only",
-  gross_margin_min: "measure_only",
+  gross_margin_min: "manual_only",
 };
 
 export interface StrategySupportSummary {
@@ -97,12 +101,22 @@ export function instrumentFamily(input: { assetClass?: string | null; instrument
   if (kind.includes("bank") || asset === "bank") return "bank";
   if (kind.includes("adr") || asset === "adr") return "adr";
   if (kind.includes("etf") || asset === "etf" || asset === "metal_fund") return "etf";
-  if (kind.includes("equity") || asset === "stock" || asset === "equity") return "operating_company";
+  // `assetClass` reaches this function from two vocabularies: InstrumentKind
+  // (us_equity / india_equity) and JournalAssetType (company / india_company).
+  // Only the first was matched, so an ordinary listed company resolved to
+  // "unknown" and the Research funnel then reported every live v1 input as
+  // inapplicable to the very decision it had just scored.
+  if (kind.includes("equity") || asset === "stock" || asset === "equity"
+      || asset === "company" || asset === "india_company") return "operating_company";
   return "unknown";
 }
 
 export function featureAuditForInstrument(input: { assetClass?: string | null; instrumentKind?: string | null }) {
   const family = instrumentFamily(input);
+  // An unclassified instrument is unknown, not proven incompatible. Historical
+  // decisions written before instrument capture existed carry no kind at all;
+  // claiming their inputs were inapplicable would misstate the audit trail.
+  if (family === "unknown") return { family, active: [], inapplicable: [], measured: [] };
   const active = FEATURE_CATALOG.filter(feature => feature.lifecycle === "active_v1" && feature.applicableTo.includes(family));
   const inapplicable = FEATURE_CATALOG.filter(feature => feature.lifecycle === "active_v1" && !feature.applicableTo.includes(family));
   const measured = FEATURE_CATALOG.filter(feature => feature.lifecycle === "measure_only" && feature.applicableTo.includes(family));

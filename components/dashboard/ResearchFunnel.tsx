@@ -319,10 +319,14 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
 
               <section style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "9px", padding: "12px", marginBottom: "14px" }}>
                 <div style={{ color: T.muted, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: "6px" }}>Feature applicability · {featureAudit.family.replaceAll("_", " ")}</div>
-                <div style={{ color: T.textSub, fontSize: "11px", lineHeight: 1.55 }}>
-                  <span style={{ color: T.green, fontWeight: 700 }}>Current v1 facts:</span>{" "}
-                  {featureAudit.active.map(feature => feature.label).join(", ") || "No specialized v1 pack applies."}
-                </div>
+                {featureAudit.family === "unknown"
+                  ? <div style={{ color: T.textSub, fontSize: "11px", lineHeight: 1.55 }}>
+                      This decision stored no instrument classification, so feature applicability cannot be stated for it. The dimensions actually used are listed in the quant audit below.
+                    </div>
+                  : <div style={{ color: T.textSub, fontSize: "11px", lineHeight: 1.55 }}>
+                      <span style={{ color: T.green, fontWeight: 700 }}>Current v1 facts:</span>{" "}
+                      {featureAudit.active.map(feature => feature.label).join(", ") || "No specialized v1 pack applies."}
+                    </div>}
                 {featureAudit.measured.length > 0 && <div style={{ color: T.blue, fontSize: "11px", lineHeight: 1.55, marginTop: "4px" }}>
                   <span style={{ fontWeight: 700 }}>Measured only:</span>{" "}
                   {featureAudit.measured.map(feature => feature.label).join(", ")}. These did not affect this decision.

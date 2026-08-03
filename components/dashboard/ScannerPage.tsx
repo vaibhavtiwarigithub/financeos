@@ -141,7 +141,7 @@ export default function ScannerPage() {
           "Passing = meets ALL specified conditions. Non-passing shown below for reference.",
           "Combined score = 50% fundamental + 50% technical. Aim for > 65.",
           "RSI > 60 with price above MA50 = technical momentum confirmed.",
-          "Fundamentals need FD API key in vault — check Admin → Vault if showing unavailable.",
+          "Fundamentals need FD API key in vault — check Settings → System → API Vault if showing unavailable.",
           "AV rate limit (free tier) = 5 calls/min. 10 symbols ≈ 30s scan time.",
         ]}
       />

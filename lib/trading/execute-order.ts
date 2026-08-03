@@ -399,7 +399,7 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
     return { ok: false, status: 400, error: `${broker.id} does not support ${orderEnv} orders` };
   }
   if (!(await broker.isConfigured())) {
-    return { ok: false, status: 400, error: `${broker.id} has no API keys configured — add them in Admin → Vault` };
+    return { ok: false, status: 400, error: `${broker.id} has no API keys configured — add them in Settings → System → API Vault` };
   }
 
   // Rate limit — rolling 10-minute window across all proposals.

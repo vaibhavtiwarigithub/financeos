@@ -1093,7 +1093,7 @@ export default function PortfolioRiskPage() {
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "32px", textAlign: "center", color: T.muted }}>
             {isIndia
               ? "No Kite holdings found. Log in to Kite and ensure your daily token is active."
-              : "No Robinhood holdings found. Ensure the Robinhood OAuth token is active in Admin → Vault."}
+              : "No Robinhood holdings found. Ensure the Robinhood OAuth token is active in Settings → System → API Vault."}
           </div>
         ) : (
           <>

@@ -20,7 +20,31 @@ describe("feature-pack catalog", () => {
     });
     expect(summary.automated).toBe(false);
     expect(summary.scannerSupported).toContain("Rsi Min");
-    expect(summary.shadowOnly).toEqual(expect.arrayContaining(["Macd Cross Up", "Gross Margin Min"]));
+    // gross_margin_min ships in AlgoStrategy.scan_filters, so the manual Scanner
+    // does evaluate it; only macd_cross_up is genuinely shadow-gated.
+    expect(summary.scannerSupported).toEqual(expect.arrayContaining(["Gross Margin Min", "Roe Min"]));
+    expect(summary.shadowOnly).toEqual(["Macd Cross Up"]);
     expect(summary.unsupported).toContain("Volume Surge");
+  });
+
+  it("treats an ordinary listed company as an operating company in both vocabularies", () => {
+    // Journal rows carry JournalAssetType ("company"/"india_company"); live runs
+    // carry InstrumentKind ("us_equity"/"india_equity"). Both must resolve.
+    expect(instrumentFamily({ assetClass: "company", instrumentKind: null })).toBe("operating_company");
+    expect(instrumentFamily({ assetClass: "india_company", instrumentKind: null })).toBe("operating_company");
+    expect(instrumentFamily({ assetClass: "company", instrumentKind: "us_equity" })).toBe("operating_company");
+    const audit = featureAuditForInstrument({ assetClass: "company", instrumentKind: null });
+    expect(audit.active.map(feature => feature.id)).toContain("rsi14");
+    expect(audit.inapplicable).toHaveLength(0);
+  });
+
+  it("claims nothing about applicability when the instrument was never classified", () => {
+    const audit = featureAuditForInstrument({ assetClass: null, instrumentKind: null });
+    expect(audit.family).toBe("unknown");
+    expect(audit.active).toHaveLength(0);
+    // The bug: an unclassified instrument reported every live v1 input as
+    // inapplicable to a decision those inputs had actually scored.
+    expect(audit.inapplicable).toHaveLength(0);
+    expect(audit.measured).toHaveLength(0);
   });
 });

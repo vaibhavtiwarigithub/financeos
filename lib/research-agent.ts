@@ -1773,7 +1773,9 @@ export async function processSymbol(
           agentLabel: "research",
           maxTokens: 1500,
         }))
-        .catch(() => narrativeFallback),
+        // A provider error is not a timeout. Labelling both "narrative-timeout"
+        // would make an outage read as latency in the LLM cost/why ledger.
+        .catch(() => ({ ...narrativeFallback, model: "narrative-error", durationMs: 0 })),
       new Promise<typeof narrativeFallback>((resolve) => {
         thesisTimer = setTimeout(() => {
           thesisTimedOut = true;
