@@ -4,6 +4,13 @@
   "framework": "nextjs",
   "installCommand": "npm install",
   "regions": ["iad1"],
+  "functions": {
+    "api/py/*.py": {
+      "memory": 1024,
+      "maxDuration": 30,
+      "excludeFiles": "{.next,node_modules,app,components,lib,tests,docs,features,knowledge,public,supabase,scripts,types,backups}/**"
+    }
+  },
   "crons": [
     {
       "path": "/api/agents/evaluation/p1-gate/cron",

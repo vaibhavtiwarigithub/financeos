@@ -1,0 +1,6 @@
+# Vercel Python Functions (api/**/*.py) — keep this list minimal.
+# Every package inflates cold start and counts against the 500MB bundle limit.
+# statsmodels transitively pulls numpy, scipy, pandas and patsy.
+statsmodels==0.14.6
+scipy==1.17.1
+numpy==2.4.6
