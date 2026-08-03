@@ -2,7 +2,7 @@
 
 Status: **Draft — awaiting owner approval. No code written.**
 Author: Claude · 2026-08-02
-Revision 2 — supersedes the Nasdaq-Trader-universe design in revision 1 (§13).
+Revision 3 — corrects rev 2's field validation and drops the FCF leg (§13).
 Related: `features/feature-pack-validation/`, `docs/arch/03-agents.md`.
 
 ---
@@ -75,19 +75,38 @@ Not reasoned from documentation. Actual responses.
 **Endpoint reachable, keyless.** `GET /v1/test/getcrumb` with a `fc.yahoo.com`
 cookie yields a crumb; the POST returns `200`.
 
-**All eight fields the current buckets need exist as screener criteria.** Each
-probed individually with a `gt 0` filter:
+**Seven of the eight fields are honoured. One is silently ignored.**
 
-| FD field | Yahoo criterion | Matching US names |
-|---|---|---:|
-| `revenue_growth` | `quarterlyrevenuegrowth.quarterly` | 9,029 |
-| `earnings_growth` | `epsgrowth.lasttwelvemonths` | 7,563 |
-| `gross_margin` | `grossprofitmargin.lasttwelvemonths` | 13,198 |
-| `return_on_equity` | `returnonequity.lasttwelvemonths` | 10,760 |
-| `price_to_earnings_ratio` | `peratio.lasttwelvemonths` | 8,899 |
-| `debt_to_equity` | `totaldebtequity.lasttwelvemonths` | 12,210 |
-| `market_cap` | `intradaymarketcap` | — |
-| `free_cash_flow_yield` | `freecashflow.lasttwelvemonths` (absolute, **not** yield) | 19,873 |
+An earlier revision of this section listed all eight as validated, each probed
+with a `gt 0` filter and a result count. **That method was wrong and the
+conclusion it produced was wrong.** A `gt 0` filter is nearly a no-op whether the
+criterion is honoured or discarded, so a non-zero count proves only that the
+request did not error. It cannot distinguish a working filter from an ignored
+one. The corrected method is an **absurd-value control**: set a threshold no
+security can satisfy and confirm the count collapses.
+
+Baseline — exchange + volume + `intradaymarketcap > 1e9`, no other criterion:
+**1,831** names.
+
+| FD field | Yahoo criterion | sane | absurd | verdict |
+|---|---|---:|---:|---|
+| `revenue_growth` | `quarterlyrevenuegrowth.quarterly` | 639 | 0 | honoured |
+| `earnings_growth` | `epsgrowth.lasttwelvemonths` | 822 | 0 | honoured |
+| `gross_margin` | `grossprofitmargin.lasttwelvemonths` | 1,338 | 0 | honoured |
+| `return_on_equity` | `returnonequity.lasttwelvemonths` | 642 | 0 | honoured |
+| `price_to_earnings_ratio` | `peratio.lasttwelvemonths` | 890 | 385 | honoured |
+| `debt_to_equity` | `totaldebtequity.lasttwelvemonths` | 1,093 | 91 | honoured |
+| `free_cash_flow_yield` | `freecashflow.lasttwelvemonths` | 1,831 | **1,831** | **IGNORED** |
+| *(unused)* | `netincomemargin.lasttwelvemonths` | 1,110 | 0 | honoured |
+
+`freecashflow.lasttwelvemonths > 999,999,999,999,999` — one quadrillion dollars —
+returns the same 1,831 as no filter at all. The criterion is accepted by the API
+and discarded. Market-cap banding does not recover it either: four bands with
+band-relative FCF floors summed to exactly the unbanded total.
+
+The `fields` request parameter is also ignored — the response is a fixed 89-key
+quote payload with no `freeCashflow`, so the yield cannot be computed client-side
+from screener output either.
 
 **Units are percentages, not ratios.** `returnonequity.lasttwelvemonths > 15`
 means 15%, not 1500%. `totaldebtequity` likewise: `< 100` is the ratio `< 1.0`.
@@ -163,9 +182,10 @@ intradaymarketcap                 > 2_000_000_000
 peratio.lasttwelvemonths          > 0
 peratio.lasttwelvemonths          < 18
 totaldebtequity.lasttwelvemonths  < 100        (= ratio 1.0)
-freecashflow.lasttwelvemonths     > 0          (see §5)
 intradaymarketcap                 > 1_000_000_000
 ```
+
+No free-cash-flow leg — see §5. It is omitted rather than approximated.
 
 The existing round-robin interleave and cap are unchanged. The locked rule of
 **3 screener candidates/day** is unchanged — this restores supply to a starved
@@ -181,34 +201,76 @@ funnel, it does not widen the gate.
 
 ---
 
-## 5. The one deviation requiring explicit sign-off
+## 5. The free-cash-flow leg is dropped
 
-**Free-cash-flow yield cannot be expressed.** Yahoo offers
-`freecashflow.lasttwelvemonths` — an absolute dollar figure — not a yield. The
-returned quote payload does not carry `freeCashflow`, so the yield cannot be
-derived post-hoc without an extra call per symbol.
+The current value bucket requires `free_cash_flow_yield > 0.04`. **No Yahoo
+criterion can express it, and there is no weaker working substitute.**
 
-The current value bucket requires `free_cash_flow_yield > 0.04`. The proposal
-substitutes `freecashflow.lasttwelvemonths > 0` — positive free cash flow, not a
-4% yield.
+Yahoo offers `freecashflow.lasttwelvemonths` — absolute dollars, not a yield —
+and §3 proves that criterion is silently discarded. So the previously-considered
+options collapse:
 
-**This is a genuine loosening of the value bucket**, not a source swap. It admits
-cash-generative but expensively-valued names the FD filter excluded. Everything
-else in this document is threshold-preserving; this one is not, and it should not
-be waved through as an implementation detail.
+- *Accept `freecashflow > 0` as a loosening* — not available. The filter does
+  nothing at any threshold.
+- *Band the market cap and use a band-relative FCF floor* — not available. The
+  bands summed to the unfiltered total.
+- *Compute the yield from screener output* — not available. `freeCashflow` is
+  absent from the response and the `fields` parameter is ignored.
 
-Three ways to handle it, owner's call:
+The leg is therefore **omitted**, and the value bucket becomes `0 < P/E < 18`,
+`debt/equity < 1.0`, `market cap > $1B`, plus the mandatory exchange/volume base
+clause.
 
-- **(a)** Accept the loosening. Simplest. Value bucket is one screen among two,
-  downstream scoring and the 3/day cap still bind.
-- **(b)** Compensate by tightening P/E (e.g. `< 15`) to hold selectivity roughly
-  constant. Arbitrary, but preserves the admission rate.
-- **(c)** Drop the FCF leg entirely and say so, rather than substituting a weaker
-  proxy that reads like the original.
+**What is genuinely lost:** the independent cash-flow cross-check on accounting
+earnings. P/E still carries "cheap" and debt/equity still carries balance-sheet
+quality, so the bucket remains coherent — but it no longer verifies that reported
+earnings convert to cash.
 
-I recommend **(a)** with the deviation recorded in `PROJECT_DECISIONS.md`.
-Pretending `FCF > 0` is equivalent to `FCF yield > 4%` is the outcome to avoid;
-naming it is sufficient.
+**Why no proxy is substituted.** `netincomemargin.lasttwelvemonths` is honoured
+and would look like a reasonable stand-in. It is not: it is earnings-derived, and
+cross-checking earnings against earnings is circular — precisely the check the FCF
+leg existed to provide. A proxy that reads like the original while providing none
+of its independence is worse than an acknowledged gap.
+
+Record in `PROJECT_DECISIONS.md` as a deliberate omission with this reasoning, so
+a later reader does not restore it by adding a field that does not work.
+
+---
+
+## 5b. Field-contract control — permanent, not a one-off
+
+The §3 discovery is the strongest argument in this document, and it is not about
+free cash flow. **A screener criterion can be accepted by the API, returned
+without error, and contribute nothing.** No exception, no warning, no test
+failure — just a filter that quietly stops filtering.
+
+R1 (undocumented endpoint) is not a hypothetical risk to be accepted with a
+shrug. It materialised on the first field probed carefully, before any code was
+written. Every remaining honoured field is one Yahoo deployment away from the
+same state, and the failure is invisible by construction: the screen keeps
+returning names, the run keeps succeeding, and the bucket silently widens to
+whatever the surviving criteria allow.
+
+**Ship an absurd-value control as a live contract check**, not a one-time
+validation:
+
+- for each criterion, issue the bucket query with a threshold no security can
+  satisfy (`gt` → absurdly high, `lt` → absurdly low)
+- the count must collapse relative to the same query without that criterion
+- if it does not, the criterion is a no-op: raise
+  `screener-field-degraded:<field>` at `critical` and **fall back to
+  FinancialDatasets** rather than screening on a bucket that is quietly wider
+  than its definition
+
+Run it on a schedule, not per research run — the probe costs one request per
+field and the condition changes on Yahoo's deploy cadence, not hourly. Daily,
+alongside the existing model-freshness check, is sufficient.
+
+This is cheap, it protects all seven working legs rather than the one that
+failed, and without it the next silent deprecation produces a wider screen that
+nothing reports. It is the piece of this proposal most worth keeping even if the
+screener direction is rejected in favour of funding FinancialDatasets — the same
+class of check applies to any provider whose contract is not versioned.
 
 ---
 
@@ -259,11 +321,15 @@ alpha improvement. Widening the funnel changes what gets examined, not what is t
 
 ## 9. Risks
 
-**R1 — undocumented endpoint (accepted, mitigated).** `/v1/finance/screener` is
-not a published API. Yahoo can change the field vocabulary, the crumb flow, or
-the response shape without notice. Mitigations: the §7 alarm makes failure loud;
-the FD fallback survives; the field mapping is a single table in one module.
-This is the principal risk and it is real.
+**R1 — undocumented endpoint (materialised, mitigated).** `/v1/finance/screener`
+is not a published API. Yahoo can change the field vocabulary, the crumb flow, or
+the response shape without notice. **This is no longer hypothetical:
+`freecashflow.lasttwelvemonths` is already in the failed state (§3), accepted and
+discarded, and was caught only because it was probed with an absurd-value
+control.** Mitigations: the §5b contract check turns a silent no-op into a
+`critical` issue with an automatic FD fallback; the §7 alarm catches total
+discovery failure; the field mapping is a single table in one module. This is the
+principal risk and §5b is the reason it is survivable.
 
 **R2 — single-provider concentration.** After this, both markets' discovery
 depends on Yahoo. Today India alone dies if Yahoo blocks; after this, both do.
@@ -289,6 +355,9 @@ that a known OTC and a known preferred series are both rejected.
 2. Every returned symbol passes exchange, volume, and symbol-policy validation;
    tests assert an OTC ticker and a `-P` preferred series are rejected.
 3. Unit tests assert percent-scaled thresholds for all six numeric criteria.
+3b. The §5b absurd-value control passes for every criterion in both buckets at
+   ship time, and its scheduled job is registered. A criterion that fails the
+   control must not be in a shipped bucket.
 4. `discovery_source` shows non-zero `screener_momentum` / `screener_value` for US
    on the first post-deploy research run.
 5. The §7 alarm fires in a forced-empty test and resolves on recovery.
@@ -311,13 +380,30 @@ No migration, no new table, no new cron.
 ## 12. Open questions for the owner
 
 1. **Approve the direction?** Yahoo keyless screener, or top up FinancialDatasets?
-2. **§5 — which handling of the lost FCF-yield filter?** (a) accept, (b) tighten
-   P/E to compensate, or (c) drop the leg explicitly. Recommend (a).
-3. **Ship §7's alarm first, separately?** Recommend yes, regardless of 1 and 2.
+2. ~~Which handling of the lost FCF-yield filter?~~ **Resolved by measurement,
+   not by preference.** No working substitute exists; the leg is dropped (§5).
+   Confirm you accept the value bucket without a cash-flow cross-check.
+3. **Ship §5b's field-contract control regardless of 1?** Recommend yes. It
+   applies to any unversioned provider contract, including a re-funded
+   FinancialDatasets.
+4. ~~Ship §7's alarm first?~~ **Done** — `discovery-starved:us` shipped in
+   `66b7862e`, independent of everything else here.
 
 ---
 
 ## 13. Revision history
+
+**Rev 3 (2026-08-02).** Corrects rev 2's field validation, which was unsound.
+Rev 2 probed each criterion with a `gt 0` filter and treated a non-zero result
+count as proof the field worked. That test cannot fail: a `gt 0` filter is nearly
+a no-op whether the criterion is honoured or discarded, so it demonstrated only
+that the request did not error. Re-probed with an absurd-value control,
+`freecashflow.lasttwelvemonths` proved to be silently ignored — accepted by the
+API and contributing nothing at any threshold, including one quadrillion dollars.
+Rev 2's §5 offered three ways to handle a "loosened" FCF filter; all three assumed
+a filter that does not exist. The leg is dropped (§5), and the control test is
+promoted to permanent infrastructure (§5b) because the same failure can silently
+disable any of the seven working criteria.
 
 **Rev 2 (2026-08-02).** Rewritten after probing Yahoo's custom screener endpoint
 live. Rev 1 proposed enumerating a US universe from the Nasdaq Trader symbol
