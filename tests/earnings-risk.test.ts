@@ -63,10 +63,10 @@ describe("earnings-aware risk", () => {
     // Load-bearing for the conflict gate. Validation runs BEFORE the from===to
     // shortcut, so a single unparseable observation compared against itself
     // yields null rather than 0 — which makes resolveEarningsEventRisk return
-    // status "conflict" and reportDate null. That is the defence-in-depth for
-    // parsers that do not validate their own date format (the earnings_calendar
-    // cache and Webull build observations with String(...) and no ISO check,
-    // unlike the Robinhood parser which does test the format).
+    // status "conflict" and reportDate null. All four collectors now validate at
+    // the parser through the single lib/date-only helper, so this is pure
+    // defence-in-depth — and it must stay that way. Validation runs BEFORE the
+    // from===to shortcut for exactly this reason; reordering silently reopens it.
     expect(tradingSessionsBetween("us", "garbage", "garbage")).toBeNull();
     expect(tradingSessionsBetween("us", "2026-07-06", "2026-07-06")).toBe(0);
   });

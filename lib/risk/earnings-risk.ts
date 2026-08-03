@@ -192,8 +192,8 @@ export async function resolveEarningsEventRisk(
     .order("report_date", { ascending: true })
     .limit(1)
     .maybeSingle()
-    .then(({ data }: any) => data && isRealIsoDate(String(data.report_date)) ? {
-      date: String(data.report_date),
+    .then(({ data }: any) => data && normalizeRealIsoDate(data.report_date) ? {
+      date: normalizeRealIsoDate(data.report_date)!,
       session: normalizeSession(data.announcement_session ?? data.report_time),
       source: "earnings_calendar_cache",
       observedAt: String(data.fetched_at ?? observedAt),

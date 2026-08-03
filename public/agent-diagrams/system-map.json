@@ -1273,6 +1273,13 @@
       "nodeId": "RESEARCH",
       "label": "US discovery moves to the keyless Yahoo screener",
       "reason": "runScreener() now screens US candidates via Yahoo's custom screener (POST /v1/finance/screener, crumb-authenticated, no API key), with FinancialDatasets retained as fallback. Removes the paid dependency whose $0.00 balance silently killed US discovery for ten days. A mandatory NMS/NYQ exchange + 500k volume base clause blocks OTC issues and preferred series that region=us admits. The value bucket ships with no free-cash-flow leg: that Yahoo criterion is accepted and silently discarded, and netincomemargin is earnings-derived so it is not an independent substitute. New cron kairos-screener-contract (11:10 UTC weekdays) re-probes every criterion with an absurd threshold and raises screener-field-degraded:<field> at critical when one stops filtering. Discovery only: no score, eligibility, sizing, exit or broker behaviour changed."
+    },
+    {
+      "date": "2026-08-02",
+      "event": "changed",
+      "nodeId": "EARNRISK",
+      "label": "One shared earnings-date parser across all four collectors",
+      "reason": "Earnings date validation was applied inconsistently across the four collectors feeding resolveEarningsEventRisk: only the Robinhood collector validated, the earnings_calendar cache and Webull accepted String(...) as-is, and fetchIndiaEarningsDate converted a Yahoo epoch with no range check. All of them now normalize through the single parser normalizeRealIsoDate in lib/date-only.ts, which accepts YYYY-MM-DD (with or without a time suffix) or a provider epoch in seconds/milliseconds and returns null for anything else, including impossible days such as 2026-02-30 that JavaScript would roll forward. Rejection is fail-closed: the collector yields no observation, so the symbol resolves to status unknown rather than 'no earnings soon'. tradingSessionsBetween still validates before its from===to shortcut and returns number|null, which callers read as a conflict; that ordering is the defence-in-depth behind the parser and is unchanged. Earnings-aware risk stays policy version 1, shadow mode: no score, weight, threshold, direction, eligibility, sizing, entry, exit, promotion or broker behaviour changed."
     }
   ]
 }
