@@ -276,10 +276,6 @@ export default function BriefingSection({ initialBriefing }: Props) {
             </div>
           )}
 
-          {/* Collapsible history */}
-          {briefings.length > 2 && (
-            <PastBriefings briefings={briefings.slice(2)} onDeleted={load} />
-          )}
         </>
       )}
     </div>
@@ -414,56 +410,6 @@ function SectionCard({ section }: { section: { key: string; title: string; body:
         </span>
       </div>
       <div>{renderBody(section.body)}</div>
-    </div>
-  );
-}
-
-function PastBriefings({ briefings, onDeleted }: { briefings: Briefing[]; onDeleted: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [deletingAll, setDeletingAll] = useState(false);
-
-  async function deleteAll() {
-    if (!confirm(`Delete all ${briefings.length} past briefings? This cannot be undone.`)) return;
-    setDeletingAll(true);
-    await Promise.all(briefings.map(b =>
-      fetch(`/api/briefing?id=${b.id}`, { method: "DELETE" }).catch(() => {})
-    ));
-    setDeletingAll(false);
-    onDeleted();
-  }
-
-  return (
-    <div style={{ marginTop: "16px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", padding: "8px 0" }}
-        onClick={() => setOpen(o => !o)}>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <span style={{ fontSize: "10px", color: T.muted, transition: "transform 0.15s", display: "inline-block", transform: open ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
-          <span style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-            Past Briefings ({briefings.length})
-          </span>
-        </div>
-        {open && (
-          <button onClick={e => { e.stopPropagation(); deleteAll(); }} disabled={deletingAll}
-            style={{ fontSize: "10px", color: T.red, background: `${T.red}12`, border: `1px solid ${T.red}33`, borderRadius: "5px", padding: "3px 10px", cursor: "pointer", opacity: deletingAll ? 0.5 : 1 }}>
-            {deletingAll ? "Deleting…" : "Delete All"}
-          </button>
-        )}
-      </div>
-      {open && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-          {briefings.map(b => (
-            <div key={b.id} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                <span style={{ fontSize: "11px", fontWeight: 600, color: b.session === "morning" ? T.yellow : T.accent }}>
-                  {b.session === "morning" ? "☀ Morning" : "🌙 Evening"} · {b.date}
-                </span>
-                <span style={{ fontSize: "10px", color: T.muted }}>{new Date(b.created_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}</span>
-              </div>
-              <div style={{ fontSize: "12px", color: T.muted, lineHeight: "1.6" }}>{b.content.slice(0, 180)}…</div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

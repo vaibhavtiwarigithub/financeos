@@ -805,6 +805,21 @@ If a category above has no data (e.g. no agent runs, no mentor grade), say so pl
     { onConflict: "date,session,market" }
   );
 
+  // Briefing history is not retained. The row itself must exist — the dashboard
+  // reads the current briefing from it and `email_sent_at` below is the
+  // send-once stamp — but nothing consumes an older one, so anything before
+  // today is dropped on write rather than accumulating to the 90-day
+  // db-cleanup horizon.
+  //
+  // Scoped to this market and to the morning/evening sessions only: the
+  // `synthesis` and `thesis` rows in this table belong to the Markets pages,
+  // not to the daily briefing, and must survive.
+  await svc.from("briefings")
+    .delete()
+    .eq("market", market)
+    .in("session", ["morning", "evening"])
+    .lt("date", dateStr);
+
   // ── Derived blocks for the rich email (rendered deterministically) ──────────
   const indexRows = market === "india"
     ? (indiaIndices as any[]).slice(0, 4).map((idx: any) => ({ label: idx.label, price: idx.price ?? null, changePct: idx.changePct ?? null }))
