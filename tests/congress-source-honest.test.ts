@@ -40,7 +40,20 @@ describe("congress feed fails loud and honest (never silently empty)", () => {
     expect(reportIssue).toHaveBeenCalledTimes(1);
     const issue = reportIssue.mock.calls[0][0] as Record<string, string>;
     expect(issue.issueKey).toBe("markets-congress-source:discontinued");
-    expect(issue.severity).toBe("warn");
+    // The invariant this test protects is that the dead upstream is REPORTED
+    // rather than swallowed — not the level it is reported at.
+    //
+    // `info`, not `warn`: the condition is permanent, understood, and carries no
+    // action. SystemHealthCard routes info into `notices` rather than
+    // `actionAlerts`, so the gap stays visible while System Health can still
+    // reach green. A warn that can never clear keeps the board permanently
+    // non-green and teaches the owner to skim past the level that is supposed to
+    // mean "something needs attention".
+    expect(issue.severity).toBe("info");
+    // Still loud in the ways that matter: the detail must explain what is
+    // missing, why, and what happens next — not just name a status.
+    expect(issue.detail).toContain("unavailable");
+    expect(issue.detail).toContain("Next:");
     expect(issue.category).toBe("market-data");
     // The alert must carry why, not just that.
     expect(issue.detail).toMatch(/403|AccessDenied/);

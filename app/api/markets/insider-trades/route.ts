@@ -77,7 +77,13 @@ export async function GET() {
     // the serverless invocation freezes.
     await reportIssue({
       issueKey: ISSUE_KEY,
-      severity: "warn",
+      // `info`, not `warn`. The condition is permanent, understood, and has no
+      // action attached — the panel is already off and the UI discloses why. A
+      // warn that can never clear is worse than no warn: it keeps System Health
+      // permanently non-green and trains the owner to skim past the level that
+      // is supposed to mean "something needs attention". This is a standing
+      // disclosure, so it belongs at the level that says so.
+      severity: "info",
       category: "market-data",
       title: "Congressional trades panel has no upstream (discontinued)",
       detail: DETAIL,
