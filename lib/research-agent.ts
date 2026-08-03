@@ -38,6 +38,7 @@ import {
   FINANCIAL_DATASETS_SCREENER_URL,
   financialDatasetsScreenerRows,
 } from "@/lib/data/financialdatasets-screener";
+import { US_BUCKETS, screenUsBucket } from "@/lib/data/yahoo-screener";
 
 // Webull research belongs to the Evidence Router shadow. Calling its nine MCP
 // tools per symbol inside the scoring deadline caused repeated 30s symbol
@@ -513,7 +514,36 @@ async function reportUsDiscoveryCoverage(supabase: any, candidateCount: number):
   } catch { /* never block research on a health write */ }
 }
 
+/** Interleave the two buckets round-robin, then cap. Shared by both providers so
+ *  a source swap cannot change which bucket gets crowded out. */
+function interleaveBuckets(momentum: string[], value: string[]): { symbol: string; bucket: "momentum" | "value" }[] {
+  const seen = new Map<string, "momentum" | "value">();
+  const validMomentum = momentum.filter(s => s.length > 0 && s.length <= 6);
+  const validValue = value.filter(s => s.length > 0 && s.length <= 6);
+  const maxLen = Math.max(validMomentum.length, validValue.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (validMomentum[i] && !seen.has(validMomentum[i])) seen.set(validMomentum[i], "momentum");
+    if (validValue[i] && !seen.has(validValue[i])) seen.set(validValue[i], "value");
+  }
+  return Array.from(seen.entries()).slice(0, 6).map(([symbol, bucket]) => ({ symbol, bucket }));
+}
+
 export async function runScreener(supabase: any): Promise<{ symbol: string; bucket: "momentum" | "value" }[]> {
+  // Yahoo's custom screener is the primary US source: keyless, so it cannot go
+  // dark on a spent balance the way FinancialDatasets did for ten days in
+  // 2026-07. FinancialDatasets stays as the fallback for when Yahoo's
+  // undocumented endpoint fails or a criterion silently degrades.
+  const [yahooMomentum, yahooValue] = await Promise.all([
+    screenUsBucket(US_BUCKETS[0]),
+    screenUsBucket(US_BUCKETS[1]),
+  ]);
+  const yahooCandidates = interleaveBuckets(yahooMomentum, yahooValue);
+  if (yahooCandidates.length) {
+    await resolveIssue("provider-unavailable:financialdatasets", supabase);
+    await reportUsDiscoveryCoverage(supabase, yahooCandidates.length);
+    return yahooCandidates;
+  }
+
   const fdKey = await getFDKey(supabase);
   const issueKey = "provider-unavailable:financialdatasets";
   if (!fdKey) {
@@ -521,8 +551,8 @@ export async function runScreener(supabase: any): Promise<{ symbol: string; buck
       issueKey,
       severity: "warn",
       category: "data_provider",
-      title: "FinancialDatasets screener unavailable - US discovery using other queues",
-      detail: "No FinancialDatasets credential is configured. Research scoring fundamentals are unaffected; US discovery continues from holdings, watchlist, themes, and carry-forward candidates.",
+      title: "US screener produced nothing - Yahoo returned no candidates and no FinancialDatasets fallback is configured",
+      detail: "The Yahoo custom screener returned no candidates for either bucket and no FinancialDatasets credential is configured as a fallback. Research scoring fundamentals are unaffected; US discovery continues from holdings, watchlist, themes, and carry-forward candidates.",
     }, supabase);
     await reportUsDiscoveryCoverage(supabase, 0);
     return [];
@@ -573,16 +603,7 @@ export async function runScreener(supabase: any): Promise<{ symbol: string; buck
   // every value candidate whenever momentum alone returned 6+ hits (which it
   // plausibly does most days), violating the locked "let ResearchAgent score
   // both buckets" design rule (screening bias, not scoring bias).
-  const seen = new Map<string, "momentum" | "value">();
-  const validMomentum = momentum.filter(s => s.length > 0 && s.length <= 6);
-  const validValue = value.filter(s => s.length > 0 && s.length <= 6);
-  const maxLen = Math.max(validMomentum.length, validValue.length);
-  for (let i = 0; i < maxLen; i++) {
-    if (validMomentum[i] && !seen.has(validMomentum[i])) seen.set(validMomentum[i], "momentum");
-    if (validValue[i] && !seen.has(validValue[i])) seen.set(validValue[i], "value");
-  }
-
-  const candidates = Array.from(seen.entries()).slice(0, 6).map(([symbol, bucket]) => ({ symbol, bucket }));
+  const candidates = interleaveBuckets(momentum, value);
   await reportUsDiscoveryCoverage(supabase, candidates.length);
   return candidates;
 }

@@ -1266,6 +1266,13 @@
       "nodeId": "RESEARCH",
       "label": "US discovery coverage alarm",
       "reason": "runScreener() now raises discovery-starved:us when a run yields zero screener candidates (warn on day 1, critical after three consecutive research days with no screener_momentum/screener_value decision, auto-resolving on recovery). Added after the FinancialDatasets balance hit $0.00 on 2026-07-29 and US discovery ran ten days on holdings and watchlist alone with every component reporting healthy. The check watches the outcome, not one provider's fault, so a funded key returning nothing is caught too. Discovery only: no score, eligibility, sizing, exit or broker behaviour changed."
+    },
+    {
+      "date": "2026-08-02",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "US discovery moves to the keyless Yahoo screener",
+      "reason": "runScreener() now screens US candidates via Yahoo's custom screener (POST /v1/finance/screener, crumb-authenticated, no API key), with FinancialDatasets retained as fallback. Removes the paid dependency whose $0.00 balance silently killed US discovery for ten days. A mandatory NMS/NYQ exchange + 500k volume base clause blocks OTC issues and preferred series that region=us admits. The value bucket ships with no free-cash-flow leg: that Yahoo criterion is accepted and silently discarded, and netincomemargin is earnings-derived so it is not an independent substitute. New cron kairos-screener-contract (11:10 UTC weekdays) re-probes every criterion with an absurd threshold and raises screener-field-degraded:<field> at critical when one stops filtering. Discovery only: no score, eligibility, sizing, exit or broker behaviour changed."
     }
   ]
 }

@@ -7,33 +7,11 @@
 
 import type { Candle } from "@/lib/data/technicals";
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
+import { getCrumb } from "@/lib/data/yahoo-crumb";
 // Candle fetching moved to lib/data/yahoo-candles.ts — it was never India-specific.
 // Re-exported here so existing India call sites keep one import, but new code
 // (especially US) should import fetchYahooCandles directly.
 export { fetchYahooCandles } from "@/lib/data/yahoo-candles";
-
-let _crumb: { cookie: string; crumb: string; at: number } | null = null;
-const CRUMB_TTL_MS = 30 * 60 * 1000;
-
-async function getCrumb(): Promise<{ cookie: string; crumb: string } | null> {
-  if (_crumb && Date.now() - _crumb.at < CRUMB_TTL_MS) return _crumb;
-  try {
-    // Grab a session cookie, then a crumb tied to it.
-    const cookieRes = await fetch("https://fc.yahoo.com/", { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8000) });
-    const setCookie = cookieRes.headers.get("set-cookie") ?? "";
-    const cookie = setCookie.split(";")[0] || "";
-    const crumbRes = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
-      headers: { "User-Agent": "Mozilla/5.0", ...(cookie ? { Cookie: cookie } : {}) },
-      signal: AbortSignal.timeout(8000),
-    });
-    const crumb = (await crumbRes.text()).trim();
-    if (!crumb || crumb.includes("<")) return null;
-    _crumb = { cookie, crumb, at: Date.now() };
-    return _crumb;
-  } catch {
-    return null;
-  }
-}
 
 const isIndia = (s: string) => s.toUpperCase().endsWith(".NS") || s.toUpperCase().endsWith(".BO");
 export { isIndia };
