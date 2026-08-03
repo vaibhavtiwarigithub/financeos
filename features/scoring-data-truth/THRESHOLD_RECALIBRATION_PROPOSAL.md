@@ -112,3 +112,45 @@ capital-deployment controls during this observation period.
 `strategy_config.score_threshold` is legacy ambiguity. Removing or aliasing it is
 a separate schema/contract proposal because older UI and backtest surfaces may
 still read it; do not silently synchronize the two fields.
+
+---
+
+## Addendum — threshold sensitivity measured (2026-08-03)
+
+This proposal argued about 52 vs 60 vs a quantile-matched target without ever
+measuring how much a threshold move is actually worth. Measured now, because it
+changes how every future scorer change must be judged.
+
+US `decision_observations`, 21 days, n = 1,590:
+
+| metric | value |
+|---|---:|
+| pass at 60 (current authority) | 697 (43.8%) |
+| **within ±2 points of 60** | **185 (11.6%)** |
+| within ±3 points of 60 | 246 (15.5%) |
+| pass at 58 | 785 (49.4%) |
+
+**A 2-point move swings admission by 5.6 percentage points on this window**, and
+by ~21pp on the narrower post-fix window measured in
+`features/india-scorer-discrimination/DIAGNOSIS.md` §11/R5. The score
+distribution is dense exactly where the gate sits.
+
+Two consequences.
+
+**1. Scorer changes are threshold changes.** Any change to a dimension's weight,
+anchors, or centring shifts the composite by some offset, and at this density a
+1–2 point offset is a material admission change. Removing `insider_score` — a
+0.041-weight dimension sitting at its floor for 94.1% of US names — lifts scores
+by ~2.1 points and would loosen the gate accordingly. A change presented as
+"dropping a dimension that contributes nothing" is a threshold cut unless it is
+paired with a compensating threshold move. See DIAGNOSIS.md §14.
+
+**2. The no-change recommendation is reinforced, not weakened.** The original
+argument was that 8 (later 20) closed US trades cannot support fitting a cutoff.
+This adds that the thing being fitted is unusually sensitive: small errors in a
+threshold estimate translate into large admission swings, so the evidence bar for
+moving it is *higher* than a normal parameter, not lower.
+
+Both markets stay at 60. The revisit conditions are unchanged: ≥20 post-fix US
+market sessions with meaningful exit turnover, and India as a separate scorer
+discrimination study rather than a threshold move.

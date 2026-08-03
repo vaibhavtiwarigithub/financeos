@@ -655,3 +655,104 @@ expected threshold flips before it is altered, and that counterfactual does not
 exist yet. R2 remains a proposal awaiting owner approval, with its required
 evidence unchanged: composite ceiling mass under a continuous technical, per
 market, reconstructed read-only.
+
+---
+
+## 14. Addendum — R5 (US insider) resolved: leave it, and why (2026-08-03)
+
+Asked directly whether `insider_score` should be removed from the US scorer.
+Investigated against production. **Answer: no, not yet — and not for the reason
+"it works."**
+
+### 14a. It is real data, not a silent default
+
+The 93.5% figure in §5 is not a fallback leaking into a scored dimension. A
+representative production row:
+
+```json
+{ "score": 10, "source": "massive", "available": true,
+  "summary": "0 open-market buys ($0) vs 9 sells ($13.8M) in 90d. Buy ratio 0%." }
+```
+
+`normalizeInsiderScore` (`lib/data/scores.ts:475`) fails closed and marks
+`available: false` when the contract is broken, so these rows are genuine
+measurements. The reason nearly every US name scores 10 is that **having no
+open-market insider buying is the normal state of the world** — most insider
+activity is option exercises and 10b5-1 sells. The scorer treats normal as
+bearish.
+
+Distribution over 632 available US rows, 21 days — **four distinct values**:
+
+| score | n | share |
+|---:|---:|---:|
+| 10 | 595 | 94.1% |
+| 50 | 20 | 3.2% |
+| 48 | 10 | 1.6% |
+| 90 | 7 | 1.1% |
+
+### 14b. There is almost no evidence about whether it predicts
+
+`observation_labels` joined to US rows with insider available:
+
+| horizon | insider = 10 | insider > 10 |
+|---|---:|---:|
+| h2 | n = 100 | **n = 2** |
+| h5 | n = 25 | **n = 0** |
+| h10 | — | **n = 0** |
+
+Two matured observations exist for the only bucket where the dimension carries
+information. Removing it on that basis would be acting on nothing — the same
+error the threshold proposal was rejected for.
+
+### 14c. Removing it is a threshold cut in disguise
+
+Measured applied weights, US, 21 days (n = 1,590):
+
+| dim | weight |
+|---|---:|
+| technical | 0.3056 |
+| sentiment | 0.2377 |
+| fundamental | 0.2319 |
+| macro | 0.1838 |
+| **insider** | **0.0411** |
+
+Correcting §11/R5: insider alone carries 0.041, not 0.25 — the 0.25 was insider
+plus macro. Dropping insider and renormalising lifts a name scoring 10 by about
+`0.0411 × 50 / 0.959 ≈ 2.1 points`, uniformly, across the whole universe.
+
+**And recentring has the identical effect.** Scoring "no insider activity" as 50
+rather than 10 raises the composite by the same amount. Every available fix to
+insider — remove, reweight, or recentre — is a threshold move wearing a
+cleanup's clothes.
+
+### 14d. Decision
+
+Leave `insider_score` as-is for now. Not because it earns its weight — it almost
+certainly does not — but because every action changes admission with no evidence
+to justify the direction, and would change a scorer input and the risk posture
+inside the same observation window, which §11/R5 already warned against.
+
+When it is acted on, the honest form is **paired**: zero the weight *and* lower
+`trading_mandates.score_threshold` by the measured offset, so admission holds
+constant and the change removes dead weight rather than quietly opening the
+gate. That requires a frozen flip table first, per the Scoring Data-Truth
+Protocol.
+
+### 14e. Incidental finding — the US gate is knife-edge
+
+Measured while quantifying the above, and more broadly useful than the insider
+question itself:
+
+| metric | value |
+|---|---:|
+| US rows, 21d | 1,590 |
+| pass at 60 | 697 (43.8%) |
+| **within ±2 points of 60** | **185 (11.6%)** |
+| within ±3 points of 60 | 246 (15.5%) |
+| pass at 58 (a 2-point shift) | 785 (49.4%) |
+
+A 2-point move in either the threshold or the composite swings admission by
+~5.6pp on this window, and §11/R5's post-fix window showed 37.1% → 58.1%. Any
+scorer change — insider or otherwise — must be evaluated against this
+sensitivity, not against its own dimension in isolation. Recorded in
+`features/scoring-data-truth/THRESHOLD_RECALIBRATION_PROPOSAL.md` as well.
