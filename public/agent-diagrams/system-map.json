@@ -1280,6 +1280,13 @@
       "nodeId": "EARNRISK",
       "label": "One shared earnings-date parser across all four collectors",
       "reason": "Earnings date validation was applied inconsistently across the four collectors feeding resolveEarningsEventRisk: only the Robinhood collector validated, the earnings_calendar cache and Webull accepted String(...) as-is, and fetchIndiaEarningsDate converted a Yahoo epoch with no range check. All of them now normalize through the single parser normalizeRealIsoDate in lib/date-only.ts, which accepts YYYY-MM-DD (with or without a time suffix) or a provider epoch in seconds/milliseconds and returns null for anything else, including impossible days such as 2026-02-30 that JavaScript would roll forward. Rejection is fail-closed: the collector yields no observation, so the symbol resolves to status unknown rather than 'no earnings soon'. tradingSessionsBetween still validates before its from===to shortcut and returns number|null, which callers read as a conflict; that ordering is the defence-in-depth behind the parser and is unchanged. Earnings-aware risk stays policy version 1, shadow mode: no score, weight, threshold, direction, eligibility, sizing, entry, exit, promotion or broker behaviour changed."
+    },
+    {
+      "date": "2026-08-03",
+      "event": "added",
+      "nodeId": "RESEARCH",
+      "label": "Python runtime available for statistics (measure-only)",
+      "reason": "Free Python libraries are now usable from the TypeScript codebase in two lanes: a Vercel Python Function (api/py/ic.py, Spearman IC + Newey-West HAC via scipy/statsmodels, x-cron-secret gated, fail-closed) for in-request work, and a weekly GitHub Actions job for anything exceeding a serverless timeout. Added because lib/edges/ic.ts hand-rolls these statistics and was only ever checked against itself; the two now agree to 1e-17, so the TS estimator is proven rather than assumed. Measure-only: nothing calls it from ResearchAgent, PaperTrader, PositionMonitor, the learner, the Router or any broker path, and wiring any output into a money decision requires separate owner approval."
     }
   ]
 }
