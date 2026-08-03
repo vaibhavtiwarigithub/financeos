@@ -439,6 +439,80 @@ async function screenBucket(
 // cannot do; every run silently returned []. Calls FinancialDatasets'
 // REST screener directly instead, same pattern already proven working in
 // app/api/agents/research/scan/route.ts.
+
+// ── US discovery coverage alarm ──────────────────────────────────────────────
+// A ten-day US discovery outage went unnoticed. The FinancialDatasets balance
+// hit $0.00 on 2026-07-29; the screener failed soft, the run continued from
+// holdings and watchlist, and every component reported healthy. Nothing watched
+// the one thing that matters: whether discovery produced a candidate AT ALL.
+// Research spent ten days re-scoring names it already held — a closed loop over
+// prior selections, not merely a smaller sample, and the bias does not show up
+// in any row count.
+//
+// The existing provider-unavailable issue is not a substitute: it fires on a
+// known FinancialDatasets fault. This fires on the OUTCOME, so a funded key
+// returning nothing, a silent contract change, or a future provider swap are all
+// caught by the same check.
+export const US_DISCOVERY_ISSUE_KEY = "discovery-starved:us";
+const DISCOVERY_DRY_DAYS_CRITICAL = 3;
+const SCREENER_SOURCES = new Set(["screener_momentum", "screener_value"]);
+
+/**
+ * Consecutive most-recent US research days that produced no screener-sourced
+ * decision. Pure, so the escalation rule is provable without a database.
+ * Days on which research did not run at all are absent from `rows` and are
+ * therefore not counted as dry — a weekend must not escalate an alert.
+ */
+export function screenerDrySpellDays(
+  rows: { ts: string; discovery_source: string | null }[],
+): number {
+  const hadScreenerByDay = new Map<string, boolean>();
+  for (const row of rows) {
+    const day = String(row.ts).slice(0, 10);
+    const isScreener = SCREENER_SOURCES.has(String(row.discovery_source));
+    hadScreenerByDay.set(day, (hadScreenerByDay.get(day) ?? false) || isScreener);
+  }
+  const newestFirst = [...hadScreenerByDay.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  let dry = 0;
+  for (const [, hadScreener] of newestFirst) {
+    if (hadScreener) break;
+    dry += 1;
+  }
+  return dry;
+}
+
+/**
+ * Raise, escalate, or clear the US discovery-starvation alert. Fail-soft: a
+ * health-reporting failure must never block a research run.
+ */
+async function reportUsDiscoveryCoverage(supabase: any, candidateCount: number): Promise<void> {
+  try {
+    if (candidateCount > 0) {
+      await resolveIssue(US_DISCOVERY_ISSUE_KEY, supabase);
+      return;
+    }
+    // Include today's run: it has already been observed as empty even though no
+    // row for it exists yet.
+    const since = new Date(Date.now() - 14 * 86400_000).toISOString();
+    const { data } = await supabase
+      .from("decision_observations")
+      .select("ts, discovery_source")
+      .eq("market", "us")
+      .gte("ts", since)
+      .limit(5000);
+    const priorDryDays = screenerDrySpellDays((data ?? []) as any[]);
+    const dryDays = priorDryDays + 1;
+    const critical = dryDays >= DISCOVERY_DRY_DAYS_CRITICAL;
+    await reportIssue({
+      issueKey: US_DISCOVERY_ISSUE_KEY,
+      severity: critical ? "critical" : "warn",
+      category: "data_provider",
+      title: `US discovery produced no screener candidates (${dryDays} day${dryDays === 1 ? "" : "s"})`,
+      detail: `The US screener returned zero candidates. Research is continuing from holdings, watchlist and manual queues only, so new decisions concern names already held or already watched. That is a closed loop: the evidence record keeps growing while its coverage does not. Check the screener provider, then confirm decision_observations.discovery_source shows screener_momentum / screener_value again.`,
+    }, supabase);
+  } catch { /* never block research on a health write */ }
+}
+
 export async function runScreener(supabase: any): Promise<{ symbol: string; bucket: "momentum" | "value" }[]> {
   const fdKey = await getFDKey(supabase);
   const issueKey = "provider-unavailable:financialdatasets";
@@ -450,6 +524,7 @@ export async function runScreener(supabase: any): Promise<{ symbol: string; buck
       title: "FinancialDatasets screener unavailable - US discovery using other queues",
       detail: "No FinancialDatasets credential is configured. Research scoring fundamentals are unaffected; US discovery continues from holdings, watchlist, themes, and carry-forward candidates.",
     }, supabase);
+    await reportUsDiscoveryCoverage(supabase, 0);
     return [];
   }
 
@@ -507,7 +582,9 @@ export async function runScreener(supabase: any): Promise<{ symbol: string; buck
     if (validValue[i] && !seen.has(validValue[i])) seen.set(validValue[i], "value");
   }
 
-  return Array.from(seen.entries()).slice(0, 6).map(([symbol, bucket]) => ({ symbol, bucket }));
+  const candidates = Array.from(seen.entries()).slice(0, 6).map(([symbol, bucket]) => ({ symbol, bucket }));
+  await reportUsDiscoveryCoverage(supabase, candidates.length);
+  return candidates;
 }
 
 // Region ETF baskets — appended when user's market_focus includes that region

@@ -1259,6 +1259,13 @@
       "nodeId": "RESEARCH",
       "label": "Event-aware fundamentals and reviewed exchange-listed ADRs",
       "reason": "ResearchAgent now assigns fundamental cache freshness from one batched earnings-calendar read, and Theme Scout validates with quotes rather than full fundamental calls. Reviewed ADRs are a distinct evidence class: SKHY uses Yahoo ADS-basis values, skips structurally inapplicable Form 4 evidence, and can flow through the US paper path. Retired/OTC proxies are blocked. No live permission or safety gate changed."
+    },
+    {
+      "date": "2026-08-02",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "US discovery coverage alarm",
+      "reason": "runScreener() now raises discovery-starved:us when a run yields zero screener candidates (warn on day 1, critical after three consecutive research days with no screener_momentum/screener_value decision, auto-resolving on recovery). Added after the FinancialDatasets balance hit $0.00 on 2026-07-29 and US discovery ran ten days on holdings and watchlist alone with every component reporting healthy. The check watches the outcome, not one provider's fault, so a funded key returning nothing is caught too. Discovery only: no score, eligibility, sizing, exit or broker behaviour changed."
     }
   ]
 }
