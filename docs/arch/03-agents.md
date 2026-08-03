@@ -1,4 +1,12 @@
 # Kairos — Agents
+> 2026-08-02 earnings-date validation normalized: all earnings collectors (the
+> `earnings_calendar` cache, Finnhub/Yahoo-India base, Webull, Robinhood, and
+> `fetchIndiaEarningsDate`) now route through the one shared parser
+> `normalizeRealIsoDate` in `lib/date-only.ts`. Malformed, impossible, or
+> out-of-range provider dates fail closed to no observation instead of being
+> coerced. `tradingSessionsBetween` keeps its load-bearing validate-before-shortcut
+> ordering. Shadow mode and every score/eligibility/sizing path are unchanged.
+>
 > 2026-08-01 documentation truth audit: reconciled the ResearchAgent screener,
 > five scoring dimensions, provider order, exact formulas, availability rules,
 > weight resolution, and breakdown veto against production code. Added a
@@ -893,6 +901,27 @@ US event dates are cross-checked against the PIT calendar, Finnhub, Webull, and
 Robinhood. India records market-local proximity and always reports options as
 unavailable. Robinhood research tools are a hardcoded read allowlist disjoint
 from order/review/cancel tools.
+
+**Date validation is one shared parser (2026-08-02).** Every earnings collector
+— the `earnings_calendar` cache, the Finnhub/Yahoo-India base observation,
+Webull `get_stock_earnings_calendar`, Robinhood `get_earnings_calendar`, and
+`fetchIndiaEarningsDate` — normalizes its provider value through
+`normalizeRealIsoDate` in `lib/date-only.ts`. It accepts a `YYYY-MM-DD` string
+(with or without a time suffix) or a provider epoch in seconds or milliseconds,
+and returns `null` for everything else, including calendar days that do not
+exist (`2026-02-30`) which JavaScript would otherwise roll forward. Rejection is
+fail-closed: the collector yields no observation rather than a coerced date, and
+a symbol with no usable observation resolves to `status: "unknown"`, never to
+"no earnings soon". Before this, only the Robinhood collector validated; the
+cache path and Webull accepted `String(...)` as-is and Yahoo India converted an
+epoch with no range check.
+
+`tradingSessionsBetween` still validates **before** its `from === to` shortcut
+and returns `number | null`; callers read `null` as a conflict. That ordering is
+the defence-in-depth behind the parser and is load-bearing — reordering it
+silently reopens the fail-closed path. Pinned by
+`tests/earnings-risk.test.ts` ("treats a self-comparison of a malformed date as
+unknown, not zero") and `tests/date-only.test.ts`.
 
 ## Shadow Registry and Upgrade Path (2026-07-29)
 

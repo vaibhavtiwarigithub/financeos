@@ -391,3 +391,41 @@ are requested only when that event is inside the holding horizon. This extends
 risk visibility to names already owned without turning options into an
 all-watchlist provider fan-out or a directional score. India remains
 proximity-only and has no scheduled options leg.
+
+### Shared earnings-date parser (2026-08-02) — open item CLOSED
+
+The follow-up recorded in `IMPLEMENTATION_RESULT.md` §"Priority 3 completed —
+provider parsers audited" ("Normalizing validation into a single shared date
+parser is the tidier fix and is left as a follow-up, since it touches all four
+collectors") is now done.
+
+`normalizeRealIsoDate` in `lib/date-only.ts` is the one parser. Every collector
+routes through it:
+
+| Collector | Before | Now |
+|---|---|---|
+| `robinhoodEarningsObservation` | validated (own inline regex) | `normalizeRealIsoDate` |
+| `earnings_calendar` cache | **unvalidated** — `String(data.report_date)` | `normalizeRealIsoDate` |
+| Webull `parseEarningsCalendar` | **unvalidated** — `String(row.expected_publish_date)` | `normalizeRealIsoDate` |
+| Finnhub / Yahoo-India base (`fetchEarningsDateObservation`) | validated | `normalizeRealIsoDate` |
+| `fetchIndiaEarningsDate` | **unvalidated** — `new Date(Number(raw) * 1000)`, no range check | `normalizeRealIsoDate` (epoch-aware) |
+
+The parser accepts `YYYY-MM-DD` (with or without a time suffix) and a provider
+epoch in seconds or milliseconds. It returns `null` for a wrong format, an empty
+string, `null`/`undefined`, a non-string non-number, an out-of-range or negative
+epoch, and for calendar days that do not exist (`2026-02-30`) which JavaScript's
+`Date` would otherwise roll forward into a different, valid-looking event day. A
+bare 8-digit `20260731` stays a rejection rather than being read as an epoch.
+
+Rejection is fail-closed for every risk-increasing decision: the collector emits
+no observation, so the symbol resolves to `status: "unknown"` (or `"conflict"`
+when observations disagree) with `reportDate: null` and
+`sessionsUntilReport: null`. It never coerces to a nearby date and never defaults
+to "no earnings soon". `tradingSessionsBetween` keeps its load-bearing ordering —
+validation before the `from === to` shortcut, returning `number | null` — as
+defence-in-depth behind the parser, pinned by `tests/earnings-risk.test.ts`.
+Coverage lives in `tests/date-only.test.ts` and `tests/webull-research-data.test.ts`.
+
+Policy version 1, `mode='shadow'`, is unchanged. This is a refactor plus a
+correctness fix: no score, weight, threshold, direction, eligibility, sizing,
+entry, exit, promotion or broker behaviour changed.

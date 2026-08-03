@@ -1,6 +1,7 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { getValidAccessToken, mcpRpc, mcpToolJson } from "@/lib/brokers/mcp-driver";
 import { MCP_BROKERS, type McpBrokerConfig } from "@/lib/brokers/mcp-registry";
+import { normalizeRealIsoDate } from "@/lib/date-only";
 
 // Webull MCP as a FREE, READ-ONLY research DATA provider (US symbols only).
 //
@@ -447,7 +448,10 @@ export function parseEarningsCalendar(calRaw: any, alertRaw: any = null): Webull
     );
     const next = sorted.find((r: any) => r.eps_actual == null && r.expected_publish_date);
     if (next) {
-      nextDate = String(next.expected_publish_date);
+      // Shared parser (lib/date-only). Webull's date was previously accepted
+      // as-is; an unparseable one now fails closed to null while the estimate
+      // fields below are still kept.
+      nextDate = normalizeRealIsoDate(next.expected_publish_date);
       const est = Number(next.eps_est);
       if (Number.isFinite(est)) nextEpsEst = est;
       const rest = Number(next.rev_est);

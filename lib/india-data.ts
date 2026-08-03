@@ -6,6 +6,7 @@
 // cookie+crumb handshake; the chart endpoint (price + candles) does not.
 
 import type { Candle } from "@/lib/data/technicals";
+import { normalizeRealIsoDate } from "@/lib/date-only";
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
 import { getCrumb } from "@/lib/data/yahoo-crumb";
 // Candle fetching moved to lib/data/yahoo-candles.ts — it was never India-specific.
@@ -168,8 +169,10 @@ export async function fetchIndiaEarningsDate(symbol: string): Promise<string | n
     if (!res.ok) return null;
     const ev = (await res.json())?.quoteSummary?.result?.[0]?.calendarEvents?.earnings;
     const raw = ev?.earningsDate?.[0]?.raw ?? ev?.earningsDate?.[0];
-    if (raw == null) return null;
-    return new Date(Number(raw) * 1000).toISOString().slice(0, 10);
+    // Shared parser (lib/date-only) — Yahoo sends epoch seconds here, but a
+    // malformed or out-of-range value must fail closed to null, never become a
+    // valid-looking date that the earnings risk path would treat as confirmed.
+    return normalizeRealIsoDate(raw);
   } catch {
     return null;
   }

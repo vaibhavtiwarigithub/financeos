@@ -140,6 +140,14 @@ protection cannot be removed silently. Normalizing validation into a single
 shared date parser is the tidier fix and is left as a follow-up, since it touches
 all four collectors.
 
+**FOLLOW-UP DONE (2026-08-02).** The table above is history, not current state.
+All collectors now normalize through the single parser `normalizeRealIsoDate`
+in `lib/date-only.ts`, including `fetchIndiaEarningsDate`, which was a fifth
+unvalidated entry point this audit missed (it converted a Yahoo epoch with no
+range check). See `FEATURE_ARCHITECTURE.md` §"Shared earnings-date parser
+(2026-08-02) — open item CLOSED". The `tradingSessionsBetween` ordering above is
+unchanged and remains the defence-in-depth layer.
+
 Numeric coercion elsewhere is sound: quote legs coerce with `Number(...)` and
 `calculateMoveProxy` rejects non-finite, crossed, or stale inputs rather than
 computing through them.
