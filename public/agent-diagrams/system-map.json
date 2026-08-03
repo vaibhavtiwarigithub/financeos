@@ -1287,6 +1287,13 @@
       "nodeId": "RESEARCH",
       "label": "Python runtime available for statistics (measure-only)",
       "reason": "Free Python libraries are now usable from the TypeScript codebase in two lanes: a Vercel Python Function (api/py/ic.py, Spearman IC + Newey-West HAC via scipy/statsmodels, x-cron-secret gated, fail-closed) for in-request work, and a weekly GitHub Actions job for anything exceeding a serverless timeout. Added because lib/edges/ic.ts hand-rolls these statistics and was only ever checked against itself; the two now agree to 1e-17, so the TS estimator is proven rather than assumed. Measure-only: nothing calls it from ResearchAgent, PaperTrader, PositionMonitor, the learner, the Router or any broker path, and wiring any output into a money decision requires separate owner approval."
+    },
+    {
+      "date": "2026-08-03",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "Close two blind spots in the discovery monitors",
+      "reason": "discovery-starved:us only saw an empty screener RETURN, not the case where candidates come back and the wall-clock budget scores none of them; both leave zero screener-sourced decisions but only one alerted. The research cron now alerts separately when every screener candidate was deferred, under its own key since the remedy is throughput rather than provider. Separately, the screener field-contract check treated an unreachable provider as honoured, so a total Yahoo outage was indistinguishable from every criterion working; probes now report verified / proven-no-op / unverifiable, and raise screener-contract-unverifiable when nothing could be probed. Monitoring only: no score, eligibility, sizing, exit or broker behaviour changed."
     }
   ]
 }

@@ -147,7 +147,10 @@ export interface FieldContractResult {
   field: string;
   baseline: number | null;
   absurd: number | null;
+  /** True only when a completed probe proved the criterion still filters. */
   honoured: boolean;
+  /** False when the probe itself could not run — NOT evidence of health. */
+  probed: boolean;
 }
 
 /** A threshold no security can satisfy, in the direction that empties the set. */
@@ -163,9 +166,15 @@ function absurdValue(operator: "gt" | "lt"): number {
  * widens to whatever the surviving legs allow. The only reliable detector is to
  * set a threshold nothing can satisfy and confirm the count collapses.
  *
- * Returns one row per numeric criterion. Rows with `honoured: false` are no-ops.
- * `baseline`/`absurd` null means the probe itself failed (network, crumb), which
- * is NOT evidence of degradation and must not be reported as such.
+ * Returns one row per numeric criterion.
+ *
+ * Three states, deliberately distinct — collapsing the last two into `honoured`
+ * was the original defect: a Yahoo outage then looked exactly like a clean bill
+ * of health, which is the same silent-failure shape this check exists to catch.
+ *   probed && honoured    → proven to still filter
+ *   probed && !honoured   → proven to be a no-op; the bucket is silently wider
+ *   !probed               → UNKNOWN. Network or crumb failure. Not degradation,
+ *                           and emphatically not health.
  */
 export async function screenerFieldContract(): Promise<FieldContractResult[]> {
   const results: FieldContractResult[] = [];
@@ -185,13 +194,15 @@ export async function screenerFieldContract(): Promise<FieldContractResult[]> {
       ));
       const baseline = typeof base?.total === "number" ? base.total : null;
       const absurd = typeof withAbsurd?.total === "number" ? withAbsurd.total : null;
+      const probed = baseline !== null && absurd !== null;
       results.push({
         field: String(field),
         baseline,
         absurd,
-        // Unknown probes are not failures. Only a completed probe showing the
-        // absurd threshold changed nothing proves the criterion is a no-op.
-        honoured: baseline === null || absurd === null ? true : absurd < baseline,
+        // Only a completed probe can assert anything. An unreachable provider
+        // yields probed:false and is reported separately, never as honoured.
+        honoured: probed ? absurd! < baseline! : false,
+        probed,
       });
     }
   }

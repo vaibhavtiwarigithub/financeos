@@ -70,3 +70,29 @@ describe("isScreenableUsSymbol", () => {
     for (const s of ["ABCD.U", "XYZ.WS", "GGPSFX", ""]) expect(isScreenableUsSymbol(s)).toBe(false);
   });
 });
+
+describe("field contract states", () => {
+  // The original defect: `honoured` was true when the probe failed, so a total
+  // Yahoo outage was indistinguishable from every criterion working. The check
+  // reported loudest exactly when it knew least.
+  const classify = (baseline: number | null, absurd: number | null) => {
+    const probed = baseline !== null && absurd !== null;
+    return { probed, honoured: probed ? absurd! < baseline! : false };
+  };
+
+  it("marks a criterion honoured only when a completed probe collapses the count", () => {
+    expect(classify(1831, 0)).toEqual({ probed: true, honoured: true });
+    expect(classify(890, 385)).toEqual({ probed: true, honoured: true });
+  });
+
+  it("marks a no-op criterion as probed-but-not-honoured", () => {
+    // Measured: freecashflow at one quadrillion dollars returned the baseline.
+    expect(classify(1831, 1831)).toEqual({ probed: true, honoured: false });
+  });
+
+  it("never reports an unreachable provider as honoured", () => {
+    expect(classify(null, null)).toEqual({ probed: false, honoured: false });
+    expect(classify(1831, null)).toEqual({ probed: false, honoured: false });
+    expect(classify(null, 0)).toEqual({ probed: false, honoured: false });
+  });
+});

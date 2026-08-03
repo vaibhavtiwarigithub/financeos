@@ -27,8 +27,25 @@ export async function POST(req: NextRequest) {
   const svc = createServiceClient();
 
   const results = await screenerFieldContract();
-  const probed = results.filter(r => r.baseline !== null && r.absurd !== null);
-  const degraded = results.filter(r => !r.honoured);
+  const probed = results.filter(r => r.probed);
+  const unprobed = results.filter(r => !r.probed);
+  const degraded = probed.filter(r => !r.honoured);
+
+  // An unreachable provider is its own condition and must be visible. Silence
+  // here previously meant "no degradation found", which a total Yahoo outage
+  // satisfied trivially — the check would pass loudest exactly when it knew
+  // least. If nothing could be probed, the contract is UNVERIFIED, not clean.
+  if (unprobed.length === results.length && results.length > 0) {
+    await reportIssue({
+      issueKey: "screener-contract-unverifiable",
+      severity: "warn",
+      category: "data_provider",
+      title: "Yahoo screener field contract could not be verified",
+      detail: `None of the ${results.length} criteria could be probed — every request failed to return a count, which usually means the crumb handshake or the endpoint itself is unreachable from this environment. This is NOT a clean bill of health: a criterion could have silently stopped filtering and this run would not know. If US discovery is also producing no candidates, treat the endpoint as down and rely on the FinancialDatasets fallback until a probe succeeds.`,
+    }, svc);
+  } else {
+    await resolveIssue("screener-contract-unverifiable", svc);
+  }
 
   for (const r of degraded) {
     await reportIssue({
@@ -49,7 +66,15 @@ export async function POST(req: NextRequest) {
     success: true,
     checked: results.length,
     probed: probed.length,
+    // Named so a caller cannot read "degraded: []" as "everything is fine"
+    // without also seeing how many criteria were actually verified.
+    unverified: unprobed.map(r => r.field),
     degraded: degraded.map(r => r.field),
+    verdict: results.length === 0 ? "no_criteria"
+      : probed.length === 0 ? "unverifiable"
+      : degraded.length > 0 ? "degraded"
+      : unprobed.length > 0 ? "partially_verified"
+      : "verified",
     results,
   });
 }
