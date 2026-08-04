@@ -1315,6 +1315,13 @@
       "nodeId": "RESEARCH",
       "label": "Carry discovery provenance through the research queue",
       "reason": "research_queue.discovery_source was never written and gatherSymbols re-added carried-forward symbols as watchlist, so a screener candidate that overflowed the 40-candidate cap returned relabelled and its discovery attribution was destroyed. decision_observations therefore under-counted screener discoveries and over-counted watchlist, which means the US screener-0/watchlist-151 reading behind two alarms was partly an attribution artifact rather than pure starvation. Measured the same day: the Yahoo screener returned 72 momentum and 86 value matches, 19 of the top 22 had never been researched, and four sat in a 43-deep queue with a null source. Provenance now travels on all three queue paths - cap overflow, wall-clock budget tail, and failed-candidate retry - and a re-defer never overwrites a known source with null. Attribution only: no score, eligibility, sizing, exit or broker behaviour changed."
+    },
+    {
+      "date": "2026-08-04",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "Discovery run bypasses the candidate cap",
+      "reason": "The discovery run could not see the names it exists to score. candidateMap is ordered manual, carry-forward, watchlist, screener; applyCandidateCarryForward keeps the top 40; screener names are last, so they overflowed into research_queue BEFORE gatherSymbols returned and the run's entry filter never saw them. The 2026-08-04 run scored exactly SLV/GDX/IAU/INDA/EPI/INDY - the buckets appended after the cap - and nothing else. gatherSymbols now takes a discoveryScope option that exempts screener_momentum, screener_value and edge_relative_strength from the cap on that run only, matching how metals and region ETFs are already handled. Bounded at ~10 symbols by RESEARCH_SCREENER_MAX and RESEARCH_EDGE_DISCOVERY_MAX. The main run is untouched, so exit re-scoring keeps its full priority and budget. Discovery admission only: no score, eligibility, sizing, exit or broker behaviour changed, and the candidates-per-day cap is unchanged."
     }
   ]
 }

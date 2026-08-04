@@ -66,6 +66,8 @@ export async function POST(req: NextRequest) {
   const mktParam = url.searchParams.get("market");
   const marketScope = mktParam === "india" ? "india" : mktParam === "us" ? "us" : null;
   const catchupMode = url.searchParams.get("mode");
+  // Read with the other params: gatherSymbols needs it well before the entry filter.
+  const discoveryOnly = url.searchParams.get("scope") === "discovery";
   const closedDayCatchup = catchupMode === "closed_day_catchup" || catchupMode === "weekend_catchup";
   if (closedDayCatchup && !marketScope) {
     return NextResponse.json({ error: "Closed-day catch-up requires market=us|india" }, { status: 400 });
@@ -193,7 +195,7 @@ export async function POST(req: NextRequest) {
     const catchupSymbols = queued.filter((symbol) => !staged.has(symbol)).slice(0, cap);
     allEntries = catchupSymbols.length > 0 ? await gatherSymbols(supabase, catchupSymbols, marketScope) : [];
   } else {
-    allEntries = await gatherSymbols(supabase, undefined, marketScope ?? undefined);
+    allEntries = await gatherSymbols(supabase, undefined, marketScope ?? undefined, { discoveryScope: discoveryOnly });
   }
   // Scope to the requested market: India run researches only .NS/.BO names; US run
   // only non-India. No param → everything (legacy).
@@ -215,7 +217,6 @@ export async function POST(req: NextRequest) {
   // This run takes only the never-held discovery buckets on its own schedule and
   // budget. Holdings are excluded outright, so nothing here can touch an
   // exit/SELL path.
-  const discoveryOnly = url.searchParams.get("scope") === "discovery";
   // Alert keys are scoped by run type: the two runs cover different symbol sets,
   // so a shared key would let one resolve what the other had just raised.
   const runTag = `${marketScope ?? "mixed"}${discoveryOnly ? ":discovery" : ""}`;

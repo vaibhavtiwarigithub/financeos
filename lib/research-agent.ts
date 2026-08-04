@@ -622,6 +622,25 @@ export async function gatherSymbols(
   supabase: any,
   manualOverride?: string[],
   marketScope?: Market,
+  opts?: {
+    /**
+     * Discovery-only run (`?scope=discovery`). Exempts screener and edge
+     * candidates from `RESEARCH_CANDIDATE_CAP`, exactly as the metals basket and
+     * region ETFs are already exempted.
+     *
+     * Without this the discovery run cannot see the names it exists to score:
+     * candidateMap is ordered manual -> carry-forward -> watchlist -> screener,
+     * `applyCandidateCarryForward` takes the top 40, and screener names are last,
+     * so they overflow into research_queue BEFORE gatherSymbols returns. The
+     * 2026-08-04 discovery run scored exactly SLV/GDX/IAU/INDA/EPI/INDY — the
+     * post-cap appended buckets — and nothing else, which is what exposed this.
+     *
+     * Bounded: screener contributes at most RESEARCH_SCREENER_MAX (6) and edge at
+     * most RESEARCH_EDGE_DISCOVERY_MAX (4), so the exemption adds ~10 symbols to a
+     * run that carries no holdings.
+     */
+    discoveryScope?: boolean;
+  },
 ): Promise<SymbolEntry[]> {
   if (manualOverride && manualOverride.length > 0) {
     const manualEntries = manualOverride.map(s => {
@@ -755,8 +774,21 @@ export async function gatherSymbols(
   const candidateSourceOf = new Map<string, string | null | undefined>(
     Array.from(candidateMap.entries()).map(([sym, e]) => [sym, e.discovery_source]),
   );
+  // On a discovery run the buckets this run exists for bypass the cap; the main
+  // run is unchanged, so exit re-scoring keeps its full priority and budget.
+  const CAP_EXEMPT_ON_DISCOVERY = new Set(["screener_momentum", "screener_value", "edge_relative_strength"]);
+  const exemptSyms = opts?.discoveryScope
+    ? Array.from(candidateMap.values())
+        .filter(e => CAP_EXEMPT_ON_DISCOVERY.has(String(e.discovery_source ?? "")))
+        .map(e => e.symbol)
+    : [];
+  const exemptSet = new Set(exemptSyms);
+  const cappedKeys = Array.from(candidateMap.keys()).filter(k => !exemptSet.has(k));
   const usBatch = new Set(includeUs
-    ? await applyCandidateCarryForward(supabase, "us", Array.from(candidateMap.keys()), candidateCap, candidateSourceOf)
+    ? [
+        ...await applyCandidateCarryForward(supabase, "us", cappedKeys, candidateCap, candidateSourceOf),
+        ...exemptSyms,
+      ]
     : []);
   // Backlog visibility: carry-forward prevents silent drops, but if the queue
   // grows far past daily throughput the pool takes many days to rotate (effective

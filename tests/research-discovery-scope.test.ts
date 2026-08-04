@@ -44,3 +44,34 @@ describe("research discovery-scope run", () => {
     expect(sql).toContain("scope=discovery");
   });
 });
+
+describe("discovery run bypasses the candidate cap", () => {
+  const agent = read("lib/research-agent.ts");
+  const cron = read("app/api/agents/research/cron/route.ts");
+
+  it("exempts screener and edge candidates from RESEARCH_CANDIDATE_CAP on a discovery run", () => {
+    // candidateMap is ordered manual -> carry-forward -> watchlist -> screener,
+    // and applyCandidateCarryForward keeps the top 40, so screener names
+    // overflowed into research_queue BEFORE gatherSymbols returned. The
+    // 2026-08-04 discovery run scored only the post-cap appended buckets.
+    expect(agent).toContain("CAP_EXEMPT_ON_DISCOVERY");
+    for (const src of ["screener_momentum", "screener_value", "edge_relative_strength"]) {
+      expect(agent).toContain(src);
+    }
+    expect(agent).toContain("opts?.discoveryScope");
+  });
+
+  it("caps normally when not a discovery run", () => {
+    // exemptSyms is empty unless discoveryScope is set, so the main run's
+    // priority order and exit-rescoring budget are untouched.
+    expect(agent).toContain("const exemptSyms = opts?.discoveryScope");
+    expect(agent).toContain("cappedKeys");
+  });
+
+  it("passes the flag from the cron route", () => {
+    expect(cron).toContain("{ discoveryScope: discoveryOnly }");
+    // Must be read before gatherSymbols is called, not at the entry filter.
+    expect(cron.indexOf('const discoveryOnly = url.searchParams.get("scope")'))
+      .toBeLessThan(cron.indexOf("await gatherSymbols(supabase, undefined"));
+  });
+});
