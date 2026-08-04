@@ -59,7 +59,11 @@ describe("agent source pipeline remediation", () => {
     const queue = read("lib/research-queue.ts");
     expect(queue).toContain("export async function completeDeferred");
     expect(queue).not.toContain('from("research_queue").delete().eq("market", market).in("symbol", batch)');
-    expect(cron).toContain("await enqueueDeferred(supabase, queueMarket, failed)");
+    // Matched without the argument list: the invariant is that failures are
+    // re-queued for bounded retry, not the call's arity. Pinning the exact
+    // signature failed when provenance was threaded through the queue, on a
+    // change that preserved this behaviour completely.
+    expect(cron).toMatch(/await enqueueDeferred\(supabase, queueMarket, failed[,)]/);
     expect(cron).toContain("await completeDeferred(supabase, queueMarket, completed)");
     expect(cron).toContain("research-symbol-failures:");
     expect(cron).toContain("await resolveIssue(failureIssueKey, supabase)");

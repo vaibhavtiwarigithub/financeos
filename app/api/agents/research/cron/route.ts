@@ -176,7 +176,8 @@ export async function POST(req: NextRequest) {
   let queueDepthAtStart: number | null = null;
   let allEntries;
   if (closedDayCatchup && marketScope) {
-    const queued = await readDeferredCandidates(supabase, marketScope);
+    const queuedRows = await readDeferredCandidates(supabase, marketScope);
+    const queued = queuedRows.map((q) => q.symbol);
     queueDepthAtStart = queued.length;
     const asOfSession = lastCompletedMarketSession(marketScope);
     const { data: alreadyStaged } = await supabase.from("agent_signals")
@@ -350,11 +351,17 @@ export async function POST(req: NextRequest) {
   // Re-defer anything the budget didn't reach (results[i] still empty) so it
   // rotates to the FRONT of next run's queue instead of silently waiting.
   const deferred = entries.filter((_, i) => results[i] == null).map((e) => e.symbol);
+  // Provenance travels with the deferred tail. Without it a screener candidate
+  // cut by the budget returns as a generic "watchlist" name and its discovery
+  // attribution is lost, which is what made screener-sourced decisions read ~0.
+  const entrySourceOf = new Map<string, string | null | undefined>(
+    entries.map((e) => [e.symbol, (e as any).discovery_source]),
+  );
   if (deferred.length > 0) {
     const usDef = deferred.filter((s) => !isIndia(s));
     const inDef = deferred.filter((s) => isIndia(s));
-    if (usDef.length) await enqueueDeferred(supabase, "us", usDef);
-    if (inDef.length) await enqueueDeferred(supabase, "india", inDef);
+    if (usDef.length) await enqueueDeferred(supabase, "us", usDef, entrySourceOf);
+    if (inDef.length) await enqueueDeferred(supabase, "india", inDef, entrySourceOf);
   }
 
   // A deferred HOLDING is categorically worse than a deferred candidate: the
@@ -440,7 +447,7 @@ export async function POST(req: NextRequest) {
     const completed = completedCandidates.filter(isQueueMarket);
     const failed = failedCandidates.filter(isQueueMarket);
     if (completed.length > 0) await completeDeferred(supabase, queueMarket, completed);
-    if (failed.length > 0) await enqueueDeferred(supabase, queueMarket, failed);
+    if (failed.length > 0) await enqueueDeferred(supabase, queueMarket, failed, entrySourceOf);
   }
 
   // Cross-sectional rank — Pass 2 (features/cross-sectional-rank). Deterministic,

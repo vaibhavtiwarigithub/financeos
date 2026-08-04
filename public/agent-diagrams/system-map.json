@@ -1308,6 +1308,13 @@
       "nodeId": "RESEARCH",
       "label": "Discovery-only research run on its own budget",
       "reason": "Screener candidates were structurally last in an oversubscribed queue - candidates order holdings then watchlist then screener, and the wall-clock budget cuts from the tail - so with 54 US holdings and 16 watchlist names against a ~100-symbol batch already deferring ~51, they were never scored. Zero screener-sourced decisions across all of 2026-07, independent of whether discovery worked; the FinancialDatasets outage was real but was never the whole story. New crons kairos-research-discovery-us (14:30 UTC) and -india (05:00 UTC) run scope=discovery after each market's main run, taking only never-held discovery buckets. Holdings are excluded outright so the run cannot touch an exit/SELL path, alert keys are suffixed :discovery so the two runs cannot resolve each other's alerts, and the holdings-deferred resolve is guarded so a run with no holdings cannot silence a real shortfall. Discovery only: no score, eligibility, sizing, exit or broker behaviour changed, and the candidates-per-day cap is untouched."
+    },
+    {
+      "date": "2026-08-04",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "Carry discovery provenance through the research queue",
+      "reason": "research_queue.discovery_source was never written and gatherSymbols re-added carried-forward symbols as watchlist, so a screener candidate that overflowed the 40-candidate cap returned relabelled and its discovery attribution was destroyed. decision_observations therefore under-counted screener discoveries and over-counted watchlist, which means the US screener-0/watchlist-151 reading behind two alarms was partly an attribution artifact rather than pure starvation. Measured the same day: the Yahoo screener returned 72 momentum and 86 value matches, 19 of the top 22 had never been researched, and four sat in a 43-deep queue with a null source. Provenance now travels on all three queue paths - cap overflow, wall-clock budget tail, and failed-candidate retry - and a re-defer never overwrites a known source with null. Attribution only: no score, eligibility, sizing, exit or broker behaviour changed."
     }
   ]
 }

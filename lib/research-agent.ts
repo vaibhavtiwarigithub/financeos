@@ -705,8 +705,14 @@ export async function gatherSymbols(
 
   // PRIORITY 2 — carry-forward (migration 172): candidates that missed a prior
   // run's cap come back with raised priority so the pool rotates fairly.
+  // Carry-forward returns each symbol with the source that DISCOVERED it. This
+  // used to hardcode "watchlist", so a screener candidate that overflowed the
+  // per-run cap came back relabelled and its discovery provenance was destroyed
+  // on the round trip — which is why screener-sourced decisions read as ~0 while
+  // watchlist read high. Fall back to "watchlist" only for rows queued before
+  // provenance was carried.
   const deferredUs = includeUs ? await readDeferredCandidates(supabase, "us") : [];
-  for (const sym of deferredUs) addCandidate(sym, "watchlist");
+  for (const q of deferredUs) addCandidate(q.symbol, (q.source as DiscoverySource) ?? "watchlist");
 
   // PRIORITY 3 — the rest of the watchlist (Theme Scout / non-manual).
   for (const sym of watchlist.usOther) addCandidate(sym, "watchlist");
@@ -745,8 +751,12 @@ export async function gatherSymbols(
   const candidateCap = parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "40");
   // Take the top `candidateCap` this run; carry the overflow forward (raised
   // priority, no starvation) instead of the old silent `.slice()` drop.
+  // Provenance for anything the cap pushes into the queue.
+  const candidateSourceOf = new Map<string, string | null | undefined>(
+    Array.from(candidateMap.entries()).map(([sym, e]) => [sym, e.discovery_source]),
+  );
   const usBatch = new Set(includeUs
-    ? await applyCandidateCarryForward(supabase, "us", Array.from(candidateMap.keys()), candidateCap)
+    ? await applyCandidateCarryForward(supabase, "us", Array.from(candidateMap.keys()), candidateCap, candidateSourceOf)
     : []);
   // Backlog visibility: carry-forward prevents silent drops, but if the queue
   // grows far past daily throughput the pool takes many days to rotate (effective
@@ -825,7 +835,7 @@ export async function gatherSymbols(
     const rawList = cacheCandidates.length > 0 ? cacheCandidates : niftyCandidates(indiaCap);
     const orderedIndia: string[] = [];
     const seenInd = new Set<string>();
-    for (const sym of [...watchlist.indiaManual, ...deferredIndia, ...watchlist.indiaOther, ...rawList]) {
+    for (const sym of [...watchlist.indiaManual, ...deferredIndia.map(q => q.symbol), ...watchlist.indiaOther, ...rawList]) {
       const u = String(sym).toUpperCase();
       if (seenAll.has(u) || seenInd.has(u)) continue;
       seenInd.add(u);
