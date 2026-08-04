@@ -196,9 +196,32 @@ export async function POST(req: NextRequest) {
   }
   // Scope to the requested market: India run researches only .NS/.BO names; US run
   // only non-India. No param → everything (legacy).
-  const entries = marketScope === "india" ? allEntries.filter(e => isIndia(e.symbol))
+  const marketEntries = marketScope === "india" ? allEntries.filter(e => isIndia(e.symbol))
     : marketScope === "us" ? allEntries.filter(e => !isIndia(e.symbol))
     : allEntries;
+
+  // `scope=discovery` — the discovery-only run.
+  //
+  // gatherSymbols orders candidates holdings → manual watchlist → carry-forward
+  // → watchlist → screener, and the wall-clock budget cuts from the tail. With
+  // 54 US holdings and 16 watchlist names against a ~100-symbol batch that
+  // already defers ~51, screener candidates sat permanently at the back and were
+  // NEVER scored — zero screener-sourced decisions for the whole of 2026-07,
+  // regardless of whether discovery itself worked. Discovery and exit
+  // re-scoring were competing for one budget, and exits rightly win, so the
+  // funnel could never contribute evidence.
+  //
+  // This run takes only the never-held discovery buckets on its own schedule and
+  // budget. Holdings are excluded outright, so nothing here can touch an
+  // exit/SELL path.
+  const discoveryOnly = url.searchParams.get("scope") === "discovery";
+  // Alert keys are scoped by run type: the two runs cover different symbol sets,
+  // so a shared key would let one resolve what the other had just raised.
+  const runTag = `${marketScope ?? "mixed"}${discoveryOnly ? ":discovery" : ""}`;
+  const DISCOVERY_SOURCES = ["screener_momentum", "screener_value", "edge_relative_strength", "metals_basket", "region_etf", "india_screener"];
+  const entries = discoveryOnly
+    ? marketEntries.filter(e => !e.isHeld && DISCOVERY_SOURCES.includes(String(e.discovery_source ?? "")))
+    : marketEntries;
   const batch = entries.map(e => e.symbol);
 
   if (entries.length === 0) {
@@ -345,7 +368,7 @@ export async function POST(req: NextRequest) {
   // symbol already in holdingSet), so this alert is the only signal that the
   // book is bigger than one run can score.
   const deferredHoldings = entries.filter((e, i) => results[i] == null && e.isHeld).map((e) => e.symbol);
-  const deferredHoldingsKey = `research-deferred-holdings:${marketScope ?? "mixed"}`;
+  const deferredHoldingsKey = `research-deferred-holdings:${runTag}`;
   if (deferredHoldings.length > 0) {
     await emitAlert({
       issue_key: deferredHoldingsKey,
@@ -355,9 +378,13 @@ export async function POST(req: NextRequest) {
       detail: `The wall-clock budget (${BUDGET_MS}ms) ran out before these HELD symbols were scored, so no exit/SELL signal was evaluated on them this run: ${deferredHoldings.join(", ")}. They are ordered least-recently-scored-first, so they lead the next run. If this fires every day the book (${entries.filter(e => e.isHeld).length} holdings) is larger than one run's throughput — raise RESEARCH_PARALLEL or split holdings into their own run.`,
       auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
     });
-  } else {
+  } else if (!discoveryOnly) {
     // Capacity recovered — clear it. Without this the alert stays open forever
     // and the next real shortfall is indistinguishable from last week's.
+    //
+    // Guarded on `!discoveryOnly`: a discovery run carries no holdings by
+    // construction, so resolving here would clear a real shortfall the main run
+    // had just raised — an alert silenced by a run that never looked.
     await resolveIssue(deferredHoldingsKey, supabase);
   }
 
@@ -376,7 +403,7 @@ export async function POST(req: NextRequest) {
     .filter((i) => i >= 0);
   const screenerEntries = screenerIdx.map((i) => entries[i]);
   const screenerScored = screenerIdx.filter((i) => results[i] != null).length;
-  const screenerDeferredKey = `research-deferred-screener:${marketScope ?? "mixed"}`;
+  const screenerDeferredKey = `research-deferred-screener:${runTag}`;
   if (screenerEntries.length > 0 && screenerScored === 0) {
     await emitAlert({
       issue_key: screenerDeferredKey,
@@ -568,7 +595,7 @@ export async function POST(req: NextRequest) {
   // One durable issue per market: retries refresh it with current symbols and
   // useful reasons; the first clean run resolves it. This prevents a pile of
   // expiring duplicate warnings that cannot show whether the fault recovered.
-  const failureIssueKey = `research-symbol-failures:${marketScope ?? "mixed"}`;
+  const failureIssueKey = `research-symbol-failures:${runTag}`;
   if (errs > 0) {
     const failureDetails = failedDetails.map(r => `${r.symbol}: ${r.reason}`).join("; ");
     await reportIssue({

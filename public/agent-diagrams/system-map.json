@@ -1301,6 +1301,13 @@
       "nodeId": "RESEARCH",
       "label": "Fix ETF cap omission in Evidence Router parity evaluation",
       "reason": "Production caps ETF-like analyst scores at 65 after the weighted score; the router's dual-run evaluation skipped that cap in both legs. The legacy-reproduction proof therefore compared a capped recorded score against an uncapped replay and reported recorded=65 vs replayed=76 for every ETF - 45 of ~90 US parity failures across 8 symbols, the harness accusing itself. capEtfLikeScore is now shared from lib/scoring/archetypes.ts and applied to both the legacy replay and the candidate leg, keyed on shape etf OR metal because symbolShapeOf checks isMetal first while production still sets isEtf:true on the metals basket. Evaluation-only: the router stays inert (active_evidence_policy points at v1, router_enabled=false, both markets) and no gate or tolerance was relaxed."
+    },
+    {
+      "date": "2026-08-04",
+      "event": "added",
+      "nodeId": "RESEARCH",
+      "label": "Discovery-only research run on its own budget",
+      "reason": "Screener candidates were structurally last in an oversubscribed queue - candidates order holdings then watchlist then screener, and the wall-clock budget cuts from the tail - so with 54 US holdings and 16 watchlist names against a ~100-symbol batch already deferring ~51, they were never scored. Zero screener-sourced decisions across all of 2026-07, independent of whether discovery worked; the FinancialDatasets outage was real but was never the whole story. New crons kairos-research-discovery-us (14:30 UTC) and -india (05:00 UTC) run scope=discovery after each market's main run, taking only never-held discovery buckets. Holdings are excluded outright so the run cannot touch an exit/SELL path, alert keys are suffixed :discovery so the two runs cannot resolve each other's alerts, and the holdings-deferred resolve is guarded so a run with no holdings cannot silence a real shortfall. Discovery only: no score, eligibility, sizing, exit or broker behaviour changed, and the candidates-per-day cap is untouched."
     }
   ]
 }
