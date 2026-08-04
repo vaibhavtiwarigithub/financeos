@@ -345,14 +345,20 @@ export async function POST(req: NextRequest) {
   // symbol already in holdingSet), so this alert is the only signal that the
   // book is bigger than one run can score.
   const deferredHoldings = entries.filter((e, i) => results[i] == null && e.isHeld).map((e) => e.symbol);
+  const deferredHoldingsKey = `research-deferred-holdings:${marketScope ?? "mixed"}`;
   if (deferredHoldings.length > 0) {
     await emitAlert({
+      issue_key: deferredHoldingsKey,
       severity: "warn",
       category: "cron",
       title: `Research: ${deferredHoldings.length} held position${deferredHoldings.length > 1 ? "s" : ""} not re-scored (budget)`,
       detail: `The wall-clock budget (${BUDGET_MS}ms) ran out before these HELD symbols were scored, so no exit/SELL signal was evaluated on them this run: ${deferredHoldings.join(", ")}. They are ordered least-recently-scored-first, so they lead the next run. If this fires every day the book (${entries.filter(e => e.isHeld).length} holdings) is larger than one run's throughput — raise RESEARCH_PARALLEL or split holdings into their own run.`,
       auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
     });
+  } else {
+    // Capacity recovered — clear it. Without this the alert stays open forever
+    // and the next real shortfall is indistinguishable from last week's.
+    await resolveIssue(deferredHoldingsKey, supabase);
   }
 
   // Closes a blind spot in `discovery-starved:us`. That alert fires when the
@@ -370,14 +376,21 @@ export async function POST(req: NextRequest) {
     .filter((i) => i >= 0);
   const screenerEntries = screenerIdx.map((i) => entries[i]);
   const screenerScored = screenerIdx.filter((i) => results[i] != null).length;
+  const screenerDeferredKey = `research-deferred-screener:${marketScope ?? "mixed"}`;
   if (screenerEntries.length > 0 && screenerScored === 0) {
     await emitAlert({
+      issue_key: screenerDeferredKey,
       severity: "warn",
       category: "cron",
       title: `Research: all ${screenerEntries.length} screener candidate${screenerEntries.length > 1 ? "s were" : " was"} deferred (budget)`,
       detail: `The screener returned ${screenerEntries.length} candidate(s) — ${screenerEntries.map((e) => e.symbol).join(", ")} — and the wall-clock budget (${BUDGET_MS}ms) scored none of them. Discovery is working but its output is not reaching the evidence ledger, so this run only recorded names already held or watched. Candidates are re-deferred to the front of the next queue, but if this repeats the batch is larger than one run's throughput: raise RESEARCH_PARALLEL, or score screener candidates before the watchlist tail.`,
       auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
     });
+  } else if (screenerScored > 0) {
+    // Only clear when candidates actually got scored. A run with no screener
+    // candidates at all is `discovery-starved:us`'s business, not this alert's —
+    // resolving here would mark the throughput problem fixed by an empty funnel.
+    await resolveIssue(screenerDeferredKey, supabase);
   }
 
   // results may now contain empty slots (symbols deferred by the wall-clock
