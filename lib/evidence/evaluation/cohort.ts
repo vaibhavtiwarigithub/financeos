@@ -27,6 +27,7 @@ import {
   type DimensionRecord,
   type ScoreDimension,
 } from "@/lib/scoring/weighted-score";
+import { capEtfLikeScore } from "@/lib/scoring/archetypes";
 import { resolveSignalDirection } from "@/lib/signal-direction";
 import type { Market } from "@/lib/evidence/contracts";
 import type { SymbolShape } from "@/lib/evidence/intent-classification";
@@ -142,11 +143,15 @@ export function scorePath(cohort: FrozenCohort, path: "legacy" | "candidate"): S
       };
     }
     // The EXACT production scorer + direction gate.
-    const { score, renormalized, includedDims } = computeWeightedAnalystScore(
-      obs.scores,
-      obs.included,
-      cohort.weights,
-    );
+    //
+    // "Exact" has to include the ETF cap. Production applies it in
+    // research-agent.ts after the weighted score; omitting it here made every
+    // ETF and metal fund score higher in BOTH legs than production recorded,
+    // which failed the legacy-reproduction proof and silently mis-stated the
+    // candidate leg's score_delta for the same symbols.
+    const weighted = computeWeightedAnalystScore(obs.scores, obs.included, cohort.weights);
+    const { renormalized, includedDims } = weighted;
+    const score = capEtfLikeScore(weighted.score, row.shape === "etf" || row.shape === "metal");
     const thin = isThinEvidence(includedDims);
     const gate = resolveSignalDirection({
       isHeld: row.isHeld,

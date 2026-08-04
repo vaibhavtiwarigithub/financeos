@@ -555,3 +555,92 @@ the existing Router cache and immutable decision detail remains in
 - Active US and India policies remain v1 with `router_enabled=false`. The bound
   activation RPC is executable by `service_role` only.
 - Gates: TypeScript clean; 1,162 tests passed / 6 skipped; production build clean.
+
+---
+
+## 16. Parity Evidence State And The ETF Reproduction Bug (2026-08-03)
+
+### Where the gates actually stand
+
+Daily dual-run evaluations have been running since 2026-07-20. Measured from
+`evidence_policy_evaluations`:
+
+| | India | US |
+|---|---:|---:|
+| sessions evaluated | 10 | 10 |
+| **sessions passing all machine gates** | **3** | **1** |
+| `safety_pass` | 8/13 runs | 2/14 runs |
+| `quality_pass` | 3/13 runs | 3/14 runs |
+| eligibility flips (§7 floor: zero) | **34** | 3 |
+| schema failures | 0 | 0 |
+| outage drills recorded (§7 requires them) | **0** | **0** |
+| owner reviews of divergences | **0** | **0** |
+
+**Nothing is approvable.** §7 requires ten *passing* sessions, zero unexplained
+entry flips, the full outage-drill set, and owner review of every material
+divergence. Three of those four are unmet in both markets, and the drill set has
+never been started.
+
+Router state is correct and unchanged: `router_enabled = true` exists on v2 for
+both markets, but `active_evidence_policy` points at v1 (`router_enabled=false`)
+for both. The candidates are inert, exactly as §14 intended.
+
+### The dominant US blocker was our bug, not the router's
+
+`legacy_reproduction_failed` accounted for **45 of ~90 US failures**, on eight
+symbols — `DBA, DXJ, EUAD, FEZ, IBIT, IVV, SCHD, VTV` — every one an ETF.
+
+Production caps ETF-like scores at `ETF_SCORE_CAP = 65` in
+`lib/research-agent.ts` after the weighted score. The evaluation called
+`computeWeightedAnalystScore` directly and skipped it, in **both** legs:
+
+- `lib/evidence/evaluation/cohort.ts` — comment claimed "the EXACT production
+  scorer" while omitting the cap;
+- `lib/evidence/evaluation/cohort-builder.ts` `scorePathForReport` — the
+  legacy-reproduction replay.
+
+Production evidence, 2026-08-03, verbatim:
+
+```
+VTV  recorded=65 replayed=76      EUAD recorded=65 replayed=82
+IVV  recorded=65 replayed=72      FEZ  recorded=65 replayed=75
+```
+
+Every `recorded` is exactly the cap; every `replayed` is the uncapped weighted
+score. The legacy-reproduction check exists to prove the harness froze the right
+mask and weights — instead it was reporting its own omission as evidence that the
+frozen cohort was wrong.
+
+The cap shipped ~2026-07-22 (US ETF scores stop exceeding 65 from 07-23 in
+`decision_observations`); the evaluator was never updated to match.
+
+**Fix.** `capEtfLikeScore(score, isEtfLike)` exported from
+`lib/scoring/archetypes.ts` and applied at both call sites, keyed on
+`shape === "etf" || shape === "metal"`. The metal case matters: `symbolShapeOf`
+checks `isMetal` first, so a metal fund never reports `"etf"` even though
+production sets `isEtf: true` on the metals basket — keying on `"etf"` alone
+would leave GLD/SLV uncapped and reopen the same failure.
+
+Applying it to the candidate leg as well is not optional. Fixing only the replay
+would have made `score_delta` compare a capped legacy against an uncapped
+candidate for the same symbols, converting a reproduction failure into a
+silently wrong drift measurement.
+
+### What this does and does not change
+
+It does **not** move any market closer to activation on its own — it makes the
+US measurement mean what it claims. Expect the next US evaluations to drop the
+45-occurrence failure class and expose whatever remains underneath. The other
+blockers are untouched and still real:
+
+- `score_drift_exceeds_quality_limit` — 29 US, 29 India occurrences. The US
+  cases pair with `availability_gain` on TSM, MELI, NVDA, INTC, KR, W: the
+  candidate finds *more* data than legacy. That is not automatically good —
+  `artifact_created_eligibility:TSM` shows one case where the router made a name
+  eligible that legacy did not, which §5 treats as a flip to explain, not a win.
+- `unexplained_flip:SBIN.NS` — India, §7 zero-tolerance.
+- India's 34 eligibility flips across 10 sessions.
+- Zero outage drills.
+
+No tolerance was widened and no gate was relaxed to accommodate any of this.
+

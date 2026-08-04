@@ -43,6 +43,7 @@ import {
   type DimensionRecord,
   type ScoreDimension,
 } from "@/lib/scoring/weighted-score";
+import { capEtfLikeScore } from "@/lib/scoring/archetypes";
 import { scoreFundamentals, scoreSentiment } from "@/lib/data/scores";
 import { computeTechnicals, scoreTechnicals } from "@/lib/data/technicals";
 import type { Currency, EvidenceEnvelope, EvidenceIntent, Market } from "@/lib/evidence/contracts";
@@ -801,7 +802,10 @@ function scorePathForReport(cohort: FrozenCohort): Map<string, number | null> {
   for (const row of cohort.rows) {
     if (row.legacy.status !== "scored") { out.set(row.symbol, null); continue; }
     const { score } = computeWeightedAnalystScore(row.legacy.scores, row.legacy.included, cohort.weights);
-    out.set(row.symbol, score);
+    // Same ETF cap production applies (see capEtfLikeScore). Without it this
+    // replay reported recorded=65 vs replayed=76 for every ETF and declared the
+    // legacy leg irreproducible — the harness accusing itself of the bug.
+    out.set(row.symbol, capEtfLikeScore(score, row.shape === "etf" || row.shape === "metal"));
   }
   return out;
 }

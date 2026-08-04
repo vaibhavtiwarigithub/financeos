@@ -101,6 +101,22 @@ export function routeToArchetypes(input: ArchetypeRouterInput): ArchetypeConfig[
 // technical dimension dominates after renorm; cap prevents displacing equity alpha candidates.
 export const ETF_SCORE_CAP = 65;
 
+/**
+ * The ETF cap exactly as the production scorer applies it
+ * (`research-agent.ts` gates on `isEtf`, and metal funds are pushed with
+ * `isEtf: true`, so both the "etf" and "metal" shapes are capped).
+ *
+ * Exported because the Evidence Router's dual-run evaluation must reproduce the
+ * production score bit-for-bit. It previously called `computeWeightedAnalystScore`
+ * directly and skipped this cap, so every ETF failed the legacy-reproduction
+ * check with `recorded=65, replayed=<uncapped>` — 45 failures across 8 symbols,
+ * over half of all US parity failures, on a leg that is supposed to prove the
+ * harness froze the right mask and weights.
+ */
+export function capEtfLikeScore(score: number, isEtfLike: boolean): number {
+  return isEtfLike ? Math.min(score, ETF_SCORE_CAP) : score;
+}
+
 export function computeArchetypeScore(
   archetype: ArchetypeConfig,
   scoreOf: DimensionRecord<number>,

@@ -1294,6 +1294,13 @@
       "nodeId": "RESEARCH",
       "label": "Close two blind spots in the discovery monitors",
       "reason": "discovery-starved:us only saw an empty screener RETURN, not the case where candidates come back and the wall-clock budget scores none of them; both leave zero screener-sourced decisions but only one alerted. The research cron now alerts separately when every screener candidate was deferred, under its own key since the remedy is throughput rather than provider. Separately, the screener field-contract check treated an unreachable provider as honoured, so a total Yahoo outage was indistinguishable from every criterion working; probes now report verified / proven-no-op / unverifiable, and raise screener-contract-unverifiable when nothing could be probed. Monitoring only: no score, eligibility, sizing, exit or broker behaviour changed."
+    },
+    {
+      "date": "2026-08-03",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "Fix ETF cap omission in Evidence Router parity evaluation",
+      "reason": "Production caps ETF-like analyst scores at 65 after the weighted score; the router's dual-run evaluation skipped that cap in both legs. The legacy-reproduction proof therefore compared a capped recorded score against an uncapped replay and reported recorded=65 vs replayed=76 for every ETF - 45 of ~90 US parity failures across 8 symbols, the harness accusing itself. capEtfLikeScore is now shared from lib/scoring/archetypes.ts and applied to both the legacy replay and the candidate leg, keyed on shape etf OR metal because symbolShapeOf checks isMetal first while production still sets isEtf:true on the metals basket. Evaluation-only: the router stays inert (active_evidence_policy points at v1, router_enabled=false, both markets) and no gate or tolerance was relaxed."
     }
   ]
 }
