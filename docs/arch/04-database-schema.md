@@ -1161,3 +1161,22 @@ Database checks pin P0 to `policy_mode='shadow'` and
 `20260729201000_harden_earnings_risk_observation_acl.sql`, with
 `20260729202000_optimize_earnings_risk_observations.sql` adding the
 proposal lookup index and init-plan-safe owner policy.
+
+## `theme_observations` (2026-08-04)
+
+Append-only per-run record of Theme Scout output — one row per
+(`run_date`, `market`, `theme_raw`). `watchlist` rows expire after 7 days, so a
+theme's recurrence across runs, which is the entire rise/decline signal, had no
+durable home.
+
+`theme_slug` is the stable identity from `lib/themes/vocabulary.ts`; **NULL means
+the controlled vocabulary does not cover that string**, recorded rather than
+guessed. `watchlist.theme_slug` carries the same value on the live row.
+
+RLS enabled, owner-email SELECT policy, `service_role` holds
+`INSERT, REFERENCES, SELECT, TRIGGER` only — UPDATE/DELETE/TRUNCATE revoked, so
+append-only is a grant property rather than a convention the writer follows.
+
+Measurement only: no score, eligibility, sizing, entry, exit, promotion or broker
+path reads either column. See `features/theme-tracking/FEATURE_ARCHITECTURE.md`.
+

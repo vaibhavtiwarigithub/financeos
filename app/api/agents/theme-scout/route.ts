@@ -9,6 +9,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { avCachedFetch } from "@/lib/av-cache";
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
 import { fetchYahooQuote } from "@/lib/india-data";
+import { resolveThemeSlug } from "@/lib/themes/vocabulary";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -215,6 +216,10 @@ Rules:
         symbol: clean,
         source: "llm_theme",
         theme: t.theme,
+        // Stable identity for the free-text theme. null when the controlled
+        // vocabulary does not cover it — recorded as unmatched rather than
+        // guessed, since minting a slug per run is the drift being fixed.
+        theme_slug: resolveThemeSlug(t.theme),
         reason: `${t.rationale} — ${t.criteria}`,
         notes: `Auto-added by Theme Scout. Theme: ${t.theme}`,
         auto_added: true,
@@ -266,10 +271,50 @@ Rules:
     }
   }
 
+  // Append-only per-run ledger. watchlist rows expire after 7 days, so without
+  // this a theme's recurrence across runs — which IS the rise/decline signal —
+  // is unrecoverable. Best-effort: a ledger write must never fail the scout.
+  let observationsWritten = 0;
+  let unmatchedThemes: string[] = [];
+  try {
+    const runDate = new Date().toISOString().slice(0, 10);
+    const seenRaw = new Set<string>();
+    const observations = [];
+    for (const t of enriched) {
+      const raw = String(t.theme ?? "").trim();
+      if (!raw || seenRaw.has(raw)) continue;
+      seenRaw.add(raw);
+      const slug = resolveThemeSlug(raw);
+      if (!slug) unmatchedThemes.push(raw);
+      const members = rows.filter((r) => r.theme === t.theme).map((r) => r.symbol);
+      observations.push({
+        run_date: runDate,
+        market: "us",
+        theme_slug: slug,
+        theme_raw: raw,
+        symbols: members,
+        member_count: members.length,
+      });
+    }
+    if (observations.length) {
+      const { error: obsErr } = await supabase
+        .from("theme_observations")
+        .upsert(observations, { onConflict: "run_date,market,theme_raw", ignoreDuplicates: true });
+      if (obsErr) console.error("[theme-scout] theme_observations write failed:", obsErr.message);
+      else observationsWritten = observations.length;
+    }
+  } catch (e) {
+    console.error("[theme-scout] theme_observations threw:", e instanceof Error ? e.message : e);
+  }
+
   return NextResponse.json({
     ok: true,
     themes: enriched,
     added: rows.length,
+    observations_written: observationsWritten,
+    // Surfaced so the vocabulary's coverage is visible per run: a rising
+    // unmatched rate is the signal to extend it, not to loosen matching.
+    unmatched_themes: unmatchedThemes,
     symbols: rows.map(r => r.symbol),
     quarantined, // candidates the LLM/AV surfaced that failed the existence check — never inserted
   });

@@ -1322,6 +1322,13 @@
       "nodeId": "RESEARCH",
       "label": "Discovery run bypasses the candidate cap",
       "reason": "The discovery run could not see the names it exists to score. candidateMap is ordered manual, carry-forward, watchlist, screener; applyCandidateCarryForward keeps the top 40; screener names are last, so they overflowed into research_queue BEFORE gatherSymbols returned and the run's entry filter never saw them. The 2026-08-04 run scored exactly SLV/GDX/IAU/INDA/EPI/INDY - the buckets appended after the cap - and nothing else. gatherSymbols now takes a discoveryScope option that exempts screener_momentum, screener_value and edge_relative_strength from the cap on that run only, matching how metals and region ETFs are already handled. Bounded at ~10 symbols by RESEARCH_SCREENER_MAX and RESEARCH_EDGE_DISCOVERY_MAX. The main run is untouched, so exit re-scoring keeps its full priority and budget. Discovery admission only: no score, eligibility, sizing, exit or broker behaviour changed, and the candidates-per-day cap is unchanged."
+    },
+    {
+      "date": "2026-08-04",
+      "event": "changed",
+      "nodeId": "THEMESCOUT",
+      "label": "Theme identity + append-only observation ledger",
+      "reason": "Theme Scout wrote a free-text LLM theme name on every row with no vocabulary and no memory of prior runs: 182 rows over 13 runs produced 42 distinct strings, 32 appearing exactly once, and Cybersecurity arrived as six separate strings across five weeks. No rise/decline signal was computable. Adds lib/themes/vocabulary.ts (curated slugs, aliases seeded from the strings actually observed), watchlist.theme_slug, and an append-only theme_observations ledger, since watchlist rows expire after 7 days and recurrence across runs is the whole signal. Backfill matched 32 of 42 themes; the 10 unmatched are one-off observations such as Debt Reduction and Grid Safety, recorded with a null slug rather than guessed. Deliberately no LLM in the resolver - free-text LLM output is the cause of the drift. Measurement only: no score, eligibility, sizing, exit or broker consumer, and a theme or sector momentum SCORING dimension is explicitly out of scope because per-date cross-sectional variance within a theme is zero by construction, the same defect that got FII/DII rejected."
     }
   ]
 }
