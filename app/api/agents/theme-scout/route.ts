@@ -108,12 +108,40 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createServiceClient();
+  const isCron = verifyCronSecret(req);
+
+  // Theme Scout ran weekly for five weeks writing NO agent_runs row: no run
+  // record, no duration, no error trail. Its only trace was watchlist rows whose
+  // created_at is pinned by upsert and whose updated_at gets moved by unrelated
+  // migrations — so "did the scout run, and what did it find" was unanswerable
+  // from the data, and an attempt to reconstruct run history from those
+  // timestamps produced misattributed rows. The run ledger is the fix.
+  let runId: string | null = null;
+  try {
+    const { data: runRow } = await supabase.from("agent_runs").insert({
+      agent_type: "theme_scout", status: "running",
+      trigger_source: isCron ? "scheduled" : "manual", market: "us",
+    } as any).select().single();
+    runId = (runRow as any)?.id ?? null;
+  } catch { /* observability must never block the scout */ }
+
+  const finishRun = async (status: "done" | "error", summary: string, written = 0) => {
+    if (!runId) return;
+    try {
+      await supabase.from("agent_runs").update({
+        status, signals_written: written, completed_at: new Date().toISOString(),
+        result_summary: summary.slice(0, 500),
+      } as any).eq("id", runId);
+    } catch { /* best-effort */ }
+  };
+
   const news = await fetchMarketNews();
   // Movers are a final AV reserve only when neither GDELT nor AV news yielded
   // usable headlines. A normal scout run spends no AV call here.
   const movers = news ? "" : await fetchTopGainersLosers();
 
   if (!news && !movers) {
+    await finishRun("error", "No market data available: GDELT, AV news and AV movers all returned nothing.");
     return NextResponse.json({ skipped: true, reason: "No market data available" });
   }
 
@@ -160,10 +188,12 @@ Rules:
     const parsed = JSON.parse(jsonMatch[0]);
     themes = parsed.themes ?? [];
   } catch (e) {
+    await finishRun("error", `LLM theme parse failed: ${String(e)}`);
     return NextResponse.json({ error: "LLM parse failed", detail: String(e) }, { status: 500 });
   }
 
   if (!themes.length) {
+    await finishRun("done", "LLM returned no themes.");
     return NextResponse.json({ added: 0, themes: [] });
   }
 
@@ -203,6 +233,7 @@ Rules:
       detail: "No owner profile could be resolved, so Theme Scout refused to create unowned watchlist rows.",
       auto_expire_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
     });
+    await finishRun("error", "Owner profile unavailable; refused to create unowned watchlist rows.");
     return NextResponse.json({ error: "Owner profile unavailable; no watchlist rows written" }, { status: 500 });
   }
 
@@ -306,6 +337,12 @@ Rules:
   } catch (e) {
     console.error("[theme-scout] theme_observations threw:", e instanceof Error ? e.message : e);
   }
+
+  await finishRun(
+    "done",
+    `${rows.length} watchlist row(s) across ${observationsWritten} theme(s); ${unmatchedThemes.length} unmatched: ${unmatchedThemes.join(", ") || "none"}.`,
+    rows.length,
+  );
 
   return NextResponse.json({
     ok: true,

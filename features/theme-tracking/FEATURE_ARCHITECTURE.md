@@ -214,3 +214,50 @@ a surface over it.
 The backfill was generated *from* the TypeScript resolver rather than
 reimplemented in SQL, so the vocabulary keeps exactly one implementation.
 
+---
+
+## 9. Step 2 — diagnosis: there was no drift (2026-08-05)
+
+Step 2 was to diagnose why theme output degraded after mid-July. **It did not.**
+§8's claim that "every durable theme's last_seen is 2026-07-15 or earlier" was an
+artifact of the backfill, and is retracted.
+
+### 9a. Why the backfill was wrong
+
+`run_date` was keyed on `watchlist.created_at`. Theme Scout **upserts on
+(user_id, symbol)**, so a symbol first added on 06-30 keeps `created_at = 06-30`
+forever while later runs overwrite its `theme`. Weeks of themes were attributed
+to the day a symbol was first seen — which is why 06-30 appeared to carry 15
+themes when `MAX_THEMES = 3` makes that impossible in one run.
+
+`updated_at` is no better: **162 of 182 rows are stamped 2026-07-17, a Friday** —
+a bulk touch from the 07-16 watchlist market-casing migration, not a run.
+
+**Neither column identifies the run that wrote a theme**, so prior theme history
+is not reconstructible from this table at all. The 68 backfilled
+`theme_observations` rows were deleted.
+
+### 9b. What actually changed
+
+Cadence. `kairos-theme-scout` runs `0 0 * * 1` — **Mondays, weekly**. The genuine
+run dates are all Mondays (06-29, 07-06, 07-13, 07-20, 07-27, 08-03); migration
+052 had unscheduled the earlier `theme-scout-daily`. With `MAX_THEMES = 3` ×
+`MAX_THEME_STOCKS = 2`, a run caps at **6 members** — and the three most recent
+Mondays produced 2, 6 and 5. Exactly at cap, not degraded.
+
+### 9c. The root cause
+
+**Theme Scout wrote no `agent_runs` row.** Five weeks of weekly runs with no run
+record, no duration, no error trail — its only trace was watchlist rows whose
+timestamps are contaminated by upsert and by unrelated migrations. That is why
+the question was unanswerable, and why an attempt to answer it from those
+timestamps produced 68 wrong rows.
+
+Fixed: the scout now opens an `agent_runs` row and closes it on **all five**
+terminal paths (no market data, LLM parse failure, no themes, no owner profile,
+success), reporting the unmatched-vocabulary count in the summary. A row left
+`running` is indistinguishable from a hang, which is the same class of silence.
+
+**The ledger's real history therefore starts with the next Monday run**, not with
+the five weeks already collected. Those are gone.
+
