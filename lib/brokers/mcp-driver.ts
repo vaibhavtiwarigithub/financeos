@@ -56,7 +56,12 @@ async function vaultSet(svc: any, cfg: McpBrokerConfig, key: string, value: stri
   // api_key_vault.display_name and .provider are NOT NULL with no default — must
   // be set on insert or the write throws a not-null violation.
   const { error } = await svc.from("api_key_vault").upsert(
-    { key_name: key, key_value: value, display_name: key, provider: cfg.vaultProvider },
+    {
+      key_name: key, key_value: value, display_name: key, provider: cfg.vaultProvider,
+      // See lib/robinhood-mcp.ts vaultSet: the column only moved on the CAS
+      // claim, so token rows kept their original insert timestamp forever.
+      updated_at: new Date().toISOString(),
+    },
     { onConflict: "key_name" }
   );
   if (error) throw new Error(`vault write failed for ${key}: ${error.message}`);

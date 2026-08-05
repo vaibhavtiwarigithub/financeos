@@ -40,7 +40,16 @@ async function vaultSet(svc: any, key: string, value: string): Promise<void> {
   // must be set on insert or the write throws a not-null violation (which is
   // what silently broke registration + token storage before this fix).
   const { error } = await svc.from("api_key_vault").upsert(
-    { key_name: key, key_value: value, display_name: key, provider: "robinhood_mcp" },
+    {
+      key_name: key, key_value: value, display_name: key, provider: "robinhood_mcp",
+      // Stamp the write. Without this the column only ever moved on the CAS
+      // claim in refreshAccessToken, so ACCESS_TOKEN and TOKEN_EXPIRY kept the
+      // timestamp of their first insert no matter how often the value changed —
+      // a re-auth on 2026-08-05 left both rows reading 2026-07-07. "When was
+      // this credential last rotated?" then has a confidently wrong answer, and
+      // the only reliable check is decoding the expiry value itself.
+      updated_at: new Date().toISOString(),
+    },
     { onConflict: "key_name" }
   );
   if (error) throw new Error(`vault write failed for ${key}: ${error.message}`);
