@@ -1336,6 +1336,13 @@
       "nodeId": "THEMESCOUT",
       "label": "Theme Scout writes a run record; bad backfill removed",
       "reason": "Theme Scout ran weekly for five weeks writing no agent_runs row: no run record, duration or error trail, its only trace being watchlist rows whose created_at is pinned by upsert and whose updated_at is moved by unrelated migrations. It now opens an agent_runs row and closes it on all five terminal paths - no market data, LLM parse failure, no themes, no owner profile, success - since a row left running is indistinguishable from a hang. This also retracts a finding: the apparent theme-quality degradation after mid-July was an artifact of a backfill keyed on created_at, and the real change was cadence, daily to weekly Mondays, with each run capped at 3 themes x 2 stocks = 6 members. The 68 backfilled theme_observations rows were deleted as unsound; real per-run history starts from the next Monday run. Observability only: no score, eligibility, sizing, exit or broker behaviour changed."
+    },
+    {
+      "date": "2026-08-05",
+      "event": "added",
+      "nodeId": "RESEARCH",
+      "label": "Market event ledger (measurement only)",
+      "reason": "Nothing in the schema could record a dated, typed market event, so a recurring pattern such as an aggressive policy announcement followed by a historical reversal existed only as a story with no base rate to count. Adds market_events and market_event_outcomes plus a controlled vocabulary in lib/events/vocabulary.ts, seeded with the trade-policy family only because each extra event type is another trial against the unresolved false-discovery procedure in walk-forward-ic-folds. occurred_at is separated from observed_at with a CHECK rejecting an event recorded before it happened - that column is where look-ahead enters - and both guards were verified against the live database rather than assumed. Ingest is manual and owner-gated with a mandatory cited source, since a hand-entered event with a real timestamp beats an automated one stamped when an aggregator noticed it. Append-only by grant: no DELETE or TRUNCATE on either table, no UPDATE on events. Measurement only: no score, eligibility, sizing, exit or broker consumer, and an event-based scoring dimension is out of scope because an event is market-wide so its per-date cross-sectional variance is zero by construction."
     }
   ]
 }

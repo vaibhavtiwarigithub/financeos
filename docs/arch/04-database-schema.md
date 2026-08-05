@@ -1180,3 +1180,27 @@ append-only is a grant property rather than a convention the writer follows.
 Measurement only: no score, eligibility, sizing, entry, exit, promotion or broker
 path reads either column. See `features/theme-tracking/FEATURE_ARCHITECTURE.md`.
 
+## `market_events` / `market_event_outcomes` (2026-08-05)
+
+Append-only ledger of dated, typed market events plus their matured forward
+paths, so a recurring event pattern becomes a counted base rate rather than a
+remembered story. Nothing in the schema could record a market event before this.
+
+`occurred_at` (when the event became **public**) is kept separate from
+`observed_at` (when we recorded it) and a CHECK rejects `occurred_at >
+observed_at`. That column is where look-ahead enters; a drift toward "when we
+noticed" makes every backward measurement silently optimistic. Verified live: a
+future `occurred_at` is rejected.
+
+`event_type` is validated against `lib/events/vocabulary.ts` at the API rather
+than by a DB enum, because extending an enum is a migration while the vocabulary
+is meant to be owner-reviewed — each new type is another trial against an
+unresolved false-discovery correction.
+
+RLS enabled, owner-email SELECT policies. `market_events` grants
+`INSERT, REFERENCES, SELECT, TRIGGER` only; `market_event_outcomes` adds UPDATE
+for re-maturation. Neither has DELETE or TRUNCATE.
+
+Measurement only: no score, eligibility, sizing, entry, exit, promotion or broker
+path reads either table. See `features/event-ledger/FEATURE_ARCHITECTURE.md`.
+

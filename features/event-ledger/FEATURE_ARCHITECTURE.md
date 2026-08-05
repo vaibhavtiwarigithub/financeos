@@ -1,6 +1,6 @@
 # Event Ledger — Feature Architecture
 
-Status: **Draft proposal — not approved, no code written.**
+Status: **Step 1 approved and shipped 2026-08-05. Steps 2-5 remain proposals.**
 Author: Claude · 2026-08-05
 Related: `features/theme-tracking/`, `features/walk-forward-ic-folds/`,
 `features/edge-factor-discovery/`, `features/india-scorer-discrimination/R3_DIMENSION_FEASIBILITY.md`.
@@ -191,3 +191,47 @@ Step 1 is small, additive, and reversible.
    `created_at` and produced misattributed rows, because the underlying table had
    never recorded run identity. A backfill is only as good as the timestamp it
    can cite.
+
+---
+
+## 9. Step 1 — shipped 2026-08-05
+
+`lib/events/vocabulary.ts`, `market_events`, `market_event_outcomes`, and an
+owner-gated `GET`/`POST /api/events`. Migration applied and verified.
+
+**Vocabulary seeded with the trade-policy family only** —
+`policy_tariff_announced` and `policy_tariff_reversed` — per §8 Q2. The paired
+announce/reverse types make the *interval between them* measurable, which is the
+quantity the pattern actually claims. Every additional type is another trial
+against an unresolved false-discovery correction, so growth is an owner-reviewed
+edit rather than a convenience.
+
+**Guards verified against the live database, not assumed.** Two deliberate
+violations were attempted and both were rejected, leaving the table empty:
+
+| attempted | result |
+|---|---|
+| `occurred_at` two days in the future | rejected by `market_events_occurred_before_observed` |
+| `market = 'mars'` | rejected by the market CHECK |
+
+Grants confirmed: `market_events` holds `INSERT, REFERENCES, SELECT, TRIGGER` —
+no UPDATE, DELETE or TRUNCATE. `market_event_outcomes` additionally keeps UPDATE
+so a horizon can be re-matured if a price source is corrected, but never DELETE
+or TRUNCATE. Append-only is a grant property, not a writer convention.
+
+**Ingest is manual and owner-gated**, with `source_url` and `source_name`
+mandatory. An event with no citation cannot be re-verified, and an unverifiable
+`occurred_at` is precisely the look-ahead in R3. The route also fails closed on
+an unrecognised `event_type` and returns the known list rather than recording the
+string — the theme ledger failure mode, avoided by construction.
+
+`GET` returns ledger contents with per-type counts and an explicit note that **no
+base rate is computed there**. A rate requires matured outcomes and the declared
+minimum n from §4.4; nothing in step 1 produces one.
+
+### Not yet built (steps 2-5)
+
+The maturation job, the base-rate report with n-floors, any display, and any
+strategy proposal. The ledger currently holds **zero rows** — that is the correct
+state, and the first real entry is the owner's to make.
+
