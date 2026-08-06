@@ -1193,3 +1193,22 @@ untouched.
 
 **Architecture:** `features/us-keyless-screener/FEATURE_ARCHITECTURE.md` (rev 3).
 
+---
+
+## Decision 63: Governed Dimension Diagnostics (2026-08-06)
+
+**Status:** Approved design, not implemented
+
+**Decision.** Use the existing immutable decision/label ledger to distinguish
+data degradation, predictive uncertainty/decay, predeclared regime dependence,
+and execution/portfolio effects. Any repair is a market-local, versioned,
+trial-budgeted candidate that must pass the existing sealed replay, shadow and
+owner-gated promotion lifecycle. It cannot automatically change a score,
+threshold, strategy champion, paper/live entry, exit, sizing, or broker action.
+
+**Reason.** A losing trade cannot by itself identify a bad dimension. Automatic
+self-reweighting would fit a small, confounded outcome sample and undermine the
+same evidence controls intended to make learning trustworthy.
+
+**Architecture:** `features/dimension-diagnostics/FEATURE_ARCHITECTURE.md`.
+
