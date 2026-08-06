@@ -300,6 +300,43 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       return status;
     }
 
+    if (program.id === "exit-geometry") {
+      // Readiness only. The counterfactual itself lives in
+      // GET /api/agents/exit-geometry-shadow — running the geometry grid here
+      // would mean a second heavy label read on every dashboard load, and this
+      // program's job is to say WHEN the question becomes decidable.
+      // Counted over ENTRY-ELIGIBLE rows only, matching what the shadow endpoint
+      // actually analyses. Counting all labels would have opened this gate at
+      // 7/20 while the usable cohort still had 2 dates — a gate that clears
+      // before its own analysis is ready is worse than no gate.
+      const atTradedHorizon = coverageByHorizon(labelRows.filter((row) => row.entryEligible))
+        .find((row) => row.horizonDays === PRIMARY_HORIZON_DAYS);
+      const dates = atTradedHorizon?.distinctDates ?? 0;
+      const decidable = dates >= MIN_DISTINCT_DATES;
+
+      status.lifecycle = !atTradedHorizon ? "idle" : decidable ? "ready_for_review" : "collecting";
+      status.benefitVerdict = "operational_only";
+      status.benefitEvidence = atTradedHorizon
+        ? `${market.toUpperCase()}: ${atTradedHorizon.observations} matured ${PRIMARY_HORIZON_DAYS}-day labels across ${dates} decision date(s), ${atTradedHorizon.eligibleObservations} entry-eligible.`
+        : `No matured ${PRIMARY_HORIZON_DAYS}-day labels for ${market.toUpperCase()} yet.`;
+      status.progress = progress(dates, MIN_DISTINCT_DATES, "distinct decision dates at the traded horizon", 45);
+      status.calls = calls("zero_incremental", "Derived from labels already written by the maturation job. No provider request and no table written.");
+      status.latestAt = labelRows.length ? labelRows.map((row) => row.date).sort().at(-1) ?? null : null;
+      status.blockers = decidable ? [] : [
+        `${dates}/${MIN_DISTINCT_DATES} distinct decision dates at the ${PRIMARY_HORIZON_DAYS}-day horizon. A geometry chosen below this floor is fitted to one regime.`,
+      ];
+      status.nextAction = decidable
+        ? "Re-run GET /api/agents/exit-geometry-shadow and open a separate architecture round. Coverage alone does not authorise an exit change."
+        : "Let maturation accumulate dates. Do not change a stop, target or time stop from the current numbers.";
+      status.details = [
+        "Measured 2026-08-06 and NOT acted on: for US, targets of 19.2%, 10% and 6% produce the identical mean, because most positions never reach +6% at all.",
+        "For India, a 6% target with a 5% stop beat the live geometry, with +4% worse than +6% — an interior optimum, not 'shorter is better'.",
+        "A window that touched both candidate levels is ambiguous: max-excursion data cannot order them.",
+      ];
+      status.available = !labelCoverageRes.error;
+      return status;
+    }
+
     if (program.id === "decision-label-coverage") {
       const binding = bindingCoverage(labelCoverage);
       const blockers = coverageBlockers(labelCoverage);

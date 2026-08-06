@@ -69,6 +69,32 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     architectureRef: "features/portfolio-underperformance/DIAGNOSIS.md",
   },
   {
+    // Added 2026-08-06. The owner asked to shorten the exit target; measuring it
+    // first showed that for US it is INERT (targets of 19.2%, 10% and 6% give
+    // the identical -1.58% mean, because 22 of 28 positions never reach +6%),
+    // while for India a 6% target with a 5% stop lifts the mean from +0.28% to
+    // +0.81% with an interior optimum. Neither is actionable at 7 and 2 distinct
+    // dates. This program exists so the re-test is scheduled rather than
+    // remembered: it reports progress toward the date floor and says when the
+    // question becomes decidable.
+    id: "exit-geometry",
+    name: "Exit-geometry shadow",
+    category: "Trading",
+    markets: ["us", "india"],
+    purpose: "Measure what alternative stop/target geometries would have produced, before any exit rule is changed.",
+    productBenefit: "Turns 'shorten the target' from a guess into a decidable question with a stated evidence threshold.",
+    traderBenefit: "Prevents an exit change fitted to a single fortnight from being applied to every future regime.",
+    evidenceSource: "observation_labels (MFE/MAE/fwd at the traded horizon) via GET /api/agents/exit-geometry-shadow",
+    currentInfluence: "None. Read-only counterfactual; it writes nothing and no exit reads it.",
+    maximumInfluence: "Advisory input to an owner-approved exit-geometry proposal. It never changes a stop, target or time stop itself.",
+    activationGate: "Twenty distinct decision dates at the 10-day horizon per market, an ambiguous share at or below 20%, and a separate owner-approved architecture round for any change.",
+    safetyBoundary: "Reads matured labels only. No score, eligibility, sizing, entry, exit, promotion or broker consumer, now or later.",
+    cronJobs: ["kairos-label-maturation"],
+    callAccounting: "zero_incremental",
+    owner: "Trading / Evidence",
+    architectureRef: "features/portfolio-underperformance/DIAGNOSIS.md",
+  },
+  {
     id: "evidence-router",
     name: "Evidence Router parity",
     category: "Data",
