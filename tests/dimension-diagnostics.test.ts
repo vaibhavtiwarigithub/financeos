@@ -42,4 +42,12 @@ describe("dimension diagnostics P0", () => {
     expect(buildAgentFindings(rows).find((finding) => finding.subjectType === "collaboration")?.classification).toBe("unattributable_no_paired_shadow");
     expect(diagnosticFingerprint("us", 5, rows)).toBe(diagnosticFingerprint("us", 5, [...rows]));
   });
+
+  it("refuses an agent contribution verdict when code-version provenance is missing", () => {
+    const row = observation(1, "2026-08-01");
+    row.codeVersion = null;
+    const finding = buildAgentFindings([row]).find((item) => item.subjectType === "agent");
+    expect(finding?.classification).toBe("data_degraded");
+    expect(finding?.metrics.code_version_coverage).toBe(0);
+  });
 });

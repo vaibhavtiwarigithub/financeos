@@ -38,4 +38,9 @@ describe("research queue preserves discovery provenance", () => {
     expect(cron).toContain('enqueueDeferred(supabase, "us", usDef, entrySourceOf)');
     expect(cron).toContain("enqueueDeferred(supabase, queueMarket, failed, entrySourceOf)");
   });
+
+  it("records the deployed scorer version with every new decision observation", () => {
+    expect(agent).toContain("const RESEARCH_CODE_VERSION = process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? null");
+    expect(agent).toContain("code_version: RESEARCH_CODE_VERSION");
+  });
 });

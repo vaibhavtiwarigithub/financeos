@@ -47,6 +47,11 @@ import { US_BUCKETS, screenUsBucket } from "@/lib/data/yahoo-screener";
 // not put it back inline without an approved cache-only reader and parity gate.
 const INLINE_WEBULL_RESEARCH_AVAILABLE = false;
 
+// Decision records must identify the deployed scorer so post-hoc diagnostics
+// never blend behavior from different versions. Local development remains
+// explicitly unversioned instead of inventing a release identifier.
+const RESEARCH_CODE_VERSION = process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? null;
+
 // Module-level cache: market → default investment_mandates.id.
 // Populated once per process; safe because seed mandates never change name.
 const _mandateIdCache = new Map<string, string>();
@@ -2266,6 +2271,7 @@ export async function processSymbol(
       market,
       symbol,
       strategy_version_id: (champion as any)?.id ?? null,
+      code_version: RESEARCH_CODE_VERSION,
       weights_used: effWeights, // the ACTUALLY-APPLIED weights (post-renormalization), not the base profile split
       used_champion: usingChampion,
       features: {

@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 import { computeSpearmanIC } from "@/lib/validation/feature-check";
 
-// v2 adds code-version identity to agent contribution subject keys. v1 remains
-// immutable in production rather than being rewritten after the fact.
-export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v2";
+// v3 adds forward-written decision code versions. v1/v2 remain immutable in
+// production rather than being reinterpreted after the fact.
+export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v3";
 export const DIAGNOSTIC_HORIZONS = [2, 5, 10, 20] as const;
 export const DIAGNOSTIC_DIMENSIONS = [
   "fundamental", "technical", "sentiment", "macro", "insider",
@@ -151,21 +151,30 @@ export function buildAgentFindings(observations: DiagnosticObservation[]): Diagn
     const eligibleReturns = rows.flatMap((row) => row.entryEligible && finite(row.benchmarkNeutralReturn) != null
       ? [finite(row.benchmarkNeutralReturn)!] : []);
     const availabilityValues = rows.flatMap((row) => DIAGNOSTIC_DIMENSIONS.map((dimension) => row.availabilityMask?.[dimension] === true ? 1 : 0));
+    const versionedObservations = rows.filter((row) => row.codeVersion != null).length;
+    const hasCompleteVersionProvenance = versionedObservations === rows.length;
+    const classification = !hasCompleteVersionProvenance
+      ? "data_degraded"
+      : predictive.classification;
     findings.push({
       subjectType: "agent",
       subjectKey: agent,
       findingType: "contribution",
-      classification: predictive.classification,
+      classification,
       metrics: {
         ...predictive.metrics,
         observations: rows.length,
+        code_versioned_observations: versionedObservations,
+        code_version_coverage: rows.length ? versionedObservations / rows.length : null,
         eligible_decisions: rows.filter((row) => row.entryEligible).length,
         signal_written: rows.filter((row) => row.action === "signal_written").length,
         eligible_mean_benchmark_neutral_return: mean(eligibleReturns),
         eligible_positive_return_share: hitRate(eligibleReturns),
         dimension_availability_rate: mean(availabilityValues),
       },
-      reason: predictive.classification === "insufficient_evidence"
+      reason: !hasCompleteVersionProvenance
+        ? "Agent contribution is not rated: one or more decision records lack a code version, so behavior cannot be compared safely across deployments."
+        : predictive.classification === "insufficient_evidence"
         ? "Agent contribution is not rated: the mature, market-local session sample is below the predeclared floor."
         : "Agent contribution is descriptive only and cannot reward, punish, disable, or reconfigure an agent.",
     });

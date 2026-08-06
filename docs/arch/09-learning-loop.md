@@ -66,6 +66,10 @@ session-level rank IC by dimension, and records an agent/version's evidence and
 decision record. Results below the predeclared 20 qualifying-session floor are
 `insufficient_evidence`, not a conclusion.
 
+ResearchAgent writes the deployed commit SHA into each new decision observation.
+Agent contribution findings require that provenance; legacy unversioned rows are
+explicitly `data_degraded` and are never silently compared with later releases.
+
 This is **not** LLM punishment/reward or autonomous self-modification. It cannot
 change a prompt, model, tool access, score, weight, threshold, candidate,
 strategy, paper/live trade, exit, sizing, or broker action. Multiple agents
