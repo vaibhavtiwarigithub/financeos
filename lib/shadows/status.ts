@@ -5,6 +5,14 @@ import {
   type ShadowLifecycle,
   type ShadowProgramDefinition,
 } from "@/lib/shadows/registry";
+import {
+  bindingCoverage,
+  coverageBlockers,
+  coverageByHorizon,
+  MIN_DISTINCT_DATES,
+  PRIMARY_HORIZON_DAYS,
+  type LabelRow,
+} from "@/lib/shadows/label-coverage";
 
 export interface ShadowCallMetrics {
   mode: CallAccountingMode;
@@ -139,6 +147,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     exogenousObservationRes,
     marketRegimeRunRes,
     fundamentalFactsRes,
+    labelCoverageRes,
   ] = await Promise.all([
     svc.rpc("get_shadow_cron_status"),
     svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
@@ -226,6 +235,11 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("fundamental_facts")
       .select("symbol,source,filing_date,captured_at")
       .eq("market", market).gte("captured_at", since90).limit(10000),
+    // Matured decision labels. The join is inner on purpose: an observation with
+    // no label has not matured and must not count toward coverage.
+    svc.from("observation_labels")
+      .select("horizon_days,fwd_return,decision_observations!inner(ts,symbol,market,entry_eligible)")
+      .eq("decision_observations.market", market).limit(20000),
   ]) as Array<QueryResult<any>>;
 
   const cronRows = cronRes.data ?? [];
@@ -255,6 +269,20 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const marketRegimeRuns = marketRegimeRunRes.data ?? [];
   const fundamentalFacts = fundamentalFactsRes.data ?? [];
 
+  const labelRows: LabelRow[] = (labelCoverageRes.data ?? [])
+    .map((row: any) => {
+      const decision = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
+      if (!decision?.ts || row.fwd_return == null) return null;
+      return {
+        date: String(decision.ts).slice(0, 10),
+        symbol: String(decision.symbol ?? ""),
+        horizonDays: Number(row.horizon_days),
+        entryEligible: decision.entry_eligible === true,
+      };
+    })
+    .filter((row: LabelRow | null): row is LabelRow => row != null && Number.isFinite(row.horizonDays));
+  const labelCoverage = coverageByHorizon(labelRows);
+
   return SHADOW_PROGRAMS.map((program) => {
     const status = base(program);
     status.schedules = scheduleFor(program, cronRows, market);
@@ -269,6 +297,40 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.nextAction = "No action. This program is intentionally market-specific.";
       status.details = [];
       status.available = true;
+      return status;
+    }
+
+    if (program.id === "decision-label-coverage") {
+      const binding = bindingCoverage(labelCoverage);
+      const blockers = coverageBlockers(labelCoverage);
+      const totalDates = new Set(labelRows.map((row) => row.date)).size;
+      // Never "ready_for_review": this program is permanently measure-only and
+      // has no activation to be ready for. It reports collecting or blocked.
+      status.lifecycle = labelRows.length === 0 ? "idle" : blockers.length ? "blocked" : "collecting";
+      status.benefitVerdict = "operational_only";
+      status.benefitEvidence = binding
+        ? `${market.toUpperCase()} ${binding.horizonDays}-day horizon: ${binding.observations} matured labels across ${binding.distinctDates} decision date(s) and ${binding.distinctSymbols} symbol(s); ${binding.eligibleObservations} were entry-eligible.`
+        : `No matured ${market.toUpperCase()} decision labels.`;
+      status.progress = progress(binding?.distinctDates ?? 0, MIN_DISTINCT_DATES, "distinct decision dates", 45, {
+        completed: binding?.distinctSymbols ?? 0,
+        target: Math.max(1, binding?.distinctSymbols ?? 1),
+        unit: "symbols at the traded horizon",
+      });
+      status.calls = calls("zero_incremental", "Reads two evidence tables already written by the research and maturation jobs. No provider request.");
+      status.latestAt = labelRows.length
+        ? labelRows.map((row) => row.date).sort().at(-1) ?? null
+        : null;
+      status.blockers = blockers;
+      status.nextAction = blockers.length
+        ? `Let maturation accumulate distinct decision dates. Do not read a scoring, universe or exit result off the ${binding?.horizonDays ?? PRIMARY_HORIZON_DAYS}-day cohort until it clears ${MIN_DISTINCT_DATES} dates.`
+        : "Coverage clears the floor at the traded horizon. Results may be interpreted, still with overlap and multiple-testing caveats.";
+      status.details = [
+        `${totalDates} distinct decision date(s) across all horizons.`,
+        ...labelCoverage.map((row) =>
+          `${row.horizonDays}d: n=${row.observations}, ${row.distinctDates} date(s), ${row.distinctSymbols} symbol(s), ${row.observationsPerDate.toFixed(1)} obs/date`),
+        "n is not the sample size. Overlapping forward windows and correlated symbols mean the effective sample is closer to the date count.",
+      ];
+      status.available = !labelCoverageRes.error;
       return status;
     }
 

@@ -269,6 +269,60 @@ with a "confident and correct" sample size of two.
 3. Are the 8 NULL-P&L closed trades worth backfilling, or is
    `direction_flip → neutral` genuinely a no-P&L close? (Unaffected by §4b.)
 
+## 12. The exit layer — the target cannot be reached before the clock closes the trade
+
+This section survives §4b because it compares the **rules as configured** against
+the **holding period they run inside**. It is a geometry argument, not an
+inference from a short sample.
+
+Configured geometry, from `paper_positions` (all rows populated):
+
+| market | n | initial stop | price target | nominal R:R |
+|---|---|---|---|---|
+| us | 14 | −7.46% | +19.37% | **2.60** |
+| india | 12 | −7.65% | +19.16% | **2.50** |
+
+Now put that beside the actual excursions over the horizon the book holds for,
+from entry-eligible decisions (`avg_atr_pct`: US ≈2.9%, India ≈2.3%):
+
+| market | horizon | avg MFE | avg MAE | stop in ATR | target in ATR | MFE in ATR |
+|---|---|---|---|---|---|---|
+| us | 10d | **+1.25%** | −3.89% | ≈2.6 | ≈**6.7** | ≈**0.43** |
+| india | 10d | **+3.71%** | −3.36% | ≈3.3 | ≈**8.2** | ≈**1.5** |
+
+**The target sits at roughly 5–15× the typical best-case excursion available
+inside the holding period.** A position exits on the 11-market-day time stop; in
+those 11 days the average US position's most favourable moment is +1.25%, against
+a target of +19.37%. The target is not a demanding goal — it is unreachable by
+construction, and the realised exits agree: **1 of 73 closed trades exited at
+`partial_target`**, against 47 on the time stop.
+
+The stop is the mirror image. At 2.6–3.3 ATR it sits well outside the typical
+10-day adverse excursion (≈1.34 ATR), so it also rarely fires — 8 of 73 exits.
+When it does fire it has, by definition, already given up ~3 ATR: US `stop_hit`
+averages **−9.47%**.
+
+**So the 2.5–2.6 nominal reward:risk never reaches the outcomes.** India's
+realised ratio is +2.31% average win against −2.23% average loss — **1.04**, not
+2.50. The stop/target pair is decorative; the 11-day clock is the real exit rule,
+and it fires at a point neither leg was designed for.
+
+This is a coherent, testable mismatch and it needs no additional data to state:
+either the holding period is too short for the target, or the target is too far
+for the holding period. Which one to change is a money-path decision and is **not
+proposed here**.
+
+### 12b. Five dead columns that nearly produced a sixth wrong finding
+
+`paper_trades.entry_price`, `.stop_loss`, `.take_profit`, `.highest_price` and
+`.quantity` are **NULL on all 145 rows**. The live fields are `fill_price` and
+`qty`, and the exit path reads stops from `paper_positions`, not `paper_trades`.
+
+Noted because reaching for the obvious-sounding column produced "stop levels are
+never persisted, so exits cannot be audited" — which is false, and was one query
+away from being written down as fact. The columns are duplicates of live fields
+and are a trap for exactly this kind of analysis.
+
 ## 11. Method note — why this document refuted itself
 
 The first version passed every check it was given: real production queries, no

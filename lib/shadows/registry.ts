@@ -43,6 +43,32 @@ export interface ShadowProgramDefinition {
 
 export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
   {
+    // Added 2026-08-06. This program exists because a diagnosis written that
+    // same day produced a confident causal story about universe composition and
+    // was refuted by the next query: its whole matured-label set turned out to
+    // span one fortnight, and the cohort it blamed had entry_eligible=false on
+    // every row. `n` looked large because observations repeat across correlated
+    // symbols and overlapping dates; the effective sample is the DATE count.
+    // Nothing here changes a decision — it measures whether any other program's
+    // evidence is yet capable of supporting a conclusion.
+    id: "decision-label-coverage",
+    name: "Decision-label coverage",
+    category: "Learning",
+    markets: ["us", "india"],
+    purpose: "Measure whether matured decision labels span enough independent dates and symbols to support any claim about scoring, universe or exits.",
+    productBenefit: "Stops Kairos drawing confident conclusions — and shipping changes — from a single market fortnight.",
+    traderBenefit: "Prevents a rule change justified by one regime from being applied to every future regime.",
+    evidenceSource: "decision_observations x observation_labels (distinct dates, symbols and horizons)",
+    currentInfluence: "None. Read-only measurement of other programs' evidence sufficiency.",
+    maximumInfluence: "Advisory gate: other programs cite its date coverage before claiming a result. It never scores, sizes or trades.",
+    activationGate: "Not applicable — this program is permanently measure-only and is never promoted to a decision path.",
+    safetyBoundary: "Reads two evidence tables. No score, eligibility, sizing, entry, exit, promotion or broker consumer, now or later.",
+    cronJobs: ["kairos-label-maturation"],
+    callAccounting: "zero_incremental",
+    owner: "Evidence / Learning",
+    architectureRef: "features/portfolio-underperformance/DIAGNOSIS.md",
+  },
+  {
     id: "evidence-router",
     name: "Evidence Router parity",
     category: "Data",
