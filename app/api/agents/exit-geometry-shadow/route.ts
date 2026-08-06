@@ -26,7 +26,12 @@ export const dynamic = "force-dynamic";
 // shortening it alone drops reward:risk below 1 and makes expectancy worse,
 // which is why this measures before anything moves.
 
-const HORIZON_DAYS = 10; // the horizon the time stop actually enforces
+// The horizon the time stop actually enforces. Overridable via ?horizon= so a
+// thin cohort can be cross-checked against a better-covered one: the 10-day US
+// cohort spans only 2 dates, while 5-day spans 9. A conclusion that holds at one
+// horizon and not the other is a coverage artefact, not a finding.
+const DEFAULT_HORIZON_DAYS = 10;
+const ALLOWED_HORIZONS = [2, 5, 10, 20];
 
 export async function GET(req: NextRequest) {
   if (!verifyCronSecret(req)) {
@@ -36,6 +41,8 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const marketFilter = url.searchParams.get("market");
+  const requested = Number(url.searchParams.get("horizon"));
+  const HORIZON_DAYS = ALLOWED_HORIZONS.includes(requested) ? requested : DEFAULT_HORIZON_DAYS;
   const svc = createServiceClient();
 
   const { data, error } = await svc
@@ -112,6 +119,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     horizonDays: HORIZON_DAYS,
+    allowedHorizons: ALLOWED_HORIZONS,
     maxAmbiguousShare: MAX_AMBIGUOUS_SHARE,
     markets: markets.sort((a, b) => a.market.localeCompare(b.market)),
     method: "Counterfactual over matured labels. A decision whose window touched BOTH the candidate target and the candidate stop is classified ambiguous and excluded from the mean, because max-excursion statistics cannot recover which came first. Geometry is in ATR multiples, scaled by each decision's own entry ATR.",
