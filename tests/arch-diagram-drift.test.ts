@@ -173,6 +173,12 @@ describe('mermaid edge parser', () => {
     expect(mapEdges.has('MACRO --> RESEARCH')).toBe(true);
     expect(mapEdges.has('CHAMPION --> RESEARCH')).toBe(true);
   });
+
+  it('does not depict autonomous live execution as active while its deployment gate is off', () => {
+    expect(systemMap.diagram).toContain('AutonomousLive (DORMANT)');
+    expect(systemMap.nodes.AUTOLIVE.label).toBe('AutonomousLive (dormant)');
+    expect(systemMap.nodes.AUTOLIVE.description).toContain('AUTONOMOUS_LIVE_ENABLED=false');
+  });
 });
 
 // ---------------------------------------------------------------------------

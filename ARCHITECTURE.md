@@ -1,6 +1,6 @@
 # Kairos Architecture Portal
 
-> Last reviewed: 2026-08-02 (current through `6d14af12`)
+> Last reviewed: 2026-08-06 (architecture-to-production conformance baseline)
 > Purpose: the stable entry point to Kairos architecture. It explains where truth
 > lives; it does not duplicate the implementation detail held by the documents it links.
 
@@ -42,6 +42,10 @@ and broker execution.
 Start with [the chapter index](docs/arch/00-index.md). Read a feature document before
 changing a scoped feature. Read the decision record before reopening an approved
 choice.
+
+The current evidence-backed conformance baseline is recorded in
+[docs/audits/2026-08-06-architecture-production-conformance.md](docs/audits/2026-08-06-architecture-production-conformance.md).
+It distinguishes active behavior from dormant scaffolds and design-only proposals.
 
 ## Architecture views
 

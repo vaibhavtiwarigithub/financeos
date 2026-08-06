@@ -1,6 +1,6 @@
 # Kairos System Overview
 
-> Last reviewed: 2026-08-02 (current through `6d14af12`)
+> Last reviewed: 2026-08-06 (architecture-to-production conformance baseline)
 > Audience: an engineer or operator who needs a quick orientation before reading the
 > canonical architecture chapters.
 
@@ -51,6 +51,11 @@ choices were made.
 When this overview and a chapter disagree, the chapter wins for subsystem behavior;
 when a chapter and the live diagram disagree about topology, the diagram source and its
 history must be reconciled in the same change.
+
+The current conformance baseline is recorded in
+[docs/audits/2026-08-06-architecture-production-conformance.md](docs/audits/2026-08-06-architecture-production-conformance.md).
+It is the place to check whether a design is active, dormant, shadow-only, or only a
+proposal before relying on it operationally.
 
 This overview is updated only when the reader's orientation changes. A provider,
 schema, schedule, money-path, or feature-state change updates its owning chapter and
