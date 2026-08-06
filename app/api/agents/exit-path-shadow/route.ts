@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { fetchYahooCandles } from "@/lib/data/yahoo-candles";
-import { evaluatePathGeometry, PATH_CANDIDATES, type SimBar } from "@/lib/trading/exit-path-sim";
+import { buildPathCandidates, evaluatePathGeometry, hasRequiredFutureSessions, type MandatePathBaseline, type SimBar } from "@/lib/trading/exit-path-sim";
 import { BENCHMARK_BY_MARKET } from "@/lib/data/benchmark-series";
 import { coverageByHorizon, MIN_DISTINCT_DATES, type LabelRow } from "@/lib/shadows/label-coverage";
 
@@ -24,8 +24,10 @@ export const maxDuration = 60;
 // than the entire 2-4% excursion typical of an 11-day hold, so it can essentially
 // never protect a gain.
 
+// The historical comments above describe the superseded hard-coded proxy. This
+// route now reports a current-mandate proxy, not the live PositionMonitor.
 const WALLCLOCK_BUDGET_MS = 45_000;
-const MAX_SESSIONS = 25; // longest clock in the candidate set, plus margin
+const MAX_CANDIDATE_SESSIONS = 20;
 
 export async function GET(req: NextRequest) {
   if (!verifyCronSecret(req)) {
@@ -48,7 +50,20 @@ export async function GET(req: NextRequest) {
   const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const decisions = (data ?? []) as Array<{ ts: string; symbol: string; market: string }>;
+  const decisions = (data ?? []) as Array<{ ts: string; symbol: string; market: string; price_at_decision: number }>;
+
+  const { data: mandateRows, error: mandateError } = await svc.from("trading_mandates")
+    .select("market,stop_loss_pct,target_pct,target_hold_days");
+  if (mandateError) return NextResponse.json({ error: mandateError.message }, { status: 500 });
+  const mandateByMarket = new Map<string, MandatePathBaseline>();
+  for (const row of mandateRows ?? []) {
+    const stopPct = Number((row as any).stop_loss_pct) / 100;
+    const targetPct = Number((row as any).target_pct) / 100;
+    const maxSessions = Number((row as any).target_hold_days);
+    if (stopPct > 0 && targetPct > 0 && Number.isInteger(maxSessions) && maxSessions > 0) {
+      mandateByMarket.set(String((row as any).market), { stopPct, targetPct, maxSessions });
+    }
+  }
 
   // One candle fetch per SYMBOL, reused across every decision date on it.
   const series = new Map<string, Promise<SimBar[]>>();
@@ -72,19 +87,23 @@ export async function GET(req: NextRequest) {
     const bars = await loadSeries(decision.symbol);
     if (bars.length === 0) { noSeries++; continue; }
 
-    // The entry bar is the first session ON OR AFTER the decision date. Using an
-    // earlier bar would enter before the decision existed.
+    // Preserve the logged decision price. The prior implementation selected this
+    // field but silently entered at a later candle close, changing every return.
+    // The entry bar's range is synthetic because it is already past at the score.
     const day = decision.ts.slice(0, 10);
     const start = bars.findIndex((b) => b.date >= day);
     if (start < 0) { noSeries++; continue; }
-    const window = bars.slice(start, start + MAX_SESSIONS + 1);
+    const entryPrice = Number(decision.price_at_decision);
+    if (!(entryPrice > 0)) { noSeries++; continue; }
+    const entryBar = { date: bars[start].date, high: entryPrice, low: entryPrice, close: entryPrice };
+    const window = [entryBar, ...bars.slice(start + 1, start + MAX_CANDIDATE_SESSIONS + 1)];
     // A window that has not fully elapsed cannot be simulated for the longest
     // clock without inventing bars, so it is skipped rather than padded.
-    if (window.length < 2) { noSeries++; continue; }
+    if (!hasRequiredFutureSessions(window, MAX_CANDIDATE_SESSIONS)) { noSeries++; continue; }
 
     const bucket = pathsByMarket.get(decision.market) ?? { paths: [], rows: [] };
     bucket.paths.push(window);
-    bucket.rows.push({ date: day, symbol: decision.symbol, horizonDays: 10, entryEligible: true });
+    bucket.rows.push({ date: day, symbol: decision.symbol, horizonDays: MAX_CANDIDATE_SESSIONS, entryEligible: true });
     pathsByMarket.set(decision.market, bucket);
   }
 
@@ -129,10 +148,13 @@ export async function GET(req: NextRequest) {
       },
       benchmarkSymbol: BENCHMARK_BY_MARKET[market] ?? null,
       benchmarkBasis: benchmarkBasis.get(market) ?? "unavailable",
-      results: PATH_CANDIDATES.map((c) => evaluatePathGeometry(paths, c.geometry, c.label, c.baseline === true, benchmark)),
+      mandate: mandateByMarket.get(market) ?? null,
+      results: mandateByMarket.has(market)
+        ? buildPathCandidates(mandateByMarket.get(market)!).map((c) => evaluatePathGeometry(paths, c.geometry, c.label, c.baseline === true, benchmark))
+        : [],
       note: coverage?.sufficient
-        ? "Coverage clears the date floor. Differences may be compared, subject to multiple-testing caveats across the candidate set."
-        : `Only ${coverage?.distinctDates ?? 0} distinct decision date(s), below the floor of ${MIN_DISTINCT_DATES}. These numbers describe one regime and MUST NOT justify an exit-rule change.`,
+        ? "Coverage clears the date floor. This remains a fixed-geometry mandate proxy, not an executor replay; differences are diagnostic only and subject to multiple-testing caveats."
+        : `Only ${coverage?.distinctDates ?? 0} distinct decision date(s), below the floor of ${MIN_DISTINCT_DATES}. These proxy numbers describe one regime and MUST NOT justify an exit-rule change.`,
     };
   }).sort((a, b) => a.market.localeCompare(b.market));
 
@@ -141,9 +163,10 @@ export async function GET(req: NextRequest) {
     symbolsFetched: series.size,
     decisionsConsidered: decisions.length,
     withoutUsableSeries: noSeries,
+    requiredFutureSessions: MAX_CANDIDATE_SESSIONS,
     truncated,
-    method: "Excess is subject minus benchmark over the SAME entry-to-exit dates the rule chose, matched by date - a rule that exits earlier is compared against less benchmark exposure, which is the honest comparison. Real daily bars replayed from the first session on or after each decision date, entering at that bar's close. The entry bar is never evaluated for an exit. The trail anchors on the highest high seen BEFORE the current bar, so a bar cannot ratchet the stop on its own high and then breach it. When one bar's low breaches the stop AND its high reaches the target, the STOP is assumed first - the pessimistic branch - and counted in intrabarAmbiguous.",
-    influence: "None. Changes no stop, target, trail, time stop, order or exit, and writes nothing.",
+    method: "Fixed-geometry mandate proxy only, not a replay of PositionMonitor. Excess is subject minus benchmark over the SAME entry-to-exit dates the proxy chose, matched by date. The logged decision price is the synthetic entry basis; the entry bar is never evaluated for an exit. The trail anchors on the highest high seen BEFORE the current bar. When one bar's low breaches the stop AND its high reaches the target, the STOP is assumed first and counted in intrabarAmbiguous.",
+    influence: "None. This changes no stop, target, trail, time stop, order or exit, and writes nothing. No proxy result may justify a configuration change without an execution-faithful portfolio simulation and a separate approved evaluation.",
     elapsedMs: Date.now() - started,
   });
 }

@@ -227,17 +227,41 @@ export function evaluatePathGeometry(
  * 2-4% excursion typical of this holding window, so it can essentially never
  * protect a gain.
  */
-export const PATH_CANDIDATES: readonly { geometry: PathGeometry; label: string; baseline?: boolean }[] = [
-  { geometry: { stopPct: 0.075, targetPct: 0.192, trailPct: 0.075, maxSessions: 10 }, label: "LIVE: stop 7.5% / trail 7.5% / target 19.2% / 10d", baseline: true },
-  { geometry: { stopPct: 0.075, targetPct: 0.192, maxSessions: 10 }, label: "no trail (isolates the trail's effect)" },
-  { geometry: { stopPct: 0.075, targetPct: 0.192, trailPct: 0.040, maxSessions: 10 }, label: "trail 4.0%" },
-  { geometry: { stopPct: 0.075, targetPct: 0.192, trailPct: 0.025, maxSessions: 10 }, label: "trail 2.5%" },
-  { geometry: { stopPct: 0.075, targetPct: 0.192, trailPct: 0.015, maxSessions: 10 }, label: "trail 1.5%" },
-  { geometry: { stopPct: 0.075, targetPct: 0.060, trailPct: 0.025, maxSessions: 10 }, label: "trail 2.5% + target 6%" },
-  { geometry: { stopPct: 0.050, targetPct: 0.060, trailPct: 0.025, maxSessions: 10 }, label: "stop 5% / trail 2.5% / target 6%" },
-  // Horizon variants: the clock and the geometry currently disagree about
-  // whether the thesis is a two-week trade or a multi-month swing.
-  { geometry: { stopPct: 0.075, targetPct: 0.192, trailPct: 0.075, maxSessions: 5 }, label: "LIVE geometry, 5-session clock" },
-  { geometry: { stopPct: 0.075, targetPct: 0.192, trailPct: 0.075, maxSessions: 20 }, label: "LIVE geometry, 20-session clock" },
-  { geometry: { stopPct: 0.075, targetPct: 0.060, trailPct: 0.025, maxSessions: 20 }, label: "trail 2.5% + target 6%, 20-session clock" },
-];
+export interface MandatePathBaseline {
+  // The surrounding historical comment is retained for audit context only. It
+  // describes a superseded proxy and must not be read as the live configuration.
+  stopPct: number;
+  targetPct: number;
+  maxSessions: number;
+}
+
+/** A counterfactual candidate needs every future session it claims to evaluate. */
+export function hasRequiredFutureSessions(bars: readonly SimBar[], maxSessions: number): boolean {
+  return Number.isInteger(maxSessions) && maxSessions > 0 && bars.length >= maxSessions + 1;
+}
+
+/**
+ * Fixed-geometry mandate proxy. This is deliberately not the live executor:
+ * PositionMonitor also uses per-fill resolved plans, score exits and partial
+ * targets, which a daily candle path cannot reconstruct.
+ */
+export function buildPathCandidates(
+  baseline: MandatePathBaseline,
+): readonly { geometry: PathGeometry; label: string; baseline?: boolean }[] {
+  const { stopPct, targetPct, maxSessions } = baseline;
+  const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
+  const incumbent = { stopPct, targetPct, trailPct: stopPct, maxSessions };
+
+  return [
+    { geometry: incumbent, label: `MANDATE PROXY: stop ${pct(stopPct)} / trail ${pct(stopPct)} / target ${pct(targetPct)} / ${maxSessions}d`, baseline: true },
+    { geometry: { stopPct, targetPct, maxSessions }, label: "no trail (isolates the proxy trail's effect)" },
+    { geometry: { stopPct, targetPct, trailPct: 0.040, maxSessions }, label: "trail 4.0%" },
+    { geometry: { stopPct, targetPct, trailPct: 0.025, maxSessions }, label: "trail 2.5%" },
+    { geometry: { stopPct, targetPct, trailPct: 0.015, maxSessions }, label: "trail 1.5%" },
+    { geometry: { stopPct, targetPct: 0.060, trailPct: 0.025, maxSessions }, label: "trail 2.5% + target 6%" },
+    { geometry: { stopPct: 0.050, targetPct: 0.060, trailPct: 0.025, maxSessions }, label: "stop 5% / trail 2.5% / target 6%" },
+    { geometry: { ...incumbent, maxSessions: 5 }, label: "mandate proxy geometry, 5-session clock" },
+    { geometry: { ...incumbent, maxSessions: 20 }, label: "mandate proxy geometry, 20-session clock" },
+    { geometry: { stopPct, targetPct: 0.060, trailPct: 0.025, maxSessions: 20 }, label: "trail 2.5% + target 6%, 20-session clock" },
+  ];
+}

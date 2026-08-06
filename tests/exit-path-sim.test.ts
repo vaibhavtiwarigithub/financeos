@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   benchmarkReturnBetween,
   evaluatePathGeometry,
-  PATH_CANDIDATES,
+  buildPathCandidates,
+  hasRequiredFutureSessions,
   simulateExit,
   type PathGeometry,
   type SimBar,
@@ -133,20 +134,31 @@ describe("evaluatePathGeometry", () => {
 });
 
 describe("candidate set", () => {
-  it("puts the live rule first, as the incumbent", () => {
-    expect(PATH_CANDIDATES[0].baseline).toBe(true);
-    expect(PATH_CANDIDATES[0].geometry).toMatchObject({
-      stopPct: 0.075, targetPct: 0.192, trailPct: 0.075, maxSessions: 10,
+  it("binds the incumbent to the supplied market mandate", () => {
+    const candidates = buildPathCandidates({ stopPct: 0.07, targetPct: 0.20, maxSessions: 10 });
+    expect(candidates[0].baseline).toBe(true);
+    expect(candidates[0].geometry).toMatchObject({
+      stopPct: 0.07, targetPct: 0.20, trailPct: 0.07, maxSessions: 10,
     });
-    expect(PATH_CANDIDATES.filter((c) => c.baseline)).toHaveLength(1);
+    expect(candidates[0].label).toContain("MANDATE PROXY");
+    expect(candidates.filter((c) => c.baseline)).toHaveLength(1);
   });
 
   it("includes a no-trail arm so the trail's effect is isolable", () => {
-    expect(PATH_CANDIDATES.some((c) => c.geometry.trailPct == null)).toBe(true);
+    const candidates = buildPathCandidates({ stopPct: 0.07, targetPct: 0.20, maxSessions: 10 });
+    expect(candidates.some((c) => c.geometry.trailPct == null)).toBe(true);
   });
 
   it("varies the clock, since the horizon is itself in question", () => {
-    expect(new Set(PATH_CANDIDATES.map((c) => c.geometry.maxSessions)).size).toBeGreaterThan(1);
+    const candidates = buildPathCandidates({ stopPct: 0.07, targetPct: 0.20, maxSessions: 10 });
+    expect(new Set(candidates.map((c) => c.geometry.maxSessions)).size).toBeGreaterThan(1);
+  });
+});
+
+describe("counterfactual maturity", () => {
+  it("refuses a path that cannot complete the longest candidate clock", () => {
+    expect(hasRequiredFutureSessions([bar(100), bar(101)], 20)).toBe(false);
+    expect(hasRequiredFutureSessions(Array.from({ length: 21 }, () => bar(100)), 20)).toBe(true);
   });
 });
 
