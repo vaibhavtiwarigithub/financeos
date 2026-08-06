@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
-import { shouldSkipFill } from "@/lib/markets/price-cache-universe";
+import { fillCoverage, shouldSkipFill } from "@/lib/markets/price-cache-universe";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -478,23 +478,37 @@ async function run(force: boolean) {
     }
   }
 
-  // A symbol backfilled this tick also received the most recent session (the
-  // range call runs up to `mostRecentWeekday`), so it counts as filled — else
-  // the coverage check below false-alarms about sectors it just populated.
+  // `filled` counts what THIS tick fetched. Coverage — the thing health alerts
+  // and the Markets tiles actually depend on — is read back from the CACHE,
+  // because the per-symbol fallback deliberately skips symbols an earlier tick
+  // already filled. Counting only fetched symbols reported those as "Missing"
+  // and claimed their tiles would show "—" while the cache was serving them
+  // (prod 2026-07-17: "3/31", listing 28 cached symbols as missing).
+  //
+  // Freshness is judged against the session actually served: on a holiday the
+  // grouped call walks back past `expected`, and demanding `expected` there
+  // would report the whole universe missing on a day it cannot exist.
+  const freshnessDate = chosenDate ?? expected;
+  const { data: freshAfter } = await svc
+    .from("price_cache")
+    .select("symbol")
+    .in("symbol", UNIVERSE)
+    .gte("date", freshnessDate);
+  const cached = (freshAfter ?? []).map((r: { symbol: string }) => r.symbol);
+
   const filledSymbols = new Set([...bars.map((b) => b.symbol), ...backfill.filled]);
   const filled = filledSymbols.size;
-  const missing = UNIVERSE.filter((s) => !filledSymbols.has(s));
-  const coverage = filled / UNIVERSE.length;
+  const { missing, coverage } = fillCoverage(cached, UNIVERSE);
 
   // System Health: only alert on a LARGE shortfall (a couple of illiquid ETFs
   // missing from one grouped snapshot is normal). Auto-clears at UTC midnight.
-  if (source === "per-symbol" && filled === 0) {
+  if (source === "per-symbol" && filled === 0 && missing.length > 0) {
     await reportIssue({
       issueKey,
       severity: "warn",
       category: "data",
       title: "Markets price-cache fill made no progress",
-      detail: `Grouped endpoint failed and the per-symbol fallback filled 0/${UNIVERSE.length} ETFs this tick. Markets tiles will fall back to lazy fetch until a later tick catches up.`,
+      detail: `Grouped endpoint failed and the per-symbol fallback filled 0 ETFs this tick, leaving ${missing.length}/${UNIVERSE.length} uncached for ${freshnessDate}. Missing: ${missing.join(", ")}. Those tiles will fall back to lazy fetch until a later tick catches up.`,
       autoExpireAt: nextUtcMidnight(),
     }, svc);
   } else if (coverage < 0.6) {
@@ -502,8 +516,8 @@ async function run(force: boolean) {
       issueKey,
       severity: "warn",
       category: "data",
-      title: `Markets price-cache fill incomplete (${filled}/${UNIVERSE.length})`,
-      detail: `Only ${filled} of ${UNIVERSE.length} Markets ETFs filled via ${source}. Missing: ${missing.join(", ")}. Display tiles for the missing names may show "—".`,
+      title: `Markets price-cache incomplete (${UNIVERSE.length - missing.length}/${UNIVERSE.length})`,
+      detail: `Only ${UNIVERSE.length - missing.length} of ${UNIVERSE.length} Markets ETFs are cached for ${freshnessDate} (this tick filled ${filled} via ${source}). Missing: ${missing.join(", ")}. Display tiles for the missing names may show "—".`,
       autoExpireAt: nextUtcMidnight(),
     }, svc);
   } else {
@@ -511,11 +525,15 @@ async function run(force: boolean) {
   }
 
   return {
-    ok: filled > 0,
+    // A tick that fetched nothing because everything was already cached is a
+    // success, not a failure — ok tracks the cache, with `filled` reported
+    // alongside so the two are never conflated.
+    ok: filled > 0 || missing.length === 0,
     source,
     date: chosenDate,
     universe: UNIVERSE.length,
     filled,
+    cached: UNIVERSE.length - missing.length,
     missing,
     attempts,
     backfill,

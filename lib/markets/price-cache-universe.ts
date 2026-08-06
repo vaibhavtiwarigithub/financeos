@@ -17,3 +17,24 @@ export function shouldSkipFill(freshSymbols: Iterable<string>, universe: readonl
   const fresh = new Set(freshSymbols);
   return universe.every((s) => fresh.has(s));
 }
+
+/**
+ * Which universe symbols are still absent from the cache, and the resulting
+ * coverage fraction — measured against the CACHE, never against what one tick
+ * happened to fetch.
+ *
+ * The per-symbol fallback deliberately fetches only symbols that are NOT already
+ * fresh, so counting fetched symbols understates coverage by exactly the amount
+ * an earlier tick already fixed. That produced a false health alert in prod
+ * (2026-07-17): "Markets price-cache fill incomplete (3/31)", naming 28 symbols
+ * as Missing and warning that their tiles would show "—", while the cache held
+ * every one of them. The alert described the tick, not the system.
+ */
+export function fillCoverage(
+  cachedSymbols: Iterable<string>,
+  universe: readonly string[],
+): { missing: string[]; coverage: number } {
+  const cached = new Set(cachedSymbols);
+  const missing = universe.filter((s) => !cached.has(s));
+  return { missing, coverage: universe.length === 0 ? 1 : (universe.length - missing.length) / universe.length };
+}

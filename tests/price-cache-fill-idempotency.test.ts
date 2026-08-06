@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shouldSkipFill } from "@/lib/markets/price-cache-universe";
+import { fillCoverage, shouldSkipFill } from "@/lib/markets/price-cache-universe";
 
 // A representative slice: regime bellwether + sector XLs + a leveraged pair.
 const UNIVERSE = ["SPY", "QQQ", "DIA", "XLK", "XLF", "XLE", "TQQQ", "SQQQ"] as const;
@@ -25,5 +25,28 @@ describe("price-cache-fill idempotency skip", () => {
 
   it("empty fresh set never skips", () => {
     expect(shouldSkipFill([], UNIVERSE)).toBe(false);
+  });
+});
+
+describe("price-cache-fill coverage reporting", () => {
+  it("counts a symbol an EARLIER tick cached, not just what this tick fetched", () => {
+    // The prod false alarm (2026-07-17): the per-symbol fallback fetched 3
+    // symbols because the other 28 were already fresh, and the alert then named
+    // those 28 as Missing with "tiles may show —". Coverage is a cache
+    // property; a tick that fetches nothing because nothing is stale is fine.
+    const { missing, coverage } = fillCoverage(UNIVERSE, UNIVERSE);
+    expect(missing).toEqual([]);
+    expect(coverage).toBe(1);
+  });
+
+  it("reports only the genuinely uncached symbols", () => {
+    const { missing, coverage } = fillCoverage(["SPY", "QQQ", "DIA", "XLK", "XLF", "XLE"], UNIVERSE);
+    expect(missing).toEqual(["TQQQ", "SQQQ"]);
+    expect(coverage).toBeCloseTo(0.75);
+  });
+
+  it("an empty cache is full coverage loss, not a divide-by-zero", () => {
+    expect(fillCoverage([], UNIVERSE)).toEqual({ missing: [...UNIVERSE], coverage: 0 });
+    expect(fillCoverage([], []).coverage).toBe(1);
   });
 });

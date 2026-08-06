@@ -58,14 +58,24 @@ per-symbol `/prev`, gated by the shared serverless-safe `try_acquire_provider_sl
 symbols missing the expected session, so the 13:45 retry tick (and subsequent days) drain any
 remainder. This mirrors the `prewarm` / `evidence-shadow` bounded-resumable pattern.
 
-**Idempotency.** Before doing anything (unless `?force=1`), it probes `price_cache` for a marker
-symbol (SPY) at the most-recent session and **skips** if already filled. Upserts are keyed by the
-`price_cache` primary key `(symbol, date)`.
+**Idempotency.** Before doing anything (unless `?force=1`), it checks that **every** universe
+symbol has the most-recent session (`shouldSkipFill`) and skips only then. It used to probe SPY
+alone as a marker; one off-schedule run advanced SPY and every later tick skipped, freezing
+XLK/QQQ/DIA a session behind (prod 2026-07-17). Upserts are keyed by the `price_cache` primary
+key `(symbol, date)`.
 
 **Health.** Emits a System Health `warn` (`reportIssue`, key `price-cache-fill-degraded`,
-auto-expires at UTC midnight) **only on a large shortfall** (<60 % of the universe filled, or the
-fallback made zero progress). A clean fill calls `resolveIssue`. A couple of illiquid names
-missing from one snapshot is normal and does **not** alert.
+auto-expires at UTC midnight) **only on a large shortfall** (<60 % of the universe cached, or the
+fallback made zero progress while symbols are still missing). A clean fill calls `resolveIssue`.
+A couple of illiquid names missing from one snapshot is normal and does **not** alert.
+
+Coverage is read back from `price_cache` (`fillCoverage`), **not** counted from what the tick
+fetched. The per-symbol fallback deliberately skips symbols an earlier tick already filled, so
+fetch-counting understated coverage by exactly the amount already fixed — prod 2026-07-17 raised
+*"incomplete (3/31)"* listing 28 symbols as Missing and warning their tiles would show "—" while
+the cache held every one. Freshness is judged against the session actually served (`chosenDate`),
+so a holiday walk-back does not report the whole universe missing for a session that never
+existed. `filled` (this tick) and `cached` (the system) are both returned, never conflated.
 
 ### 2. Tiles read the warm cache
 
