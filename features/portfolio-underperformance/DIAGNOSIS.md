@@ -323,6 +323,68 @@ never persisted, so exits cannot be audited" — which is false, and was one que
 away from being written down as fact. The columns are duplicates of live fields
 and are a trap for exactly this kind of analysis.
 
+## 13. Exit-geometry shadow — measured, 2026-08-06
+
+`lib/trading/exit-geometry-shadow.ts` (pure) + owner/cron-gated read-only
+`GET /api/agents/exit-geometry-shadow`. **Changes nothing and writes nothing** —
+the counterfactual is derived from `observation_labels`, so there is no table and
+no state to keep in sync.
+
+Counterfactual outcomes at the 10-day horizon, entry-eligible decisions only:
+
+| geometry | tgt | stop | time | mean | win% |
+|---|---|---|---|---|---|
+| **INDIA — 25 obs, 7 dates** | | | | | |
+| stop 7.5% / target 19.2% **(live)** | 0 | 2 | 23 | **+0.28%** | 40.0% |
+| stop 7.5% / target 6.0% | 6 | 2 | 17 | +0.66% | 44.0% |
+| **stop 5.0% / target 6.0%** | 6 | 5 | 14 | **+0.81%** | 44.0% |
+| stop 5.0% / target 4.0% | 8 | 5 | 12 | +0.57% | 48.0% |
+| stop 3.5% / target 4.0% | 7 | 9 | 8 | +0.01% | 37.5% |
+| **US — 28 obs, 2 dates** | | | | | |
+| stop 7.5% / target 19.2% **(live)** | 0 | 6 | 22 | **−1.58%** | 35.7% |
+| stop 7.5% / target 10.0% | 0 | 6 | 22 | **−1.58%** | 35.7% |
+| stop 7.5% / target 6.0% | 0 | 6 | 22 | **−1.58%** | 35.7% |
+| stop 3.5% / target 6.0% | 0 | 13 | 15 | −1.81% | 21.4% |
+
+**Two results, and they point opposite ways.**
+
+**For US, shortening the target is provably inert.** The live target, a 10%
+target and a 6% target produce the *identical* −1.58% mean and the *identical*
+outcome mix — because 22 of 28 positions never reach even +6% at any point in the
+window, so moving the target between 19.2% and 6% changes nothing about what
+happens to them. Only at +4% do two positions convert, and the mean does not
+move. There is no favourable excursion to harvest. **Tightening the stop makes it
+strictly worse** (−1.81% at 3.5%). No geometry in the grid is positive.
+
+**For India there is a real candidate**: target 19.2% → 6.0% and stop 7.5% → 5.0%
+takes the mean from +0.28% to +0.81% and converts 6 timeouts into target hits.
+Note the shape — the best cell is *not* the shortest target. Going to +4.0% is
+worse (+0.57%) than +6.0%, so "shorter is better" is not the rule; there is an
+interior optimum, which is exactly the kind of thing a hand-picked number misses.
+
+**Neither result may be acted on.** India has 7 distinct dates, US has 2, against
+a floor of 20 (§8, and the program shipped this morning). An interior optimum
+found on 7 dates is what overfitting looks like from the inside.
+
+### Ambiguity guard, and why the ATR grid is unusable today
+
+A window that touched both the candidate target and the candidate stop cannot be
+resolved from max-excursion statistics — the ordering is unknown. Those are
+classified `ambiguous`, excluded from the mean, and the result is marked unusable
+above a 20% ambiguous share. The ATR grid trips this immediately: **96% ambiguous
+for US, 40% for India**, because `entry_atr_pct` is populated on only **4.1% of US
+10-day labels** and 43% of India's.
+
+That is not a defect in the ATR contract, which is the better one — 10-day labels
+mature from the OLDEST decisions, which predate the column being populated, so
+coverage should recover on its own. The percentage grid carries the analysis
+meanwhile, and it has the advantage of testing the live configuration exactly
+rather than an ATR approximation of it.
+
+**Caught during the build:** filtering out rows with no ATR left the US arm at
+**n=1** and every candidate looking identical. The rows are now retained, with
+ATR geometries marking them ambiguous rather than the report silently shrinking.
+
 ## 11. Method note — why this document refuted itself
 
 The first version passed every check it was given: real production queries, no
