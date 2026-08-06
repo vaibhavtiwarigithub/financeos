@@ -153,7 +153,7 @@ planned runs), cooldown (5d per symbol), per-run (1) and per-day (1) caps, and
 finally the atomic `execute_paper_rotation` RPC: it re-validates the signal
 claim, sells the source via `execute_paper_exit` (marked price − 5 bps), buys
 the candidate via `execute_paper_fill` (which re-runs mandate threshold, market
-controls, pyramid, name/sector caps, cash) in ONE transaction — a buy-leg
+controls, existing-position, name/sector caps, cash) in ONE transaction — a buy-leg
 denial rolls back the sell. The prior containment check constraint
 (`rotation_paper_execution_p1_not_approved`) was dropped by the same migration.
 There is NO live rotation path: no live proposal is created, and
@@ -192,7 +192,9 @@ US order account is exactly Robinhood agentic account `605420660`. Account `9658
 
 `lib/kill-switches.ts` checks per market for daily loss, peak drawdown, and rolling accuracy, disables trading, and creates a critical alert. Submit-time checks must rerun immediately before reserve/send.
 
-**Accuracy-gate minimum sample (`MIN_ACCURACY_SAMPLE = 20`, corrected 2026-07-29).** Paper accuracy uses the actual realization timestamp and aggregates every pyramid lot closed for one symbol at one timestamp into one exit episode. The combined episode return is classified with the currency-neutral breakeven band; breakevens and tainted rows are excluded. The gate trips only after **≥20 directional exit episodes**, never 20 correlated entry lots. Live filled-order pairing is not a kill-switch input: pairing a SELL with the latest BUY is not broker-confirmed lot accounting and is wrong under pyramiding/partial fills. Live daily-loss and drawdown remain immediate from account NAV.
+**One entry per open alpha name (2026-08-06).** A fresh score can reassess a held position but cannot create an unvalidated add-to-winner. PaperTrader marks that later signal superseded before claim; the database independently rejects a concurrent bypass. A separately validated and owner-approved add-to-winner policy would need its own risk budget, attribution, and shadow evidence before this rule may change.
+
+**Accuracy-gate minimum sample (`MIN_ACCURACY_SAMPLE = 20`, corrected 2026-07-29).** Paper accuracy uses the actual realization timestamp and aggregates every entry lot closed for one symbol at one timestamp into one exit episode. The combined episode return is classified with the currency-neutral breakeven band; breakevens and tainted rows are excluded. The gate trips only after **≥20 directional exit episodes**. Live filled-order pairing is not a kill-switch input: pairing a SELL with the latest BUY is not broker-confirmed lot accounting and is wrong under partial fills. Live daily-loss and drawdown remain immediate from account NAV.
 
 **Guarded manual reset (2026-07-20).** The per-market strategy toggle is not the breaker latch. Settings reads `market_controls` separately and exposes reset only while its `trading_enabled` is false. Reset names the originating `paper|live` book, reruns that book's deterministic checks, refuses a mismatched book or active market pause, writes an unresolved audit record before enabling, and resolves it plus only the matching kill alert after the latch write succeeds. It never changes thresholds, accounts, global/security pause, credentials, or autonomy flags. Risk/config reads are strictly market-scoped and fail closed; the old pre-schema unscoped retry is forbidden.
 

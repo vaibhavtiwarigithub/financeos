@@ -1212,3 +1212,31 @@ same evidence controls intended to make learning trustworthy.
 
 **Architecture:** `features/dimension-diagnostics/FEATURE_ARCHITECTURE.md`.
 
+---
+
+## Decision 64: One Paper Entry Per Open Alpha Name (2026-08-06)
+
+**Status:** Implemented and production-verified
+
+**Decision.** PaperTrader may open an alpha name once. A later fresh research
+signal reassesses the held position but cannot add exposure, including when the
+price is above average cost. The route rejects the candidate before it claims
+the signal; the database independently prevents a concurrent or alternate-path
+BUY and permits only one paper trade and immutable fill event per signal.
+
+**Reason.** The previous add-to-winner behavior repeated buys at separate
+scheduled research cycles without a distinct entry thesis, dedicated risk
+budget, or shadow validation. It consumed cash and confounded trade outcomes.
+
+**Data correction.** One MSFT buy projection duplicated an immutable fill event
+without a second position, cash movement, learner reference, or memory. The
+unreferenced projection was removed before unique indexes were created; the
+position and immutable event ledger were not altered.
+
+**Reversal.** A future add-to-winner feature requires its own approved
+architecture, per-name risk budget, attribution and market-local shadow proof.
+
+**Files/features affected:** PaperTrader, `paper_trades`, `paper_order_events`,
+Trading Mandate architecture, risk/schema chapters, and migration
+`20260806203000_prevent_paper_alpha_pyramiding.sql`.
+

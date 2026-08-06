@@ -17,7 +17,7 @@ import { loadTradingMandate, mandateSnapshot, resolveHorizonDays, type TradingMa
 import { isPaused, isTradingEnabled } from "@/lib/market-controls";
 import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/trading/capital-rotation";
 import { selectBestPaperSignals } from "@/lib/trading/paper-signal-selection";
-import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
+import { canOpenPaperName, hasOpenPaperName } from "@/lib/trading/paper-entry-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-calendar";
@@ -452,6 +452,24 @@ export async function POST(req: NextRequest) {
 
       const openNames = openAlphaNamesByMarket.get(market) ?? new Set<string>();
       const marketNameCap = mandateByMarket.get(market)?.max_open_positions ?? 10;
+      // A fresh score can reassess an open holding, but it is not a separately
+      // validated instruction to increase exposure. Every alpha name gets one
+      // entry until a future, approved add-to-winner policy proves otherwise.
+      if (hasOpenPaperName(openNames, signal.symbol)) {
+        const { error: supersedeError } = await supabase.from("agent_signals")
+          .update({ status: "superseded" }).eq("id", signal.id).eq("status", "pending");
+        if (supersedeError) {
+          skipped.push({ symbol: signal.symbol, reason: `open_position_signal_supersession_failed: ${supersedeError.message}` });
+          continue;
+        }
+        skipped.push({ symbol: signal.symbol, reason: "open_alpha_position_exists" });
+        await logStage(supabase, {
+          signal_id: signal.id, symbol: signal.symbol, market,
+          stage: "existing_position_gate", outcome: "rejected", reason: "open_alpha_position_exists",
+          detail: { policy: "one_entry_per_open_alpha_name" },
+        });
+        continue;
+      }
       // Capital-rotation reachability: at the name cap the candidate is NOT
       // rejected here. It flows through the remaining gates (sector cap,
       // re-entry cooldown, pricing, sizing) and is evaluated as a rotation
@@ -803,7 +821,7 @@ export async function POST(req: NextRequest) {
             skipped.push({ symbol: signal.symbol, reason: `rpc_fill_denied: ${denial}` });
             await logStage(supabase, {
               signal_id: signal.id, symbol: signal.symbol, market,
-              stage: denial === "pyramid_gate" ? "pyramid_gate" : "execution",
+              stage: denial === "existing_open_position" ? "existing_position_gate" : "execution",
               outcome: "rejected", reason: `rpc_fill_denied:${denial}`, detail: result,
             });
             continue;

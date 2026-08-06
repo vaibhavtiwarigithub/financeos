@@ -152,4 +152,6 @@ RLS policy were verified from the production schema after application.
 - A rejected fill RPC is written to `pipeline_stage_events` and summarized by
   reason in `agent_runs.workload_metrics`; observability never changes eligibility.
 - The per-market 10-name default remains a concentration gate, not a cash-use
-  target. Idle cash does not authorize an eleventh name or averaging down.
+  target. Idle cash does not authorize an eleventh name or any add to an open
+  alpha name. A later fresh score reassesses the holding; it is not a second
+  entry instruction without separately validated add-to-winner architecture.
