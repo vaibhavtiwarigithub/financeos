@@ -34,7 +34,7 @@ async function agentLabels(svc: any, ids: string[]): Promise<Map<string, string>
 async function loadObservations(svc: any, market: Market, horizonDays: number): Promise<DiagnosticObservation[]> {
   const { data, error } = await svc
     .from("observation_labels")
-    .select("id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,action,signal_id)")
+    .select("id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,action,signal_id)")
     .eq("horizon_days", horizonDays)
     .eq("decision_observations.market", market)
     .not("benchmark_neutral_return", "is", null)
@@ -50,7 +50,7 @@ async function loadObservations(svc: any, market: Market, horizonDays: number): 
     const decision = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
     if (!decision?.id || !decision.ts) return [];
     return [{
-      id: Number(decision.id), ts: String(decision.ts), symbol: String(decision.symbol), analystScore: decision.analyst_score == null ? null : Number(decision.analyst_score),
+      id: Number(decision.id), ts: String(decision.ts), symbol: String(decision.symbol), codeVersion: decision.code_version == null ? null : String(decision.code_version), analystScore: decision.analyst_score == null ? null : Number(decision.analyst_score),
       scores: {
         fundamental: decision.fundamental_score == null ? null : Number(decision.fundamental_score),
         technical: decision.technical_score == null ? null : Number(decision.technical_score),

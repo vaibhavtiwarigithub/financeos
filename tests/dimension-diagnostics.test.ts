@@ -9,7 +9,7 @@ import {
 
 function observation(id: number, date: string, available = true): DiagnosticObservation {
   return {
-    id, ts: `${date}T21:00:00.000Z`, symbol: `S${id}`, analystScore: 50 + id,
+    id, ts: `${date}T21:00:00.000Z`, symbol: `S${id}`, codeVersion: "test-code", analystScore: 50 + id,
     scores: { fundamental: 45 + id, technical: 50 + id, sentiment: 55, macro: 50, insider: 50 },
     availabilityMask: { fundamental: available, technical: available, sentiment: false, macro: available, insider: available },
     benchmarkNeutralReturn: id % 2 ? 0.02 : -0.01, entryEligible: id % 2 === 0,

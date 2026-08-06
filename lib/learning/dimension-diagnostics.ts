@@ -23,6 +23,7 @@ export type DiagnosticObservation = {
   id: number;
   ts: string;
   symbol: string;
+  codeVersion: string | null;
   analystScore: number | null;
   scores: Record<DiagnosticDimension, number | null>;
   availabilityMask: Partial<Record<DiagnosticDimension, boolean>> | null;
@@ -131,7 +132,7 @@ export function buildDimensionFindings(observations: DiagnosticObservation[]): D
 export function buildAgentFindings(observations: DiagnosticObservation[]): DiagnosticFinding[] {
   const byAgent = new Map<string, DiagnosticObservation[]>();
   for (const observation of observations) {
-    const key = observation.agentLabel || "research";
+    const key = `${observation.agentLabel || "research:unlabeled"}@${observation.codeVersion ?? "unknown-code"}`;
     const rows = byAgent.get(key) ?? [];
     rows.push(observation);
     byAgent.set(key, rows);
@@ -180,7 +181,7 @@ export function buildAgentFindings(observations: DiagnosticObservation[]): Diagn
 
 export function diagnosticFingerprint(market: string, horizonDays: number, observations: DiagnosticObservation[]): string {
   const material = observations
-    .map((row) => `${row.id}:${row.ts}:${row.symbol}:${row.agentLabel}:${row.benchmarkNeutralReturn}`)
+    .map((row) => `${row.id}:${row.ts}:${row.symbol}:${row.agentLabel}:${row.codeVersion}:${row.benchmarkNeutralReturn}`)
     .sort()
     .join("|");
   return crypto.createHash("sha256").update(`${DIMENSION_DIAGNOSTIC_PLAN_VERSION}|${market}|${horizonDays}|${material}`).digest("hex");
