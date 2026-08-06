@@ -32,6 +32,10 @@
   and separate UI queries.
 - Collaboration is deliberately not assigned credit from shared workflow output.
   It remains unattributable unless a future paired market-local shadow exists.
+- The initial `dimension_diagnostics_p0_v1` rows remain immutable. The active
+  `dimension_diagnostics_p0_v2` plan records agent contribution by agent label
+  plus the decision's code version, so a deployment cannot silently blend an
+  agent's historical behavior across versions.
 
 ## Verification
 

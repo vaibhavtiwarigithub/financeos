@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
 import { computeSpearmanIC } from "@/lib/validation/feature-check";
 
-export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v1";
+// v2 adds code-version identity to agent contribution subject keys. v1 remains
+// immutable in production rather than being rewritten after the fact.
+export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v2";
 export const DIAGNOSTIC_HORIZONS = [2, 5, 10, 20] as const;
 export const DIAGNOSTIC_DIMENSIONS = [
   "fundamental", "technical", "sentiment", "macro", "insider",
