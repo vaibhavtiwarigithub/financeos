@@ -452,6 +452,59 @@ Both markets remain below the date floor (US 13/20, India 14/20), so no exit
 change is justified — but the direction of the trailing evidence is consistent,
 large, and points the opposite way to the intuition that motivated it.
 
+## 15. Benchmark-relative paths — raw and excess give OPPOSITE answers (2026-08-06)
+
+Excess is subject minus benchmark over the **same entry-to-exit dates the rule
+chose**, matched by date. US vs SPY, India vs ^NSEI, never pooled.
+
+| candidate | US raw | **US excess** | exc win% | days | India raw | **India excess** |
+|---|---|---|---|---|---|---|
+| **LIVE** (trail 7.5%) | +0.62% | **−1.41%** | 32.3% | 5.0 | +1.59% | +0.24% |
+| no trail | +0.78% | **−1.58%** | 34.1% | 5.5 | +1.50% | +0.13% |
+| trail 4.0% | +0.42% | −0.78% | 30.9% | 3.7 | +1.30% | +0.26% |
+| trail 2.5% | +0.54% | −0.11% | 41.0% | 2.5 | +0.97% | +0.13% |
+| **trail 1.5%** | +0.73% | **+0.47%** | **56.0%** | 1.8 | +1.10% | **+0.53%** |
+
+**On raw returns, tightening the trail is worse. On excess, tightening is
+better.** §14's conclusion holds for raw and reverses for excess.
+
+### Why — and why NEITHER table settles it
+
+Excess is charged over the holding window the rule chose. A rule that holds 1.8
+sessions is charged 1.8 sessions of benchmark; one that holds 5.5 is charged 5.5.
+**In a rising market, holding less is mechanically better on excess** — a rule
+that never traded would score exactly 0.00% excess and beat the live rule's
+−1.41%.
+
+The opposite convention (charge the full window regardless of exit) is equally
+biased the other way: it penalises an early exit for market moves the position
+was never exposed to.
+
+So per-trade excess **cannot rank rules with different holding periods**, because
+it ignores what the freed capital does next. A 1.8-session rule leaves capital
+idle for the remaining 3.7 sessions, and in a rising market that idle cash is a
+real cost the per-trade view cannot see. Settling this requires a
+**portfolio-level simulation** — same capital, same calendar, redeployment
+modelled — which is not built.
+
+### What DOES firm up
+
+US live-rule excess of **−1.41% with a 32.3% excess win rate**, on 666 paths
+across 13 dates, is consistent with §1's −1.83% at 5 days measured a completely
+different way. **US underperformance against SPY is now the most robust finding
+in this document** — it survives raw-vs-excess, per-trade-vs-portfolio framing,
+and two independent samples. India's excess is positive but small (+0.24%) and
+still below the date floor.
+
+### Bug caught in this build
+
+The first run reported **334 of 334 India paths with an unmatched benchmark**,
+while the endpoint reported success. Cause was a transient empty candle fetch
+under ~105 symbol requests, not the adjusted-close theory first proposed. The
+endpoint now falls back to an unadjusted series and **reports which basis it
+used** (`adjusted` / `unadjusted` / `unavailable`), so an empty benchmark can no
+longer masquerade as a computed result.
+
 ## 11. Method note — why this document refuted itself
 
 The first version passed every check it was given: real production queries, no

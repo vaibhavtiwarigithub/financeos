@@ -49,6 +49,9 @@ export interface PathExit {
   ret: number | null;
   /** True when the exit bar was ambiguous intra-bar and the pessimistic branch was taken. */
   intrabarAmbiguous: boolean;
+  /** Entry and exit session dates, so the benchmark can be matched by DATE. */
+  entryDate: string | null;
+  exitDate: string | null;
 }
 
 /**
@@ -61,9 +64,10 @@ export interface PathExit {
  */
 export function simulateExit(bars: readonly SimBar[], geometry: PathGeometry): PathExit {
   if (bars.length < 2 || !(bars[0]?.close > 0) || geometry.maxSessions < 1) {
-    return { reason: "unresolved", sessions: 0, ret: null, intrabarAmbiguous: false };
+    return { reason: "unresolved", sessions: 0, ret: null, intrabarAmbiguous: false, entryDate: null, exitDate: null };
   }
   const entry = bars[0].close;
+  const entryDate = bars[0].date;
   const initialStop = entry * (1 - geometry.stopPct);
   const target = geometry.targetPct != null ? entry * (1 + geometry.targetPct) : null;
 
@@ -91,10 +95,11 @@ export function simulateExit(bars: readonly SimBar[], geometry: PathGeometry): P
         sessions: i,
         ret: (effectiveStop - entry) / entry,
         intrabarAmbiguous: targetReached,
+        entryDate, exitDate: bar.date,
       };
     }
     if (targetReached) {
-      return { reason: "target", sessions: i, ret: (target! - entry) / entry, intrabarAmbiguous: false };
+      return { reason: "target", sessions: i, ret: (target! - entry) / entry, intrabarAmbiguous: false, entryDate, exitDate: bar.date };
     }
 
     if (bar.high > highestHigh) highestHigh = bar.high;
@@ -107,6 +112,7 @@ export function simulateExit(bars: readonly SimBar[], geometry: PathGeometry): P
     sessions: last,
     ret: (exitBar.close - entry) / entry,
     intrabarAmbiguous: false,
+    entryDate, exitDate: exitBar.date,
   };
 }
 
@@ -124,7 +130,44 @@ export interface PathGeometryResult {
   medianReturn: number | null;
   winRate: number | null;
   avgSessions: number | null;
+  /** Subject minus benchmark over the SAME entry->exit dates. Null without a benchmark. */
+  meanExcess: number | null;
+  medianExcess: number | null;
+  /** Share of paths beating the benchmark over their own holding window. */
+  excessWinRate: number | null;
+  /** Paths whose benchmark leg could not be aligned by date. */
+  benchmarkUnmatched: number;
   baseline: boolean;
+}
+
+/**
+ * Benchmark return between two session dates, matched by DATE.
+ *
+ * Never by index: the subject and the benchmark can have different holiday
+ * calendars, so positional joins compare different days. An unmatched date
+ * yields null and is counted, rather than silently dropping the path.
+ */
+export function benchmarkReturnBetween(
+  benchmark: ReadonlyMap<string, number>,
+  entryDate: string | null,
+  exitDate: string | null,
+): number | null {
+  if (!entryDate || !exitDate) return null;
+  const a = benchmark.get(entryDate);
+  const z = benchmark.get(exitDate);
+  if (a == null || z == null || !(a > 0)) return null;
+  return (z - a) / a;
+}
+
+function mean(xs: readonly number[]): number | null {
+  return xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null;
+}
+
+function median(xs: readonly number[]): number | null {
+  if (!xs.length) return null;
+  const sorted = [...xs].sort((a, b) => a - b);
+  const n = sorted.length;
+  return n % 2 ? sorted[(n - 1) / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2;
 }
 
 export function evaluatePathGeometry(
@@ -132,27 +175,43 @@ export function evaluatePathGeometry(
   geometry: PathGeometry,
   label: string,
   baseline = false,
+  /** Benchmark closes by date. Omit to report raw returns only. */
+  benchmark?: ReadonlyMap<string, number>,
 ): PathGeometryResult {
   const counts = { stop: 0, target: 0, trail: 0, time: 0, unresolved: 0 };
   let intrabarAmbiguous = 0;
+  let benchmarkUnmatched = 0;
   const returns: number[] = [];
   const sessions: number[] = [];
+  const excesses: number[] = [];
 
   for (const bars of paths) {
     const exit = simulateExit(bars, geometry);
     counts[exit.reason]++;
     if (exit.intrabarAmbiguous) intrabarAmbiguous++;
-    if (exit.ret != null) { returns.push(exit.ret); sessions.push(exit.sessions); }
+    if (exit.ret == null) continue;
+    returns.push(exit.ret);
+    sessions.push(exit.sessions);
+
+    if (!benchmark) continue;
+    // The benchmark is measured over the SAME holding window this rule chose.
+    // A rule that exits earlier is compared against less benchmark exposure,
+    // which is the honest comparison — otherwise a fast-exiting rule is charged
+    // for market moves it was never in.
+    const bench = benchmarkReturnBetween(benchmark, exit.entryDate, exit.exitDate);
+    if (bench == null) { benchmarkUnmatched++; continue; }
+    excesses.push(exit.ret - bench);
   }
 
-  const sorted = [...returns].sort((a, b) => a - b);
-  const n = returns.length;
   return {
-    label, geometry, n: paths.length, ...counts, intrabarAmbiguous,
-    meanReturn: n ? returns.reduce((s, x) => s + x, 0) / n : null,
-    medianReturn: n ? (n % 2 ? sorted[(n - 1) / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2) : null,
-    winRate: n ? returns.filter((x) => x > 0).length / n : null,
-    avgSessions: sessions.length ? sessions.reduce((s, x) => s + x, 0) / sessions.length : null,
+    label, geometry, n: paths.length, ...counts, intrabarAmbiguous, benchmarkUnmatched,
+    meanReturn: mean(returns),
+    medianReturn: median(returns),
+    winRate: returns.length ? returns.filter((x) => x > 0).length / returns.length : null,
+    avgSessions: mean(sessions),
+    meanExcess: benchmark ? mean(excesses) : null,
+    medianExcess: benchmark ? median(excesses) : null,
+    excessWinRate: benchmark && excesses.length ? excesses.filter((x) => x > 0).length / excesses.length : null,
     baseline,
   };
 }

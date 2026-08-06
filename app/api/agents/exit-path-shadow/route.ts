@@ -4,6 +4,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { fetchYahooCandles } from "@/lib/data/yahoo-candles";
 import { evaluatePathGeometry, PATH_CANDIDATES, type SimBar } from "@/lib/trading/exit-path-sim";
+import { BENCHMARK_BY_MARKET } from "@/lib/data/benchmark-series";
 import { coverageByHorizon, MIN_DISTINCT_DATES, type LabelRow } from "@/lib/shadows/label-coverage";
 
 export const dynamic = "force-dynamic";
@@ -87,8 +88,36 @@ export async function GET(req: NextRequest) {
     pathsByMarket.set(decision.market, bucket);
   }
 
+  // Benchmark closes per market, keyed by DATE so the excess leg can never be
+  // joined positionally across differing holiday calendars. US and India each
+  // use their own benchmark and are never pooled.
+  //
+  // ADJUSTED-CLOSE TRAP: fetchYahooCandles returns [] when `adjusted` is asked
+  // for and the symbol has no adjclose series. ^NSEI is a PRICE INDEX and has
+  // none, so the India benchmark came back empty and every excess figure was
+  // silently unmatched — 334 of 334 — while the endpoint reported success.
+  // Adjusted is still correct for SPY, which is an ETF and pays distributions;
+  // unadjusted is correct for a price index, which has none to reinvest. So try
+  // adjusted, fall back to raw, and REPORT which was used rather than hide it.
+  const benchmarks = new Map<string, Map<string, number>>();
+  const benchmarkBasis = new Map<string, "adjusted" | "unadjusted" | "unavailable">();
+  for (const market of pathsByMarket.keys()) {
+    const symbol = BENCHMARK_BY_MARKET[market];
+    if (!symbol) continue;
+    let bars = await loadSeries(symbol);
+    let basis: "adjusted" | "unadjusted" | "unavailable" = "adjusted";
+    if (bars.length === 0) {
+      const raw = await fetchYahooCandles(symbol, "2y").catch(() => []);
+      bars = raw.map((c) => ({ date: c.date, high: c.high, low: c.low, close: c.close }));
+      basis = bars.length ? "unadjusted" : "unavailable";
+    }
+    benchmarkBasis.set(market, basis);
+    benchmarks.set(market, new Map(bars.map((b) => [b.date, b.close])));
+  }
+
   const markets = [...pathsByMarket.entries()].map(([market, { paths, rows }]) => {
     const coverage = coverageByHorizon(rows)[0];
+    const benchmark = benchmarks.get(market);
     return {
       market,
       coverage: {
@@ -98,7 +127,9 @@ export async function GET(req: NextRequest) {
         minDistinctDates: MIN_DISTINCT_DATES,
         sufficient: coverage?.sufficient ?? false,
       },
-      results: PATH_CANDIDATES.map((c) => evaluatePathGeometry(paths, c.geometry, c.label, c.baseline === true)),
+      benchmarkSymbol: BENCHMARK_BY_MARKET[market] ?? null,
+      benchmarkBasis: benchmarkBasis.get(market) ?? "unavailable",
+      results: PATH_CANDIDATES.map((c) => evaluatePathGeometry(paths, c.geometry, c.label, c.baseline === true, benchmark)),
       note: coverage?.sufficient
         ? "Coverage clears the date floor. Differences may be compared, subject to multiple-testing caveats across the candidate set."
         : `Only ${coverage?.distinctDates ?? 0} distinct decision date(s), below the floor of ${MIN_DISTINCT_DATES}. These numbers describe one regime and MUST NOT justify an exit-rule change.`,
@@ -111,7 +142,7 @@ export async function GET(req: NextRequest) {
     decisionsConsidered: decisions.length,
     withoutUsableSeries: noSeries,
     truncated,
-    method: "Real daily bars replayed from the first session on or after each decision date, entering at that bar's close. The entry bar is never evaluated for an exit. The trail anchors on the highest high seen BEFORE the current bar, so a bar cannot ratchet the stop on its own high and then breach it. When one bar's low breaches the stop AND its high reaches the target, the STOP is assumed first - the pessimistic branch - and counted in intrabarAmbiguous.",
+    method: "Excess is subject minus benchmark over the SAME entry-to-exit dates the rule chose, matched by date - a rule that exits earlier is compared against less benchmark exposure, which is the honest comparison. Real daily bars replayed from the first session on or after each decision date, entering at that bar's close. The entry bar is never evaluated for an exit. The trail anchors on the highest high seen BEFORE the current bar, so a bar cannot ratchet the stop on its own high and then breach it. When one bar's low breaches the stop AND its high reaches the target, the STOP is assumed first - the pessimistic branch - and counted in intrabarAmbiguous.",
     influence: "None. Changes no stop, target, trail, time stop, order or exit, and writes nothing.",
     elapsedMs: Date.now() - started,
   });

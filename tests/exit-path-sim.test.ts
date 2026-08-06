@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  benchmarkReturnBetween,
   evaluatePathGeometry,
   PATH_CANDIDATES,
   simulateExit,
@@ -146,5 +147,51 @@ describe("candidate set", () => {
 
   it("varies the clock, since the horizon is itself in question", () => {
     expect(new Set(PATH_CANDIDATES.map((c) => c.geometry.maxSessions)).size).toBeGreaterThan(1);
+  });
+});
+
+describe("benchmark leg", () => {
+  const bench = new Map<string, number>([
+    ["2026-07-06", 100],
+    ["2026-07-07", 102],
+    ["2026-07-08", 104],
+  ]);
+
+  it("matches by DATE, never by index", () => {
+    // Subject and benchmark have different holiday calendars. A positional join
+    // would compare 07-06 against 07-08 and invent a return.
+    expect(benchmarkReturnBetween(bench, "2026-07-06", "2026-07-07")).toBeCloseTo(0.02);
+    expect(benchmarkReturnBetween(bench, "2026-07-06", "2026-07-08")).toBeCloseTo(0.04);
+  });
+
+  it("returns null on an unmatched or unusable date rather than guessing", () => {
+    expect(benchmarkReturnBetween(bench, "2026-07-06", "2026-07-09")).toBeNull();
+    expect(benchmarkReturnBetween(bench, null, "2026-07-08")).toBeNull();
+    expect(benchmarkReturnBetween(new Map([["a", 0]]), "a", "a")).toBeNull();
+  });
+
+  it("charges each rule only for the benchmark exposure it actually held", () => {
+    // Subject rises 2% over one session while the benchmark rises 2% too:
+    // excess is zero, even though the raw return looks positive.
+    const paths = [[bar(100, 100, 100, "2026-07-06"), bar(102, 102, 102, "2026-07-07")]];
+    const r = evaluatePathGeometry(paths, { stopPct: 0.075, maxSessions: 1 }, "t", false, bench);
+    expect(r.meanReturn).toBeCloseTo(0.02);
+    expect(r.meanExcess).toBeCloseTo(0);
+    expect(r.benchmarkUnmatched).toBe(0);
+  });
+
+  it("counts unmatched benchmark legs instead of dropping them silently", () => {
+    const paths = [[bar(100, 100, 100, "1999-01-01"), bar(102, 102, 102, "1999-01-02")]];
+    const r = evaluatePathGeometry(paths, { stopPct: 0.075, maxSessions: 1 }, "t", false, bench);
+    expect(r.benchmarkUnmatched).toBe(1);
+    expect(r.meanExcess).toBeNull();
+    expect(r.meanReturn).toBeCloseTo(0.02); // the raw leg still stands
+  });
+
+  it("reports null excess when no benchmark is supplied", () => {
+    const paths = [[bar(100, 100, 100, "2026-07-06"), bar(102, 102, 102, "2026-07-07")]];
+    const r = evaluatePathGeometry(paths, { stopPct: 0.075, maxSessions: 1 }, "t");
+    expect(r.meanExcess).toBeNull();
+    expect(r.excessWinRate).toBeNull();
   });
 });
