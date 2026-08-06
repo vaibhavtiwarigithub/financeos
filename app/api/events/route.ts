@@ -7,6 +7,7 @@ import {
   eventTypeDefinition,
   isEventDirection,
   isKnownEventType,
+  requiresSymbol,
 } from "@/lib/events/vocabulary";
 
 export const dynamic = "force-dynamic";
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Body must be a JSON object" }, { status: 400 });
   }
 
-  const { event_type, occurred_at, market, direction, magnitude, source_url, source_name, notes } = body as Record<string, unknown>;
+  const { event_type, occurred_at, market, direction, magnitude, source_url, source_name, notes, symbol } = body as Record<string, unknown>;
 
   // Fail closed on the vocabulary. An unrecognised type is rejected rather than
   // recorded: a type minted per occurrence cannot be counted, and counting is
@@ -91,6 +92,14 @@ export async function POST(req: NextRequest) {
   if (magnitude != null && !Number.isFinite(Number(magnitude))) {
     return NextResponse.json({ error: "magnitude must be a number or omitted" }, { status: 400 });
   }
+  // An idiosyncratic event with no subject has nothing to compute a forward
+  // return ON, so it could never mature — it would sit in the ledger forever
+  // deflating the base rate's n. Reject it at the door rather than record it.
+  if (requiresSymbol(String(event_type)) && (typeof symbol !== "string" || !symbol.trim())) {
+    return NextResponse.json({
+      error: `${event_type} is a per-company event and requires a subject "symbol". Without one it can never be matured.`,
+    }, { status: 400 });
+  }
 
   const observedAt = new Date().toISOString();
   const stamps = checkEventTimestamps(occurred_at, observedAt);
@@ -101,6 +110,7 @@ export async function POST(req: NextRequest) {
     event_type, occurred_at, observed_at: observedAt, market, direction,
     magnitude: magnitude == null ? null : Number(magnitude),
     source_url, source_name: String(source_name).trim(),
+    symbol: typeof symbol === "string" && symbol.trim() ? symbol.trim().toUpperCase() : null,
     notes: typeof notes === "string" ? notes : null,
   }).select().single();
 

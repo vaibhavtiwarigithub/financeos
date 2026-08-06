@@ -257,9 +257,84 @@ US+India statistic, and those must never cross-sum.
 Every count here is **below the §4.4 floor of 20**, which is the expected and
 correct outcome — the base-rate report must refuse to estimate on it.
 
-### Not yet built (steps 2-5)
+## 10 — Steps 2 and 3, shipped 2026-08-05
 
-The maturation job, the base-rate report with n-floors, any display, and any
-strategy proposal. The ledger currently holds **zero rows** — that is the correct
-state, and the first real entry is the owner's to make.
+`lib/events/outcomes.ts` (pure), `POST /api/agents/event-maturation`
+(`kairos-event-maturation`, weekdays 16:10 UTC, jobid 116), and owner-gated
+read-only `GET /api/events/base-rate`.
+
+### The anti-look-ahead rule is the feature
+
+A measurement starts at **the first session whose CLOSE falls after
+`occurred_at`**, using a per-market close hour (`us` 20:00Z, `india` 10:00Z).
+Anchoring on the close rather than the date is the whole point: an announcement
+made at 13:20 ET is tradable at that day's US close, one made after the bell is
+not, and starting from a pre-announcement close folds the market's reaction INTO
+the "forward" return and makes the pattern look prescient.
+
+Verified against the live ledger, not just fixtures:
+
+| event | market | entry |
+|---|---|---|
+| 2025-04-09 **17:20Z** (intraday) | us | **2025-04-09** — same session, 13:20 ET is before the close |
+| 2025-04-09 **17:20Z** (same instant) | india | **2025-04-11** — after the IST close, and 04-10 was an NSE holiday |
+| 2025-02-01 23:59Z (Saturday) | us | 2025-02-03 (Monday) |
+
+An unelapsed horizon returns **null, never 0**. A zero would pull every mean
+toward zero while inflating n — the same class as the count-not-span bug this
+repo already shipped once in sector returns.
+
+Excursions (MAE/MFE) are measured from `start + 1`, not from the entry bar: we
+enter at the entry bar's close, so that bar's intraday range is already past, and
+for an intraday-cited event part of it happened *before* the announcement.
+**This was a real defect in the first implementation, caught by its own test.**
+
+### Two artefacts found by running it on real data
+
+**`benchmark_neutral_return` is identically 0 for every market-wide event**,
+because the subject IS the benchmark. The report initially preferred the neutral
+leg, which would have printed every tariff base rate as exactly zero — reading
+as a finding and being an artefact. `cohortValue()` now selects raw return for
+market-wide cohorts and benchmark-neutral for idiosyncratic ones.
+
+**`price_cache` cannot mature this ledger**: it reaches back only to 2025-07-22
+for SPY, while the earliest recorded event is 2025-02-01. Maturation uses the
+repo's existing keyless Yahoo chart source with `adjusted: true` — deliberately
+*not* the live scoring path's default, because a return study must not read a
+split or distribution as alpha.
+
+### The report refuses
+
+Below `MIN_INSTANCES = 20` the summary carries **nulls, not numbers with a
+caveat beside them** — a caveat is something a reader skips; an absent number is
+not. `n` is returned either way, and the count of event types tested is returned
+with the results per R4.
+
+Live state 2026-08-05: **57 outcomes, 12 cohorts, max n = 7. Nothing estimated.**
+Market is part of the grouping KEY, not a filter applied afterwards, so a pooled
+US+India row cannot be produced by accident.
+
+### Vocabulary extended — guidance, by owner review
+
+`guidance_cut` / `guidance_raised`, chosen over further macro types **because it
+is idiosyncratic**. A market-wide event hits every name in the affected set
+together, so its per-date cross-sectional variance is zero by construction: it
+can shift a composite's level but never improve its ordering. That is the
+measured defect that disqualified NSE FII/DII and that already afflicts US
+`macro_score` and `insider_score`. Per-company events are the only ones with real
+dispersion, so they are the only ones worth minting.
+
+`EventTypeDefinition.idiosyncratic` drives `requiresSymbol()`: an idiosyncratic
+event with no subject has nothing to compute a return ON, so it could never
+mature and would sit in the ledger permanently deflating n. `POST /api/events`
+rejects it at the door.
+
+**Guidance rows still need a source.** The type exists; populating it is the next
+problem, and it is harder than tariffs — per-company, higher frequency, and the
+`occurred_at` must be the release or call, not the period covered.
+
+### Not yet built (steps 4-5)
+
+Markets-page display (gated on a type reaching the floor) and any strategy
+proposal (gated on §5 in full, including the unresolved false-discovery control).
 

@@ -28,6 +28,21 @@ export interface EventTypeDefinition {
   /** What a row of this type must record, so magnitude stays comparable. */
   magnitudeUnit: string | null;
   description: string;
+  /**
+   * Does this type apply to ONE company (idiosyncratic) or to the whole market?
+   *
+   * This is the most consequential field in the vocabulary. A market-wide event
+   * hits every name in the affected set together, so its per-date
+   * cross-sectional variance is zero by construction: it can move a composite's
+   * LEVEL but can never improve its ORDERING. That is the measured defect that
+   * disqualified NSE FII/DII in R3_DIMENSION_FEASIBILITY.md and that already
+   * afflicts US macro_score (sigma 2.26) and insider_score (94.1% at one value).
+   *
+   * Idiosyncratic types are the ones with real dispersion, so they are the ones
+   * worth minting. Market-wide types are recorded for their own sake, not as
+   * candidate ranking inputs.
+   */
+  idiosyncratic: boolean;
 }
 
 // Seeded with the trade-policy family only — the motivating pattern where an
@@ -40,12 +55,34 @@ export const EVENT_VOCABULARY: readonly EventTypeDefinition[] = [
     label: "Tariff announced or escalated",
     magnitudeUnit: "headline tariff rate, percentage points",
     description: "A new or increased tariff is announced publicly. occurred_at is the announcement, not the effective date.",
+    idiosyncratic: false,
   },
   {
     type: "policy_tariff_reversed",
     label: "Tariff withdrawn, paused or reduced",
     magnitudeUnit: "percentage points removed from the headline rate",
     description: "A previously announced tariff is withdrawn, paused, delayed or cut. Pairs with an earlier policy_tariff_announced.",
+    idiosyncratic: false,
+  },
+  // Added 2026-08-05 by owner review. Chosen over further macro types precisely
+  // BECAUSE it is per-company: guidance revisions disperse names against each
+  // other, which is the only way an event can ever inform ranking rather than
+  // level. Paired, so the revise-and-revert interval is measurable, and not
+  // recorded anywhere else in this repo (earnings DATES live in symbol_profiles;
+  // the revision itself does not).
+  {
+    type: "guidance_cut",
+    label: "Company cut forward guidance",
+    magnitudeUnit: "percent reduction in the midpoint of guided revenue or EPS",
+    description: "A company lowers its own forward guidance. occurred_at is when the revision became public (release or call), not the period it covers.",
+    idiosyncratic: true,
+  },
+  {
+    type: "guidance_raised",
+    label: "Company raised forward guidance",
+    magnitudeUnit: "percent increase in the midpoint of guided revenue or EPS",
+    description: "A company raises its own forward guidance. Pairs with an earlier guidance_cut when the same name reverses course.",
+    idiosyncratic: true,
   },
 ];
 
@@ -61,6 +98,19 @@ export function isKnownEventType(value: unknown): value is string {
 
 export function eventTypeDefinition(type: string): EventTypeDefinition | null {
   return TYPE_INDEX.get(type) ?? null;
+}
+
+/**
+ * Does a row of this type need a subject `symbol`?
+ *
+ * An idiosyncratic event with no symbol cannot be measured at all — there is
+ * nothing to compute a forward return ON. Recording one would put a permanently
+ * unmaturable row in the ledger and quietly deflate every base rate that counts
+ * matured outcomes. Unknown types return false so the caller's vocabulary check
+ * stays the thing that rejects them.
+ */
+export function requiresSymbol(type: string): boolean {
+  return TYPE_INDEX.get(type)?.idiosyncratic ?? false;
 }
 
 export const EVENT_DIRECTIONS: readonly EventDirection[] = ["escalation", "de_escalation", "neutral"];
