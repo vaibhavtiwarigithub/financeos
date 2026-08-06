@@ -39,6 +39,13 @@
 
 ## Overview
 
+**2026-08-06 security boundary:** browser-callable
+`get_daily_ai_count(p_user_id)` is a SECURITY DEFINER RPC for the owner's daily
+AI counter. Migration `20260806183039_restrict_daily_ai_count_to_caller.sql`
+requires `auth.uid() = p_user_id` inside the function, so an authenticated caller
+cannot query another user's count by substituting a UUID. Service-role access is
+retained for trusted server work.
+
 Manual and future autonomous orders must pass one shared Execution Gateway. Manual and auto differ only in **who authorizes the proposal**; they do not have separate money-safety implementations.
 
 ```mermaid
