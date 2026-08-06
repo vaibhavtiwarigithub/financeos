@@ -385,6 +385,73 @@ rather than an ATR approximation of it.
 **n=1** and every candidate looking identical. The rows are now retained, with
 ATR geometries marking them ambiguous rather than the report silently shrinking.
 
+## 14. Exit-PATH shadow — the trailing hypothesis is REFUTED (2026-08-06)
+
+`lib/trading/exit-path-sim.ts` + `GET /api/agents/exit-path-shadow`. Replays real
+daily bars under alternative exit rules. Read-only; writes nothing.
+
+Built because a trailing stop is **path-dependent** and MFE/MAE cannot evaluate
+one at all — a trail fires only after a rise then a fall, so every case worth
+studying is ambiguous from excursion statistics. Replaying bars resolves ordering
+exactly, and as a side effect dissolves the `ambiguous` bucket §13 has to refuse.
+
+**Sample is far better than anything above**: it uses every entry-eligible
+decision with price history, not only those with matured labels — **666 US paths
+across 13 dates and 66 symbols; 334 India across 14 dates and 39 symbols.**
+
+| candidate | US mean | US win% | US avg days | India mean | India win% |
+|---|---|---|---|---|---|
+| **LIVE** stop 7.5% / trail 7.5% / target 19.2% / 10d | +0.75% | 55.3% | 5.0 | **+1.60%** | 56.9% |
+| **no trail** | **+1.04%** | **59.2%** | 5.5 | +1.51% | 56.9% |
+| trail 4.0% | +0.52% | 49.2% | 3.7 | +1.30% | 52.4% |
+| trail 2.5% | +0.61% | 46.2% | 2.5 | +0.97% | 50.0% |
+| trail 1.5% | +0.77% | 54.2% | 1.8 | +1.10% | 51.2% |
+| trail 2.5% + target 6% | +0.47% | 46.2% | 2.3 | +0.68% | 50.0% |
+| LIVE geometry, 5-session clock | +0.40% | 54.2% | 3.7 | +1.24% | 55.4% |
+| LIVE geometry, 20-session clock | +0.73% | 55.3% | 5.2 | +1.58% | 57.5% |
+
+**Tightening the trail makes things worse in BOTH markets, monotonically.** US
+goes +0.75% → +0.52% → +0.61% as the trail tightens from 7.5% to 2.5%, with the
+win rate falling 55.3% → 46.2%. India falls +1.60% → +0.97%. The best US arm is
+**no trail at all** (+1.04%, 59.2% win).
+
+The §12 reasoning — "the trail is wider than the excursion, so it can never
+protect a gain" — was correct as arithmetic and **wrong as a prescription**. A
+tight trail does capture giveback, but it also exits on noise: average holding
+collapses from 5.0 sessions to 2.5, with **510 of 666 US paths** stopped out on
+the trail, forgoing every position that would have recovered. The giveback is
+real; harvesting it costs more than it returns.
+
+This is the second time in this document that a correct observation produced a
+wrong prescription. The observation was about the average position; the
+prescription needed the distribution.
+
+**Costs would widen the gap.** No spread or slippage is modelled here. The
+tight-trail arms trade roughly twice as often, so a realistic cost model
+penalises exactly the arms that already lose.
+
+### The clock is not the problem either
+
+5 sessions is worse (US +0.40%), 20 is indistinguishable from 10 (+0.73% vs
++0.75%). And average holding is **5.0 sessions** — most exits already happen
+before the clock fires, so the 10-day horizon is rarely the binding constraint it
+appeared to be in §6's exit-reason counts.
+
+### A prior conclusion this contradicts
+
+§13 reported every US geometry as negative (live: **−1.58%**). That rested on 28
+matured labels across **2 dates**. This sample — 666 paths, 13 dates — puts the
+same live geometry at **+0.75%** with a 55.3% win rate. The narrow cohort was
+unrepresentative, exactly as the coverage program warned.
+
+**Do not read this as "US is fine."** These are **raw** returns, and the
+benchmark rose over the window; a positive raw mean can still be negative excess,
+which is what §1 measured. Benchmark-relative path simulation is not built.
+
+Both markets remain below the date floor (US 13/20, India 14/20), so no exit
+change is justified — but the direction of the trailing evidence is consistent,
+large, and points the opposite way to the intuition that motivated it.
+
 ## 11. Method note — why this document refuted itself
 
 The first version passed every check it was given: real production queries, no
