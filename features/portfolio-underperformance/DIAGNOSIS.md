@@ -11,13 +11,27 @@ Related: `features/walk-forward-ic-folds/`, `features/india-scorer-discriminatio
 
 ## 0. The one-line version
 
-**US and India are failing for opposite reasons.** US selects from a candidate
-pool that loses badly to its benchmark — one discovery source alone runs
-**−9.8% excess at 5 days**. India's *decisions* are actually good (+0.58% excess
-at 5 days across every source) and the **exit layer gives all of it back**.
+**The honest answer is that the data cannot yet say why.** Every decision-level
+figure in this document comes from a **single two-week window** (2026-07-06 →
+2026-07-22), with 7–14 distinct dates depending on horizon. See **§4b**, which
+refutes §4 and §5 of this same document.
 
-Neither is a scorer-weights problem, which is where tuning effort would
-instinctively go.
+What is solidly established:
+
+- **~30% of the US and ~51% of the India benchmark gap is uninvested cash** —
+  arithmetic, not signal (§2).
+- **The reporting window is 18 return days**, and the system already labels its
+  own confidence `low`/`insufficient` (§1).
+- **US and India have different payoff shapes** — US lottery (2 wins of 23),
+  India coin-flip (48% at ±2.3%) — both with expectancy indistinguishable from
+  slightly negative (§3).
+- **The modal exit is a 10-day clock, not a thesis**, in both books (§6).
+
+What is NOT established, despite being written confidently in the first version
+of this document: any claim about universe composition, discovery-source quality,
+or scorer ranking ability.
+
+**The binding constraint on every question here is matured-label date coverage.**
 
 ---
 
@@ -94,7 +108,60 @@ Caveats, stated rather than buried: the 5d/10d windows overlap heavily with no
 HAC correction, and n=74 at 10d is thin. The best-powered figure here is US 2d at
 n=536, and it is **negative**. India shows no ranking ability at any horizon.
 
+## 4b. CORRECTION (2026-08-06, same day) — §4 and §5 do not survive scrutiny
+
+Everything below in §5 was written, committed, and then **refuted by the next
+query**. It is kept rather than deleted because the failure mode is the point.
+
+**The entire matured-label dataset is one fortnight.**
+
+| market | horizon | n | distinct dates | symbols | span |
+|---|---|---|---|---|---|
+| us | 2d | 536 | 14 | 82 | 07-06 → 07-22 |
+| us | 5d | 338 | 11 | 70 | 07-06 → 07-20 |
+| us | 10d | 74 | **7** | **18** | 07-06 → 07-14 |
+| us | 20d | 4 | **2** | **1** | 07-06 → 07-07 |
+| india | 10d | 65 | 7 | 31 | 07-07 → 07-15 |
+| india | 20d | 13 | **1** | 13 | 07-07 |
+
+Every IC figure in §4 comes from a single two-week window in July 2026. The
+US 10-day IC of **+0.300** rests on 18 symbols over 7 overlapping dates — that is
+not evidence of a ranking ability, it is one market fortnight. `n` counts
+observations; the effective independent sample is the **date** count, and it is
+7. Nothing in §4 supports a claim about the scorer in either direction.
+
+**The §5 watchlist finding is an artefact, and worse than merely thin:**
+
+- 26 observations = **10 symbols × 3 consecutive days** (07-09, 07-10, 07-13)
+- All 10 symbols are semiconductors: SOXL, MRVL, ARM, MU, INTC, QCOM, TSM,
+  AVGO, NVDA, ASML. It is a **semis watchlist**, measured across one semis
+  drawdown. One sector, one week.
+- **`entry_eligible = false` on all 26.** The system never bought a single one.
+
+So the cohort blamed for the largest measured loss **had zero influence on the
+portfolio**. `metals_basket` (3 symbols, 3 dates) and `region_etf` (3 symbols,
+3 dates) are also 0-eligible. Only `holding` (108 eligible) and `null`
+(30 eligible) ever produced an eligible US decision — and `holding`'s **median**
+excess is exactly **0.0000**, with the −0.94% mean coming from a tail.
+
+The §5 error was also one of attribution: the closed trades named there
+(RDDT, HOOD, SMCI) were never in the watchlist cohort. Sharing a "high-beta"
+description is not sharing a source. Two separate observations were merged into
+one story because the story was tidy.
+
+**What actually survives:** §1 (window too short — already self-labelled), §2
+(cash drag, pure arithmetic), §3 (payoff shapes, though on n=23/50), and §6's
+raw exit-reason counts. The causal claims in §4 and §5 do not.
+
+**Consequence for the recommendations in §8:** items 1 and 2 were both built on
+§5. Demoting the watchlist would be a **no-op that resembles a fix** — it already
+buys nothing. The universe-composition thesis has no surviving evidence behind
+it. What is genuinely established is that **matured-label date coverage is the
+binding constraint on every question this document asks**, including its own.
+
 ## 5. Where the US pool goes wrong — this is the finding
+
+> **REFUTED — see §4b.** Retained verbatim as written. Do not act on it.
 
 5-day benchmark-neutral excess by `discovery_source`:
 
@@ -158,23 +225,27 @@ win is worse in ratio: a single stop erases roughly three average winners.
 
 ## 7. What this rules out
 
-- **Not the scorer weights.** US IC is positive at the horizon actually traded.
 - **Not the LLM.** No LLM touches score direction, sizing, or exits.
-- **Not a data-availability problem.** Coverage figures are healthy in
-  System Health; the negative cohorts have full evidence.
+- **Not data availability.** Coverage is healthy in System Health.
 
-## 8. What it points at, in priority order
+It does **not** rule out the scorer, the universe, or the exits. Post-§4b, none
+of the three has been tested on enough independent dates to convict or acquit.
 
-1. **US universe composition.** The watchlist cohort is the single largest
-   measured destroyer of relative return. Nothing in the 14-program upgrade-path
-   registry currently measures universe composition at all.
-2. **The exit layer for India.** A positive decision edge is being converted to
-   zero. Time-stop and stop-width are the two candidate mechanisms and are
-   separable with existing data.
-3. **Cash deployment.** Pure arithmetic, needs no edge, but is a policy decision
-   with its own risk implications and is NOT free — deploying into a pool with
-   negative expectancy makes things worse, not better. **Sequence matters: this
-   is safe only after (1).**
+## 8. What it points at, in priority order (revised after §4b)
+
+1. **Matured-label date coverage.** Every question above is gated on it. At the
+   20-day horizon the US has **4 observations across 2 dates on 1 symbol**; India
+   has 13 on a single date. Until this grows, each new analysis will keep
+   producing confident answers from one market fortnight — as this document
+   demonstrated on itself.
+2. **The exit layer.** The raw counts are robust: 34 of 50 India exits and 13 of
+   23 US exits are the 10-market-day time stop, and stops (−6.35% India, −9.47%
+   US) are wide against average wins (+2.31% / +15.86%). This is a design
+   observation about the rules as written, not an inference from a short sample,
+   which is why it survives §4b.
+3. **Cash deployment.** Pure arithmetic (§2) and the only item needing no edge.
+   But it is NOT free: deploying into a book whose expectancy is unproven
+   increases exposure to an unmeasured quantity. **Sequence: not before (1).**
 
 ## 9. Explicitly not proposed here
 
@@ -185,13 +256,30 @@ its own architecture round and its own predeclared evidence. In particular,
 concentration multiplies edge, and measured US expectancy is −0.97% per trade
 with a "confident and correct" sample size of two.
 
-## 10. Open questions for the owner
+## 10. Open questions for the owner (revised after §4b)
 
-1. Should universe composition become a tracked program in
-   `lib/shadows/registry.ts`? It is currently the largest measured problem with
-   no owner and no evidence campaign.
-2. Is the US `watchlist` source hand-maintained, and can it simply be
-   demoted to measure-only pending review? That is the highest-value, lowest-risk
-   single change available — but it is still a change to what the system may buy.
+1. **Withdrawn.** "Universe composition" as a tracked program had exactly one
+   piece of evidence behind it and that evidence was an artefact. A program
+   measuring **decision-label coverage** — the constraint that actually binds —
+   is proposed instead.
+2. **Withdrawn.** Demoting the US `watchlist` source is a no-op: all 26 of its
+   observations are `entry_eligible = false`. It buys nothing today. Making that
+   change would produce a commit, a doc update and no behavioural difference,
+   while creating the impression the problem was addressed.
 3. Are the 8 NULL-P&L closed trades worth backfilling, or is
-   `direction_flip → neutral` genuinely a no-P&L close?
+   `direction_flip → neutral` genuinely a no-P&L close? (Unaffected by §4b.)
+
+## 11. Method note — why this document refuted itself
+
+The first version passed every check it was given: real production queries, no
+fabricated numbers, correct arithmetic, caveats about overlapping windows stated
+up front. It was still wrong, because **the caveats were stated and then not
+acted on**. "Windows overlap heavily" was written in §4 and the very next section
+built a causal story on top of it anyway.
+
+The single query that broke it — `count(distinct ts::date)` alongside `count(*)`
+— was cheap and obvious in hindsight. The lesson worth keeping is procedural:
+when a cohort's `n` is impressive, **check how many independent dates and symbols
+produced it before writing the interpretation**, not after. And check
+`entry_eligible` before attributing portfolio damage to a cohort — a source that
+never passed the eligibility gate cannot have cost anything.
