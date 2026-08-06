@@ -47,12 +47,20 @@ export async function GET(req: NextRequest) {
   // Group by (event_type, market, horizon). The market is part of the key, not
   // a filter applied afterwards, so a pooled row cannot be produced by accident.
   const groups = new Map<string, number[]>();
+  let excludedUnalignedIdiosyncraticOutcomes = 0;
   for (const row of (data ?? []) as unknown as OutcomeJoin[]) {
     const ev = row.market_events;
     if (!ev) continue;
     if (marketFilter && ev.market !== marketFilter) continue;
     const value = cohortValue(row);
-    if (value == null) continue;
+    if (value == null) {
+      // A raw idiosyncratic return contains market beta. It must not enter a
+      // benchmark-neutral cohort just because the benchmark leg is missing.
+      if (row.subject_symbol !== row.benchmark_symbol && row.benchmark_neutral_return == null) {
+        excludedUnalignedIdiosyncraticOutcomes++;
+      }
+      continue;
+    }
     const key = `${ev.event_type}|${ev.market}|${row.horizon_days}`;
     const bucket = groups.get(key);
     if (bucket) bucket.push(value);
@@ -73,6 +81,7 @@ export async function GET(req: NextRequest) {
     minInstances: MIN_INSTANCES,
     cohorts: summaries.length,
     cohortsAboveFloor: sufficient,
+    excludedUnalignedIdiosyncraticOutcomes,
     summaries,
     // The count of types tested is reported WITH the results, per R4: every
     // additional type is another trial, and there is no false-discovery

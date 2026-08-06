@@ -553,7 +553,8 @@ Closed paper trade ledger (append-only in practice; never hard-deleted).
 | `fill_status` | text | |
 | `exit_price` | numeric | Closing price (on sell) |
 | `realized_pnl` | numeric | |
-| `pnl_pct` | numeric | |
+| `pnl_pct` | numeric | Canonical realized percent return used by performance and learning. |
+| `realized_pnl_pct` | numeric | Compatibility projection: `pnl_pct` rounded to four decimals for closed rows. |
 | `outcome` | text | `win` \| `loss` \| `break_even` |
 | `exit_reason` | text | |
 | `data_confidence` | numeric | From the signal that opened the trade |

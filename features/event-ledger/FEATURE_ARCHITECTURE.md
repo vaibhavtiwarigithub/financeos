@@ -295,7 +295,10 @@ for an intraday-cited event part of it happened *before* the announcement.
 because the subject IS the benchmark. The report initially preferred the neutral
 leg, which would have printed every tariff base rate as exactly zero — reading
 as a finding and being an artefact. `cohortValue()` now selects raw return for
-market-wide cohorts and benchmark-neutral for idiosyncratic ones.
+market-wide cohorts and benchmark-neutral for idiosyncratic ones. An
+idiosyncratic outcome without an aligned benchmark is excluded rather than
+falling back to raw return; the base-rate response exposes that exclusion count
+so an incomplete benchmark series cannot silently shrink or contaminate a cohort.
 
 **`price_cache` cannot mature this ledger**: it reaches back only to 2025-07-22
 for SPY, while the earliest recorded event is 2025-02-01. Maturation uses the

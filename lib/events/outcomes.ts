@@ -154,8 +154,10 @@ export function cohortValue(row: {
   benchmark_neutral_return: number | null;
 }): number | null {
   const marketWide = row.subject_symbol === row.benchmark_symbol;
-  const raw = marketWide ? row.fwd_return : (row.benchmark_neutral_return ?? row.fwd_return);
-  return raw == null || !Number.isFinite(Number(raw)) ? null : Number(raw);
+  // An idiosyncratic raw return includes market beta. Mixing it with aligned
+  // benchmark-neutral rows makes one cohort internally incomparable.
+  const value = marketWide ? row.fwd_return : row.benchmark_neutral_return;
+  return value == null || !Number.isFinite(Number(value)) ? null : Number(value);
 }
 
 /** Horizons measured for every event. Fixed BEFORE any estimate is read, per §5. */

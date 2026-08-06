@@ -126,11 +126,11 @@ describe("cohortValue — market-wide events must not summarise to zero", () => 
     })).toBeCloseTo(0.03);
   });
 
-  it("falls back to raw when no benchmark aligned", () => {
+  it("excludes an idiosyncratic event when no benchmark aligned", () => {
     expect(cohortValue({
       subject_symbol: "AAPL", benchmark_symbol: "SPY",
       fwd_return: 0.05, benchmark_neutral_return: null,
-    })).toBeCloseTo(0.05);
+    })).toBeNull();
   });
 
   it("returns null, not 0, when nothing is measurable", () => {
