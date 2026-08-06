@@ -148,6 +148,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     marketRegimeRunRes,
     fundamentalFactsRes,
     labelCoverageRes,
+    dimensionDiagnosticRunRes,
   ] = await Promise.all([
     svc.rpc("get_shadow_cron_status"),
     svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
@@ -240,6 +241,9 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("observation_labels")
       .select("horizon_days,fwd_return,decision_observations!inner(ts,symbol,market,entry_eligible)")
       .eq("decision_observations.market", market).limit(20000),
+    svc.from("dimension_diagnostic_runs")
+      .select("id,status,horizon_days,input_observation_count,distinct_session_count,created_at")
+      .eq("market", market).gte("created_at", since45).order("created_at", { ascending: false }).limit(100),
   ]) as Array<QueryResult<any>>;
 
   const cronRows = cronRes.data ?? [];
@@ -268,6 +272,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const exogenousObservations = exogenousObservationRes.data ?? [];
   const marketRegimeRuns = marketRegimeRunRes.data ?? [];
   const fundamentalFacts = fundamentalFactsRes.data ?? [];
+  const diagnosticRuns = dimensionDiagnosticRunRes.data ?? [];
 
   const labelRows: LabelRow[] = (labelCoverageRes.data ?? [])
     .map((row: any) => {
@@ -334,6 +339,35 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         "A window that touched both candidate levels is ambiguous: max-excursion data cannot order them.",
       ];
       status.available = !labelCoverageRes.error;
+      return status;
+    }
+
+    if (program.id === "dimension-diagnostics") {
+      const latestByHorizon = new Map<number, any>();
+      for (const row of diagnosticRuns) {
+        if (!latestByHorizon.has(Number(row.horizon_days))) latestByHorizon.set(Number(row.horizon_days), row);
+      }
+      const latest = diagnosticRuns[0] ?? null;
+      const latestTen = latestByHorizon.get(10) ?? latest;
+      const sessions = Number(latestTen?.distinct_session_count ?? 0);
+      const insufficient = [...latestByHorizon.values()].filter((row) => row.status === "insufficient_evidence").length;
+      status.lifecycle = latest ? (insufficient > 0 ? "collecting" : "ready_for_review") : "idle";
+      status.benefitVerdict = "operational_only";
+      status.benefitEvidence = latest
+        ? `${market.toUpperCase()} latest P0 diagnostics recorded ${latestByHorizon.size}/4 horizon(s); ${insufficient} remain below the evidence floor.`
+        : `No ${market.toUpperCase()} P0 dimension diagnostic run has been recorded yet.`;
+      status.progress = progress(sessions, 20, "qualifying sessions at the latest diagnostic horizon", 45);
+      status.calls = calls("zero_incremental", "Reads the existing decision and matured-label ledgers. It makes no provider or LLM call.");
+      status.latestAt = latest?.created_at ?? null;
+      status.blockers = !latest ? ["The scheduled P0 diagnostic has not yet written a run."]
+        : insufficient > 0 ? [`${insufficient} horizon(s) remain insufficient for a predictive conclusion; no repair candidate is created.`] : [];
+      status.nextAction = !latest
+        ? "Wait for the next market-local diagnostic schedule or run the owner-only endpoint once."
+        : insufficient > 0
+          ? "Let mature labels accumulate. Do not reward/punish an agent or change a dimension from this sample."
+          : "Review descriptive findings; any repair still needs a separate, bounded candidate and sealed validation.";
+      status.details = [...latestByHorizon.values()].map((row) => `${row.horizon_days}d: ${row.input_observation_count} labels across ${row.distinct_session_count} session(s), ${row.status}.`);
+      status.available = !dimensionDiagnosticRunRes.error;
       return status;
     }
 

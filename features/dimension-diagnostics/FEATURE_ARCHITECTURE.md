@@ -9,6 +9,12 @@
 > research scores, paper trading, live trading, exits, sizing, thresholds, or a
 > champion strategy.
 
+> Accountability addition (2026-08-06): this P0 program also records an
+> **agent contribution ledger**. It measures evidence quality and outcome
+> attribution for an agent/version; it does not reward or punish an LLM, mutate
+> its prompt/model/tools, or infer that several agents caused a result merely
+> because they appeared in the same workflow.
+
 ## 1. Problem and decision
 
 Kairos already stores the exact evidence, availability mask, applied weights,
@@ -34,6 +40,27 @@ existing decision, feature, validation, shadow, and strategy-version truth layer
 This feature is intentionally not a claim that Kairos can guarantee benchmark
 outperformance. It makes changes falsifiable and reversible instead of silently
 optimizing after the fact.
+
+### 1.1 Agent accountability, not agent punishment
+
+Agents are software roles, not economic actors. A reward/punishment loop that
+updates their behavior after a trade would optimize a sparse, confounded P&L
+sample and invite persuasive explanations, selective abstention, or other
+reward-hacking behavior. Instead, P0 records an immutable scorecard for each
+agent/version:
+
+- decision coverage and label maturity;
+- evidence availability, freshness and point-in-time integrity;
+- market-local, benchmark-neutral decision outcomes at each horizon;
+- the decision funnel (`scored -> eligible -> admitted -> filled -> exited`),
+  with portfolio/execution exclusions shown separately;
+- explicit `insufficient_evidence` rather than a positive or negative verdict.
+
+No scorecard changes an agent's model, prompt, tool access, schedule, score
+weight, decision authority or trading permission. A future collaboration claim
+requires an existing paired or randomized shadow where the same opportunity was
+evaluated with and without the specific input. Until then, `collaboration` is
+reported as **unattributable**, not rewarded.
 
 ## 2. Non-negotiable boundaries
 
@@ -93,8 +120,12 @@ a schema/RLS review:
 | Table | One row per | Purpose |
 |---|---|---|
 | `dimension_diagnostic_runs` | market, declared analysis plan, as-of cutoff, horizon, code hash | Immutable run identity, input counts, exclusions, trial-family version and deterministic status. |
-| `dimension_diagnostic_findings` | run, dimension/family/version, cohort, finding type | Measured availability, freshness, PIT integrity, conditional predictive result, uncertainty, and abstention/rejection reason. |
+| `dimension_diagnostic_findings` | run, subject type/key, cohort, finding type | Measured dimension availability, freshness, PIT integrity, agent contribution, conditional predictive result, uncertainty, and abstention/rejection reason. |
 | `dimension_repair_candidates` | finding-backed, structured candidate | A bounded reweight, availability-policy repair, feature retirement, or new measure-only feature proposal linked to the existing strategy/feature/experiment records. |
+
+`subject_type` is `dimension`, `agent`, or `collaboration`. Only `dimension` and
+`agent` have P0 metrics. A P0 `collaboration` finding is always
+`unattributable`; it exists to make the missing paired counterfactual explicit.
 
 These are diagnostic index rows, not alternate evidence stores. They reference
 source record IDs and immutable fingerprints; they do not copy or recompute a
@@ -148,6 +179,21 @@ This prevents a factor from being blamed for a cash cap, a correlation veto, an
 earnings barrier, a stop, a partial exit, a stale order, or an unavailable broker.
 Conversely, a good research score does not excuse a harmful execution policy.
 
+### 4.5 Agent contribution attribution
+
+P0 reports an agent's own decision and evidence record, not a causal reward. A
+ResearchAgent score can be measured against mature benchmark-neutral outcomes;
+a data collector can be measured on valid/fresh/PIT-safe evidence; and an
+execution role can be measured on filled/held/exited bookkeeping. These metrics
+are never combined into one cross-role reward number.
+
+The collaboration of ResearchAgent, an LLM explanation, a data adapter and
+PaperTrader is not identifiable from one realized trade. P0 therefore records
+`unattributable_no_paired_shadow` until an existing non-executing shadow compares
+the same decision with and without a declared input. Any later marginal-credit
+method must be proposed separately, use market-local paired decisions, and stay
+outside the money path.
+
 ## 5. Statistical and governance controls
 
 ### 5.1 Minimum evidence
@@ -197,7 +243,9 @@ number; free-text cannot become a candidate specification.
    decision/label ledger.
 3. Write append-only run/finding rows with source fingerprints and explicit
    insufficient-data states.
-4. Display status in Dashboard Learning/Upgrade Path and Strategy Portfolio Lab:
+4. Write a per-agent/version contribution finding alongside the dimension
+   findings, plus an explicit unattributable collaboration finding.
+5. Display status in Dashboard Learning/Upgrade Path and Strategy Portfolio Lab:
    evidence collected, exclusions, confidence, finding class, candidate status,
    and next gate. The global market switch selects the market; no cross-market
    aggregate exists.
@@ -272,6 +320,10 @@ LLM call, replay, or candidate evaluation.
   and no money-path imports/readers.
 - Any strategy candidate reuses existing validation, shadow, and promotion rows;
   no parallel champion, provenance, or evaluation truth is introduced.
+- Agent contribution results never trigger a model/prompt/tool/configuration
+  mutation, task disablement, privilege change, score change or broker action.
+- A collaboration result is `unattributable` unless it references paired,
+  market-local shadow decisions with and without the declared input.
 
 ## 9. Build order and dependencies
 

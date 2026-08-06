@@ -29,6 +29,7 @@ describe("shadow registry governance contract", () => {
   it("registers the outstanding feature-pack gates rather than hiding them in docs", () => {
     const ids = new Set(SHADOW_PROGRAMS.map((program) => program.id));
     expect(ids.has("technical-calibration")).toBe(true);
+    expect(ids.has("dimension-diagnostics")).toBe(true);
     expect(ids.has("pit-fundamental-qualification")).toBe(true);
     expect(ids.has("specialist-feature-packs")).toBe(true);
   });
@@ -50,6 +51,8 @@ describe("shadow registry governance contract", () => {
       "kairos-shadow-india",
       "kairos-validation-sweep",
       "kairos-downside-hedge-us",
+      "kairos-dimension-diagnostics-us",
+      "kairos-dimension-diagnostics-india",
     ].forEach((job) => expect(jobs.has(job), `${job} is not registered`).toBe(true));
   });
 

@@ -56,6 +56,23 @@ stop breach, and realized path statistics. The objective is an exit-policy
 level, not a predicted terminal price; MAE/MFE cannot establish which level was
 touched first.
 
+### Dimension diagnostics and agent accountability (2026-08-06)
+
+`/api/agents/dimension-diagnostics?market=us|india` runs after label maturation
+and writes append-only `dimension_diagnostic_runs` and
+`dimension_diagnostic_findings`. It reads only the existing decision/label
+ledgers plus signal labels. It reports availability and descriptive
+session-level rank IC by dimension, and records an agent/version's evidence and
+decision record. Results below the predeclared 20 qualifying-session floor are
+`insufficient_evidence`, not a conclusion.
+
+This is **not** LLM punishment/reward or autonomous self-modification. It cannot
+change a prompt, model, tool access, score, weight, threshold, candidate,
+strategy, paper/live trade, exit, sizing, or broker action. Multiple agents
+appearing in one workflow do not receive collaboration credit: the ledger records
+`unattributable_no_paired_shadow` until the same market-local opportunity is
+compared with and without a declared input in a paired non-executing shadow.
+
 Decision Review shows per-symbol paths as illustrative. LearnerAgent receives
 only same-market aggregate summaries through `query_plan_calibration`. The LLM
 may explain the cohort and write a hypothesis, but it has no tool that changes

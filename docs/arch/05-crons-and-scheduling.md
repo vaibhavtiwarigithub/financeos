@@ -64,6 +64,8 @@ Scheduled inside Supabase via `cron.schedule`, calling the deployed app through 
 
 | Job | Schedule (UTC) | Calls | What it does |
 |---|---|---|---|
+| `kairos-dimension-diagnostics-us` | Weekdays 23:20 UTC | `POST /api/agents/dimension-diagnostics?market=us` | P0 post-label diagnostic. Reads immutable decision/label evidence only; writes append-only market-local findings about availability, descriptive factor behavior and agent contribution. It makes no provider/LLM call and cannot change an agent, score, strategy, trade, exit, sizing or broker action. |
+| `kairos-dimension-diagnostics-india` | Weekdays 23:25 UTC | `POST /api/agents/dimension-diagnostics?market=india` | Same P0 contract, separately for India. USD/US evidence is never read as India evidence. |
 | `kairos-research` | Weekdays 13:00+14:00 UTC; only 09:00 ET admitted | `POST /api/agents/research/cron?market=us&local_slot=09%3A00` | Paired seasonal invocations keep the research contract at 09:00 New York time. The nonmatching invocation exits before provider/DB work. Daily technical scoring filters out the current session until 16:00 ET. |
 | `kairos-paper-trade-us` | Weekdays 15:15+16:15 UTC; only 11:15 ET admitted | `POST /api/agents/paper-trade?market=us&local_slot=11%3A15` | The scheduled US paper-entry attempt stays at 11:15 ET across DST and independently enforces the NYSE session/calendar. |
 | `kairos-paper-trade-india` | Weekdays 04:10 UTC (09:40 IST) | `POST /api/agents/paper-trade?market=india` | Morning India paper-entry attempt, after research starts and inside NSE hours. |

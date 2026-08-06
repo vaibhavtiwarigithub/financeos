@@ -1197,7 +1197,7 @@ untouched.
 
 ## Decision 63: Governed Dimension Diagnostics (2026-08-06)
 
-**Status:** Approved design, not implemented
+**Status:** P0 implemented and production-verified; P1-P4 remain evidence-gated
 
 **Decision.** Use the existing immutable decision/label ledger to distinguish
 data degradation, predictive uncertainty/decay, predeclared regime dependence,

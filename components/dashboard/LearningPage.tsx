@@ -4,6 +4,7 @@ import { lazy, Suspense } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 import PerformanceTruth from "@/components/dashboard/PerformanceTruth";
 import StrategyGovernancePanel from "@/components/dashboard/StrategyGovernancePanel";
+import DimensionDiagnosticsSummary from "@/components/dashboard/DimensionDiagnosticsSummary";
 import { fmtMoney, type Mkt } from "@/lib/format-money";
 import { navReturnPct, paperStartNav } from "@/lib/paper-nav";
 const LineChart = lazy(() => import("recharts").then(m => ({ default: m.LineChart })));
@@ -138,6 +139,7 @@ export default function LearningPage({
       <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 32px" }}>
 
       <StrategyGovernancePanel />
+      <DimensionDiagnosticsSummary />
 
       {/* Agent Pipeline Diagram */}
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "24px" }}>

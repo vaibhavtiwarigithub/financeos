@@ -43,6 +43,24 @@ export interface ShadowProgramDefinition {
 
 export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
   {
+    id: "dimension-diagnostics",
+    name: "Dimension and agent diagnostics",
+    category: "Learning",
+    markets: ["us", "india"],
+    purpose: "Separates evidence degradation, descriptive factor behavior, agent contribution and execution confounders before any repair is proposed.",
+    productBenefit: "Turns a bad result into an auditable diagnosis instead of an automatic score rewrite or an untestable explanation.",
+    traderBenefit: "Shows whether a weakness is data quality, a thin sample, a market-local signal question, or an execution constraint.",
+    evidenceSource: "decision_observations x observation_labels, recorded in dimension_diagnostic_runs and dimension_diagnostic_findings",
+    currentInfluence: "P0 read-only diagnostics. It cannot change agents, scores, thresholds, strategy versions, paper/live positions, exits or orders.",
+    maximumInfluence: "A qualified finding may create a separately governed candidate for existing replay and shadow validation; no automatic activation.",
+    activationGate: "P0 is permanently measure-only. Any candidate must meet point-in-time, predeclared trial-family, sealed replay, forward-shadow and owner-promotion gates.",
+    safetyBoundary: "No provider calls. Append-only diagnostic rows only; collaboration remains unattributable without a paired shadow counterfactual.",
+    cronJobs: ["kairos-dimension-diagnostics-us", "kairos-dimension-diagnostics-india"],
+    callAccounting: "zero_incremental",
+    owner: "Learning / Evidence",
+    architectureRef: "features/dimension-diagnostics/FEATURE_ARCHITECTURE.md",
+  },
+  {
     // Added 2026-08-06. This program exists because a diagnosis written that
     // same day produced a confident causal story about universe composition and
     // was refuted by the next query: its whole matured-label set turned out to

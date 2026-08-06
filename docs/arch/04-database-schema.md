@@ -57,6 +57,9 @@ These tables must never be hard-deleted by any agent, cron, or cleanup job:
 - `paper_trades` — financial ledger
 - `paper_order_events` — event sourcing log (trigger blocks UPDATE/DELETE)
 - `decision_observations` — learning fuel (trigger blocks UPDATE/DELETE)
+- `dimension_diagnostic_runs` and `dimension_diagnostic_findings` — P0
+  market-local diagnostic indexes over immutable decision/label evidence
+  (append-only; RLS enabled; service-role-only; no scoring/trading reader)
 - `broker_orders` — live trade audit trail
 - `strategy_evaluations` — evaluation history (trigger blocks UPDATE/DELETE)
 - `evidence_records` — immutable evidence ledger
