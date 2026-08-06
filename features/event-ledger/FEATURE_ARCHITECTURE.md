@@ -229,6 +229,34 @@ string — the theme ledger failure mode, avoided by construction.
 base rate is computed there**. A rate requires matured outcomes and the declared
 minimum n from §4.4; nothing in step 1 produces one.
 
+### Backfill — done 2026-08-05 (§8 Q3 answered: yes, with cited sources)
+
+`scripts/seed-market-events.ts` — **19 rows, every one carrying a source URL**,
+routed through the same validators as `POST /api/events` rather than raw SQL, so
+the vocabulary and timestamp guards apply to seeded rows too. Idempotent via the
+`(event_type, market, occurred_at)` UNIQUE constraint; a second run inserted 0.
+
+| market | announced | reversed |
+|---|---|---|
+| us | 7 | 7 |
+| india | 3 | 2 |
+
+**Timestamp precision is recorded, not assumed.** Two rows are cited to the hour
+(Apr 2 2025 Rose Garden, after the US close; Apr 9 2025 Truth Social, ~13:00 ET
+intraday). The rest are date-only and are stamped **23:59:00Z of the event
+date** — deliberately, because stamping 00:00Z would place the event up to a day
+*before* it became public and a forward return measured from there would quietly
+include pre-announcement drift. That is R3 exactly. End-of-day UTC is the
+conservative direction: after the US cash close, before the next India open. The
+precision marker is written into `notes` so a reader can see which is which.
+
+**No `global` rows.** An event that moved both books is two rows, one per market,
+each measurable against its own benchmark. A `global` row would invite a pooled
+US+India statistic, and those must never cross-sum.
+
+Every count here is **below the §4.4 floor of 20**, which is the expected and
+correct outcome — the base-rate report must refuse to estimate on it.
+
 ### Not yet built (steps 2-5)
 
 The maturation job, the base-rate report with n-floors, any display, and any
