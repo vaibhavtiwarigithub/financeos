@@ -1240,3 +1240,26 @@ architecture, per-name risk budget, attribution and market-local shadow proof.
 Trading Mandate architecture, risk/schema chapters, and migration
 `20260806203000_prevent_paper_alpha_pyramiding.sql`.
 
+---
+
+## Decision 65: Time Horizon Is A Review Point, Not A Proven Winner Exit (2026-08-07)
+
+**Status:** Approved for P0 measurement only
+
+**Decision.** Preserve the incumbent deterministic horizon exit while collecting
+forward, immutable review observations at the horizon. A future paper candidate
+may retain a profitable position only under predeclared fresh-score, trend, and
+drawdown conditions, for a bounded extension. It requires sealed replay,
+forward-shadow evidence, and owner promotion before it can alter any exit.
+
+**Reason.** The current hard time stop closes a profitable position on session
+eleven for a ten-session horizon even if its research and trend remain healthy.
+Existing price-path shadows can test static clocks but cannot reconstruct the
+actual review-date evidence without look-ahead bias.
+
+**Non-goals.** No immediate exit-rule change, LLM exit authority, automatic
+extension, position increase, stop widening, cross-market comparison, or live
+activation.
+
+**Architecture:** `features/time-review-exit/FEATURE_ARCHITECTURE.md`.
+
