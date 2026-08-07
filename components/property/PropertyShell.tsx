@@ -26,6 +26,12 @@ export default function PropertyShell({ children }: { children: React.ReactNode 
           </div>
           <div style={{ color: T.muted, fontSize: "11px", marginTop: "6px" }}>Personal property decision workspace</div>
         </div>
+        <div style={{ padding: "10px 10px 2px" }}>
+          <div style={{ display: "flex", border: `1px solid ${T.border}`, borderRadius: "7px", overflow: "hidden" }}>
+            <Link href="/dashboard" style={{ flex: 1, padding: "7px 8px", color: T.textSub, textDecoration: "none", fontSize: "11px", textAlign: "center", borderRight: `1px solid ${T.border}` }}>Investing</Link>
+            <span style={{ flex: 1, padding: "7px 8px", background: `${T.accent}18`, color: T.accent, fontSize: "11px", fontWeight: 700, textAlign: "center" }}>Property</span>
+          </div>
+        </div>
         <nav style={{ padding: "14px 10px", flex: 1 }}>
           {nav.map(({ href, label, icon: Icon }) => {
             const active = href === "/property" ? pathname === href : pathname.startsWith(href);
@@ -37,13 +43,9 @@ export default function PropertyShell({ children }: { children: React.ReactNode 
         </div>
       </aside>
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <header style={{ minHeight: "58px", padding: "10px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${T.border}`, background: T.surface }}>
+        <header style={{ minHeight: "58px", padding: "10px 28px", display: "flex", alignItems: "center", borderBottom: `1px solid ${T.border}`, background: T.surface }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: T.textSub }}>
             <span style={{ color: T.muted }}>Kairos</span><span>/</span><strong style={{ color: T.accent }}>Property</strong>
-          </div>
-          <div style={{ display: "flex", border: `1px solid ${T.border}`, borderRadius: "6px", overflow: "hidden" }}>
-            <Link href="/dashboard" style={{ padding: "6px 10px", color: T.textSub, textDecoration: "none", fontSize: "11px" }}>Investing</Link>
-            <span style={{ padding: "6px 10px", background: `${T.accent}1C`, color: T.accent, fontWeight: 700, fontSize: "11px" }}>Property</span>
           </div>
         </header>
         <main style={{ flex: 1, minWidth: 0 }}>{children}</main>
