@@ -1,9 +1,8 @@
 # Kairos Property Decision Workspace
 
-Status: P0 implemented. P0 ships only the isolated workspace shell, the static
-market/source catalogue, and owner-only schema foundation. No collection worker,
-property valuation, lender integration, private vault, or automated transaction
-is authorized or enabled.
+Status: P0 implemented; P1/P4 data contracts implemented but inactive. No
+collection worker, property valuation, lender integration, private vault, or
+automated transaction is authorized or enabled.
 
 Initial market packs: Austin Central Texas, Phoenix Metro Arizona, and Bengaluru
 Karnataka. They are independent markets, never a blended property universe.
