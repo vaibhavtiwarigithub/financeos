@@ -2,7 +2,7 @@ import type { PropertyMarketId } from "@/lib/property/registry";
 
 export type PropertyMetric =
   | "price_index" | "rent_index" | "inventory" | "days_on_market"
-  | "mortgage_rate" | "employment" | "income";
+  | "mortgage_rate" | "employment" | "unemployment_rate" | "income";
 
 export type PropertyObservation = {
   sourceKey: string;
@@ -22,6 +22,16 @@ export type PropertyObservation = {
  */
 export interface PropertySourceAdapter {
   readonly sourceKey: string;
+  /**
+   * Whether this source can cover a market AT ALL.
+   *
+   * Kept separate from returning zero rows so the collector can report
+   * `not_applicable` instead of `success`. FHFA, FRED and BLS are US-only; a run
+   * that reported "success, 0 rows" for Bengaluru made a structural coverage gap
+   * look like a source that simply had nothing new, which is the dishonest
+   * market-local reporting the feature contract forbids.
+   */
+  supportsMarket(market: PropertyMarketId): boolean;
   fetch(input: { market: PropertyMarketId; since: string | null }): Promise<PropertyObservation[]>;
 }
 

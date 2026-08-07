@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Building2, Plus, Trash2 } from "lucide-react";
 import { buttonStyle, EmptyState, fieldStyle, FieldLabel, LocalOnlyNotice, PropertyPageFrame, PT, StatCell } from "./PropertyPrimitives";
 
 type PropertyDraft = {
-  id: number;
+  id: string;
   name: string;
   market: "Austin" | "Phoenix" | "Bengaluru";
   use: "Home" | "Rental" | "Land";
@@ -24,19 +24,33 @@ export default function MyPropertiesWorkspace() {
   const [status, setStatus] = useState<PropertyDraft["status"]>("Owned");
   const [value, setValue] = useState("");
   const [loan, setLoan] = useState("");
+  const [encryptionReady, setEncryptionReady] = useState<boolean | null>(null);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    fetch("/api/property/assets").then(response => response.json()).then(payload => {
+      setEncryptionReady(Boolean(payload.encryptionReady));
+      setItems((payload.assets ?? []).map((row: any) => ({ id: row.id, name: row.display_label, market: row.geography_slug === "bengaluru" ? "Bengaluru" : row.geography_slug === "phoenix" ? "Phoenix" : "Austin", use: row.asset_type === "rental" ? "Rental" : row.asset_type === "land" ? "Land" : "Home", status: row.details?.status === "Watching" ? "Watching" : "Owned", value: row.details?.value, loan: row.details?.loan })));
+    }).catch(() => setEncryptionReady(false));
+  }, []);
 
   const owned = useMemo(() => items.filter((item) => item.status === "Owned"), [items]);
   const knownEquity = useMemo(() => owned.reduce((sum, item) => sum + Math.max(0, (item.value ?? 0) - (item.loan ?? 0)), 0), [owned]);
   const mixedCurrencies = new Set(owned.map((item) => currencyFor(item.market))).size > 1;
 
-  function addProperty() {
+  async function addProperty() {
     if (!name.trim()) return;
-    setItems((current) => [...current, {
-      id: Date.now(), name: name.trim(), market, use, status,
-      value: value ? Number(value) : undefined,
-      loan: loan ? Number(loan) : undefined,
-    }]);
+    setMessage("");
+    const response = await fetch("/api/property/assets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ displayLabel: name.trim(), market: market.toLowerCase(), assetType: use.toLowerCase(), details: { status, value: value ? Number(value) : undefined, loan: loan ? Number(loan) : undefined } }) });
+    const payload = await response.json();
+    if (!response.ok) { setMessage(payload.error ?? "Property could not be saved"); return; }
+    setItems((current) => [...current, { id: payload.id, name: name.trim(), market, use, status, value: value ? Number(value) : undefined, loan: loan ? Number(loan) : undefined }]);
     setName(""); setValue(""); setLoan("");
+  }
+
+  async function removeProperty(id: string) {
+    const response = await fetch(`/api/property/assets?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (response.ok) setItems(current => current.filter(entry => entry.id !== id));
   }
 
   return (
@@ -45,7 +59,7 @@ export default function MyPropertiesWorkspace() {
         <StatCell label="OWNED" value={String(owned.length)} />
         <StatCell label="WATCHING" value={String(items.length - owned.length)} />
         <StatCell label="KNOWN EQUITY" value={mixedCurrencies ? "Split by market" : owned.length ? knownEquity.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—"} detail={mixedCurrencies ? "USD and INR are never summed" : owned[0] ? currencyFor(owned[0].market) : "No values entered"} />
-        <StatCell label="STORAGE" value="Session only" tone={PT.blue} detail="Cleared on refresh" />
+        <StatCell label="STORAGE" value={encryptionReady ? "Encrypted" : encryptionReady === null ? "Checking" : "Locked"} tone={encryptionReady ? PT.accent : PT.amber} detail={encryptionReady ? "AES-256-GCM, owner-only" : "Server encryption key required"} />
       </div>
       <div className="property-page-body property-two-column" style={{ padding: "22px 28px", display: "grid", gridTemplateColumns: "minmax(280px, 360px) minmax(0, 1fr)", gap: "18px", alignItems: "start" }}>
         <section style={{ border: `1px solid ${PT.border}`, borderRadius: "7px", background: PT.surface, padding: "16px" }}>
@@ -62,7 +76,8 @@ export default function MyPropertiesWorkspace() {
               <FieldLabel label={`Loan balance (${currencyFor(market)})`}><input aria-label="User-entered loan balance" inputMode="decimal" value={loan} onChange={(event) => setLoan(event.target.value)} placeholder="Optional" style={fieldStyle} /></FieldLabel>
             </div>
             <button type="button" onClick={addProperty} disabled={!name.trim()} style={{ ...buttonStyle, opacity: name.trim() ? 1 : 0.45 }}>Add record</button>
-            <LocalOnlyNotice>Do not enter a street address here. These records are not saved, synced, sent to an LLM, or used as verified market evidence.</LocalOnlyNotice>
+            {message ? <div style={{ color: PT.amber, fontSize: "10px" }}>{message}</div> : null}
+            <LocalOnlyNotice>Private fields are encrypted before database storage and never sent to an LLM. This form intentionally uses a nickname rather than a street address.</LocalOnlyNotice>
           </div>
         </section>
         <section style={{ border: `1px solid ${PT.border}`, borderRadius: "7px", overflow: "hidden", minWidth: 0 }}>
@@ -73,7 +88,7 @@ export default function MyPropertiesWorkspace() {
               {items.map((item) => {
                 const equity = item.value == null ? null : Math.max(0, item.value - (item.loan ?? 0));
                 return <div className="property-table-row" key={item.id} style={{ display: "grid", gridTemplateColumns: "1.4fr .8fr .7fr .8fr .8fr 28px", gap: "10px", alignItems: "center", padding: "12px 13px", borderBottom: `1px solid ${PT.border}`, color: PT.textSub, fontSize: "11px" }}>
-                  <strong style={{ color: PT.text }}>{item.name}</strong><span>{item.market}</span><span>{item.use}</span><span>{item.status}</span><span>{equity == null ? "—" : `${currencyFor(item.market)} ${equity.toLocaleString()}`}</span><button type="button" title="Remove record" aria-label={`Remove ${item.name}`} onClick={() => setItems((current) => current.filter((entry) => entry.id !== item.id))} style={{ border: 0, background: "transparent", color: PT.muted, padding: "4px", cursor: "pointer" }}><Trash2 size={14} /></button>
+                  <strong style={{ color: PT.text }}>{item.name}</strong><span>{item.market}</span><span>{item.use}</span><span>{item.status}</span><span>{equity == null ? "—" : `${currencyFor(item.market)} ${equity.toLocaleString()}`}</span><button type="button" title="Remove record" aria-label={`Remove ${item.name}`} onClick={() => removeProperty(item.id)} style={{ border: 0, background: "transparent", color: PT.muted, padding: "4px", cursor: "pointer" }}><Trash2 size={14} /></button>
                 </div>;
               })}
             </div>

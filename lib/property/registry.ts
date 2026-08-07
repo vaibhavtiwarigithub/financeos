@@ -18,7 +18,7 @@ export type PropertySource = {
   coverage: string;
   role: string;
   officialUrl: string;
-  state: "contract_pending" | "not_applicable";
+  state: "active" | "contract_pending" | "manual_only" | "deferred";
 };
 
 export const PROPERTY_MARKETS: PropertyMarket[] = [
@@ -52,12 +52,14 @@ export const PROPERTY_MARKETS: PropertyMarket[] = [
 ];
 
 export const PROPERTY_SOURCES: PropertySource[] = [
-  { id: "fhfa-hpi", name: "FHFA House Price Index", markets: ["austin", "phoenix"], cadence: "Quarterly", coverage: "Published metro, county, and ZIP price trends", role: "Repeat-sales price context", officialUrl: "https://www.fhfa.gov/data/hpi", state: "contract_pending" },
-  { id: "redfin-data-center", name: "Redfin Data Center", markets: ["austin", "phoenix"], cadence: "Weekly metro / monthly small geography", coverage: "Published aggregate market conditions", role: "Inventory and demand context", officialUrl: "https://www.redfin.com/news/data-center/", state: "contract_pending" },
-  { id: "fred-mortgage", name: "Freddie Mac via FRED", markets: ["austin", "phoenix"], cadence: "Weekly", coverage: "US national mortgage-rate context", role: "Affordability context", officialUrl: "https://fred.stlouisfed.org/series/MORTGAGE30US", state: "contract_pending" },
-  { id: "census-bls-hud", name: "Census, BLS, and HUD", markets: ["austin", "phoenix"], cadence: "Monthly to annual", coverage: "Income, employment, and rent references", role: "Economic context", officialUrl: "https://www.huduser.gov/portal/datasets/fmr.html", state: "contract_pending" },
-  { id: "nhb-residex", name: "NHB RESIDEX", markets: ["bengaluru"], cadence: "Quarterly", coverage: "Published housing, land, and rent indices", role: "India price and rent context", officialUrl: "https://residex.nhbonline.org.in/Dashboard/About", state: "contract_pending" },
-  { id: "rbi-hpi", name: "Reserve Bank of India HPI", markets: ["bengaluru"], cadence: "Quarterly", coverage: "Published city-level HPI and policy context", role: "Independent price and financing reference", officialUrl: "https://www.rbi.org.in/", state: "contract_pending" },
+  { id: "fhfa-hpi", name: "FHFA House Price Index", markets: ["austin", "phoenix"], cadence: "Quarterly", coverage: "Published metro price trends", role: "Repeat-sales price context", officialUrl: "https://www.fhfa.gov/data/hpi", state: "active" },
+  { id: "fred-mortgage", name: "Freddie Mac via FRED", markets: ["austin", "phoenix"], cadence: "Weekly", coverage: "US national mortgage-rate context", role: "Affordability context", officialUrl: "https://fred.stlouisfed.org/series/MORTGAGE30US", state: "active" },
+  { id: "bls-laus", name: "BLS Local Area Unemployment", markets: ["austin", "phoenix"], cadence: "Monthly", coverage: "Metro unemployment rate, preliminary and revised", role: "Employment context", officialUrl: "https://www.bls.gov/lau/", state: "active" },
+  { id: "redfin-data-center", name: "Redfin Data Center", markets: ["austin", "phoenix"], cadence: "Weekly metro / monthly ZIP", coverage: "Published aggregate market conditions", role: "Inventory and demand context", officialUrl: "https://www.redfin.com/news/data-center/", state: "contract_pending" },
+  { id: "census-acs", name: "Census ACS 5-year", markets: ["austin", "phoenix"], cadence: "Annual", coverage: "Metro income, rent, and value estimates", role: "Economic and affordability context", officialUrl: "https://www.census.gov/data/developers/data-sets/acs-5year.html", state: "contract_pending" },
+  { id: "hud-fmr", name: "HUD FMR / SAFMR", markets: ["austin", "phoenix"], cadence: "Annual", coverage: "Area rent-reference ranges", role: "Rental affordability reference", officialUrl: "https://www.huduser.gov/portal/dataset/fmr-api.html", state: "contract_pending" },
+  { id: "rbi-hpi", name: "Reserve Bank of India HPI", markets: ["bengaluru"], cadence: "Quarterly", coverage: "Published Bengaluru HPI and policy context", role: "Independent price and financing reference", officialUrl: "https://data.rbi.org.in/", state: "manual_only" },
+  { id: "nhb-residex", name: "NHB RESIDEX", markets: ["bengaluru"], cadence: "Quarterly", coverage: "Published housing, land, and rent indices", role: "Deep-link only pending written reuse permission", officialUrl: "https://residex.nhbonline.org.in/Dashboard/About", state: "deferred" },
 ];
 
 export function marketById(id: string | undefined): PropertyMarket {
