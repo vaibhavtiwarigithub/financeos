@@ -1263,3 +1263,25 @@ activation.
 
 **Architecture:** `features/time-review-exit/FEATURE_ARCHITECTURE.md`.
 
+---
+
+## Decision 66: Isolated Property Decision Workspace (2026-08-07)
+
+**Status:** Architecture approved; implementation not started
+
+**Decision.** Add a top-level Property workspace within Kairos for personal
+property, market, and financing decision support. It shares authentication,
+evidence governance, source health, and learning discipline with Investing, but
+has an isolated data model and no trading, brokerage, portfolio, or execution
+consumer. Initial market packs are Austin, Phoenix, and Bengaluru.
+
+**Reason.** Property decisions need slower, geography-specific evidence,
+private address/loan data, and auditable scenarios. Mixing them into securities
+agents would create privacy, currency, data-license, and product-model errors.
+
+**Non-goals.** No listing-site scraping, automated property transaction,
+lending/appraisal/tax/legal advice, individual-property price prediction without
+licensed comps, or automated link to securities financing/execution.
+
+**Architecture:** `features/property-decision-workspace/FEATURE_ARCHITECTURE.md`.
+
