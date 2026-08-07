@@ -512,6 +512,19 @@ export default function DashboardShell({ profile, children }: { profile: Profile
         </div>
 
         {/* Pause banner — shown in sidebar when app is paused */}
+        <div style={{ padding: "10px 10px 2px" }}>
+          <div style={{ display: "flex", border: `1px solid ${T.border}`, borderRadius: "7px", overflow: "hidden" }}>
+            <span style={{ flex: 1, padding: "7px 8px", background: T.accent + "1A", color: T.accent, fontSize: "11px", fontWeight: 700, textAlign: "center" }}>Investing</span>
+            <button
+              onClick={() => router.push("/property")}
+              title="Open the separate property decision workspace"
+              style={{ flex: 1, padding: "7px 8px", border: "none", borderLeft: `1px solid ${T.border}`, background: "transparent", color: T.textSub, fontSize: "11px", cursor: "pointer" }}
+            >
+              Property
+            </button>
+          </div>
+        </div>
+
         {pauseState?.paused && (
           <div style={{
             margin: "8px 10px 0",
