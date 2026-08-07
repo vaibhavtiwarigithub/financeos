@@ -1285,3 +1285,9 @@ licensed comps, or automated link to securities financing/execution.
 
 **Architecture:** `features/property-decision-workspace/FEATURE_ARCHITECTURE.md`.
 
+**Implementation update (2026-08-07).** P0 is live: a separately authenticated
+`/property` workspace, Austin/Phoenix/Bengaluru catalogue, source-catalogue UI,
+and deny-by-default Supabase registry/source-run tables. No source worker,
+observation, private address, property asset, financing input, forecast, LLM
+property prompt, investment integration, or transaction capability was enabled.
+

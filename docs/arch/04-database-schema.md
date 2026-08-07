@@ -48,6 +48,23 @@
 
 Migrations in `supabase/migrations/`. Applied via Supabase MCP `apply_migration` or the Supabase SQL editor. **Always verify with `list_migrations` before shipping schema-coupled code.** A migration file existing in the repo does NOT mean it ran against production.
 
+## Property Workspace Foundation
+
+Property P0 is a separate domain. It does not join, read, or write securities
+research, paper portfolios, broker accounts, cash, agent scores, or execution.
+Migration `20260807090000_property_workspace_p0.sql` created only its public
+catalogue and source-run foundation:
+
+| Table | P0 contents | Security contract |
+|---|---|---|
+| `property_geographies` | Austin, Phoenix, and Bengaluru market-pack metadata | RLS enabled; no anon/authenticated grant. |
+| `property_sources` | Approved source candidates and permitted-use metadata | RLS enabled; no anon/authenticated grant. |
+| `property_source_runs` | Future collection outcome ledger | RLS enabled; no anon/authenticated grant; trigger rejects updates and deletes. |
+
+The P0 schema deliberately has no address, property, financing, listing, market
+observation, or forecast record. Those require later privacy and source-contract
+phases. Service-role writes remain behind owner-gated routes/workers.
+
 ---
 
 ## Append-only ledgers (NEVER DELETE)

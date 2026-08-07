@@ -36,8 +36,9 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // Protect dashboard routes
-  if (!user && request.nextUrl.pathname.startsWith("/dashboard")) {
+  // Protect both authenticated workspaces. Property has its own shell and
+  // data boundary, but it shares the same single-owner authentication gate.
+  if (!user && (request.nextUrl.pathname.startsWith("/dashboard") || request.nextUrl.pathname.startsWith("/property"))) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 

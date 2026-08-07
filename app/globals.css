@@ -207,4 +207,7 @@ html, body {
     max-width: 100%;
     height: auto;
   }
+  .property-three-grid, .property-main-grid {
+    grid-template-columns: 1fr !important;
+  }
 }
