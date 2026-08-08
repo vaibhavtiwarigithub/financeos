@@ -1,21 +1,15 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { Activity, AlertTriangle, RefreshCw } from "lucide-react";
 import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { marketById, PROPERTY_MARKETS, sourcesForMarket, type PropertyMarketId } from "@/lib/property/registry";
+import { marketById, sourcesForMarket, type PropertyMarketId } from "@/lib/property/registry";
 import { PT } from "./PropertyPrimitives";
+import { PROPERTY_CHART_WINDOWS, propertyWindowCutoff, type PropertyChartWindowId } from "@/lib/property/chart-windows";
+import { usePropertyMarket } from "@/lib/property/market-context";
 
 type Observation = { source_key: string; metric_key: string; native_unit: string; value: number | string; as_of: string; revision_state: string };
 type Forecast = { metric_key: string; horizon_days: number; cutoff_at: string; lower_value: number | string; base_value: number | string; upper_value: number | string; model_version: string; state: string };
 type Run = { source_key: string; outcome: string; started_at: string; rows_written: number | null; error_code: string | null };
-
-const WINDOWS = [
-  { id: "1y", label: "1Y", days: 365 },
-  { id: "5y", label: "5Y", days: 365 * 5 },
-  { id: "max", label: "Max", days: Number.POSITIVE_INFINITY },
-] as const;
-type WindowId = (typeof WINDOWS)[number]["id"];
 
 /** Cap plotted points so a 2,889-row weekly series stays legible and cheap. */
 const MAX_POINTS = 220;
@@ -37,13 +31,16 @@ const METRIC_LABEL: Record<string, string> = {
   unemployment_rate: "Metro unemployment (BLS LAUS)",
 };
 
-export default function PropertyMarketData({ marketId }: { marketId: PropertyMarketId }) {
+export default function PropertyMarketData({ marketId: initialMarketId }: { marketId?: PropertyMarketId }) {
+  const { market: marketId, setMarket } = usePropertyMarket();
   const market = marketById(marketId);
   const [payload, setPayload] = useState<{ observations: Observation[]; forecasts: Forecast[]; runs: Run[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [message, setMessage] = useState("");
-  const [windowId, setWindowId] = useState<WindowId>("5y");
+  const [windowId, setWindowId] = useState<PropertyChartWindowId>("5y");
+
+  useEffect(() => { if (initialMarketId) setMarket(initialMarketId); }, [initialMarketId, setMarket]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,9 +62,7 @@ export default function PropertyMarketData({ marketId }: { marketId: PropertyMar
   useEffect(() => { void load(); }, [load]);
 
   const cutoff = useMemo(() => {
-    const days = WINDOWS.find((w) => w.id === windowId)?.days ?? Number.POSITIVE_INFINITY;
-    if (!Number.isFinite(days)) return null;
-    return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+    return propertyWindowCutoff(windowId);
   }, [windowId]);
 
   const grouped = useMemo(() => {
@@ -127,9 +122,7 @@ export default function PropertyMarketData({ marketId }: { marketId: PropertyMar
       <button onClick={() => void collect()} disabled={loading} style={{ border: `1px solid ${PT.border}`, background: PT.surface, color: PT.textSub, borderRadius: "6px", padding: "8px 11px", fontSize: "11px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}><RefreshCw size={13} />Refresh official data</button>
     </div>
 
-    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", margin: "20px 0 12px" }}>{PROPERTY_MARKETS.map(item => <Link key={item.id} href={`/property/markets?market=${item.id}`} style={{ padding: "7px 10px", border: `1px solid ${item.id === marketId ? PT.accent : PT.border}`, borderRadius: "6px", textDecoration: "none", color: item.id === marketId ? PT.accent : PT.textSub, fontSize: "12px" }}>{item.label}</Link>)}</div>
-
-    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "16px" }}>{WINDOWS.map(w => <button key={w.id} type="button" onClick={() => setWindowId(w.id)} style={{ padding: "5px 11px", border: `1px solid ${w.id === windowId ? PT.accent : PT.border}`, background: "transparent", borderRadius: "5px", color: w.id === windowId ? PT.accent : PT.muted, fontSize: "10px", cursor: "pointer" }}>{w.label}</button>)}</div>
+    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", margin: "20px 0 16px" }}>{PROPERTY_CHART_WINDOWS.map(w => <button key={w.id} type="button" onClick={() => setWindowId(w.id)} style={{ padding: "5px 11px", border: `1px solid ${w.id === windowId ? PT.accent : PT.border}`, background: "transparent", borderRadius: "5px", color: w.id === windowId ? PT.accent : PT.muted, fontSize: "10px", cursor: "pointer" }}>{w.label}</button>)}</div>
 
     {message ? <div style={{ color: PT.textSub, fontSize: "11px", marginBottom: "12px" }}>{message}</div> : null}
 

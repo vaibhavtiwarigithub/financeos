@@ -799,3 +799,11 @@ qualifying post-event bar exists; it does not silently expire after seven calend
 days. All earnings collectors share one real ISO-date validator, so impossible
 provider dates cannot normalize into another session. Normal scoring resumes on
 the first post-report daily bar.
+> 2026-08-08: **Property address and carrying-cost boundary.** Exact addresses,
+> loan terms, tax, insurance, and maintenance values remain owner-only encrypted
+> data and never enter an LLM or investing flow. API inputs are size/range
+> bounded. US geocoding fails honestly to `no_match`, `ambiguous`, or
+> `unavailable`; it never invents a parcel. Monthly cost uses the shared
+> deterministic mortgage engine, while tax/insurance/maintenance stay labelled
+> owner inputs until an official bill or quote is connected. USD and INR remain
+> independent.

@@ -6,6 +6,7 @@ import { Area, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, 
 import { EmptyState, fieldStyle, FieldLabel, LocalOnlyNotice, PropertyPageFrame, PT, StatCell } from "./PropertyPrimitives";
 import { calibrationBlocker, MIN_MATURED_OUTCOMES, summarizeCalibration, type MaturedOutcome } from "@/lib/property/calibration";
 import { PROPERTY_MARKETS, type PropertyMarketId } from "@/lib/property/registry";
+import { usePropertyMarket } from "@/lib/property/market-context";
 
 // Forecasts here are SHADOW decision support. They are never a promise, and
 // nothing on this page is read by a securities score, an order, or any money
@@ -40,12 +41,12 @@ function maturityDate(f: Forecast): string {
 }
 
 export default function ForecastLearningWorkspace() {
+  const { market, setMarket } = usePropertyMarket();
   const [forecasts, setForecasts] = useState<Forecast[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // User assumption fan — local only, never persisted.
-  const [market, setMarket] = useState<PropertyMarketId>("austin");
   const [baseline, setBaseline] = useState("100");
   const [growth, setGrowth] = useState("");
   const [uncertainty, setUncertainty] = useState("3");

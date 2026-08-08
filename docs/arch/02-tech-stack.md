@@ -232,3 +232,9 @@ callers never know which concrete provider runs.
 | `lib/validators/backtest.ts` | Validation Engine (deterministic replay) |
 | `lib/evaluation/run-evaluation.ts` | Performance Truth Layer evaluation runner |
 | `lib/robinhood-mcp-client.ts` | Robinhood MCP JSON-RPC client + token refresh CAS |
+> 2026-08-08: **Property owner-address resolution.** Owner-entered US addresses
+> travel only through the owner-gated server route to the official Census
+> Geocoding Services API, then remain in the AES-256-GCM property payload with
+> the returned ZIP/county resolution state. Census geography is not a parcel
+> match, valuation, tax lookup, or insurance quote. Bengaluru address/locality
+> remains encrypted owner input with no automated resolver.

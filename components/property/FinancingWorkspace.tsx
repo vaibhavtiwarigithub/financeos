@@ -6,6 +6,7 @@ import { Area, AreaChart, CartesianGrid, Legend, Line, LineChart, ReferenceLine,
 import { buttonStyle, EmptyState, fieldStyle, FieldLabel, LocalOnlyNotice, PropertyPageFrame, PT, StatCell } from "./PropertyPrimitives";
 import { buildAmortizationSchedule, calculateMortgage, evaluateRateShock, evaluateRefinance } from "@/lib/property/scenarios";
 import { PROPERTY_MARKETS, type PropertyMarketId } from "@/lib/property/registry";
+import { usePropertyMarket } from "@/lib/property/market-context";
 
 // This page carried a private `payment()` helper and a hand-rolled amortization
 // loop. Two implementations of the same formula drift apart silently, so both
@@ -63,6 +64,7 @@ function money(value: number, currency: string): string {
 }
 
 export default function FinancingWorkspace() {
+  const { market, setMarket } = usePropertyMarket();
   const [accounts, setAccounts] = useState<SavedAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -71,7 +73,6 @@ export default function FinancingWorkspace() {
   const [encryptionReady, setEncryptionReady] = useState(true);
 
   const [financingType, setFinancingType] = useState<FinancingType>("mortgage");
-  const [market, setMarket] = useState<PropertyMarketId>("austin");
   const [label, setLabel] = useState("");
   const [balance, setBalance] = useState("400000");
   const [rate, setRate] = useState("6.5");

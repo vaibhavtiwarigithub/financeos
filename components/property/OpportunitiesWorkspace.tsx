@@ -6,6 +6,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { buttonStyle, EmptyState, fieldStyle, FieldLabel, LocalOnlyNotice, PropertyPageFrame, PT, StatCell } from "./PropertyPrimitives";
 import { calculateMortgage, type RentalEconomicsResult } from "@/lib/property/scenarios";
 import { PROPERTY_MARKETS, type PropertyMarketId } from "@/lib/property/registry";
+import { usePropertyMarket } from "@/lib/property/market-context";
 
 // Scenarios are computed by the SERVER engine (lib/property/scenarios.ts) and
 // persisted; this component renders what came back. It previously carried its
@@ -39,6 +40,7 @@ function currencyFor(market: PropertyMarketId): string {
 }
 
 export default function OpportunitiesWorkspace() {
+  const { market, setMarket } = usePropertyMarket();
   const [scenarios, setScenarios] = useState<SavedScenario[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -46,7 +48,6 @@ export default function OpportunitiesWorkspace() {
   const [encryptionReady, setEncryptionReady] = useState(true);
 
   const [name, setName] = useState("");
-  const [market, setMarket] = useState<PropertyMarketId>("austin");
   const [price, setPrice] = useState("");
   const [rent, setRent] = useState("");
   const [annualCosts, setAnnualCosts] = useState("");

@@ -1,0 +1,40 @@
+import { describe, expect, it } from "vitest";
+import { calculateOwnershipCost } from "@/lib/property/ownership-cost";
+import { parseCensusGeocode } from "@/lib/property/geocode";
+import { propertyWindowCutoff } from "@/lib/property/chart-windows";
+
+describe("property owner records", () => {
+  it("calculates a complete monthly carrying cost without mixing annual and monthly inputs", () => {
+    const result = calculateOwnershipCost({
+      loanBalance: 300_000, annualMortgageRatePct: 6, remainingTermMonths: 360,
+      annualPropertyTax: 6_000, annualInsurance: 2_400, annualMaintenance: 3_600,
+      monthlyHoa: 100, monthlyOther: 50,
+    });
+    expect(result.propertyTax).toBe(500);
+    expect(result.insurance).toBe(200);
+    expect(result.maintenance).toBe(300);
+    expect(result.total).toBeCloseTo(result.principalAndInterest + 1_150, 8);
+  });
+
+  it("does not invent principal and interest for an unfinanced property", () => {
+    expect(calculateOwnershipCost({ loanBalance: 0, annualMortgageRatePct: 0, remainingTermMonths: 1, annualPropertyTax: 1_200, annualInsurance: 0, annualMaintenance: 0, monthlyHoa: 0, monthlyOther: 0 }).total).toBe(100);
+  });
+
+  it("extracts only non-sensitive geography from a unique Census match", () => {
+    const result = parseCensusGeocode({ result: { addressMatches: [{ matchedAddress: "1 MAIN ST, AUSTIN, TX, 78701", addressComponents: { zip: "78701" }, geographies: { Counties: [{ NAME: "Travis County", GEOID: "48453" }] } }] } }, "2026-08-08T00:00:00.000Z");
+    expect(result).toMatchObject({ state: "resolved", postalCode: "78701", countyName: "Travis County", countyGeoid: "48453" });
+  });
+
+  it("fails honestly on absent or ambiguous address matches", () => {
+    expect(parseCensusGeocode({ result: { addressMatches: [] } }).state).toBe("no_match");
+    expect(parseCensusGeocode({ result: { addressMatches: [{}, {}] } }).state).toBe("ambiguous");
+  });
+
+  it("supports the standard historical windows", () => {
+    const now = new Date("2026-08-08T12:00:00Z");
+    expect(propertyWindowCutoff("ytd", now)).toBe("2026-01-01");
+    expect(propertyWindowCutoff("1m", now)).toBe("2026-07-08");
+    expect(propertyWindowCutoff("20y", now)).toBe("2006-08-08");
+    expect(propertyWindowCutoff("all", now)).toBeNull();
+  });
+});

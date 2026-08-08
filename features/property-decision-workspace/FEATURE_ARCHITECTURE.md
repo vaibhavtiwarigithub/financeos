@@ -10,6 +10,14 @@ no AVM, lender integration, or automated
 transaction is authorized or enabled. See `IMPLEMENTATION_RESULT.md` for the
 verified findings list and the honest deferral list.
 
+Update (2026-08-08): the Property shell now has one persistent market context
+(`US - Austin`, `US - Phoenix`, `India - Bengaluru`) inherited by market-aware
+pages. My Properties accepts an optional exact address inside the existing
+encrypted vault, resolves US geography through Census without claiming a parcel
+match, and calculates source-labelled monthly carrying costs. Historical market
+charts use 1M/6M/YTD/1Y/5Y/10Y/20Y/All. See
+`features/property-address-and-carrying-costs/FEATURE_ARCHITECTURE.md`.
+
 Initial market packs: Austin Central Texas, Phoenix Metro Arizona, and Bengaluru
 Karnataka. They are independent markets, never a blended property universe.
 

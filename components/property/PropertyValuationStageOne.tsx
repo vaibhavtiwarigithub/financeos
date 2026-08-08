@@ -5,8 +5,8 @@ import { AlertTriangle, BadgeDollarSign, Building2, Database, ExternalLink, Plus
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { PropertyValuationStageOneResponse, ValuationSourceCoverage } from "@/lib/property/valuation-contract";
 import { EmptyState, PropertyPageFrame, PT, StatCell } from "./PropertyPrimitives";
-
-type MarketTab = "phoenix" | "austin";
+import { usePropertyMarket } from "@/lib/property/market-context";
+import { PROPERTY_CHART_WINDOWS, propertyWindowCutoff, type PropertyChartWindowId } from "@/lib/property/chart-windows";
 
 const STATUS_LABEL: Record<ValuationSourceCoverage["state"], string> = {
   available: "Evidence available",
@@ -46,12 +46,13 @@ function CoveragePanel({ title, description, coverage }: { title: string; descri
 }
 
 export default function PropertyValuationStageOne() {
-  const [market, setMarket] = useState<MarketTab>("phoenix");
+  const { market } = usePropertyMarket();
   const [payload, setPayload] = useState<PropertyValuationStageOneResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [scopeValue, setScopeValue] = useState("");
   const [savingScope, setSavingScope] = useState(false);
+  const [windowId, setWindowId] = useState<PropertyChartWindowId>("5y");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,10 +76,13 @@ export default function PropertyValuationStageOne() {
   const latestTrend = trendRows.at(-1) ?? null;
   const latestAssessment = payload?.austin.assessedValueRows.at(-1) ?? null;
   const phoenixReady = payload?.phoenix.sales.state === "available";
-  const chartRows = useMemo(() => trendRows.map((row) => ({ date: row.asOf, value: row.value })), [trendRows]);
+  const chartRows = useMemo(() => {
+    const cutoff = propertyWindowCutoff(windowId);
+    return trendRows.filter((row) => !cutoff || row.asOf >= cutoff).map((row) => ({ date: row.asOf, value: row.value }));
+  }, [trendRows, windowId]);
 
   const saveScope = async () => {
-    if (!scopeValue.trim()) return;
+    if (market !== "phoenix" || !scopeValue.trim()) return;
     setSavingScope(true);
     try {
       const response = await fetch("/api/property/valuation-evidence", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ market, value: scopeValue.trim() }) });
@@ -114,27 +118,23 @@ export default function PropertyValuationStageOne() {
       </div>
 
       <div className="property-page-body" style={{ padding: "20px 28px" }}>
-        <div style={{ display: "flex", gap: "6px", marginBottom: "17px" }}>
-          {(["phoenix", "austin"] as MarketTab[]).map((tab) => <button key={tab} type="button" onClick={() => setMarket(tab)} style={{ minHeight: "34px", padding: "7px 12px", borderRadius: "6px", border: `1px solid ${market === tab ? PT.accent : PT.border}`, background: market === tab ? `${PT.accent}12` : "transparent", color: market === tab ? PT.accent : PT.textSub, fontSize: "11px", fontWeight: 700, cursor: "pointer", textTransform: "capitalize" }}>{tab}</button>)}
-        </div>
-
-        <section style={{ border: `1px solid ${PT.border}`, borderRadius: "7px", background: PT.surface, padding: "14px", marginBottom: "15px" }}>
+        {market === "phoenix" ? <section style={{ border: `1px solid ${PT.border}`, borderRadius: "7px", background: PT.surface, padding: "14px", marginBottom: "15px" }}>
           <div style={{ display: "flex", alignItems: "flex-end", gap: "8px", flexWrap: "wrap" }}>
             <label style={{ display: "grid", gap: "5px", flex: "1 1 240px", color: PT.textSub, fontSize: "10px" }}>
-              {market === "phoenix" ? "Phoenix ZIP to collect" : "TCAD property ID to collect"}
-              <input value={scopeValue} onChange={(event) => setScopeValue(event.target.value)} placeholder={market === "phoenix" ? "e.g. 85018" : "County property ID"} style={{ minHeight: "36px", border: `1px solid ${PT.border}`, borderRadius: "6px", background: PT.cardRaised, color: PT.text, padding: "7px 9px", fontSize: "12px" }} />
+              Phoenix ZIP to collect
+              <input value={scopeValue} onChange={(event) => setScopeValue(event.target.value)} placeholder="e.g. 85018" style={{ minHeight: "36px", border: `1px solid ${PT.border}`, borderRadius: "6px", background: PT.cardRaised, color: PT.text, padding: "7px 9px", fontSize: "12px" }} />
             </label>
             <button type="button" onClick={() => void saveScope()} disabled={savingScope || !scopeValue.trim() || !payload?.encryptionReady} style={{ minHeight: "36px", display: "inline-flex", alignItems: "center", gap: "6px", border: 0, borderRadius: "6px", padding: "8px 11px", background: PT.accent, color: PT.bg, fontWeight: 800, fontSize: "10px", opacity: savingScope || !payload?.encryptionReady ? .5 : 1 }}><Plus size={13} />Add scope</button>
           </div>
-          <div style={{ marginTop: "9px", color: PT.muted, fontSize: "9px", lineHeight: 1.5 }}>{market === "phoenix" ? "Only selected ZIP rows survive the monthly ephemeral worker; the county archive is discarded." : "The property ID is converted to a keyed private reference before storage. Owner names and addresses are never ingested."}</div>
+          <div style={{ marginTop: "9px", color: PT.muted, fontSize: "9px", lineHeight: 1.5 }}>Only selected ZIP rows survive the monthly ephemeral worker; the county archive is discarded.</div>
           {!payload?.encryptionReady && <div style={{ color: PT.amber, fontSize: "9px", marginTop: "6px" }}>Private scope storage is locked until the Property encryption key is configured.</div>}
           <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "10px" }}>
             {(payload?.scopes ?? []).filter((scope) => scope.market === market && scope.active).map((scope) => <span key={scope.id} style={{ display: "inline-flex", alignItems: "center", gap: "5px", border: `1px solid ${PT.border}`, borderRadius: "999px", color: PT.textSub, padding: "4px 7px", fontSize: "9px" }}>{scope.label}<button type="button" aria-label={`Disable ${scope.label}`} onClick={() => void disableScope(scope.id)} style={{ border: 0, background: "transparent", color: PT.muted, display: "inline-flex", padding: 0, cursor: "pointer" }}><X size={10} /></button></span>)}
             {!(payload?.scopes ?? []).some((scope) => scope.market === market && scope.active) && <span style={{ color: PT.muted, fontSize: "9px" }}>No active collection scope. The bulk worker will skip the download.</span>}
           </div>
-        </section>
+        </section> : market === "austin" ? <div style={{ marginBottom: "15px", padding: "13px 15px", border: `1px solid ${PT.border}`, borderRadius: "7px", background: PT.surface, color: PT.textSub, fontSize: "10px", lineHeight: 1.6 }}>Add a specific Austin address under My Properties. Kairos resolves geography in the background; county parcel IDs are not an owner-facing input. TCAD assessment linkage remains unavailable until the address-to-parcel resolver is source-verified.</div> : <div style={{ marginBottom: "15px" }}><EmptyState title="Bengaluru parcel evidence is not connected" detail="Use a PIN/locality for market exploration. Kairos will not request a US county identifier or fabricate parcel-level tax or valuation data for India." /></div>}
 
-        {error ? <div role="alert" style={{ border: `1px solid ${PT.red}`, borderRadius: "7px", padding: "16px", color: PT.red, display: "flex", gap: "8px", alignItems: "center", fontSize: "11px" }}><AlertTriangle size={15} />{error}. This is a coverage-check failure, not evidence of zero records.</div> : loading ? <div style={{ color: PT.muted, padding: "54px 0", fontSize: "11px" }}>Checking source coverage…</div> : !payload ? null : market === "phoenix" ? (
+        {error ? <div role="alert" style={{ border: `1px solid ${PT.red}`, borderRadius: "7px", padding: "16px", color: PT.red, display: "flex", gap: "8px", alignItems: "center", fontSize: "11px" }}><AlertTriangle size={15} />{error}. This is a coverage-check failure, not evidence of zero records.</div> : loading ? <div style={{ color: PT.muted, padding: "54px 0", fontSize: "11px" }}>Checking source coverage...</div> : !payload || market === "bengaluru" ? null : market === "phoenix" ? (
           <div style={{ display: "grid", gap: "15px" }}>
             <CoveragePanel title="Recorded transfer evidence" description="Maricopa deed-linked sales-affidavit observations for selected ZIPs. Corrections remain separate snapshot observations; recorded prices are not a Kairos valuation for a home." coverage={payload.phoenix.sales} />
             <section style={{ border: `1px solid ${PT.border}`, borderRadius: "7px", background: PT.surface, padding: "17px", display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: "12px" }}>
@@ -152,7 +152,8 @@ export default function PropertyValuationStageOne() {
             </section>
             <section style={{ minWidth: 0, border: `1px solid ${PT.border}`, borderRadius: "7px", background: PT.surface, overflow: "hidden" }}>
               <div style={{ padding: "14px 16px", borderBottom: `1px solid ${PT.border}`, display: "flex", justifyContent: "space-between", gap: "10px" }}><div><h2 style={{ color: PT.text, fontSize: "13px", margin: 0 }}>Austin metro price trend</h2><div style={{ color: PT.muted, fontSize: "9px", marginTop: "4px" }}>{latestTrend ? `FHFA HPI · ${latestTrend.nativeUnit} · as of ${latestTrend.asOf} · ${latestTrend.revisionState}` : "FHFA HPI · no observations returned"}</div></div><Building2 size={16} color={PT.accent} /></div>
-              <div style={{ height: "290px", padding: "14px 10px 8px" }}>{chartRows.length ? <ResponsiveContainer width="100%" height="100%"><LineChart data={chartRows} margin={{ top: 8, right: 14, left: 0, bottom: 8 }}><CartesianGrid stroke={PT.border} vertical={false} /><XAxis dataKey="date" tick={{ fill: PT.muted, fontSize: 9 }} minTickGap={35} /><YAxis tick={{ fill: PT.muted, fontSize: 9 }} domain={["auto", "auto"]} /><Tooltip contentStyle={{ background: PT.cardRaised, border: `1px solid ${PT.border}`, borderRadius: "6px", fontSize: "10px" }} /><Line type="monotone" dataKey="value" name="Observed FHFA HPI" stroke={PT.accent} strokeWidth={2} dot={false} isAnimationActive={false} /></LineChart></ResponsiveContainer> : <EmptyState title="No Austin FHFA observations" detail="The chart remains empty until the existing official-source pipeline returns rows. A metro trend cannot be converted into a parcel price." />}</div>
+              <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", padding: "9px 16px 0" }}>{PROPERTY_CHART_WINDOWS.map((item) => <button key={item.id} type="button" onClick={() => setWindowId(item.id)} style={{ minHeight: "27px", padding: "4px 8px", border: `1px solid ${windowId === item.id ? PT.accent : PT.border}`, borderRadius: "5px", background: "transparent", color: windowId === item.id ? PT.accent : PT.muted, fontSize: "9px", cursor: "pointer" }}>{item.label}</button>)}</div>
+              <div style={{ height: "290px", padding: "14px 10px 8px" }}>{chartRows.length ? <ResponsiveContainer width="100%" height="100%"><LineChart data={chartRows} margin={{ top: 8, right: 14, left: 0, bottom: 8 }}><CartesianGrid stroke={PT.border} vertical={false} /><XAxis dataKey="date" tick={{ fill: PT.muted, fontSize: 9 }} minTickGap={35} /><YAxis tick={{ fill: PT.muted, fontSize: 9 }} domain={["auto", "auto"]} /><Tooltip contentStyle={{ background: PT.cardRaised, border: `1px solid ${PT.border}`, borderRadius: "6px", fontSize: "10px" }} /><Line type="monotone" dataKey="value" name="Observed FHFA HPI" stroke={PT.accent} strokeWidth={2} dot={false} isAnimationActive={false} /></LineChart></ResponsiveContainer> : <EmptyState title="No Austin FHFA observations in this range" detail="Choose a longer range or wait for official observations. A metro trend cannot be converted into a parcel price." />}</div>
               <div style={{ padding: "10px 16px", borderTop: `1px solid ${PT.border}`, color: PT.textSub, fontSize: "9px", lineHeight: 1.5 }}><Scale size={12} color={PT.blue} style={{ verticalAlign: "middle", marginRight: "5px" }} />Metro-level repeat-sales context only. It does not estimate the market value of a specific Austin property.</div>
             </section>
           </div>

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Building2, Database, LayoutDashboard, Map, ArrowLeftRight, Home, Search, Landmark, ChartNoAxesCombined, Scale, Menu, X } from "lucide-react";
+import { PROPERTY_MARKETS } from "@/lib/property/registry";
+import { usePropertyMarket } from "@/lib/property/market-context";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -23,6 +25,7 @@ const nav = [
 
 export default function PropertyShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { market, setMarket } = usePropertyMarket();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   useEffect(() => setMobileNavOpen(false), [pathname]);
   return (
@@ -62,6 +65,9 @@ export default function PropertyShell({ children }: { children: React.ReactNode 
           <div style={{ flex: 1 }} />
           <Link className="property-mobile-investing" href="/dashboard" style={{ display: "none", alignItems: "center", gap: "6px", minHeight: "32px", padding: "6px 9px", border: `1px solid ${T.border}`, borderRadius: "7px", color: T.textSub, textDecoration: "none", fontSize: "11px" }}><ArrowLeftRight size={13} />Investing</Link>
         </header>
+        <div className="property-market-switch" role="group" aria-label="Property market" style={{ display: "flex", gap: "5px", padding: "7px 28px", borderBottom: `1px solid ${T.border}`, background: T.surface, overflowX: "auto" }}>
+          {PROPERTY_MARKETS.map((item) => <button key={item.id} type="button" onClick={() => setMarket(item.id)} aria-pressed={market === item.id} style={{ flex: "0 0 auto", minHeight: "30px", padding: "5px 9px", borderRadius: "6px", border: `1px solid ${market === item.id ? T.accent : T.border}`, background: market === item.id ? `${T.accent}18` : "transparent", color: market === item.id ? T.accent : T.textSub, fontSize: "10px", fontWeight: 700, cursor: "pointer" }}>{item.country === "US" ? "US" : "India"} · {item.label}</button>)}
+        </div>
         <main className="property-main" style={{ flex: 1, minWidth: 0 }}>{children}</main>
       </div>
       <style>{`
@@ -80,6 +86,7 @@ export default function PropertyShell({ children }: { children: React.ReactNode 
           .property-mobile-menu, .property-mobile-investing { display: inline-flex !important; }
           .property-mobile-title { display: inline !important; }
           .property-desktop-context { display: none !important; }
+          .property-market-switch { padding: 7px calc(12px + env(safe-area-inset-right)) 7px calc(12px + env(safe-area-inset-left)) !important; }
           .property-main { padding-bottom: env(safe-area-inset-bottom) !important; }
         }
         @media (max-width: 520px) {
