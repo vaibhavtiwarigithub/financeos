@@ -27,11 +27,12 @@ export default function PropertyShell({ children }: { children: React.ReactNode 
   useEffect(() => setMobileNavOpen(false), [pathname]);
   return (
     <div className="property-app-shell" style={{ minHeight: "100dvh", background: T.bg, color: T.text, display: "flex" }}>
-      <aside className="property-sidebar" style={{ width: "236px", flexShrink: 0, background: T.surface, borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+      {mobileNavOpen ? <button className="property-nav-backdrop" type="button" aria-label="Close Property navigation" onClick={() => setMobileNavOpen(false)} style={{ display: "none" }} /> : null}
+      <aside className={`property-sidebar${mobileNavOpen ? " property-sidebar-open" : ""}`} style={{ width: "236px", flexShrink: 0, background: T.surface, borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
         <div className="property-brand" style={{ padding: "22px 18px 18px", borderBottom: `1px solid ${T.border}` }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "9px", fontWeight: 700, fontSize: "17px" }}><Building2 size={18} color={T.accent} /> Kairos Property</div>
-            <button className="property-nav-toggle" type="button" aria-label={mobileNavOpen ? "Close Property navigation" : "Open Property navigation"} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((open) => !open)} style={{ display: "none", width: "36px", height: "36px", alignItems: "center", justifyContent: "center", border: `1px solid ${T.border}`, borderRadius: "6px", background: T.card, color: T.text, cursor: "pointer" }}>{mobileNavOpen ? <X size={17} /> : <Menu size={17} />}</button>
+            <button className="property-drawer-close" type="button" aria-label="Close Property navigation" onClick={() => setMobileNavOpen(false)} style={{ display: "none", width: "32px", height: "32px", alignItems: "center", justifyContent: "center", border: `1px solid ${T.border}`, borderRadius: "7px", background: T.card, color: T.text, cursor: "pointer" }}><X size={16} /></button>
           </div>
           <div className="property-brand-subtitle" style={{ color: T.muted, fontSize: "11px", marginTop: "6px" }}>Personal property decision workspace</div>
         </div>
@@ -41,7 +42,7 @@ export default function PropertyShell({ children }: { children: React.ReactNode 
             <span style={{ flex: 1, padding: "7px 8px", background: `${T.accent}18`, color: T.accent, fontSize: "11px", fontWeight: 700, textAlign: "center" }}>Property</span>
           </div>
         </div>
-        <nav className={`property-nav${mobileNavOpen ? " property-nav-open" : ""}`} aria-label="Property workspace" style={{ padding: "14px 10px", flex: 1 }}>
+        <nav className="property-nav" aria-label="Property workspace" style={{ padding: "14px 10px", flex: 1 }}>
           {nav.map(({ href, label, icon: Icon }) => {
             const active = href === "/property" ? pathname === href : pathname.startsWith(href);
             return <Link className="property-nav-item" key={href} href={href} style={{ display: "flex", alignItems: "center", gap: "9px", marginBottom: "3px", padding: "9px 10px", borderRadius: "7px", background: active ? `${T.accent}18` : "transparent", borderLeft: active ? `2px solid ${T.accent}` : "2px solid transparent", textDecoration: "none", color: active ? T.accent : T.textSub, fontSize: "13px", fontWeight: active ? 650 : 450, whiteSpace: "nowrap" }}><Icon size={15} />{label}</Link>;
@@ -53,25 +54,32 @@ export default function PropertyShell({ children }: { children: React.ReactNode 
       </aside>
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <header className="property-context-header" style={{ minHeight: "58px", padding: "10px 28px", display: "flex", alignItems: "center", borderBottom: `1px solid ${T.border}`, background: T.surface }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: T.textSub }}>
+          <button className="property-mobile-menu" type="button" aria-label="Open navigation menu" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)} style={{ display: "none", width: "32px", height: "32px", alignItems: "center", justifyContent: "center", border: `1px solid ${T.border}`, borderRadius: "7px", background: "transparent", color: T.text, cursor: "pointer", flexShrink: 0 }}><Menu size={16} /></button>
+          <div className="property-desktop-context" style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: T.textSub }}>
             <span style={{ color: T.muted }}>Kairos</span><span>/</span><strong style={{ color: T.accent }}>Property</strong>
           </div>
+          <strong className="property-mobile-title" style={{ display: "none", color: T.text, fontSize: "13px" }}>Property</strong>
+          <div style={{ flex: 1 }} />
+          <Link className="property-mobile-investing" href="/dashboard" style={{ display: "none", alignItems: "center", gap: "6px", minHeight: "32px", padding: "6px 9px", border: `1px solid ${T.border}`, borderRadius: "7px", color: T.textSub, textDecoration: "none", fontSize: "11px" }}><ArrowLeftRight size={13} />Investing</Link>
         </header>
         <main className="property-main" style={{ flex: 1, minWidth: 0 }}>{children}</main>
       </div>
       <style>{`
         @media (max-width: 900px) {
-          .property-app-shell { flex-direction: column !important; }
-          .property-sidebar { width: 100% !important; min-height: auto !important; border-right: 0 !important; border-bottom: 1px solid ${T.border} !important; }
-          .property-brand { padding: calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left)) !important; }
+          .property-sidebar { width: min(280px, 88vw) !important; min-height: 0 !important; height: 100dvh !important; position: fixed !important; inset: 0 auto 0 0; z-index: 200; transform: translateX(-100%); transition: transform .2s ease; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); box-shadow: 12px 0 30px #00000066; }
+          .property-sidebar.property-sidebar-open { transform: translateX(0); }
+          .property-nav-backdrop { display: block !important; position: fixed; inset: 0; z-index: 199; border: 0; background: #000000AA; }
+          .property-brand { padding: 14px 16px 12px !important; }
           .property-brand-subtitle { display: none !important; }
-          .property-nav-toggle { display: inline-flex !important; }
-          .property-workspace-switch { display: none !important; }
-          .property-nav { display: none !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 5px !important; padding: 8px calc(10px + env(safe-area-inset-right)) 10px calc(10px + env(safe-area-inset-left)) !important; border-top: 1px solid ${T.border}; }
-          .property-nav.property-nav-open { display: grid !important; }
-          .property-nav-item { min-width: 0 !important; margin-bottom: 0 !important; border-left: 0 !important; border: 1px solid ${T.border} !important; white-space: normal !important; min-height: 42px !important; }
-          .property-sidebar-footer { display: none !important; }
-          .property-context-header { display: none !important; }
+          .property-drawer-close { display: inline-flex !important; }
+          .property-workspace-switch { display: block !important; }
+          .property-nav { display: block !important; padding: 12px 10px !important; overflow-y: auto; }
+          .property-nav-item { min-width: 0 !important; white-space: normal !important; min-height: 42px !important; }
+          .property-sidebar-footer { padding-bottom: calc(14px + env(safe-area-inset-bottom)) !important; }
+          .property-context-header { display: flex !important; position: sticky; top: 0; z-index: 100; min-height: 0 !important; padding: calc(7px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 7px calc(12px + env(safe-area-inset-left)) !important; gap: 10px; }
+          .property-mobile-menu, .property-mobile-investing { display: inline-flex !important; }
+          .property-mobile-title { display: inline !important; }
+          .property-desktop-context { display: none !important; }
           .property-main { padding-bottom: env(safe-area-inset-bottom) !important; }
         }
         @media (max-width: 520px) {

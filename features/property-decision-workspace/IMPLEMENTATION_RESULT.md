@@ -225,3 +225,9 @@ not simulate: unlike Investing, Property did not clear iOS's translucent status
 bar even though the root viewport uses `viewport-fit: cover`. The mobile brand
 header and navigation now include the top/left/right safe-area insets, the main
 content includes the bottom home-indicator inset, and the shell uses `100dvh`.
+
+The first mobile-navigation revision also hid the workspace switch and placed
+Property's hamburger on the opposite side from Investing. Property now follows
+the Investing interaction contract: a sticky safe-area top bar with the menu
+button at far left, a slide-in left drawer, backdrop dismissal, and an explicit
+Investing link in both the top bar and drawer workspace switch.
