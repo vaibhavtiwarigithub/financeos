@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed on 2026-08-08. This design replaces the ambiguous single owner-entered
+Implemented through value evidence, index references, and index scenarios on
+2026-08-08. This design replaces the ambiguous single owner-entered
 `value` field with source-labelled property value evidence and an explainable
 market-index reference. It does **not** authorize a Zillow/Redfin-style AVM
 until market-specific data and validation gates are satisfied.
@@ -68,14 +69,16 @@ Allowed `kind`:
 - `county_appraised_reference`
 - `county_assessed_reference`
 - `owner_comparable`
-- `market_index_reference`
 
 Allowed `provenance`:
 
 - `owner_entered`
 - `owner_document`
 - `official_reference`
-- `derived_index`
+
+Market-index results and scenarios are derived records in
+`property_value_references`; they are never written back into the evidence
+ledger as if they were an observation.
 
 Triggers and grants must block update, delete, and truncate. A correction writes
 a new observation with `supersedes_id`; it does not rewrite history.
