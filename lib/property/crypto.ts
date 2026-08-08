@@ -1,5 +1,5 @@
 import "server-only";
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 
 const VERSION = "v1";
 
@@ -35,4 +35,19 @@ export function decryptPropertyPayload<T>(sealed: string): T {
 
 export function propertyContentHash(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+/**
+ * Stable private lookup key for public-record identifiers and addresses.
+ *
+ * Plain SHA-256 is not sufficient for addresses or parcel numbers: both have a
+ * small, enumerable input space and can be recovered with a dictionary attack.
+ * A domain-separated HMAC stays joinable across releases without storing the
+ * original identifier. The bulk worker receives the same master key through a
+ * GitHub Actions secret.
+ */
+export function propertyLookupKey(domain: "parcel" | "address", value: string): string {
+  const normalized = value.trim().toUpperCase().replace(/\s+/g, " ");
+  if (!normalized) throw new Error("Property lookup value cannot be empty");
+  return createHmac("sha256", key()).update(`property:${domain}:v1\0${normalized}`, "utf8").digest("hex");
 }

@@ -1,9 +1,9 @@
 # Kairos Property — implementation result
 
 Date: 2026-08-07 · Production project `dionkikgdmlaotvtbnfr`
-Status: **P2–P4 schema applied and verified. UI persistence and charts landed.
-Deployment verification, visual testing, and the Vercel encryption key are NOT
-done. This feature is not complete.**
+Status: **P2-P4 and valuation-evidence Stage 1 schema applied and verified. UI
+persistence and charts landed. The Vercel and GitHub Action encryption master is
+configured. Deployment and authenticated visual verification remain pending.**
 
 ---
 
@@ -165,19 +165,36 @@ Census ACS and HUD FMR are `contract_pending` pending a key/token.
 
 ## 6. Genuinely deferred — not complete
 
-1. **`PROPERTY_DATA_ENCRYPTION_KEY` is not set in Vercel.** Owner action. It must
-   be **identical** to the local value because both environments write the same
-   Supabase project; a mismatch makes stored payloads permanently undecryptable.
-2. **No Playwright or visual verification.** The pages are auth-gated and no
+1. **No Playwright or visual verification.** The pages are auth-gated and no
    desktop/mobile screenshot pass was run. Responsive classes are reused from the
    existing shell but are unverified visually.
-3. **No production deployment smoke test.**
-4. **My Properties and Imports** are not part of this pass.
-5. **Bengaluru data** — no India source is implemented.
-6. **`rent_index`** is forecast-capable in code but no adapter produces it, so it
+2. **No production deployment smoke test.**
+3. **Bengaluru data** — no India source is implemented.
+4. **`rent_index`** is forecast-capable in code but no adapter produces it, so it
    will never populate.
-7. **Open design question, undecided:** `MORTGAGE30US` is a **national** series
+5. **Open design question, undecided:** `MORTGAGE30US` is a **national** series
    stored per market, so 2,889 identical rows exist for Austin and again for
    Phoenix. It works, but it duplicates and misrepresents a national series as
    market-local. A cleaner model is one `national` geography that markets
    reference. Left as an owner decision, not silently changed.
+
+## 7. Completion audit and valuation Stage 1 (2026-08-07)
+
+The oldest-first observation-limit defect was corrected before the first
+forecast cron: market overview now bounds each metric independently from newest
+rows, and forecasts select the newest coherent source series, collapse revisions
+deterministically, project the declared horizon in observed periods, bind source
+provenance, and freeze the exact matured observation. Production contains zero
+legacy forecasts, so no stale forecast required supersession.
+
+Property valuation remains evidence-only. Production now has owner-selected
+scope configuration plus append-only bulk snapshot, write-event, parcel, and
+deed-linked transfer ledgers. Phoenix accepts ZIP scopes; Austin accepts TCAD
+parcel IDs that are HMACed before persistence. No address, party name, or raw
+parcel ID is stored. The monthly GitHub Action exits before download without a
+scope, pins action SHAs, uploads no raw artifacts, and runs no model. The UI says
+`NO AVM`, `NO MARKET-PRICE ESTIMATE`, and `NO PARCEL VALUE RANGE`.
+
+The identical Property encryption master is configured in local development,
+Vercel production/preview/development, and the FinanceOS GitHub Action. GitHub
+also has the FinanceOS Supabase URL and service-role key; no value was logged.

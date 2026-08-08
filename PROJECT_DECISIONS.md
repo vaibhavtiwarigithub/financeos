@@ -1267,7 +1267,7 @@ activation.
 
 ## Decision 66: Isolated Property Decision Workspace (2026-08-07)
 
-**Status:** Architecture approved; implementation not started
+**Status:** P0-P4 implemented; Stage 1 parcel evidence implemented pending final production verification
 
 **Decision.** Add a top-level Property workspace within Kairos for personal
 property, market, and financing decision support. It shares authentication,
@@ -1285,11 +1285,10 @@ licensed comps, or automated link to securities financing/execution.
 
 **Architecture:** `features/property-decision-workspace/FEATURE_ARCHITECTURE.md`.
 
-**Implementation update (2026-08-07).** P0 is live: a separately authenticated
-`/property` workspace, Austin/Phoenix/Bengaluru catalogue, source-catalogue UI,
-and deny-by-default Supabase registry/source-run tables. No source worker,
-observation, private address, property asset, financing input, forecast, LLM
-property prompt, investment integration, or transaction capability was enabled.
+**Implementation update (2026-08-07).** The isolated workspace, owner-private
+asset/financing/scenario APIs, official aggregate collection, deterministic
+scenario engine, market charts, and shadow forecast-calibration ledger are live.
+No Property output is connected to Investing or any transaction path.
 
 ## 2026-08-07 — Property workspace: schema live, three source adapters, isolation reaffirmed
 
@@ -1317,3 +1316,26 @@ shown. At n=3 a coverage percentage can only read 0/33/67/100.
 **Open, undecided:** `MORTGAGE30US` is a national series currently stored once
 per market (2,889 duplicate rows per market). A `national` geography that markets
 reference is cleaner. Not changed unilaterally.
+
+## 2026-08-07 — Property parcel evidence: Phoenix and Austin have different truth ceilings
+
+**Decided.** Build Stage 1 evidence collection for both markets, but do not
+pretend they support the same product. Phoenix may collect deed-linked Maricopa
+recorded-transfer observations for owner-selected ZIPs. Austin may collect TCAD
+county appraised/assessed references for owner-selected parcels and combine them
+only with the existing FHFA metro trend. Austin has no public comparable-sale
+or Kairos market-price claim.
+
+**Privacy and provenance.** The ephemeral monthly GitHub worker downloads only
+after a scope exists, stores no address or party names, converts parcel and deed
+identity to domain-separated HMACs, validates the official layout, records file
+and scope fingerprints, and preserves corrections as separate immutable source
+snapshot observations. Raw archives are never artifacts or Supabase records.
+
+**Deferred by evidence, not engineering preference.** Phoenix repeat-sales,
+hedonic intervals, and owner-parcel interpolation remain disabled until multiple
+source snapshots, correction/retraction policy, temporal validation, market-local
+sample floors, and measured calibration exist. Austin has no later AVM phase
+under the current source contract. No LLM performs valuation math.
+
+**Architecture:** `features/property-valuation/FEATURE_ARCHITECTURE.md`.

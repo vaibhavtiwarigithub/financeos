@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, BadgeDollarSign, Building2, Database, ExternalLink, RefreshCw, Scale, ShieldAlert } from "lucide-react";
+import { AlertTriangle, BadgeDollarSign, Building2, Database, ExternalLink, Plus, RefreshCw, Scale, ShieldAlert, X } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { PropertyValuationStageOneResponse, ValuationSourceCoverage } from "@/lib/property/valuation-contract";
 import { EmptyState, PropertyPageFrame, PT, StatCell } from "./PropertyPrimitives";
@@ -50,6 +50,8 @@ export default function PropertyValuationStageOne() {
   const [payload, setPayload] = useState<PropertyValuationStageOneResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [scopeValue, setScopeValue] = useState("");
+  const [savingScope, setSavingScope] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,8 +74,25 @@ export default function PropertyValuationStageOne() {
   const trendRows = payload?.austin.metroTrend.rows ?? [];
   const latestTrend = trendRows.at(-1) ?? null;
   const latestAssessment = payload?.austin.assessedValueRows.at(-1) ?? null;
-  const phoenixReady = payload?.phoenix.parcels.state === "available" && payload.phoenix.sales.state === "available";
+  const phoenixReady = payload?.phoenix.sales.state === "available";
   const chartRows = useMemo(() => trendRows.map((row) => ({ date: row.asOf, value: row.value })), [trendRows]);
+
+  const saveScope = async () => {
+    if (!scopeValue.trim()) return;
+    setSavingScope(true);
+    try {
+      const response = await fetch("/api/property/valuation-evidence", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ market, value: scopeValue.trim() }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not save scope");
+      setScopeValue(""); await load();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save scope"); }
+    finally { setSavingScope(false); }
+  };
+
+  const disableScope = async (id: string) => {
+    const response = await fetch(`/api/property/valuation-evidence?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (response.ok) await load();
+  };
 
   return (
     <PropertyPageFrame eyebrow="Stage 1 evidence" title="Valuation evidence" description="Source coverage and tax-assessment references only. Kairos does not calculate an automated valuation, parcel value range, or market price in this stage." action={<button type="button" onClick={() => void load()} disabled={loading} style={{ minHeight: "34px", display: "inline-flex", alignItems: "center", gap: "6px", padding: "7px 10px", borderRadius: "6px", border: `1px solid ${PT.border}`, background: PT.surface, color: PT.textSub, fontSize: "10px", cursor: loading ? "default" : "pointer" }}><RefreshCw size={13} />Refresh evidence</button>}>
@@ -99,15 +118,28 @@ export default function PropertyValuationStageOne() {
           {(["phoenix", "austin"] as MarketTab[]).map((tab) => <button key={tab} type="button" onClick={() => setMarket(tab)} style={{ minHeight: "34px", padding: "7px 12px", borderRadius: "6px", border: `1px solid ${market === tab ? PT.accent : PT.border}`, background: market === tab ? `${PT.accent}12` : "transparent", color: market === tab ? PT.accent : PT.textSub, fontSize: "11px", fontWeight: 700, cursor: "pointer", textTransform: "capitalize" }}>{tab}</button>)}
         </div>
 
+        <section style={{ border: `1px solid ${PT.border}`, borderRadius: "7px", background: PT.surface, padding: "14px", marginBottom: "15px" }}>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: "8px", flexWrap: "wrap" }}>
+            <label style={{ display: "grid", gap: "5px", flex: "1 1 240px", color: PT.textSub, fontSize: "10px" }}>
+              {market === "phoenix" ? "Phoenix ZIP to collect" : "TCAD property ID to collect"}
+              <input value={scopeValue} onChange={(event) => setScopeValue(event.target.value)} placeholder={market === "phoenix" ? "e.g. 85018" : "County property ID"} style={{ minHeight: "36px", border: `1px solid ${PT.border}`, borderRadius: "6px", background: PT.cardRaised, color: PT.text, padding: "7px 9px", fontSize: "12px" }} />
+            </label>
+            <button type="button" onClick={() => void saveScope()} disabled={savingScope || !scopeValue.trim() || !payload?.encryptionReady} style={{ minHeight: "36px", display: "inline-flex", alignItems: "center", gap: "6px", border: 0, borderRadius: "6px", padding: "8px 11px", background: PT.accent, color: PT.bg, fontWeight: 800, fontSize: "10px", opacity: savingScope || !payload?.encryptionReady ? .5 : 1 }}><Plus size={13} />Add scope</button>
+          </div>
+          <div style={{ marginTop: "9px", color: PT.muted, fontSize: "9px", lineHeight: 1.5 }}>{market === "phoenix" ? "Only selected ZIP rows survive the monthly ephemeral worker; the county archive is discarded." : "The property ID is converted to a keyed private reference before storage. Owner names and addresses are never ingested."}</div>
+          {!payload?.encryptionReady && <div style={{ color: PT.amber, fontSize: "9px", marginTop: "6px" }}>Private scope storage is locked until the Property encryption key is configured.</div>}
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "10px" }}>
+            {(payload?.scopes ?? []).filter((scope) => scope.market === market && scope.active).map((scope) => <span key={scope.id} style={{ display: "inline-flex", alignItems: "center", gap: "5px", border: `1px solid ${PT.border}`, borderRadius: "999px", color: PT.textSub, padding: "4px 7px", fontSize: "9px" }}>{scope.label}<button type="button" aria-label={`Disable ${scope.label}`} onClick={() => void disableScope(scope.id)} style={{ border: 0, background: "transparent", color: PT.muted, display: "inline-flex", padding: 0, cursor: "pointer" }}><X size={10} /></button></span>)}
+            {!(payload?.scopes ?? []).some((scope) => scope.market === market && scope.active) && <span style={{ color: PT.muted, fontSize: "9px" }}>No active collection scope. The bulk worker will skip the download.</span>}
+          </div>
+        </section>
+
         {error ? <div role="alert" style={{ border: `1px solid ${PT.red}`, borderRadius: "7px", padding: "16px", color: PT.red, display: "flex", gap: "8px", alignItems: "center", fontSize: "11px" }}><AlertTriangle size={15} />{error}. This is a coverage-check failure, not evidence of zero records.</div> : loading ? <div style={{ color: PT.muted, padding: "54px 0", fontSize: "11px" }}>Checking source coverage…</div> : !payload ? null : market === "phoenix" ? (
           <div style={{ display: "grid", gap: "15px" }}>
-            <div className="property-two-column" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: "15px" }}>
-              <CoveragePanel title="Parcel attributes" description="Parcel identifiers and residential characteristics needed to describe the evidence population. No owner name or plaintext address belongs here." coverage={payload.phoenix.parcels} />
-              <CoveragePanel title="Recorded sale evidence" description="Maricopa sales-affidavit evidence status. Recorded prices are evidence rows, not a Kairos valuation for a home." coverage={payload.phoenix.sales} />
-            </div>
+            <CoveragePanel title="Recorded transfer evidence" description="Maricopa deed-linked sales-affidavit observations for selected ZIPs. Corrections remain separate snapshot observations; recorded prices are not a Kairos valuation for a home." coverage={payload.phoenix.sales} />
             <section style={{ border: `1px solid ${PT.border}`, borderRadius: "7px", background: PT.surface, padding: "17px", display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: "12px" }}>
               <Database size={18} color={PT.blue} />
-              <div><h2 style={{ color: PT.text, fontSize: "13px", margin: 0 }}>What Phoenix Stage 1 can say</h2><p style={{ color: PT.textSub, fontSize: "10px", lineHeight: 1.6, margin: "6px 0 0" }}>{phoenixReady ? "Both evidence feeds report available. This confirms source coverage only; no repeat-sales model, comparable analysis, interpolation, or value range is enabled." : "The required evidence feeds are not both available. Kairos cannot infer parcel coverage, comparable sales, or a value from this state."}</p></div>
+              <div><h2 style={{ color: PT.text, fontSize: "13px", margin: 0 }}>What Phoenix Stage 1 can say</h2><p style={{ color: PT.textSub, fontSize: "10px", lineHeight: 1.6, margin: "6px 0 0" }}>{phoenixReady ? "Selected-scope transfer evidence is available. This confirms evidence coverage only; no repeat-sales model, comparable analysis, interpolation, or value range is enabled." : "No selected-scope transfer evidence is available yet. Kairos cannot infer comparable sales or a parcel value from this state."}</p></div>
             </section>
           </div>
         ) : (

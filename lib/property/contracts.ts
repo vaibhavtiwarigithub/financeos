@@ -32,7 +32,11 @@ export interface PropertySourceAdapter {
    * market-local reporting the feature contract forbids.
    */
   supportsMarket(market: PropertyMarketId): boolean;
-  fetch(input: { market: PropertyMarketId; since: string | null }): Promise<PropertyObservation[]>;
+  fetch(input: {
+    market: PropertyMarketId;
+    since: string | null;
+    fetchText: (url: string, init?: RequestInit) => Promise<{ body: string; lastModified: string | null }>;
+  }): Promise<PropertyObservation[]>;
 }
 
 export type PropertyForecast = {

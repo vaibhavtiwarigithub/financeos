@@ -1,0 +1,45 @@
+name: Property evidence snapshots
+
+on:
+  schedule:
+    # Monthly snapshots are enough to detect new latest sales while keeping the
+    # official bulk-download load bounded. TCAD changes mainly by annual roll
+    # and supplements; the worker no-ops before download when no scope exists.
+    - cron: "15 5 8 * *"
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Official source to collect
+        type: choice
+        options: [all, maricopa-sales, tcad-appraisal]
+        default: all
+
+concurrency:
+  group: property-evidence
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [maricopa-sales, tcad-appraisal]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Parser self-check
+        run: python scripts/python/property_bulk_ingest.py --self-check
+      - name: Collect bounded official snapshot
+        if: ${{ inputs.source == '' || inputs.source == 'all' || inputs.source == matrix.source }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PROPERTY_DATA_ENCRYPTION_KEY: ${{ secrets.PROPERTY_DATA_ENCRYPTION_KEY }}
+        run: python scripts/python/property_bulk_ingest.py --source "${{ matrix.source }}"

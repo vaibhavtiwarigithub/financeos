@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { keepObservation } from "@/lib/property/sources";
+import { describe, it, expect, vi } from "vitest";
+import { createPropertyCollectionRun, keepObservation } from "@/lib/property/sources";
 import { ACTIVE_PROPERTY_ADAPTERS } from "@/lib/property/sources";
 
 describe("keepObservation — revisions must survive the `since` filter", () => {
@@ -43,5 +43,23 @@ describe("adapter market coverage is declared, not inferred from an empty result
   it("exposes the three official US adapters", () => {
     expect(ACTIVE_PROPERTY_ADAPTERS.map((a) => a.sourceKey).sort())
       .toEqual(["bls-laus", "fhfa-hpi", "fred-mortgage"]);
+  });
+});
+
+describe("property collection fetch accounting", () => {
+  it("deduplicates within one invocation but isolates overlapping invocations", async () => {
+    const fetchMock = vi.fn(async () => new Response("ok", { status: 200, headers: { "last-modified": "today" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const first = createPropertyCollectionRun();
+    const second = createPropertyCollectionRun();
+    await Promise.all([
+      first.fetchText("https://example.test/data"),
+      first.fetchText("https://example.test/data"),
+      second.fetchText("https://example.test/data"),
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(first.fetchCount()).toBe(1);
+    expect(second.fetchCount()).toBe(1);
+    vi.unstubAllGlobals();
   });
 });

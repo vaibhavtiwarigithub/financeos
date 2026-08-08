@@ -1,224 +1,238 @@
-# Property Valuation (Phoenix) — Feature Architecture
+# Property Valuation Evidence
 
-Status: **DRAFT. Not approved, not implemented, no code written.**
-Author: Claude · 2026-08-07
-Scope decided by owner: **Phoenix only**, **addresses stay encrypted**.
+Status (2026-08-07): **Stage 1 implemented locally. Production migration,
+secrets, first scoped run, and deployment verification remain pending.**
+
 Parent: `features/property-decision-workspace/FEATURE_ARCHITECTURE.md`
-Related: `features/walk-forward-ic-folds/` (unresolved false-discovery control),
-`features/portfolio-underperformance/DIAGNOSIS.md` (how a confident number gets
-retracted).
 
----
+There is no AVM, repeat-sales index, hedonic model, comparable-sale engine, or
+parcel value claim in Stage 1. The word `valuation` names the user problem; the
+current product surface is an evidence ledger.
 
-## 1. What this is
+## 1. Product Boundary
 
-Estimate a value range for a specific Phoenix-area parcel, and track how that
-range moves, using real recorded sales and real parcel attributes.
+Property evidence remains inside the Property workspace. It cannot affect a
+security score, research eligibility, sizing, order, exit, strategy promotion,
+or broker call. It never initiates a property or financing transaction.
 
-**It is a range, never a point.** Section 3 explains why a point estimate would
-be a lie regardless of how much engineering goes into it.
+The owner approved two different evidence tiers because the underlying law and
+data differ:
 
-Property valuation stays inside the Property workspace and is subject to the same
-isolation invariant: **no output reaches any securities score, eligibility gate,
-sizing rule, order, exit, promotion gate or broker call.**
+| Market | Stage 1 capability | Explicitly unavailable |
+|---|---|---|
+| Phoenix | Recorded deed/transfer observations for owner-selected ZIPs | Active AVM or parcel value range |
+| Austin | FHFA metro trend plus TCAD county appraised/assessed reference for owner-selected parcels | Public comparable sales or market-price estimate |
+| Bengaluru | No parcel source in this feature | Any substituted US evidence |
 
----
+## 2. Why Phoenix And Austin Differ
 
-## 2. Why Phoenix only — the fact that decides the design
+### Phoenix
 
-**Texas is a non-disclosure state.** Sale prices are not recorded with the county
-clerk and are shielded under Tex. Tax Code § 22.27 and Gov't Code § 552.149.
-Zillow and Redfin are legally unable to display Texas sale prices at all
-([Redfin](https://www.redfin.com/blog/non-disclosure-states-real-estate/),
-[NTPTS](https://ntpts.com/non-disclosure-states/)). Travis County's appraisal
-district works from voluntary surveys and MLS participation.
+Maricopa County publishes a public ArcGIS ZIP containing the R102 Sales
+Affidavits pipe-delimited file. Its columns include parcel number, month-level
+sale date, reported price, deed number/date/status/type, property class, situs
+fields, parties, finance fields, assessor quality codes, and personal-property
+flags.
 
-So for **Austin there is no public sale price to learn from, at any budget.**
-Not "hard to get" — legally unavailable. Any Austin AVM would be fitted to
-assessed values, which are themselves a model, and we would be modelling a model.
+Stage 1 reads only the fields needed for identity, quality filtering, ZIP scope,
+and the recorded transfer. It never reads or stores grantor/grantee names,
+mailing addresses, or owner fields. Situs addresses are not persisted or hashed.
 
-**Maricopa County (Phoenix) is the opposite**, and free
-([Assessor data downloads](https://www.mcassessor.maricopa.gov/page/data_sales/)):
+The file is a latest-transfer snapshot, not transaction history. A changed row
+can be a correction rather than a new transaction. Therefore:
 
-| dataset | contains |
-|---|---|
-| Sales Affidavits (R102) | parcel number, grantor, grantee, **sale date, sale price** |
-| Parcel detail | owner, property address, legal description, legal classification, valuations |
-| Residential Master | livable square footage, construction year, residential components |
+- event identity is HMAC(parcel) + deed number + deed date;
+- each source release remains a separate immutable observation;
+- corrections are preserved rather than overwritten;
+- later repeat-sale work must collapse reviewed deed identities, not diff rows
+  and assume every change is a sale.
 
-All pipe-delimited `.txt` inside ZIPs, all free.
+Official references:
 
-Every doc in this repo lists Austin before Phoenix. **On this feature that
-ordering is backwards**, and the reason is legal, not technical.
+- `https://www.arcgis.com/sharing/rest/content/items/f3484c72a938497286adc4e5de7e9963?f=pjson`
+- `https://www.arcgis.com/sharing/rest/content/items/f3484c72a938497286adc4e5de7e9963/data`
+- `https://www.mcassessor.maricopa.gov/file/data_sales/R102_Sales%20Affidavit_Layout_ST42025.pdf`
 
-### 2b. Licence constraint — RECORD THIS, it is binding
+### Austin
 
-The Assessor provides the data "with the understanding that such data will
-**NOT, under any circumstances, be used or distributed for commercial gain or
-profit**."
+Texas does not provide a public individual-sale-price feed suitable for
+comparable-sales modeling. Texas Tax Code 22.27 protects voluntarily disclosed
+sale-price information held under confidentiality, and Government Code 552.149
+protects related private-entity data held by appraisal authorities.
 
-Kairos Property is a single-owner personal decision-support tool: compatible.
-But this **forecloses ever commercialising anything derived from it**, and it
-forbids redistribution. If Kairos is ever productised, this dataset must be
-removed or relicensed first. That is a product-level constraint, not a footnote.
+TCAD does publish certified appraisal exports. They contain distinct `market`,
+`appraised`, and `assessed` fields. Kairos stores the exact county terminology;
+it does not collapse those fields into a sale price.
 
----
+Austin can display:
 
-## 3. The accuracy ceiling, measured not assumed
+1. FHFA Austin metro HPI trend already collected by Property Markets.
+2. TCAD county appraised and assessed references for a selected parcel.
+3. The tax year and source release.
 
-Zillow's published **off-market** median error is **7.06%**; Redfin's is ~6.45%.
-On-market is ~1.94%, but that number is not comparable — the list price is an
-input to it ([ListWithClever](https://listwithclever.com/real-estate-blog/how-accurate-is-a-zillow-zestimate-5-things-to-know/)).
+The UI must always state: **County appraisal reference, not a market price.**
+No Texas AVM may be trained on county assessments, because that would fit one
+model to another model and falsely present the result as market evidence.
 
-So the best-funded AVMs in existence, with full MLS feeds and large ML teams, are
-**±7% median on a home that is not listed** — ±$35k on a $500k house — and
-*median* means half of all estimates are worse than that.
+Official references:
 
-**Design consequence:** this feature reports an interval and an error band, and
-the UI never renders a single number as "the value". A point estimate here would
-be less accurate than a Zestimate while looking more authoritative.
+- `https://traviscad.org/publicinformation/`
+- current certified appraisal export linked by that page;
+- official export layout ZIP linked by that page.
 
----
+## 3. Source And Licence Boundary
 
-## 4. The measurement problem — the part that constrains everything
+Both sources are approved only for the current owner's private,
+non-commercial decision support. No open-data or redistribution licence is
+asserted.
 
-A house sells roughly **once every 7–13 years**. A per-address prediction can
-only be scored when that address transacts.
+Maricopa has separate commercial-purpose request rules and fees. TCAD's public
+download page does not grant a commercial redistribution licence. Any future
+commercialisation, redistribution, or multi-user product must stop these feeds
+until a new declared-use, fee, permission, and legal review is completed.
 
-The Property workspace already refuses to report a calibration rate below **10
-matured outcomes** (`lib/property/calibration.ts`). At address level, ten matured
-outcomes for one parcel is a century.
+County data carries no accuracy guarantee. Recorded transfers are evidence, not
+automatically arm's-length comparable sales. County appraisals are tax-system
+model outputs, not independent appraisals or expected sale prices.
 
-**Therefore the learning loop cannot close at address level.** It closes at ZIP
-level, where transactions are frequent. This is not an engineering limitation to
-route around; it decides what the system is permitted to claim:
+## 4. Privacy Contract
 
-- **ZIP level** — falsifiable. Predict, wait a quarter, score against actual
-  recorded sales. Calibration is real.
-- **Parcel level** — an *interpolation* of a calibrated ZIP surface using that
-  parcel's attributes. It inherits the ZIP's error band. It is **not**
-  independently validated and must never be presented as if it were.
+The bulk worker receives the same 32-byte Property encryption master through a
+GitHub Actions secret. It derives domain-separated HMAC-SHA256 lookup keys:
 
----
+```text
+HMAC(master, "property:parcel:v1\0" + normalizedParcelId)
+HMAC(master, "property:sale-event:v1\0" + parcelKey + deedIdentity)
+```
 
-## 5. What I would refuse to build, and why
+Plain SHA-256 is forbidden because parcel IDs and addresses are enumerable.
+Raw parcel/account IDs are accepted only by an owner-gated server route and are
+converted before persistence. Parcel HMACs are not returned to the browser.
 
-The owner asked about news, demographics, new employers, "many many metrics".
-Each is individually reasonable and collectively the failure mode.
+The bulk worker does not persist or log:
 
-**A ZIP-wide event cannot rank homes within that ZIP.** A new employer
-announcement moves every parcel in the ZIP together, so its cross-sectional
-variance within the ZIP is **zero by construction**. That is structurally the
-same defect that disqualified NSE FII/DII in
-`R3_DIMENSION_FEASIBILITY.md` and that afflicts US `macro_score`. Such a signal
-can shift a ZIP's level; it can never tell you which house is mispriced.
+- plaintext parcel/account identifiers;
+- owner, grantor, or grantee names;
+- mailing or situs addresses;
+- raw source archives;
+- full input rows.
 
-**Trial count.** `walk-forward-ic-folds` Open Decision #3 (false-discovery
-procedure) is still unresolved. Property offers *quarterly* observations where
-equities offer daily. Adding twenty features against less data is precisely how
-this codebase produced five confident findings in one week that had to be
-retracted (`DIAGNOSIS.md` §4b, §11).
+## 5. Bounded Collection
 
-**"Learns user behavior" has n = 1.** This is a single-owner application. There
-is no behavioural population to learn from. Dropped.
+Large county archives never enter a Vercel request. The monthly
+`.github/workflows/property-evidence.yml` worker runs on an ephemeral GitHub
+Actions runner.
 
-Deferred, not rejected: ZIP-level covariates (permits, employer announcements,
-demographic drift) become admissible **after** stage 2 gives a calibrated
-baseline to measure them against — one at a time, each with a pre-declared
-hypothesis.
+Safety properties:
 
----
+1. It queries active scopes before any download. No scope means no provider call.
+2. Phoenix persists only selected five-digit ZIPs.
+3. Austin persists only selected HMAC parcel IDs.
+4. Raw archives live only in a temporary directory and are never artifacts or
+   caches.
+5. GitHub actions are pinned to commit SHAs with `contents: read` only.
+6. Maricopa requires the exact audited 44-column R102 header and fails closed on
+   schema drift.
+7. TCAD uses the smaller certified fixed-width export, not the multi-gigabyte
+   special JSON export, and follows the official layout positions.
+8. Every run records source hash, release ID, scope fingerprint, rows seen,
+   selected rows, actual inserted rows, and rejection counts.
+9. No row-level source content is written to logs.
 
-## 6. Design
+The service-role secret is still broad. It is accepted only because FinanceOS
+already uses it in a private repository action and all target tables are
+server-only. A future multi-user product must replace it with a narrowly scoped
+ingestion service or database role before activation.
 
-### 6.1 Ingest — bounded external worker, never Vercel
+## 6. Data Model
 
-Maricopa bulk files are hundreds of MB. They are fetched, parsed and diffed in a
-**GitHub Actions worker**, which then writes normalised rows to Supabase. This
-matches the existing decision that Redfin-scale bulk files never enter a Vercel
-request.
+| Table | Mutability | Purpose |
+|---|---|---|
+| `property_valuation_scopes` | Mutable configuration | Phoenix ZIP or Austin HMAC parcel scopes |
+| `property_bulk_snapshots` | Append-only | Source release, file/scope fingerprints, normalization counts |
+| `property_bulk_snapshot_events` | Append-only | Write started/completed/failed ledger with actual rows |
+| `property_parcel_snapshots` | Append-only | TCAD county references and selected parcel attributes per release |
+| `property_sales` | Append-only | Maricopa deed-linked transfer observations per release |
 
-New tables (all append-only, enforced by trigger **and** revoked grant, per the
-lesson in `IMPLEMENTATION_RESULT.md`):
+Append-only means UPDATE, DELETE, and TRUNCATE are blocked by grants and
+triggers. RLS is enabled and browser grants are revoked. Owner APIs use the
+server-side service client only after the existing owner gate succeeds.
 
-- `property_parcels` — parcel id, ZIP, legal classification, livable sqft, year
-  built, lot attributes. **No owner name.** Address stored **encrypted only**.
-- `property_sales` — parcel id, sale date, sale price, affidavit provenance.
-  This is the ground truth the whole feature rests on.
+The sale uniqueness key includes source, deed-based event HMAC, and source
+snapshot. This deliberately retains a correction in a later release. Current
+state is derived by a view/query with documented precedence; evidence is never
+rewritten.
 
-### 6.2 Repeat-sales ZIP index
+TCAD releases must preserve tax year and release class. Supplemental rows do not
+overwrite certified or preliminary rows. Display precedence is latest valid
+supplement, then certified, then preliminary, while every observation remains.
 
-Same-parcel resales are the gold standard because the property is its own
-control — quality, lot and location cancel out. This is the Case-Shiller
-construction. It is also self-calibrating: every resale is a scored observation.
+## 7. UI Contract
 
-### 6.3 Hedonic surface, ZIP-scoped
+`/property/valuation` shows evidence state and owner scope controls.
 
-A deterministic regression of log price on parcel attributes, fitted **per ZIP**,
-producing a value interval per parcel. Attributes are exactly what Maricopa
-publishes — sqft, year built, classification. "Corner lot" is only usable if it
-is derivable from the legal description or parcel geometry; that is an open
-question in §9, not an assumption.
+Phoenix:
 
-**No LLM touches the estimate.** An LLM may later explain a deterministic output;
-it may never alter it. Same rule as the investing side.
+- selected ZIP scopes;
+- source status, last snapshot, actual row count, and errors;
+- explicit `NO AVM`, `NO MARKET-PRICE ESTIMATE`, and
+  `NO PARCEL VALUE RANGE` labels.
 
-### 6.4 Owner's parcel — privacy contract
+Austin:
 
-The owner's address is **encrypted at rest** (`lib/property/crypto.ts`,
-AES-256-GCM, fail-closed) and is decrypted only to resolve a **parcel id**. From
-that point the pipeline handles the parcel id and ZIP only.
+- selected private parcel scope;
+- latest county appraised/assessed values with tax year;
+- FHFA metro trend chart;
+- persistent statement that county values are tax references, not sale prices.
 
-**The model never receives an address.** No owner name, no plaintext address, no
-precise identity-bearing record is stored or logged — consistent with the parent
-feature contract, which this preserves rather than amends.
+Zero rows, no configured scope, provider failure, and unavailable capability are
+four different states and must never share copy.
 
----
+## 8. Learning And Later Stages
 
-## 7. Risks
+Stage 1 makes no prediction. It only accumulates auditable source snapshots.
 
-**R1 — a range gets read as a price.** The likeliest harm. Mitigation: no point
-estimate is rendered anywhere; the interval and its measured error band are shown
-together, always.
+### Phoenix Stage 2: repeat-sale ZIP index
 
-**R2 — parcel estimates inherit ZIP error but look bespoke.** A per-parcel number
-feels more precise than the ZIP figure it is derived from. Mitigation: label it
-as an interpolation and show the ZIP's calibration alongside.
+Blocked until at least two dated source snapshots exist and reviewed deed
+identity creates genuine same-parcel repeat transactions. Before activation it
+requires:
 
-**R3 — the licence.** Non-commercial use only. Any future productisation must
-remove this dataset first.
+- correction/retraction handling;
+- arm's-length quality policy using deed status and assessor codes;
+- minimum event and ZIP sample floors;
+- temporal validation with no future release leakage;
+- a declared benchmark and error metric.
 
-**R4 — assessed-value contamination.** Maricopa's own valuations are a model. If
-they leak in as a feature we are fitting a model to a model. Sales only.
+### Phoenix Stage 3: hedonic interval
 
-**R5 — thin ZIPs.** Some ZIPs will not transact enough to calibrate. They must
-report "not enough sales" rather than borrow a neighbouring ZIP's surface — the
-same market-local honesty rule that gives Bengaluru zero rows today.
+Blocked until Stage 2 is calibrated. It may use permitted parcel attributes and
+must output an interval, not a point. It requires temporal holdout testing,
+out-of-sample error by ZIP and property type, and at least ten matured outcomes
+before any calibration rate is shown.
 
----
+### Phoenix Stage 4: owner parcel interpolation
 
-## 8. Sequencing
+Blocked until Stage 3 passes. It inherits the ZIP model's measured error and must
+be labelled as interpolation, not an independent appraisal.
 
-1. Maricopa parcel + sales ingest via GitHub Actions worker. No model.
-2. Repeat-sales ZIP index. First falsifiable output.
-3. Hedonic surface per ZIP, interval only, scored against subsequent sales, held
-   to the existing n≥10 floor.
-4. Owner parcel interpolation, clearly labelled as inheriting ZIP error.
-5. ZIP-level covariates, one at a time, only after 3 is calibrated.
+### Austin
 
-Stages 1–2 are safe and additive. Stage 3 is the first thing that makes a claim.
+There is no later AVM stage under the current source contract. New public,
+licensed arm's-length sales evidence would require a new architecture decision.
 
----
+## 9. Go/No-Go Gates
 
-## 9. Open questions for the owner
+Stage 1 may run only when:
 
-1. **Approve stage 1 only?** It is ingest with no model and no claim.
-2. **Is "corner lot" actually derivable** from Maricopa's legal description or
-   parcel geometry? Unverified. If it is not, the hedonic feature set is limited
-   to sqft, year built and classification, and that should be known before
-   stage 3 rather than discovered during it.
-3. **Non-commercial licence** — accepted as a permanent constraint on this data?
-4. **Austin** — accept that it likely never supports valuation, and say so in the
-   UI rather than leaving an empty panel implying "coming soon"?
-5. **Bengaluru** — Karnataka registration data (Kaveri) is a separate research
-   question, not covered here.
+- both database migrations are applied and verified;
+- Vercel and GitHub use the identical Property encryption master;
+- the owner has configured a bounded ZIP or parcel scope;
+- the source page, schema/layout, licence posture, and file size still match the
+  audited contract;
+- parser self-check, TypeScript, tests, and production build pass;
+- production RLS, grants, append-only triggers, and advisor results are clean.
+
+No later stage is enabled merely because its code could be written. Evidence,
+sample size, and calibration gates are product behavior, not implementation
+delay.

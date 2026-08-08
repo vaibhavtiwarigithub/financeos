@@ -36,8 +36,18 @@ export type ValuationAssessedValueRow = {
   taxYear: number;
   assessedValue: number;
   currency: "USD";
-  sourceKey: "tcad-assessment";
+  appraisedValue: number | null;
+  sourceKey: "tcad-appraisal";
   asOf: string;
+};
+
+export type ValuationScope = {
+  id: string;
+  market: "phoenix" | "austin";
+  kind: "postal_code" | "parcel";
+  /** ZIP for Phoenix; always redacted for an Austin parcel. */
+  label: string;
+  active: boolean;
 };
 
 export type PropertyValuationStageOneResponse = {
@@ -48,9 +58,10 @@ export type PropertyValuationStageOneResponse = {
     marketPriceAvailable: false;
     parcelValueRangeAvailable: false;
   };
+  encryptionReady: boolean;
+  scopes: ValuationScope[];
   phoenix: {
-    capability: "parcel_and_sale_evidence_status";
-    parcels: ValuationSourceCoverage;
+    capability: "recorded_transfer_evidence_status";
     sales: ValuationSourceCoverage;
   };
   austin: {

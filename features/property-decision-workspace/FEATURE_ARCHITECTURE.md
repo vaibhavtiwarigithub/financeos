@@ -1,11 +1,12 @@
 # Kairos Property Decision Workspace
 
-Status (2026-08-07): **P0–P4 schema applied to production and verified.**
+Status (2026-08-07): **P0-P4 and valuation-evidence Stage 1 schema applied to production and verified.**
 Collection is live for the US markets (FHFA HPI, FRED MORTGAGE30US, BLS LAUS) on
 a weekly cron; Opportunities, Financing and Forecasts persist through owner-gated
-encrypted APIs. Still NOT done: `PROPERTY_DATA_ENCRYPTION_KEY` in Vercel, any
-visual/Playwright verification, production smoke tests, My Properties/Imports,
-and every India source. No property valuation, lender integration, or automated
+encrypted APIs. The encryption master is configured consistently in Vercel and
+GitHub Actions. Still NOT done: authenticated visual verification, production
+route smoke tests, and every India source. Valuation Stage 1 is evidence-only;
+no AVM, lender integration, or automated
 transaction is authorized or enabled. See `IMPLEMENTATION_RESULT.md` for the
 verified findings list and the honest deferral list.
 

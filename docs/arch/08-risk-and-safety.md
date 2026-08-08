@@ -3,6 +3,8 @@
 >
 > Property forecasts are **shadow decision support**. They are written `state = 'shadow'`, are never a promise, and are scored only against values observed after the horizon elapsed. The Forecasts workspace **withholds a calibration rate below 10 matured outcomes** per market-and-metric cohort (`lib/property/calibration.ts`) and shows `n` regardless — at n=3 an interval-coverage percentage can only read 0, 33, 67 or 100 and would be arithmetic noise presented as evidence.
 >
+> Property parcel Stage 1 is evidence-only. Phoenix recorded transfers are preserved by deed identity and source snapshot; Austin county `appraised` and `assessed` fields are tax references, never public comparable sales or Kairos market-price estimates. Bulk workers persist no addresses or party names and use keyed HMAC parcel identities. The UI hard-disables every AVM/market-price/value-range claim. Repeat-sales or hedonic work remains blocked until multiple snapshots, correction handling, temporal validation, market-local sample floors, and measured calibration exist.
+>
 > Market-local honesty is enforced rather than assumed: the three active sources are US-only, so adapters declare `supportsMarket()` and the collector records `not_applicable` for Bengaluru instead of `success, 0 rows`. **No US value is ever substituted into an India market card.** Private data handling: no plaintext address, mortgage account number, owner name or uploaded document is stored; payloads are encrypted server-side and owner routes never trust a caller-supplied `owner_id`.
 
 > 2026-08-01 documentation truth audit: the technical breakdown guard is a hard
