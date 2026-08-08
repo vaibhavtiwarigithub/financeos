@@ -2,7 +2,13 @@ import type { PropertyMarketId } from "@/lib/property/registry";
 
 export type PropertyMetric =
   | "price_index" | "rent_index" | "inventory" | "days_on_market"
-  | "mortgage_rate" | "employment" | "unemployment_rate" | "income";
+  | "mortgage_rate" | "employment" | "unemployment_rate" | "income"
+  // HUD FMR is an area affordability reference, not a rent index, comp, or
+  // property-level rent estimate. Keeping it distinct prevents a future
+  // forecast or underwriting path from treating it as observed market rent.
+  | "rent_reference_studio" | "rent_reference_one_bedroom"
+  | "rent_reference_two_bedroom" | "rent_reference_three_bedroom"
+  | "rent_reference_four_bedroom";
 
 export type PropertyObservation = {
   sourceKey: string;

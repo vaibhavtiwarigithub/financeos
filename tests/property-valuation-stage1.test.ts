@@ -30,6 +30,14 @@ describe("Property valuation Stage 1 safety contract", () => {
     expect(worker.indexOf("rest.scopes(source)")).toBeLessThan(worker.indexOf("download(url, target)"));
   });
 
+  it("cannot fetch either county archive until its source contract is verified", () => {
+    expect(worker).toContain("DISABLED_SOURCE_REASONS");
+    expect(worker.indexOf("if source in DISABLED_SOURCE_REASONS")).toBeLessThan(worker.indexOf("SupabaseRest()"));
+    expect(workflow).not.toContain("schedule:");
+    expect(workflow).not.toContain("SUPABASE_SERVICE_ROLE_KEY");
+    expect(route).toContain("Valuation scope activation is disabled pending source licence verification");
+  });
+
   it("cannot claim an AVM or market price", () => {
     expect(route).toContain("avmAvailable: false");
     expect(route).toContain("marketPriceAvailable: false");

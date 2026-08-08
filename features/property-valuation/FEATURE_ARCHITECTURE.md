@@ -1,9 +1,9 @@
 # Property Valuation Evidence
 
-Status (2026-08-08): **Stage 1 shipped. Production migration and secrets are
-verified, the deployment is live, and both source jobs proved the pre-download
-`NO_SCOPE` guard. The first data-bearing run correctly awaits an owner-selected
-Phoenix ZIP or Austin TCAD parcel.**
+Status (2026-08-08): **Stage 1 schema is shipped, but collection is disabled.**
+The previous pre-download `NO_SCOPE` guard remains valid but is no longer enough:
+both county collectors are stopped before credentials, scopes, or downloads until
+their individual machine-use contracts are verified.
 
 Source-audit correction (2026-08-08): the claimed public/free Phoenix R102
 sales source is now **licence-unverified**. Maricopa's official data-sales

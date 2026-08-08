@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { createPropertyCollectionRun, keepObservation } from "@/lib/property/sources";
+import { createPropertyCollectionRun, HudFmrAdapter, keepObservation, PropertySourceUnavailableError } from "@/lib/property/sources";
 import { ACTIVE_PROPERTY_ADAPTERS } from "@/lib/property/sources";
+import { PROPERTY_SOURCES } from "@/lib/property/registry";
 
 describe("keepObservation — revisions must survive the `since` filter", () => {
   const since = "2026-06-30";
@@ -40,9 +41,44 @@ describe("adapter market coverage is declared, not inferred from an empty result
     }
   });
 
-  it("exposes the three official US adapters", () => {
+  it("exposes the bounded official US adapters", () => {
     expect(ACTIVE_PROPERTY_ADAPTERS.map((a) => a.sourceKey).sort())
-      .toEqual(["bls-laus", "fhfa-hpi", "fred-mortgage"]);
+      .toEqual(["bls-laus", "fhfa-hpi", "fred-mortgage", "hud-fmr"]);
+  });
+});
+
+describe("HUD FMR rental reference adapter", () => {
+  const fetchText = vi.fn(async () => ({ body: JSON.stringify({ data: { year: "2026", basicdata: {
+    "Efficiency": 1200, "One-Bedroom": 1350, "Two-Bedroom": 1600, "Three-Bedroom": 2100, "Four-Bedroom": 2550,
+  } } }), lastModified: "Wed, 01 Oct 2025 00:00:00 GMT" }));
+
+  it("normalizes only annual metro affordability references by bedroom count", async () => {
+    const adapter = new HudFmrAdapter(() => "server-token");
+    const rows = await adapter.fetch({ market: "austin", since: null, fetchText });
+    expect(rows).toHaveLength(5);
+    expect(rows[0]).toMatchObject({ sourceKey: "hud-fmr", market: "austin", metric: "rent_reference_studio", asOf: "2026-10-01", nativeUnit: "USD/month studio", value: 1200, sourceVersion: "HUD FMR 2026" });
+    expect(fetchText).toHaveBeenCalledWith(expect.stringContaining("METRO12420M12420"), expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer server-token" }) }));
+  });
+
+  it("uses only the published MSA row when HUD supplies a SAFMR ZIP array", async () => {
+    const adapter = new HudFmrAdapter(() => "server-token");
+    const rows = await adapter.fetch({ market: "phoenix", since: null, fetchText: async () => ({ body: JSON.stringify({ data: { year: 2026, basicdata: [
+      { zip_code: "85001", "One-Bedroom": 9999 }, { zip_code: "MSA level", "Efficiency": 900, "One-Bedroom": 1100, "Two-Bedroom": 1300, "Three-Bedroom": 1700, "Four-Bedroom": 2100 },
+    ] } }), lastModified: null }) });
+    expect(rows.find((row) => row.nativeUnit === "USD/month one_bedroom")?.value).toBe(1100);
+  });
+
+  it("fails explicitly when the server token is not configured", async () => {
+    await expect(new HudFmrAdapter(() => "").fetch({ market: "austin", since: null, fetchText }))
+      .rejects.toMatchObject({ name: "PropertySourceUnavailableError", code: "hud_fmr_token_unconfigured" } satisfies Partial<PropertySourceUnavailableError>);
+  });
+
+  it("does not cover Bengaluru", () => {
+    expect(new HudFmrAdapter(() => "server-token").supportsMarket("bengaluru")).toBe(false);
+  });
+
+  it("does not present the uncontracted RBI portal as a running collector", () => {
+    expect(PROPERTY_SOURCES.find((source) => source.id === "rbi-hpi")?.state).toBe("contract_pending");
   });
 });
 

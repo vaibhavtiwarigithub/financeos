@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
-import { ACTIVE_PROPERTY_ADAPTERS, createPropertyCollectionRun } from "@/lib/property/sources";
+import { ACTIVE_PROPERTY_ADAPTERS, createPropertyCollectionRun, PropertySourceUnavailableError } from "@/lib/property/sources";
 import { PROPERTY_MARKETS, type PropertyMarketId } from "@/lib/property/registry";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +51,11 @@ export async function POST(req: NextRequest) {
       await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: "success", rows_written: written, request_count: collectionRun.fetchCount() - fetchesBefore });
       results.push({ market, source: adapter.sourceKey, outcome: "success", rowsWritten: written });
     } catch (error) {
+      if (error instanceof PropertySourceUnavailableError) {
+        await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: "partial", rows_written: 0, request_count: collectionRun.fetchCount() - fetchesBefore, error_code: error.code, detail: error.message.slice(0, 300) });
+        results.push({ market, source: adapter.sourceKey, outcome: "unavailable", reason: error.code });
+        continue;
+      }
       const code = error instanceof Error ? error.name : "collection_error";
       await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: "failed", error_code: code, detail: error instanceof Error ? error.message.slice(0, 300) : "Unknown collection error", request_count: collectionRun.fetchCount() - fetchesBefore });
       results.push({ market, source: adapter.sourceKey, outcome: "failed", error: code });

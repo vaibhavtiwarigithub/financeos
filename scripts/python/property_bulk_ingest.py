@@ -55,6 +55,15 @@ MARICOPA_HEADER = [
     "PERSONALPROPERTYDESCRIPTION",
 ]
 
+# These files used to be considered Stage-1 inputs. The source-capability audit
+# found that neither feed currently has a documented, permitted machine-use
+# contract for this product. This guard runs before credentials, scopes, or
+# downloads are touched, including when a trusted operator invokes the worker.
+DISABLED_SOURCE_REASONS = {
+    "maricopa-sales": "licence_unverified",
+    "tcad-appraisal": "export_terms_reaudit_required",
+}
+
 
 def _master_key() -> bytes:
     raw = os.environ.get("PROPERTY_DATA_ENCRYPTION_KEY", "")
@@ -261,6 +270,9 @@ def batch(rows: list[dict], size: int = 500):
 
 
 def run(source: str) -> int:
+    if source in DISABLED_SOURCE_REASONS:
+        print(f"SOURCE_DISABLED source={source}; reason={DISABLED_SOURCE_REASONS[source]}; no credential, scope, or download access")
+        return 0
     rest = SupabaseRest(); key = _master_key(); scopes = rest.scopes(source)
     if not scopes:
         print(f"NO_SCOPE source={source}; no download performed")

@@ -51,6 +51,13 @@ function parseSimpleCsv(text: string): string[][] {
 
 type AdapterInput = Parameters<PropertySourceAdapter["fetch"]>[0];
 
+export class PropertySourceUnavailableError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "PropertySourceUnavailableError";
+  }
+}
+
 export class FredMortgageAdapter implements PropertySourceAdapter {
   readonly sourceKey = "fred-mortgage";
   supportsMarket(market: PropertyMarketId): boolean { return market !== "bengaluru"; }
@@ -120,4 +127,81 @@ export class BlsLausAdapter implements PropertySourceAdapter {
   }
 }
 
-export const ACTIVE_PROPERTY_ADAPTERS: PropertySourceAdapter[] = [new FhfaHpiAdapter(), new FredMortgageAdapter(), new BlsLausAdapter()];
+const HUD_FMR_BASE = "https://www.huduser.gov/hudapi/public/fmr/data";
+const HUD_FMR_ENTITY: Record<Exclude<PropertyMarketId, "bengaluru">, string> = {
+  // HUD Metro FMR area identifiers use the documented METRO<CBSA>M<CBSA>
+  // form. These are Austin-Round Rock-Georgetown and Phoenix-Mesa-Chandler.
+  austin: "METRO12420M12420",
+  phoenix: "METRO38060M38060",
+};
+
+type HudFmrPayload = {
+  data?: {
+    year?: string | number;
+    basicdata?: Record<string, unknown> | Array<Record<string, unknown>>;
+  };
+};
+
+const HUD_BEDROOMS = [
+  ["Efficiency", "studio", "rent_reference_studio"], ["One-Bedroom", "one_bedroom", "rent_reference_one_bedroom"],
+  ["Two-Bedroom", "two_bedroom", "rent_reference_two_bedroom"], ["Three-Bedroom", "three_bedroom", "rent_reference_three_bedroom"],
+  ["Four-Bedroom", "four_bedroom", "rent_reference_four_bedroom"],
+] as const;
+
+/**
+ * Official HUD Fair Market Rent data, deliberately bounded to the two current
+ * US metro workspaces. This describes an area-level affordability reference;
+ * it must never become a property rent estimate or valuation input.
+ */
+export class HudFmrAdapter implements PropertySourceAdapter {
+  readonly sourceKey = "hud-fmr";
+  constructor(private readonly token = () => process.env.HUD_FMR_API_TOKEN?.trim() ?? "") {}
+  supportsMarket(market: PropertyMarketId): boolean { return market !== "bengaluru"; }
+
+  async fetch(input: AdapterInput): Promise<PropertyObservation[]> {
+    if (!this.supportsMarket(input.market)) return [];
+    const token = this.token();
+    if (!token) throw new PropertySourceUnavailableError(
+      "hud_fmr_token_unconfigured",
+      "HUD FMR is unavailable: HUD_FMR_API_TOKEN is not configured on the server",
+    );
+    const entity = HUD_FMR_ENTITY[input.market as Exclude<PropertyMarketId, "bengaluru">];
+    const { body, lastModified } = await input.fetchText(`${HUD_FMR_BASE}/${entity}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(20_000),
+    });
+    const payload = JSON.parse(body) as HudFmrPayload;
+    const year = Number(payload.data?.year);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      throw new PropertySourceUnavailableError("hud_fmr_invalid_response", "HUD FMR response has no valid FMR year");
+    }
+    // Metro FMR is returned as one object. If HUD marks a metro as SAFMR, the
+    // response may include a ZIP array; this bounded adapter intentionally uses
+    // only its explicit MSA-level row and never accepts a ZIP or address.
+    const basic = Array.isArray(payload.data?.basicdata)
+      ? payload.data?.basicdata.find((row) => row["zip_code"] === "MSA level")
+      : payload.data?.basicdata;
+    if (!basic || typeof basic !== "object") {
+      throw new PropertySourceUnavailableError("hud_fmr_invalid_response", "HUD FMR response has no metro reference values");
+    }
+    const asOf = `${year}-10-01`;
+    if (!keepObservation(asOf, input.since, "initial")) return [];
+    return HUD_BEDROOMS.flatMap(([field, bedroom, metric]) => {
+      const value = Number(basic[field]);
+      if (!Number.isFinite(value) || value <= 0) return [];
+      return [{
+        sourceKey: this.sourceKey,
+        market: input.market,
+        metric,
+        nativeUnit: `USD/month ${bedroom}`,
+        value,
+        asOf,
+        publishedAt: null,
+        sourceVersion: `HUD FMR ${year}`,
+        revisionState: "initial" as const,
+      }];
+    });
+  }
+}
+
+export const ACTIVE_PROPERTY_ADAPTERS: PropertySourceAdapter[] = [new FhfaHpiAdapter(), new FredMortgageAdapter(), new BlsLausAdapter(), new HudFmrAdapter()];

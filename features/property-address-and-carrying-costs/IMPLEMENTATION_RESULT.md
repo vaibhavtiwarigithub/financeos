@@ -14,5 +14,6 @@ Implemented on 2026-08-08:
 - Archive-only removal and an owner-recorded value, equity, and carrying-cost chart per property.
 - Encrypted owner tax-notice and insurance-policy/quote evidence at `/property/imports`; metadata is listable but document text is never returned to the browser.
 - Explicit `Incomplete` monthly cost when no cost inputs were recorded; missing data is never represented as zero.
+- Owner-only overview truth surface: active private-record count and non-sensitive market/type status are fetched live without selecting encrypted payloads; active source contracts are shown from the source registry rather than a static P0 placeholder.
 
 Not claimed: parcel resolution, AVM, property-specific insurance quote, automatic tax bill lookup, or Bengaluru parcel data. The source capability audit also blocks unlicensed Phoenix sales-feed use and automation of the Travis County search/tax-estimator pages.

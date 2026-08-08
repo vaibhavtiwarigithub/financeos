@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, BadgeDollarSign, Building2, Database, ExternalLink, Plus, RefreshCw, Scale, ShieldAlert, X } from "lucide-react";
+import { AlertTriangle, BadgeDollarSign, Building2, Database, ExternalLink, RefreshCw, Scale, ShieldAlert, X } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { PropertyValuationStageOneResponse, ValuationSourceCoverage } from "@/lib/property/valuation-contract";
 import { EmptyState, PropertyPageFrame, PT, StatCell } from "./PropertyPrimitives";
@@ -50,8 +50,6 @@ export default function PropertyValuationStageOne() {
   const [payload, setPayload] = useState<PropertyValuationStageOneResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [scopeValue, setScopeValue] = useState("");
-  const [savingScope, setSavingScope] = useState(false);
   const [windowId, setWindowId] = useState<PropertyChartWindowId>("5y");
 
   const load = useCallback(async () => {
@@ -81,18 +79,6 @@ export default function PropertyValuationStageOne() {
     return trendRows.filter((row) => !cutoff || row.asOf >= cutoff).map((row) => ({ date: row.asOf, value: row.value }));
   }, [trendRows, windowId]);
 
-  const saveScope = async () => {
-    if (market !== "phoenix" || !scopeValue.trim()) return;
-    setSavingScope(true);
-    try {
-      const response = await fetch("/api/property/valuation-evidence", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ market, value: scopeValue.trim() }) });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Could not save scope");
-      setScopeValue(""); await load();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save scope"); }
-    finally { setSavingScope(false); }
-  };
-
   const disableScope = async (id: string) => {
     const response = await fetch(`/api/property/valuation-evidence?id=${encodeURIComponent(id)}`, { method: "DELETE" });
     if (response.ok) await load();
@@ -119,15 +105,8 @@ export default function PropertyValuationStageOne() {
 
       <div className="property-page-body" style={{ padding: "20px 28px" }}>
         {market === "phoenix" ? <section style={{ border: `1px solid ${PT.border}`, borderRadius: "7px", background: PT.surface, padding: "14px", marginBottom: "15px" }}>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: "8px", flexWrap: "wrap" }}>
-            <label style={{ display: "grid", gap: "5px", flex: "1 1 240px", color: PT.textSub, fontSize: "10px" }}>
-              Phoenix ZIP to collect
-              <input value={scopeValue} onChange={(event) => setScopeValue(event.target.value)} placeholder="e.g. 85018" style={{ minHeight: "36px", border: `1px solid ${PT.border}`, borderRadius: "6px", background: PT.cardRaised, color: PT.text, padding: "7px 9px", fontSize: "12px" }} />
-            </label>
-            <button type="button" onClick={() => void saveScope()} disabled={savingScope || !scopeValue.trim() || !payload?.encryptionReady} style={{ minHeight: "36px", display: "inline-flex", alignItems: "center", gap: "6px", border: 0, borderRadius: "6px", padding: "8px 11px", background: PT.accent, color: PT.bg, fontWeight: 800, fontSize: "10px", opacity: savingScope || !payload?.encryptionReady ? .5 : 1 }}><Plus size={13} />Add scope</button>
-          </div>
-          <div style={{ marginTop: "9px", color: PT.muted, fontSize: "9px", lineHeight: 1.5 }}>Only selected ZIP rows survive the monthly ephemeral worker; the county archive is discarded.</div>
-          {!payload?.encryptionReady && <div style={{ color: PT.amber, fontSize: "9px", marginTop: "6px" }}>Private scope storage is locked until the Property encryption key is configured.</div>}
+          <div style={{ color: PT.amber, fontSize: "11px", fontWeight: 700 }}>Phoenix collection is disabled pending source licence verification.</div>
+          <div style={{ marginTop: "7px", color: PT.muted, fontSize: "9px", lineHeight: 1.5 }}>Kairos retains historical evidence but will not accept a new ZIP, download a county archive, or represent the feed as free until a documented machine-use contract is reviewed.</div>
           <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "10px" }}>
             {(payload?.scopes ?? []).filter((scope) => scope.market === market && scope.active).map((scope) => <span key={scope.id} style={{ display: "inline-flex", alignItems: "center", gap: "5px", border: `1px solid ${PT.border}`, borderRadius: "999px", color: PT.textSub, padding: "4px 7px", fontSize: "9px" }}>{scope.label}<button type="button" aria-label={`Disable ${scope.label}`} onClick={() => void disableScope(scope.id)} style={{ border: 0, background: "transparent", color: PT.muted, display: "inline-flex", padding: 0, cursor: "pointer" }}><X size={10} /></button></span>)}
             {!(payload?.scopes ?? []).some((scope) => scope.market === market && scope.active) && <span style={{ color: PT.muted, fontSize: "9px" }}>No active collection scope. The bulk worker will skip the download.</span>}

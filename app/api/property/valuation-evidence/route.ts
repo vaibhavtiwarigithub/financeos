@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
-import { propertyEncryptionReady, propertyLookupKey } from "@/lib/property/crypto";
+import { propertyEncryptionReady } from "@/lib/property/crypto";
 import type { PropertyValuationStageOneResponse, ValuationSourceCoverage } from "@/lib/property/valuation-contract";
 
 export const dynamic = "force-dynamic";
@@ -73,17 +73,10 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const gate = await requireOwner(); if (gate) return gate;
-  if (!propertyEncryptionReady()) return NextResponse.json({ error: "Property encryption is not configured" }, { status: 503 });
-  const body = await req.json().catch(() => null) as { market?: string; value?: string } | null;
-  const market = body?.market; const value = body?.value?.trim() ?? "";
-  if (market !== "phoenix" && market !== "austin") return NextResponse.json({ error: "Only Phoenix and Austin scopes are supported" }, { status: 400 });
-  if (!value) return NextResponse.json({ error: market === "phoenix" ? "ZIP is required" : "TCAD property ID is required" }, { status: 400 });
-  const scopeValue = market === "phoenix" ? (/^\d{5}$/.test(value) ? value : null) : propertyLookupKey("parcel", value);
-  if (!scopeValue) return NextResponse.json({ error: "Phoenix scope must be a five-digit ZIP" }, { status: 400 });
-  const svc = createServiceClient();
-  const { error } = await svc.from("property_valuation_scopes").upsert({ market_slug: market, source_key: market === "phoenix" ? "maricopa-sales" : "tcad-appraisal", scope_kind: market === "phoenix" ? "postal_code" : "parcel", scope_value: scopeValue, active: true, updated_at: new Date().toISOString() }, { onConflict: "market_slug,source_key,scope_kind,scope_value" });
-  if (error) return NextResponse.json({ error: "Could not save valuation scope" }, { status: 500 });
-  return NextResponse.json({ ok: true }, { status: 201 });
+  // Neither county source has a verified machine-use licence. Rejecting at the
+  // API boundary is deliberate: a future worker cannot be re-enabled merely by
+  // adding a scope in the UI.
+  return NextResponse.json({ error: "Valuation scope activation is disabled pending source licence verification" }, { status: 409 });
 }
 
 export async function DELETE(req: NextRequest) {

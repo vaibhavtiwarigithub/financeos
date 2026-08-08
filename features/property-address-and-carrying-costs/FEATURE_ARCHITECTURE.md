@@ -80,3 +80,56 @@ be truthfully backfilled by SQL.
 - US Census Geocoding Services API: https://geocoding.geo.census.gov/geocoder/Geocoding_Services_API.html
 - Maricopa Assessor address and parcel search: https://www.mcassessor.maricopa.gov/page/home/help/searching/
 - Travis Central Appraisal District property search: https://traviscad.org/propertysearch/
+# HUD rental-reference adapter (2026-08-08)
+
+## Decision
+
+Kairos may collect the official HUD Fair Market Rent (FMR) response for the
+**Austin** and **Phoenix** HUD metro areas only, after an operator supplies a
+free HUD User API token as the server-only `HUD_FMR_API_TOKEN` environment
+variable and explicitly changes the `hud-fmr` source record to `active`.
+
+The collector records one annual bedroom-specific `rent_reference_*` observation for each HUD
+published bedroom category (studio through four-bedroom), source key `hud-fmr`,
+FMR-year source version, and the FMR-year effective date. The browser never
+receives the token. If the source remains pending or the token is absent, the
+workspace states that the source is unavailable; it does not render a zero,
+reuse an old value as current, or fabricate a rent.
+
+## Boundaries
+
+- This is an **area-level affordability reference**, not a property rent
+  estimate, comparable, appraisal, valuation input, forecast, underwriting
+  input, portfolio recommendation, or rental-price target.
+- The adapter accepts no address, ZIP, parcel, owner record, or bedroom input.
+  Even if HUD returns a Small Area FMR array, it deliberately chooses only the
+  documented `MSA level` row. This prevents an official affordability table
+  from becoming a false claim about a particular property.
+- Bengaluru is structurally `not_applicable`; no US rent reference is copied
+  into the India workspace.
+- A missing token is a typed `hud_fmr_token_unconfigured` unavailable state,
+  recorded in the append-only source-run ledger as `partial`, not a collection
+  failure and not a silent no-data state.
+
+## Official verification
+
+HUD's FMR API documentation specifies the `Authorization: Bearer` token flow,
+the `/fmr/data/{entityid}` endpoint, FMR-year response, and bedroom fields.
+HUD requires an account-created access token, so the adapter is server-only and
+starts `contract_pending`; there is no private browser key. Source:
+https://www.huduser.gov/portal/dataset/fmr-api.html
+
+HUD's API terms permit retrieval, display, and analysis of its public data and
+require the displayed HUD User attribution. The Property Market Explorer renders
+that exact attribution beside the source references. The terms also set a
+60-queries-per-minute maximum; annual, two-metro collection is materially below
+that limit. Source: https://www.huduser.gov/portal/dataset/api-terms-of-service.html
+
+## Implementation result
+
+Implemented on 2026-08-08 in `lib/property/sources.ts` and the bounded Property
+collection route. `tests/property-ingestion.test.ts` covers annual normalization,
+the MSA-only SAFMR-array rule, token absence, and Bengaluru exclusion. TypeScript
+and focused tests pass. The adapter has no schema migration because
+`property_market_observations.metric_key` is a governed text contract; the new
+metric is documented in this feature record.

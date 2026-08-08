@@ -27,6 +27,11 @@ function downsample<T>(rows: T[]): T[] {
 
 const METRIC_LABEL: Record<string, string> = {
   price_index: "Home price index (FHFA)",
+  rent_reference_studio: "HUD studio area rent reference (not a property estimate)",
+  rent_reference_one_bedroom: "HUD one-bedroom area rent reference (not a property estimate)",
+  rent_reference_two_bedroom: "HUD two-bedroom area rent reference (not a property estimate)",
+  rent_reference_three_bedroom: "HUD three-bedroom area rent reference (not a property estimate)",
+  rent_reference_four_bedroom: "HUD four-bedroom area rent reference (not a property estimate)",
   mortgage_rate: "30-year mortgage rate (FRED)",
   unemployment_rate: "Metro unemployment (BLS LAUS)",
 };
@@ -102,12 +107,14 @@ export default function PropertyMarketData({ marketId: initialMarketId }: { mark
       const ok = rows.filter((r) => r.outcome === "success").length;
       const na = rows.filter((r) => r.outcome === "not_applicable").length;
       const failed = rows.filter((r) => r.outcome === "failed").length;
+      const unavailable = rows.filter((r) => r.outcome === "unavailable").length;
       const written = rows.reduce((sum, r) => sum + (r.rowsWritten ?? 0), 0);
       // Report every category. Counting only successes made a market with no
       // applicable sources read as a failed collection.
       setMessage([
         `${ok} succeeded (${written} new rows)`,
         na ? `${na} not applicable to this market` : null,
+        unavailable ? `${unavailable} unavailable` : null,
         failed ? `${failed} failed` : null,
       ].filter(Boolean).join(" · "));
       await load();
@@ -173,6 +180,7 @@ export default function PropertyMarketData({ marketId: initialMarketId }: { mark
                 </ResponsiveContainer>
               </div>
               {forecast ? <div style={{ padding: "0 15px 12px", fontSize: "9px", color: PT.amber }}>Dashed line and shaded band are a shadow forecast ({forecast.model_version}); they are decision support, never a promise and never a trading input.</div> : null}
+              {metric.startsWith("rent_reference_") ? <div style={{ padding: "0 15px 12px", fontSize: "9px", color: PT.amber }}>HUD Fair Market Rent is an annual metro affordability reference by bedroom count. It is not a comparable rent, appraisal, rent estimate, or underwriting input.</div> : null}
             </section>;
           })}
         </div>
@@ -188,7 +196,7 @@ export default function PropertyMarketData({ marketId: initialMarketId }: { mark
     <section style={{ marginTop: "20px", borderTop: `1px solid ${PT.border}`, paddingTop: "16px" }}>
       <h2 style={{ fontSize: "13px", margin: "0 0 9px" }}>Source status</h2>
       {sourcesForMarket(marketId).map(source => <div className="property-source-row" key={source.id} style={{ display: "grid", gridTemplateColumns: "1.2fr .7fr 1.5fr", gap: "10px", padding: "9px 0", borderBottom: `1px solid ${PT.border}`, fontSize: "10px" }}><span style={{ color: PT.text }}>{source.name}</span><span style={{ color: source.state === "active" ? PT.accent : source.state === "deferred" ? PT.red : PT.amber }}>{source.state.replaceAll("_", " ")}</span><span style={{ color: PT.muted }}>{source.role}</span></div>)}
-      <div style={{ marginTop: "10px", fontSize: "9px", color: PT.muted }}>This product uses FHFA Data but is neither endorsed nor certified by FHFA. Mortgage rates via FRED (Federal Reserve Bank of St. Louis). Unemployment via U.S. Bureau of Labor Statistics.</div>
+      <div style={{ marginTop: "10px", fontSize: "9px", color: PT.muted }}>This product uses FHFA Data but is neither endorsed nor certified by FHFA. Mortgage rates via FRED (Federal Reserve Bank of St. Louis). Unemployment via U.S. Bureau of Labor Statistics. This product uses the HUD User Data API but is not endorsed or certified by HUD User. HUD FMR is an area affordability reference only.</div>
     </section>
     <style>{`
       @media (max-width: 720px) {

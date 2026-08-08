@@ -1,7 +1,7 @@
 # RBI Bengaluru HPI Collector Capability Decision
 
 **Decision date:** 2026-08-08
-**Status:** `manual_only`; no collector, source adapter, cron, or database change
+**Status:** `contract_pending`; no collector, source adapter, cron, or database change
 
 ## Verified facts
 
@@ -53,7 +53,7 @@ must never infer an individual property value or replace owner evidence.
 
 ## Current product behaviour
 
-The Property source registry deliberately keeps `rbi-hpi` as `manual_only`.
-The Data Sources page can link the official portal, while Bengaluru uses owner
-evidence for property-specific values and costs. This is an honest coverage
-state, not a collector failure.
+The Property source registry and database both keep `rbi-hpi` as
+`contract_pending`. The Data Sources page can link the official portal, while
+Bengaluru uses owner evidence for property-specific values and costs. This is
+an honest coverage state, not a collector failure.
