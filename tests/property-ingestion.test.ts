@@ -47,6 +47,17 @@ describe("adapter market coverage is declared, not inferred from an empty result
   });
 });
 
+describe("BLS local unemployment adapter", () => {
+  it("classifies an upstream outage as optional context unavailable", async () => {
+    const { BlsLausAdapter } = await import("@/lib/property/sources");
+    await expect(new BlsLausAdapter().fetch({
+      market: "austin",
+      since: null,
+      fetchText: async () => { throw new Error("HTTP 503"); },
+    })).rejects.toMatchObject({ name: "PropertySourceUnavailableError", code: "bls_transport_unavailable" } satisfies Partial<PropertySourceUnavailableError>);
+  });
+});
+
 describe("HUD FMR rental reference adapter", () => {
   const fetchText = vi.fn(async () => ({ body: JSON.stringify({ data: { year: "2026", basicdata: {
     "Efficiency": 1200, "One-Bedroom": 1350, "Two-Bedroom": 1600, "Three-Bedroom": 2100, "Four-Bedroom": 2550,

@@ -108,11 +108,18 @@ export class BlsLausAdapter implements PropertySourceAdapter {
   async fetch(input: AdapterInput): Promise<PropertyObservation[]> {
     if (!this.supportsMarket(input.market)) return [];
     const year = new Date().getUTCFullYear();
-    const { body } = await input.fetchText("https://api.bls.gov/publicAPI/v2/timeseries/data/", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ seriesid: [BLS_SERIES[input.market as Exclude<PropertyMarketId, "bengaluru">]], startyear: String(year - 5), endyear: String(year) }),
-      signal: AbortSignal.timeout(20_000),
-    });
+    let body: string;
+    try {
+      ({ body } = await input.fetchText("https://api.bls.gov/publicAPI/v2/timeseries/data/", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seriesid: [BLS_SERIES[input.market as Exclude<PropertyMarketId, "bengaluru">]], startyear: String(year - 5), endyear: String(year) }),
+        signal: AbortSignal.timeout(20_000),
+      }));
+    } catch {
+      // Local unemployment is context only. Preserve existing evidence and make
+      // an upstream outage visible without describing the whole run as failed.
+      throw new PropertySourceUnavailableError("bls_transport_unavailable", "BLS local unemployment is temporarily unavailable");
+    }
     const json = JSON.parse(body) as any; const series = json?.Results?.series?.[0]?.data;
     if (!Array.isArray(series)) throw new Error("BLS response missing series data");
     return series.flatMap((row: any) => {
