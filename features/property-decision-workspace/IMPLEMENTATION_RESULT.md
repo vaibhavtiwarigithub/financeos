@@ -214,3 +214,8 @@ column; charts use a stable phone height; and data rows retain their field names
 when desktop headers disappear. Overview, Market Explorer, and Data Sources now
 have the same responsive contract as the shared workspace pages. The stale Data
 Sources statement that no collectors exist was also removed.
+
+Verified on production deployment `dpl_B3zY6VdvZ6uPjh2ZmqYGWGywJzUf`: all eight
+Property destinations had viewport width equal to document scroll width at
+390px; the collapsed menu exposed eight links; the 1440px layout retained its
+236px sidebar; and the browser console had no warnings or errors.
