@@ -231,3 +231,13 @@ Property's hamburger on the opposite side from Investing. Property now follows
 the Investing interaction contract: a sticky safe-area top bar with the menu
 button at far left, a slide-in left drawer, backdrop dismissal, and an explicit
 Investing link in both the top bar and drawer workspace switch.
+
+## 9. Page guidance parity (2026-08-08)
+
+Every Property destination now carries the same collapsible, page-specific help
+contract as Investing: **What's here** and **What to look for**. Guidance is
+attached to the shared `PropertyPageFrame`, so Properties, Markets, Valuation,
+Imports, Opportunities, Financing, Forecasts, and Sources cannot drift into
+different help implementations. The Overview uses that same frame. Guidance
+states evidence and estimate limitations explicitly; it never represents a
+county assessment, manual scenario, or shadow forecast as a market-value claim.

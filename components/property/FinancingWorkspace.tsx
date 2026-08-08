@@ -162,6 +162,7 @@ export default function FinancingWorkspace() {
       eyebrow="Scenario calculator"
       title="Financing"
       description="Model mortgage, refinance, and revolving-credit mechanics from terms you already hold. Nothing here is a lender quote, an offer, or a recommendation."
+      help={{ whatItDoes: "Calculates payment schedules, refinance break-even, and revolving-credit rate shocks from terms you enter. It does not fetch lender offers or approve a loan.", whatToLookFor: ["Compare the current and proposed payment using the same balance and remaining term.", "A positive refinance result still needs a real lender quote and closing-cost review.", "Rate-shock outputs are sensitivities, not predictions of future rates."] }}
     >
       <div style={{ padding: "12px 28px", borderBottom: `1px solid ${PT.border}`, display: "flex", gap: "6px", flexWrap: "wrap" }}>
         {FINANCING_TYPES.map((item) => (

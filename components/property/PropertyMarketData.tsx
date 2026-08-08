@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, AlertTriangle, RefreshCw } from "lucide-react";
 import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { marketById, sourcesForMarket, type PropertyMarketId } from "@/lib/property/registry";
-import { PT } from "./PropertyPrimitives";
+import { PT, PropertyPageFrame } from "./PropertyPrimitives";
 import { PROPERTY_CHART_WINDOWS, propertyWindowCutoff, type PropertyChartWindowId } from "@/lib/property/chart-windows";
 import { usePropertyMarket } from "@/lib/property/market-context";
 
@@ -123,11 +123,8 @@ export default function PropertyMarketData({ marketId: initialMarketId }: { mark
     }
   }
 
-  return <div className="property-market-data" style={{ padding: "28px", maxWidth: "1500px" }}>
-    <div style={{ display: "flex", justifyContent: "space-between", gap: "15px", alignItems: "flex-start", flexWrap: "wrap" }}>
-      <div><div style={{ fontSize: "12px", color: PT.accent, fontWeight: 700, letterSpacing: "0.08em" }}>MARKET EXPLORER</div><h1 style={{ margin: "7px 0 6px", fontSize: "24px" }}>{market.label} market pack</h1><div style={{ color: PT.muted, fontSize: "11px" }}>{market.scope}</div></div>
-      <button onClick={() => void collect()} disabled={loading} style={{ border: `1px solid ${PT.border}`, background: PT.surface, color: PT.textSub, borderRadius: "6px", padding: "8px 11px", fontSize: "11px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}><RefreshCw size={13} />Refresh official data</button>
-    </div>
+  return <PropertyPageFrame eyebrow="Market explorer" title={`${market.label} market pack`} description={market.scope} help={{ whatItDoes: "Displays the approved market-level time series for the selected city and their source health. It is context for property decisions, not a property valuation.", whatToLookFor: ["Check the observation date and source before relying on a chart.", "A dashed line is a shadow forecast range, not a price promise.", "Bengaluru has no US-data substitute; unavailable coverage is shown explicitly."] }} action={<button onClick={() => void collect()} disabled={loading} style={{ border: `1px solid ${PT.border}`, background: PT.surface, color: PT.textSub, borderRadius: "6px", padding: "8px 11px", fontSize: "11px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}><RefreshCw size={13} />Refresh official data</button>}>
+    <div className="property-market-data" style={{ padding: "28px", maxWidth: "1500px" }}>
 
     <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", margin: "20px 0 16px" }}>{PROPERTY_CHART_WINDOWS.map(w => <button key={w.id} type="button" onClick={() => setWindowId(w.id)} style={{ padding: "5px 11px", border: `1px solid ${w.id === windowId ? PT.accent : PT.border}`, background: "transparent", borderRadius: "5px", color: w.id === windowId ? PT.accent : PT.muted, fontSize: "10px", cursor: "pointer" }}>{w.label}</button>)}</div>
 
@@ -205,5 +202,6 @@ export default function PropertyMarketData({ marketId: initialMarketId }: { mark
         .property-source-row { grid-template-columns: minmax(0, 1fr) !important; gap: 4px !important; padding: 12px 0 !important; }
       }
     `}</style>
-  </div>;
+    </div>
+  </PropertyPageFrame>;
 }

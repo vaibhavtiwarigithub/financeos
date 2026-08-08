@@ -125,7 +125,7 @@ export default function OpportunitiesWorkspace() {
   const actionable = scenarios.filter((s) => s.decision_state === "actionable").length;
 
   return (
-    <PropertyPageFrame eyebrow="Decision lab" title="Opportunities" description="Compare user-entered deal assumptions with deterministic rental math. This page does not discover listings or estimate market prices.">
+    <PropertyPageFrame eyebrow="Decision lab" title="Opportunities" description="Compare user-entered deal assumptions with deterministic rental math. This page does not discover listings or estimate market prices." help={{ whatItDoes: "Compares a buy, rental, or land scenario using your stated price, financing, costs, rent, and exit assumptions. It is a calculator, not a listing scout.", whatToLookFor: ["Change one assumption at a time to see what drives cash flow and return.", "Treat missing tax, insurance, vacancy, and maintenance inputs as uncertainty, not zero cost.", "An actionable result means the entered scenario clears its deterministic checks, not that Kairos recommends buying."] }}>
       <div className="property-stat-row" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", borderBottom: `1px solid ${PT.border}` }}>
         <StatCell label="SAVED SCENARIOS" value={loading ? "…" : String(scenarios.length)} detail="Persisted, owner-encrypted" />
         <StatCell label="ACTIONABLE" value={loading ? "…" : String(actionable)} tone={actionable ? PT.accent : PT.muted} detail="Under your assumptions only" />

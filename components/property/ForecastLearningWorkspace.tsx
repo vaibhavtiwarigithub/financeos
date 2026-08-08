@@ -118,7 +118,7 @@ export default function ForecastLearningWorkspace() {
   })), [matured]);
 
   return (
-    <PropertyPageFrame eyebrow="Shadow workspace" title="Forecasts & learning" description="Shadow forecasts scored against what was later observed. Nothing here is a promise, and no securities score, order or money path reads it.">
+    <PropertyPageFrame eyebrow="Shadow workspace" title="Forecasts & learning" description="Shadow forecasts scored against what was later observed. Nothing here is a promise, and no securities score, order or money path reads it." help={{ whatItDoes: "Shows persisted market-level shadow forecasts beside eventual observations. It also keeps your separate manual compound-growth scenario out of the learning ledger.", whatToLookFor: ["Calibration is withheld until at least 10 outcomes mature for the exact market and metric.", "Dashed ranges are forecast scenarios, not a property appraisal or price guarantee.", "Your manual assumption chart is useful for planning but is not a Kairos prediction."] }}>
       <div className="property-stat-row" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", borderBottom: `1px solid ${PT.border}` }}>
         <StatCell label="SHADOW FORECASTS" value={loading ? "…" : String(forecasts.length)} detail="Append-only ledger" />
         <StatCell label="MATURED OUTCOMES" value={loading ? "…" : String(matured.length)} detail="Horizon elapsed and observed" />

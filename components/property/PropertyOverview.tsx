@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowRight, Building2, Database, MapPin, ShieldCheck } from "lucide-react";
 import { PROPERTY_MARKETS, PROPERTY_SOURCES } from "@/lib/property/registry";
+import { PropertyPageFrame } from "./PropertyPrimitives";
 
 const T = { surface: "#13151C", card: "#1A1D27", border: "#252836", text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280", accent: "#34D399", blue: "#60A5FA", amber: "#FBBF24" };
 
@@ -37,12 +38,8 @@ export default function PropertyOverview() {
         ? "Active owner records; private details remain sealed"
         : "Private storage is locked"
       : "Loading owner record status";
-  return <div className="property-overview" style={{ padding: "28px", maxWidth: "1500px" }}>
-    <section style={{ paddingBottom: "24px", borderBottom: `1px solid ${T.border}` }}>
-      <div style={{ fontSize: "12px", color: T.accent, fontWeight: 700, letterSpacing: "0.08em" }}>PROPERTY WORKSPACE</div>
-      <h1 style={{ margin: "7px 0", fontSize: "25px", letterSpacing: 0, lineHeight: 1.2 }}>Market evidence before property decisions</h1>
-      <p style={{ margin: 0, maxWidth: "680px", color: T.textSub, fontSize: "13px", lineHeight: 1.6 }}>Austin, Phoenix, and Bengaluru are tracked as independent markets. Market evidence, owner records, and source status stay separate from securities research and execution.</p>
-    </section>
+  return <PropertyPageFrame eyebrow="Property workspace" title="Market evidence before property decisions" description="Austin, Phoenix, and Bengaluru are tracked independently. Market evidence, owner records, and source status stay separate from securities research and execution." help={{ whatItDoes: "Gives you a truthful starting point: active source contracts, private-record status, and the three independent market packs.", whatToLookFor: ["A source is active only when its data contract allows collection; pending does not mean broken.", "Private record counts never expose addresses, values, loans, or documents.", "Choose a market pack before treating a trend as relevant to a property decision."] }}>
+    <div className="property-overview" style={{ padding: "28px", maxWidth: "1500px" }}>
     <section className="property-three-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", borderBottom: `1px solid ${T.border}` }}>
       {[
         ["Markets", String(PROPERTY_MARKETS.length), "Independent location packs", MapPin, T.accent],
@@ -74,5 +71,6 @@ export default function PropertyOverview() {
         .property-overview-heading { align-items: flex-start !important; flex-direction: column !important; }
       }
     `}</style>
-  </div>;
+    </div>
+  </PropertyPageFrame>;
 }
