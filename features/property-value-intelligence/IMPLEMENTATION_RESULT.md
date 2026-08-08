@@ -16,9 +16,10 @@ Implemented on 2026-08-08:
   model version, and unvalidated calibration state. A user explicitly selects
   which dated evidence point may become the reference base; recording an
   appraisal, estimate, or note never changes a derived reference by itself.
-- Local BLS unemployment is optional context. An upstream outage preserves the
-  existing observation history and records a typed unavailable result; it never
-  changes a price scenario or makes FHFA/FRED collection appear failed.
+- Local BLS unemployment and FRED mortgage rates are optional context. An
+  upstream outage preserves existing observation history and records a typed
+  unavailable result; it never changes a price scenario or makes FHFA price
+  collection appear failed.
 
 Not implemented: a Zillow/Redfin-style AVM, property-level market-price claim,
 listing scrape, MLS integration, automated comparable selection, or any lending

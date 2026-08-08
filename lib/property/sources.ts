@@ -63,7 +63,12 @@ export class FredMortgageAdapter implements PropertySourceAdapter {
   supportsMarket(market: PropertyMarketId): boolean { return market !== "bengaluru"; }
   async fetch(input: AdapterInput): Promise<PropertyObservation[]> {
     if (!this.supportsMarket(input.market)) return [];
-    const { body, lastModified } = await input.fetchText(FRED_MORTGAGE, { signal: AbortSignal.timeout(20_000) });
+    let body: string; let lastModified: string | null;
+    try {
+      ({ body, lastModified } = await input.fetchText(FRED_MORTGAGE, { signal: AbortSignal.timeout(20_000) }));
+    } catch {
+      throw new PropertySourceUnavailableError("fred_transport_unavailable", "FRED mortgage context is temporarily unavailable");
+    }
     return parseSimpleCsv(body).slice(1).flatMap(([date, raw]) => {
       const value = Number(raw);
       if (!date || !Number.isFinite(value) || !keepObservation(date, input.since, "initial")) return [];
