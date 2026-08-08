@@ -1,7 +1,9 @@
 # Property Valuation Evidence
 
-Status (2026-08-07): **Stage 1 implemented locally. Production migration,
-secrets, first scoped run, and deployment verification remain pending.**
+Status (2026-08-08): **Stage 1 shipped. Production migration and secrets are
+verified, the deployment is live, and both source jobs proved the pre-download
+`NO_SCOPE` guard. The first data-bearing run correctly awaits an owner-selected
+Phoenix ZIP or Austin TCAD parcel.**
 
 Parent: `features/property-decision-workspace/FEATURE_ARCHITECTURE.md`
 

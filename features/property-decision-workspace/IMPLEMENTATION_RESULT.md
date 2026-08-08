@@ -1,9 +1,9 @@
 # Kairos Property — implementation result
 
 Date: 2026-08-07 · Production project `dionkikgdmlaotvtbnfr`
-Status: **P2-P4 and valuation-evidence Stage 1 schema applied and verified. UI
-persistence and charts landed. The Vercel and GitHub Action encryption master is
-configured. Deployment and authenticated visual verification remain pending.**
+Status: **P2-P4 and valuation-evidence Stage 1 shipped. Schema, secrets,
+production deployment, parser self-checks, and the no-scope download guard are
+verified. Authenticated visual verification remains pending.**
 
 ---
 
@@ -129,7 +129,7 @@ true latest observation so the "as of" line cannot disagree with the chart.
 
 ## 3. Gates
 
-`npx tsc --noEmit` clean. `npx vitest run` **1688 passed / 7 skipped**.
+`npx tsc --noEmit` clean. `npx vitest run` **1704 passed / 7 skipped**.
 `npm run build` clean.
 
 Two tests failed on two separate runs and passed on a clean re-run both times.
@@ -168,11 +168,10 @@ Census ACS and HUD FMR are `contract_pending` pending a key/token.
 1. **No Playwright or visual verification.** The pages are auth-gated and no
    desktop/mobile screenshot pass was run. Responsive classes are reused from the
    existing shell but are unverified visually.
-2. **No production deployment smoke test.**
-3. **Bengaluru data** — no India source is implemented.
-4. **`rent_index`** is forecast-capable in code but no adapter produces it, so it
+2. **Bengaluru data** — no India source is implemented.
+3. **`rent_index`** is forecast-capable in code but no adapter produces it, so it
    will never populate.
-5. **Open design question, undecided:** `MORTGAGE30US` is a **national** series
+4. **Open design question, undecided:** `MORTGAGE30US` is a **national** series
    stored per market, so 2,889 identical rows exist for Austin and again for
    Phoenix. It works, but it duplicates and misrepresents a national series as
    market-local. A cleaner model is one `national` geography that markets
@@ -198,3 +197,9 @@ scope, pins action SHAs, uploads no raw artifacts, and runs no model. The UI say
 The identical Property encryption master is configured in local development,
 Vercel production/preview/development, and the FinanceOS GitHub Action. GitHub
 also has the FinanceOS Supabase URL and service-role key; no value was logged.
+
+Production deployment `dpl_9QQQZaxASYtQMkSMGrf3BaZ1f9H6` is live at
+`https://financeos-phi.vercel.app`. GitHub Actions run `31241170477` completed
+both matrix jobs: each parser self-check passed and each source returned
+`NO_SCOPE` before downloading. This is the intended state until the owner adds a
+Phoenix ZIP or Austin parcel through the authenticated UI.
