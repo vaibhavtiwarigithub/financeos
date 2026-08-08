@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { calculateOwnershipCost } from "@/lib/property/ownership-cost";
 import { parseCensusGeocode } from "@/lib/property/geocode";
 import { propertyWindowCutoff } from "@/lib/property/chart-windows";
+import { parsePropertyEvidenceImport } from "@/lib/property/import-contract";
 
 describe("property owner records", () => {
   it("calculates a complete monthly carrying cost without mixing annual and monthly inputs", () => {
@@ -36,5 +39,19 @@ describe("property owner records", () => {
     expect(propertyWindowCutoff("1m", now)).toBe("2026-07-08");
     expect(propertyWindowCutoff("20y", now)).toBe("2006-08-08");
     expect(propertyWindowCutoff("all", now)).toBeNull();
+  });
+
+  it("keeps the property-value ledger immutable, server-only, and archive-safe", () => {
+    const migration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260808180110_property_asset_history.sql"), "utf8");
+    expect(migration).toContain("property_asset_id uuid not null references public.property_assets(id) on delete restrict");
+    expect(migration).toContain("alter table public.property_asset_history enable row level security");
+    expect(migration).toContain("revoke all on public.property_asset_history from anon, authenticated");
+    expect(migration).toContain("before update or delete on public.property_asset_history");
+    expect(migration).toContain("archive_property_asset");
+  });
+
+  it("accepts only real calendar dates for encrypted tax and insurance evidence", () => {
+    expect(parsePropertyEvidenceImport({ importType: "tax_notice", sourceLabel: "County notice", content: "Amount redacted", market: "austin", asOf: "2026-02-28" })).toMatchObject({ market: "austin" });
+    expect(parsePropertyEvidenceImport({ importType: "tax_notice", sourceLabel: "County notice", content: "Amount redacted", market: "austin", asOf: "2026-02-31" })).toBeNull();
   });
 });

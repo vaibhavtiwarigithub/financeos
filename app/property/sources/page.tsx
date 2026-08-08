@@ -8,7 +8,7 @@ export default function PropertySourcesPage() {
     <div className="property-sources-page" style={{ padding: "28px", maxWidth: "1500px" }}>
       <div style={{ color: T.accent, fontWeight: 700, fontSize: "12px", letterSpacing: "0.08em" }}>DATA SOURCES</div>
       <h1 style={{ margin: "7px 0", fontSize: "24px", letterSpacing: 0 }}>Source catalogue and collection health</h1>
-      <p style={{ color: T.textSub, fontSize: "13px", lineHeight: 1.55, margin: "0 0 20px", maxWidth: "760px" }}>Official market observations collect on bounded schedules. Parcel evidence collects only for owner-selected Phoenix ZIPs or Austin parcel references; unsupported markets remain explicitly unavailable.</p>
+      <p style={{ color: T.textSub, fontSize: "13px", lineHeight: 1.55, margin: "0 0 20px", maxWidth: "760px" }}>Official market observations collect on bounded schedules. Exact-address matching is owner-initiated and never fabricated; unsupported parcel or valuation coverage remains explicitly unavailable.</p>
       <div style={{ border: `1px solid ${T.border}`, borderRadius: "7px", overflow: "hidden" }}>
         <div className="property-source-header" style={{ display: "grid", gridTemplateColumns: "1.2fr .9fr 1.3fr .8fr auto", gap: "12px", padding: "10px 14px", color: T.muted, fontSize: "10px", fontWeight: 700, letterSpacing: "0.07em", borderBottom: `1px solid ${T.border}` }}><span>SOURCE</span><span>MARKETS</span><span>USE</span><span>CADENCE</span><span>STATE</span></div>
         {PROPERTY_SOURCES.map((source) => (

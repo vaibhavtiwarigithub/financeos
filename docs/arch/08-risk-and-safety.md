@@ -800,7 +800,7 @@ days. All earnings collectors share one real ISO-date validator, so impossible
 provider dates cannot normalize into another session. Normal scoring resumes on
 the first post-report daily bar.
 > 2026-08-08: **Property address and carrying-cost boundary.** Exact addresses,
-> loan terms, tax, insurance, and maintenance values remain owner-only encrypted
+> loan terms, tax, insurance, and maintenance values remain owner-only encrypted. Owner-provided tax notices and insurance quotes use the same AES-256-GCM vault through `/api/property/owner-evidence`; the UI retains metadata only and does not perform OCR, extraction, automated quote comparison, or automatic cost mutation.
 > data and never enter an LLM or investing flow. API inputs are size/range
 > bounded. US geocoding fails honestly to `no_match`, `ambiguous`, or
 > `unavailable`; it never invents a parcel. Monthly cost uses the shared

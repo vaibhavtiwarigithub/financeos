@@ -1,6 +1,6 @@
 # Property Address And Carrying Costs
 
-Status (2026-08-08): **Implemented.** No schema migration is required because all new owner-private fields use the existing encrypted `property_assets.encrypted_payload` contract.
+Status (2026-08-08): **Implemented.** Address and current carrying-cost fields use the existing encrypted `property_assets.encrypted_payload` contract. The editable-record release adds `property_asset_history` through `20260808180110_property_asset_history.sql`; its history snapshots are encrypted too.
 
 Source capability decision (2026-08-08): see
 [`SOURCE_CAPABILITY_AUDIT.md`](SOURCE_CAPABILITY_AUDIT.md) before adding any
@@ -55,6 +55,25 @@ Historical market charts use: `1M`, `6M`, `YTD`, `1Y`, `5Y`, `10Y`, `20Y`, `All`
 - A geocoder outage does not prevent saving the private record and does not fabricate resolution.
 - Austin no longer asks the owner for a TCAD property ID; Phoenix bulk collection remains ZIP-scoped.
 - Property workflows remain isolated from investing scores, agents, orders, and strategy promotion.
+
+## Editable Records And Owner History (2026-08-08)
+
+The current `property_assets` row is editable owner state. Every create or save
+also writes one encrypted, append-only `property_asset_history` snapshot through
+an atomic service-role RPC. The history contains the valuation, loan, and
+carrying-cost inputs needed to reproduce the chart point, but deliberately does
+not duplicate the exact address.
+
+An owner can choose the snapshot's effective date, including a prior date, but
+cannot select a future date. The chart renders the recorded value, derived
+equity, and derived monthly carrying cost in the asset's own currency. It never
+cross-sums USD and INR.
+
+Records are archived rather than deleted. The history foreign key uses
+`ON DELETE RESTRICT`, history mutations and truncation are rejected by database
+triggers, and table/function access is service-role-only. Existing records begin
+their history at their next save because their current encrypted payload cannot
+be truthfully backfilled by SQL.
 
 ## Official References
 
