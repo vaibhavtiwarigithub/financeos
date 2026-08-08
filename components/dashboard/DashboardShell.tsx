@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
 import { getMarketSupport, SUPPORT_META } from "@/lib/market-support";
 import { MarketProvider, MarketSwitcher } from "@/lib/market-context";
+import { ChartNoAxesCombined } from "lucide-react";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -387,8 +388,9 @@ export default function DashboardShell({ profile, children }: { profile: Profile
         {/* Logo + bell row */}
         <div style={{ padding: "18px 16px 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontSize: "18px", fontWeight: 800, letterSpacing: "-0.03em" }}>
-              <span style={{ color: T.accent }}>K</span>airos
+            <div style={{ display: "flex", alignItems: "center", gap: "9px", fontSize: "18px", fontWeight: 800, letterSpacing: 0 }}>
+              <ChartNoAxesCombined size={18} color={T.accent} aria-hidden="true" />
+              <span>Kairos Investing</span>
             </div>
             <div style={{ fontSize: "9px", color: T.muted, marginTop: "2px", letterSpacing: "0.06em" }}>
               Right signal. Right moment.
