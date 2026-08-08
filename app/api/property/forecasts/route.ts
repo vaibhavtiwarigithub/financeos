@@ -5,6 +5,46 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { buildPropertyBaselineForecast } from "@/lib/property/forecast";
 import { PROPERTY_MARKETS } from "@/lib/property/registry";
 
+export const dynamic = "force-dynamic";
+
+/**
+ * Read persisted shadow forecasts together with any matured outcome.
+ *
+ * The route was POST-only, so the Forecasts workspace had no way to display the
+ * ledger it exists to show. Outcomes are fetched separately and joined in
+ * memory rather than via an embedded PostgREST relation: `property_forecasts`
+ * has no FK POINTING AT it that PostgREST would expose in that direction, and a
+ * missing outcome is the normal case (a forecast is unmatured until its horizon
+ * elapses), so an inner join would silently hide most of the ledger.
+ */
+export async function GET() {
+  const gate = await requireOwner(); if (gate) return gate;
+  const svc = createServiceClient();
+
+  const { data: forecasts, error } = await svc.from("property_forecasts")
+    .select("id, geography_slug, metric_key, horizon_days, cutoff_at, lower_value, base_value, upper_value, model_version, state, created_at")
+    .order("cutoff_at", { ascending: false })
+    .limit(500);
+  if (error) return NextResponse.json({ error: "Forecast ledger is temporarily unavailable" }, { status: 503 });
+
+  const ids = (forecasts ?? []).map((f: any) => f.id);
+  let outcomes: any[] = [];
+  if (ids.length) {
+    const { data, error: outcomeError } = await svc.from("property_forecast_outcomes")
+      .select("forecast_id, actual_value, evaluated_at, absolute_error, interval_covered")
+      .in("forecast_id", ids);
+    // A failed outcome read must not be reported as "nothing has matured yet".
+    if (outcomeError) return NextResponse.json({ error: "Forecast outcomes are temporarily unavailable" }, { status: 503 });
+    outcomes = data ?? [];
+  }
+  const byForecast = new Map(outcomes.map((o: any) => [o.forecast_id, o]));
+
+  return NextResponse.json({
+    forecasts: (forecasts ?? []).map((f: any) => ({ ...f, outcome: byForecast.get(f.id) ?? null })),
+    maturedCount: outcomes.length,
+  });
+}
+
 export async function POST(req: NextRequest) {
   if (!verifyCronSecret(req)) { const gate = await requireOwner(); if (gate) return gate; }
   const svc = createServiceClient(); const created: unknown[] = []; const matured: unknown[] = [];

@@ -1291,3 +1291,29 @@ and deny-by-default Supabase registry/source-run tables. No source worker,
 observation, private address, property asset, financing input, forecast, LLM
 property prompt, investment integration, or transaction capability was enabled.
 
+## 2026-08-07 — Property workspace: schema live, three source adapters, isolation reaffirmed
+
+**Decided.** Kairos Property's private and evidence schema is applied to
+production. Market data comes from three keyless official US sources as small
+native adapters — FHFA HPI, FRED `MORTGAGE30US`, BLS LAUS. Third-party packages
+(DealLens, RealVest, HomeHarvest, `fred-mcp`, `rhud`) and listing scrapers were
+reviewed and **rejected** as runtime dependencies: none improves the security,
+licence or provenance boundary over reading the official release directly.
+
+**Isolation reaffirmed as an invariant.** No property table, adapter, scenario,
+forecast or journal row is read by any securities score, eligibility gate,
+sizing rule, order, exit, promotion gate or broker call. One-way dependency only.
+
+**Append-only is a grant property, not a convention.** Row triggers do not fire
+on TRUNCATE; the property evidence tables now carry statement-level TRUNCATE
+triggers AND revoked `service_role` grants. This defect had already been found
+and fixed once on 2026-08-01 for the exogenous-risk tables and was reintroduced
+here — treat "append-only" claims as unverified until both barriers are checked.
+
+**Calibration refuses below n=10.** Forecast interval-coverage rates are withheld
+until a market-and-metric cohort has ten matured outcomes, and `n` is always
+shown. At n=3 a coverage percentage can only read 0/33/67/100.
+
+**Open, undecided:** `MORTGAGE30US` is a national series currently stored once
+per market (2,889 duplicate rows per market). A `national` geography that markets
+reference is cleaner. Not changed unilaterally.

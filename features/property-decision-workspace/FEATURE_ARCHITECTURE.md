@@ -1,8 +1,13 @@
 # Kairos Property Decision Workspace
 
-Status: P0 implemented; P1/P4 data contracts implemented but inactive. No
-collection worker, property valuation, lender integration, private vault, or
-automated transaction is authorized or enabled.
+Status (2026-08-07): **P0–P4 schema applied to production and verified.**
+Collection is live for the US markets (FHFA HPI, FRED MORTGAGE30US, BLS LAUS) on
+a weekly cron; Opportunities, Financing and Forecasts persist through owner-gated
+encrypted APIs. Still NOT done: `PROPERTY_DATA_ENCRYPTION_KEY` in Vercel, any
+visual/Playwright verification, production smoke tests, My Properties/Imports,
+and every India source. No property valuation, lender integration, or automated
+transaction is authorized or enabled. See `IMPLEMENTATION_RESULT.md` for the
+verified findings list and the honest deferral list.
 
 Initial market packs: Austin Central Texas, Phoenix Metro Arizona, and Bengaluru
 Karnataka. They are independent markets, never a blended property universe.
