@@ -126,8 +126,10 @@ parcel price.
 - 1 year: persistent-trend baseline plus historical volatility band.
 - 3 and 5 years: same baseline compounded only within an explicit cap and wider
   uncertainty; no apparent precision from decimal projections.
-- Drivers: index momentum, publication freshness, mortgage-rate context,
-  employment context, and source coverage. Missing inputs are named.
+- Current numeric driver: local price-index momentum and its observed volatility.
+  Mortgage-rate and local-unemployment series are collected as labelled context,
+  not model features, until a predeclared point-in-time shadow proves a
+  market-local improvement against this baseline. Missing inputs are named.
 - No national mortgage or labour measure may become a local property fact.
 - The owner may run a separate manual assumption scenario, but it is never
   written to the forecast-evaluation ledger as a Kairos forecast.
@@ -193,6 +195,17 @@ collection remains `contract_pending`.
 5. Owner-comparable import workflow, still no automatic listing/MLS scraping.
 6. Market-specific AVM only after the hard gate above. This is deliberately not
    scheduled by calendar.
+
+### Data-use rule
+
+Free data already available to Austin/Phoenix is not automatically a better
+forecast feature. FHFA price history is the current numeric baseline. FRED
+mortgage rates and BLS local unemployment are retained as separate,
+market-local context. BLS collection retains its permitted 20-year history
+window so a future candidate can be tested, but revised data without a release
+vintage is excluded from historical accuracy claims. A candidate may replace
+the baseline only after a predeclared rolling-origin, no-look-ahead comparison
+improves both error and interval calibration on the same market.
 
 ## Acceptance Criteria
 

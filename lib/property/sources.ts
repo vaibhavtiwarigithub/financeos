@@ -101,6 +101,10 @@ const BLS_SERIES: Record<Exclude<PropertyMarketId, "bengaluru">, string> = {
   austin: "LAUMT481242000000003",
   phoenix: "LAUMT043806000000003",
 };
+// BLS permits a bounded 20-year request without a registration key. Retaining
+// that full window gives future shadows enough local context while remaining
+// below the provider's documented request horizon.
+export const BLS_HISTORY_YEARS = 20;
 
 export class BlsLausAdapter implements PropertySourceAdapter {
   readonly sourceKey = "bls-laus";
@@ -110,7 +114,7 @@ export class BlsLausAdapter implements PropertySourceAdapter {
     const year = new Date().getUTCFullYear();
     const { body } = await input.fetchText("https://api.bls.gov/publicAPI/v2/timeseries/data/", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ seriesid: [BLS_SERIES[input.market as Exclude<PropertyMarketId, "bengaluru">]], startyear: String(year - 5), endyear: String(year) }),
+      body: JSON.stringify({ seriesid: [BLS_SERIES[input.market as Exclude<PropertyMarketId, "bengaluru">]], startyear: String(year - (BLS_HISTORY_YEARS - 1)), endyear: String(year) }),
       signal: AbortSignal.timeout(20_000),
     });
     const json = JSON.parse(body) as any; const series = json?.Results?.series?.[0]?.data;

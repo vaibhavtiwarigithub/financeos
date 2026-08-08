@@ -16,6 +16,9 @@ Implemented on 2026-08-08:
   model version, and unvalidated calibration state. A user explicitly selects
   which dated evidence point may become the reference base; recording an
   appraisal, estimate, or note never changes a derived reference by itself.
+- Austin/Phoenix local unemployment collection now retains the BLS-permitted
+  20-year window. It is visible context and a future shadow input only; it does
+  not alter the price-index scenario until point-in-time testing proves value.
 
 Not implemented: a Zillow/Redfin-style AVM, property-level market-price claim,
 listing scrape, MLS integration, automated comparable selection, or any lending
