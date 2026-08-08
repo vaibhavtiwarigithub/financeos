@@ -174,7 +174,7 @@ export default function OpportunitiesWorkspace() {
               : scenarios.length === 0 ? <EmptyState title="No saved scenarios" detail="Enter a candidate using figures you already have. Listing discovery stays absent until a permitted provider is connected." />
               : !comparable ? <EmptyState title="Comparison split by currency" detail="USD and INR cash flows cannot share one scale. Filter to a single currency group to compare." />
               : (
-                <div style={{ padding: "16px", height: "260px" }}>
+                <div className="property-chart" style={{ padding: "16px", height: "260px" }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 12 }}>
                       <CartesianGrid stroke={PT.border} vertical={false} />
@@ -199,14 +199,14 @@ export default function OpportunitiesWorkspace() {
                 const cash = Number(r.annualCashFlow ?? 0);
                 return (
                   <div className="property-table-row" key={s.id} style={{ display: "grid", gridTemplateColumns: "1fr .8fr .7fr .8fr .8fr 1fr", gap: "8px", alignItems: "center", padding: "12px", borderBottom: `1px solid ${PT.border}`, color: PT.textSub, fontSize: "10px" }}>
-                    <span title={s.decision_state} style={{ color: DECISION_TONE[s.decision_state] ?? PT.textSub }}>
+                    <span data-label="DATE / DECISION" title={s.decision_state} style={{ color: DECISION_TONE[s.decision_state] ?? PT.textSub }}>
                       {new Date(s.created_at).toLocaleDateString()} · {s.decision_state.replace(/_/g, " ")}
                     </span>
-                    <span>{PROPERTY_MARKETS.find((m) => m.id === s.geography_slug)?.label ?? s.geography_slug}</span>
-                    <span>{Number(r.capRatePct ?? 0).toFixed(2)}%</span>
-                    <span>{Number(r.cashOnCashReturnPct ?? 0).toFixed(2)}%</span>
-                    <span>{r.dscr == null ? "—" : Number(r.dscr).toFixed(2)}</span>
-                    <span style={{ color: cash >= 0 ? PT.accent : PT.red }}>{code} {Math.round(cash).toLocaleString()}</span>
+                    <span data-label="MARKET">{PROPERTY_MARKETS.find((m) => m.id === s.geography_slug)?.label ?? s.geography_slug}</span>
+                    <span data-label="CAP RATE">{Number(r.capRatePct ?? 0).toFixed(2)}%</span>
+                    <span data-label="CASH RETURN">{Number(r.cashOnCashReturnPct ?? 0).toFixed(2)}%</span>
+                    <span data-label="DSCR">{r.dscr == null ? "—" : Number(r.dscr).toFixed(2)}</span>
+                    <span data-label="ANNUAL CASH" style={{ color: cash >= 0 ? PT.accent : PT.red }}>{code} {Math.round(cash).toLocaleString()}</span>
                   </div>
                 );
               })}

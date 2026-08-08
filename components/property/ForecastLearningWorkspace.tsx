@@ -144,7 +144,7 @@ export default function ForecastLearningWorkspace() {
                   ? "A forecast is scored only after its horizon elapses AND a later observation exists for that metric. Nothing is plotted until then."
                   : "The weekly job kairos-property-forecast runs Sundays at 10:30 UTC and writes a shadow forecast per market and metric once that metric has enough observation history. Price-index forecasts use a 365-day horizon and mortgage-rate 90 days, so the first scoreable outcome is at least a quarter away."} />
             ) : (
-              <div style={{ height: "320px", padding: "16px 10px 8px" }}>
+              <div className="property-chart" style={{ height: "320px", padding: "16px 10px 8px" }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={chart} margin={{ top: 8, right: 15, left: 0, bottom: 30 }}>
                     <CartesianGrid stroke={PT.border} vertical={false} />
@@ -177,12 +177,12 @@ export default function ForecastLearningWorkspace() {
                 const blocker = calibrationBlocker(c);
                 return (
                   <div className="property-table-row" key={`${c.market}-${c.metric}`} style={{ display: "grid", gridTemplateColumns: "1fr 1fr .5fr .9fr .9fr 1.6fr", gap: "8px", alignItems: "center", padding: "12px", borderBottom: `1px solid ${PT.border}`, color: PT.textSub, fontSize: "10px" }}>
-                    <span style={{ color: PT.text }}>{PROPERTY_MARKETS.find((m) => m.id === c.market)?.label ?? c.market}</span>
-                    <span>{METRIC_LABEL[c.metric] ?? c.metric}</span>
-                    <span>{c.n}</span>
-                    <span>{c.intervalCoveragePct == null ? "—" : `${c.intervalCoveragePct.toFixed(0)}%`}</span>
-                    <span>{c.meanAbsolutePercentError == null ? "—" : `${c.meanAbsolutePercentError.toFixed(2)}%`}</span>
-                    <span style={{ color: blocker ? PT.amber : PT.accent }}>{blocker ?? "Scoreable"}</span>
+                    <span data-label="MARKET" style={{ color: PT.text }}>{PROPERTY_MARKETS.find((m) => m.id === c.market)?.label ?? c.market}</span>
+                    <span data-label="METRIC">{METRIC_LABEL[c.metric] ?? c.metric}</span>
+                    <span data-label="N">{c.n}</span>
+                    <span data-label="COVERAGE">{c.intervalCoveragePct == null ? "—" : `${c.intervalCoveragePct.toFixed(0)}%`}</span>
+                    <span data-label="MAPE">{c.meanAbsolutePercentError == null ? "—" : `${c.meanAbsolutePercentError.toFixed(2)}%`}</span>
+                    <span data-label="READINESS" style={{ color: blocker ? PT.amber : PT.accent }}>{blocker ?? "Scoreable"}</span>
                   </div>
                 );
               })}
@@ -198,12 +198,12 @@ export default function ForecastLearningWorkspace() {
             </div>
             {forecasts.slice(0, 40).map((f) => (
               <div className="property-table-row" key={f.id} style={{ display: "grid", gridTemplateColumns: ".9fr 1fr .8fr .8fr 1fr .8fr", gap: "8px", alignItems: "center", padding: "12px", borderBottom: `1px solid ${PT.border}`, color: PT.textSub, fontSize: "10px" }}>
-                <span style={{ color: PT.text }}>{PROPERTY_MARKETS.find((m) => m.id === f.geography_slug)?.label ?? f.geography_slug}</span>
-                <span>{METRIC_LABEL[f.metric_key] ?? f.metric_key}</span>
-                <span>{f.cutoff_at.slice(0, 10)}</span>
-                <span>{maturityDate(f)}</span>
-                <span>{Number(f.lower_value).toFixed(2)}–{Number(f.upper_value).toFixed(2)}{f.outcome ? ` → ${Number(f.outcome.actual_value).toFixed(2)}` : ""}</span>
-                <span style={{ color: !f.outcome ? PT.muted : f.outcome.interval_covered ? PT.accent : PT.red }}>
+                <span data-label="MARKET" style={{ color: PT.text }}>{PROPERTY_MARKETS.find((m) => m.id === f.geography_slug)?.label ?? f.geography_slug}</span>
+                <span data-label="METRIC">{METRIC_LABEL[f.metric_key] ?? f.metric_key}</span>
+                <span data-label="CUTOFF">{f.cutoff_at.slice(0, 10)}</span>
+                <span data-label="MATURES">{maturityDate(f)}</span>
+                <span data-label="RANGE / ACTUAL">{Number(f.lower_value).toFixed(2)}–{Number(f.upper_value).toFixed(2)}{f.outcome ? ` → ${Number(f.outcome.actual_value).toFixed(2)}` : ""}</span>
+                <span data-label="COVERED" style={{ color: !f.outcome ? PT.muted : f.outcome.interval_covered ? PT.accent : PT.red }}>
                   {!f.outcome ? "unmatured" : f.outcome.interval_covered ? "yes" : "no"}
                 </span>
               </div>
@@ -234,7 +234,7 @@ export default function ForecastLearningWorkspace() {
               <div><h2 style={{ color: PT.text, fontSize: "13px", margin: 0 }}>{PROPERTY_MARKETS.find((m) => m.id === market)?.label} user scenario</h2><div style={{ color: PT.muted, fontSize: "9px", marginTop: "3px" }}>Index basis; not a currency valuation</div></div>
               <span style={{ color: PT.blue, fontSize: "9px", fontWeight: 800 }}>USER ASSUMPTION</span>
             </div>
-            <div style={{ height: "300px", padding: "16px 10px 8px" }}>
+            <div className="property-chart" style={{ height: "300px", padding: "16px 10px 8px" }}>
               {scenario.length === 0 ? <EmptyState title="Enter an annual-change assumption" detail="The chart stays blank until you supply a scenario. Kairos will not invent a market forecast to fill this space." /> : (
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={scenario} margin={{ top: 8, right: 15, left: 0, bottom: 8 }}>

@@ -203,3 +203,14 @@ Production deployment `dpl_9QQQZaxASYtQMkSMGrf3BaZ1f9H6` is live at
 both matrix jobs: each parser self-check passed and each source returned
 `NO_SCOPE` before downloading. This is the intended state until the owner adds a
 Phoenix ZIP or Austin parcel through the authenticated UI.
+
+## 8. Mobile workspace parity (2026-08-08)
+
+The Property shell now uses a compact mobile header with an explicit navigation
+menu instead of rendering the full brand, workspace switcher, and eight-link
+horizontal strip above every page. Shared page grids collapse without horizontal
+overflow; actions become full-width; stat rows reduce to two and then one
+column; charts use a stable phone height; and data rows retain their field names
+when desktop headers disappear. Overview, Market Explorer, and Data Sources now
+have the same responsive contract as the shared workspace pages. The stale Data
+Sources statement that no collectors exist was also removed.

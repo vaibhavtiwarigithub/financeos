@@ -88,7 +88,7 @@ export default function MyPropertiesWorkspace() {
               {items.map((item) => {
                 const equity = item.value == null ? null : Math.max(0, item.value - (item.loan ?? 0));
                 return <div className="property-table-row" key={item.id} style={{ display: "grid", gridTemplateColumns: "1.4fr .8fr .7fr .8fr .8fr 28px", gap: "10px", alignItems: "center", padding: "12px 13px", borderBottom: `1px solid ${PT.border}`, color: PT.textSub, fontSize: "11px" }}>
-                  <strong style={{ color: PT.text }}>{item.name}</strong><span>{item.market}</span><span>{item.use}</span><span>{item.status}</span><span>{equity == null ? "—" : `${currencyFor(item.market)} ${equity.toLocaleString()}`}</span><button type="button" title="Remove record" aria-label={`Remove ${item.name}`} onClick={() => removeProperty(item.id)} style={{ border: 0, background: "transparent", color: PT.muted, padding: "4px", cursor: "pointer" }}><Trash2 size={14} /></button>
+                  <strong data-label="PROPERTY" style={{ color: PT.text }}>{item.name}</strong><span data-label="MARKET">{item.market}</span><span data-label="USE">{item.use}</span><span data-label="STATUS">{item.status}</span><span data-label="EQUITY">{equity == null ? "—" : `${currencyFor(item.market)} ${equity.toLocaleString()}`}</span><button type="button" title="Remove record" aria-label={`Remove ${item.name}`} onClick={() => removeProperty(item.id)} style={{ border: 0, background: "transparent", color: PT.muted, padding: "8px", cursor: "pointer", justifySelf: "end" }}><Trash2 size={14} /></button>
                 </div>;
               })}
             </div>

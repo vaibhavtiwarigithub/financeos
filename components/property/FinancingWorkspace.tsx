@@ -272,7 +272,7 @@ export default function FinancingWorkspace() {
                     : `Annual principal and interest split from the deterministic amortization schedule, in ${currency}. This is the contractual schedule for the terms entered, not a forecast.`}
               </div>
             </div>
-            <div style={{ height: "330px", padding: "18px 12px 8px" }}>
+            <div className="property-chart" style={{ height: "330px", padding: "18px 12px 8px" }}>
               {calc.state !== "ok" ? (
                 <EmptyState title="Scenario cannot be evaluated" detail={calc.message} />
               ) : calc.kind === "revolving" ? (
@@ -331,10 +331,10 @@ export default function FinancingWorkspace() {
               const rowCurrency = currencyFor(d.market ?? "austin");
               return (
                 <div className="property-table-row" key={account.id} style={{ display: "grid", gridTemplateColumns: "1.3fr .9fr .8fr 1fr .6fr", gap: "8px", alignItems: "center", padding: "12px", borderBottom: `1px solid ${PT.border}`, color: PT.textSub, fontSize: "10px" }}>
-                  <span style={{ color: PT.text, overflowWrap: "anywhere" }}>{account.display_label}</span>
-                  <span>{FINANCING_TYPES.find((t) => t.id === account.financing_type)?.label ?? account.financing_type}</span>
-                  <span>{PROPERTY_MARKETS.find((m) => m.id === d.market)?.label ?? "—"}</span>
-                  <span>{d.balance != null ? money(d.balance, rowCurrency) : "—"}</span>
+                  <span data-label="ACCOUNT" style={{ color: PT.text, overflowWrap: "anywhere" }}>{account.display_label}</span>
+                  <span data-label="TYPE">{FINANCING_TYPES.find((t) => t.id === account.financing_type)?.label ?? account.financing_type}</span>
+                  <span data-label="MARKET">{PROPERTY_MARKETS.find((m) => m.id === d.market)?.label ?? "—"}</span>
+                  <span data-label="BALANCE">{d.balance != null ? money(d.balance, rowCurrency) : "—"}</span>
                   <button type="button" onClick={() => loadRecord(account)} style={{ minHeight: "28px", border: `1px solid ${PT.border}`, borderRadius: "5px", background: "transparent", color: PT.blue, fontSize: "10px", fontWeight: 700, cursor: "pointer" }}>Open</button>
                 </div>
               );

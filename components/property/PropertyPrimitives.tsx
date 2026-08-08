@@ -67,12 +67,18 @@ export function PropertyPageFrame({
       {children}
       <style>{`
         @media (max-width: 720px) {
+          .property-page-frame { overflow-x: hidden !important; }
           .property-page-header { padding: 18px 16px 16px !important; align-items: flex-start !important; flex-direction: column !important; }
+          .property-page-header > :last-child:not(:first-child) { width: 100% !important; justify-content: center !important; }
           .property-page-body { padding: 16px !important; }
           .property-two-column, .property-three-column { grid-template-columns: minmax(0, 1fr) !important; }
           .property-stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
           .property-table-header { display: none !important; }
-          .property-table-row { grid-template-columns: minmax(0, 1fr) !important; gap: 6px !important; }
+          .property-table-row { grid-template-columns: minmax(0, 1fr) !important; gap: 8px !important; padding: 14px !important; }
+          .property-table-row > [data-label] { display: grid !important; grid-template-columns: minmax(88px, .42fr) minmax(0, 1fr); gap: 10px; align-items: baseline; min-width: 0; overflow-wrap: anywhere; }
+          .property-table-row > [data-label]::before { content: attr(data-label); color: ${PT.muted}; font-size: 9px; font-weight: 800; }
+          .property-chart { height: 250px !important; min-width: 0 !important; }
+          .property-section-heading { align-items: flex-start !important; flex-direction: column !important; }
         }
         @media (max-width: 410px) {
           .property-stat-row { grid-template-columns: minmax(0, 1fr) !important; }

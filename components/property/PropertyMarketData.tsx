@@ -121,7 +121,7 @@ export default function PropertyMarketData({ marketId }: { marketId: PropertyMar
     }
   }
 
-  return <div style={{ padding: "28px", maxWidth: "1500px" }}>
+  return <div className="property-market-data" style={{ padding: "28px", maxWidth: "1500px" }}>
     <div style={{ display: "flex", justifyContent: "space-between", gap: "15px", alignItems: "flex-start", flexWrap: "wrap" }}>
       <div><div style={{ fontSize: "12px", color: PT.accent, fontWeight: 700, letterSpacing: "0.08em" }}>MARKET EXPLORER</div><h1 style={{ margin: "7px 0 6px", fontSize: "24px" }}>{market.label} market pack</h1><div style={{ color: PT.muted, fontSize: "11px" }}>{market.scope}</div></div>
       <button onClick={() => void collect()} disabled={loading} style={{ border: `1px solid ${PT.border}`, background: PT.surface, color: PT.textSub, borderRadius: "6px", padding: "8px 11px", fontSize: "11px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}><RefreshCw size={13} />Refresh official data</button>
@@ -146,7 +146,7 @@ export default function PropertyMarketData({ marketId }: { marketId: PropertyMar
             : <div>Only active, permitted source adapters can populate these charts. Try a longer window or refresh official data.</div>}
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: "12px" }}>
+        <div className="property-market-chart-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: "12px" }}>
           {[...grouped].map(([metric, rows]) => {
             const latest = rows[rows.length - 1];
             const forecast = forecastByMetric.get(metric);
@@ -166,7 +166,7 @@ export default function PropertyMarketData({ marketId }: { marketId: PropertyMar
                 </div>
                 <Activity size={14} color={PT.accent} />
               </div>
-              <div style={{ height: "230px", padding: "12px 8px" }}>
+              <div className="property-chart" style={{ height: "230px", padding: "12px 8px" }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={points}>
                     <CartesianGrid stroke={PT.border} vertical={false} />
@@ -194,8 +194,15 @@ export default function PropertyMarketData({ marketId }: { marketId: PropertyMar
 
     <section style={{ marginTop: "20px", borderTop: `1px solid ${PT.border}`, paddingTop: "16px" }}>
       <h2 style={{ fontSize: "13px", margin: "0 0 9px" }}>Source status</h2>
-      {sourcesForMarket(marketId).map(source => <div key={source.id} style={{ display: "grid", gridTemplateColumns: "1.2fr .7fr 1.5fr", gap: "10px", padding: "9px 0", borderBottom: `1px solid ${PT.border}`, fontSize: "10px" }}><span style={{ color: PT.text }}>{source.name}</span><span style={{ color: source.state === "active" ? PT.accent : source.state === "deferred" ? PT.red : PT.amber }}>{source.state.replaceAll("_", " ")}</span><span style={{ color: PT.muted }}>{source.role}</span></div>)}
+      {sourcesForMarket(marketId).map(source => <div className="property-source-row" key={source.id} style={{ display: "grid", gridTemplateColumns: "1.2fr .7fr 1.5fr", gap: "10px", padding: "9px 0", borderBottom: `1px solid ${PT.border}`, fontSize: "10px" }}><span style={{ color: PT.text }}>{source.name}</span><span style={{ color: source.state === "active" ? PT.accent : source.state === "deferred" ? PT.red : PT.amber }}>{source.state.replaceAll("_", " ")}</span><span style={{ color: PT.muted }}>{source.role}</span></div>)}
       <div style={{ marginTop: "10px", fontSize: "9px", color: PT.muted }}>This product uses FHFA Data but is neither endorsed nor certified by FHFA. Mortgage rates via FRED (Federal Reserve Bank of St. Louis). Unemployment via U.S. Bureau of Labor Statistics.</div>
     </section>
+    <style>{`
+      @media (max-width: 720px) {
+        .property-market-data { padding: 18px 16px !important; overflow-x: hidden; }
+        .property-market-chart-grid { grid-template-columns: minmax(0, 1fr) !important; }
+        .property-source-row { grid-template-columns: minmax(0, 1fr) !important; gap: 4px !important; padding: 12px 0 !important; }
+      }
+    `}</style>
   </div>;
 }
