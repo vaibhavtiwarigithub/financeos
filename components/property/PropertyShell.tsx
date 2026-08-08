@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, Database, LayoutDashboard, Map, ArrowLeftRight, Home, Search, Landmark, ChartNoAxesCombined } from "lucide-react";
+import { Building2, Database, LayoutDashboard, Map, ArrowLeftRight, Home, Search, Landmark, ChartNoAxesCombined, Scale } from "lucide-react";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -12,6 +12,7 @@ const T = {
 const nav = [
   { href: "/property", label: "Overview", icon: LayoutDashboard },
   { href: "/property/markets", label: "Market Explorer", icon: Map },
+  { href: "/property/valuation", label: "Valuation Evidence", icon: Scale },
   { href: "/property/my-properties", label: "My Properties", icon: Home },
   { href: "/property/opportunities", label: "Opportunities", icon: Search },
   { href: "/property/financing", label: "Financing", icon: Landmark },
