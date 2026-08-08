@@ -34,6 +34,11 @@ export async function POST(req: NextRequest) {
       continue;
     }
     const startedAt = new Date().toISOString();
+    // Count only requests that actually left the process. With the run cache,
+    // a second market reusing the national FHFA/FRED payload makes ZERO network
+    // calls, and recording 1 would overstate provider usage in the very ledger
+    // used to justify the cadence.
+    const fetchesBefore = propertyRunFetchCount();
     const { data: latest } = await svc.from("property_market_observations").select("as_of").eq("source_key", adapter.sourceKey).eq("geography_slug", market).order("as_of", { ascending: false }).limit(1).maybeSingle();
     try {
       const observations = await adapter.fetch({ market, since: latest?.as_of ?? null });
@@ -43,11 +48,11 @@ export async function POST(req: NextRequest) {
         const { data, error } = await svc.from("property_market_observations").upsert(payload, { onConflict: "source_key,geography_slug,metric_key,as_of,revision_state,source_version", ignoreDuplicates: true }).select("id");
         if (error) throw error; written = data?.length ?? 0;
       }
-      await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: "success", rows_written: written, request_count: 1 });
+      await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: "success", rows_written: written, request_count: propertyRunFetchCount() - fetchesBefore });
       results.push({ market, source: adapter.sourceKey, outcome: "success", rowsWritten: written });
     } catch (error) {
       const code = error instanceof Error ? error.name : "collection_error";
-      await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: "failed", error_code: code, detail: error instanceof Error ? error.message.slice(0, 300) : "Unknown collection error", request_count: 1 });
+      await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: "failed", error_code: code, detail: error instanceof Error ? error.message.slice(0, 300) : "Unknown collection error", request_count: propertyRunFetchCount() - fetchesBefore });
       results.push({ market, source: adapter.sourceKey, outcome: "failed", error: code });
     }
   }
