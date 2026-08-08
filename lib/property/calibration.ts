@@ -51,7 +51,13 @@ export function summarizeCalibration(
   metric: string,
   outcomes: readonly MaturedOutcome[],
 ): CalibrationSummary {
-  const usable = outcomes.filter((o) => Number.isFinite(o.absoluteError) && Number.isFinite(o.baseValue));
+  const usable = outcomes.filter((o) =>
+    typeof o.intervalCovered === "boolean"
+    && Number.isFinite(o.absoluteError)
+    && o.absoluteError >= 0
+    && Number.isFinite(o.baseValue)
+    && o.baseValue > 0,
+  );
   const n = usable.length;
   const base: CalibrationSummary = {
     metric, market, n,
@@ -63,14 +69,15 @@ export function summarizeCalibration(
   if (!base.sufficient) return base;
 
   const mae = usable.reduce((sum, o) => sum + o.absoluteError, 0) / n;
-  const meanBase = usable.reduce((sum, o) => sum + Math.abs(o.baseValue), 0) / n;
   return {
     ...base,
     intervalCoveragePct: usable.filter((o) => o.intervalCovered).length / n * 100,
     meanAbsoluteError: mae,
-    // Guard the divide: a metric legitimately centred on zero would otherwise
-    // produce Infinity and render as a broken percentage.
-    meanAbsolutePercentError: meanBase > 0 ? mae / meanBase * 100 : null,
+    // Mean of per-forecast percentage errors. `MAE / mean(base)` is normalized
+    // MAE, not MAPE, and can materially differ when forecast scales vary.
+    meanAbsolutePercentError: usable.reduce(
+      (sum, o) => sum + o.absoluteError / Math.abs(o.baseValue), 0,
+    ) / n * 100,
   };
 }
 

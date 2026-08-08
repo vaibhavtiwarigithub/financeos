@@ -57,11 +57,32 @@ describe("summarizeCalibration — the floor refuses, it does not caveat", () =>
     expect(s.n).toBe(1);
   });
 
-  it("does not divide by a zero-centred metric when computing percent error", () => {
+  it("rejects a zero-centred property forecast from the calibration cohort", () => {
     const outcomes = Array.from({ length: MIN_MATURED_OUTCOMES }, () => outcome(true, 0.5, 0));
     const s = summarizeCalibration("austin", "mortgage_rate", outcomes);
-    expect(s.meanAbsoluteError).toBeCloseTo(0.5);
-    expect(s.meanAbsolutePercentError).toBeNull(); // not Infinity
+    expect(s.n).toBe(0);
+    expect(s.meanAbsoluteError).toBeNull();
+    expect(s.meanAbsolutePercentError).toBeNull();
+  });
+
+  it("computes true MAPE as the mean of per-forecast percentage errors", () => {
+    const outcomes = [
+      ...Array.from({ length: 5 }, () => outcome(true, 10, 100)),
+      ...Array.from({ length: 5 }, () => outcome(true, 10, 200)),
+    ];
+    const s = summarizeCalibration("austin", "price_index", outcomes);
+    expect(s.meanAbsoluteError).toBe(10);
+    expect(s.meanAbsolutePercentError).toBeCloseTo(7.5);
+  });
+
+  it("excludes negative errors rather than letting corrupt rows reduce MAE", () => {
+    const outcomes = [
+      ...Array.from({ length: 10 }, () => outcome(true, 2, 100)),
+      outcome(true, -100, 100),
+    ];
+    const s = summarizeCalibration("austin", "price_index", outcomes);
+    expect(s.n).toBe(10);
+    expect(s.meanAbsoluteError).toBe(2);
   });
 });
 
