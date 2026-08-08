@@ -201,11 +201,11 @@ collection remains `contract_pending`.
 Free data already available to Austin/Phoenix is not automatically a better
 forecast feature. FHFA price history is the current numeric baseline. FRED
 mortgage rates and BLS local unemployment are retained as separate,
-market-local context. BLS collection retains its permitted 20-year history
-window so a future candidate can be tested, but revised data without a release
-vintage is excluded from historical accuracy claims. A candidate may replace
-the baseline only after a predeclared rolling-origin, no-look-ahead comparison
-improves both error and interval calibration on the same market.
+market-local context. The running BLS collector retains its tested recent
+window; a longer historical intake needs its own reliable provider contract and
+release-vintage check before it can support an accuracy claim. A candidate may
+replace the baseline only after a predeclared rolling-origin, no-look-ahead
+comparison improves both error and interval calibration on the same market.
 
 ## Acceptance Criteria
 

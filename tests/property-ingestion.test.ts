@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { BlsLausAdapter, BLS_HISTORY_YEARS, createPropertyCollectionRun, HudFmrAdapter, keepObservation, PropertySourceUnavailableError } from "@/lib/property/sources";
+import { createPropertyCollectionRun, HudFmrAdapter, keepObservation, PropertySourceUnavailableError } from "@/lib/property/sources";
 import { ACTIVE_PROPERTY_ADAPTERS } from "@/lib/property/sources";
 import { PROPERTY_SOURCES } from "@/lib/property/registry";
 
@@ -44,22 +44,6 @@ describe("adapter market coverage is declared, not inferred from an empty result
   it("exposes the bounded official US adapters", () => {
     expect(ACTIVE_PROPERTY_ADAPTERS.map((a) => a.sourceKey).sort())
       .toEqual(["bls-laus", "fhfa-hpi", "fred-mortgage", "hud-fmr"]);
-  });
-});
-
-describe("BLS local unemployment history", () => {
-  it("requests the documented 20-year context window", async () => {
-    let request: RequestInit | undefined;
-    await new BlsLausAdapter().fetch({
-      market: "austin",
-      since: null,
-      fetchText: async (_url, init) => {
-        request = init;
-        return { body: JSON.stringify({ Results: { series: [{ data: [] }] } }), lastModified: null };
-      },
-    });
-    const payload = JSON.parse(String(request?.body));
-    expect(Number(payload.endyear) - Number(payload.startyear) + 1).toBe(BLS_HISTORY_YEARS);
   });
 });
 
