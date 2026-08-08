@@ -2,6 +2,12 @@
 
 Status (2026-08-08): **Implemented.** No schema migration is required because all new owner-private fields use the existing encrypted `property_assets.encrypted_payload` contract.
 
+Source capability decision (2026-08-08): see
+[`SOURCE_CAPABILITY_AUDIT.md`](SOURCE_CAPABILITY_AUDIT.md) before adding any
+parcel, tax, insurance, or property-value automation. In particular, the
+Phoenix sales-feed licence remains unverified and no search page, payment page,
+or private portal may be automated.
+
 ## Decision
 
 Property uses one workspace-wide market context: `US - Austin`, `US - Phoenix`, or `India - Bengaluru`. Every market-aware page inherits it. Currency values remain market-local and USD and INR are never summed.

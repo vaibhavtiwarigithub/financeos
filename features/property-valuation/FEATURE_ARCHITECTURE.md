@@ -5,6 +5,13 @@ verified, the deployment is live, and both source jobs proved the pre-download
 `NO_SCOPE` guard. The first data-bearing run correctly awaits an owner-selected
 Phoenix ZIP or Austin TCAD parcel.**
 
+Source-audit correction (2026-08-08): the claimed public/free Phoenix R102
+sales source is now **licence-unverified**. Maricopa's official data-sales
+catalogue lists Sales Affidavits as a paid product. No new feed use, expansion,
+or free-availability claim is authorized until the cited ArcGIS attachment's
+publisher, licence, and machine-use permission are recorded. See
+`features/property-address-and-carrying-costs/SOURCE_CAPABILITY_AUDIT.md`.
+
 Parent: `features/property-decision-workspace/FEATURE_ARCHITECTURE.md`
 
 There is no AVM, repeat-sales index, hedonic model, comparable-sale engine, or
@@ -30,8 +37,11 @@ data differ:
 
 ### Phoenix
 
-Maricopa County publishes a public ArcGIS ZIP containing the R102 Sales
-Affidavits pipe-delimited file. Its columns include parcel number, month-level
+This design previously treated a cited ArcGIS ZIP as a public R102 Sales
+Affidavits source. That assertion is not yet source-verified: Maricopa's
+official data-sales catalogue lists Sales Affidavits as a paid product. No
+production collection may rely on that attachment until its legal and technical
+status is resolved. If approved, its columns would include parcel number, month-level
 sale date, reported price, deed number/date/status/type, property class, situs
 fields, parties, finance fields, assessor quality codes, and personal-property
 flags.
