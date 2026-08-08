@@ -26,7 +26,7 @@ export default function PropertyShell({ children }: { children: React.ReactNode 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   useEffect(() => setMobileNavOpen(false), [pathname]);
   return (
-    <div className="property-app-shell" style={{ minHeight: "100vh", background: T.bg, color: T.text, display: "flex" }}>
+    <div className="property-app-shell" style={{ minHeight: "100dvh", background: T.bg, color: T.text, display: "flex" }}>
       <aside className="property-sidebar" style={{ width: "236px", flexShrink: 0, background: T.surface, borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
         <div className="property-brand" style={{ padding: "22px 18px 18px", borderBottom: `1px solid ${T.border}` }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
@@ -57,21 +57,22 @@ export default function PropertyShell({ children }: { children: React.ReactNode 
             <span style={{ color: T.muted }}>Kairos</span><span>/</span><strong style={{ color: T.accent }}>Property</strong>
           </div>
         </header>
-        <main style={{ flex: 1, minWidth: 0 }}>{children}</main>
+        <main className="property-main" style={{ flex: 1, minWidth: 0 }}>{children}</main>
       </div>
       <style>{`
         @media (max-width: 900px) {
           .property-app-shell { flex-direction: column !important; }
           .property-sidebar { width: 100% !important; min-height: auto !important; border-right: 0 !important; border-bottom: 1px solid ${T.border} !important; }
-          .property-brand { padding: 10px 14px !important; }
+          .property-brand { padding: calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left)) !important; }
           .property-brand-subtitle { display: none !important; }
           .property-nav-toggle { display: inline-flex !important; }
           .property-workspace-switch { display: none !important; }
-          .property-nav { display: none !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 5px !important; padding: 8px 10px 10px !important; border-top: 1px solid ${T.border}; }
+          .property-nav { display: none !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 5px !important; padding: 8px calc(10px + env(safe-area-inset-right)) 10px calc(10px + env(safe-area-inset-left)) !important; border-top: 1px solid ${T.border}; }
           .property-nav.property-nav-open { display: grid !important; }
           .property-nav-item { min-width: 0 !important; margin-bottom: 0 !important; border-left: 0 !important; border: 1px solid ${T.border} !important; white-space: normal !important; min-height: 42px !important; }
           .property-sidebar-footer { display: none !important; }
           .property-context-header { display: none !important; }
+          .property-main { padding-bottom: env(safe-area-inset-bottom) !important; }
         }
         @media (max-width: 520px) {
           .property-brand > div:first-child { font-size: 15px !important; }

@@ -219,3 +219,9 @@ Verified on production deployment `dpl_B3zY6VdvZ6uPjh2ZmqYGWGywJzUf`: all eight
 Property destinations had viewport width equal to document scroll width at
 390px; the collapsed menu exposed eight links; the 1440px layout retained its
 236px sidebar; and the browser console had no warnings or errors.
+
+The follow-up device-safe-area audit found one gap the browser-width test could
+not simulate: unlike Investing, Property did not clear iOS's translucent status
+bar even though the root viewport uses `viewport-fit: cover`. The mobile brand
+header and navigation now include the top/left/right safe-area insets, the main
+content includes the bottom home-indicator inset, and the shell uses `100dvh`.
