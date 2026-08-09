@@ -10,6 +10,8 @@ import { usePropertyMarket } from "@/lib/property/market-context";
 type Observation = { source_key: string; metric_key: string; native_unit: string; value: number | string; as_of: string; revision_state: string };
 type Forecast = { metric_key: string; horizon_days: number; cutoff_at: string; lower_value: number | string; base_value: number | string; upper_value: number | string; model_version: string; state: string };
 type Run = { source_key: string; outcome: string; started_at: string; rows_written: number | null; error_code: string | null };
+type CountyScope = { countyFips: string; countyName: string };
+type CountyObservation = { county_fips: string; metric_key: string; value: number | string; native_unit: string; as_of: string; source_version: string };
 
 /** Cap plotted points so a 2,889-row weekly series stays legible and cheap. */
 const MAX_POINTS = 220;
@@ -39,7 +41,7 @@ const METRIC_LABEL: Record<string, string> = {
 export default function PropertyMarketData({ marketId: initialMarketId }: { marketId?: PropertyMarketId }) {
   const { market: marketId, setMarket } = usePropertyMarket();
   const market = marketById(marketId);
-  const [payload, setPayload] = useState<{ observations: Observation[]; forecasts: Forecast[]; runs: Run[] } | null>(null);
+  const [payload, setPayload] = useState<{ observations: Observation[]; forecasts: Forecast[]; runs: Run[]; countyScope?: CountyScope[]; countyObservations?: CountyObservation[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -189,6 +191,18 @@ export default function PropertyMarketData({ marketId: initialMarketId }: { mark
         {failedRuns.map((r, i) => <div key={i} style={{ fontSize: "10px", color: PT.textSub }}>{r.source_key} · {new Date(r.started_at).toLocaleString()} · {r.error_code ?? "error"}</div>)}
       </section>
     ) : null}
+
+    <section style={{ marginTop: "20px", border: `1px solid ${PT.border}`, borderRadius: "7px", background: PT.surface }}>
+      <div style={{ padding: "13px 15px", borderBottom: `1px solid ${PT.border}` }}>
+        <h2 style={{ fontSize: "13px", margin: 0 }}>Metro county coverage</h2>
+        <div style={{ color: PT.muted, fontSize: "10px", marginTop: "4px" }}>{marketId === "bengaluru" ? "Bengaluru is tracked as a city. No county equivalent is implied." : "Whole-metro charts above are not county charts. County ACS context is annual and remains unavailable until the server Census key and source activation are configured."}</div>
+      </div>
+      {marketId === "bengaluru" ? <div style={{ padding: "13px 15px", color: PT.muted, fontSize: "11px" }}>Locality, PIN, parcel, and transaction coverage are separate source contracts.</div> : <div>{(payload?.countyScope ?? []).map((county) => {
+        const rows = (payload?.countyObservations ?? []).filter((row) => row.county_fips === county.countyFips);
+        const newest = rows[0];
+        return <div className="property-source-row" key={county.countyFips} style={{ display: "grid", gridTemplateColumns: "1.1fr .75fr 1.4fr", gap: "10px", padding: "10px 15px", borderBottom: `1px solid ${PT.border}`, fontSize: "10px" }}><span style={{ color: PT.text }}>{county.countyName}</span><span style={{ color: rows.length ? PT.accent : PT.amber }}>{rows.length ? "ACS available" : "ACS pending"}</span><span style={{ color: PT.muted }}>{rows.length ? `${rows.length} annual context metrics · ${newest?.source_version} · as of ${newest?.as_of}` : "No county price/sale claim; local sources are independently gated"}</span></div>;
+      })}</div>}
+    </section>
 
     <section style={{ marginTop: "20px", borderTop: `1px solid ${PT.border}`, paddingTop: "16px" }}>
       <h2 style={{ fontSize: "13px", margin: "0 0 9px" }}>Source status</h2>

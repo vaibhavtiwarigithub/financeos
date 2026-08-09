@@ -1,5 +1,11 @@
 # Kairos — Crons & Scheduling
 > Last updated: 2026-08-08 (Property collection runs Sunday at 10:00 UTC, Property forecasts at 10:30 UTC, and Capital Plan area snapshots at 10:45 UTC. The final job reads only already-persisted Property observations, so it makes no provider call and cannot turn unavailable ZIP/PIN/locality data into a local prediction. All three remain outside securities scoring, orders, and money movement.)
+
+> 2026-08-09: When the explicitly gated `census-acs` source is active and its
+> server key is configured, the existing Sunday Property collection job makes
+> one bounded request per state and writes annual county context for every
+> declared Austin/Phoenix metro county. It does not fetch sales, listings, or
+> parcel records and it never substitutes county data for ZIP/locality evidence.
 >
 > Property parcel evidence is not a pg_cron/Vercel job. `.github/workflows/property-evidence.yml` runs monthly on the 8th at 05:15 UTC and can be dispatched per source. It exits before downloading when no active owner scope exists. Large Maricopa/TCAD archives remain ephemeral, raw artifacts are never uploaded, and Stage 1 writes evidence only; it runs no AVM or property transaction workflow.
 > Last updated: 2026-08-05 (Added weekday `kairos-event-maturation` at 16:10 UTC, jobid 116. Computes 1/5/21-session forward paths for the market event ledger into `market_event_outcomes`. Measure-only; no score, sizing, entry, exit, promotion or broker path reads it.)

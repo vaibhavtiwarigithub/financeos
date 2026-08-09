@@ -1263,3 +1263,19 @@ collection cadence and reads the existing observation table only. It adds no
 provider calls and records unavailable local coverage explicitly. These tables
 are not readable by any scoring, agent, order, or broker path.
 
+## Property metro-county context (2026-08-09)
+
+`property_market_counties` is the declared county boundary for each US metro:
+Austin holds Bastrop, Caldwell, Hays, Travis, and Williamson; Phoenix holds
+Maricopa and Pinal. It prevents a metro label or one county's parcel source from
+silently becoming a claim of full-metro coverage.
+
+`property_county_observations` is an append-only, service-role-only annual ACS
+context ledger. It stores county FIPS, source vintage, median household income,
+median gross rent, median home value, and rental-vacancy rate. It has no owner,
+address, parcel, protected-class, listing, sale-price, or recommendation field.
+The table has RLS plus update/delete/truncate guards. ACS rows are unavailable
+until the server `CENSUS_API_KEY` is configured and the source is explicitly
+activated; missing credentials are recorded as source unavailability, never as
+zero county coverage.
+

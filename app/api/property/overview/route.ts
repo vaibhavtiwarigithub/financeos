@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { PROPERTY_MARKETS } from "@/lib/property/registry";
+import { countiesForMarket, PROPERTY_MARKETS } from "@/lib/property/registry";
 import { propertyEncryptionReady } from "@/lib/property/crypto";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   const svc = createServiceClient();
   // Bound each metric independently. A single high-frequency series must not
   // consume a shared limit and hide lower-frequency price or rent history.
-  const [observationResults, runsResult, forecastsResult, sourcesResult, assetResult] = await Promise.all([
+  const [observationResults, runsResult, forecastsResult, sourcesResult, assetResult, countyResult] = await Promise.all([
     Promise.all(OVERVIEW_METRICS.map((metric) => svc.from("property_market_observations")
       .select("source_key, metric_key, native_unit, value, as_of, published_at, collected_at, revision_state")
       .eq("geography_slug", market)
@@ -45,8 +45,9 @@ export async function GET(req: NextRequest) {
     // encrypted payload here: values, addresses, loans, and carrying costs stay
     // behind the dedicated owner-record route.
     svc.from("property_assets").select("geography_slug, asset_type").eq("owner_id", ownerId).is("archived_at", null),
+    market === "bengaluru" ? Promise.resolve({ data: [], error: null }) : svc.from("property_county_observations").select("county_fips, metric_key, value, native_unit, as_of, source_version, collected_at").eq("market_slug", market).order("as_of", { ascending: false }).order("collected_at", { ascending: false }).limit(100),
   ]);
-  if (observationResults.some((result) => result.error) || runsResult.error || forecastsResult.error || sourcesResult.error || assetResult.error) {
+  if (observationResults.some((result) => result.error) || runsResult.error || forecastsResult.error || sourcesResult.error || assetResult.error || countyResult.error) {
     return NextResponse.json({ error: "Property market overview is temporarily unavailable" }, { status: 503 });
   }
   const observations = observationResults.flatMap((result) => result.data ?? [])
@@ -61,6 +62,8 @@ export async function GET(req: NextRequest) {
     observations,
     runs: runsResult.data ?? [],
     forecasts: forecastsResult.data ?? [],
+    countyScope: countiesForMarket(market as any),
+    countyObservations: countyResult.data ?? [],
     sources: sourcesResult.data ?? [],
     workspace: {
       privateRecords: {

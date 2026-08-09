@@ -298,6 +298,23 @@ outcome. A later LLM summary cannot rewrite the original rationale.
 
 ## Data And Compliance Gates
 
+### Metro and county scope
+
+Metro-level evidence must not be mistaken for one county. Kairos uses the
+current OMB/Census metro definitions as a declared coverage registry:
+
+| Market | County scope | What can be collected now | What remains gated |
+|---|---|---|---|
+| Austin-Round Rock-Georgetown | Bastrop, Caldwell, Hays, Travis, Williamson | Whole-metro FHFA/BLS/FRED context; county ACS context after a server Census key | ZIP market feed and any county appraisal/sale feed until that publisher permits automated use |
+| Phoenix-Mesa-Chandler | Maricopa, Pinal | Whole-metro FHFA/BLS/FRED context; county ACS context after a server Census key | Maricopa recorded-sale feed and any Pinal equivalent until each source contract is separately approved |
+| Bengaluru | city-level only | RBI/NHB city series after direct release-contract validation | locality/PIN/parcel/sale collection and every automated guidance-value lookup |
+
+Every county row carries its county FIPS and ACS release vintage. ACS is annual
+context (income, median value, gross rent, and rental vacancy), not current
+sale-price evidence, a desirability score, or an allocation input. A local
+source may not be activated for the whole metro merely because one county has a
+public download page.
+
 - Aggregate US source use requires a documented contract. Redfin publishes
   broad market metrics across metros and ZIPs, but its releases can be revised;
   it remains inactive until Kairos records permitted reuse and revision policy.

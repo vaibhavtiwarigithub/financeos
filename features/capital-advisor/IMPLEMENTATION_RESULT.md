@@ -19,6 +19,12 @@ Implemented: 2026-08-08
   read existing observations only, use no new provider calls, and record
   `metro_only` or `contract_pending` rather than producing a ZIP/PIN/locality
   forecast without an approved source contract.
+- Explicit metro-county coverage: Austin-Round Rock-Georgetown includes Bastrop,
+  Caldwell, Hays, Travis, and Williamson; Phoenix-Mesa-Chandler includes
+  Maricopa and Pinal. A server-key-gated ACS collector is ready to record annual
+  county income, rent, value, and vacancy context for every declared county.
+  It is not active without `CENSUS_API_KEY` and source approval, and it never
+  represents annual ACS data as sale-price evidence.
 - A sealed future narrator envelope in `lib/capital-advisor/narrator.ts`.
   It contains no address, lender identifier, account number, execution
   instruction, or authority to alter the deterministic decision state.
@@ -49,3 +55,6 @@ Implemented: 2026-08-08
    collection or alerts.
 3. Define matured-outcome semantics and a minimum sample before a shadow policy
    can be evaluated. A narrator must remain explanation-only.
+4. Configure a Census API key and explicitly activate `census-acs`; configure a
+   HUD token separately for the existing annual FMR reference. Confirm machine-
+   use terms separately for every county's parcel or recorded-sale feed.

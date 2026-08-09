@@ -3,6 +3,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { ACTIVE_PROPERTY_ADAPTERS, createPropertyCollectionRun, PropertySourceUnavailableError } from "@/lib/property/sources";
+import { COUNTY_PROPERTY_ADAPTERS } from "@/lib/property/county-sources";
 import { PROPERTY_MARKETS, type PropertyMarketId } from "@/lib/property/registry";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +60,31 @@ export async function POST(req: NextRequest) {
       const code = error instanceof Error ? error.name : "collection_error";
       await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: "failed", error_code: code, detail: error instanceof Error ? error.message.slice(0, 300) : "Unknown collection error", request_count: collectionRun.fetchCount() - fetchesBefore });
       results.push({ market, source: adapter.sourceKey, outcome: "failed", error: code });
+    }
+  }
+  // County ACS context is intentionally a separate evidence plane. It covers
+  // every declared county in a metro, but it is annual affordability context,
+  // not an inferred current price, sale, or local recommendation.
+  for (const market of markets) for (const adapter of COUNTY_PROPERTY_ADAPTERS) {
+    if (!active.has(adapter.sourceKey)) { results.push({ market, source: adapter.sourceKey, outcome: "skipped", reason: "source_not_active" }); continue; }
+    if (!adapter.supportsMarket(market)) {
+      const at = new Date().toISOString();
+      await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: at, completed_at: at, outcome: "not_applicable", rows_written: 0, request_count: 0, detail: `${adapter.sourceKey} does not publish county context for ${market}` });
+      results.push({ market, source: adapter.sourceKey, outcome: "not_applicable", reason: "source_does_not_cover_market" });
+      continue;
+    }
+    const startedAt = new Date().toISOString(); const fetchesBefore = collectionRun.fetchCount();
+    try {
+      const observations = await adapter.fetch({ market, fetchText: collectionRun.fetchText });
+      const payload = observations.map((item) => ({ source_key: item.sourceKey, market_slug: item.market, county_fips: item.countyFips, metric_key: item.metric, native_unit: item.nativeUnit, value: item.value, as_of: item.asOf, source_version: item.sourceVersion, revision_state: "initial" }));
+      const { data, error } = payload.length ? await svc.from("property_county_observations").upsert(payload, { onConflict: "source_key,market_slug,county_fips,metric_key,as_of,source_version,revision_state", ignoreDuplicates: true }).select("id") : { data: [], error: null };
+      if (error) throw error;
+      await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: "success", rows_written: data?.length ?? 0, request_count: collectionRun.fetchCount() - fetchesBefore });
+      results.push({ market, source: adapter.sourceKey, outcome: "success", rowsWritten: data?.length ?? 0, scope: "all_declared_metro_counties" });
+    } catch (error) {
+      const unavailable = error instanceof PropertySourceUnavailableError;
+      await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: unavailable ? "partial" : "failed", rows_written: 0, request_count: collectionRun.fetchCount() - fetchesBefore, error_code: unavailable ? error.code : error instanceof Error ? error.name : "collection_error", detail: error instanceof Error ? error.message.slice(0, 300) : "Unknown collection error" });
+      results.push({ market, source: adapter.sourceKey, outcome: unavailable ? "unavailable" : "failed", reason: unavailable ? error.code : "collection_error" });
     }
   }
   return NextResponse.json({ ok: true, upstreamFetches: collectionRun.fetchCount(), results });
