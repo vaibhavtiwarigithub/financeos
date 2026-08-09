@@ -42,8 +42,9 @@ export default function PropertyShell({ children }: { children: React.ReactNode 
         </div>
         <div className="property-workspace-switch" style={{ padding: "10px 10px 2px" }}>
           <div style={{ display: "flex", border: `1px solid ${T.border}`, borderRadius: "7px", overflow: "hidden" }}>
-            <Link href="/dashboard" style={{ flex: 1, padding: "7px 8px", color: T.textSub, textDecoration: "none", fontSize: "11px", textAlign: "center", borderRight: `1px solid ${T.border}` }}>Investing</Link>
-            <span style={{ flex: 1, padding: "7px 8px", background: `${T.accent}18`, color: T.accent, fontSize: "11px", fontWeight: 700, textAlign: "center" }}>Property</span>
+            <Link href="/dashboard" style={{ flex: 1, padding: "7px 6px", color: T.textSub, textDecoration: "none", fontSize: "10px", textAlign: "center", borderRight: `1px solid ${T.border}` }}>Investing</Link>
+            <span style={{ flex: 1, padding: "7px 6px", background: `${T.accent}18`, color: T.accent, fontSize: "10px", fontWeight: 700, textAlign: "center" }}>Property</span>
+            <Link href="/capital-plan" style={{ flex: 1, padding: "7px 6px", color: T.textSub, textDecoration: "none", fontSize: "10px", textAlign: "center", borderLeft: `1px solid ${T.border}` }}>Capital</Link>
           </div>
         </div>
         <nav className="property-nav" aria-label="Property workspace" style={{ padding: "14px 10px", flex: 1 }}>

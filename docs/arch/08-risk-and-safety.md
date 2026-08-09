@@ -807,3 +807,20 @@ the first post-report daily bar.
 > deterministic mortgage engine, while tax/insurance/maintenance stay labelled
 > owner inputs until an official bill or quote is connected. USD and INR remain
 > independent.
+
+## Capital Plan boundary (2026-08-08)
+
+Capital Plan is owner-only decision support above the Investing and Property
+workspaces. It has no broker, lender, payment, transfer, property-purchase,
+refinance, HELOC-draw, or order route. It reads no paper cash and does not
+silently read brokerage credentials. Its deterministic mortgage comparison is
+review-only: it rejects a partial principal payment that would breach the
+owner-entered reserve plus near-term obligations and never assumes a recast,
+deduction, or lender permission.
+
+Area snapshots consume already-persisted Property observations rather than
+calling providers. ZIP/PIN/locality and Bengaluru-local coverage remains
+`contract_pending`; the system records that absence rather than emitting an ROI
+or valuation. A future LLM narrator receives only a sealed typed envelope and
+cannot modify a number, rank, policy, cash transfer, payment, or trade. Capital
+learning remains shadow-only until timestamped owner outcomes mature.

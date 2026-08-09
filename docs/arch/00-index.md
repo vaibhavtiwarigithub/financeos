@@ -1,6 +1,6 @@
 # Kairos Architecture Chapter Index
 
-> Last reviewed: 2026-08-02 (current through `6d14af12`)
+> Last reviewed: 2026-08-08 (Capital Plan foundation)
 
 This directory is the definitive chapter-by-chapter operational architecture. Each
 chapter is independently updateable: a broker change does not require editing the
@@ -53,6 +53,7 @@ that changes their underlying contract.
 | Money-path, autonomy, or safety-gate change | `08-risk-and-safety.md` and relevant feature design |
 | Learning, validation, strategy, or promotion change | `09-learning-loop.md` and relevant feature design |
 | Product scope/principle change | `01-what-is-kairos.md` and `SYSTEM_OVERVIEW.md` |
+| Private cross-workspace capital-planning inputs or decisions | `04-database-schema.md`, `08-risk-and-safety.md`, and `features/capital-advisor/` |
 | Feature implementation | Its feature design and an implementation result; affected shared chapters |
 
 ## Diagram ownership

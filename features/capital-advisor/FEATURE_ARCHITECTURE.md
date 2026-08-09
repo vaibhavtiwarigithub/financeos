@@ -2,9 +2,10 @@
 
 ## Status
 
-Proposed on 2026-08-08. Architecture only. No capital allocation, securities
-order, property purchase, refinancing, HELOC draw, or mortgage prepayment is
-authorized by this document.
+Implemented foundation on 2026-08-08. Capital allocation, securities orders,
+property purchases, refinancing, HELOC draws, and mortgage prepayments remain
+unauthorized. See `IMPLEMENTATION_RESULT.md` for the shipped boundary and the
+explicitly gated future phases.
 
 ## Decision
 

@@ -1242,3 +1242,24 @@ for re-maturation. Neither has DELETE or TRUNCATE.
 Measurement only: no score, eligibility, sizing, entry, exit, promotion or broker
 path reads either table. See `features/event-ledger/FEATURE_ARCHITECTURE.md`.
 
+## Capital Plan private records (2026-08-08)
+
+`capital_profiles` holds the current encrypted owner-entered planning profile;
+every save also inserts an immutable encrypted row in
+`capital_profile_snapshots`. `capital_area_watchlists` holds the owner-selected
+market/locality configuration. It is not a discovered listing universe and does
+not contain an address, lender document, broker token, or account number.
+
+`capital_decision_runs` is the append-only audit ledger for deterministic
+mortgage-prepayment, cross-asset, and area-watch snapshot results. Inputs and
+results are AES-256-GCM encrypted in application code; only narrow metadata,
+the bounded decision state, engine version, and evidence references are stored
+in plaintext. `capital_profile_snapshots` and `capital_decision_runs` have row
+mutation and statement-level truncate triggers and service-role mutation grants
+revoked. All four tables have RLS enabled and no browser grants.
+
+The weekly `kairos-capital-area-snapshots` cron runs after the Property
+collection cadence and reads the existing observation table only. It adds no
+provider calls and records unavailable local coverage explicitly. These tables
+are not readable by any scoring, agent, order, or broker path.
+
