@@ -226,6 +226,17 @@ export async function fetchIndiaOverview(
     if (hi != null) ov["52WeekHigh"] = String(hi);
     const target = num(fd.targetMeanPrice);
     if (target != null) ov.AnalystTargetPrice = String(target);
+    const grossM = num(fd.grossMargins);
+    if (grossM != null) ov.GrossMarginTTM = String(grossM);
+    const de = num(fd.debtToEquity);
+    if (de != null) ov.DebtToEquity = String(de);
+    const peg = num(ks.pegRatio);
+    if (peg != null) ov.PEGRatio = String(peg);
+    const fcf = num(fd.freeCashflow);
+    const mcapForYield = num(pr.marketCap) ?? num(sd.marketCap);
+    if (fcf != null && mcapForYield != null && mcapForYield > 0) {
+      ov.FCFYield = String(fcf / mcapForYield);
+    }
     // Additive display-only fields consumed by the Stock Context feature
     // (features/stock-context). The scorer reads specific keys and ignores
     // these, so adding them is harmless for the money path. Name/exchange/
