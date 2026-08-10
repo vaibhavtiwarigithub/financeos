@@ -69,6 +69,7 @@ const NAV_SECTIONS = [
     label: "Explore",
     hint: "Find and test ideas outside the automatic loop",
     items: [
+      { href: "/dashboard/research",     label: "Fundamentals",     icon: "📊", hint: "Price charts, technical indicators, fundamentals, score history, and trade markers per symbol", alertCat: "" },
       { href: "/dashboard/watchlist",  label: "Watchlist",        icon: "◎", hint: "AI-curated + manual symbols to track",alertCat: "watchlist" },
       { href: "/dashboard/scanner",            label: "Scanner",           icon: "⟐", hint: "Screen stocks by technical + fundamental conditions", alertCat: "" },
       { href: "/dashboard/strategies",         label: "Strategies",       icon: "⬡", hint: "Fit scores (7 templates) + Algo Library (8 strategies) — two tabs", alertCat: "strategy" },
@@ -598,7 +599,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
 
               {/* Nav items */}
               {section.items.map(item => {
-                const active = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
+                const active = pathname === item.href || (item.href !== "/dashboard" && (pathname.startsWith(item.href + "/") || pathname === item.href));
                 const catAlerts = item.alertCat ? alerts.filter(a => a.category === item.alertCat) : [];
                 const catWorst = catAlerts.find(a => a.severity === "critical") ? "critical"
                   : catAlerts.find(a => a.severity === "error") ? "error"
