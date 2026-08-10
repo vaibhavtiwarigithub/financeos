@@ -953,6 +953,7 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
               {/* Header row */}
               <div style={{ display: "flex", alignItems: "baseline", gap: "12px", flexWrap: "wrap", marginBottom: "16px" }}>
                 <span style={{ fontSize: "20px", fontWeight: 700, color: colorFor(selected!.symbol, selectedSymbols) }}>{drill.row.symbol}</span>
+                <a href={`/dashboard/research/${drill.row.symbol}`} style={{ fontSize: "11px", color: T.accent, textDecoration: "none", border: `1px solid ${T.accent}44`, borderRadius: "6px", padding: "3px 8px" }}>Deep Dive ↗</a>
                 <span style={{ fontSize: "26px", fontWeight: 800, color: T.text }}>{drill.row.analyst_score}</span>
                 {drill.analystDelta !== null
                   ? <span style={{ fontSize: "15px" }}><DeltaText delta={drill.analystDelta} size={15} /> <span style={{ fontSize: "11px", color: T.muted }}>vs prior</span></span>
