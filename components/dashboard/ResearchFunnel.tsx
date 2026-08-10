@@ -302,9 +302,12 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
                     <div style={{ color: T.muted, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase" }}>Current news context · separate from this decision</div>
                     <div style={{ color: T.textSub, fontSize: "11px", marginTop: "3px" }}>Loaded only when requested to protect free-provider limits.</div>
                   </div>
-                  <button type="button" onClick={() => loadCurrentContext(s.symbol)} disabled={contextLoading.has(s.symbol)} style={{ background: T.ink, border: `1px solid ${T.blue}55`, color: contextLoading.has(s.symbol) ? T.muted : T.blue, borderRadius: "7px", padding: "6px 10px", cursor: contextLoading.has(s.symbol) ? "default" : "pointer", fontSize: "11px" }}>
-                    {contextLoading.has(s.symbol) ? "Loading…" : contexts[s.symbol] ? "Refresh current news" : "Load current news"}
-                  </button>
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    <a href={`/dashboard/research/${s.symbol}`} style={{ background: "transparent", border: `1px solid ${T.accent}55`, color: T.accent, borderRadius: "7px", padding: "6px 10px", fontSize: "11px", textDecoration: "none", whiteSpace: "nowrap" }}>Deep Dive ↗</a>
+                    <button type="button" onClick={() => loadCurrentContext(s.symbol)} disabled={contextLoading.has(s.symbol)} style={{ background: T.ink, border: `1px solid ${T.blue}55`, color: contextLoading.has(s.symbol) ? T.muted : T.blue, borderRadius: "7px", padding: "6px 10px", cursor: contextLoading.has(s.symbol) ? "default" : "pointer", fontSize: "11px" }}>
+                      {contextLoading.has(s.symbol) ? "Loading…" : contexts[s.symbol] ? "Refresh current news" : "Load current news"}
+                    </button>
+                  </div>
                 </div>
                 {contexts[s.symbol] && <div style={{ marginTop: "10px", borderTop: `1px solid ${T.border}`, paddingTop: "9px" }}>
                   <div style={{ color: T.amber, fontSize: "10px", marginBottom: "7px" }}>{contexts[s.symbol].disclaimer}</div>
