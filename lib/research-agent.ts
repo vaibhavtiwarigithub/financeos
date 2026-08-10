@@ -1663,6 +1663,12 @@ export async function processSymbol(
   // have no single-company earnings date, so skip the fetch (saves a Finnhub call).
   const daysToEarnings = isEtf ? null : await fetchDaysToEarnings(symbol, india, webullExtended?.earnings?.nextDate ?? undefined).catch(() => null);
 
+  // Benchmark series is promise-cached per run (lib/data/benchmark-series.ts).
+  // This call is a cache hit — the same promise was already started by
+  // getRegimeFeatures and the return-observation capture above.
+  const benchmarkBars = await getBenchmarkSeries(india ? "india" : "us", supabase).catch(() => [] as import("@/lib/data/benchmark-series").BenchmarkBar[]);
+  const benchmarkCloses = benchmarkBars.map(b => b.close);
+
   // Compute all 5 scores deterministically from fetched data
   const scores = await computeScores({
     symbol, isEtf,
@@ -1672,6 +1678,7 @@ export async function processSymbol(
     insiderResult,
     supabase,
     market: india ? "india" : "us",
+    benchmarkCloses,
     provenance: {
       fundamental: fundamentalResult.source,
       technical: candleResult.source as SourceName,

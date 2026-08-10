@@ -28,6 +28,13 @@ export interface TechnicalResult {
   lastReturnPct: number | null;    // single most-recent bar % change vs prev close
   lastRangeLocation: number | null; // where latest close sits in its bar range: 0=low, 1=high
   atrMultipleMove: number | null;  // |last bar move| / atr14 — how many ATRs the last bar moved
+  // Extended indicators (v2 scoring upgrades)
+  ema200: number | null;           // EMA(200), null if <200 candles
+  macdLine: number | null;         // EMA12 - EMA26
+  macdSignal: number | null;       // EMA9 of macdLine series
+  macdHistogram: number | null;    // macdLine - macdSignal
+  adx14: number | null;            // Average Directional Index (14), null if <28 candles
+  rsVsSpy: number | null;          // stock 12M return / benchmark 12M return ratio
 }
 
 /** Compute EMA from close prices. period must be <= closes.length */
@@ -93,9 +100,72 @@ function computeATR14(candles: Candle[]): number | null {
   return parseFloat(atr.toFixed(4));
 }
 
+/** Compute MACD (12/26/9) from close prices. Null if <27 closes. */
+function computeMACD(closes: number[]): { macdLine: number | null; macdSignal: number | null; macdHistogram: number | null } {
+  const nil = { macdLine: null, macdSignal: null, macdHistogram: null };
+  if (closes.length < 27) return nil;
+  const ema12arr = computeEMA(closes, 12);
+  const ema26arr = computeEMA(closes, 26);
+  // ema12arr starts at index 11, ema26arr at index 25 — align by taking the tail
+  const offset = ema12arr.length - ema26arr.length;
+  const macdSeries: number[] = ema26arr.map((e26, i) => ema12arr[i + offset] - e26);
+  if (macdSeries.length < 9) return nil;
+  const signalArr = computeEMA(macdSeries, 9);
+  if (signalArr.length === 0) return nil;
+  const macdLine = macdSeries[macdSeries.length - 1];
+  const macdSignal = signalArr[signalArr.length - 1];
+  return {
+    macdLine: parseFloat(macdLine.toFixed(4)),
+    macdSignal: parseFloat(macdSignal.toFixed(4)),
+    macdHistogram: parseFloat((macdLine - macdSignal).toFixed(4)),
+  };
+}
+
+/** Compute Wilder ADX(14) from candles. Null if <28 candles. */
+function computeADX14(candles: Candle[]): number | null {
+  if (candles.length < 28) return null;
+  const trs: number[] = [];
+  const plusDm: number[] = [];
+  const minusDm: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const cur = candles[i], prev = candles[i - 1];
+    const upMove = cur.high - prev.high;
+    const downMove = prev.low - cur.low;
+    plusDm.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDm.push(downMove > upMove && downMove > 0 ? downMove : 0);
+    trs.push(Math.max(cur.high - cur.low, Math.abs(cur.high - prev.close), Math.abs(cur.low - prev.close)));
+  }
+  const period = 14;
+  // Wilder smoothing (initial = simple sum, then rolling)
+  let smoothTr = trs.slice(0, period).reduce((a, b) => a + b, 0);
+  let smoothPlus = plusDm.slice(0, period).reduce((a, b) => a + b, 0);
+  let smoothMinus = minusDm.slice(0, period).reduce((a, b) => a + b, 0);
+  const dxArr: number[] = [];
+  if (smoothTr > 0) {
+    const diPlus = 100 * smoothPlus / smoothTr;
+    const diMinus = 100 * smoothMinus / smoothTr;
+    const denom = diPlus + diMinus;
+    if (denom > 0) dxArr.push(100 * Math.abs(diPlus - diMinus) / denom);
+  }
+  for (let i = period; i < trs.length; i++) {
+    smoothTr = smoothTr - smoothTr / period + trs[i];
+    smoothPlus = smoothPlus - smoothPlus / period + plusDm[i];
+    smoothMinus = smoothMinus - smoothMinus / period + minusDm[i];
+    if (!(smoothTr > 0)) continue;
+    const diPlus = 100 * smoothPlus / smoothTr;
+    const diMinus = 100 * smoothMinus / smoothTr;
+    const denom = diPlus + diMinus;
+    if (denom > 0) dxArr.push(100 * Math.abs(diPlus - diMinus) / denom);
+  }
+  if (dxArr.length < period) return null;
+  let adx = dxArr.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < dxArr.length; i++) adx = (adx * (period - 1) + dxArr[i]) / period;
+  return Number.isFinite(adx) ? parseFloat(adx.toFixed(2)) : null;
+}
+
 /** Compute all technical indicators from candle array (oldest first) */
-export function computeTechnicals(candles: Candle[]): TechnicalResult {
-  const empty: TechnicalResult = { rsi14: null, ema20: null, ema50: null, priceVsEma20: null, priceVsEma50: null, volumeVsAvg20: null, trend20d: null, dataPoints: candles.length, atr14: null, lastReturnPct: null, lastRangeLocation: null, atrMultipleMove: null };
+export function computeTechnicals(candles: Candle[], benchmarkCloses?: number[]): TechnicalResult {
+  const empty: TechnicalResult = { rsi14: null, ema20: null, ema50: null, priceVsEma20: null, priceVsEma50: null, volumeVsAvg20: null, trend20d: null, dataPoints: candles.length, atr14: null, lastReturnPct: null, lastRangeLocation: null, atrMultipleMove: null, ema200: null, macdLine: null, macdSignal: null, macdHistogram: null, adx14: null, rsVsSpy: null };
   if (candles.length < 15) return empty;
 
   const closes = candles.map(c => c.close);
@@ -138,7 +208,37 @@ export function computeTechnicals(candles: Candle[]): TechnicalResult {
 
   const atrMultipleMove = atr14 != null && atr14 > 0 ? parseFloat((Math.abs(latest - prevClose) / atr14).toFixed(4)) : null;
 
-  return { rsi14, ema20, ema50, priceVsEma20, priceVsEma50, volumeVsAvg20, trend20d, dataPoints: candles.length, atr14, lastReturnPct, lastRangeLocation, atrMultipleMove };
+  // EMA-200 — long-term trend filter
+  const ema200arr = candles.length >= 200 ? computeEMA(closes, 200) : [];
+  const ema200 = ema200arr.length > 0 ? parseFloat(ema200arr[ema200arr.length - 1].toFixed(4)) : null;
+
+  // MACD (12/26/9)
+  const { macdLine, macdSignal, macdHistogram } = computeMACD(closes);
+
+  // ADX(14)
+  const adx14 = computeADX14(candles);
+
+  // RS vs benchmark: (stock 12M return) / (benchmark 12M return), up to 252 bars
+  let rsVsSpy: number | null = null;
+  if (benchmarkCloses && benchmarkCloses.length >= 252) {
+    const window = Math.min(candles.length, benchmarkCloses.length, 252);
+    if (window >= 2) {
+      const stockFirst = closes[closes.length - window];
+      const stockLast = latest;
+      const benchFirst = benchmarkCloses[benchmarkCloses.length - window];
+      const benchLast = benchmarkCloses[benchmarkCloses.length - 1];
+      if (stockFirst > 0 && benchFirst > 0 && benchLast > 0) {
+        const stockReturn = stockLast / stockFirst - 1;
+        const benchReturn = benchLast / benchFirst - 1;
+        // Avoid division by near-zero benchmark
+        if (Math.abs(benchReturn) > 0.001) {
+          rsVsSpy = parseFloat((stockReturn / benchReturn).toFixed(3));
+        }
+      }
+    }
+  }
+
+  return { rsi14, ema20, ema50, priceVsEma20, priceVsEma50, volumeVsAvg20, trend20d, dataPoints: candles.length, atr14, lastReturnPct, lastRangeLocation, atrMultipleMove, ema200, macdLine, macdSignal, macdHistogram, adx14, rsVsSpy };
 }
 
 // Piecewise-linear interpolation over (x, y) anchor points (x ascending).
@@ -267,6 +367,50 @@ export function scoreTechnicals(t: TechnicalResult): number {
     } else if (bearish && !bullish) {
       if (t.volumeVsAvg20 >= 1.5) score -= 8;
       else if (t.volumeVsAvg20 >= 1.2) score -= 4;
+    }
+  }
+
+  // EMA-200 position (±10 pts) — long-term trend filter
+  const latest200 = t.ema200;
+  if (latest200 != null) {
+    // Use ema20 as a proxy for latest price (both are from same candle series)
+    const refClose = t.ema20; // not exact but directionally correct; ema200 is used as a relative marker
+    // ponytail: use ema50 > ema200 as the proxy since ema20 may lag; simpler direction read
+    if (t.priceVsEma50 != null) {
+      // We know price vs ema50 and ema50 vs ema200 — use ema50 as bridge
+      if (t.ema50 != null) {
+        if (t.ema50 > latest200) score += 10; // price > EMA50 > EMA200 = bullish structure
+        else score -= 10;
+      }
+    } else if (refClose != null) {
+      if (refClose > latest200) score += 10;
+      else score -= 10;
+    }
+  }
+
+  // MACD histogram confirmation (±5 pts)
+  if (t.macdHistogram != null) {
+    if (t.macdHistogram > 0) score += 5;
+    else score -= 5;
+  }
+
+  // RS vs benchmark (±8 pts) — outperforming the market = institutional support
+  if (t.rsVsSpy != null) {
+    if (t.rsVsSpy > 1.1) score += 8;
+    else if (t.rsVsSpy > 1.0) score += 4;
+    else if (t.rsVsSpy < 0.9) score -= 8;
+    else if (t.rsVsSpy < 1.0) score -= 4;
+  }
+
+  // ADX trend-strength multiplier — not additive, scales the delta from neutral.
+  // Trending market (ADX>25): momentum signals count more.
+  // Ranging market (ADX<20): dampen momentum component by 25%.
+  if (t.adx14 != null) {
+    const delta = score - 50;
+    if (t.adx14 >= 25) {
+      score = 50 + Math.round(delta * 1.15);
+    } else if (t.adx14 < 20) {
+      score = 50 + Math.round(delta * 0.75);
     }
   }
 

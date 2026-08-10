@@ -191,6 +191,55 @@ export function scoreFundamentals(overview: Record<string, string>, isEtf: boole
     else if (revGrowth < 0) score -= 10;
   }
 
+  // FCF Yield — cash-flow quality gate
+  const fcfYield = parseFloat(overview.FCFYield ?? "");
+  if (!isNaN(fcfYield)) {
+    evidence.fcf_yield = fcfYield;
+    if (fcfYield > 0.05) score += 12;
+    else if (fcfYield > 0.02) score += 6;
+    else if (fcfYield < 0) score -= 10;
+  }
+
+  // Debt/Equity — balance sheet risk
+  const de = parseFloat(overview.DebtToEquity ?? "");
+  if (!isNaN(de) && de >= 0) {
+    evidence.debt_to_equity = de;
+    if (de < 0.5) score += 8;
+    else if (de < 1.0) score += 4;
+    else if (de > 3.0) score -= 15;
+    else if (de > 2.0) score -= 10;
+  }
+
+  // Gross Margin — pricing power proxy (fraction: 0.45 = 45%)
+  const gm = parseFloat(overview.GrossMarginTTM ?? "");
+  if (!isNaN(gm)) {
+    evidence.gross_margin = gm;
+    if (gm > 0.50) score += 10;
+    else if (gm > 0.30) score += 5;
+    else if (gm < 0) score -= 10;
+  }
+
+  // PEG Ratio — P/E adjusted for growth
+  const peg = parseFloat(overview.PEGRatio ?? "");
+  if (!isNaN(peg) && peg > 0) {
+    evidence.peg_ratio = peg;
+    if (peg < 1.0) score += 12;
+    else if (peg < 2.0) score += 6;
+    else if (peg > 3.0) score -= 10;
+  }
+
+  // 52-week high proximity — momentum quality signal (IBD-style)
+  const high52w = parseFloat(overview["52WeekHigh"] ?? "");
+  const refP = currentPrice ?? parseFloat(overview["200DayMovingAverage"] ?? "");
+  if (!isNaN(high52w) && high52w > 0 && !isNaN(refP) && refP > 0) {
+    const pctFrom52wHigh = (high52w - refP) / high52w; // 0 = AT high, 1 = 100% below
+    evidence.pct_from_52w_high = parseFloat((pctFrom52wHigh * 100).toFixed(1));
+    if (pctFrom52wHigh <= 0.05) score += 15;
+    else if (pctFrom52wHigh <= 0.10) score += 10;
+    else if (pctFrom52wHigh <= 0.20) score += 3;
+    else if (pctFrom52wHigh > 0.40) score -= 8;
+  }
+
   // Analyst target vs current price — a real forward signal (previously logged
   // as evidence but never scored). Upside = (target - price)/price. Uses the
   // live close when available, else the 200-day MA as a price proxy.
@@ -515,6 +564,8 @@ export async function computeScores(opts: {
   /** Injectable clock for deterministic tests of the macro age bound. */
   now?: Date;
   provenance?: Partial<Record<"fundamental" | "technical" | "sentiment" | "insider", SourceName>>;
+  /** Benchmark close series (SPY for US, ^NSEI for India) for RS computation. */
+  benchmarkCloses?: number[];
 }): Promise<ComputedScores> {
   const { symbol, isEtf, avOverview, candles, socialResult, insiderResult, supabase } = opts;
   const market: MarketScope = opts.market ?? (isIndia(symbol) ? "india" : "us");
@@ -524,7 +575,7 @@ export async function computeScores(opts: {
   const latestClose = candles.length > 0 ? candles[candles.length - 1].close : undefined;
   const { score: fundamental_score, evidence: fundEvidence } = scoreFundamentals(avOverview, isEtf, latestClose);
 
-  const technicals = computeTechnicals(candles);
+  const technicals = computeTechnicals(candles, opts.benchmarkCloses);
   const technical_score = scoreTechnicals(technicals);
   // Keep the exact price and completed candle date beside the derived indicators.
   // The score is still computed solely from `technicals`; these two fields make a
