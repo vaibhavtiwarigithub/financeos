@@ -234,6 +234,12 @@ export default function FundamentalsPage() {
       return true;
     })
     .sort((a, b) => {
+      // Date columns: sort by epoch
+      if (sortKey === "last_researched_at") {
+        const at = new Date(a.last_researched_at).getTime();
+        const bt = new Date(b.last_researched_at).getTime();
+        return sortDir === "desc" ? bt - at : at - bt;
+      }
       const av = getCell(a, sortKey), bv = getCell(b, sortKey);
       const an = parseFloat(av), bn = parseFloat(bv);
       if (!isNaN(an) && !isNaN(bn)) return sortDir === "desc" ? bn - an : an - bn;
