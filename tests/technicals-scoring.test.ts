@@ -7,6 +7,7 @@ function t(over: Partial<TechnicalResult>): TechnicalResult {
     priceVsEma20: "above", priceVsEma50: "above",
     volumeVsAvg20: 1.0, trend20d: "flat", dataPoints: 60,
     atr14: null, lastReturnPct: null, lastRangeLocation: null, atrMultipleMove: null,
+    ema200: null, macdLine: null, macdSignal: null, macdHistogram: null, adx14: null, rsVsSpy: null,
     ...over,
   };
 }

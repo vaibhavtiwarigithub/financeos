@@ -47,6 +47,10 @@ export async function fetchFmpOverview(symbol: string, maxAgeDays = 7): Promise<
     set("ProfitMargin", r?.netProfitMarginTTM);
     set("EPS", r?.netIncomePerShareTTM);
     set("ReturnOnEquityTTM", m?.returnOnEquityTTM);
+    set("FCFYield", m?.freeCashFlowYieldTTM);
+    set("DebtToEquity", m?.debtToEquityTTM);
+    set("GrossMarginTTM", m?.grossProfitMarginTTM);  // FMP = fraction (0.45 = 45%)
+    set("PEGRatio", m?.priceEarningsToGrowthRatioTTM);
     return ov;
   } catch { return {}; }
 }
@@ -80,6 +84,11 @@ export async function fetchFinnhubOverview(symbol: string, maxAgeDays = 7): Prom
     setFrac("ProfitMargin", m.netProfitMarginTTM);
     setFrac("ReturnOnEquityTTM", m.roeTTM);
     setFrac("QuarterlyRevenueGrowthYOY", m.revenueGrowthQuarterlyYoy ?? m.revenueGrowthTTMYoy);
+    setRaw("PEGRatio", m.peGrowthTTM ?? m.pegRatio);
+    setFrac("GrossMarginTTM", m.grossMarginTTM);   // Finnhub = percentage, divide by 100
+    setRaw("DebtToEquity", m.totalDebtToEquityAnnual ?? m.ltDebtToEquityAnnual);
+    setRaw("EpsGrowth3Y", m.epsGrowthTTMYoy ?? m.epsGrowth3Y);
+    setRaw("52WeekPriceReturn", m["52WeekPriceReturnDaily"]);
     if (typeof m["52WeekHigh"] === "number") ov["52WeekHigh"] = String(m["52WeekHigh"]);
     if (typeof m["52WeekLow"] === "number") ov["52WeekLow"] = String(m["52WeekLow"]);
     if (p.finnhubIndustry) {
