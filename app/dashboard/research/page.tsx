@@ -74,38 +74,38 @@ const IND_BY_KEY = Object.fromEntries(INDICATOR_DEFS.map(d => [d.key, d]));
 // ── Table column defs ─────────────────────────────────────────────────────────
 
 interface ColDef {
-  key: string; label: string; width: number;
+  key: string; label: string; csvLabel?: string; width: number;
   pct?: boolean; score?: boolean; tooltip: string; defaultHidden?: boolean;
 }
 
 const ALL_COLS: ColDef[] = [
-  { key: "run_date",   label: "Date",      width: 86,  tooltip: "Exact date and time this research run was executed" },
-  { key: "symbol",     label: "Symbol",    width: 90,  tooltip: "Ticker — click to open deep dive" },
-  { key: "Name",       label: "Name",      width: 160, defaultHidden: true, tooltip: "Company full name" },
-  { key: "Sector",     label: "Sector",    width: 110, defaultHidden: true, tooltip: "Sector from provider taxonomy" },
-  { key: "market",     label: "Mkt",       width: 42,  tooltip: "Market: 🇺🇸 US (NYSE/Nasdaq) or 🇮🇳 India (NSE)" },
-  { key: "direction",  label: "Dir",       width: 58,  tooltip: "Signal direction: LONG / NEUTRAL / SHORT from this research run" },
-  { key: "analyst_score",     label: "Score", width: 54, score: true,
+  { key: "run_date",   label: "Date",      csvLabel: "Research Date",          width: 86,  tooltip: "Exact date and time this research run was executed" },
+  { key: "symbol",     label: "Symbol",    csvLabel: "Ticker Symbol",          width: 90,  tooltip: "Ticker — click to open deep dive" },
+  { key: "Name",       label: "Name",      csvLabel: "Company Name",           width: 160, defaultHidden: true, tooltip: "Company full name" },
+  { key: "Sector",     label: "Sector",    csvLabel: "Sector",                 width: 110, defaultHidden: true, tooltip: "Sector from provider taxonomy" },
+  { key: "market",     label: "Mkt",       csvLabel: "Market",                 width: 42,  tooltip: "Market: 🇺🇸 US (NYSE/Nasdaq) or 🇮🇳 India (NSE)" },
+  { key: "direction",  label: "Dir",       csvLabel: "Signal Direction",       width: 58,  tooltip: "Signal direction: LONG / NEUTRAL / SHORT from this research run" },
+  { key: "analyst_score",     label: "Score", csvLabel: "Analyst Score (0-100)",     width: 54, score: true,
     tooltip: "Composite analyst score (0–100)\nFormula: weighted sum of F + T + S + M using champion genome weights.\nWeights are learned from closed-trade outcomes by LearnerAgent." },
-  { key: "fundamental_score", label: "F",     width: 42, score: true,
+  { key: "fundamental_score", label: "F",   csvLabel: "Fundamental Score (0-100)", width: 42, score: true,
     tooltip: "Fundamental score (0–100)\nKey drivers:\n• P/E vs sector median: ±15 pts\n• PEG: <1→+12, <2→+6, >3→-10\n• ROE: >15%→+10, >8%→+5, <0→-10\n• EPS growth: >20%→+10, >5%→+5\n• Revenue growth: >20%→+15, >10%→+8, <-10→-12\n• FCF Yield: >5%→+12, <0→-10\n• D/E: <0.5→+8, >3→-15\n• Gross Margin: >50%→+10, >30%→+5\n• 52W proximity: within 5%→+15, within 10%→+10" },
-  { key: "technical_score",   label: "T",     width: 42, score: true,
+  { key: "technical_score",   label: "T",   csvLabel: "Technical Score (0-100)",    width: 42, score: true,
     tooltip: "Technical score (0–100)\nKey drivers:\n• RSI: 40–60→+10, >70→-5, <30→-20\n• EMA20>EMA50→+8, below→-8\n• EMA50>EMA200→+10, below→-10\n• MACD histogram: pos→+5, neg→-5\n• RS vs benchmark: >5%→+8, >0→+4, <-5%→-8\n• ADX≥25→×1.15 (trending), ADX<20→×0.75 (ranging)\n• Breakdown veto: ATR crash caps score at 20" },
-  { key: "sentiment_score",   label: "S",     width: 42, score: true,
+  { key: "sentiment_score",   label: "S",   csvLabel: "Sentiment Score (0-100)",    width: 42, score: true,
     tooltip: "Sentiment score (0–100)\nSources: news sentiment (GDELT/Finnhub), analyst upgrades/downgrades, insider buying/selling activity" },
-  { key: "macro_score",       label: "M",     width: 42, score: true,
+  { key: "macro_score",       label: "M",   csvLabel: "Macro Score (0-100)",        width: 42, score: true,
     tooltip: "Macro score (0–100)\nSources: market regime (bull/bear/neutral), VIX level, sector breadth, yield curve context from macro_regime table" },
-  { key: "last_trade_side",   label: "Trade", width: 60, defaultHidden: false,
+  { key: "last_trade_side",   label: "Trade", csvLabel: "Last Trade Side",     width: 60, defaultHidden: false,
     tooltip: "Last paper trade executed for this symbol: BUY (entry) or SELL (exit). Shows score at time of trade in parentheses." },
-  { key: "PERatio",           label: "P/E",   width: 56, tooltip: "Price-to-Earnings TTM. Scored vs sector median. Lower relative to sector = better." },
-  { key: "PEGRatio",          label: "PEG",   width: 50, tooltip: "PEG = P/E ÷ earnings growth rate. <1 = undervalued for growth; >3 = expensive." },
-  { key: "ReturnOnEquityTTM", label: "ROE",   width: 60, pct: true, tooltip: "Return on Equity TTM: net income ÷ equity. Measures management capital efficiency." },
-  { key: "GrossMarginTTM",    label: "G.Mgn", width: 64, pct: true, tooltip: "Gross Margin TTM: (revenue − COGS) ÷ revenue. Pricing power proxy." },
-  { key: "FCFYield",          label: "FCF%",  width: 56, pct: true, tooltip: "Free Cash Flow Yield: FCF ÷ market cap. >5% = strong cash gen; <0% = burning cash." },
-  { key: "DebtToEquity",      label: "D/E",   width: 50, tooltip: "Debt-to-Equity: total debt ÷ equity. <0.5 = conservative; >2.0 = high leverage risk." },
-  { key: "QuarterlyRevenueGrowthYOY", label: "Rev↑", width: 56, pct: true, tooltip: "Quarterly Revenue Growth YoY — top-line acceleration signal." },
-  { key: "ProfitMargin",      label: "N.Mgn", width: 60, pct: true, tooltip: "Net Profit Margin: net income ÷ revenue." },
-  { key: "EPS",               label: "EPS",   width: 58, tooltip: "Earnings Per Share TTM." },
+  { key: "PERatio",           label: "P/E",   csvLabel: "Price-to-Earnings TTM",           width: 56, tooltip: "Price-to-Earnings TTM. Scored vs sector median. Lower relative to sector = better." },
+  { key: "PEGRatio",          label: "PEG",   csvLabel: "PEG Ratio",                        width: 50, tooltip: "PEG = P/E ÷ earnings growth rate. <1 = undervalued for growth; >3 = expensive." },
+  { key: "ReturnOnEquityTTM", label: "ROE",   csvLabel: "Return on Equity TTM (%)",         width: 60, pct: true, tooltip: "Return on Equity TTM: net income ÷ equity. Measures management capital efficiency." },
+  { key: "GrossMarginTTM",    label: "G.Mgn", csvLabel: "Gross Margin TTM (%)",             width: 64, pct: true, tooltip: "Gross Margin TTM: (revenue − COGS) ÷ revenue. Pricing power proxy." },
+  { key: "FCFYield",          label: "FCF%",  csvLabel: "Free Cash Flow Yield (%)",         width: 56, pct: true, tooltip: "Free Cash Flow Yield: FCF ÷ market cap. >5% = strong cash gen; <0% = burning cash." },
+  { key: "DebtToEquity",      label: "D/E",   csvLabel: "Debt-to-Equity",                   width: 50, tooltip: "Debt-to-Equity: total debt ÷ equity. <0.5 = conservative; >2.0 = high leverage risk." },
+  { key: "QuarterlyRevenueGrowthYOY", label: "Rev↑", csvLabel: "Revenue Growth YoY (%)", width: 56, pct: true, tooltip: "Quarterly Revenue Growth YoY — top-line acceleration signal." },
+  { key: "ProfitMargin",      label: "N.Mgn", csvLabel: "Net Profit Margin (%)",            width: 60, pct: true, tooltip: "Net Profit Margin: net income ÷ revenue." },
+  { key: "EPS",               label: "EPS",   csvLabel: "Earnings Per Share TTM",           width: 58, tooltip: "Earnings Per Share TTM." },
 ];
 
 const COL_BY_KEY = Object.fromEntries(ALL_COLS.map(c => [c.key, c]));
@@ -174,6 +174,42 @@ export default function FundamentalsPage() {
   );
   const [showColPicker, setShowColPicker] = useState(false);
   const dragFrom = useRef<number | null>(null);
+
+  // Domain tab presets — auto-set visible columns per domain
+  const [domainTab, setDomainTab] = useState<"all"|"fundamental"|"technical"|"sentiment"|"macro"|"scores">("all");
+
+  const DOMAIN_PRESETS: Record<string, string[]> = {
+    all:         ALL_COLS.filter(c => !c.defaultHidden).map(c => c.key),
+    scores:      ["run_date","symbol","market","direction","analyst_score","fundamental_score","technical_score","sentiment_score","macro_score"],
+    fundamental: ["run_date","symbol","market","direction","fundamental_score","PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield","DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS"],
+    technical:   ["run_date","symbol","market","direction","technical_score"],
+    sentiment:   ["run_date","symbol","market","direction","sentiment_score"],
+    macro:       ["run_date","symbol","market","direction","macro_score"],
+  };
+
+  function applyDomainTab(tab: typeof domainTab) {
+    setDomainTab(tab);
+    const show = new Set(DOMAIN_PRESETS[tab]);
+    setHiddenSet(new Set(ALL_COLS.map(c => c.key).filter(k => !show.has(k))));
+  }
+
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillMsg, setBackfillMsg] = useState("");
+
+  function runBackfill() {
+    if (backfilling) return;
+    setBackfilling(true);
+    setBackfillMsg("Fetching names from Finnhub/Yahoo… (takes ~3 min for 184 symbols)");
+    fetch("/api/admin/backfill-names", { method: "POST" })
+      .then(r => r.json())
+      .then(d => {
+        setBackfillMsg(`Done: ${d.updated} updated, ${d.failed} failed out of ${d.total} symbols`);
+        setBackfilling(false);
+        // Reload rows to show new names
+        fetch(`/api/research/universe?mode=${viewMode}`).then(r => r.json()).then(d2 => setRows(d2.symbols ?? []));
+      })
+      .catch(() => { setBackfillMsg("Backfill failed — check server logs"); setBackfilling(false); });
+  }
 
   // Chart
   const [chartSymbols,     setChartSymbols]     = useState<string[]>([]);
@@ -256,21 +292,21 @@ export default function FundamentalsPage() {
     setChartIndicators(prev => prev.includes(ind) ? prev.filter(s => s !== ind) : [...prev, ind].slice(0, 12));
   }
 
-  // CSV export of current filtered+sorted view
+  // CSV export — always ALL rows + ALL columns (ignores current filter/column picker)
   function downloadCSV() {
-    const cols = visibleCols.filter(c => c.key !== "last_trade_side"); // trade col is formatted
-    const header = [...cols.map(c => c.label), "Trade", "Trade Date"].join(",");
-    const csvRows = filtered.map(r => {
+    const csvCols = ALL_COLS.filter(c => c.key !== "last_trade_side");
+    const header = [...csvCols.map(c => c.csvLabel ?? c.label), "Trade Side", "Trade Date"].join(",");
+    const csvRows = rows.map(r => {
       const f = r.fundamentals ?? {};
-      const cells = cols.map(c => {
+      const cells = csvCols.map(c => {
         let v: string;
-        if (c.key === "run_date")   v = fmtDate(r.last_researched_at);
-        else if (c.key === "symbol") v = r.symbol;
-        else if (c.key === "market") v = r.market;
+        if (c.key === "run_date")       v = fmtDate(r.last_researched_at);
+        else if (c.key === "symbol")    v = r.symbol;
+        else if (c.key === "market")    v = r.market;
         else if (c.key === "direction") v = r.direction ?? "";
-        else if (c.score)            v = String((r as any)[c.key] ?? "");
+        else if (c.score)               v = String((r as any)[c.key] ?? "");
         else if (c.key === "Name" || c.key === "Sector") v = f[c.key] ?? "";
-        else                         v = f[c.key] ?? "";
+        else                            v = f[c.key] ?? "";
         return `"${String(v).replace(/"/g,'""')}"`;
       });
       const lt = r.last_trade;
@@ -329,11 +365,24 @@ export default function FundamentalsPage() {
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
 
       {/* Header */}
-      <div style={{ padding: "18px 20px 0" }}>
-        <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Fundamentals</h1>
-        <p style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>
-          Research audit log · score formulas · chart any indicator over time · trade markers
-        </p>
+      <div style={{ padding: "18px 20px 0", display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Fundamentals</h1>
+          <p style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>
+            Research audit log · score formulas · chart any indicator · trade markers
+            <span style={{ marginLeft: 8, color: T.yellow }}>· Sort "Date" ↓ to see today&apos;s runs at top</span>
+          </p>
+          {backfillMsg && <p style={{ fontSize: 11, color: backfilling ? T.yellow : T.green, marginTop: 4 }}>{backfillMsg}</p>}
+        </div>
+        <button onClick={runBackfill} disabled={backfilling}
+          title="Fetch company Name + Sector from Finnhub/Yahoo for all symbols missing it"
+          style={{
+            padding: "7px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: backfilling ? "default" : "pointer",
+            border: `1px solid ${T.border}`, background: T.card, color: backfilling ? T.muted : T.accent,
+            opacity: backfilling ? 0.6 : 1,
+          }}>
+          {backfilling ? "⏳ Backfilling…" : "🔄 Backfill Names"}
+        </button>
       </div>
 
       {/* ══ CHART BUILDER ══════════════════════════════════════════════════════ */}
@@ -505,8 +554,35 @@ export default function FundamentalsPage() {
 
       {/* ══ TABLE ════════════════════════════════════════════════════════════ */}
 
+      {/* Domain tabs — column group presets */}
+      <div style={{ padding: "12px 20px 0", display: "flex", gap: 4, flexWrap: "wrap" }}>
+        {([
+          { id: "all",         label: "All",         note: "" },
+          { id: "scores",      label: "📊 Scores",   note: "Composite F/T/S/M per run" },
+          { id: "fundamental", label: "📈 Fundamental", note: "F-score + P/E, PEG, ROE, margins, FCF, D/E" },
+          { id: "technical",   label: "⚡ Technical",  note: "T-score only — sub-indicators (RSI/EMA/MACD) not stored per run" },
+          { id: "sentiment",   label: "💬 Sentiment",  note: "S-score only — news/analyst breakdown not stored per run" },
+          { id: "macro",       label: "🌐 Macro",      note: "M-score only — regime/VIX breakdown not stored per run" },
+        ] as const).map(tab => (
+          <button key={tab.id} onClick={() => applyDomainTab(tab.id)} title={tab.note}
+            style={{
+              padding: "5px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
+              border: `1px solid ${domainTab === tab.id ? T.accent : T.border}`,
+              background: domainTab === tab.id ? `${T.accent}22` : T.card,
+              color: domainTab === tab.id ? T.accent : T.muted,
+            }}>
+            {tab.label}
+          </button>
+        ))}
+        {(domainTab === "technical" || domainTab === "sentiment" || domainTab === "macro") && (
+          <span style={{ fontSize: 10, color: T.muted, alignSelf: "center", marginLeft: 4 }}>
+            ℹ Sub-indicators not stored per run — use charts to see historical score trends
+          </span>
+        )}
+      </div>
+
       {/* Table filter bar */}
-      <div style={{ padding: "16px 20px 8px", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{ padding: "10px 20px 8px", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input value={query} onChange={e => setQuery(e.target.value)}
           placeholder="Filter any column — symbol, sector, score, direction…"
           style={{
