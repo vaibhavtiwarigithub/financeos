@@ -4,10 +4,10 @@ import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  Legend, ResponsiveContainer,
+  Legend, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 
-// ── Palette ─────────────────────────────────────────────────────────────────
+// ── Palette ──────────────────────────────────────────────────────────────────
 
 const T = {
   bg: "#0D0F1A", card: "#12141F", border: "#1E2030",
@@ -20,61 +20,99 @@ const LINE_COLORS = [
   "#A855F7","#F97316","#06B6D4","#EC4899","#84CC16",
 ];
 
-// ── Table column definitions ─────────────────────────────────────────────────
+// ── Chart grouping: same-scale indicators share one panel ─────────────────────
+
+const CHART_GROUPS = [
+  {
+    id: "scores", label: "Scores (0–100)",
+    keys: ["analyst_score","fundamental_score","technical_score","sentiment_score","macro_score"],
+    pct: false, yDomain: [0, 100] as [number,number],
+  },
+  {
+    id: "price",  label: "Price",
+    keys: ["price"],
+    pct: false,
+  },
+  {
+    id: "pct",    label: "Margins & Yields (%)",
+    keys: ["ReturnOnEquityTTM","GrossMarginTTM","FCFYield","QuarterlyRevenueGrowthYOY","ProfitMargin"],
+    pct: true,
+  },
+  {
+    id: "ratio",  label: "Valuation Ratios",
+    keys: ["PERatio","PEGRatio","DebtToEquity"],
+    pct: false,
+  },
+  {
+    id: "eps",    label: "EPS",
+    keys: ["EPS"],
+    pct: false,
+  },
+];
+
+// ── Indicator defs ────────────────────────────────────────────────────────────
+
+const INDICATOR_DEFS = [
+  { key: "analyst_score",     label: "Analyst Score",  group: "scores" },
+  { key: "fundamental_score", label: "F-Score",        group: "scores" },
+  { key: "technical_score",   label: "T-Score",        group: "scores" },
+  { key: "sentiment_score",   label: "S-Score",        group: "scores" },
+  { key: "macro_score",       label: "M-Score",        group: "scores" },
+  { key: "price",             label: "Price",          group: "price"  },
+  { key: "PERatio",           label: "P/E",            group: "ratio"  },
+  { key: "PEGRatio",          label: "PEG",            group: "ratio"  },
+  { key: "ReturnOnEquityTTM", label: "ROE",            group: "pct", pct: true },
+  { key: "GrossMarginTTM",    label: "Gross Margin",   group: "pct", pct: true },
+  { key: "FCFYield",          label: "FCF Yield",      group: "pct", pct: true },
+  { key: "DebtToEquity",      label: "D/E",            group: "ratio"  },
+  { key: "QuarterlyRevenueGrowthYOY", label: "Rev Growth", group: "pct", pct: true },
+  { key: "ProfitMargin",      label: "Profit Margin",  group: "pct", pct: true },
+  { key: "EPS",               label: "EPS",            group: "eps"    },
+];
+const IND_BY_KEY = Object.fromEntries(INDICATOR_DEFS.map(d => [d.key, d]));
+
+// ── Table column defs ─────────────────────────────────────────────────────────
 
 interface ColDef {
   key: string; label: string; width: number;
-  pct?: boolean; score?: boolean; tooltip: string;
-  defaultHidden?: boolean;
+  pct?: boolean; score?: boolean; tooltip: string; defaultHidden?: boolean;
 }
 
 const ALL_COLS: ColDef[] = [
-  { key: "symbol",   label: "Symbol",   width: 90, tooltip: "Ticker — click to open deep dive" },
-  { key: "Name",     label: "Name",     width: 160, defaultHidden: true, tooltip: "Company full name" },
-  { key: "Sector",   label: "Sector",   width: 110, defaultHidden: true, tooltip: "Sector from provider taxonomy" },
-  { key: "market",   label: "Mkt",      width: 42,  tooltip: "Market: 🇺🇸 US or 🇮🇳 India (NSE)" },
-  { key: "direction",label: "Dir",      width: 58,  tooltip: "Signal direction: LONG / NEUTRAL / SHORT from last research run" },
-  { key: "analyst_score",     label: "Score", width: 54, score: true, tooltip: "Composite analyst score (0–100): weighted F + T + S + M" },
-  { key: "fundamental_score", label: "F",     width: 42, score: true, tooltip: "Fundamental score (0–100): P/E, PEG, ROE, FCF Yield, D/E, Gross Margin, Rev Growth, EPS trend" },
-  { key: "technical_score",   label: "T",     width: 42, score: true, tooltip: "Technical score (0–100): RSI, EMA 20/50/200, MACD, ADX trend strength, RS vs benchmark, 52W proximity" },
-  { key: "sentiment_score",   label: "S",     width: 42, score: true, tooltip: "Sentiment score (0–100): news sentiment, analyst upgrades/downgrades, insider activity" },
-  { key: "macro_score",       label: "M",     width: 42, score: true, tooltip: "Macro score (0–100): market regime, VIX, sector breadth, yield curve context" },
-  { key: "PERatio",           label: "P/E",   width: 56, tooltip: "Price-to-Earnings TTM. Lower = cheaper vs earnings. Scored vs sector median." },
-  { key: "PEGRatio",          label: "PEG",   width: 50, tooltip: "PEG = P/E ÷ earnings growth rate. <1 = potentially undervalued for growth; >3 = expensive" },
-  { key: "ReturnOnEquityTTM", label: "ROE",   width: 60, pct: true, tooltip: "Return on Equity TTM: net income ÷ equity. How efficiently management uses capital." },
-  { key: "GrossMarginTTM",    label: "G.Mgn", width: 64, pct: true, tooltip: "Gross Margin TTM: (revenue − COGS) ÷ revenue. Higher = stronger pricing power." },
-  { key: "FCFYield",          label: "FCF%",  width: 56, pct: true, tooltip: "Free Cash Flow Yield: FCF ÷ market cap. >5% = high cash generation; <0% = burning cash." },
+  { key: "run_date",   label: "Date",      width: 86,  tooltip: "Exact date and time this research run was executed" },
+  { key: "symbol",     label: "Symbol",    width: 90,  tooltip: "Ticker — click to open deep dive" },
+  { key: "Name",       label: "Name",      width: 160, defaultHidden: true, tooltip: "Company full name" },
+  { key: "Sector",     label: "Sector",    width: 110, defaultHidden: true, tooltip: "Sector from provider taxonomy" },
+  { key: "market",     label: "Mkt",       width: 42,  tooltip: "Market: 🇺🇸 US (NYSE/Nasdaq) or 🇮🇳 India (NSE)" },
+  { key: "direction",  label: "Dir",       width: 58,  tooltip: "Signal direction: LONG / NEUTRAL / SHORT from this research run" },
+  { key: "analyst_score",     label: "Score", width: 54, score: true,
+    tooltip: "Composite analyst score (0–100)\nFormula: weighted sum of F + T + S + M using champion genome weights.\nWeights are learned from closed-trade outcomes by LearnerAgent." },
+  { key: "fundamental_score", label: "F",     width: 42, score: true,
+    tooltip: "Fundamental score (0–100)\nKey drivers:\n• P/E vs sector median: ±15 pts\n• PEG: <1→+12, <2→+6, >3→-10\n• ROE: >15%→+10, >8%→+5, <0→-10\n• EPS growth: >20%→+10, >5%→+5\n• Revenue growth: >20%→+15, >10%→+8, <-10→-12\n• FCF Yield: >5%→+12, <0→-10\n• D/E: <0.5→+8, >3→-15\n• Gross Margin: >50%→+10, >30%→+5\n• 52W proximity: within 5%→+15, within 10%→+10" },
+  { key: "technical_score",   label: "T",     width: 42, score: true,
+    tooltip: "Technical score (0–100)\nKey drivers:\n• RSI: 40–60→+10, >70→-5, <30→-20\n• EMA20>EMA50→+8, below→-8\n• EMA50>EMA200→+10, below→-10\n• MACD histogram: pos→+5, neg→-5\n• RS vs benchmark: >5%→+8, >0→+4, <-5%→-8\n• ADX≥25→×1.15 (trending), ADX<20→×0.75 (ranging)\n• Breakdown veto: ATR crash caps score at 20" },
+  { key: "sentiment_score",   label: "S",     width: 42, score: true,
+    tooltip: "Sentiment score (0–100)\nSources: news sentiment (GDELT/Finnhub), analyst upgrades/downgrades, insider buying/selling activity" },
+  { key: "macro_score",       label: "M",     width: 42, score: true,
+    tooltip: "Macro score (0–100)\nSources: market regime (bull/bear/neutral), VIX level, sector breadth, yield curve context from macro_regime table" },
+  { key: "last_trade_side",   label: "Trade", width: 60, defaultHidden: false,
+    tooltip: "Last paper trade executed for this symbol: BUY (entry) or SELL (exit). Shows score at time of trade in parentheses." },
+  { key: "PERatio",           label: "P/E",   width: 56, tooltip: "Price-to-Earnings TTM. Scored vs sector median. Lower relative to sector = better." },
+  { key: "PEGRatio",          label: "PEG",   width: 50, tooltip: "PEG = P/E ÷ earnings growth rate. <1 = undervalued for growth; >3 = expensive." },
+  { key: "ReturnOnEquityTTM", label: "ROE",   width: 60, pct: true, tooltip: "Return on Equity TTM: net income ÷ equity. Measures management capital efficiency." },
+  { key: "GrossMarginTTM",    label: "G.Mgn", width: 64, pct: true, tooltip: "Gross Margin TTM: (revenue − COGS) ÷ revenue. Pricing power proxy." },
+  { key: "FCFYield",          label: "FCF%",  width: 56, pct: true, tooltip: "Free Cash Flow Yield: FCF ÷ market cap. >5% = strong cash gen; <0% = burning cash." },
   { key: "DebtToEquity",      label: "D/E",   width: 50, tooltip: "Debt-to-Equity: total debt ÷ equity. <0.5 = conservative; >2.0 = high leverage risk." },
-  { key: "QuarterlyRevenueGrowthYOY", label: "Rev↑", width: 56, pct: true, tooltip: "Quarterly Revenue Growth YoY. Positive = accelerating top-line." },
-  { key: "ProfitMargin",      label: "N.Mgn", width: 60, pct: true, tooltip: "Net Profit Margin: net income ÷ revenue. % of sales that becomes profit after all costs." },
-  { key: "EPS",               label: "EPS",   width: 58, tooltip: "Earnings Per Share TTM: total earnings ÷ shares outstanding." },
-  { key: "last_researched_at",label: "Last",  width: 60, tooltip: "Days since last research pipeline run for this symbol." },
+  { key: "QuarterlyRevenueGrowthYOY", label: "Rev↑", width: 56, pct: true, tooltip: "Quarterly Revenue Growth YoY — top-line acceleration signal." },
+  { key: "ProfitMargin",      label: "N.Mgn", width: 60, pct: true, tooltip: "Net Profit Margin: net income ÷ revenue." },
+  { key: "EPS",               label: "EPS",   width: 58, tooltip: "Earnings Per Share TTM." },
 ];
 
 const COL_BY_KEY = Object.fromEntries(ALL_COLS.map(c => [c.key, c]));
 
-// ── Indicator definitions for chart builder ──────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-const INDICATOR_DEFS = [
-  { key: "analyst_score",     label: "Analyst Score",  group: "scores" as const },
-  { key: "fundamental_score", label: "F-Score",        group: "scores" as const },
-  { key: "technical_score",   label: "T-Score",        group: "scores" as const },
-  { key: "sentiment_score",   label: "S-Score",        group: "scores" as const },
-  { key: "macro_score",       label: "M-Score",        group: "scores" as const },
-  { key: "price",             label: "Price",          group: "price"  as const },
-  { key: "PERatio",           label: "P/E",            group: "fundamental" as const },
-  { key: "PEGRatio",          label: "PEG",            group: "fundamental" as const },
-  { key: "ReturnOnEquityTTM", label: "ROE",            group: "fundamental" as const, pct: true },
-  { key: "GrossMarginTTM",    label: "Gross Margin",   group: "fundamental" as const, pct: true },
-  { key: "FCFYield",          label: "FCF Yield",      group: "fundamental" as const, pct: true },
-  { key: "DebtToEquity",      label: "D/E",            group: "fundamental" as const },
-  { key: "QuarterlyRevenueGrowthYOY", label: "Rev Growth", group: "fundamental" as const, pct: true },
-  { key: "ProfitMargin",      label: "Profit Margin",  group: "fundamental" as const, pct: true },
-  { key: "EPS",               label: "EPS",            group: "fundamental" as const },
-];
-const IND_BY_KEY = Object.fromEntries(INDICATOR_DEFS.map(d => [d.key, d]));
-
-// ── Types ────────────────────────────────────────────────────────────────────
+interface LastTrade { side: string; date: string; exit_at: string | null; analyst_score: number | null }
 
 interface SymbolRow {
   symbol: string; market: string; analyst_score: number;
@@ -82,9 +120,12 @@ interface SymbolRow {
   sentiment_score: number; macro_score: number;
   direction: string; last_researched_at: string;
   fundamentals: Record<string, string> | null;
+  last_trade: LastTrade | null;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+interface TradeMarker { date: string; side: string; type: "entry" | "exit"; analyst_score: number | null }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtVal(v: string | number | undefined, pct = false) {
   if (v == null || v === "") return "—";
@@ -92,32 +133,34 @@ function fmtVal(v: string | number | undefined, pct = false) {
   if (!isFinite(n)) return "—";
   if (pct) return `${(n * 100).toFixed(1)}%`;
   return n >= 1000 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 })
-       : n >= 10   ? n.toFixed(1) : n.toFixed(2);
+       : n >= 10 ? n.toFixed(1) : n.toFixed(2);
 }
 
-function scoreColor(v: number) {
-  return v >= 70 ? T.green : v >= 50 ? T.yellow : T.red;
+function fmtDate(iso: string) {
+  const d = new Date(iso);
+  return d.toISOString().slice(0, 10);
 }
-function dirColor(d: string) {
-  return d === "long" ? T.green : d === "short" ? T.red : T.muted;
+
+function fmtDateTime(iso: string) {
+  return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
-function daysAgo(iso: string) {
-  const d = Math.round((Date.now() - new Date(iso).getTime()) / 86400000);
-  return d === 0 ? "today" : `${d}d`;
-}
+
+function scoreColor(v: number) { return v >= 70 ? T.green : v >= 50 ? T.yellow : T.red; }
+function dirColor(d: string)   { return d === "long" ? T.green : d === "short" ? T.red : T.muted; }
+
 function getCell(row: SymbolRow, key: string) {
   if (key in row) return (row as any)[key];
   return row.fundamentals?.[key] ?? null;
 }
 
-// ── Component ────────────────────────────────────────────────────────────────
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function FundamentalsPage() {
   const router = useRouter();
 
-  // Universe
-  const [rows, setRows]       = useState<SymbolRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [rows, setRows]         = useState<SymbolRow[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [viewMode, setViewMode] = useState<"latest" | "all_runs">("latest");
 
   // Table controls
   const [query, setQuery]           = useState("");
@@ -125,55 +168,66 @@ export default function FundamentalsPage() {
   const [sortKey, setSortKey]       = useState("analyst_score");
   const [sortDir, setSortDir]       = useState<"asc" | "desc">("desc");
 
-  // Column visibility + order
+  // Column management
   const [colOrder,  setColOrder]  = useState<string[]>(ALL_COLS.map(c => c.key));
   const [hiddenSet, setHiddenSet] = useState<Set<string>>(
     new Set(ALL_COLS.filter(c => c.defaultHidden).map(c => c.key))
   );
   const [showColPicker, setShowColPicker] = useState(false);
-
-  // Drag-to-reorder columns
   const dragFrom = useRef<number | null>(null);
 
-  // Chart controls
-  const [chartSymbols,    setChartSymbols]    = useState<string[]>([]);
-  const [chartIndicators, setChartIndicators] = useState<string[]>(["analyst_score"]);
-  const [chartDays,       setChartDays]       = useState(365);
-  const [chartData,       setChartData]       = useState<Record<string, any>[]>([]);
-  const [chartLoading,    setChartLoading]    = useState(false);
-  const [rawSeries, setRawSeries] = useState<Record<string, Record<string, { date: string; value: number }[]>>>({});
+  // Chart
+  const [chartSymbols,     setChartSymbols]     = useState<string[]>([]);
+  const [chartIndicators,  setChartIndicators]  = useState<string[]>(["analyst_score","fundamental_score","technical_score"]);
+  const [chartDays,        setChartDays]        = useState(365);
+  const [showTradeMarkers, setShowTradeMarkers] = useState(true);
+  const [chartLoading,     setChartLoading]     = useState(false);
+  const [rawSeries, setRawSeries]   = useState<Record<string, Record<string, { date: string; value: number }[]>>>({});
+  const [tradeMarkers, setTradeMarkers] = useState<Record<string, TradeMarker[]>>({});
 
-  // Load universe
+  // Load rows
   useEffect(() => {
-    fetch("/api/research/universe")
+    setLoading(true);
+    fetch(`/api/research/universe?mode=${viewMode}`)
       .then(r => r.json())
       .then(d => { setRows(d.symbols ?? []); setLoading(false); })
       .catch(() => setLoading(false));
-  }, []);
+  }, [viewMode]);
 
-  // Chart fetch
+  // Load chart data
   useEffect(() => {
-    if (!chartSymbols.length || !chartIndicators.length) { setChartData([]); return; }
+    if (!chartSymbols.length || !chartIndicators.length) {
+      setRawSeries({}); setTradeMarkers({}); return;
+    }
     setChartLoading(true);
     const params = new URLSearchParams({
       symbols: chartSymbols.join(","),
       indicators: chartIndicators.join(","),
       days: String(chartDays),
+      include_trades: String(showTradeMarkers),
     });
     fetch(`/api/research/chart-data?${params}`)
       .then(r => r.json())
       .then(d => {
         setRawSeries(d.series ?? {});
+        setTradeMarkers(d.trade_markers ?? {});
         setChartLoading(false);
       })
       .catch(() => setChartLoading(false));
-  }, [chartSymbols, chartIndicators, chartDays]);
+  }, [chartSymbols, chartIndicators, chartDays, showTradeMarkers]);
 
-  // Visible cols in order
+  // Visible + ordered cols (in latest mode show fundamentals; in all_runs hide them)
   const visibleCols = colOrder
-    .filter(k => !hiddenSet.has(k))
-    .map(k => COL_BY_KEY[k])
-    .filter(Boolean);
+    .filter(k => {
+      if (hiddenSet.has(k)) return false;
+      if (viewMode === "all_runs") {
+        // Fundamentals only available in latest mode
+        const fundKeys = new Set(["PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield","DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS","Name","Sector","last_trade_side"]);
+        if (fundKeys.has(k)) return false;
+      }
+      return true;
+    })
+    .map(k => COL_BY_KEY[k]).filter(Boolean);
 
   // Sort
   function handleSort(key: string) {
@@ -181,72 +235,89 @@ export default function FundamentalsPage() {
     else { setSortKey(key); setSortDir("desc"); }
   }
 
-  // Column drag handlers
+  // Drag-to-reorder columns
   function onDragStart(i: number) { dragFrom.current = i; }
   function onDragOver(e: React.DragEvent) { e.preventDefault(); }
   function onDrop(toIdx: number) {
     const from = dragFrom.current;
     if (from == null || from === toIdx) return;
     setColOrder(prev => {
-      // Work on visible order only then splice back
-      const visKeys = prev.filter(k => !hiddenSet.has(k));
-      const fromKey = visKeys[from];
-      visKeys.splice(from, 1);
-      visKeys.splice(toIdx, 0, fromKey);
-      // Rebuild full order: hidden cols preserve their original relative positions
-      const hiddenKeys = prev.filter(k => hiddenSet.has(k));
-      return [...visKeys, ...hiddenKeys];
+      const vis = prev.filter(k => !hiddenSet.has(k));
+      const fromKey = vis[from];
+      vis.splice(from, 1); vis.splice(toIdx, 0, fromKey);
+      return [...vis, ...prev.filter(k => hiddenSet.has(k))];
     });
     dragFrom.current = null;
   }
 
-  // Column toggle
   function toggleCol(key: string) {
-    setHiddenSet(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
+    setHiddenSet(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   }
 
-  // Chart toggles
   function toggleChartSymbol(sym: string) {
-    setChartSymbols(prev =>
-      prev.includes(sym) ? prev.filter(s => s !== sym) : [...prev, sym].slice(0, 10)
-    );
+    setChartSymbols(prev => prev.includes(sym) ? prev.filter(s => s !== sym) : [...prev, sym].slice(0, 10));
   }
   function toggleChartIndicator(ind: string) {
-    setChartIndicators(prev =>
-      prev.includes(ind) ? prev.filter(s => s !== ind) : [...prev, ind].slice(0, 12)
-    );
+    setChartIndicators(prev => prev.includes(ind) ? prev.filter(s => s !== ind) : [...prev, ind].slice(0, 12));
+  }
+
+  // CSV export of current filtered+sorted view
+  function downloadCSV() {
+    const cols = visibleCols.filter(c => c.key !== "last_trade_side"); // trade col is formatted
+    const header = [...cols.map(c => c.label), "Trade", "Trade Date"].join(",");
+    const csvRows = filtered.map(r => {
+      const f = r.fundamentals ?? {};
+      const cells = cols.map(c => {
+        let v: string;
+        if (c.key === "run_date")   v = fmtDate(r.last_researched_at);
+        else if (c.key === "symbol") v = r.symbol;
+        else if (c.key === "market") v = r.market;
+        else if (c.key === "direction") v = r.direction ?? "";
+        else if (c.score)            v = String((r as any)[c.key] ?? "");
+        else if (c.key === "Name" || c.key === "Sector") v = f[c.key] ?? "";
+        else                         v = f[c.key] ?? "";
+        return `"${String(v).replace(/"/g,'""')}"`;
+      });
+      const lt = r.last_trade;
+      cells.push(`"${lt ? lt.side.toUpperCase() : ""}"`, `"${lt ? fmtDate(lt.date) : ""}"`);
+      return cells.join(",");
+    });
+    const blob = new Blob([header + "\n" + csvRows.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url;
+    a.download = `fundamentals-${viewMode}-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click(); URL.revokeObjectURL(url);
   }
 
   // Filter + sort rows
-  const filtered = rows
-    .filter(r => {
-      if (mktFilter !== "all" && r.market !== mktFilter) return false;
-      if (query) {
-        const q = query.toLowerCase();
-        return r.symbol.toLowerCase().includes(q) ||
-          (r.fundamentals?.Sector ?? "").toLowerCase().includes(q) ||
-          (r.fundamentals?.Name ?? "").toLowerCase().includes(q);
-      }
-      return true;
-    })
-    .sort((a, b) => {
-      // Date columns: sort by epoch
-      if (sortKey === "last_researched_at") {
-        const at = new Date(a.last_researched_at).getTime();
-        const bt = new Date(b.last_researched_at).getTime();
-        return sortDir === "desc" ? bt - at : at - bt;
-      }
-      const av = getCell(a, sortKey), bv = getCell(b, sortKey);
-      const an = parseFloat(av), bn = parseFloat(bv);
-      if (!isNaN(an) && !isNaN(bn)) return sortDir === "desc" ? bn - an : an - bn;
-      return sortDir === "desc"
-        ? String(bv ?? "").localeCompare(String(av ?? ""))
-        : String(av ?? "").localeCompare(String(bv ?? ""));
-    });
+  const filtered = rows.filter(r => {
+    if (mktFilter !== "all" && r.market !== mktFilter) return false;
+    if (query) {
+      const q = query.toLowerCase();
+      return r.symbol.toLowerCase().includes(q) ||
+        (r.fundamentals?.Sector ?? "").toLowerCase().includes(q) ||
+        (r.fundamentals?.Name ?? "").toLowerCase().includes(q);
+    }
+    return true;
+  }).sort((a, b) => {
+    if (sortKey === "last_researched_at" || sortKey === "run_date") {
+      const at = new Date(a.last_researched_at).getTime();
+      const bt = new Date(b.last_researched_at).getTime();
+      return sortDir === "desc" ? bt - at : at - bt;
+    }
+    const av = getCell(a, sortKey), bv = getCell(b, sortKey);
+    const an = parseFloat(av), bn = parseFloat(bv);
+    if (!isNaN(an) && !isNaN(bn)) return sortDir === "desc" ? bn - an : an - bn;
+    return sortDir === "desc"
+      ? String(bv ?? "").localeCompare(String(av ?? ""))
+      : String(av ?? "").localeCompare(String(bv ?? ""));
+  });
+
+  // Chart group rendering
+  const activeGroups = CHART_GROUPS.map(g => ({
+    ...g,
+    activeKeys: g.keys.filter(k => chartIndicators.includes(k)),
+  })).filter(g => g.activeKeys.length > 0);
 
   const SortArrow = ({ col }: { col: string }) => (
     <span style={{ fontSize: 8, marginLeft: 2, opacity: sortKey === col ? 1 : 0.25 }}>
@@ -257,54 +328,52 @@ export default function FundamentalsPage() {
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div style={{ padding: "18px 20px 0" }}>
         <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Fundamentals</h1>
         <p style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>
-          All researched symbols — chart history · sortable table · customisable columns
+          Research audit log · score formulas · chart any indicator over time · trade markers
         </p>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          CHART BUILDER — above table
-      ══════════════════════════════════════════════════════════════════════ */}
+      {/* ══ CHART BUILDER ══════════════════════════════════════════════════════ */}
       <div style={{ padding: "16px 20px 0" }}>
         <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>
           Historical Chart Builder
           <span style={{ fontWeight: 400, fontSize: 11, color: T.muted, marginLeft: 8 }}>
-            click "+ Chart" in table · pick indicators · compare symbols
+            select symbols from table · pick indicators · same-scale indicators share one panel
           </span>
         </div>
 
         {/* Indicator pills */}
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 9, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 }}>
-            Indicators — S=Score · P=Price · F=Fundamental
+            Indicators — S=Score · P=Price · %=Pct · R=Ratio
           </div>
           <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
             {INDICATOR_DEFS.map(ind => {
               const active = chartIndicators.includes(ind.key);
+              const groupColor: Record<string, string> = {
+                scores: T.accent, price: "#3B82F6", pct: T.green, ratio: T.yellow, eps: T.muted,
+              };
               return (
                 <button key={ind.key} onClick={() => toggleChartIndicator(ind.key)}
                   style={{
                     padding: "3px 9px", borderRadius: 10, fontSize: 11, cursor: "pointer",
                     fontWeight: active ? 700 : 400,
-                    border: `1px solid ${active ? T.accent : T.border}`,
-                    background: active ? `${T.accent}22` : T.card,
-                    color: active ? T.accent : T.muted,
+                    border: `1px solid ${active ? (groupColor[(ind as any).group] ?? T.border) : T.border}`,
+                    background: active ? `${groupColor[(ind as any).group] ?? T.accent}22` : T.card,
+                    color: active ? (groupColor[(ind as any).group] ?? T.text) : T.muted,
                   }}>
                   {ind.label}
-                  <span style={{ fontSize: 9, marginLeft: 3, opacity: 0.5 }}>
-                    {ind.group === "scores" ? "S" : ind.group === "price" ? "P" : "F"}
-                  </span>
                 </button>
               );
             })}
           </div>
         </div>
 
-        {/* Time window */}
-        <div style={{ display: "flex", gap: 5, marginBottom: 12 }}>
+        {/* Options row */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
           {([90, 180, 365, 730, 2000] as const).map(d => (
             <button key={d} onClick={() => setChartDays(d)}
               style={{
@@ -316,13 +385,21 @@ export default function FundamentalsPage() {
               {d === 90 ? "3M" : d === 180 ? "6M" : d === 365 ? "1Y" : d === 730 ? "2Y" : "All"}
             </button>
           ))}
+          <button onClick={() => setShowTradeMarkers(p => !p)}
+            style={{
+              padding: "3px 9px", borderRadius: 5, fontSize: 11, cursor: "pointer",
+              border: `1px solid ${showTradeMarkers ? T.green : T.border}`,
+              background: showTradeMarkers ? `${T.green}22` : T.card,
+              color: showTradeMarkers ? T.green : T.muted,
+            }}>
+            📍 Trade markers {showTradeMarkers ? "on" : "off"}
+          </button>
         </div>
 
         {/* Empty state */}
         {!chartSymbols.length && (
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 8,
-            padding: "20px", textAlign: "center", color: T.muted, fontSize: 12, marginBottom: 12 }}>
-            Click "+ Chart" on any row in the table below to add symbols here.
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "20px", textAlign: "center", color: T.muted, fontSize: 12, marginBottom: 12 }}>
+            Click "+ Chart" on any row in the table below.
           </div>
         )}
 
@@ -330,8 +407,7 @@ export default function FundamentalsPage() {
         {chartSymbols.length > 0 && (
           <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 10 }}>
             {chartSymbols.map((sym, i) => (
-              <span key={sym}
-                onClick={() => toggleChartSymbol(sym)}
+              <span key={sym} onClick={() => toggleChartSymbol(sym)}
                 style={{
                   background: `${LINE_COLORS[i % LINE_COLORS.length]}22`,
                   border: `1px solid ${LINE_COLORS[i % LINE_COLORS.length]}`,
@@ -344,50 +420,79 @@ export default function FundamentalsPage() {
           </div>
         )}
 
-        {/* One chart per indicator */}
-        {chartSymbols.length > 0 && chartIndicators.map(ind => {
-          const def = IND_BY_KEY[ind];
+        {/* Charts: one panel per group, same-scale indicators share panel */}
+        {chartSymbols.length > 0 && activeGroups.map(group => {
+          // Build unified date map for all symbols × indicators in this group
           const dateMap = new Map<string, Record<string, number>>();
           for (const sym of chartSymbols) {
-            for (const { date, value } of rawSeries[sym]?.[ind] ?? []) {
-              if (!dateMap.has(date)) dateMap.set(date, { date: date as any });
-              dateMap.get(date)![`${sym}`] = value;
+            for (const ind of group.activeKeys) {
+              for (const { date, value } of rawSeries[sym]?.[ind] ?? []) {
+                if (!dateMap.has(date)) dateMap.set(date, { date: date as any });
+                dateMap.get(date)![`${sym}:${ind}`] = value;
+              }
             }
           }
           const data = [...dateMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([,v]) => v);
+
+          // All trade markers across all selected symbols (for ReferenceLine)
+          const allMarkers: (TradeMarker & { sym: string })[] = chartSymbols.flatMap(sym =>
+            (tradeMarkers[sym] ?? []).map(m => ({ ...m, sym }))
+          );
+
           if (!data.length && !chartLoading) return null;
+
+          // Line keys: one per symbol × indicator
+          const lineKeys = chartSymbols.flatMap((sym, si) =>
+            group.activeKeys.map((ind, ii) => ({
+              key: `${sym}:${ind}`,
+              label: group.activeKeys.length > 1 ? `${sym} ${IND_BY_KEY[ind]?.label ?? ind}` : sym,
+              color: LINE_COLORS[(si * 3 + ii) % LINE_COLORS.length],
+            }))
+          );
+
           return (
-            <div key={ind} style={{ marginBottom: 18 }}>
+            <div key={group.id} style={{ marginBottom: 18 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, marginBottom: 5 }}>
-                {def?.label ?? ind}
-                <span style={{ fontSize: 9, marginLeft: 6 }}>
-                  {def?.group === "scores" ? "0–100" : def?.pct ? "%" : def?.group === "price" ? "$" : "ratio"}
+                {group.label}
+                <span style={{ fontSize: 9, marginLeft: 6, color: T.muted }}>
+                  {group.activeKeys.map(k => IND_BY_KEY[k]?.label ?? k).join(" · ")}
                 </span>
               </div>
               <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 4px 4px" }}>
                 {chartLoading ? (
-                  <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 11 }}>
+                  <div style={{ height: 180, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 11 }}>
                     Loading…
                   </div>
                 ) : (
-                  <ResponsiveContainer width="100%" height={160}>
+                  <ResponsiveContainer width="100%" height={180}>
                     <LineChart data={data} margin={{ top: 4, right: 12, left: 0, bottom: 4 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke={T.border} />
                       <XAxis dataKey="date" tick={{ fontSize: 9, fill: T.muted }}
                         tickFormatter={d => d.slice(5)} minTickGap={40} />
                       <YAxis tick={{ fontSize: 9, fill: T.muted }} width={36}
-                        tickFormatter={v => def?.pct ? `${(v*100).toFixed(0)}%` : Number(v).toFixed(0)} />
+                        domain={group.yDomain}
+                        tickFormatter={v => group.pct ? `${(v*100).toFixed(0)}%` : String(Number(v).toFixed(0))} />
                       <Tooltip
                         contentStyle={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 6, fontSize: 11 }}
-                        formatter={(v: any, name: string) => [
-                          def?.pct ? `${(Number(v)*100).toFixed(1)}%` : Number(v).toFixed(2),
-                          name,
-                        ]}
+                        formatter={(v: any, name: string) => {
+                          const isPct = group.pct;
+                          return [isPct ? `${(Number(v)*100).toFixed(1)}%` : Number(v).toFixed(2), name];
+                        }}
                       />
                       <Legend wrapperStyle={{ fontSize: 10 }} />
-                      {chartSymbols.map((sym, i) => (
-                        <Line key={sym} dataKey={sym} stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                      {lineKeys.map(({ key, label, color }) => (
+                        <Line key={key} dataKey={key} name={label} stroke={color}
                           dot={false} strokeWidth={1.5} connectNulls activeDot={{ r: 3 }} />
+                      ))}
+                      {/* Trade markers: vertical reference lines */}
+                      {showTradeMarkers && allMarkers.map((m, i) => (
+                        <ReferenceLine key={i} x={m.date}
+                          stroke={m.type === "entry" && m.side === "buy" ? T.green
+                               : m.type === "exit" ? T.red : T.yellow}
+                          strokeDasharray="4 2" strokeWidth={1.5}
+                          label={{ value: m.side === "buy" ? "B" : "S", position: "top", fontSize: 8,
+                            fill: m.side === "buy" ? T.green : T.red }}
+                        />
                       ))}
                     </LineChart>
                   </ResponsiveContainer>
@@ -398,13 +503,11 @@ export default function FundamentalsPage() {
         })}
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          TABLE — filter bar + sortable table
-      ══════════════════════════════════════════════════════════════════════ */}
+      {/* ══ TABLE ════════════════════════════════════════════════════════════ */}
+
+      {/* Table filter bar */}
       <div style={{ padding: "16px 20px 8px", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <input
-          value={query}
-          onChange={e => setQuery(e.target.value)}
+        <input value={query} onChange={e => setQuery(e.target.value)}
           placeholder="Filter by symbol, sector, name…"
           style={{
             flex: "1 1 160px", minWidth: 120, background: T.card,
@@ -412,7 +515,9 @@ export default function FundamentalsPage() {
             padding: "6px 10px", color: T.text, fontSize: 13, outline: "none",
           }}
         />
-        {(["all", "us", "india"] as const).map(m => (
+
+        {/* Market filter */}
+        {(["all","us","india"] as const).map(m => (
           <button key={m} onClick={() => setMktFilter(m)}
             style={{
               padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
@@ -423,6 +528,20 @@ export default function FundamentalsPage() {
             {m === "all" ? "All" : m === "us" ? "🇺🇸 US" : "🇮🇳 India"}
           </button>
         ))}
+
+        {/* View mode toggle */}
+        <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", border: `1px solid ${T.border}` }}>
+          {(["latest","all_runs"] as const).map(v => (
+            <button key={v} onClick={() => setViewMode(v)}
+              style={{
+                padding: "5px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", border: "none",
+                background: viewMode === v ? T.accent : T.card,
+                color: viewMode === v ? "#fff" : T.muted,
+              }}>
+              {v === "latest" ? "Latest" : "All Runs"}
+            </button>
+          ))}
+        </div>
 
         {/* Column picker */}
         <div style={{ position: "relative" }}>
@@ -442,28 +561,33 @@ export default function FundamentalsPage() {
               padding: "10px 12px", minWidth: 200, boxShadow: "0 8px 24px #00000066",
             }}>
               <div style={{ fontSize: 10, color: T.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                Show / hide columns
+                Show / hide · drag headers to reorder
               </div>
               {ALL_COLS.map(col => (
                 <label key={col.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", cursor: "pointer" }}>
                   <input type="checkbox" checked={!hiddenSet.has(col.key)} onChange={() => toggleCol(col.key)} />
                   <span style={{ fontSize: 12, color: T.text }}>{col.label}</span>
-                  <span style={{ fontSize: 10, color: T.muted, flex: 1, textAlign: "right" }}>
-                    {col.key === "symbol" ? "required" : ""}
-                  </span>
                 </label>
               ))}
             </div>
           )}
         </div>
 
+        <button onClick={downloadCSV} disabled={loading || !filtered.length}
+          title="Download visible table as CSV"
+          style={{
+            padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
+            border: `1px solid ${T.border}`, background: T.card, color: T.muted,
+            opacity: (!filtered.length || loading) ? 0.4 : 1,
+          }}>
+          ⬇ CSV
+        </button>
+
         <span style={{ fontSize: 11, color: T.muted }}>
-          {loading ? "Loading…" : `${filtered.length} symbols`}
+          {loading ? "Loading…" : `${filtered.length} row${filtered.length !== 1 ? "s" : ""}`}
         </span>
         {chartSymbols.length > 0 && (
-          <span style={{ fontSize: 11, color: T.accent }}>
-            {chartSymbols.length} in chart ↑
-          </span>
+          <span style={{ fontSize: 11, color: T.accent }}>{chartSymbols.length} in chart ↑</span>
         )}
       </div>
 
@@ -475,20 +599,16 @@ export default function FundamentalsPage() {
             <tr style={{ background: "#0A0C16" }}>
               {visibleCols.map((col, i) => (
                 <th key={col.key}
-                  draggable
-                  onDragStart={() => onDragStart(i)}
-                  onDragOver={onDragOver}
-                  onDrop={() => onDrop(i)}
+                  draggable onDragStart={() => onDragStart(i)} onDragOver={onDragOver} onDrop={() => onDrop(i)}
                   onClick={() => handleSort(col.key)}
                   title={col.tooltip}
                   style={{
                     padding: "8px 10px",
-                    textAlign: col.key === "symbol" || col.key === "Name" || col.key === "Sector" ? "left" : "right",
+                    textAlign: (col.key === "symbol" || col.key === "Name" || col.key === "Sector" || col.key === "run_date") ? "left" : "right",
                     color: sortKey === col.key ? T.accent : T.muted,
-                    fontWeight: 600, fontSize: 10, letterSpacing: "0.06em",
-                    textTransform: "uppercase", cursor: "grab", whiteSpace: "nowrap",
-                    borderBottom: `1px solid ${T.border}`, minWidth: col.width,
-                    userSelect: "none",
+                    fontWeight: 600, fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase",
+                    cursor: "grab", whiteSpace: "nowrap",
+                    borderBottom: `1px solid ${T.border}`, minWidth: col.width, userSelect: "none",
                   }}>
                   {col.label}<SortArrow col={col.key} />
                 </th>
@@ -510,20 +630,26 @@ export default function FundamentalsPage() {
               </tr>
             ))}
 
-            {!loading && filtered.map(row => {
+            {!loading && filtered.map((row, ri) => {
               const inChart = chartSymbols.includes(row.symbol);
               const f = row.fundamentals ?? {};
               return (
-                <tr key={`${row.symbol}:${row.market}`}
+                <tr key={ri}
                   style={{ borderBottom: `1px solid ${T.border}`, background: inChart ? `${T.accent}0D` : "transparent" }}
                   onMouseEnter={e => { if (!inChart) (e.currentTarget as HTMLElement).style.background = "#ffffff07"; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = inChart ? `${T.accent}0D` : "transparent"; }}
                 >
                   {visibleCols.map(col => {
+                    const isLeft = ["symbol","Name","Sector","run_date"].includes(col.key);
                     let content: React.ReactNode;
-                    const isLeft = col.key === "symbol" || col.key === "Name" || col.key === "Sector";
 
-                    if (col.key === "symbol") {
+                    if (col.key === "run_date") {
+                      content = (
+                        <span title={row.last_researched_at} style={{ color: T.muted, fontSize: 11, fontFamily: "monospace" }}>
+                          {fmtDate(row.last_researched_at)}
+                        </span>
+                      );
+                    } else if (col.key === "symbol") {
                       content = (
                         <span onClick={() => router.push(`/dashboard/research/${row.symbol}`)}
                           style={{ fontWeight: 700, cursor: "pointer", color: T.accent }}>
@@ -532,22 +658,30 @@ export default function FundamentalsPage() {
                       );
                     } else if (col.key === "Name" || col.key === "Sector") {
                       const v = f[col.key] ?? "—";
-                      content = <span style={{ color: v === "—" ? T.muted : T.text, maxWidth: col.width, overflow: "hidden", textOverflow: "ellipsis", display: "block" }}>{v}</span>;
+                      content = <span style={{ color: v === "—" ? T.muted : T.text }}>{v}</span>;
                     } else if (col.key === "market") {
-                      content = <span style={{ color: T.muted }}>{row.market === "india" ? "🇮🇳" : "🇺🇸"}</span>;
+                      content = <span>{row.market === "india" ? "🇮🇳" : "🇺🇸"}</span>;
                     } else if (col.key === "direction") {
                       content = (
                         <span style={{ color: dirColor(row.direction), fontWeight: 700, fontSize: 10 }}>
                           {row.direction?.toUpperCase() ?? "—"}
                         </span>
                       );
-                    } else if (col.key === "last_researched_at") {
-                      content = <span style={{ color: T.muted }}>{daysAgo(row.last_researched_at)}</span>;
+                    } else if (col.key === "last_trade_side") {
+                      const lt = row.last_trade;
+                      if (!lt) { content = <span style={{ color: T.muted }}>—</span>; }
+                      else {
+                        const isBuy = lt.side === "buy";
+                        content = (
+                          <span title={`${lt.side.toUpperCase()} on ${fmtDate(lt.date)}${lt.analyst_score != null ? ` · score ${lt.analyst_score}` : ""}`}
+                            style={{ fontWeight: 700, fontSize: 10, color: isBuy ? T.green : T.red }}>
+                            {lt.side.toUpperCase()} {fmtDate(lt.date).slice(5)}
+                          </span>
+                        );
+                      }
                     } else if (col.score) {
                       const v = Number((row as any)[col.key]);
-                      content = (
-                        <span style={{ fontWeight: 700, color: scoreColor(v) }}>{isNaN(v) ? "—" : v}</span>
-                      );
+                      content = <span style={{ fontWeight: 700, color: scoreColor(v) }}>{isNaN(v) ? "—" : v}</span>;
                     } else {
                       const raw = f[col.key];
                       content = <span style={{ color: raw ? T.text : T.muted }}>{fmtVal(raw, col.pct)}</span>;
