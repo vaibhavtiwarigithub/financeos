@@ -150,7 +150,46 @@ export async function fetchUsOverview(
   }
 
   const finnhub = await fetchFinnhubOverview(symbol, maxAgeDays).catch(() => ({} as Overview));
-  if (realFields(finnhub) >= 2) return { overview: finnhub, source: "finnhub" };
+
+  // FILL, don't just fall back. The old chain returned Finnhub whole as soon as it
+  // had >=2 fields, so every field Finnhub omitted was simply lost even when Yahoo
+  // had it. Measured on production: of 101 Finnhub-sourced US symbols, 55 lacked
+  // PEG, 52 FCF Yield, 48 Gross Margin, 44 D/E. Spot-checking those gaps against
+  // Yahoo, names like LNG and SPOT have all four available (LNG PEG 9.46,
+  // GM 0.3685, D/E 2.43, EPS growth 1.007) — recoverable data that first-wins
+  // selection was discarding.
+  //
+  // Unit safety: both sides are normalised to the SAME AV-OVERVIEW conventions by
+  // their own adapters (fractions for margins/growth, ratio for D/E) before they
+  // meet here, so filling is a key-level merge and never a unit conversion. That
+  // ordering matters — Yahoo reports D/E as a percentage and only becomes
+  // mergeable because fetchYahooOverview divides it by 100.
+  //
+  // Finnhub keeps precedence on any field both provide: it is the higher trust
+  // tier and the source the existing values were validated against.
+  const FILLABLE = [
+    "PERatio", "PEGRatio", "FCFYield", "DebtToEquity", "GrossMarginTTM",
+    "EpsGrowth3Y", "ProfitMargin", "ReturnOnEquityTTM", "EPS",
+    "QuarterlyRevenueGrowthYOY", "52WeekHigh", "Sector", "Name",
+  ] as const;
+
+  if (realFields(finnhub) >= 2) {
+    const gaps = FILLABLE.filter((k) => finnhub[k] == null || finnhub[k] === "");
+    if (gaps.length === 0) return { overview: finnhub, source: "finnhub" };
+
+    const filler = await fetchYahooOverview(symbol, { maxAgeDays }).catch(() => ({} as Overview));
+    const merged: Overview = { ...finnhub };
+    const filled: string[] = [];
+    for (const k of gaps) {
+      const v = filler[k];
+      if (v != null && v !== "") { merged[k] = v; filled.push(k); }
+    }
+    if (!filled.length) return { overview: finnhub, source: "finnhub" };
+    // Provenance names both contributors and exactly which fields Yahoo supplied,
+    // so a later audit can tell a Finnhub value from a filled one.
+    merged.FilledFrom = `yahoo:${filled.join("|")}`;
+    return { overview: merged, source: "finnhub+yahoo" };
+  }
 
   const yahoo = await fetchYahooOverview(symbol, { maxAgeDays }).catch(() => ({} as Overview));
   if (realFields(yahoo) >= 2) return { overview: yahoo, source: "yahoo" };
