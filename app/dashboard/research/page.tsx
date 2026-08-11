@@ -97,27 +97,34 @@ Default weights: F=0.30, T=0.35, S=0.20, M=0.15 (until 10+ closed trades).`,
   fundamental_score: {
     title: "Fundamental Score (F-Score)",
     text: `Base: 50 pts
+
+SCORING COMPONENTS (these move the score):
 • P/E vs sector median — sector-relative:
    ratio < 0.7 → +18, < 1.0 → +8, < 1.4 → −3, < 2.0 → −12, ≥ 2.0 → −22
+   (omitted entirely when the sector is unmapped or P/E is non-positive)
 • Profit Margin:
    > 20% → +20, > 10% → +10, < 0% → −20
 • ROE:
    > 20% → +15, > 10% → +8, < 0% → −10
-• EPS (positive/negative):
+• EPS (sign only):
    > 0 → +5, ≤ 0 → −10
 • Revenue Growth YoY:
    > 20% → +15, > 10% → +8, < 0% → −10
-• FCF Yield:
-   > 5% → +12, > 2% → +6, < 0% → −10
-• Debt/Equity:
-   < 0.5 → +8, < 1.0 → +4, > 3.0 → −15, > 2.0 → −10
-• Gross Margin:
-   > 50% → +10, > 30% → +5, < 0% → −10
-• PEG:
-   < 1.0 → +12, < 2.0 → +6, > 3.0 → −10
-• 52W High proximity:
-   ≤ 5% from high → +15, ≤ 10% → +10, ≤ 20% → +3, > 40% → −8
-Score clamped to [0, 100].`,
+
+MEASURE-ONLY (recorded as evidence, contribute ZERO points):
+• FCF Yield
+• Debt/Equity
+• Gross Margin
+• PEG Ratio
+• 52-week-high proximity
+
+  These were disabled by commit ba20f4ff ("restore score governance"). They are
+  still collected and shown in the table, and they are still useful for judging a
+  name by eye, but the F-score does not currently use them. Re-enabling any of
+  them is a scoring change that needs its own validation.
+
+Score clamped to [0, 100]. ETFs and symbols with no fundamentals return a
+neutral 55 baseline with low confidence, not a computed score.`,
   },
   technical_score: {
     title: "Technical Score (T-Score)",
@@ -186,18 +193,18 @@ const ALL_COLS: ColDef[] = [
 
   // ── Fundamental sub-indicators (inputs to F-Score) ────────────────────────
   { key: "PERatio",           label: "P/E",   csvLabel: "Price-to-Earnings TTM",           width: 56, tooltip: "Price-to-Earnings TTM. Scored sector-relative. Lower vs sector = better." },
-  { key: "PEGRatio",          label: "PEG",   csvLabel: "PEG Ratio",                        width: 50, tooltip: "PEG = P/E ÷ earnings growth rate. <1 = undervalued for growth; >3 = expensive." },
+  { key: "PEGRatio",          label: "PEG",   csvLabel: "PEG Ratio",                        width: 50, tooltip: "PEG = P/E ÷ earnings growth rate. <1 = undervalued for growth; >3 = expensive. MEASURE-ONLY — recorded but contributes 0 points to the F-score." },
   { key: "ReturnOnEquityTTM", label: "ROE",   csvLabel: "Return on Equity TTM (%)",         width: 60, pct: true, tooltip: "Return on Equity TTM: net income ÷ equity. Measures management capital efficiency." },
-  { key: "GrossMarginTTM",    label: "G.Mgn", csvLabel: "Gross Margin TTM (%)",             width: 64, pct: true, tooltip: "Gross Margin TTM: (revenue − COGS) ÷ revenue. Pricing power proxy." },
-  { key: "FCFYield",          label: "FCF%",  csvLabel: "Free Cash Flow Yield (%)",         width: 56, pct: true, tooltip: "Free Cash Flow Yield: FCF ÷ market cap. >5% = strong cash gen; <0% = burning cash." },
-  { key: "DebtToEquity",      label: "D/E",   csvLabel: "Debt-to-Equity",                   width: 50, tooltip: "Debt-to-Equity: total debt ÷ equity. <0.5 = conservative; >2.0 = high leverage risk." },
+  { key: "GrossMarginTTM",    label: "G.Mgn", csvLabel: "Gross Margin TTM (%)",             width: 64, pct: true, tooltip: "Gross Margin TTM: (revenue − COGS) ÷ revenue. Pricing power proxy. MEASURE-ONLY — recorded but contributes 0 points to the F-score." },
+  { key: "FCFYield",          label: "FCF%",  csvLabel: "Free Cash Flow Yield (%)",         width: 56, pct: true, tooltip: "Free Cash Flow Yield: FCF ÷ market cap. >5% = strong cash gen; <0% = burning cash. MEASURE-ONLY — recorded but contributes 0 points to the F-score." },
+  { key: "DebtToEquity",      label: "D/E",   csvLabel: "Debt-to-Equity",                   width: 50, tooltip: "Debt-to-Equity: total debt ÷ equity (RATIO, not percent). <0.5 = conservative; >2.0 = high leverage. MEASURE-ONLY — recorded but contributes 0 points to the F-score." },
   { key: "QuarterlyRevenueGrowthYOY", label: "Rev↑", csvLabel: "Revenue Growth YoY (%)", width: 56, pct: true, tooltip: "Quarterly Revenue Growth YoY — top-line acceleration signal." },
   { key: "ProfitMargin",      label: "N.Mgn", csvLabel: "Net Profit Margin (%)",            width: 60, pct: true, tooltip: "Net Profit Margin: net income ÷ revenue." },
   { key: "EPS",               label: "EPS",   csvLabel: "Earnings Per Share TTM",           width: 58, tooltip: "Earnings Per Share TTM." },
   { key: "EpsGrowth3Y",       label: "EPS↑",  csvLabel: "EPS Growth (TTM YoY %)", width: 58, pct: true, defaultHidden: true,
     tooltip: "EPS growth rate YoY TTM — earnings momentum signal. Pairs with PEG scoring." },
   { key: "52WeekHigh",        label: "52wH",  csvLabel: "52-Week High",           width: 62, defaultHidden: true,
-    tooltip: "52-Week High price. Used to compute 52W proximity score (up to +15 pts for being within 5% of high)." },
+    tooltip: "52-Week High price. Drives 52W-proximity, which is MEASURE-ONLY — recorded but contributes 0 points to the F-score." },
 
   // ── Technical sub-indicators (inputs to T-Score) ──────────────────────────
   { key: "rsi14",           label: "RSI",     csvLabel: "RSI (14-day)",            width: 50, defaultHidden: true,

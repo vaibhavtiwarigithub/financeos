@@ -235,8 +235,15 @@ export async function fetchIndiaOverview(
     if (target != null) ov.AnalystTargetPrice = String(target);
     const grossM = num(fd.grossMargins);
     if (grossM != null) ov.GrossMarginTTM = String(grossM);
-    const de = num(fd.debtToEquity);
-    if (de != null) ov.DebtToEquity = String(de);
+    // Yahoo reports debtToEquity as a PERCENTAGE (AAPL 78.445), while Finnhub —
+    // and therefore scoreFundamentals' thresholds — use a RATIO (AAPL 1.3547).
+    // Storing Yahoo's number raw made every India D/E ~100x too large: TCS's true
+    // 0.10 was stored as 10.21 and scored as extreme leverage. Because
+    // scoreFundamentals buckets on de > 3.0 => -15, this silently deducted a mean
+    // 12.4 fundamental points across 15 of 24 India symbols (up to -23 for TCS,
+    // INFY, HCLTECH, WIPRO, SUNPHARMA, TECHM). Convert to the ratio convention.
+    const dePct = num(fd.debtToEquity);
+    if (dePct != null) ov.DebtToEquity = String(dePct / 100);
     const peg = num(ks.pegRatio);
     if (peg != null) ov.PEGRatio = String(peg);
     const fcf = num(fd.freeCashflow);
