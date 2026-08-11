@@ -301,6 +301,14 @@ function dirColor(d: string)   { return d === "long" ? T.green : d === "short" ?
 /** Resolve cell value: score fields → row top-level; breakdown fields → breakdown object; else fundamentals */
 function getCell(row: SymbolRow, col: ColDef): string | number | boolean | null {
   if (col.score) return (row as any)[col.key] ?? null;
+  // The Trade column is derived, not a row field, so it fell through to the
+  // fundamentals lookup and every row compared as null — the column looked
+  // unsortable. Sort on the same composite the cell displays: venue, then side,
+  // then date, so BUYs group together and are newest-first within the group.
+  if (col.key === "last_trade_side") {
+    const lt = row.last_trade;
+    return lt ? `${lt.venue ?? "paper"}.${lt.side}.${lt.date}` : null;
+  }
   // Breakdown fields
   if (col.breakdownSource) {
     const src = col.breakdownSource === "technical" ? row.technical_breakdown
@@ -583,11 +591,20 @@ export default function FundamentalsPage() {
     const colDef = COL_BY_KEY[sortKey];
     const av = colDef ? getCell(a, colDef) : null;
     const bv = colDef ? getCell(b, colDef) : null;
+
+    // Empty always sinks, in BOTH directions. Previously "" sorted first when
+    // ascending, so flipping a sparse column buried the populated rows.
+    const aEmpty = av == null || av === "";
+    const bEmpty = bv == null || bv === "";
+    if (aEmpty && bEmpty) return 0;
+    if (aEmpty) return 1;
+    if (bEmpty) return -1;
+
     const an = parseFloat(String(av)), bn = parseFloat(String(bv));
     if (!isNaN(an) && !isNaN(bn)) return sortDir === "desc" ? bn - an : an - bn;
     return sortDir === "desc"
-      ? String(bv ?? "").localeCompare(String(av ?? ""))
-      : String(av ?? "").localeCompare(String(bv ?? ""));
+      ? String(bv).localeCompare(String(av))
+      : String(av).localeCompare(String(bv));
   });
 
   // Chart group rendering
