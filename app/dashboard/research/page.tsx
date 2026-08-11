@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useMarket } from "@/lib/market-context";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer, ReferenceLine,
@@ -311,6 +312,10 @@ function getCell(row: SymbolRow, col: ColDef): string | number | boolean | null 
 
 export default function FundamentalsPage() {
   const router = useRouter();
+  // Global US/India switcher in the shell header. This page previously ignored it
+  // entirely (the in-page toggle was removed without wiring the global one up),
+  // so both markets were always shown regardless of the switcher position.
+  const { market: activeMarket, indiaEnabled } = useMarket();
 
   const [rows, setRows]         = useState<SymbolRow[]>([]);
   const [loading, setLoading]   = useState(true);
@@ -454,11 +459,14 @@ export default function FundamentalsPage() {
     setChartIndicators(prev => prev.includes(ind) ? prev.filter(s => s !== ind) : [...prev, ind].slice(0, 12));
   }
 
-  // CSV export — always ALL rows + ALL columns
+  // CSV export — ALL rows + ALL columns for the active market. Deliberately
+  // ignores the text filter and the column picker (you always get the full
+  // dataset), but does respect the global US/India switcher; the market is in
+  // the filename so an exported file is never ambiguous about its scope.
   function downloadCSV() {
     const csvCols = ALL_COLS.filter(c => c.key !== "last_trade_side");
     const header = [...csvCols.map(c => c.csvLabel ?? c.label), "Trade Side", "Trade Date"].join(",");
-    const csvRows = rows.map(r => {
+    const csvRows = marketScoped.map(r => {
       const f = r.fundamentals ?? {};
       const cells = csvCols.map(c => {
         let v: string;
@@ -481,12 +489,16 @@ export default function FundamentalsPage() {
     const blob = new Blob([header + "\n" + csvRows.join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
-    a.download = `fundamentals-${viewMode}-${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `fundamentals-${indiaEnabled ? activeMarket + "-" : ""}${viewMode}-${new Date().toISOString().slice(0,10)}.csv`;
     a.click(); URL.revokeObjectURL(url);
   }
 
-  // Filter + sort rows — search across all visible column values
-  const filtered = rows.filter(r => {
+  // Filter + sort rows. Market scope comes from the global switcher; when India
+  // isn't enabled for the account the switcher is hidden, so show everything
+  // rather than silently filtering to an empty table.
+  const marketScoped = indiaEnabled ? rows.filter(r => (r.market ?? "us") === activeMarket) : rows;
+
+  const filtered = marketScoped.filter(r => {
     if (!query) return true;
     const q = query.toLowerCase();
     const f = r.fundamentals ?? {};
@@ -526,6 +538,23 @@ export default function FundamentalsPage() {
     ...g,
     activeKeys: g.keys.filter(k => chartIndicators.includes(k)),
   })).filter(g => g.activeKeys.length > 0);
+
+  // Column pinning: the leading run of visible columns that are pin-eligible stays
+  // frozen on the left while the table scrolls horizontally, so Date/Symbol never
+  // scroll out of view on a wide table (or a phone). Only a LEADING run is pinned —
+  // if you drag Symbol into the middle it simply stops being sticky, which avoids
+  // pinned columns overlapping scrolled ones.
+  const PINNABLE = new Set(["run_date", "symbol"]);
+  const pinnedLefts = new Map<string, number>();
+  {
+    let offset = 0;
+    for (const col of visibleCols) {
+      if (!PINNABLE.has(col.key)) break;
+      pinnedLefts.set(col.key, offset);
+      offset += col.width;
+    }
+  }
+  const lastPinnedKey = [...pinnedLefts.keys()].pop() ?? null;
 
   const SortArrow = ({ col }: { col: string }) => (
     <span style={{ fontSize: 8, marginLeft: 2, opacity: sortKey === col ? 1 : 0.25 }}>
@@ -889,14 +918,42 @@ export default function FundamentalsPage() {
 
         <span style={{ fontSize: 11, color: T.muted }}>
           {loading ? "Loading…" : `${filtered.length} row${filtered.length !== 1 ? "s" : ""}`}
+          {!loading && indiaEnabled && (
+            <span style={{ color: T.accent }}>
+              {" "}· {activeMarket === "india" ? "🇮🇳 India" : "🇺🇸 US"} only
+              <span style={{ color: T.muted }}> ({rows.length - marketScoped.length} hidden by market switcher)</span>
+            </span>
+          )}
         </span>
         {chartSymbols.length > 0 && (
           <span style={{ fontSize: 11, color: T.accent }}>{chartSymbols.length} in chart ↑</span>
         )}
       </div>
 
-      {/* Table */}
-      <div style={{ overflowX: "auto", margin: "0 20px 32px", borderRadius: 8, border: `1px solid ${T.border}` }}>
+      {/* Table — scrolls in both axes with always-visible scrollbars, sticky header
+          row, and the leading Date/Symbol columns frozen to the left. */}
+      <style>{`
+        .fx-scroll { overflow: auto; max-height: 72vh; }
+        /* Force scrollbars to stay visible instead of the OS overlay style that
+           fades out (macOS/iOS) — otherwise there is no affordance that the table
+           scrolls sideways at all. */
+        .fx-scroll { scrollbar-width: thin; scrollbar-color: #3A3F55 #12141F; }
+        .fx-scroll::-webkit-scrollbar { -webkit-appearance: none; width: 11px; height: 11px; }
+        .fx-scroll::-webkit-scrollbar-track { background: #0F111B; }
+        .fx-scroll::-webkit-scrollbar-thumb {
+          background: #3A3F55; border-radius: 6px; border: 2px solid #0F111B;
+        }
+        .fx-scroll::-webkit-scrollbar-thumb:hover { background: #4C5270; }
+        .fx-scroll::-webkit-scrollbar-corner { background: #0F111B; }
+        .fx-scroll thead th { position: sticky; top: 0; z-index: 3; background: #0A0C16; }
+        .fx-scroll th.fx-pin, .fx-scroll td.fx-pin { position: sticky; z-index: 2; }
+        .fx-scroll thead th.fx-pin { z-index: 4; }
+        .fx-scroll td.fx-pin { background: ${T.bg}; }
+        .fx-scroll tr:hover td.fx-pin { background: #171A28; }
+        /* Divider so pinned columns read as a frozen group, not overlapping text */
+        .fx-scroll .fx-pin-last { box-shadow: inset -1px 0 0 ${T.border}, 1px 0 6px #00000055; }
+      `}</style>
+      <div className="fx-scroll" style={{ margin: "0 20px 32px", borderRadius: 8, border: `1px solid ${T.border}` }}>
         <table style={{ borderCollapse: "collapse", width: "max-content", minWidth: "100%", fontSize: 12 }}>
           <thead>
             <tr style={{ background: "#0A0C16" }}>
@@ -905,7 +962,12 @@ export default function FundamentalsPage() {
                   draggable onDragStart={() => onDragStart(i)} onDragOver={onDragOver} onDrop={() => onDrop(i)}
                   onClick={() => handleSort(col.key)}
                   title={col.tooltip}
+                  className={[
+                    pinnedLefts.has(col.key) ? "fx-pin" : "",
+                    col.key === lastPinnedKey ? "fx-pin-last" : "",
+                  ].filter(Boolean).join(" ")}
                   style={{
+                    left: pinnedLefts.get(col.key),
                     padding: "8px 10px",
                     textAlign: (col.key === "symbol" || col.key === "Name" || col.key === "Sector" || col.key === "run_date") ? "left" : "right",
                     color: sortKey === col.key ? T.accent : T.muted,
@@ -1029,7 +1091,17 @@ export default function FundamentalsPage() {
                     }
 
                     return (
-                      <td key={col.key} style={{ padding: "7px 10px", textAlign: isLeft ? "left" : "right", whiteSpace: "nowrap" }}>
+                      <td key={col.key}
+                        className={[
+                          pinnedLefts.has(col.key) ? "fx-pin" : "",
+                          col.key === lastPinnedKey ? "fx-pin-last" : "",
+                        ].filter(Boolean).join(" ")}
+                        style={{
+                          left: pinnedLefts.get(col.key),
+                          padding: "7px 10px",
+                          textAlign: isLeft ? "left" : "right",
+                          whiteSpace: "nowrap",
+                        }}>
                         {content}
                       </td>
                     );

@@ -84,9 +84,24 @@ export async function fetchFinnhubOverview(symbol: string, maxAgeDays = 7): Prom
     setFrac("ProfitMargin", m.netProfitMarginTTM);
     setFrac("ReturnOnEquityTTM", m.roeTTM);
     setFrac("QuarterlyRevenueGrowthYOY", m.revenueGrowthQuarterlyYoy ?? m.revenueGrowthTTMYoy);
-    setRaw("PEGRatio", m.peGrowthTTM ?? m.pegRatio);
+    // Finnhub's real key names contain slashes and are NOT camelCase — verified
+    // live against /stock/metric?metric=all (2026-08-10). The previously-used
+    // `totalDebtToEquityAnnual` / `ltDebtToEquityAnnual` / `peGrowthTTM` / `pegRatio`
+    // are absent from the payload, so D/E and PEG silently never populated.
+    setRaw("PEGRatio", m.pegTTM ?? m.forwardPEG);
     setFrac("GrossMarginTTM", m.grossMarginTTM);   // Finnhub = percentage, divide by 100
-    setRaw("DebtToEquity", m.totalDebtToEquityAnnual ?? m.ltDebtToEquityAnnual);
+    setRaw("DebtToEquity",
+      m["totalDebt/totalEquityAnnual"] ?? m["totalDebt/totalEquityQuarterly"] ?? m["longTermDebt/equityAnnual"]);
+    // Finnhub exposes no FCF yield directly. pfcfShareTTM is price / FCF-per-share,
+    // so its reciprocal IS the FCF yield as a fraction (matches the AV convention
+    // scoreFundamentals reads). Guard against 0/negative so a loss-making filer
+    // can't produce a nonsense yield.
+    {
+      const pfcf = m.pfcfShareTTM ?? m.pfcfShareAnnual;
+      if (typeof pfcf === "number" && Number.isFinite(pfcf) && pfcf > 0) {
+        ov.FCFYield = String(1 / pfcf);
+      }
+    }
     setRaw("EpsGrowth3Y", m.epsGrowthTTMYoy ?? m.epsGrowth3Y);
     setRaw("52WeekPriceReturn", m["52WeekPriceReturnDaily"]);
     if (typeof m["52WeekHigh"] === "number") ov["52WeekHigh"] = String(m["52WeekHigh"]);
