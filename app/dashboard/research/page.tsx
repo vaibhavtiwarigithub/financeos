@@ -166,6 +166,8 @@ const ALL_COLS: ColDef[] = [
   { key: "symbol",     label: "Symbol",    csvLabel: "Ticker Symbol",          width: 90,  tooltip: "Ticker — click to open deep dive" },
   { key: "Name",       label: "Name",      csvLabel: "Company Name",           width: 160, defaultHidden: true, tooltip: "Company full name" },
   { key: "Sector",     label: "Sector",    csvLabel: "Sector",                 width: 110, defaultHidden: true, tooltip: "Sector from provider taxonomy" },
+  { key: "Industry",   label: "Industry",  csvLabel: "Industry",               width: 150, defaultHidden: true,
+    tooltip: "Industry within the sector (e.g. Oil & Gas Integrated vs Refining & Marketing vs E&P). Sourced from Yahoo assetProfile — Finnhub exposes no separate industry, so US rows only carry this after the provider fill." },
   { key: "market",     label: "Mkt",       csvLabel: "Market",                 width: 42,  tooltip: "Market: 🇺🇸 US (NYSE/Nasdaq) or 🇮🇳 India (NSE)" },
   { key: "direction",  label: "Dir",       csvLabel: "Signal Direction",       width: 58,  tooltip: "Signal direction: LONG / NEUTRAL / SHORT from this research run" },
 
@@ -355,7 +357,7 @@ export default function FundamentalsPage() {
   const DOMAIN_PRESETS: Record<string, string[]> = {
     all:         ALL_COLS.filter(c => !c.defaultHidden).map(c => c.key),
     scores:      ["run_date","symbol","market","direction","analyst_score","fundamental_score","technical_score","sentiment_score","macro_score"],
-    fundamental: ["run_date","symbol","market","direction","fundamental_score",
+    fundamental: ["run_date","symbol","Sector","Industry","market","direction","fundamental_score",
                   "PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield",
                   "DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS","EpsGrowth3Y","52WeekHigh"],
     technical:   ["run_date","symbol","market","direction","technical_score",
@@ -964,7 +966,7 @@ export default function FundamentalsPage() {
               </div>
               {/* Group by domain */}
               {[
-                { label: "Core", keys: ["run_date","symbol","Name","Sector","market","direction","last_trade_side","price_at_research"] },
+                { label: "Core", keys: ["run_date","symbol","Name","Sector","Industry","market","direction","last_trade_side","price_at_research"] },
                 { label: "Scores", keys: ["analyst_score","fundamental_score","technical_score","sentiment_score","macro_score"] },
                 { label: "Fundamental", keys: ["PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield","DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS","EpsGrowth3Y","52WeekHigh"] },
                 { label: "Technical", keys: ["rsi14","ema20_x_ema50","ema50_x_ema200","macd_hist","adx14","rs_vs_bench","breakdown_veto"] },
@@ -1053,7 +1055,7 @@ export default function FundamentalsPage() {
                   style={{
                     left: pinnedLefts.get(col.key),
                     padding: "8px 10px",
-                    textAlign: (col.key === "symbol" || col.key === "Name" || col.key === "Sector" || col.key === "run_date") ? "left" : "right",
+                    textAlign: (col.key === "symbol" || col.key === "Name" || col.key === "Sector" || col.key === "Industry" || col.key === "run_date") ? "left" : "right",
                     color: sortKey === col.key ? T.accent : T.muted,
                     fontWeight: 600, fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase",
                     cursor: "grab", whiteSpace: "nowrap",
@@ -1102,7 +1104,7 @@ export default function FundamentalsPage() {
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = inChart ? `${T.accent}0D` : "transparent"; }}
                 >
                   {visibleCols.map(col => {
-                    const isLeft = ["symbol","Name","Sector","run_date","sent_source","macro_regime","macro_week_of"].includes(col.key);
+                    const isLeft = ["symbol","Name","Sector","Industry","run_date","sent_source","macro_regime","macro_week_of"].includes(col.key);
                     let content: React.ReactNode;
 
                     if (col.key === "run_date") {
@@ -1118,7 +1120,7 @@ export default function FundamentalsPage() {
                           {row.symbol}
                         </span>
                       );
-                    } else if (col.key === "Name" || col.key === "Sector") {
+                    } else if (col.key === "Name" || col.key === "Sector" || col.key === "Industry") {
                       const v = f[col.key] ?? "—";
                       content = <span style={{ color: v === "—" ? T.muted : T.text }}>{v}</span>;
                     } else if (col.key === "market") {

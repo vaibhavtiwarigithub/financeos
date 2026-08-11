@@ -167,10 +167,19 @@ export async function fetchUsOverview(
   //
   // Finnhub keeps precedence on any field both provide: it is the higher trust
   // tier and the source the existing values were validated against.
+  // `Industry` matters more than it looks. Finnhub's profile2 exposes only
+  // finnhubIndustry, which this adapter maps to Sector, so US rows carried a
+  // sector with NO industry — every US energy name read as plain "Energy" while
+  // India (Yahoo-sourced) distinguished refiners from E&P. Within energy that
+  // distinction is the whole story: integrateds, E&P, refiners, midstream and
+  // services trade on different drivers, so a sector-relative comparison that
+  // cannot separate them is comparing the wrong peers. Yahoo's assetProfile
+  // supplies it (XOM "Oil & Gas Integrated", SLB "Equipment & Services",
+  // PBF "Refining & Marketing", LNG "Midstream", OXY "E&P").
   const FILLABLE = [
     "PERatio", "PEGRatio", "FCFYield", "DebtToEquity", "GrossMarginTTM",
     "EpsGrowth3Y", "ProfitMargin", "ReturnOnEquityTTM", "EPS",
-    "QuarterlyRevenueGrowthYOY", "52WeekHigh", "Sector", "Name",
+    "QuarterlyRevenueGrowthYOY", "52WeekHigh", "Sector", "Name", "Industry",
   ] as const;
 
   if (realFields(finnhub) >= 2) {
