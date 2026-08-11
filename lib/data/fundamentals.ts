@@ -91,6 +91,7 @@ export async function fetchFinnhubOverview(symbol: string, maxAgeDays = 7): Prom
     setRaw("52WeekPriceReturn", m["52WeekPriceReturnDaily"]);
     if (typeof m["52WeekHigh"] === "number") ov["52WeekHigh"] = String(m["52WeekHigh"]);
     if (typeof m["52WeekLow"] === "number") ov["52WeekLow"] = String(m["52WeekLow"]);
+    if (p.name)            ov.Name   = String(p.name);
     if (p.finnhubIndustry) {
       // Profile 2 exposes Finnhub's industry classification, not a GICS sector.
       ov.Sector = String(p.finnhubIndustry);
