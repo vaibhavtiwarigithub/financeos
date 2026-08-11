@@ -25,6 +25,7 @@
 
 import type {
   FieldProvenance,
+  Market,
   ProviderAdapter,
   ProviderCallContext,
   ProviderId,
@@ -43,6 +44,8 @@ export interface CanonicalDailyBars {
   count: number;
   /** The provider that ACTUALLY served these bars. Never nominal. */
   source: ProviderId;
+  /** Quote currency of the OHLC values. USD for US, INR for NSE. */
+  currency?: "USD" | "INR";
 }
 
 // Minimum bars for a real RSI(14)/EMA20 — below this the series is not evidence
@@ -73,12 +76,26 @@ export function makeBarsAdapter(opts: {
   fetchCandles: (symbol: string) => Promise<Candle[]>;
   /** "adapter" when the underlying helper already takes the provider's lease. */
   pacingOwner?: "router" | "adapter";
+  /** Narrower market scope than the provider's, when the two differ. */
+  markets?: readonly Market[];
+  /**
+   * Whether this source's OHLC is corporate-action adjusted. Defaults TRUE
+   * because every US source is requested adjusted. It is explicit rather than
+   * assumed: §4's comparator treats adjusted-vs-unadjusted as a HARD mismatch
+   * with no numeric tolerance, so an adapter that claimed the wrong basis would
+   * fail parity against the legacy series for reasons that look like data drift.
+   */
+  adjusted?: boolean;
+  /** Quote currency of the OHLC values. */
+  currency?: "USD" | "INR";
 }): ProviderAdapter {
+  const adjusted = opts.adjusted ?? true;
   return {
     providerId: opts.providerId,
     intent: "price.daily_bars",
     contractVersion: opts.contractVersion,
     pacingOwner: opts.pacingOwner ?? "adapter",
+    ...(opts.markets ? { markets: opts.markets } : {}),
 
     async fetch(request: ProviderRequest, _ctx: ProviderCallContext): Promise<ProviderResult> {
       const symbol = (request.symbol ?? "").trim();
@@ -120,9 +137,10 @@ export function makeBarsAdapter(opts: {
       const retrievedAt = new Date().toISOString();
       const payload: CanonicalDailyBars = {
         bars: p.bars,
-        adjusted: true,
+        adjusted,
         count: p.bars.length,
         source: opts.providerId,
+        ...(opts.currency ? { currency: opts.currency } : {}),
       };
       const provenance: FieldProvenance[] = [
         {
@@ -132,6 +150,7 @@ export function makeBarsAdapter(opts: {
           providerField: "daily_bars",
           basis: "eod",
           unit: "currency",
+          ...(opts.currency ? { currency: opts.currency } : {}),
           retrievedAt,
           observedAt: p.bars.length ? `${p.bars[p.bars.length - 1].date}T00:00:00.000Z` : undefined,
         },

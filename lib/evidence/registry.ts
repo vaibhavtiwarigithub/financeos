@@ -16,6 +16,7 @@ import { massiveInsiderAdapter, massiveBarsAdapter } from "@/lib/evidence/adapte
 import { eodhdBarsAdapter } from "@/lib/evidence/adapters/eodhd";
 import { twelvedataBarsAdapter } from "@/lib/evidence/adapters/twelvedata";
 import { edgarInsiderAdapter } from "@/lib/evidence/adapters/edgar";
+import { upstoxBarsAdapter, yahooIndiaBarsAdapter } from "@/lib/evidence/adapters/india-bars";
 import {
   observedBarsAdapter,
   observedFundamentalsAdapter,
@@ -43,7 +44,15 @@ export const ADAPTERS_BY_INTENT: Partial<Record<EvidenceIntent, ProviderAdapter[
   // NOTE: the resolver caps a single resolve at MAX_SYNC_ATTEMPTS=2 live calls,
   // so the third source is reached via the durable refresh queue rather than
   // synchronously — a deliberate Vercel wall-clock bound, not an oversight.
-  "price.daily_bars":      [observedBarsAdapter, massiveBarsAdapter, eodhdBarsAdapter, twelvedataBarsAdapter],
+  // India's native sources (Upstox → Yahoo) sit after the US ones; each adapter
+  // is market-scoped, so `adaptersForIntent` hands US exactly the chain it had
+  // before and India its own. Without these India could only reach bars through
+  // the kairos compatibility bridge, i.e. only while the legacy fetch still runs.
+  "price.daily_bars":      [
+    observedBarsAdapter,
+    massiveBarsAdapter, eodhdBarsAdapter, twelvedataBarsAdapter,
+    upstoxBarsAdapter, yahooIndiaBarsAdapter,
+  ],
   "sentiment.news":        [observedSentimentAdapter],
   "macro.regime_inputs":   [observedMacroAdapter],
   // fundamentals.valuation / events.* /
@@ -58,6 +67,10 @@ export const ALL_ADAPTERS: ProviderAdapter[] = Object.values(ADAPTERS_BY_INTENT)
 export function adaptersForIntent(intent: EvidenceIntent, market: Market): ProviderAdapter[] {
   const chain = ADAPTERS_BY_INTENT[intent] ?? [];
   return chain.filter((a) => {
+    // An adapter may scope itself more narrowly than its provider, because
+    // capability is per (provider, intent): Yahoo serves fundamentals in both
+    // markets but bars only for India. Provider spec is the fallback.
+    if (a.markets) return a.markets.includes(market);
     const spec = PROVIDER_SPECS[a.providerId];
     return !spec || spec.markets.includes(market);
   });
@@ -82,9 +95,20 @@ export const PROVIDER_SPECS: Partial<Record<ProviderId, ProviderSpec>> = {
   },
   yahoo: {
     id: "yahoo", label: "Yahoo Finance", transport: "http",
-    markets: ["us", "india"], capabilities: ["fundamentals.reported"],
+    // Bars are India-only and enforced on the adapter (yahooIndiaBarsAdapter),
+    // not here — listing the capability does not widen the US chain.
+    markets: ["us", "india"], capabilities: ["fundamentals.reported", "price.daily_bars"],
     dailyLimitState: "unknown", rateLimitState: "unknown",
     minIntervalMs: 0, reserveCalls: 0, entitlementRequired: false, trustTier: 3, official: false,
+  },
+  upstox: {
+    id: "upstox", label: "Upstox", transport: "http",
+    markets: ["india"], capabilities: ["price.daily_bars"],
+    // ~500/min documented; no daily cap. Kept conservative — the code-owned spec
+    // may only be made MORE restrictive by provider_runtime_config, never less.
+    dailyLimitState: "none", rateLimitState: "known", rateLimitCalls: 250, rateLimitWindowSeconds: 60,
+    minIntervalMs: 250, reserveCalls: 0, entitlementRequired: true, credentialRef: "UPSTOX_ACCESS_TOKEN",
+    trustTier: 1, official: true,
   },
   webull: {
     id: "webull", label: "Webull", transport: "mcp",

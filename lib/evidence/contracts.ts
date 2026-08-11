@@ -211,6 +211,14 @@ export interface ProviderAdapter {
   readonly providerId: ProviderId;
   readonly intent: EvidenceIntent;
   readonly contractVersion: string;
+  /**
+   * Market scope for THIS adapter, when it is narrower than the provider's.
+   * Capability is really per (provider, intent), not per provider: Yahoo serves
+   * fundamentals in both markets but daily bars only for India here, so a
+   * provider-level `markets` list would wrongly add Yahoo to the US bars chain
+   * and change US resolution. Defaults to the provider spec's markets.
+   */
+  readonly markets?: readonly Market[];
   /** Cache bridge only: a miss must never consume a live-attempt slot. */
   readonly cacheReadOnly?: boolean;
   // Legacy-backed adapters may already acquire this provider's durable lease
