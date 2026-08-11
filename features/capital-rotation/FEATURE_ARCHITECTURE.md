@@ -214,6 +214,16 @@ money-moving RPC is replaced by a claim-verifying stub that always returns
 measurement is the only reachable phase until a later migration removes that
 constraint and introduces a fully reviewed P1 transaction.
 
+**Containment correction (2026-08-10):** Migration `20260723120000` later
+removed that containment and enabled both paper rows, but the caller only
+rechecked score spread, persistence, cooldown and count caps. It did not enforce
+the P1 readiness result and did not read `rotation_allow_score_only_paper`.
+Four paper rotations executed; their small realized cohort was negative in both
+markets. Migration `20260811033335` disables paper execution again, and the
+caller now refuses score-only execution when the default-false flag is not
+explicitly enabled. P0 measurement remains active. This is containment, not a
+claim that the four-trade result proves rotation lacks edge.
+
 ### P2 - Live approval proposals
 
 After P1 shows low churn and net-positive behavior, add live proposal generation. Owner approval is required. Sell and buy legs are reconciled separately through the canonical gateway. No autonomous live rotation in this phase.

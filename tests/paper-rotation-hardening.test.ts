@@ -39,15 +39,45 @@ describe("paper capital-rotation hardening", () => {
     }
   });
 
-  it("keeps P1 database-disabled and refuses money movement after exact claim verification", () => {
-    const sql = readFileSync("supabase/migrations/20260722185000_harden_paper_rotation_claim.sql", "utf8");
-    expect(sql).toContain("rotation_paper_execution_p1_not_approved");
-    expect(sql).toContain("and claim_run_id = p_claim_run_id");
-    expect(sql).toContain("'signal_claim_not_owned'");
-    expect(sql).toContain("'p1_guardrails_incomplete'");
-    expect(sql).not.toContain("insert into public.paper_trades");
-    expect(sql).not.toContain("delete from public.paper_positions");
-    expect(sql).toContain("drop function if exists public.execute_paper_rotation");
+  it("honors the database score-only gate before reading or moving the book", async () => {
+    const previous = process.env.CAPITAL_ROTATION_PAPER_ENABLED;
+    process.env.CAPITAL_ROTATION_PAPER_ENABLED = "true";
+    const chain: any = {
+      select: () => chain,
+      eq: () => chain,
+      maybeSingle: async () => ({
+        data: {
+          rotation_paper_execute_enabled: true,
+          rotation_allow_score_only_paper: false,
+        },
+        error: null,
+      }),
+    };
+    try {
+      const result = await executeCapitalRotationPaper({ from: () => chain }, {
+        runId: "00000000-0000-0000-0000-000000000001",
+        rotationsThisRun: 0,
+        candidate: {
+          signalId: "00000000-0000-0000-0000-000000000002",
+          symbol: "TEST", market: "us", currency: "USD", score: 90,
+          targetNotional: 1000, cash: 0, qty: 10, fillPrice: 100,
+          priceTarget: 120, stopLoss: 90, sector: "Technology",
+        },
+        scoreThreshold: 60,
+        minHoldingDays: 2,
+      });
+      expect(result).toEqual({ executed: false, reason: "score_only_execution_disabled" });
+    } finally {
+      if (previous == null) delete process.env.CAPITAL_ROTATION_PAPER_ENABLED;
+      else process.env.CAPITAL_ROTATION_PAPER_ENABLED = previous;
+    }
+  });
+
+  it("restores paper execution containment while keeping shadow measurement", () => {
+    const sql = readFileSync("supabase/migrations/20260811033335_disable_unqualified_paper_rotation.sql", "utf8");
+    expect(sql).toContain("rotation_paper_execute_enabled = false");
+    expect(sql).toContain("where book_type = 'paper'");
+    expect(sql).not.toContain("rotation_shadow_enabled = false");
   });
 
   it("loads a complete revision-collapsed return cohort without exposing the RPC", () => {

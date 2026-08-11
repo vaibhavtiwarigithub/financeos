@@ -7,6 +7,39 @@ is a query result, not an estimate.
 Related: `features/walk-forward-ic-folds/`, `features/india-scorer-discrimination/`,
 `features/event-ledger/`.
 
+## 2026-08-10 production re-audit
+
+The latest market-local scorecards remain below benchmark: US 1M portfolio
+`+0.41%` versus benchmark `+2.43%` (excess `-2.02%`), and India 1M `+1.33%`
+versus `+1.54%` (excess `-0.21%`). Both remain low-confidence 20-return-day
+windows, so they diagnose defects but do not establish durable negative alpha.
+
+Three implementation findings were actionable without fitting a threshold to
+this month:
+
+1. Average cash was about 44% in each market. Cash drag explains roughly one
+   third of each gap. PaperTrader interpreted `finalSizePct` as a percentage of
+   remaining cash even though the constructor and schema define it against NAV;
+   later entries therefore shrank geometrically. It now sizes from market-local
+   NAV and caps by cash and order limits.
+2. Commit `82c932a3` wired EMA-200, MACD, ADX, relative strength, FCF yield,
+   debt/equity, gross margin, PEG and 52-week proximity directly into
+   `deterministic_v1`, contradicting the measure-only feature-pack contract.
+   Collection and UI evidence remain, but those fields no longer alter the live
+   score before market-local validation and promotion.
+3. Capital rotation ignored its default-false score-only gate and the shadow's
+   economic-readiness blockers. Paper execution is disabled again in both
+   markets; measurement continues.
+
+The matured 5-day labels are directionally useful but not a tuning license. In
+US, eligible decisions averaged `+0.07%` excess versus `-1.34%` for rejected
+decisions; India eligible averaged `+1.06%` versus `+0.21%`. Score bands were
+non-monotonic in both markets and no recent observation had a populated
+`rank_score` or calibrated `p_win`. Therefore no threshold, weight, stop or
+horizon was changed from this audit. The next decision-grade comparison must use
+the deterministic portfolio simulator with cash redeployment, costs, the actual
+fill/exit precedence and separate US/India benchmarks.
+
 ---
 
 ## 0. The one-line version

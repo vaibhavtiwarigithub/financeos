@@ -406,12 +406,18 @@ export async function executeCapitalRotationPaper(supabase: any, args: RotationE
 
     const { data: cfgRow, error: cfgError } = await supabase
       .from("rotation_config")
-      .select("rotation_paper_execute_enabled, rotation_margin_score, rotation_persistence_runs, rotation_cooldown_days, max_rotations_per_run, max_rotations_per_day")
+      .select("rotation_paper_execute_enabled, rotation_allow_score_only_paper, rotation_margin_score, rotation_persistence_runs, rotation_cooldown_days, max_rotations_per_run, max_rotations_per_day")
       .eq("market", c.market).eq("book_type", "paper").maybeSingle();
     if (cfgError) return { executed: false, reason: `config_query_failed:${cfgError.message}` };
 
     // GATE 0: master execution flag (default OFF).
     if (!(cfgRow as any)?.rotation_paper_execute_enabled) return { executed: false, reason: "execute_disabled" };
+    // No confidence-qualified benchmark-alpha edge is available in this path.
+    // The schema defaults score-only execution to false; honor that owner gate
+    // before reading positions or invoking the atomic money-moving RPC.
+    if ((cfgRow as any)?.rotation_allow_score_only_paper !== true) {
+      return { executed: false, reason: "score_only_execution_disabled" };
+    }
 
     const persistenceRuns = Math.max(1, Number((cfgRow as any)?.rotation_persistence_runs ?? 2));
     const cooldownDays = Math.max(0, Number((cfgRow as any)?.rotation_cooldown_days ?? 3));

@@ -43,4 +43,17 @@ describe("scoreTechnicals", () => {
     expect(s).toBeGreaterThanOrEqual(0);
     expect(s).toBeLessThanOrEqual(100);
   });
+
+  it("keeps unpromoted technical challengers out of deterministic_v1", () => {
+    const baseline = scoreTechnicals(t({ rsi14: 52, trend20d: "flat" }));
+    const challengers = scoreTechnicals(t({
+      rsi14: 52,
+      trend20d: "flat",
+      ema200: 50,
+      macdHistogram: 12,
+      adx14: 40,
+      rsVsSpy: 1.4,
+    }));
+    expect(challengers).toBe(baseline);
+  });
 });

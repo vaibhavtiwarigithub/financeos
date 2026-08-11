@@ -370,49 +370,9 @@ export function scoreTechnicals(t: TechnicalResult): number {
     }
   }
 
-  // EMA-200 position (±10 pts) — long-term trend filter
-  const latest200 = t.ema200;
-  if (latest200 != null) {
-    // Use ema20 as a proxy for latest price (both are from same candle series)
-    const refClose = t.ema20; // not exact but directionally correct; ema200 is used as a relative marker
-    // ponytail: use ema50 > ema200 as the proxy since ema20 may lag; simpler direction read
-    if (t.priceVsEma50 != null) {
-      // We know price vs ema50 and ema50 vs ema200 — use ema50 as bridge
-      if (t.ema50 != null) {
-        if (t.ema50 > latest200) score += 10; // price > EMA50 > EMA200 = bullish structure
-        else score -= 10;
-      }
-    } else if (refClose != null) {
-      if (refClose > latest200) score += 10;
-      else score -= 10;
-    }
-  }
-
-  // MACD histogram confirmation (±5 pts)
-  if (t.macdHistogram != null) {
-    if (t.macdHistogram > 0) score += 5;
-    else score -= 5;
-  }
-
-  // RS vs benchmark (±8 pts) — outperforming the market = institutional support
-  if (t.rsVsSpy != null) {
-    if (t.rsVsSpy > 1.1) score += 8;
-    else if (t.rsVsSpy > 1.0) score += 4;
-    else if (t.rsVsSpy < 0.9) score -= 8;
-    else if (t.rsVsSpy < 1.0) score -= 4;
-  }
-
-  // ADX trend-strength multiplier — not additive, scales the delta from neutral.
-  // Trending market (ADX>25): momentum signals count more.
-  // Ranging market (ADX<20): dampen momentum component by 25%.
-  if (t.adx14 != null) {
-    const delta = score - 50;
-    if (t.adx14 >= 25) {
-      score = 50 + Math.round(delta * 1.15);
-    } else if (t.adx14 < 20) {
-      score = 50 + Math.round(delta * 0.75);
-    }
-  }
+  // EMA-200, MACD, relative strength and ADX remain measure-only evidence.
+  // They cannot affect deterministic_v1 until a separately approved,
+  // market-local challenger clears replay and forward-shadow gates.
 
   return Math.max(0, Math.min(100, Math.round(score)));
 }

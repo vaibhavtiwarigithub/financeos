@@ -7,6 +7,24 @@ function finitePositive(value: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/** Convert a NAV allocation percentage into a cash-bounded paper budget. */
+export function paperAllocationSpend(
+  portfolioNav: unknown,
+  cashBalance: unknown,
+  sizePct: unknown,
+  orderCap?: unknown,
+): number | null {
+  const nav = finitePositive(portfolioNav);
+  const cash = finitePositive(cashBalance);
+  const pct = finitePositive(sizePct);
+  if (nav == null || cash == null || pct == null) return null;
+
+  const rawCap = orderCap == null ? Number.POSITIVE_INFINITY : Number(orderCap);
+  const cap = Number.isFinite(rawCap) && rawCap > 0 ? rawCap : Number.POSITIVE_INFINITY;
+  const spend = Math.min(nav * (pct / 100), cash, cap);
+  return Number.isFinite(spend) && spend > 0 ? spend : null;
+}
+
 /**
  * Converts a paper allocation into an executable market-local quantity without
  * ever rounding up over its cash budget. US paper supports six-decimal fractions;

@@ -21,7 +21,7 @@ import { canOpenPaperName, hasOpenPaperName } from "@/lib/trading/paper-entry-po
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-calendar";
-import { paperEntryQuantity } from "@/lib/trading/paper-quantity";
+import { paperAllocationSpend, paperEntryQuantity } from "@/lib/trading/paper-quantity";
 import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/earnings-risk";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
@@ -228,7 +228,7 @@ export async function POST(req: NextRequest) {
 
     // Dedup: research runs 3x/day, stacking duplicate pending rows per symbol.
     // Keep only the highest-scoring signal per (symbol, market); ties → most recent.
-    const { data: openPos } = await supabase.from("paper_positions").select("symbol, sector, qty, avg_cost, market, position_role");
+    const { data: openPos } = await supabase.from("paper_positions").select("symbol, sector, qty, avg_cost, current_price, market, position_role");
     const openAlphaNamesByMarket = new Map<string, Set<string>>();
     for (const m of activeMarkets) openAlphaNamesByMarket.set(m, new Set());
     for (const p of (openPos ?? []) as any[]) {
@@ -330,12 +330,19 @@ export async function POST(req: NextRequest) {
     for (const m of activeMarkets) {
       const pool = poolByMarket.get(m);
       const mktPositions = (openPos ?? []).filter((p: any) => (hasMarketCol ? (p.market ?? "us") : "us") === m);
-      const holdingsValue = mktPositions.reduce((s: number, p: any) => s + Number(p.qty ?? 0) * Number(p.avg_cost ?? 0), 0);
+      const holdingsValue = mktPositions.reduce((s: number, p: any) => {
+        const marked = Number(p.current_price);
+        const cost = Number(p.avg_cost ?? 0);
+        const price = Number.isFinite(marked) && marked > 0 ? marked : cost;
+        return s + Number(p.qty ?? 0) * price;
+      }, 0);
       const nav = (pool?.cash_balance ?? 0) + holdingsValue;
       constructorNavByMarket.set(m, nav > 0 ? nav : (pool?.cash_balance ?? 1));
       bookByMarket.set(m, mktPositions.map((p: any) => ({
         symbol: p.symbol, sector: p.sector ?? null,
-        valuePct: nav > 0 ? (Number(p.qty ?? 0) * Number(p.avg_cost ?? 0) / nav) * 100 : 0,
+        valuePct: nav > 0
+          ? (Number(p.qty ?? 0) * (Number(p.current_price) > 0 ? Number(p.current_price) : Number(p.avg_cost ?? 0)) / nav) * 100
+          : 0,
         beta: null, dailyVol: null,
       })));
       try {
@@ -682,10 +689,15 @@ export async function POST(req: NextRequest) {
       const sizedPct = rawSizedPct;
       await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: sizedPct < proposedSizePct ? "shrunk" : "passed", reason: `Sized ${sizedPct.toFixed(1)}% (proposed ${proposedSizePct.toFixed(1)}%)`, detail: { proposedSizePct, sizedPct, adjustments: constructed.orders[0]?.adjustments } });
 
-      // Size off THIS pool's cash, in its own currency — bounded by the per-trade
-      // paper notional cap (scaled to paper NAV) so an outlier can't exceed it.
+      // finalSizePct is a percentage of this market-local NAV. Available cash
+      // and the per-order limit are hard caps, not allocation denominators.
       const perTradeCapPaper = market === "india" ? perTradeCapInrPaper : perTradeCapUsdPaper;
-      const maxSpend = Math.min(portfolio.cash_balance * (sizedPct / 100), perTradeCapPaper != null ? Number(perTradeCapPaper) : Infinity);
+      const maxSpend = paperAllocationSpend(
+        constructorNavByMarket.get(market),
+        portfolio.cash_balance,
+        sizedPct,
+        perTradeCapPaper,
+      );
       const qty = paperEntryQuantity(market as "us" | "india", maxSpend, fillPrice);
       if (qty == null) {
         await revertClaim(signal.id);

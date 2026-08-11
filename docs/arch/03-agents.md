@@ -505,6 +505,9 @@ cash idle while valid, unheld candidates sit below the rank cut.
 
 **Position sizing:**
 - `position_size_pct` from champion genome (clamped to `strategy_config.position_size_pct`)
+- The approved percentage is applied to the market-local paper NAV, then capped
+  by that pool's available cash and per-order limit. It is never applied to the
+  shrinking cash balance; doing so geometrically undersizes later entries.
 - Slippage model: 0.05% above mid
 - Records `expected_price` and `realized_slip_pct` on every fill
 
@@ -522,7 +525,7 @@ are appended to the Research Journal pipeline trail.
 - **Pyramid gate:** New BUY only if fill price > existing avg_cost (no averaging down)
 - **Long-only for new positions:** SELL signals only apply to symbols already held
 
-**Capital-rotation shadow (added 2026-07-13; trigger corrected 2026-07-22):** When a candidate cannot be taken as-is — because the book is at its `max_open_names` cap **or** because it lacks cash — PaperTrader calls the deterministic rotation evaluator and writes one `rotation_events` row with the would-be source holding, edge, notional, and gate reasons. This is P0 measurement only: it does not sell, buy, create a proposal, or move cash. Paper rotation execution and live rotation proposals remain disabled/unbuilt behind `rotation_config`.
+**Capital-rotation shadow (added 2026-07-13; containment restored 2026-08-10):** When a candidate cannot be taken as-is — because the book is at its `max_open_names` cap **or** because it lacks cash — PaperTrader calls the deterministic rotation evaluator and writes one `rotation_events` row with the would-be source holding, edge, notional, and gate reasons. This is P0 measurement only. Paper execution is disabled in both market rows after production proved that the P1 executor did not enforce the shadow's economic-readiness result or `rotation_allow_score_only_paper=false`. Live proposals remain disabled.
 
 Until 2026-07-22 the evaluator was reachable **only** from the `insufficient_cash` branch. In practice the name cap binds first — the book exhausts its 10 slots long before it runs out of cash — and the cap check `continue`d before the rotation call, so the evaluator was unreachable and `rotation_events` stayed empty for nine days with shadow enabled. The cap check now sets a flag instead of skipping; the candidate flows through the remaining gates (sector cap, re-entry cooldown, pricing, sizing) and is evaluated for rotation at the funding step. Rotation is slot-for-slot, so this cannot grow the book; a candidate with no viable rotation is still skipped with the same `max_open_names` reason.
 

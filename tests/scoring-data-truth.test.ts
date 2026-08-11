@@ -67,6 +67,28 @@ describe("fundamental outlier contract", () => {
   });
 });
 
+describe("measure-only fundamental candidates", () => {
+  it("records expanded fields without changing deterministic_v1", () => {
+    const base = scoreFundamentals({
+      Symbol: "TEST", Sector: "Technology", SectorTaxonomy: "yahoo_sector",
+      PERatio: "30",
+    }, false, 100);
+    const expanded = scoreFundamentals({
+      Symbol: "TEST", Sector: "Technology", SectorTaxonomy: "yahoo_sector",
+      PERatio: "30", FCFYield: "0.12", DebtToEquity: "0.1",
+      GrossMarginTTM: "0.8", PEGRatio: "0.5", "52WeekHigh": "102",
+    }, false, 100);
+    expect(expanded.score).toBe(base.score);
+    expect(expanded.evidence).toMatchObject({
+      fcf_yield_scoring_status: "measure_only",
+      debt_to_equity_scoring_status: "measure_only",
+      gross_margin_scoring_status: "measure_only",
+      peg_ratio_scoring_status: "measure_only",
+      pct_from_52w_high_scoring_status: "measure_only",
+    });
+  });
+});
+
 describe("insider availability contract", () => {
   it("rejects available=true when no valid score exists", () => {
     const missing = normalizeInsiderScore({ available: true, summary: "provider bug" });

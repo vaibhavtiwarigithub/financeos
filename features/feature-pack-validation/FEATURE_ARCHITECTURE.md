@@ -18,6 +18,12 @@
 > architecture and invited misuse. The lifecycle is now
 > `proposed -> quarantined -> measure_only -> retired`; legacy rows migrate to
 > `measure_only`. This changes no scoring or trade behavior.
+>
+> Money-path regression corrected (2026-08-10): commit `82c932a3` collected the
+> planned fields but also added them directly to `deterministic_v1`. EMA-200,
+> MACD, ADX, relative strength, FCF yield, debt/equity, gross margin, PEG and
+> 52-week proximity are again evidence/measurement only. Regression tests assert
+> that populating these fields cannot change the canonical score.
 
 ## 1. Decision
 

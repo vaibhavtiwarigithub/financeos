@@ -148,23 +148,15 @@ position-monitor now runs a **ledger reconciliation guard** every cycle: if
 `paper-cash-drift:<market>` (warn) so drift is visible and actionable BEFORE the
 drawdown breaker acts on corrupted NAV.
 
-**Capital rotation P1 PAPER execution enabled (migration 20260723120000,
-owner-approved 2026-07-23).** PaperTrader records a `rotation_events` audit row
-when a candidate is rejected for `max_open_names` or `insufficient_cash`, and —
-paper book only — may now execute the rotation. The gate stack, all fail-closed:
-`CAPITAL_ROTATION_PAPER_ENABLED` deployment env var, per-market
-`rotation_config.rotation_paper_execute_enabled` (true only for
-`book_type='paper'`; both live rows remain false), a fresh deterministic
-eligibility re-eval against the current book, persistence (≥2 distinct prior
-planned runs), cooldown (5d per symbol), per-run (1) and per-day (1) caps, and
-finally the atomic `execute_paper_rotation` RPC: it re-validates the signal
-claim, sells the source via `execute_paper_exit` (marked price − 5 bps), buys
-the candidate via `execute_paper_fill` (which re-runs mandate threshold, market
-controls, existing-position, name/sector caps, cash) in ONE transaction — a buy-leg
-denial rolls back the sell. The prior containment check constraint
-(`rotation_paper_execution_p1_not_approved`) was dropped by the same migration.
-There is NO live rotation path: no live proposal is created, and
-PositionMonitor remains the only owner of true exit labels.
+**Capital rotation is shadow-only (containment restored 2026-08-10).** Migration
+`20260723120000` had enabled paper execution before the TypeScript executor
+enforced the shadow evaluator's cost, tax, turnover, correlation and economic-
+edge readiness. It also ignored `rotation_allow_score_only_paper=false`, so four
+score-only swaps reached paper books. Migration `20260811033335` disables both
+paper rows. The executor now fails closed on the score-only flag before reading
+positions or invoking the atomic RPC. Shadow measurement stays enabled; live
+rotation remains disabled. Re-enabling paper rotation requires a new reviewed
+change that enforces every P1 readiness blocker in the execution transaction.
 
 New P0 rows now carry a fail-closed P1 readiness contract. Rotation source
 selection reuses the canonical paper exit-plan projection; post-swap sizing
