@@ -7,7 +7,28 @@ import { cookies } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
-const SCORE_SELECT = "symbol, market, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, direction, created_at, technical_breakdown, sentiment_breakdown, macro_breakdown";
+// Full select including breakdown cols (added by migrations after 2026-08-10).
+// If those columns don't exist yet the query will error; we fall back to the
+// base select automatically so the page still shows rows while migration is pending.
+const SCORE_SELECT_FULL = "symbol, market, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, direction, created_at, technical_breakdown, sentiment_breakdown, macro_breakdown";
+const SCORE_SELECT_BASE = "symbol, market, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, direction, created_at";
+
+async function queryScoreHistory(
+  sb: ReturnType<typeof createServerClient>,
+  opts: { mode: "all_runs" | "latest" }
+): Promise<any[]> {
+  const limit = opts.mode === "all_runs" ? 2000 : 5000;
+  // Try full select (breakdown cols); fall back to base if columns missing in DB
+  const { data, error } = await sb.from("signal_score_history")
+    .select(SCORE_SELECT_FULL).order("created_at", { ascending: false }).limit(limit);
+  if (!error) return data as any[];
+
+  // Column missing → retry without breakdown cols
+  const { data: data2, error: error2 } = await sb.from("signal_score_history")
+    .select(SCORE_SELECT_BASE).order("created_at", { ascending: false }).limit(limit);
+  if (error2) throw new Error(error2.message);
+  return data2 as any[];
+}
 
 export async function GET(req: NextRequest) {
   const mode = req.nextUrl.searchParams.get("mode") ?? "latest";
@@ -20,12 +41,9 @@ export async function GET(req: NextRequest) {
 
   // ── All-runs mode: raw audit log + latest fundamentals per symbol ──────────
   if (mode === "all_runs") {
-    const { data, error } = await sb
-      .from("signal_score_history")
-      .select(SCORE_SELECT)
-      .order("created_at", { ascending: false })
-      .limit(2000);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    let data: any[];
+    try { data = await queryScoreHistory(sb, { mode: "all_runs" }); }
+    catch (e: any) { return NextResponse.json({ error: String(e?.message) }, { status: 500 }); }
 
     // Unique symbols → join latest fundamentals so P/E, PEG etc are visible
     const allSyms = [...new Set((data ?? []).map((r: any) => r.symbol as string))];
@@ -63,24 +81,21 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Latest mode: one row per symbol + fundamentals + last trade ───────────
-  const [scoresRes, tradesRes] = await Promise.all([
-    sb.from("signal_score_history")
-      .select(SCORE_SELECT)
-      .order("created_at", { ascending: false })
-      .limit(5000),
-    sb.from("paper_trades")
-      .select("symbol, order_side, executed_at, exit_at, analyst_score")
-      .is("tainted", null)
-      .order("executed_at", { ascending: false })
-      .limit(2000),
-  ]);
+  let scoresData: any[];
+  try { scoresData = await queryScoreHistory(sb, { mode: "latest" }); }
+  catch (e: any) { return NextResponse.json({ error: String(e?.message) }, { status: 500 }); }
 
-  if (scoresRes.error) return NextResponse.json({ error: scoresRes.error.message }, { status: 500 });
-  if (!scoresRes.data?.length) return NextResponse.json({ symbols: [] });
+  const tradesRes = await sb.from("paper_trades")
+    .select("symbol, order_side, executed_at, exit_at, analyst_score")
+    .is("tainted", null)
+    .order("executed_at", { ascending: false })
+    .limit(2000);
+
+  if (!scoresData?.length) return NextResponse.json({ symbols: [] });
 
   // Dedupe: keep latest per symbol+market
   const seen = new Map<string, any>();
-  for (const row of scoresRes.data as any[]) {
+  for (const row of scoresData) {
     const key = `${row.symbol}:${row.market ?? "us"}`;
     if (!seen.has(key)) seen.set(key, row);
   }
