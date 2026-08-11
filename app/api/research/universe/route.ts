@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
     { cookies: { getAll: () => cookieStore.getAll() } },
   );
 
-  // ── All-runs mode: raw audit log, no dedup, no fundamentals join ──────────
+  // ── All-runs mode: raw audit log + latest fundamentals per symbol ──────────
   if (mode === "all_runs") {
     const { data, error } = await sb
       .from("signal_score_history")
@@ -24,6 +24,22 @@ export async function GET(req: NextRequest) {
       .order("created_at", { ascending: false })
       .limit(2000);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    // Unique symbols → join latest fundamentals so P/E, PEG etc are visible
+    const allSyms = [...new Set((data ?? []).map(r => r.symbol))];
+    const { data: facts } = await sb
+      .from("fundamental_facts")
+      .select("symbol, market, values")
+      .in("symbol", allSyms)
+      .eq("is_latest", true)
+      .eq("metric_set", "ttm_overview");
+
+    const factsMap = new Map<string, Record<string, string>>();
+    for (const f of facts ?? []) {
+      const key = `${f.symbol}:${f.market ?? "us"}`;
+      if (!factsMap.has(key)) factsMap.set(key, f.values as Record<string, string>);
+    }
+
     return NextResponse.json({
       symbols: (data ?? []).map(r => ({
         symbol: r.symbol,
@@ -35,7 +51,7 @@ export async function GET(req: NextRequest) {
         macro_score: Number(r.macro_score),
         direction: r.direction,
         last_researched_at: r.created_at,
-        fundamentals: null,
+        fundamentals: factsMap.get(`${r.symbol}:${r.market ?? "us"}`) ?? null,
         last_trade: null,
       })),
     });

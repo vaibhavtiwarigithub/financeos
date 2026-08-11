@@ -164,7 +164,6 @@ export default function FundamentalsPage() {
 
   // Table controls
   const [query, setQuery]           = useState("");
-  const [mktFilter, setMktFilter]   = useState<"all" | "us" | "india">("all");
   const [sortKey, setSortKey]       = useState("analyst_score");
   const [sortDir, setSortDir]       = useState<"asc" | "desc">("desc");
 
@@ -216,15 +215,11 @@ export default function FundamentalsPage() {
       .catch(() => setChartLoading(false));
   }, [chartSymbols, chartIndicators, chartDays, showTradeMarkers]);
 
-  // Visible + ordered cols (in latest mode show fundamentals; in all_runs hide them)
+  // Visible + ordered cols (all_runs hides last_trade only — fundamentals now joined)
   const visibleCols = colOrder
     .filter(k => {
       if (hiddenSet.has(k)) return false;
-      if (viewMode === "all_runs") {
-        // Fundamentals only available in latest mode
-        const fundKeys = new Set(["PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield","DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS","Name","Sector","last_trade_side"]);
-        if (fundKeys.has(k)) return false;
-      }
+      if (viewMode === "all_runs" && k === "last_trade_side") return false;
       return true;
     })
     .map(k => COL_BY_KEY[k]).filter(Boolean);
@@ -289,16 +284,21 @@ export default function FundamentalsPage() {
     a.click(); URL.revokeObjectURL(url);
   }
 
-  // Filter + sort rows
+  // Filter + sort rows — search across all visible column values
   const filtered = rows.filter(r => {
-    if (mktFilter !== "all" && r.market !== mktFilter) return false;
-    if (query) {
-      const q = query.toLowerCase();
-      return r.symbol.toLowerCase().includes(q) ||
-        (r.fundamentals?.Sector ?? "").toLowerCase().includes(q) ||
-        (r.fundamentals?.Name ?? "").toLowerCase().includes(q);
-    }
-    return true;
+    if (!query) return true;
+    const q = query.toLowerCase();
+    const f = r.fundamentals ?? {};
+    // Build search blob: symbol + all fundamental text fields + scores + direction + date
+    const blob = [
+      r.symbol, r.market, r.direction,
+      fmtDate(r.last_researched_at),
+      f.Name, f.Sector,
+      String(r.analyst_score), String(r.fundamental_score), String(r.technical_score),
+      String(r.sentiment_score), String(r.macro_score),
+      ...Object.values(f),
+    ].join(" ").toLowerCase();
+    return blob.includes(q);
   }).sort((a, b) => {
     if (sortKey === "last_researched_at" || sortKey === "run_date") {
       const at = new Date(a.last_researched_at).getTime();
@@ -508,26 +508,13 @@ export default function FundamentalsPage() {
       {/* Table filter bar */}
       <div style={{ padding: "16px 20px 8px", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input value={query} onChange={e => setQuery(e.target.value)}
-          placeholder="Filter by symbol, sector, name…"
+          placeholder="Filter any column — symbol, sector, score, direction…"
           style={{
-            flex: "1 1 160px", minWidth: 120, background: T.card,
+            flex: "1 1 220px", minWidth: 160, background: T.card,
             border: `1px solid ${T.border}`, borderRadius: 6,
             padding: "6px 10px", color: T.text, fontSize: 13, outline: "none",
           }}
         />
-
-        {/* Market filter */}
-        {(["all","us","india"] as const).map(m => (
-          <button key={m} onClick={() => setMktFilter(m)}
-            style={{
-              padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
-              border: `1px solid ${mktFilter === m ? T.accent : T.border}`,
-              background: mktFilter === m ? `${T.accent}22` : T.card,
-              color: mktFilter === m ? T.accent : T.muted,
-            }}>
-            {m === "all" ? "All" : m === "us" ? "🇺🇸 US" : "🇮🇳 India"}
-          </button>
-        ))}
 
         {/* View mode toggle */}
         <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", border: `1px solid ${T.border}` }}>
