@@ -19,6 +19,7 @@ import { cookies } from "next/headers";
 import { fetchFinnhubOverview } from "@/lib/data/fundamentals";
 import { fetchIndiaOverview } from "@/lib/india-data";
 import { captureFundamentalsFact } from "@/lib/data/pit-fundamentals";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -38,6 +39,11 @@ interface Result {
 }
 
 export async function POST(req: NextRequest) {
+  // Owner-only. This one deliberately BYPASSES the provider cache, so an
+  // unauthenticated caller could burn the Finnhub/Yahoo budget at will.
+  const denied = await requireOwner();
+  if (denied) return denied;
+
   const sp = req.nextUrl.searchParams;
   const marketFilter = (sp.get("market") ?? "all").toLowerCase();
   const limit = Math.min(Number(sp.get("limit") ?? DEFAULT_BATCH) || DEFAULT_BATCH, 100);

@@ -16,6 +16,7 @@ import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { SHADOW_PROGRAMS } from "@/lib/shadows/registry";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,10 @@ function declaredInactive(currentInfluence: string): boolean {
 }
 
 export async function GET() {
+  // Owner-only: this enumerates internal program state and evidence-table health.
+  const denied = await requireOwner();
+  if (denied) return denied;
+
   const cookieStore = await cookies();
   const sb = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
