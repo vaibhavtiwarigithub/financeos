@@ -2201,6 +2201,7 @@ export async function processSymbol(
     const t = scores.evidence?.technical;
     if (!t) return null;
     return {
+      status: (scores.dataQuality?.technicalDataPoints ?? 0) >= 15 ? "available" : "unavailable",
       rsi14: t.rsi14 ?? null,
       ema20: t.ema20 ?? null,
       ema50: t.ema50 ?? null,
@@ -2211,6 +2212,13 @@ export async function processSymbol(
       adx14: t.adx14 ?? null,
       rs_vs_benchmark: t.rsVsSpy ?? null,
       price: t.price ?? null,
+      as_of: t.as_of ?? null,
+      data_points: t.dataPoints ?? null,
+      price_vs_ema20: t.priceVsEma20 ?? null,
+      price_vs_ema50: t.priceVsEma50 ?? null,
+      trend_20d: t.trend20d ?? null,
+      volume_vs_avg20: t.volumeVsAvg20 ?? null,
+      atr14: t.atr14 ?? null,
       // detectBreakdownVeto returns { vetoed, reasons, warnings } — an OBJECT, which
       // is always truthy. Storing it raw made every consumer read "vetoed" for every
       // symbol. Persist the boolean, and keep the reasons beside it (they are the
@@ -2231,6 +2239,7 @@ export async function processSymbol(
     const bull = s.bullish_pct ?? raw.stocktwits_bullish_pct ?? raw.bullish_pct ?? null;
     const bear = s.bearish_pct ?? raw.stocktwits_bearish_pct ?? raw.bearish_pct ?? null;
     return {
+      status: market === "india" ? "inapplicable" : (scores.dataQuality?.sentimentDataAvailable ? "available" : "unavailable"),
       bullish_pct: bull,
       bearish_pct: bear,
       sample_size: s.message_count ?? raw.stocktwits_sample_size ?? raw.stocktwits_message_count ?? null,
@@ -2249,6 +2258,7 @@ export async function processSymbol(
     // signals_triggered at all (it is selected from macro_regime but never surfaced),
     // so the previous week_of/signals_triggered mapping was always null.
     return {
+      status: scores.dataQuality?.macroDataAvailable ? "available" : (market === "india" ? "inapplicable" : "unavailable"),
       regime: m.regime ?? null,
       danger_score: m.danger_score ?? null,
       as_of: m.as_of ?? null,
@@ -2261,10 +2271,18 @@ export async function processSymbol(
     const f = scores.evidence?.fundamental as Record<string, unknown> | undefined;
     if (!f) return null;
     return {
+      status: isEtf ? "inapplicable" : (scores.dataQuality?.fundamentalDataAvailable ? "available" : "unavailable"),
+      note: f.note ?? null,
+      symbol: f.symbol ?? null,
+      sector: f.sector ?? null,
+      industry: f.industry ?? null,
+      sector_taxonomy: f.sector_taxonomy ?? null,
       pe_ratio: f.pe_ratio ?? null,
       pe_vs_sector_ratio: f.pe_vs_sector_ratio ?? null,
       pe_sector_norm: f.pe_sector_norm ?? null,
       pe_normalized_sector: f.pe_normalized_sector ?? null,
+      pe_scoring_status: f.pe_scoring_status ?? null,
+      pe_sector_mapping_status: f.pe_sector_mapping_status ?? null,
       profit_margin: f.profit_margin ?? null,
       roe: f.roe ?? null,
       eps: f.eps ?? null,
@@ -2274,6 +2292,10 @@ export async function processSymbol(
       gross_margin: f.gross_margin ?? null,
       peg_ratio: f.peg_ratio ?? null,
       pct_from_52w_high: f.pct_from_52w_high ?? null,
+      eps_growth_yoy: avOverview.EpsGrowth3Y != null ? Number(avOverview.EpsGrowth3Y) : null,
+      high_52_week: avOverview["52WeekHigh"] != null ? Number(avOverview["52WeekHigh"]) : null,
+      analyst_target: f.analyst_target ?? null,
+      analyst_upside_pct: f.analyst_upside_pct ?? null,
     };
   })();
 

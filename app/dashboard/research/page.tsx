@@ -26,7 +26,7 @@ const LINE_COLORS = [
 const CHART_GROUPS = [
   {
     id: "scores", label: "Scores (0–100)",
-    keys: ["analyst_score","fundamental_score","technical_score","sentiment_score","macro_score"],
+    keys: ["analyst_score","fundamental_score","technical_score","sentiment_score","macro_score","insider_score"],
     pct: false, yDomain: [0, 100] as [number,number],
   },
   {
@@ -59,6 +59,7 @@ const INDICATOR_DEFS = [
   { key: "technical_score",   label: "T-Score",        group: "scores" },
   { key: "sentiment_score",   label: "S-Score",        group: "scores" },
   { key: "macro_score",       label: "M-Score",        group: "scores" },
+  { key: "insider_score",     label: "I-Score",        group: "scores" },
   { key: "price",             label: "Price",          group: "price"  },
   { key: "PERatio",           label: "P/E",            group: "ratio"  },
   { key: "PEGRatio",          label: "PEG",            group: "ratio"  },
@@ -77,9 +78,9 @@ const IND_BY_KEY = Object.fromEntries(INDICATOR_DEFS.map(d => [d.key, d]));
 interface ColDef {
   key: string; label: string; csvLabel?: string; width: number;
   pct?: boolean; score?: boolean; tooltip: string; defaultHidden?: boolean;
-  // "breakdown" means: value is in technical_breakdown / sentiment_breakdown / macro_breakdown
+  // "breakdown" means: value is in the immutable per-run domain breakdown.
   // "breakdown_source" names which object
-  breakdownSource?: "technical" | "sentiment" | "macro";
+  breakdownSource?: "fundamental" | "technical" | "sentiment" | "macro";
   breakdownField?: string;  // field name inside the breakdown object
   boolField?: boolean;      // render as ✓/✗
   formulaKey?: string;      // score column formula key — shows formula panel button
@@ -90,9 +91,10 @@ interface ColDef {
 const SCORE_FORMULAS: Record<string, { title: string; text: string }> = {
   analyst_score: {
     title: "Analyst Score (composite)",
-    text: `Weighted sum of F + T + S + M scores using champion genome weights.
+    text: `Weighted sum of available F + T + S + M + I scores using champion genome weights.
 Weights are learned from closed-trade outcomes by LearnerAgent (weekly batch).
-Default weights: F=0.30, T=0.35, S=0.20, M=0.15 (until 10+ closed trades).`,
+Default weights: F=0.30, T=0.25, S=0.20, M=0.15, I=0.10.
+Unavailable or inapplicable dimensions are excluded and the remaining weights are renormalized.`,
   },
   fundamental_score: {
     title: "Fundamental Score (F-Score)",
@@ -129,34 +131,27 @@ neutral 55 baseline with low confidence, not a computed score.`,
   technical_score: {
     title: "Technical Score (T-Score)",
     text: `Base: 50 pts
-• RSI (14):
-   40–60 → +10, > 70 → −5, < 30 → −20
-• EMA20 > EMA50 → +8, below → −8
-• EMA50 > EMA200 → +10, below → −10
-• MACD histogram positive → +5, negative → −5
-• RS vs SPY/NIFTY benchmark:
-   > +5% → +8, > 0% → +4, < −5% → −8
-• ADX ≥ 25 (trending) → score × 1.15
-  ADX < 20 (ranging)  → score × 0.75
-• Breakdown veto: ATR crash or recent vol spike caps score at 20
+ACTIVE: continuous RSI(14), price vs EMA20, price vs EMA50, 20-session trend, and direction-confirming volume.
+BREAKDOWN VETO: a >=2.5 ATR down move, or a <=-7% drop on >=1.5x volume, caps the score at 20.
+MEASURE-ONLY: EMA200, MACD, ADX, and relative strength vs SPY/NIFTY are recorded but contribute zero points until a market-local challenger passes replay and forward-shadow gates.
 Score clamped to [0, 100].`,
   },
   sentiment_score: {
     title: "Sentiment Score (S-Score)",
-    text: `Sources: StockTwits bullish/bearish ratio, news sentiment (GDELT/Finnhub), analyst upgrades/downgrades, insider buying/selling activity.
-
-Bullish % > 65% → positive, < 35% → negative, 45–55% → neutral.
-Sample size < 10 → low-confidence, score reverts toward 50.`,
+    text: `US sources: StockTwits and GDELT, with Alpha Vantage news only when both free sources fail.
+Social evidence is shrunk toward 50 with a 10-message neutral prior; news uses a 5-item prior. When both exist the blend is 40% social and 60% news.
+No resolved evidence means unavailable and the dimension is excluded. India news remains shadow-only, so India sentiment is inapplicable to the active score.`,
   },
   macro_score: {
     title: "Macro Score (M-Score)",
-    text: `Sources: macro_regime table (weekly cron).
-• Regime: bull → +20, bear → −30, neutral → 0
-• Danger score (0–100): ≥ 70 → −25, ≥ 40 → −10
-• Signals triggered: each danger signal adds weight
-
-India market uses NSE FII/DII flows + RBI calendar signals.
-US market uses VIX, yield curve, sector breadth.`,
+    text: `US only: score = 100 - danger_score from the newest valid weekly MacroSentinel verdict.
+A verdict is usable only when it is known, no more than 10 days old, and backed by at least 3 real US macro indicators.
+India FII/DII and event evidence is advisory/shadow-only. India macro is inapplicable to the active score and its weight is renormalized away.`,
+  },
+  insider_score: {
+    title: "Insider Score (I-Score)",
+    text: `US equities only: open-market purchases and sales over 90 days. Requires at least 3 qualifying transactions. Awards, exercises, gifts and tax withholding are excluded.
+ETFs, India symbols, ADRs and unresolved feeds are inapplicable or unavailable and their weight is renormalized away.`,
   },
 };
 
@@ -182,6 +177,8 @@ const ALL_COLS: ColDef[] = [
     tooltip: "Sentiment score (0–100). Click ⓘ for formula." },
   { key: "macro_score",       label: "M",   csvLabel: "Macro Score (0-100)",        width: 42, score: true, formulaKey: "macro_score",
     tooltip: "Macro score (0–100). Click ⓘ for formula." },
+  { key: "insider_score",     label: "I",   csvLabel: "Insider Score (0-100)",      width: 42, score: true, formulaKey: "insider_score",
+    tooltip: "Insider score (0-100). Click for formula and applicability rules." },
 
   // ── Trade column ─────────────────────────────────────────────────────────
   { key: "last_trade_side", label: "Trade", csvLabel: "Last Trade Side", width: 60,
@@ -194,21 +191,28 @@ const ALL_COLS: ColDef[] = [
     breakdownSource: "technical", breakdownField: "price" },
 
   // ── Fundamental sub-indicators (inputs to F-Score) ────────────────────────
-  { key: "PERatio",           label: "P/E",   csvLabel: "Price-to-Earnings TTM",           width: 56, tooltip: "Price-to-Earnings TTM. Scored sector-relative. Lower vs sector = better." },
-  { key: "PEGRatio",          label: "PEG",   csvLabel: "PEG Ratio",                        width: 50, tooltip: "PEG = P/E ÷ earnings growth rate. <1 = undervalued for growth; >3 = expensive. MEASURE-ONLY — recorded but contributes 0 points to the F-score." },
-  { key: "ReturnOnEquityTTM", label: "ROE",   csvLabel: "Return on Equity TTM (%)",         width: 60, pct: true, tooltip: "Return on Equity TTM: net income ÷ equity. Measures management capital efficiency." },
-  { key: "GrossMarginTTM",    label: "G.Mgn", csvLabel: "Gross Margin TTM (%)",             width: 64, pct: true, tooltip: "Gross Margin TTM: (revenue − COGS) ÷ revenue. Pricing power proxy. MEASURE-ONLY — recorded but contributes 0 points to the F-score." },
-  { key: "FCFYield",          label: "FCF%",  csvLabel: "Free Cash Flow Yield (%)",         width: 56, pct: true, tooltip: "Free Cash Flow Yield: FCF ÷ market cap. >5% = strong cash gen; <0% = burning cash. MEASURE-ONLY — recorded but contributes 0 points to the F-score." },
-  { key: "DebtToEquity",      label: "D/E",   csvLabel: "Debt-to-Equity",                   width: 50, tooltip: "Debt-to-Equity: total debt ÷ equity (RATIO, not percent). <0.5 = conservative; >2.0 = high leverage. MEASURE-ONLY — recorded but contributes 0 points to the F-score." },
-  { key: "QuarterlyRevenueGrowthYOY", label: "Rev↑", csvLabel: "Revenue Growth YoY (%)", width: 56, pct: true, tooltip: "Quarterly Revenue Growth YoY — top-line acceleration signal." },
-  { key: "ProfitMargin",      label: "N.Mgn", csvLabel: "Net Profit Margin (%)",            width: 60, pct: true, tooltip: "Net Profit Margin: net income ÷ revenue." },
-  { key: "EPS",               label: "EPS",   csvLabel: "Earnings Per Share TTM",           width: 58, tooltip: "Earnings Per Share TTM." },
+  { key: "fund_status", label: "Status", csvLabel: "Fundamental Evidence Status", width: 74, defaultHidden: true,
+    tooltip: "Fundamental evidence state for this exact research run.", breakdownSource: "fundamental", breakdownField: "status" },
+  { key: "PERatio",           label: "P/E",   csvLabel: "Price-to-Earnings TTM",           width: 56, tooltip: "Price-to-Earnings TTM. Scored sector-relative. Lower vs sector = better.", breakdownSource: "fundamental", breakdownField: "pe_ratio" },
+  { key: "PEGRatio",          label: "PEG",   csvLabel: "PEG Ratio",                        width: 50, tooltip: "PEG is measure-only and contributes zero points.", breakdownSource: "fundamental", breakdownField: "peg_ratio" },
+  { key: "ReturnOnEquityTTM", label: "ROE",   csvLabel: "Return on Equity TTM (%)",         width: 60, pct: true, tooltip: "Return on Equity TTM.", breakdownSource: "fundamental", breakdownField: "roe" },
+  { key: "GrossMarginTTM",    label: "G.Mgn", csvLabel: "Gross Margin TTM (%)",             width: 64, pct: true, tooltip: "Gross margin is measure-only and contributes zero points.", breakdownSource: "fundamental", breakdownField: "gross_margin" },
+  { key: "FCFYield",          label: "FCF%",  csvLabel: "Free Cash Flow Yield (%)",         width: 56, pct: true, tooltip: "FCF yield is measure-only and contributes zero points.", breakdownSource: "fundamental", breakdownField: "fcf_yield" },
+  { key: "DebtToEquity",      label: "D/E",   csvLabel: "Debt-to-Equity",                   width: 50, tooltip: "Debt/equity is measure-only and contributes zero points.", breakdownSource: "fundamental", breakdownField: "debt_to_equity" },
+  { key: "QuarterlyRevenueGrowthYOY", label: "Rev↑", csvLabel: "Revenue Growth YoY (%)", width: 56, pct: true, tooltip: "Quarterly Revenue Growth YoY.", breakdownSource: "fundamental", breakdownField: "revenue_growth_yoy" },
+  { key: "ProfitMargin",      label: "N.Mgn", csvLabel: "Net Profit Margin (%)",            width: 60, pct: true, tooltip: "Net Profit Margin.", breakdownSource: "fundamental", breakdownField: "profit_margin" },
+  { key: "EPS",               label: "EPS",   csvLabel: "Earnings Per Share TTM",           width: 58, tooltip: "Earnings Per Share TTM.", breakdownSource: "fundamental", breakdownField: "eps" },
   { key: "EpsGrowth3Y",       label: "EPS↑",  csvLabel: "EPS Growth (TTM YoY %)", width: 58, pct: true, defaultHidden: true,
-    tooltip: "EPS growth rate YoY TTM — earnings momentum signal. Pairs with PEG scoring." },
+    tooltip: "EPS growth rate YoY TTM; recorded evidence, not an active score input.", breakdownSource: "fundamental", breakdownField: "eps_growth_yoy" },
   { key: "52WeekHigh",        label: "52wH",  csvLabel: "52-Week High",           width: 62, defaultHidden: true,
-    tooltip: "52-Week High price. Drives 52W-proximity, which is MEASURE-ONLY — recorded but contributes 0 points to the F-score." },
+    tooltip: "52-week high; recorded evidence, not an active score input.", breakdownSource: "fundamental", breakdownField: "high_52_week" },
 
   // ── Technical sub-indicators (inputs to T-Score) ──────────────────────────
+  { key: "tech_status", label: "Status", csvLabel: "Technical Evidence Status", width: 74, defaultHidden: true, tooltip: "Technical evidence state for this exact run.", breakdownSource: "technical", breakdownField: "status" },
+  { key: "price_vs_ema20", label: "Px/EMA20", csvLabel: "Price vs EMA20", width: 70, defaultHidden: true, tooltip: "Active technical input: price above/below EMA20.", breakdownSource: "technical", breakdownField: "price_vs_ema20" },
+  { key: "price_vs_ema50", label: "Px/EMA50", csvLabel: "Price vs EMA50", width: 70, defaultHidden: true, tooltip: "Active technical input: price above/below EMA50.", breakdownSource: "technical", breakdownField: "price_vs_ema50" },
+  { key: "trend_20d", label: "20d Trend", csvLabel: "20-session Trend", width: 68, defaultHidden: true, tooltip: "Active technical input: up, flat, or down over 20 sessions.", breakdownSource: "technical", breakdownField: "trend_20d" },
+  { key: "volume_vs_avg20", label: "Vol x", csvLabel: "Volume vs 20-session Average", width: 58, defaultHidden: true, tooltip: "Active direction-confirming volume input.", breakdownSource: "technical", breakdownField: "volume_vs_avg20" },
   { key: "rsi14",           label: "RSI",     csvLabel: "RSI (14-day)",            width: 50, defaultHidden: true,
     tooltip: "RSI (14): momentum oscillator. 40–60 = neutral (+10), >70 = overbought (−5), <30 = oversold (−20).",
     breakdownSource: "technical", breakdownField: "rsi14" },
@@ -219,19 +223,20 @@ const ALL_COLS: ColDef[] = [
     tooltip: "EMA50 above EMA200 = long-term bullish trend (golden cross, +10). Below = death cross (−10).",
     breakdownSource: "technical", breakdownField: "ema50_above_ema200" },
   { key: "macd_hist",       label: "MACD",    csvLabel: "MACD Histogram",          width: 58, defaultHidden: true,
-    tooltip: "MACD histogram value. Positive = bullish momentum (+5), Negative = bearish (−5).",
+    tooltip: "MACD histogram. Measure-only: it does not affect the active technical score.",
     breakdownSource: "technical", breakdownField: "macd_histogram" },
   { key: "adx14",           label: "ADX",     csvLabel: "ADX (14-day)",            width: 50, defaultHidden: true,
-    tooltip: "ADX (14): trend strength. ≥25 = trending → score ×1.15. <20 = ranging → score ×0.75.",
+    tooltip: "ADX (14) trend strength. Measure-only: it does not affect the active technical score.",
     breakdownSource: "technical", breakdownField: "adx14" },
   { key: "rs_vs_bench",     label: "RS",      csvLabel: "RS vs Benchmark (%)",     width: 58, defaultHidden: true, pct: true,
-    tooltip: "Relative Strength vs SPY (US) or NIFTY (India). >+5% → +8, >0% → +4, <−5% → −8.",
+    tooltip: "Relative strength vs SPY (US) or NIFTY (India). Measure-only: it does not affect the active technical score.",
     breakdownSource: "technical", breakdownField: "rs_vs_benchmark" },
   { key: "breakdown_veto",  label: "Veto",    csvLabel: "Breakdown Veto",          width: 44, defaultHidden: true, boolField: true,
     tooltip: "Breakdown veto: ATR crash or extreme vol spike detected → score capped at 20.",
     breakdownSource: "technical", breakdownField: "breakdown_veto" },
 
   // ── Sentiment sub-indicators (inputs to S-Score) ──────────────────────────
+  { key: "sent_status", label: "Status", csvLabel: "Sentiment Evidence Status", width: 74, defaultHidden: true, tooltip: "Sentiment evidence state for this exact run.", breakdownSource: "sentiment", breakdownField: "status" },
   { key: "bullish_pct",     label: "Bull%",  csvLabel: "Bullish % (StockTwits)",  width: 52, defaultHidden: true, pct: true,
     tooltip: "Bullish % from StockTwits (or similar). >65% = positive sentiment, <35% = negative.",
     breakdownSource: "sentiment", breakdownField: "bullish_pct" },
@@ -246,6 +251,7 @@ const ALL_COLS: ColDef[] = [
     breakdownSource: "sentiment", breakdownField: "source" },
 
   // ── Macro sub-indicators (inputs to M-Score) ──────────────────────────────
+  { key: "macro_status", label: "Status", csvLabel: "Macro Evidence Status", width: 74, defaultHidden: true, tooltip: "Macro evidence state for this exact run.", breakdownSource: "macro", breakdownField: "status" },
   { key: "macro_regime",    label: "Regime", csvLabel: "Macro Regime",            width: 64, defaultHidden: true,
     tooltip: "Macro regime at time of research: bull / bear / neutral. Bull → +20, Bear → −30.",
     breakdownSource: "macro", breakdownField: "regime" },
@@ -264,12 +270,13 @@ const COL_BY_KEY = Object.fromEntries(ALL_COLS.map(c => [c.key, c]));
 interface LastTrade { side: string; date: string; exit_at: string | null; analyst_score: number | null; venue?: "paper" | "live" }
 
 interface SymbolRow {
-  symbol: string; market: string; analyst_score: number;
-  fundamental_score: number; technical_score: number;
-  sentiment_score: number; macro_score: number;
+  symbol: string; market: string; analyst_score: number | null;
+  fundamental_score: number | null; technical_score: number | null;
+  sentiment_score: number | null; macro_score: number | null; insider_score: number | null;
   direction: string; last_researched_at: string;
   fundamentals: Record<string, string> | null;
   last_trade: LastTrade | null;
+  fundamental_breakdown: Record<string, unknown> | null;
   technical_breakdown: Record<string, unknown> | null;
   sentiment_breakdown: Record<string, unknown> | null;
   macro_breakdown: Record<string, unknown> | null;
@@ -313,7 +320,8 @@ function getCell(row: SymbolRow, col: ColDef): string | number | boolean | null 
   }
   // Breakdown fields
   if (col.breakdownSource) {
-    const src = col.breakdownSource === "technical" ? row.technical_breakdown
+    const src = col.breakdownSource === "fundamental" ? row.fundamental_breakdown
+              : col.breakdownSource === "technical" ? row.technical_breakdown
               : col.breakdownSource === "sentiment" ? row.sentiment_breakdown
               : row.macro_breakdown;
     if (!src) return null;
@@ -356,15 +364,15 @@ export default function FundamentalsPage() {
 
   const DOMAIN_PRESETS: Record<string, string[]> = {
     all:         ALL_COLS.filter(c => !c.defaultHidden).map(c => c.key),
-    scores:      ["run_date","symbol","market","direction","analyst_score","fundamental_score","technical_score","sentiment_score","macro_score"],
-    fundamental: ["run_date","symbol","Sector","Industry","market","direction","fundamental_score",
+    scores:      ["run_date","symbol","market","direction","analyst_score","fundamental_score","technical_score","sentiment_score","macro_score","insider_score"],
+    fundamental: ["run_date","symbol","Sector","Industry","market","direction","fundamental_score","fund_status",
                   "PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield",
                   "DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS","EpsGrowth3Y","52WeekHigh"],
-    technical:   ["run_date","symbol","market","direction","technical_score",
-                  "price_at_research","rsi14","ema20_x_ema50","ema50_x_ema200","macd_hist","adx14","rs_vs_bench","breakdown_veto"],
-    sentiment:   ["run_date","symbol","market","direction","sentiment_score",
+    technical:   ["run_date","symbol","market","direction","technical_score","tech_status",
+                  "price_at_research","rsi14","price_vs_ema20","price_vs_ema50","trend_20d","volume_vs_avg20","ema20_x_ema50","ema50_x_ema200","macd_hist","adx14","rs_vs_bench","breakdown_veto"],
+    sentiment:   ["run_date","symbol","market","direction","sentiment_score","sent_status",
                   "bullish_pct","bearish_pct","sent_sample","sent_source"],
-    macro:       ["run_date","symbol","market","direction","macro_score",
+    macro:       ["run_date","symbol","market","direction","macro_score","macro_status",
                   "macro_regime","macro_danger","macro_week_of"],
   };
 
@@ -534,7 +542,6 @@ export default function FundamentalsPage() {
     const csvCols = ALL_COLS.filter(c => c.key !== "last_trade_side");
     const header = [...csvCols.map(c => c.csvLabel ?? c.label), "Trade Side", "Trade Date"].join(",");
     const csvRows = marketScoped.map(r => {
-      const f = r.fundamentals ?? {};
       const cells = csvCols.map(c => {
         let v: string;
         if (c.key === "run_date")          v = fmtDate(r.last_researched_at);
@@ -542,11 +549,10 @@ export default function FundamentalsPage() {
         else if (c.key === "market")       v = r.market;
         else if (c.key === "direction")    v = r.direction ?? "";
         else if (c.score)                  v = String((r as any)[c.key] ?? "");
-        else if (c.breakdownSource) {
+        else {
           const raw = getCell(r, c);
           v = raw == null ? "" : String(raw);
         }
-        else                               v = f[c.key] ?? "";
         return `"${String(v).replace(/"/g,'""')}"`;
       });
       const lt = r.last_trade;
@@ -570,6 +576,7 @@ export default function FundamentalsPage() {
     const q = query.toLowerCase();
     const f = r.fundamentals ?? {};
     const tb = r.technical_breakdown ?? {};
+    const fb = r.fundamental_breakdown ?? {};
     const sb = r.sentiment_breakdown ?? {};
     const mb = r.macro_breakdown ?? {};
     const blob = [
@@ -577,8 +584,9 @@ export default function FundamentalsPage() {
       fmtDate(r.last_researched_at),
       f.Name, f.Sector,
       String(r.analyst_score), String(r.fundamental_score), String(r.technical_score),
-      String(r.sentiment_score), String(r.macro_score),
+      String(r.sentiment_score), String(r.macro_score), String(r.insider_score),
       ...Object.values(f),
+      ...Object.values(fb).map(String),
       ...Object.values(tb).map(String),
       ...Object.values(sb).map(String),
       ...Object.values(mb).map(String),
@@ -1146,8 +1154,9 @@ export default function FundamentalsPage() {
                         );
                       }
                     } else if (col.score) {
-                      const v = Number((row as any)[col.key]);
-                      content = <span style={{ fontWeight: 700, color: scoreColor(v) }}>{isNaN(v) ? "—" : v}</span>;
+                      const rawScore = (row as any)[col.key];
+                      const v = rawScore == null ? null : Number(rawScore);
+                      content = <span style={{ fontWeight: 700, color: v == null || isNaN(v) ? T.muted : scoreColor(v) }}>{v == null || isNaN(v) ? "—" : v}</span>;
                     } else if (col.breakdownSource) {
                       // Breakdown cell
                       const raw = getCell(row, col);
@@ -1159,11 +1168,13 @@ export default function FundamentalsPage() {
                         // resolve this run. Showing an identical "—" for both reads
                         // as a bug when it is a documented gap, so name it.
                         const src = col.breakdownSource;
-                        const bd = src === "sentiment" ? row.sentiment_breakdown
+                        const bd = src === "fundamental" ? row.fundamental_breakdown
+                                 : src === "sentiment" ? row.sentiment_breakdown
                                  : src === "macro" ? row.macro_breakdown
                                  : row.technical_breakdown;
                         const note = (bd as any)?.note as string | undefined;
-                        const structural = row.market === "india" && (src === "sentiment" || src === "macro");
+                        const structural = (bd as any)?.status === "inapplicable"
+                          || (row.market === "india" && (src === "sentiment" || src === "macro"));
                         content = structural
                           ? <span title={note ?? `${src} evidence is not available for India — the dimension scores a neutral 50 and is excluded from the active scorer`}
                               style={{ color: T.muted, fontSize: 9, fontStyle: "italic" }}>n/a</span>
@@ -1199,9 +1210,10 @@ export default function FundamentalsPage() {
                         content = <span style={{ color: T.text }}>{isNaN(n) ? String(raw) : fmtVal(n)}</span>;
                       }
                     } else {
-                      // Fundamentals field
-                      const raw = f[col.key];
-                      content = <span style={{ color: raw ? T.text : T.muted }}>{fmtVal(raw, col.pct)}</span>;
+                      const raw = getCell(row, col);
+                      content = <span style={{ color: raw != null && raw !== "" ? T.text : T.muted }}>
+                        {typeof raw === "boolean" ? String(raw) : fmtVal(raw, col.pct)}
+                      </span>;
                     }
 
                     return (

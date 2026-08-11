@@ -4,14 +4,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { breakdownWithStatus, finiteNumber } from "@/lib/research/universe-truth";
 
 export const dynamic = "force-dynamic";
 
 // Full select including breakdown cols (added by migrations after 2026-08-10).
 // If those columns don't exist yet the query will error; we fall back to the
 // base select automatically so the page still shows rows while migration is pending.
-const SCORE_SELECT_FULL = "symbol, market, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, direction, created_at, technical_breakdown, sentiment_breakdown, macro_breakdown";
-const SCORE_SELECT_BASE = "symbol, market, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, direction, created_at";
+const SCORE_SELECT_FULL = "symbol, market, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, direction, created_at, fundamental_breakdown, technical_breakdown, sentiment_breakdown, macro_breakdown";
+const SCORE_SELECT_BASE = "symbol, market, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, direction, created_at";
 
 // PostgREST caps every response at 1000 rows regardless of .limit(n) — asking for
 // 5000 silently returns only the newest 1000. That truncation is what previously
@@ -58,43 +59,33 @@ export async function GET(req: NextRequest) {
     { cookies: { getAll: () => cookieStore.getAll() } },
   );
 
-  // ── All-runs mode: raw audit log + latest fundamentals per symbol ──────────
+  // ── All-runs mode: raw point-in-time audit log ────────────────────────────
   if (mode === "all_runs") {
     let data: any[];
     try { data = await queryScoreHistory(sb); }
     catch (e: any) { return NextResponse.json({ error: String(e?.message) }, { status: 500 }); }
 
-    // Unique symbols → join latest fundamentals so P/E, PEG etc are visible
-    const allSyms = [...new Set((data ?? []).map((r: any) => r.symbol as string))];
-    const { data: facts } = await sb
-      .from("fundamental_facts")
-      .select("symbol, market, values")
-      .in("symbol", allSyms)
-      .eq("is_latest", true)
-      .eq("metric_set", "ttm_overview");
-
-    const factsMap = new Map<string, Record<string, string>>();
-    for (const f of facts ?? []) {
-      const key = `${f.symbol}:${f.market ?? "us"}`;
-      if (!factsMap.has(key)) factsMap.set(key, f.values as Record<string, string>);
-    }
-
     return NextResponse.json({
       symbols: (data ?? []).map((r: any) => ({
         symbol: r.symbol,
         market: r.market ?? "us",
-        analyst_score: Number(r.analyst_score),
-        fundamental_score: Number(r.fundamental_score),
-        technical_score: Number(r.technical_score),
-        sentiment_score: Number(r.sentiment_score),
-        macro_score: Number(r.macro_score),
+        analyst_score: finiteNumber(r.analyst_score),
+        fundamental_score: finiteNumber(r.fundamental_score),
+        technical_score: finiteNumber(r.technical_score),
+        sentiment_score: finiteNumber(r.sentiment_score),
+        macro_score: finiteNumber(r.macro_score),
+        insider_score: finiteNumber(r.insider_score),
         direction: r.direction,
         last_researched_at: r.created_at,
-        fundamentals: factsMap.get(`${r.symbol}:${r.market ?? "us"}`) ?? null,
+        // Historical rows must use the immutable per-run breakdown below. A
+        // current TTM snapshot would rewrite history every time fundamentals
+        // refresh and make the chart look point-in-time when it is not.
+        fundamentals: null,
         last_trade: null,
-        technical_breakdown: r.technical_breakdown ?? null,
-        sentiment_breakdown: r.sentiment_breakdown ?? null,
-        macro_breakdown: r.macro_breakdown ?? null,
+        fundamental_breakdown: breakdownWithStatus(r.fundamental_breakdown, "fundamental", r.market ?? "us"),
+        technical_breakdown: breakdownWithStatus(r.technical_breakdown, "technical", r.market ?? "us"),
+        sentiment_breakdown: breakdownWithStatus(r.sentiment_breakdown, "sentiment", r.market ?? "us"),
+        macro_breakdown: breakdownWithStatus(r.macro_breakdown, "macro", r.market ?? "us"),
       })),
     });
   }
@@ -162,19 +153,21 @@ export async function GET(req: NextRequest) {
   const out = latest.map((r: any) => ({
     symbol: r.symbol,
     market: r.market ?? "us",
-    analyst_score: Number(r.analyst_score),
-    fundamental_score: Number(r.fundamental_score),
-    technical_score: Number(r.technical_score),
-    sentiment_score: Number(r.sentiment_score),
-    macro_score: Number(r.macro_score),
+    analyst_score: finiteNumber(r.analyst_score),
+    fundamental_score: finiteNumber(r.fundamental_score),
+    technical_score: finiteNumber(r.technical_score),
+    sentiment_score: finiteNumber(r.sentiment_score),
+    macro_score: finiteNumber(r.macro_score),
+    insider_score: finiteNumber(r.insider_score),
     direction: r.direction,
     last_researched_at: r.created_at,
     fundamentals: factsMap.get(`${r.symbol}:${r.market ?? "us"}`) ?? null,
     last_trade: tradeMap.get(`${r.symbol}:${r.market ?? "us"}`) ?? null,
-    technical_breakdown: r.technical_breakdown ?? null,
-    sentiment_breakdown: r.sentiment_breakdown ?? null,
-    macro_breakdown: r.macro_breakdown ?? null,
-  })).sort((a: any, b: any) => b.analyst_score - a.analyst_score);
+    fundamental_breakdown: breakdownWithStatus(r.fundamental_breakdown, "fundamental", r.market ?? "us"),
+    technical_breakdown: breakdownWithStatus(r.technical_breakdown, "technical", r.market ?? "us"),
+    sentiment_breakdown: breakdownWithStatus(r.sentiment_breakdown, "sentiment", r.market ?? "us"),
+    macro_breakdown: breakdownWithStatus(r.macro_breakdown, "macro", r.market ?? "us"),
+  })).sort((a: any, b: any) => (b.analyst_score ?? -Infinity) - (a.analyst_score ?? -Infinity));
 
   return NextResponse.json({ symbols: out });
 }

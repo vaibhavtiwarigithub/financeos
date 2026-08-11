@@ -372,6 +372,10 @@ Append-only per-symbol score history. Never mutated after insert.
 | `insider` | numeric | |
 | `direction` | text | |
 | `source` | text | `claude` \| `deepseek` |
+| `fundamental_breakdown` | jsonb | Immutable per-run fundamental values, scoring statuses, and evidence availability. |
+| `technical_breakdown` | jsonb | Immutable active and measure-only technical values plus candle basis and availability. |
+| `sentiment_breakdown` | jsonb | Immutable sentiment values, source/sample context, and availability. |
+| `macro_breakdown` | jsonb | Immutable macro verdict basis, freshness, and availability/applicability. |
 | `created_at` | timestamptz | Index: `(symbol, created_at DESC)`. Pruned >180d by DB cleanup. |
 
 ### `decision_observations`
