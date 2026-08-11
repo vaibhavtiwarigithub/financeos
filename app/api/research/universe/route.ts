@@ -13,21 +13,40 @@ export const dynamic = "force-dynamic";
 const SCORE_SELECT_FULL = "symbol, market, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, direction, created_at, technical_breakdown, sentiment_breakdown, macro_breakdown";
 const SCORE_SELECT_BASE = "symbol, market, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, direction, created_at";
 
-async function queryScoreHistory(
-  sb: ReturnType<typeof createServerClient>,
-  opts: { mode: "all_runs" | "latest" }
-): Promise<any[]> {
-  const limit = opts.mode === "all_runs" ? 2000 : 5000;
-  // Try full select (breakdown cols); fall back to base if columns missing in DB
-  const { data, error } = await sb.from("signal_score_history")
-    .select(SCORE_SELECT_FULL).order("created_at", { ascending: false }).limit(limit);
-  if (!error) return data as any[];
+// PostgREST caps every response at 1000 rows regardless of .limit(n) — asking for
+// 5000 silently returns only the newest 1000. That truncation is what previously
+// made the Fundamentals table show 158 symbols going back only ~5 days instead of
+// the real 185 symbols going back to the first run. Page with .range() instead.
+const PAGE = 1000;
+const MAX_ROWS = 20000; // safety stop; table is ~3.5k rows as of 2026-08
 
-  // Column missing → retry without breakdown cols
-  const { data: data2, error: error2 } = await sb.from("signal_score_history")
-    .select(SCORE_SELECT_BASE).order("created_at", { ascending: false }).limit(limit);
-  if (error2) throw new Error(error2.message);
-  return data2 as any[];
+async function pagedSelect(
+  sb: ReturnType<typeof createServerClient>,
+  select: string,
+): Promise<{ rows: any[]; error: string | null }> {
+  const rows: any[] = [];
+  for (let from = 0; from < MAX_ROWS; from += PAGE) {
+    const { data, error } = await sb
+      .from("signal_score_history")
+      .select(select)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) return { rows, error: error.message };
+    if (!data?.length) break;
+    rows.push(...(data as any[]));
+    if (data.length < PAGE) break; // last page
+  }
+  return { rows, error: null };
+}
+
+async function queryScoreHistory(sb: ReturnType<typeof createServerClient>): Promise<any[]> {
+  // Try full select (breakdown cols); fall back to base if columns missing in DB
+  const full = await pagedSelect(sb, SCORE_SELECT_FULL);
+  if (!full.error) return full.rows;
+
+  const base = await pagedSelect(sb, SCORE_SELECT_BASE);
+  if (base.error) throw new Error(base.error);
+  return base.rows;
 }
 
 export async function GET(req: NextRequest) {
@@ -42,7 +61,7 @@ export async function GET(req: NextRequest) {
   // ── All-runs mode: raw audit log + latest fundamentals per symbol ──────────
   if (mode === "all_runs") {
     let data: any[];
-    try { data = await queryScoreHistory(sb, { mode: "all_runs" }); }
+    try { data = await queryScoreHistory(sb); }
     catch (e: any) { return NextResponse.json({ error: String(e?.message) }, { status: 500 }); }
 
     // Unique symbols → join latest fundamentals so P/E, PEG etc are visible
@@ -82,7 +101,7 @@ export async function GET(req: NextRequest) {
 
   // ── Latest mode: one row per symbol + fundamentals + last trade ───────────
   let scoresData: any[];
-  try { scoresData = await queryScoreHistory(sb, { mode: "latest" }); }
+  try { scoresData = await queryScoreHistory(sb); }
   catch (e: any) { return NextResponse.json({ error: String(e?.message) }, { status: 500 }); }
 
   const tradesRes = await sb.from("paper_trades")
