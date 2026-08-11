@@ -150,7 +150,7 @@ describe("decideExtension — fail-closed on missing evidence", () => {
 });
 
 describe("decideExtension — safety invariant", () => {
-  it("can only ever produce an exit day inside [horizon, ceiling]", () => {
+  it("can only ever produce an effective horizon inside [horizon, ceiling]", () => {
     // Fuzz the inputs; the decision must never schedule an exit outside the
     // mandate window, which is the one thing that would make it unsafe.
     const vals = [null, 0, 1, -5, 50, 100] as const;
@@ -159,7 +159,7 @@ describe("decideExtension — safety invariant", () => {
         for (const b of vals) {
           const v = decideExtension(at({ ageDays: age, unrealizedPct: u as any, benchmarkRelPct: b as any }));
           expect(v.effectiveExitDay).toBeLessThanOrEqual(HEALTHY.ceilingDays);
-          expect(v.effectiveExitDay).toBeGreaterThanOrEqual(Math.min(age, HEALTHY.horizonDays));
+          expect(v.effectiveExitDay).toBeGreaterThanOrEqual(HEALTHY.horizonDays);
         }
       }
     }

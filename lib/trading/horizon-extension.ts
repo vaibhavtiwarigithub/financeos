@@ -76,7 +76,7 @@ export interface ExtensionVerdict {
   reason: ExtensionReason;
   /** Every condition that failed, so a shadow row shows WHY, not just no. */
   failed: ExtensionReason[];
-  /** Day the position would be closed if nothing changes. */
+  /** Effective horizon boundary; the live `age > horizon` rule exits next day. */
   effectiveExitDay: number;
 }
 

@@ -19,6 +19,7 @@ import { decideExtension, type ExtensionInputs, type ExtensionVerdict } from "@/
 import { loadTradingMandate, tradingWeekdaysBetween } from "@/lib/trading-mandate";
 import { isPaperScoreFresh, paperPositionOpenedAt } from "@/lib/trading/paper-exit-policy";
 import { getBenchmarkSeries } from "@/lib/data/benchmark-series";
+import { randomUUID } from "node:crypto";
 
 export interface ShadowRow extends ExtensionVerdict {
   market: "us" | "india";
@@ -63,11 +64,14 @@ export async function runHorizonExtensionShadow(
   opts: { market?: "us" | "india"; now?: Date; persist?: boolean } = {},
 ): Promise<{ runId: string; evaluated: number; rows: ShadowRow[]; persisted: boolean }> {
   const now = opts.now ?? new Date();
-  const runId = `hxs-${now.toISOString().slice(0, 19).replace(/[:T]/g, "")}`;
+  const runId = `hxs-${now.toISOString().replace(/\D/g, "")}-${randomUUID()}`;
 
-  const { data: positions } = await supabase
+  const { data: positions, error: positionsError } = await supabase
     .from("paper_positions")
-    .select("id, symbol, market, qty, avg_cost, current_price, opened_at, created_at, resolved_horizon_days, position_role");
+    .select("id, symbol, market, qty, avg_cost, current_price, opened_at, resolved_horizon_days, position_role");
+  if (positionsError) {
+    throw new Error(`horizon extension position load failed: ${positionsError.message}`);
+  }
 
   const open = (positions ?? []).filter((p: any) => {
     if (p.position_role === "hedge") return false;
