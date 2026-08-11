@@ -2194,12 +2194,77 @@ export async function processSymbol(
   // Self-explaining fields (migration 055) — let the Score Tracker's point-click
   // drill-down show WHY the score moved. Fall back to the base row if migration
   // 055 hasn't been applied yet (columns missing) so writes never stop.
+  // Sub-indicator breakdowns for the Fundamentals audit page.
+  // Stored as JSONB; added by migration (technical_breakdown / etc columns).
+  // Fail-open: if columns don't exist the base insert still succeeds.
+  const technicalBreakdown = (() => {
+    const t = scores.evidence?.technical;
+    if (!t) return null;
+    return {
+      rsi14: t.rsi14 ?? null,
+      ema20: t.ema20 ?? null,
+      ema50: t.ema50 ?? null,
+      ema200: t.ema200 ?? null,
+      ema20_above_ema50: t.ema20 != null && t.ema50 != null ? t.ema20 > t.ema50 : null,
+      ema50_above_ema200: t.ema50 != null && t.ema200 != null ? t.ema50 > t.ema200 : null,
+      macd_histogram: t.macdHistogram ?? null,
+      adx14: t.adx14 ?? null,
+      rs_vs_benchmark: t.rsVsSpy ?? null,
+      price: t.price ?? null,
+      breakdown_veto: t.breakdown_veto ?? false,
+    };
+  })();
+  const sentimentBreakdown = (() => {
+    const s = scores.evidence?.sentiment;
+    if (!s) return null;
+    return {
+      bullish_pct: (s as any).bullish_pct ?? null,
+      bearish_pct: (s as any).bearish_pct ?? null,
+      sample_size: (s as any).msgCount ?? (s as any).stocktwits_sample_size ?? null,
+      source: (s as any).source ?? null,
+      raw_score: scores.sentiment_score,
+    };
+  })();
+  const macroBreakdown = (() => {
+    const m = scores.evidence?.macro;
+    if (!m) return null;
+    return {
+      regime: (m as any).regime ?? null,
+      danger_score: (m as any).danger_score ?? null,
+      week_of: (m as any).week_of ?? null,
+      signals_triggered: (m as any).signals_triggered ?? null,
+    };
+  })();
+  const fundamentalBreakdown = (() => {
+    const f = scores.evidence?.fundamental as Record<string, unknown> | undefined;
+    if (!f) return null;
+    return {
+      pe_ratio: f.pe_ratio ?? null,
+      pe_vs_sector_ratio: f.pe_vs_sector_ratio ?? null,
+      pe_sector_norm: f.pe_sector_norm ?? null,
+      pe_normalized_sector: f.pe_normalized_sector ?? null,
+      profit_margin: f.profit_margin ?? null,
+      roe: f.roe ?? null,
+      eps: f.eps ?? null,
+      revenue_growth_yoy: f.revenue_growth_yoy ?? null,
+      fcf_yield: f.fcf_yield ?? null,
+      debt_to_equity: f.debt_to_equity ?? null,
+      gross_margin: f.gross_margin ?? null,
+      peg_ratio: f.peg_ratio ?? null,
+      pct_from_52w_high: f.pct_from_52w_high ?? null,
+    };
+  })();
+
   const { error: scoreHistErr } = await supabase.from("signal_score_history").insert({
     ...baseScoreRow,
     rationale: thesis.summary ?? `Analyst score ${analystScore}, direction ${signalDirection}.`,
     research_packet_id: packet?.id ?? null,
     used_champion_weights: usingChampion,
     market, // Phase 4: per-market score trajectory
+    technical_breakdown: technicalBreakdown,
+    sentiment_breakdown: sentimentBreakdown,
+    macro_breakdown: macroBreakdown,
+    fundamental_breakdown: fundamentalBreakdown,
   });
   if (scoreHistErr) {
     // Retry keeping the market tag (only the 055 self-explaining cols missing);

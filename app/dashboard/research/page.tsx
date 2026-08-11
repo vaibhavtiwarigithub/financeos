@@ -76,28 +76,115 @@ const IND_BY_KEY = Object.fromEntries(INDICATOR_DEFS.map(d => [d.key, d]));
 interface ColDef {
   key: string; label: string; csvLabel?: string; width: number;
   pct?: boolean; score?: boolean; tooltip: string; defaultHidden?: boolean;
+  // "breakdown" means: value is in technical_breakdown / sentiment_breakdown / macro_breakdown
+  // "breakdown_source" names which object
+  breakdownSource?: "technical" | "sentiment" | "macro";
+  breakdownField?: string;  // field name inside the breakdown object
+  boolField?: boolean;      // render as ✓/✗
+  formulaKey?: string;      // score column formula key — shows formula panel button
 }
 
+// ── Score formulas — displayed in persistent panel ────────────────────────────
+
+const SCORE_FORMULAS: Record<string, { title: string; text: string }> = {
+  analyst_score: {
+    title: "Analyst Score (composite)",
+    text: `Weighted sum of F + T + S + M scores using champion genome weights.
+Weights are learned from closed-trade outcomes by LearnerAgent (weekly batch).
+Default weights: F=0.30, T=0.35, S=0.20, M=0.15 (until 10+ closed trades).`,
+  },
+  fundamental_score: {
+    title: "Fundamental Score (F-Score)",
+    text: `Base: 50 pts
+• P/E vs sector median — sector-relative:
+   ratio < 0.7 → +18, < 1.0 → +8, < 1.4 → −3, < 2.0 → −12, ≥ 2.0 → −22
+• Profit Margin:
+   > 20% → +20, > 10% → +10, < 0% → −20
+• ROE:
+   > 20% → +15, > 10% → +8, < 0% → −10
+• EPS (positive/negative):
+   > 0 → +5, ≤ 0 → −10
+• Revenue Growth YoY:
+   > 20% → +15, > 10% → +8, < 0% → −10
+• FCF Yield:
+   > 5% → +12, > 2% → +6, < 0% → −10
+• Debt/Equity:
+   < 0.5 → +8, < 1.0 → +4, > 3.0 → −15, > 2.0 → −10
+• Gross Margin:
+   > 50% → +10, > 30% → +5, < 0% → −10
+• PEG:
+   < 1.0 → +12, < 2.0 → +6, > 3.0 → −10
+• 52W High proximity:
+   ≤ 5% from high → +15, ≤ 10% → +10, ≤ 20% → +3, > 40% → −8
+Score clamped to [0, 100].`,
+  },
+  technical_score: {
+    title: "Technical Score (T-Score)",
+    text: `Base: 50 pts
+• RSI (14):
+   40–60 → +10, > 70 → −5, < 30 → −20
+• EMA20 > EMA50 → +8, below → −8
+• EMA50 > EMA200 → +10, below → −10
+• MACD histogram positive → +5, negative → −5
+• RS vs SPY/NIFTY benchmark:
+   > +5% → +8, > 0% → +4, < −5% → −8
+• ADX ≥ 25 (trending) → score × 1.15
+  ADX < 20 (ranging)  → score × 0.75
+• Breakdown veto: ATR crash or recent vol spike caps score at 20
+Score clamped to [0, 100].`,
+  },
+  sentiment_score: {
+    title: "Sentiment Score (S-Score)",
+    text: `Sources: StockTwits bullish/bearish ratio, news sentiment (GDELT/Finnhub), analyst upgrades/downgrades, insider buying/selling activity.
+
+Bullish % > 65% → positive, < 35% → negative, 45–55% → neutral.
+Sample size < 10 → low-confidence, score reverts toward 50.`,
+  },
+  macro_score: {
+    title: "Macro Score (M-Score)",
+    text: `Sources: macro_regime table (weekly cron).
+• Regime: bull → +20, bear → −30, neutral → 0
+• Danger score (0–100): ≥ 70 → −25, ≥ 40 → −10
+• Signals triggered: each danger signal adds weight
+
+India market uses NSE FII/DII flows + RBI calendar signals.
+US market uses VIX, yield curve, sector breadth.`,
+  },
+};
+
 const ALL_COLS: ColDef[] = [
+  // ── Core identity ────────────────────────────────────────────────────────
   { key: "run_date",   label: "Date",      csvLabel: "Research Date",          width: 86,  tooltip: "Exact date and time this research run was executed" },
   { key: "symbol",     label: "Symbol",    csvLabel: "Ticker Symbol",          width: 90,  tooltip: "Ticker — click to open deep dive" },
   { key: "Name",       label: "Name",      csvLabel: "Company Name",           width: 160, defaultHidden: true, tooltip: "Company full name" },
   { key: "Sector",     label: "Sector",    csvLabel: "Sector",                 width: 110, defaultHidden: true, tooltip: "Sector from provider taxonomy" },
   { key: "market",     label: "Mkt",       csvLabel: "Market",                 width: 42,  tooltip: "Market: 🇺🇸 US (NYSE/Nasdaq) or 🇮🇳 India (NSE)" },
   { key: "direction",  label: "Dir",       csvLabel: "Signal Direction",       width: 58,  tooltip: "Signal direction: LONG / NEUTRAL / SHORT from this research run" },
-  { key: "analyst_score",     label: "Score", csvLabel: "Analyst Score (0-100)",     width: 54, score: true,
-    tooltip: "Composite analyst score (0–100)\nFormula: weighted sum of F + T + S + M using champion genome weights.\nWeights are learned from closed-trade outcomes by LearnerAgent." },
-  { key: "fundamental_score", label: "F",   csvLabel: "Fundamental Score (0-100)", width: 42, score: true,
-    tooltip: "Fundamental score (0–100)\nKey drivers:\n• P/E vs sector median: ±15 pts\n• PEG: <1→+12, <2→+6, >3→-10\n• ROE: >15%→+10, >8%→+5, <0→-10\n• EPS growth: >20%→+10, >5%→+5\n• Revenue growth: >20%→+15, >10%→+8, <-10→-12\n• FCF Yield: >5%→+12, <0→-10\n• D/E: <0.5→+8, >3→-15\n• Gross Margin: >50%→+10, >30%→+5\n• 52W proximity: within 5%→+15, within 10%→+10" },
-  { key: "technical_score",   label: "T",   csvLabel: "Technical Score (0-100)",    width: 42, score: true,
-    tooltip: "Technical score (0–100)\nKey drivers:\n• RSI: 40–60→+10, >70→-5, <30→-20\n• EMA20>EMA50→+8, below→-8\n• EMA50>EMA200→+10, below→-10\n• MACD histogram: pos→+5, neg→-5\n• RS vs benchmark: >5%→+8, >0→+4, <-5%→-8\n• ADX≥25→×1.15 (trending), ADX<20→×0.75 (ranging)\n• Breakdown veto: ATR crash caps score at 20" },
-  { key: "sentiment_score",   label: "S",   csvLabel: "Sentiment Score (0-100)",    width: 42, score: true,
-    tooltip: "Sentiment score (0–100)\nSources: news sentiment (GDELT/Finnhub), analyst upgrades/downgrades, insider buying/selling activity" },
-  { key: "macro_score",       label: "M",   csvLabel: "Macro Score (0-100)",        width: 42, score: true,
-    tooltip: "Macro score (0–100)\nSources: market regime (bull/bear/neutral), VIX level, sector breadth, yield curve context from macro_regime table" },
-  { key: "last_trade_side",   label: "Trade", csvLabel: "Last Trade Side",     width: 60, defaultHidden: false,
+
+  // ── Composite scores ─────────────────────────────────────────────────────
+  { key: "analyst_score",     label: "Score", csvLabel: "Analyst Score (0-100)",     width: 54, score: true, formulaKey: "analyst_score",
+    tooltip: "Composite analyst score (0–100). Click ⓘ for formula." },
+  { key: "fundamental_score", label: "F",   csvLabel: "Fundamental Score (0-100)", width: 42, score: true, formulaKey: "fundamental_score",
+    tooltip: "Fundamental score (0–100). Click ⓘ for full formula breakdown." },
+  { key: "technical_score",   label: "T",   csvLabel: "Technical Score (0-100)",    width: 42, score: true, formulaKey: "technical_score",
+    tooltip: "Technical score (0–100). Click ⓘ for formula." },
+  { key: "sentiment_score",   label: "S",   csvLabel: "Sentiment Score (0-100)",    width: 42, score: true, formulaKey: "sentiment_score",
+    tooltip: "Sentiment score (0–100). Click ⓘ for formula." },
+  { key: "macro_score",       label: "M",   csvLabel: "Macro Score (0-100)",        width: 42, score: true, formulaKey: "macro_score",
+    tooltip: "Macro score (0–100). Click ⓘ for formula." },
+
+  // ── Trade column ─────────────────────────────────────────────────────────
+  { key: "last_trade_side", label: "Trade", csvLabel: "Last Trade Side", width: 60,
     tooltip: "Last paper trade executed for this symbol: BUY (entry) or SELL (exit). Shows score at time of trade in parentheses." },
-  { key: "PERatio",           label: "P/E",   csvLabel: "Price-to-Earnings TTM",           width: 56, tooltip: "Price-to-Earnings TTM. Scored vs sector median. Lower relative to sector = better." },
+
+  // ── Price at research ─────────────────────────────────────────────────────
+  { key: "price_at_research", label: "Price@R", csvLabel: "Price at Research (close)",
+    width: 66, defaultHidden: false,
+    tooltip: "Closing price at the time this research run executed (from technical_breakdown.price). Available for runs after 2026-08-10.",
+    breakdownSource: "technical", breakdownField: "price" },
+
+  // ── Fundamental sub-indicators (inputs to F-Score) ────────────────────────
+  { key: "PERatio",           label: "P/E",   csvLabel: "Price-to-Earnings TTM",           width: 56, tooltip: "Price-to-Earnings TTM. Scored sector-relative. Lower vs sector = better." },
   { key: "PEGRatio",          label: "PEG",   csvLabel: "PEG Ratio",                        width: 50, tooltip: "PEG = P/E ÷ earnings growth rate. <1 = undervalued for growth; >3 = expensive." },
   { key: "ReturnOnEquityTTM", label: "ROE",   csvLabel: "Return on Equity TTM (%)",         width: 60, pct: true, tooltip: "Return on Equity TTM: net income ÷ equity. Measures management capital efficiency." },
   { key: "GrossMarginTTM",    label: "G.Mgn", csvLabel: "Gross Margin TTM (%)",             width: 64, pct: true, tooltip: "Gross Margin TTM: (revenue − COGS) ÷ revenue. Pricing power proxy." },
@@ -106,6 +193,58 @@ const ALL_COLS: ColDef[] = [
   { key: "QuarterlyRevenueGrowthYOY", label: "Rev↑", csvLabel: "Revenue Growth YoY (%)", width: 56, pct: true, tooltip: "Quarterly Revenue Growth YoY — top-line acceleration signal." },
   { key: "ProfitMargin",      label: "N.Mgn", csvLabel: "Net Profit Margin (%)",            width: 60, pct: true, tooltip: "Net Profit Margin: net income ÷ revenue." },
   { key: "EPS",               label: "EPS",   csvLabel: "Earnings Per Share TTM",           width: 58, tooltip: "Earnings Per Share TTM." },
+  { key: "EpsGrowth3Y",       label: "EPS↑",  csvLabel: "EPS Growth (TTM YoY %)", width: 58, pct: true, defaultHidden: true,
+    tooltip: "EPS growth rate YoY TTM — earnings momentum signal. Pairs with PEG scoring." },
+  { key: "52WeekHigh",        label: "52wH",  csvLabel: "52-Week High",           width: 62, defaultHidden: true,
+    tooltip: "52-Week High price. Used to compute 52W proximity score (up to +15 pts for being within 5% of high)." },
+
+  // ── Technical sub-indicators (inputs to T-Score) ──────────────────────────
+  { key: "rsi14",           label: "RSI",     csvLabel: "RSI (14-day)",            width: 50, defaultHidden: true,
+    tooltip: "RSI (14): momentum oscillator. 40–60 = neutral (+10), >70 = overbought (−5), <30 = oversold (−20).",
+    breakdownSource: "technical", breakdownField: "rsi14" },
+  { key: "ema20_x_ema50",   label: "EMA fast", csvLabel: "EMA20 > EMA50",          width: 68, defaultHidden: true, boolField: true,
+    tooltip: "EMA20 above EMA50 = short-term bullish trend (+8). Below = −8.",
+    breakdownSource: "technical", breakdownField: "ema20_above_ema50" },
+  { key: "ema50_x_ema200",  label: "EMA slow", csvLabel: "EMA50 > EMA200",         width: 68, defaultHidden: true, boolField: true,
+    tooltip: "EMA50 above EMA200 = long-term bullish trend (golden cross, +10). Below = death cross (−10).",
+    breakdownSource: "technical", breakdownField: "ema50_above_ema200" },
+  { key: "macd_hist",       label: "MACD",    csvLabel: "MACD Histogram",          width: 58, defaultHidden: true,
+    tooltip: "MACD histogram value. Positive = bullish momentum (+5), Negative = bearish (−5).",
+    breakdownSource: "technical", breakdownField: "macd_histogram" },
+  { key: "adx14",           label: "ADX",     csvLabel: "ADX (14-day)",            width: 50, defaultHidden: true,
+    tooltip: "ADX (14): trend strength. ≥25 = trending → score ×1.15. <20 = ranging → score ×0.75.",
+    breakdownSource: "technical", breakdownField: "adx14" },
+  { key: "rs_vs_bench",     label: "RS",      csvLabel: "RS vs Benchmark (%)",     width: 58, defaultHidden: true, pct: true,
+    tooltip: "Relative Strength vs SPY (US) or NIFTY (India). >+5% → +8, >0% → +4, <−5% → −8.",
+    breakdownSource: "technical", breakdownField: "rs_vs_benchmark" },
+  { key: "breakdown_veto",  label: "Veto",    csvLabel: "Breakdown Veto",          width: 44, defaultHidden: true, boolField: true,
+    tooltip: "Breakdown veto: ATR crash or extreme vol spike detected → score capped at 20.",
+    breakdownSource: "technical", breakdownField: "breakdown_veto" },
+
+  // ── Sentiment sub-indicators (inputs to S-Score) ──────────────────────────
+  { key: "bullish_pct",     label: "Bull%",  csvLabel: "Bullish % (StockTwits)",  width: 52, defaultHidden: true, pct: true,
+    tooltip: "Bullish % from StockTwits (or similar). >65% = positive sentiment, <35% = negative.",
+    breakdownSource: "sentiment", breakdownField: "bullish_pct" },
+  { key: "bearish_pct",     label: "Bear%",  csvLabel: "Bearish % (StockTwits)",  width: 52, defaultHidden: true, pct: true,
+    tooltip: "Bearish % from StockTwits. 100% − bullish − neutral.",
+    breakdownSource: "sentiment", breakdownField: "bearish_pct" },
+  { key: "sent_sample",     label: "#Posts", csvLabel: "Sentiment Sample Size",   width: 52, defaultHidden: true,
+    tooltip: "Number of posts/messages sampled for sentiment. <10 = low confidence.",
+    breakdownSource: "sentiment", breakdownField: "sample_size" },
+  { key: "sent_source",     label: "S.Src",  csvLabel: "Sentiment Source",        width: 70, defaultHidden: true,
+    tooltip: "Sentiment data source (stocktwits, gdelt, finnhub, etc.).",
+    breakdownSource: "sentiment", breakdownField: "source" },
+
+  // ── Macro sub-indicators (inputs to M-Score) ──────────────────────────────
+  { key: "macro_regime",    label: "Regime", csvLabel: "Macro Regime",            width: 64, defaultHidden: true,
+    tooltip: "Macro regime at time of research: bull / bear / neutral. Bull → +20, Bear → −30.",
+    breakdownSource: "macro", breakdownField: "regime" },
+  { key: "macro_danger",    label: "Danger", csvLabel: "Macro Danger Score",      width: 56, defaultHidden: true,
+    tooltip: "Macro danger score (0–100). ≥70 → −25, ≥40 → −10 applied to macro score.",
+    breakdownSource: "macro", breakdownField: "danger_score" },
+  { key: "macro_week_of",   label: "M.Week", csvLabel: "Macro Week Of",           width: 76, defaultHidden: true,
+    tooltip: "ISO week the macro regime snapshot was captured.",
+    breakdownSource: "macro", breakdownField: "week_of" },
 ];
 
 const COL_BY_KEY = Object.fromEntries(ALL_COLS.map(c => [c.key, c]));
@@ -121,13 +260,16 @@ interface SymbolRow {
   direction: string; last_researched_at: string;
   fundamentals: Record<string, string> | null;
   last_trade: LastTrade | null;
+  technical_breakdown: Record<string, unknown> | null;
+  sentiment_breakdown: Record<string, unknown> | null;
+  macro_breakdown: Record<string, unknown> | null;
 }
 
 interface TradeMarker { date: string; side: string; type: "entry" | "exit"; analyst_score: number | null }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtVal(v: string | number | undefined, pct = false) {
+function fmtVal(v: string | number | undefined | null, pct = false) {
   if (v == null || v === "") return "—";
   const n = typeof v === "number" ? v : parseFloat(v as string);
   if (!isFinite(n)) return "—";
@@ -148,9 +290,21 @@ function fmtDateTime(iso: string) {
 function scoreColor(v: number) { return v >= 70 ? T.green : v >= 50 ? T.yellow : T.red; }
 function dirColor(d: string)   { return d === "long" ? T.green : d === "short" ? T.red : T.muted; }
 
-function getCell(row: SymbolRow, key: string) {
-  if (key in row) return (row as any)[key];
-  return row.fundamentals?.[key] ?? null;
+/** Resolve cell value: score fields → row top-level; breakdown fields → breakdown object; else fundamentals */
+function getCell(row: SymbolRow, col: ColDef): string | number | boolean | null {
+  if (col.score) return (row as any)[col.key] ?? null;
+  // Breakdown fields
+  if (col.breakdownSource) {
+    const src = col.breakdownSource === "technical" ? row.technical_breakdown
+              : col.breakdownSource === "sentiment" ? row.sentiment_breakdown
+              : row.macro_breakdown;
+    if (!src) return null;
+    return (src as any)[col.breakdownField!] ?? null;
+  }
+  // Direct row field
+  if (col.key in row) return (row as any)[col.key] as any;
+  // Fundamentals
+  return row.fundamentals?.[col.key] ?? null;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -181,10 +335,15 @@ export default function FundamentalsPage() {
   const DOMAIN_PRESETS: Record<string, string[]> = {
     all:         ALL_COLS.filter(c => !c.defaultHidden).map(c => c.key),
     scores:      ["run_date","symbol","market","direction","analyst_score","fundamental_score","technical_score","sentiment_score","macro_score"],
-    fundamental: ["run_date","symbol","market","direction","fundamental_score","PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield","DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS"],
-    technical:   ["run_date","symbol","market","direction","technical_score"],
-    sentiment:   ["run_date","symbol","market","direction","sentiment_score"],
-    macro:       ["run_date","symbol","market","direction","macro_score"],
+    fundamental: ["run_date","symbol","market","direction","fundamental_score",
+                  "PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield",
+                  "DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS","EpsGrowth3Y","52WeekHigh"],
+    technical:   ["run_date","symbol","market","direction","technical_score",
+                  "price_at_research","rsi14","ema20_x_ema50","ema50_x_ema200","macd_hist","adx14","rs_vs_bench","breakdown_veto"],
+    sentiment:   ["run_date","symbol","market","direction","sentiment_score",
+                  "bullish_pct","bearish_pct","sent_sample","sent_source"],
+    macro:       ["run_date","symbol","market","direction","macro_score",
+                  "macro_regime","macro_danger","macro_week_of"],
   };
 
   function applyDomainTab(tab: typeof domainTab) {
@@ -193,6 +352,7 @@ export default function FundamentalsPage() {
     setHiddenSet(new Set(ALL_COLS.map(c => c.key).filter(k => !show.has(k))));
   }
 
+  // Backfill
   const [backfilling, setBackfilling] = useState(false);
   const [backfillMsg, setBackfillMsg] = useState("");
 
@@ -205,11 +365,13 @@ export default function FundamentalsPage() {
       .then(d => {
         setBackfillMsg(`Done: ${d.updated} updated, ${d.failed} failed out of ${d.total} symbols`);
         setBackfilling(false);
-        // Reload rows to show new names
         fetch(`/api/research/universe?mode=${viewMode}`).then(r => r.json()).then(d2 => setRows(d2.symbols ?? []));
       })
       .catch(() => { setBackfillMsg("Backfill failed — check server logs"); setBackfilling(false); });
   }
+
+  // Persistent formula panel
+  const [formulaPanel, setFormulaPanel] = useState<string | null>(null); // key of open formula
 
   // Chart
   const [chartSymbols,     setChartSymbols]     = useState<string[]>([]);
@@ -251,7 +413,7 @@ export default function FundamentalsPage() {
       .catch(() => setChartLoading(false));
   }, [chartSymbols, chartIndicators, chartDays, showTradeMarkers]);
 
-  // Visible + ordered cols (all_runs hides last_trade only — fundamentals now joined)
+  // Visible + ordered cols
   const visibleCols = colOrder
     .filter(k => {
       if (hiddenSet.has(k)) return false;
@@ -292,7 +454,7 @@ export default function FundamentalsPage() {
     setChartIndicators(prev => prev.includes(ind) ? prev.filter(s => s !== ind) : [...prev, ind].slice(0, 12));
   }
 
-  // CSV export — always ALL rows + ALL columns (ignores current filter/column picker)
+  // CSV export — always ALL rows + ALL columns
   function downloadCSV() {
     const csvCols = ALL_COLS.filter(c => c.key !== "last_trade_side");
     const header = [...csvCols.map(c => c.csvLabel ?? c.label), "Trade Side", "Trade Date"].join(",");
@@ -300,13 +462,16 @@ export default function FundamentalsPage() {
       const f = r.fundamentals ?? {};
       const cells = csvCols.map(c => {
         let v: string;
-        if (c.key === "run_date")       v = fmtDate(r.last_researched_at);
-        else if (c.key === "symbol")    v = r.symbol;
-        else if (c.key === "market")    v = r.market;
-        else if (c.key === "direction") v = r.direction ?? "";
-        else if (c.score)               v = String((r as any)[c.key] ?? "");
-        else if (c.key === "Name" || c.key === "Sector") v = f[c.key] ?? "";
-        else                            v = f[c.key] ?? "";
+        if (c.key === "run_date")          v = fmtDate(r.last_researched_at);
+        else if (c.key === "symbol")       v = r.symbol;
+        else if (c.key === "market")       v = r.market;
+        else if (c.key === "direction")    v = r.direction ?? "";
+        else if (c.score)                  v = String((r as any)[c.key] ?? "");
+        else if (c.breakdownSource) {
+          const raw = getCell(r, c);
+          v = raw == null ? "" : String(raw);
+        }
+        else                               v = f[c.key] ?? "";
         return `"${String(v).replace(/"/g,'""')}"`;
       });
       const lt = r.last_trade;
@@ -325,7 +490,9 @@ export default function FundamentalsPage() {
     if (!query) return true;
     const q = query.toLowerCase();
     const f = r.fundamentals ?? {};
-    // Build search blob: symbol + all fundamental text fields + scores + direction + date
+    const tb = r.technical_breakdown ?? {};
+    const sb = r.sentiment_breakdown ?? {};
+    const mb = r.macro_breakdown ?? {};
     const blob = [
       r.symbol, r.market, r.direction,
       fmtDate(r.last_researched_at),
@@ -333,6 +500,9 @@ export default function FundamentalsPage() {
       String(r.analyst_score), String(r.fundamental_score), String(r.technical_score),
       String(r.sentiment_score), String(r.macro_score),
       ...Object.values(f),
+      ...Object.values(tb).map(String),
+      ...Object.values(sb).map(String),
+      ...Object.values(mb).map(String),
     ].join(" ").toLowerCase();
     return blob.includes(q);
   }).sort((a, b) => {
@@ -341,8 +511,10 @@ export default function FundamentalsPage() {
       const bt = new Date(b.last_researched_at).getTime();
       return sortDir === "desc" ? bt - at : at - bt;
     }
-    const av = getCell(a, sortKey), bv = getCell(b, sortKey);
-    const an = parseFloat(av), bn = parseFloat(bv);
+    const colDef = COL_BY_KEY[sortKey];
+    const av = colDef ? getCell(a, colDef) : null;
+    const bv = colDef ? getCell(b, colDef) : null;
+    const an = parseFloat(String(av)), bn = parseFloat(String(bv));
     if (!isNaN(an) && !isNaN(bn)) return sortDir === "desc" ? bn - an : an - bn;
     return sortDir === "desc"
       ? String(bv ?? "").localeCompare(String(av ?? ""))
@@ -361,10 +533,67 @@ export default function FundamentalsPage() {
     </span>
   );
 
-  return (
-    <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
+  // ── Render ──────────────────────────────────────────────────────────────────
 
-      {/* Header */}
+  return (
+    <div style={{ minHeight: "100vh", background: T.bg, color: T.text }} onClick={() => { setShowColPicker(false); }}>
+
+      {/* ── Formula Panel ────────────────────────────────────────────────── */}
+      {formulaPanel && SCORE_FORMULAS[formulaPanel] && (
+        <div style={{
+          position: "fixed", top: 60, right: 20, zIndex: 100, width: 380, maxHeight: "70vh",
+          background: T.card, border: `1px solid ${T.accent}`,
+          borderRadius: 10, boxShadow: "0 12px 40px #00000099",
+          display: "flex", flexDirection: "column", overflow: "hidden",
+        }}
+          onClick={e => e.stopPropagation()}>
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "10px 14px", borderBottom: `1px solid ${T.border}`,
+            background: `${T.accent}22`,
+          }}>
+            <span style={{ fontWeight: 700, fontSize: 13, color: T.accent }}>
+              {SCORE_FORMULAS[formulaPanel].title}
+            </span>
+            <button onClick={() => setFormulaPanel(null)}
+              style={{ background: "none", border: "none", color: T.muted, fontSize: 16, cursor: "pointer", lineHeight: 1 }}>
+              ×
+            </button>
+          </div>
+          <pre style={{
+            padding: "12px 14px", fontSize: 11, color: T.text, lineHeight: 1.65,
+            overflowY: "auto", margin: 0, fontFamily: "monospace",
+            whiteSpace: "pre-wrap", wordBreak: "break-word",
+          }}>
+            {SCORE_FORMULAS[formulaPanel].text}
+          </pre>
+          <div style={{ padding: "8px 14px", borderTop: `1px solid ${T.border}`, display: "flex", gap: 8 }}>
+            <button
+              onClick={() => navigator.clipboard.writeText(SCORE_FORMULAS[formulaPanel!].text)}
+              style={{
+                padding: "4px 10px", borderRadius: 5, fontSize: 11, cursor: "pointer",
+                border: `1px solid ${T.border}`, background: T.bg, color: T.muted,
+              }}>
+              📋 Copy formula
+            </button>
+            <div style={{ display: "flex", gap: 4 }}>
+              {Object.keys(SCORE_FORMULAS).map(k => (
+                <button key={k} onClick={() => setFormulaPanel(k)}
+                  style={{
+                    padding: "3px 8px", borderRadius: 4, fontSize: 10, cursor: "pointer",
+                    border: `1px solid ${formulaPanel === k ? T.accent : T.border}`,
+                    background: formulaPanel === k ? `${T.accent}22` : T.bg,
+                    color: formulaPanel === k ? T.accent : T.muted,
+                  }}>
+                  {k.replace("_score","").replace("analyst","total").toUpperCase().slice(0,3)}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Header ──────────────────────────────────────────────────────── */}
       <div style={{ padding: "18px 20px 0", display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 200 }}>
           <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Fundamentals</h1>
@@ -374,7 +603,7 @@ export default function FundamentalsPage() {
           </p>
           {backfillMsg && <p style={{ fontSize: 11, color: backfilling ? T.yellow : T.green, marginTop: 4 }}>{backfillMsg}</p>}
         </div>
-        <button onClick={runBackfill} disabled={backfilling}
+        <button onClick={e => { e.stopPropagation(); runBackfill(); }} disabled={backfilling}
           title="Fetch company Name + Sector from Finnhub/Yahoo for all symbols missing it"
           style={{
             padding: "7px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: backfilling ? "default" : "pointer",
@@ -385,7 +614,7 @@ export default function FundamentalsPage() {
         </button>
       </div>
 
-      {/* ══ CHART BUILDER ══════════════════════════════════════════════════════ */}
+      {/* ══ CHART BUILDER ════════════════════════════════════════════════════ */}
       <div style={{ padding: "16px 20px 0" }}>
         <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>
           Historical Chart Builder
@@ -448,7 +677,7 @@ export default function FundamentalsPage() {
         {/* Empty state */}
         {!chartSymbols.length && (
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "20px", textAlign: "center", color: T.muted, fontSize: 12, marginBottom: 12 }}>
-            Click "+ Chart" on any row in the table below.
+            Click &ldquo;+ Chart&rdquo; on any row in the table below.
           </div>
         )}
 
@@ -469,9 +698,8 @@ export default function FundamentalsPage() {
           </div>
         )}
 
-        {/* Charts: one panel per group, same-scale indicators share panel */}
+        {/* Charts: one panel per group */}
         {chartSymbols.length > 0 && activeGroups.map(group => {
-          // Build unified date map for all symbols × indicators in this group
           const dateMap = new Map<string, Record<string, number>>();
           for (const sym of chartSymbols) {
             for (const ind of group.activeKeys) {
@@ -482,15 +710,10 @@ export default function FundamentalsPage() {
             }
           }
           const data = [...dateMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([,v]) => v);
-
-          // All trade markers across all selected symbols (for ReferenceLine)
           const allMarkers: (TradeMarker & { sym: string })[] = chartSymbols.flatMap(sym =>
             (tradeMarkers[sym] ?? []).map(m => ({ ...m, sym }))
           );
-
           if (!data.length && !chartLoading) return null;
-
-          // Line keys: one per symbol × indicator
           const lineKeys = chartSymbols.flatMap((sym, si) =>
             group.activeKeys.map((ind, ii) => ({
               key: `${sym}:${ind}`,
@@ -498,7 +721,6 @@ export default function FundamentalsPage() {
               color: LINE_COLORS[(si * 3 + ii) % LINE_COLORS.length],
             }))
           );
-
           return (
             <div key={group.id} style={{ marginBottom: 18 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, marginBottom: 5 }}>
@@ -533,7 +755,6 @@ export default function FundamentalsPage() {
                         <Line key={key} dataKey={key} name={label} stroke={color}
                           dot={false} strokeWidth={1.5} connectNulls activeDot={{ r: 3 }} />
                       ))}
-                      {/* Trade markers: vertical reference lines */}
                       {showTradeMarkers && allMarkers.map((m, i) => (
                         <ReferenceLine key={i} x={m.date}
                           stroke={m.type === "entry" && m.side === "buy" ? T.green
@@ -554,17 +775,17 @@ export default function FundamentalsPage() {
 
       {/* ══ TABLE ════════════════════════════════════════════════════════════ */}
 
-      {/* Domain tabs — column group presets */}
+      {/* Domain tabs */}
       <div style={{ padding: "12px 20px 0", display: "flex", gap: 4, flexWrap: "wrap" }}>
         {([
-          { id: "all",         label: "All",         note: "" },
-          { id: "scores",      label: "📊 Scores",   note: "Composite F/T/S/M per run" },
-          { id: "fundamental", label: "📈 Fundamental", note: "F-score + P/E, PEG, ROE, margins, FCF, D/E" },
-          { id: "technical",   label: "⚡ Technical",  note: "T-score only — sub-indicators (RSI/EMA/MACD) not stored per run" },
-          { id: "sentiment",   label: "💬 Sentiment",  note: "S-score only — news/analyst breakdown not stored per run" },
-          { id: "macro",       label: "🌐 Macro",      note: "M-score only — regime/VIX breakdown not stored per run" },
+          { id: "all",         label: "All" },
+          { id: "scores",      label: "📊 Scores" },
+          { id: "fundamental", label: "📈 Fundamental" },
+          { id: "technical",   label: "⚡ Technical" },
+          { id: "sentiment",   label: "💬 Sentiment" },
+          { id: "macro",       label: "🌐 Macro" },
         ] as const).map(tab => (
-          <button key={tab.id} onClick={() => applyDomainTab(tab.id)} title={tab.note}
+          <button key={tab.id} onClick={() => applyDomainTab(tab.id)}
             style={{
               padding: "5px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
               border: `1px solid ${domainTab === tab.id ? T.accent : T.border}`,
@@ -576,7 +797,7 @@ export default function FundamentalsPage() {
         ))}
         {(domainTab === "technical" || domainTab === "sentiment" || domainTab === "macro") && (
           <span style={{ fontSize: 10, color: T.muted, alignSelf: "center", marginLeft: 4 }}>
-            ℹ Sub-indicators not stored per run — use charts to see historical score trends
+            ℹ Sub-indicator columns populate for runs after 2026-08-10 (when we started storing breakdowns)
           </span>
         )}
       </div>
@@ -584,7 +805,7 @@ export default function FundamentalsPage() {
       {/* Table filter bar */}
       <div style={{ padding: "10px 20px 8px", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input value={query} onChange={e => setQuery(e.target.value)}
-          placeholder="Filter any column — symbol, sector, score, direction…"
+          placeholder="Filter any column — symbol, sector, score, direction, regime…"
           style={{
             flex: "1 1 220px", minWidth: 160, background: T.card,
             border: `1px solid ${T.border}`, borderRadius: 6,
@@ -608,7 +829,7 @@ export default function FundamentalsPage() {
 
         {/* Column picker */}
         <div style={{ position: "relative" }}>
-          <button onClick={() => setShowColPicker(p => !p)}
+          <button onClick={e => { e.stopPropagation(); setShowColPicker(p => !p); }}
             style={{
               padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
               border: `1px solid ${showColPicker ? T.accent : T.border}`,
@@ -621,23 +842,43 @@ export default function FundamentalsPage() {
             <div style={{
               position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 50,
               background: T.card, border: `1px solid ${T.border}`, borderRadius: 8,
-              padding: "10px 12px", minWidth: 200, boxShadow: "0 8px 24px #00000066",
-            }}>
+              padding: "10px 12px", minWidth: 220, maxHeight: 400, overflowY: "auto",
+              boxShadow: "0 8px 24px #00000066",
+            }}
+              onClick={e => e.stopPropagation()}>
               <div style={{ fontSize: 10, color: T.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>
                 Show / hide · drag headers to reorder
               </div>
-              {ALL_COLS.map(col => (
-                <label key={col.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", cursor: "pointer" }}>
-                  <input type="checkbox" checked={!hiddenSet.has(col.key)} onChange={() => toggleCol(col.key)} />
-                  <span style={{ fontSize: 12, color: T.text }}>{col.label}</span>
-                </label>
+              {/* Group by domain */}
+              {[
+                { label: "Core", keys: ["run_date","symbol","Name","Sector","market","direction","last_trade_side","price_at_research"] },
+                { label: "Scores", keys: ["analyst_score","fundamental_score","technical_score","sentiment_score","macro_score"] },
+                { label: "Fundamental", keys: ["PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield","DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS","EpsGrowth3Y","52WeekHigh"] },
+                { label: "Technical", keys: ["rsi14","ema20_x_ema50","ema50_x_ema200","macd_hist","adx14","rs_vs_bench","breakdown_veto"] },
+                { label: "Sentiment", keys: ["bullish_pct","bearish_pct","sent_sample","sent_source"] },
+                { label: "Macro", keys: ["macro_regime","macro_danger","macro_week_of"] },
+              ].map(g => (
+                <div key={g.label}>
+                  <div style={{ fontSize: 9, color: T.muted, marginTop: 8, marginBottom: 4, fontWeight: 700, textTransform: "uppercase" }}>{g.label}</div>
+                  {g.keys.map(k => {
+                    const col = COL_BY_KEY[k];
+                    if (!col) return null;
+                    return (
+                      <label key={k} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", cursor: "pointer" }}>
+                        <input type="checkbox" checked={!hiddenSet.has(k)} onChange={() => toggleCol(k)} />
+                        <span style={{ fontSize: 12, color: T.text }}>{col.label}</span>
+                        <span style={{ fontSize: 10, color: T.muted, marginLeft: "auto" }}>{col.csvLabel?.slice(0,25)}</span>
+                      </label>
+                    );
+                  })}
+                </div>
               ))}
             </div>
           )}
         </div>
 
         <button onClick={downloadCSV} disabled={loading || !filtered.length}
-          title="Download visible table as CSV"
+          title="Download full dataset as CSV (ignores current filter/column state)"
           style={{
             padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
             border: `1px solid ${T.border}`, background: T.card, color: T.muted,
@@ -655,8 +896,7 @@ export default function FundamentalsPage() {
       </div>
 
       {/* Table */}
-      <div style={{ overflowX: "auto", margin: "0 20px 32px", borderRadius: 8, border: `1px solid ${T.border}` }}
-        onClick={() => setShowColPicker(false)}>
+      <div style={{ overflowX: "auto", margin: "0 20px 32px", borderRadius: 8, border: `1px solid ${T.border}` }}>
         <table style={{ borderCollapse: "collapse", width: "max-content", minWidth: "100%", fontSize: 12 }}>
           <thead>
             <tr style={{ background: "#0A0C16" }}>
@@ -673,7 +913,20 @@ export default function FundamentalsPage() {
                     cursor: "grab", whiteSpace: "nowrap",
                     borderBottom: `1px solid ${T.border}`, minWidth: col.width, userSelect: "none",
                   }}>
-                  {col.label}<SortArrow col={col.key} />
+                  {col.label}
+                  {col.formulaKey && (
+                    <button
+                      onClick={e => { e.stopPropagation(); setFormulaPanel(p => p === col.formulaKey ? null : col.formulaKey!); }}
+                      title="Show formula (persistent, copyable)"
+                      style={{
+                        marginLeft: 4, padding: "1px 4px", borderRadius: 3, fontSize: 9,
+                        border: `1px solid ${formulaPanel === col.formulaKey ? T.accent : T.border}`,
+                        background: formulaPanel === col.formulaKey ? `${T.accent}22` : "transparent",
+                        color: formulaPanel === col.formulaKey ? T.accent : T.muted,
+                        cursor: "pointer",
+                      }}>ⓘ</button>
+                  )}
+                  <SortArrow col={col.key} />
                 </th>
               ))}
               <th style={{ padding: "8px 10px", color: T.muted, fontSize: 10, borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" }}>
@@ -703,7 +956,7 @@ export default function FundamentalsPage() {
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = inChart ? `${T.accent}0D` : "transparent"; }}
                 >
                   {visibleCols.map(col => {
-                    const isLeft = ["symbol","Name","Sector","run_date"].includes(col.key);
+                    const isLeft = ["symbol","Name","Sector","run_date","sent_source","macro_regime","macro_week_of"].includes(col.key);
                     let content: React.ReactNode;
 
                     if (col.key === "run_date") {
@@ -745,7 +998,32 @@ export default function FundamentalsPage() {
                     } else if (col.score) {
                       const v = Number((row as any)[col.key]);
                       content = <span style={{ fontWeight: 700, color: scoreColor(v) }}>{isNaN(v) ? "—" : v}</span>;
+                    } else if (col.breakdownSource) {
+                      // Breakdown cell
+                      const raw = getCell(row, col);
+                      if (raw == null) {
+                        content = <span style={{ color: T.muted, fontSize: 10 }}>—</span>;
+                      } else if (col.boolField) {
+                        const bv = Boolean(raw);
+                        // veto field: true = bad; cross fields: true = good
+                        const isVeto = col.key === "breakdown_veto";
+                        const good = isVeto ? !bv : bv;
+                        content = <span style={{ color: good ? T.green : T.red, fontWeight: 700, fontSize: 11 }}>{bv ? "✓" : "✗"}</span>;
+                      } else if (col.pct) {
+                        // sentiment pct fields stored as fractions (0.65 = 65%) or raw pct
+                        const n = Number(raw);
+                        const isProbFraction = n <= 1;
+                        content = <span style={{ color: T.text }}>{isProbFraction ? fmtVal(n, true) : `${n.toFixed(1)}%`}</span>;
+                      } else if (typeof raw === "string" && isNaN(parseFloat(raw))) {
+                        // Text field (regime, source, week_of)
+                        const colorMap: Record<string, string> = { bull: T.green, bear: T.red, neutral: T.muted };
+                        content = <span style={{ color: colorMap[raw] ?? T.text, fontSize: 11 }}>{raw}</span>;
+                      } else {
+                        const n = Number(raw);
+                        content = <span style={{ color: T.text }}>{isNaN(n) ? String(raw) : fmtVal(n)}</span>;
+                      }
                     } else {
+                      // Fundamentals field
                       const raw = f[col.key];
                       content = <span style={{ color: raw ? T.text : T.muted }}>{fmtVal(raw, col.pct)}</span>;
                     }

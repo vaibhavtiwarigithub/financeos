@@ -7,6 +7,8 @@ import { cookies } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
+const SCORE_SELECT = "symbol, market, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, direction, created_at, technical_breakdown, sentiment_breakdown, macro_breakdown";
+
 export async function GET(req: NextRequest) {
   const mode = req.nextUrl.searchParams.get("mode") ?? "latest";
   const cookieStore = await cookies();
@@ -20,13 +22,13 @@ export async function GET(req: NextRequest) {
   if (mode === "all_runs") {
     const { data, error } = await sb
       .from("signal_score_history")
-      .select("symbol, market, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, direction, created_at")
+      .select(SCORE_SELECT)
       .order("created_at", { ascending: false })
       .limit(2000);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     // Unique symbols → join latest fundamentals so P/E, PEG etc are visible
-    const allSyms = [...new Set((data ?? []).map(r => r.symbol))];
+    const allSyms = [...new Set((data ?? []).map((r: any) => r.symbol as string))];
     const { data: facts } = await sb
       .from("fundamental_facts")
       .select("symbol, market, values")
@@ -41,7 +43,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({
-      symbols: (data ?? []).map(r => ({
+      symbols: (data ?? []).map((r: any) => ({
         symbol: r.symbol,
         market: r.market ?? "us",
         analyst_score: Number(r.analyst_score),
@@ -53,6 +55,9 @@ export async function GET(req: NextRequest) {
         last_researched_at: r.created_at,
         fundamentals: factsMap.get(`${r.symbol}:${r.market ?? "us"}`) ?? null,
         last_trade: null,
+        technical_breakdown: r.technical_breakdown ?? null,
+        sentiment_breakdown: r.sentiment_breakdown ?? null,
+        macro_breakdown: r.macro_breakdown ?? null,
       })),
     });
   }
@@ -60,7 +65,7 @@ export async function GET(req: NextRequest) {
   // ── Latest mode: one row per symbol + fundamentals + last trade ───────────
   const [scoresRes, tradesRes] = await Promise.all([
     sb.from("signal_score_history")
-      .select("symbol, market, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, direction, created_at")
+      .select(SCORE_SELECT)
       .order("created_at", { ascending: false })
       .limit(5000),
     sb.from("paper_trades")
@@ -74,13 +79,13 @@ export async function GET(req: NextRequest) {
   if (!scoresRes.data?.length) return NextResponse.json({ symbols: [] });
 
   // Dedupe: keep latest per symbol+market
-  const seen = new Map<string, typeof scoresRes.data[0]>();
-  for (const row of scoresRes.data) {
+  const seen = new Map<string, any>();
+  for (const row of scoresRes.data as any[]) {
     const key = `${row.symbol}:${row.market ?? "us"}`;
     if (!seen.has(key)) seen.set(key, row);
   }
   const latest = [...seen.values()];
-  const symbols = latest.map(r => r.symbol);
+  const symbols = latest.map((r: any) => r.symbol as string);
 
   // Fundamentals
   const { data: facts } = await sb
@@ -110,7 +115,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const out = latest.map(r => ({
+  const out = latest.map((r: any) => ({
     symbol: r.symbol,
     market: r.market ?? "us",
     analyst_score: Number(r.analyst_score),
@@ -122,7 +127,10 @@ export async function GET(req: NextRequest) {
     last_researched_at: r.created_at,
     fundamentals: factsMap.get(`${r.symbol}:${r.market ?? "us"}`) ?? null,
     last_trade: tradeMap.get(r.symbol) ?? null,
-  })).sort((a, b) => b.analyst_score - a.analyst_score);
+    technical_breakdown: r.technical_breakdown ?? null,
+    sentiment_breakdown: r.sentiment_breakdown ?? null,
+    macro_breakdown: r.macro_breakdown ?? null,
+  })).sort((a: any, b: any) => b.analyst_score - a.analyst_score);
 
   return NextResponse.json({ symbols: out });
 }
