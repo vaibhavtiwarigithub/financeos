@@ -213,3 +213,89 @@ describe("pit-fundamentals — capture-on-fetch is fail-open (never breaks scori
     expect(rows.length).toBe(0);
   });
 });
+
+// ── Regression: the real supabase builder is a thenable WITHOUT .catch ───────
+//
+// This is the shape that made captureFundamentalsFact silently write nothing in
+// production for weeks. supabase-js returns a PostgrestFilterBuilder, which
+// implements `then` but NOT `catch` (verified: typeof builder.catch === "undefined").
+// The is_latest flip called `.catch(...)` on it, which threw a TypeError; the
+// enclosing try swallowed that and returned null, so no restatement was ever
+// appended. Symptom: fundamental_facts held exactly one row per symbol, every
+// restatement_seq 0, nothing refreshed since first observation.
+//
+// makeFakeDb could never catch it — its update().eq() is `async`, so it returns a
+// REAL promise, and real promises do have .catch. The fake was strictly more
+// forgiving than the client it stood in for. This fake is deliberately not.
+function makeThenableDb(seed: FactRow[] = []) {
+  const rows: FactRow[] = seed.map((r, i) => ({ id: r.id ?? `seed-${i}`, ...r }));
+  let idc = 0;
+  // Mimics PostgrestFilterBuilder: awaitable, but no .catch on the object.
+  const thenableOnly = <T,>(value: T) => ({
+    then: (res: (v: T) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve(value).then(res, rej),
+  });
+  const db = {
+    from() {
+      return {
+        select: () => ({
+          eq: (_c1: string, v1: unknown) => ({
+            eq: async (_c2: string, v2: unknown) => ({
+              data: rows.filter((r) => r.symbol === v1 && r.market === v2).map((r) => ({ ...r })),
+              error: undefined,
+            }),
+          }),
+        }),
+        insert: async (row: Record<string, unknown>) => {
+          rows.push({ ...(row as unknown as FactRow), id: `ins-${idc++}` });
+          return { error: undefined };
+        },
+        update: (patch: Record<string, unknown>) => ({
+          eq: (col: string, val: unknown) => {
+            const t = rows.find((r) => (r as any)[col] === val);
+            if (t) Object.assign(t, patch);
+            return thenableOnly({ error: undefined });
+          },
+        }),
+      };
+    },
+  } as unknown as PitDbClient;
+  return { db, rows };
+}
+
+describe("pit-fundamentals — restatement against a catch-less thenable client", () => {
+  const seeded: FactRow[] = [{
+    id: "row-1", symbol: "AAPL", market: "us", metric_set: "ttm_overview",
+    report_period: null, fiscal_period: null, filing_date: null,
+    values: OV({ PERatio: "25" }), source: "finnhub",
+    restatement_seq: 0, is_latest: true,
+    payload_hash: hashValues("AAPL", "us", "ttm_overview", null, "finnhub", OV({ PERatio: "25" })),
+    captured_at: "2026-07-13T00:00:00Z",
+  }];
+
+  it("appends the new vintage even though update().eq() has no .catch", async () => {
+    const { db, rows } = makeThenableDb(seeded);
+
+    // A changed payload — exactly what a provider-mapping fix produces.
+    const vintage = await captureFundamentalsFact(db, {
+      symbol: "AAPL", market: "us", source: "finnhub",
+      values: OV({ PERatio: "25", DebtToEquity: "1.35", PEGRatio: "2.93" }),
+    });
+
+    expect(vintage).not.toBeNull();
+    expect(rows).toHaveLength(2);
+    const appended = rows.find((r) => r.restatement_seq === 1);
+    expect(appended?.values.DebtToEquity).toBe("1.35");
+    expect(appended?.is_latest).toBe(true);
+    // and the prior vintage is demoted, not mutated away
+    expect(rows.find((r) => r.id === "row-1")?.is_latest).toBe(false);
+  });
+
+  it("still dedups an identical re-fetch on the same client shape", async () => {
+    const { db, rows } = makeThenableDb(seeded);
+    const vintage = await captureFundamentalsFact(db, {
+      symbol: "AAPL", market: "us", source: "finnhub", values: OV({ PERatio: "25" }),
+    });
+    expect(vintage).toBeNull();
+    expect(rows).toHaveLength(1);
+  });
+});
