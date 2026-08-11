@@ -62,17 +62,17 @@ export async function fetchFmpOverview(symbol: string, maxAgeDays = 7): Promise<
 // primary US fundamentals source. Percent-scaled Finnhub fields (margin/ROE/
 // growth) are divided by 100 to match AV's fraction convention that
 // scoreFundamentals reads (ProfitMargin 0.27 = 27%).
-export async function fetchFinnhubOverview(symbol: string, maxAgeDays = 7): Promise<Overview> {
+export async function fetchFinnhubOverview(symbol: string, maxAgeDays = 7, forceRefresh = false): Promise<Overview> {
   const key = process.env.FINNHUB_API_KEY ?? "";
   if (!key) return {};
   try {
     const [metricRes, profileRes] = await Promise.all([
       providerCachedFetch("finnhub", `FINNHUB_METRIC:${symbol}`,
         `https://finnhub.io/api/v1/stock/metric?symbol=${encodeURIComponent(symbol)}&metric=all&token=${key}`,
-        { timeoutMs: 8000, maxAgeDays, maxStaleAgeDays: maxAgeDays }),
+        { timeoutMs: 8000, maxAgeDays, maxStaleAgeDays: maxAgeDays, forceRefresh }),
       providerCachedFetch("finnhub", `FINNHUB_PROFILE:${symbol}`,
         `https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(symbol)}&token=${key}`,
-        { timeoutMs: 8000, maxAgeDays: 30 }),
+        { timeoutMs: 8000, maxAgeDays: 30, forceRefresh }),
     ]);
     const m = (metricRes as any)?.metric ?? {};
     const p = (profileRes as any) ?? {};

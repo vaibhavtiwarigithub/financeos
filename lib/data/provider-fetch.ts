@@ -100,6 +100,12 @@ export interface ProviderFetchOpts {
   // historical seven-day bound. Event-sensitive callers set this equal to
   // maxAgeDays so an outage cannot resurrect pre-report facts as current.
   maxStaleAgeDays?: number;
+  // Skip the cache-hit branch entirely and always spend a real provider call.
+  // Note maxAgeDays:0 does NOT do this — it still serves today's cached payload.
+  // Used by the admin fundamentals-refresh job, which exists precisely to pull
+  // values a mapping fix has changed; a cache hit would defeat the whole point.
+  // Still budget-guarded and still writes the fresh payload back to av_cache.
+  forceRefresh?: boolean;
 }
 
 // Cache key MUST be globally unique across providers. Callers pass a
@@ -122,7 +128,9 @@ export async function providerCachedFetch(
   // their fundamentals change quarterly. Default 0 = today-only (prices/quotes).
   const maxAgeDays = opts.maxAgeDays ?? 0;
   const maxStaleAgeDays = opts.maxStaleAgeDays ?? MAX_STALE_CACHE_DAYS;
-  if (maxAgeDays > 0) {
+  if (opts.forceRefresh) {
+    // fall through to the real call — no cache branch
+  } else if (maxAgeDays > 0) {
     const fresh = await lastCached(svc, cacheKey, maxAgeDays);
     if (fresh) return fresh;
   } else {

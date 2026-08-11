@@ -185,7 +185,7 @@ export async function fetchIndiaEarningsDate(symbol: string): Promise<string | n
 // left blank so the scorer falls back to its neutral baseline honestly.
 export async function fetchIndiaOverview(
   symbol: string,
-  opts: { maxAgeDays?: number } = {},
+  opts: { maxAgeDays?: number; forceRefresh?: boolean } = {},
 ): Promise<Record<string, string>> {
   const c = await getCrumb();
   if (!c) return {};
@@ -199,6 +199,7 @@ export async function fetchIndiaOverview(
         timeoutMs: 8000,
         maxAgeDays: opts.maxAgeDays ?? 1,
         maxStaleAgeDays: opts.maxAgeDays ?? 1,
+        forceRefresh: opts.forceRefresh,
       },
     );
     const r = json?.quoteSummary?.result?.[0];

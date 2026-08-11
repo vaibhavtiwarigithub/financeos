@@ -361,6 +361,56 @@ export default function FundamentalsPage() {
   const [backfilling, setBackfilling] = useState(false);
   const [backfillMsg, setBackfillMsg] = useState("");
 
+  // Forced fundamentals refresh. Pages through batches itself — one request can't
+  // cover every symbol because Finnhub pacing (2 calls/symbol at 60/min) would blow
+  // past Vercel's 300s request cap.
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState("");
+
+  async function runRefresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    const scope = indiaEnabled ? activeMarket : "all";
+    let offset = 0, updated = 0, unchanged = 0, failed = 0, total: number | null = null;
+    const newFieldTally: Record<string, number> = {};
+    try {
+      for (;;) {
+        const res = await fetch(
+          `/api/admin/refresh-fundamentals?market=${scope}&limit=40&offset=${offset}`,
+          { method: "POST" },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        updated += d.updated ?? 0; unchanged += d.unchanged ?? 0; failed += d.failed ?? 0;
+        total = d.total ?? total;
+        for (const r of d.results ?? []) {
+          for (const f of r.new_fields ?? []) newFieldTally[f] = (newFieldTally[f] ?? 0) + 1;
+        }
+        const seen = (d.offset ?? offset) + (d.processed ?? 0);
+        setRefreshMsg(
+          `Refreshing ${scope.toUpperCase()}… ${seen}${total ? "/" + total : ""} symbols · ` +
+          `${updated} updated, ${unchanged} unchanged${failed ? `, ${failed} failed` : ""}`
+        );
+        if (d.done || d.next_offset == null) break;
+        offset = d.next_offset;
+      }
+      const gained = Object.entries(newFieldTally)
+        .sort((a, b) => b[1] - a[1]).slice(0, 6)
+        .map(([k, n]) => `${k} +${n}`).join(" · ");
+      setRefreshMsg(
+        `Refresh done: ${updated} updated, ${unchanged} unchanged${failed ? `, ${failed} failed` : ""}` +
+        (gained ? ` — newly populated: ${gained}` : "")
+      );
+      const d2 = await (await fetch(`/api/research/universe?mode=${viewMode}`)).json();
+      setRows(d2.symbols ?? []);
+    } catch (e: any) {
+      setRefreshMsg(`Refresh failed: ${e?.message ?? "unknown error"}`);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   function runBackfill() {
     if (backfilling) return;
     setBackfilling(true);
@@ -631,7 +681,17 @@ export default function FundamentalsPage() {
             <span style={{ marginLeft: 8, color: T.yellow }}>· Sort "Date" ↓ to see today&apos;s runs at top</span>
           </p>
           {backfillMsg && <p style={{ fontSize: 11, color: backfilling ? T.yellow : T.green, marginTop: 4 }}>{backfillMsg}</p>}
+          {refreshMsg && <p style={{ fontSize: 11, color: refreshing ? T.yellow : T.green, marginTop: 4 }}>{refreshMsg}</p>}
         </div>
+        <button onClick={e => { e.stopPropagation(); runRefresh(); }} disabled={refreshing}
+          title="Force re-fetch of all fundamentals from Finnhub/Yahoo, bypassing the provider cache. Use after a provider mapping fix. Takes ~2s per US symbol (Finnhub rate limit)."
+          style={{
+            padding: "7px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: refreshing ? "default" : "pointer",
+            border: `1px solid ${refreshing ? T.border : T.green}`, background: T.card,
+            color: refreshing ? T.muted : T.green, opacity: refreshing ? 0.6 : 1,
+          }}>
+          {refreshing ? "⏳ Refreshing…" : "♻ Force Refresh Fundamentals"}
+        </button>
         <button onClick={e => { e.stopPropagation(); runBackfill(); }} disabled={backfilling}
           title="Fetch company Name + Sector from Finnhub/Yahoo for all symbols missing it"
           style={{
