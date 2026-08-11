@@ -104,11 +104,15 @@ export async function GET(req: NextRequest) {
   try { scoresData = await queryScoreHistory(sb); }
   catch (e: any) { return NextResponse.json({ error: String(e?.message) }, { status: 500 }); }
 
+  // `tainted` is a real boolean here: 153 rows false, 2 true, NONE null. The old
+  // .is("tainted", null) therefore matched zero rows and the Trade column was
+  // permanently blank. Exclude only genuinely tainted lots, and tolerate null in
+  // case older rows predate the column default.
   const tradesRes = await sb.from("paper_trades")
-    .select("symbol, order_side, executed_at, exit_at, analyst_score")
-    .is("tainted", null)
+    .select("symbol, market, order_side, executed_at, exit_at, analyst_score")
+    .or("tainted.is.null,tainted.is.false")
     .order("executed_at", { ascending: false })
-    .limit(2000);
+    .limit(1000);
 
   if (!scoresData?.length) return NextResponse.json({ symbols: [] });
 
@@ -135,16 +139,22 @@ export async function GET(req: NextRequest) {
     if (!factsMap.has(key)) factsMap.set(key, f.values as Record<string, string>);
   }
 
-  // Last paper trade per symbol
-  interface TradeInfo { side: string; date: string; exit_at: string | null; analyst_score: number | null }
+  // Last trade per symbol+market. Keyed by market too: the same ticker can exist in
+  // both books, and a symbol-only key let one market's trade label the other's row.
+  // `venue` is "paper" for every row here — there is no live execution table, and
+  // live auto-trading has never filled (trade_proposals holds manual rows only), so
+  // the UI can state the venue instead of implying an unlabelled trade is live.
+  interface TradeInfo { side: string; date: string; exit_at: string | null; analyst_score: number | null; venue: "paper" | "live" }
   const tradeMap = new Map<string, TradeInfo>();
   for (const t of (tradesRes.data ?? []) as any[]) {
-    if (!tradeMap.has(t.symbol)) {
-      tradeMap.set(t.symbol, {
+    const key = `${t.symbol}:${t.market ?? "us"}`;
+    if (!tradeMap.has(key)) {
+      tradeMap.set(key, {
         side: t.order_side,
         date: t.executed_at,
         exit_at: t.exit_at,
         analyst_score: t.analyst_score != null ? Number(t.analyst_score) : null,
+        venue: "paper",
       });
     }
   }
@@ -160,7 +170,7 @@ export async function GET(req: NextRequest) {
     direction: r.direction,
     last_researched_at: r.created_at,
     fundamentals: factsMap.get(`${r.symbol}:${r.market ?? "us"}`) ?? null,
-    last_trade: tradeMap.get(r.symbol) ?? null,
+    last_trade: tradeMap.get(`${r.symbol}:${r.market ?? "us"}`) ?? null,
     technical_breakdown: r.technical_breakdown ?? null,
     sentiment_breakdown: r.sentiment_breakdown ?? null,
     macro_breakdown: r.macro_breakdown ?? null,

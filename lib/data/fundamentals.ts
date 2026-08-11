@@ -102,7 +102,12 @@ export async function fetchFinnhubOverview(symbol: string, maxAgeDays = 7, force
         ov.FCFYield = String(1 / pfcf);
       }
     }
-    setRaw("EpsGrowth3Y", m.epsGrowthTTMYoy ?? m.epsGrowth3Y);
+    // setFrac, not setRaw: Finnhub returns this as a PERCENT (31.56 = 31.56%) while
+    // every sibling growth/margin field in this shape is a FRACTION (0.3156). Storing
+    // it raw put two units in one column family — QuarterlyRevenueGrowthYOY reads
+    // 0.125 while EpsGrowth3Y read 31.56 — and any consumer applying the usual
+    // fraction convention rendered it 100x too large.
+    setFrac("EpsGrowth3Y", m.epsGrowthTTMYoy ?? m.epsGrowth3Y);
     setRaw("52WeekPriceReturn", m["52WeekPriceReturnDaily"]);
     if (typeof m["52WeekHigh"] === "number") ov["52WeekHigh"] = String(m["52WeekHigh"]);
     if (typeof m["52WeekLow"] === "number") ov["52WeekLow"] = String(m["52WeekLow"]);

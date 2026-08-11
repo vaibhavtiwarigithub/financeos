@@ -243,16 +243,16 @@ const ALL_COLS: ColDef[] = [
   { key: "macro_danger",    label: "Danger", csvLabel: "Macro Danger Score",      width: 56, defaultHidden: true,
     tooltip: "Macro danger score (0–100). ≥70 → −25, ≥40 → −10 applied to macro score.",
     breakdownSource: "macro", breakdownField: "danger_score" },
-  { key: "macro_week_of",   label: "M.Week", csvLabel: "Macro Week Of",           width: 76, defaultHidden: true,
-    tooltip: "ISO week the macro regime snapshot was captured.",
-    breakdownSource: "macro", breakdownField: "week_of" },
+  { key: "macro_week_of",   label: "M.AsOf", csvLabel: "Macro Regime As-Of",      width: 84, defaultHidden: true,
+    tooltip: "Week the macro regime snapshot was captured (evidence field `as_of`).",
+    breakdownSource: "macro", breakdownField: "as_of" },
 ];
 
 const COL_BY_KEY = Object.fromEntries(ALL_COLS.map(c => [c.key, c]));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface LastTrade { side: string; date: string; exit_at: string | null; analyst_score: number | null }
+interface LastTrade { side: string; date: string; exit_at: string | null; analyst_score: number | null; venue?: "paper" | "live" }
 
 interface SymbolRow {
   symbol: string; market: string; analyst_score: number;
@@ -1110,9 +1110,11 @@ export default function FundamentalsPage() {
                       if (!lt) { content = <span style={{ color: T.muted }}>—</span>; }
                       else {
                         const isBuy = lt.side === "buy";
+                        const venue = lt.venue ?? "paper";
                         content = (
-                          <span title={`${lt.side.toUpperCase()} on ${fmtDate(lt.date)}${lt.analyst_score != null ? ` · score ${lt.analyst_score}` : ""}`}
+                          <span title={`${venue} ${lt.side.toUpperCase()} on ${fmtDate(lt.date)}${lt.analyst_score != null ? ` · score ${lt.analyst_score}` : ""}${lt.exit_at ? ` · exited ${fmtDate(lt.exit_at)}` : " · still open"}`}
                             style={{ fontWeight: 700, fontSize: 10, color: isBuy ? T.green : T.red }}>
+                            <span style={{ color: T.muted, fontWeight: 400 }}>{venue}.</span>
                             {lt.side.toUpperCase()} {fmtDate(lt.date).slice(5)}
                           </span>
                         );
@@ -1124,13 +1126,39 @@ export default function FundamentalsPage() {
                       // Breakdown cell
                       const raw = getCell(row, col);
                       if (raw == null) {
-                        content = <span style={{ color: T.muted, fontSize: 10 }}>—</span>;
+                        // A blank here has two very different meanings. India has no
+                        // sentiment or macro evidence AT ALL (both are structurally
+                        // excluded from the active scorer and score a flat neutral
+                        // 50), whereas a US blank means the field genuinely did not
+                        // resolve this run. Showing an identical "—" for both reads
+                        // as a bug when it is a documented gap, so name it.
+                        const src = col.breakdownSource;
+                        const bd = src === "sentiment" ? row.sentiment_breakdown
+                                 : src === "macro" ? row.macro_breakdown
+                                 : row.technical_breakdown;
+                        const note = (bd as any)?.note as string | undefined;
+                        const structural = row.market === "india" && (src === "sentiment" || src === "macro");
+                        content = structural
+                          ? <span title={note ?? `${src} evidence is not available for India — the dimension scores a neutral 50 and is excluded from the active scorer`}
+                              style={{ color: T.muted, fontSize: 9, fontStyle: "italic" }}>n/a</span>
+                          : <span title={note ?? "not resolved this run"} style={{ color: T.muted, fontSize: 10 }}>—</span>;
                       } else if (col.boolField) {
-                        const bv = Boolean(raw);
-                        // veto field: true = bad; cross fields: true = good
+                        // Rows written before 2026-08-11 stored detectBreakdownVeto's
+                        // whole { vetoed, reasons } object here. An object is always
+                        // truthy, so reading it directly rendered "vetoed" for every
+                        // symbol — unwrap it rather than trusting the raw value.
+                        const bv = typeof raw === "object" && raw !== null
+                          ? Boolean((raw as any).vetoed)
+                          : Boolean(raw);
                         const isVeto = col.key === "breakdown_veto";
                         const good = isVeto ? !bv : bv;
-                        content = <span style={{ color: good ? T.green : T.red, fontWeight: 700, fontSize: 11 }}>{bv ? "✓" : "✗"}</span>;
+                        const reasons = typeof raw === "object" && raw !== null ? (raw as any).reasons : null;
+                        content = (
+                          <span title={Array.isArray(reasons) && reasons.length ? reasons.join(" · ") : undefined}
+                            style={{ color: good ? T.green : T.red, fontWeight: 700, fontSize: 11 }}>
+                            {bv ? "✓" : "✗"}
+                          </span>
+                        );
                       } else if (col.pct) {
                         // sentiment pct fields stored as fractions (0.65 = 65%) or raw pct
                         const n = Number(raw);

@@ -57,7 +57,15 @@ async function loadUsBenchmark(supabase: any): Promise<BenchmarkBar[]> {
 }
 
 async function loadIndiaBenchmark(): Promise<BenchmarkBar[]> {
-  const candles = await fetchYahooCandles(BENCHMARK_BY_MARKET.india, "1y");
+  // "2y", not "1y". computeTechnicals only computes RS when the benchmark series
+  // has >= 252 closes, but NSE trades ~246 days a year (more holidays than NYSE),
+  // so a 1-year ^NSEI range returned 246 usable closes and India's rs_vs_benchmark
+  // was NEVER computed — silently null on every India row, while US passed via
+  // price_cache's limit(260). The RS window itself is still bounded by the symbol's
+  // own candle count (min(candles, bench, 252)), so a longer benchmark range only
+  // satisfies the availability gate; it does not widen the measured window or
+  // change the US path.
+  const candles = await fetchYahooCandles(BENCHMARK_BY_MARKET.india, "2y");
   return candles
     .map((c) => ({ date: c.date, close: c.close }))
     .filter((b) => Number.isFinite(b.close) && b.close > 0);

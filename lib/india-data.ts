@@ -223,6 +223,12 @@ export async function fetchIndiaOverview(
     if (eps != null) ov.EPS = String(eps);
     const revG = num(fd.revenueGrowth);
     if (revG != null) ov.QuarterlyRevenueGrowthYOY = String(revG);
+    // EPS growth was never mapped for India, so EpsGrowth3Y was 0/24 on every NSE
+    // symbol while US filled it from Finnhub. Yahoo reports these as FRACTIONS
+    // (0.32 = 32%), which is the convention the rest of this adapter uses and which
+    // fetchFinnhubOverview now matches via setFrac.
+    const epsG = num(fd.earningsGrowth) ?? num(ks.earningsQuarterlyGrowth);
+    if (epsG != null) ov.EpsGrowth3Y = String(epsG);
     const hi = num(sd.fiftyTwoWeekHigh);
     if (hi != null) ov["52WeekHigh"] = String(hi);
     const target = num(fd.targetMeanPrice);

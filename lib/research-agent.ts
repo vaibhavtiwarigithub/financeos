@@ -2211,28 +2211,50 @@ export async function processSymbol(
       adx14: t.adx14 ?? null,
       rs_vs_benchmark: t.rsVsSpy ?? null,
       price: t.price ?? null,
-      breakdown_veto: t.breakdown_veto ?? false,
+      // detectBreakdownVeto returns { vetoed, reasons, warnings } — an OBJECT, which
+      // is always truthy. Storing it raw made every consumer read "vetoed" for every
+      // symbol. Persist the boolean, and keep the reasons beside it (they are the
+      // "why", which a bare flag throws away).
+      breakdown_veto: (t.breakdown_veto as any)?.vetoed ?? false,
+      breakdown_veto_reasons: (t.breakdown_veto as any)?.reasons ?? null,
     };
   })();
   const sentimentBreakdown = (() => {
-    const s = scores.evidence?.sentiment;
+    const s = scores.evidence?.sentiment as Record<string, any> | undefined;
     if (!s) return null;
+    // scoreSentiment's COMMON path returns { source: "social", raw: socialResult },
+    // so the percentages live one level down in `raw` under their stocktwits_* names.
+    // Reading only the top level yielded source="social" with every percentage null.
+    // Both levels are checked because the fallback path does put them at the top.
+    // NOTE: these are 0-100 percentages, not 0-1 fractions.
+    const raw = (s.raw ?? {}) as Record<string, any>;
+    const bull = s.bullish_pct ?? raw.stocktwits_bullish_pct ?? raw.bullish_pct ?? null;
+    const bear = s.bearish_pct ?? raw.stocktwits_bearish_pct ?? raw.bearish_pct ?? null;
     return {
-      bullish_pct: (s as any).bullish_pct ?? null,
-      bearish_pct: (s as any).bearish_pct ?? null,
-      sample_size: (s as any).msgCount ?? (s as any).stocktwits_sample_size ?? null,
-      source: (s as any).source ?? null,
+      bullish_pct: bull,
+      bearish_pct: bear,
+      sample_size: s.message_count ?? raw.stocktwits_sample_size ?? raw.stocktwits_message_count ?? null,
+      source: s.source ?? (bull != null ? "stocktwits" : null),
+      // Present when the dimension is structurally unavailable for this market
+      // (India sentiment is excluded from the active scorer), so a blank column can
+      // be shown as "not applicable" rather than as a silent gap.
+      note: s.note ?? null,
       raw_score: scores.sentiment_score,
     };
   })();
   const macroBreakdown = (() => {
-    const m = scores.evidence?.macro;
+    const m = scores.evidence?.macro as Record<string, any> | undefined;
     if (!m) return null;
+    // fetchMacroScore's evidence uses `as_of` for the regime week and does not emit
+    // signals_triggered at all (it is selected from macro_regime but never surfaced),
+    // so the previous week_of/signals_triggered mapping was always null.
     return {
-      regime: (m as any).regime ?? null,
-      danger_score: (m as any).danger_score ?? null,
-      week_of: (m as any).week_of ?? null,
-      signals_triggered: (m as any).signals_triggered ?? null,
+      regime: m.regime ?? null,
+      danger_score: m.danger_score ?? null,
+      as_of: m.as_of ?? null,
+      age_days: m.age_days ?? null,
+      source: m.source ?? null,
+      note: m.note ?? null,
     };
   })();
   const fundamentalBreakdown = (() => {
