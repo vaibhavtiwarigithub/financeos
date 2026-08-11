@@ -493,6 +493,12 @@ deterministic score and compare explanation/veto quality.
 **Signal freshness gate:** Only fills signals created today in the market's own timezone
 (New York for US, Kolkata for India). Older signals are marked `expired`.
 
+**New-entry queue invariant (2026-08-10):** Held alpha names are excluded before
+the per-market top-N entry ranking. Research still writes their fresh deterministic
+signals and PositionMonitor reads those latest rows without relying on entry-queue
+status. This prevents held names from consuming every new-entry slot and leaving
+cash idle while valid, unheld candidates sit below the rank cut.
+
 **Claim-and-fill protocol (prevents double-fills):**
 1. Claims a signal by stamping `claim_run_id` on the `agent_signals` row
 2. Opens paper position only if it still owns the claim

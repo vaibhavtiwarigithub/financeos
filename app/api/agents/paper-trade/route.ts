@@ -228,6 +228,20 @@ export async function POST(req: NextRequest) {
 
     // Dedup: research runs 3x/day, stacking duplicate pending rows per symbol.
     // Keep only the highest-scoring signal per (symbol, market); ties → most recent.
+    const { data: openPos } = await supabase.from("paper_positions").select("symbol, sector, qty, avg_cost, market, position_role");
+    const openAlphaNamesByMarket = new Map<string, Set<string>>();
+    for (const m of activeMarkets) openAlphaNamesByMarket.set(m, new Set());
+    for (const p of (openPos ?? []) as any[]) {
+      if ((p.position_role ?? "alpha") !== "alpha") continue;
+      const m = hasMarketCol ? String(p.market ?? "us") : "us";
+      const names = openAlphaNamesByMarket.get(m) ?? new Set<string>();
+      names.add(String(p.symbol).toUpperCase());
+      openAlphaNamesByMarket.set(m, names);
+    }
+
+    // Held symbols receive fresh research for PositionMonitor, but may not
+    // consume a paper-entry slot. Applying this after the top-N cut starved
+    // new candidates and left deployable cash idle.
     if (signals.length > 0) {
       const selected: any[] = [];
       const duplicateIds: string[] = [];
@@ -242,9 +256,11 @@ export async function POST(req: NextRequest) {
           marketRows,
           market as "us" | "india",
           hasMarketCol ? 10 : 5,
+          { excludedSymbols: openAlphaNamesByMarket.get(market) },
         );
         selected.push(...result.selected);
         duplicateIds.push(...result.duplicateIds);
+        duplicateIds.push(...result.excludedIds);
       }
       if (duplicateIds.length > 0) {
         const { error } = await supabase.from("agent_signals")
@@ -283,7 +299,6 @@ export async function POST(req: NextRequest) {
 
     // Sector cap is market-local. US sector occupancy must never block an India
     // name (or vice versa); the books and currencies are independent.
-    const { data: openPos } = await supabase.from("paper_positions").select("symbol, sector, qty, avg_cost, market, position_role");
     const sectorCountByMarket = new Map<string, Record<string, number>>();
     for (const p of (openPos ?? []) as any[]) {
       if (!p.sector) continue;
@@ -292,16 +307,6 @@ export async function POST(req: NextRequest) {
       counts[p.sector] = (counts[p.sector] ?? 0) + 1;
       sectorCountByMarket.set(m, counts);
     }
-    const openAlphaNamesByMarket = new Map<string, Set<string>>();
-    for (const m of activeMarkets) openAlphaNamesByMarket.set(m, new Set());
-    for (const p of (openPos ?? []) as any[]) {
-      if ((p.position_role ?? "alpha") !== "alpha") continue;
-      const m = hasMarketCol ? String(p.market ?? "us") : "us";
-      const names = openAlphaNamesByMarket.get(m) ?? new Set<string>();
-      names.add(String(p.symbol).toUpperCase());
-      openAlphaNamesByMarket.set(m, names);
-    }
-
     // Portfolio Constructor: per-market book (name/sector/gross/vol/correlation
     // budgeting — see lib/portfolio/constructor.ts). Human-set limits from
     // strategy_config, falling back to DEFAULT_LIMITS when unset/pre-069.

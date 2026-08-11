@@ -42,4 +42,18 @@ describe("paper signal selection", () => {
     expect(selectBestPaperSignals([adr], "us", 10).selected).toEqual([adr]);
     expect(selectBestPaperSignals([adr], "india", 10).selected).toEqual([]);
   });
+
+  it("does not let an already-held name consume a new-entry slot", () => {
+    const held = new Set(["AAA"]);
+    const rows = [
+      row("held-new", "AAA", 99, "2026-07-22T11:00:00Z"),
+      row("held-old", "AAA", 98, "2026-07-22T10:00:00Z"),
+      row("new", "BBB", 90, "2026-07-22T10:00:00Z"),
+    ];
+
+    const result = selectBestPaperSignals(rows, "us", 1, { excludedSymbols: held });
+
+    expect(result.selected.map(signal => signal.id)).toEqual(["new"]);
+    expect(result.excludedIds.sort()).toEqual(["held-new", "held-old"]);
+  });
 });
