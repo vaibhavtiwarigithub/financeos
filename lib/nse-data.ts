@@ -59,9 +59,16 @@ export async function fetchNseEquityList(): Promise<string[]> {
     const lines = text.split(/\r?\n/).slice(1); // drop header
     const list: string[] = [];
     for (const ln of lines) {
-      const sym = ln.split(",")[0]?.trim();
-      // EQ series only (skip ETFs/bonds/etc via col 1 = " EQ")
-      const series = ln.split(",")[1]?.trim();
+      const cols = ln.split(",");
+      const sym = cols[0]?.trim();
+      // Series is column 2, NOT column 1. The header is
+      //   SYMBOL, NAME OF COMPANY, SERIES, DATE OF LISTING, ...
+      // so column 1 is the company name. Comparing a company name to "EQ" never
+      // matched, this function returned [] on every call, and the India scan
+      // silently fell back to the static ~NIFTY-100 list. Measured against the
+      // live file: column 1 yields 0 symbols, column 2 yields 2,373
+      // (EQ 2123 + BE 250 of 2,401 rows; the rest are BZ, which stays excluded).
+      const series = cols[2]?.trim();
       if (sym && (series === "EQ" || series === "BE")) list.push(`${sym}.NS`);
     }
     if (list.length) _eqList = { list, at: Date.now() };

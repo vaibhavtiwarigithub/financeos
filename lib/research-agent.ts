@@ -788,7 +788,43 @@ export async function gatherSymbols(
         .map(e => e.symbol)
     : [];
   const exemptSet = new Set(exemptSyms);
-  const cappedKeys = Array.from(candidateMap.keys()).filter(k => !exemptSet.has(k));
+  const rawCappedKeys = Array.from(candidateMap.keys()).filter(k => !exemptSet.has(k));
+
+  // RESERVED DISCOVERY QUOTA.
+  //
+  // candidateMap is ordered manual -> carry-forward -> watchlist -> screener/edge,
+  // and the cap keeps the top `candidateCap`. The watchlist alone holds 186 US
+  // names, so on a MAIN run every screener and relative-strength candidate sat
+  // past position 40 and overflowed into research_queue before it could ever be
+  // scored. Discovery only reached production at all via the separate
+  // `?scope=discovery` run, which exempts those buckets entirely.
+  //
+  // That is why 62% of all decisions are `holding` and screener-sourced decisions
+  // are ~1%: the pipeline was structurally re-researching the book it already owns
+  // — the closed loop reportUsDiscoveryCoverage warns about.
+  //
+  // Reserve the LAST `reserve` slots of the cap for discovery sources instead of
+  // raising the cap. Non-discovery keeps its existing relative priority within the
+  // remaining slots (manual still first), discovery gets guaranteed throughput,
+  // and anything past either quota still carries forward exactly as before.
+  const DISCOVERY_SOURCES = new Set(["screener_momentum", "screener_value", "edge_relative_strength"]);
+  const discoveryReserve = Math.max(0, Math.min(
+    parseInt(process.env.RESEARCH_DISCOVERY_RESERVE ?? "10"),
+    candidateCap,
+  ));
+  const isDiscovery = (k: string) => DISCOVERY_SOURCES.has(String(candidateSourceOf.get(k) ?? ""));
+  const discoveryKeys = rawCappedKeys.filter(isDiscovery);
+  const otherKeys = rawCappedKeys.filter(k => !isDiscovery(k));
+  const otherSlots = Math.max(0, candidateCap - discoveryReserve);
+  const cappedKeys = [
+    // Inside the cap: highest-priority non-discovery, then the reserved discovery.
+    ...otherKeys.slice(0, otherSlots),
+    ...discoveryKeys.slice(0, discoveryReserve),
+    // Past the cap: unchanged order, so overflow carries forward as it always did.
+    ...otherKeys.slice(otherSlots),
+    ...discoveryKeys.slice(discoveryReserve),
+  ];
+
   const usBatch = new Set(includeUs
     ? [
         ...await applyCandidateCarryForward(supabase, "us", cappedKeys, candidateCap, candidateSourceOf),
