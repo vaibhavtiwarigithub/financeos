@@ -205,6 +205,7 @@ export default function SettingsPage() {
   // Data Providers capacity dashboard
   const [providers, setProviders] = useState<any | null>(null);
   const [providersLoading, setProvidersLoading] = useState(false);
+  const [providerHistory, setProviderHistory] = useState<any[] | null>(null);
   const loadKite = () => fetch("/api/kite/status").then(r => r.json()).then(setKite).catch(() => {});
 
   // Autonomous trading (PA3 — per-market off/manual/autonomous)
@@ -617,14 +618,22 @@ export default function SettingsPage() {
   ];
 
   useEffect(() => {
-    if (tab !== "data" || providers) return;
-    setProvidersLoading(true);
-    fetch("/api/data-providers")
-      .then(r => r.json())
-      .then(d => setProviders(d))
-      .catch(() => setProviders({ providers: [], bottleneck: null }))
-      .finally(() => setProvidersLoading(false));
-  }, [tab, providers]);
+    if (tab !== "data") return;
+    if (!providers) {
+      setProvidersLoading(true);
+      fetch("/api/data-providers")
+        .then(r => r.json())
+        .then(d => setProviders(d))
+        .catch(() => setProviders({ providers: [], bottleneck: null }))
+        .finally(() => setProvidersLoading(false));
+    }
+    if (!providerHistory) {
+      fetch("/api/data-providers/history")
+        .then(r => r.json())
+        .then(d => setProviderHistory(d.rows ?? []))
+        .catch(() => setProviderHistory([]));
+    }
+  }, [tab, providers, providerHistory]);
 
   if (!profile) return <div style={{ padding: "28px", color: T.muted }}>Loading...</div>;
 
@@ -1778,6 +1787,82 @@ export default function SettingsPage() {
           {providers && !providersLoading && !providers.providers?.length && (
             <div style={{ color: T.muted, fontSize: "14px" }}>No provider usage recorded yet — data appears after the agents run.</div>
           )}
+
+          {/* 36-day call-volume heatmap */}
+          {providerHistory && providerHistory.length > 0 && (() => {
+            // Build sorted date list (last 36 days that appear in the data)
+            const allDates = [...new Set(providerHistory.map((r: any) => r.cache_date as string))].sort();
+            const allProviders = [...new Set(providerHistory.map((r: any) => r.provider as string))].sort();
+            // cell lookup: provider → date → calls
+            const lookup = new Map<string, number>();
+            for (const r of providerHistory) lookup.set(`${r.provider}::${r.cache_date}`, r.calls);
+            // per-provider max (for heat scaling)
+            const provMax = new Map<string, number>();
+            for (const prov of allProviders) {
+              provMax.set(prov, Math.max(1, ...allDates.map(d => lookup.get(`${prov}::${d}`) ?? 0)));
+            }
+            const CELL = 18; // px square
+            const heatColor = (calls: number, max: number) => {
+              if (calls === 0) return T.surface;
+              const t = Math.min(calls / max, 1);
+              // green → amber → red
+              if (t < 0.5) return `hsl(${160 - t * 60}, 70%, ${30 + t * 10}%)`;
+              return `hsl(${100 - (t - 0.5) * 160}, 70%, ${35 + t * 5}%)`;
+            };
+            const fmtDate = (iso: string) => {
+              const d = new Date(iso + "T00:00:00Z");
+              return `${d.toLocaleString("default", { month: "short", timeZone: "UTC" })} ${d.getUTCDate()}`;
+            };
+            return (
+              <div style={{ marginTop: "32px" }}>
+                <div style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "14px" }}>
+                  36-Day Call Volume Heatmap
+                </div>
+                <div style={{ overflowX: "auto", paddingBottom: "8px" }}>
+                  <table style={{ borderCollapse: "separate", borderSpacing: "2px", fontSize: "11px" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: "90px", textAlign: "left", color: T.muted, fontWeight: 400, paddingRight: "8px", fontSize: "10px" }}></th>
+                        {allDates.map(d => (
+                          <th key={d} style={{ width: `${CELL}px`, textAlign: "center", color: T.muted, fontWeight: 400, writingMode: "vertical-lr", transform: "rotate(180deg)", paddingBottom: "4px", fontSize: "9px", maxHeight: "48px" }}>
+                            {fmtDate(d)}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allProviders.map(prov => (
+                        <tr key={prov}>
+                          <td style={{ color: T.textSub, paddingRight: "8px", whiteSpace: "nowrap", fontSize: "11px", paddingTop: "2px" }}>{prov}</td>
+                          {allDates.map(d => {
+                            const calls = lookup.get(`${prov}::${d}`) ?? 0;
+                            const max = provMax.get(prov) ?? 1;
+                            return (
+                              <td key={d} title={`${prov} ${d}: ${calls} calls`}
+                                style={{
+                                  width: `${CELL}px`, height: `${CELL}px`, borderRadius: "3px",
+                                  background: heatColor(calls, max),
+                                  cursor: "default",
+                                }}
+                              />
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px", fontSize: "10px", color: T.muted }}>
+                  <span>Less</span>
+                  {[0, 0.25, 0.5, 0.75, 1].map(t => (
+                    <div key={t} style={{ width: "12px", height: "12px", borderRadius: "2px", background: t === 0 ? T.surface : heatColor(Math.round(t * 100), 100) }} />
+                  ))}
+                  <span>More</span>
+                  <span style={{ marginLeft: "12px" }}>Hover cell for exact count. Each row scaled to its own peak.</span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 

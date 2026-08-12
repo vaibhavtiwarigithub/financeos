@@ -5,6 +5,7 @@ import BriefingSection from "@/components/dashboard/BriefingSection";
 import GoalCard from "@/components/dashboard/GoalCard";
 import AgentCalendar from "@/components/dashboard/AgentCalendar";
 import SystemHealthCard from "@/components/dashboard/SystemHealthCard";
+import ProviderCapacityCard from "@/components/dashboard/ProviderCapacityCard";
 import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
 import { fmtMoneyAbbrev, fmtMoney as fmtMoneyFull } from "@/lib/format-money";
 import type { TradingMandate } from "@/lib/trading-mandate";
@@ -247,6 +248,8 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
       <AgentCalendar />
 
       <SystemHealthCard />
+
+      <ProviderCapacityCard />
 
       {/* Hero — two-section: paper left, live right */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px", marginBottom: "20px" }}>
