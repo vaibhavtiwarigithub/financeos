@@ -307,6 +307,174 @@ function fmtDateTime(iso: string) {
 function scoreColor(v: number) { return v >= 70 ? T.green : v >= 50 ? T.yellow : T.red; }
 function dirColor(d: string)   { return d === "long" ? T.green : d === "short" ? T.red : T.muted; }
 
+// ── Sector-aware thresholds ───────────────────────────────────────────────────
+const SECTOR_PROFILES: Record<string, {
+  peGood: number; peOk: number; peWarn: number;
+  gmGood: number; gmOk: number;
+  deHighNormal: boolean; // high D/E is structural (financials, utilities, REITs)
+  ctx: string;
+}> = {
+  "Technology":             { peGood:25, peOk:45, peWarn:70, gmGood:0.65, gmOk:0.45, deHighNormal:false, ctx:"High-growth — valuation premium normal if growth supports it" },
+  "Information Technology": { peGood:22, peOk:38, peWarn:60, gmGood:0.50, gmOk:0.35, deHighNormal:false, ctx:"IT services — asset-light, high margins expected" },
+  "Healthcare":             { peGood:20, peOk:35, peWarn:55, gmGood:0.55, gmOk:0.35, deHighNormal:false, ctx:"R&D-heavy — margin range wide depending on pharma vs devices vs services" },
+  "Energy":                 { peGood:10, peOk:18, peWarn:30, gmGood:0.30, gmOk:0.15, deHighNormal:false, ctx:"Cyclical commodity — low P/E and margins are normal; watch FCF" },
+  "Financial Services":     { peGood:12, peOk:20, peWarn:30, gmGood:0.50, gmOk:0.30, deHighNormal:true,  ctx:"Banking/NBFC — D/E is structural; focus on ROE and NIM instead" },
+  "Consumer Cyclical":      { peGood:15, peOk:25, peWarn:40, gmGood:0.40, gmOk:0.25, deHighNormal:false, ctx:"Discretionary — margins compress in downturns; evaluate at mid-cycle" },
+  "Consumer Defensive":     { peGood:18, peOk:26, peWarn:35, gmGood:0.38, gmOk:0.25, deHighNormal:false, ctx:"Stable demand — moderate margins, predictable cash flow" },
+  "Industrials":            { peGood:15, peOk:22, peWarn:35, gmGood:0.30, gmOk:0.18, deHighNormal:false, ctx:"Capital-intensive — lower margins are structurally normal" },
+  "Real Estate":            { peGood:20, peOk:38, peWarn:55, gmGood:0.45, gmOk:0.30, deHighNormal:true,  ctx:"REIT — high leverage and P/E structural; evaluate on FFO yield" },
+  "Utilities":              { peGood:14, peOk:20, peWarn:28, gmGood:0.30, gmOk:0.18, deHighNormal:true,  ctx:"Regulated monopoly — high D/E and low growth are normal; dividend yield matters" },
+  "Communication Services": { peGood:18, peOk:32, peWarn:50, gmGood:0.55, gmOk:0.35, deHighNormal:false, ctx:"Mixed: telcos (low margin) vs digital platforms (high margin)" },
+  "Basic Materials":        { peGood:12, peOk:20, peWarn:30, gmGood:0.28, gmOk:0.16, deHighNormal:false, ctx:"Commodity-linked — margins highly cyclical" },
+};
+const GENERIC_SP = { peGood:15, peOk:25, peWarn:40, gmGood:0.40, gmOk:0.25, deHighNormal:false, ctx:"No sector profile — generic thresholds applied" };
+
+type IndGrade = { color: string; tip: string };
+const SCORING = "· Active scoring component";
+const MEASURE = "· Measure-only (not scored currently)";
+
+function indicatorGrade(key: string, raw: string | number | null | undefined, sector?: string | null): IndGrade {
+  const g  = (color: string, tip: string): IndGrade => ({ color, tip });
+  const gn = (tip: string) => g(T.text,  tip);
+  const gg = (tip: string) => g(T.green, tip);
+  const ga = (tip: string) => g("#f59e0b", tip);
+  const gr = (tip: string) => g(T.red,   tip);
+  const gm = (tip: string) => g(T.muted, tip);
+  const toN = (v: string | number | null | undefined) => {
+    if (v == null) return null;
+    const n = typeof v === "number" ? v : parseFloat(String(v));
+    return isFinite(n) ? n : null;
+  };
+  const n  = toN(raw);
+  const sp = SECTOR_PROFILES[sector ?? ""] ?? null;
+
+  switch (key) {
+    // ── Fundamentals ─────────────────────────────────────────────────────────
+    case "PERatio": {
+      if (n == null) return gm("P/E: no data");
+      const t = sp ?? GENERIC_SP;
+      const sLine = sp ? `${sector}: good ≤${t.peGood}×, ok ≤${t.peOk}×, high ≤${t.peWarn}× · ${t.ctx}` : `Generic: good ≤${t.peGood}×, ok ≤${t.peOk}×`;
+      const tip = `P/E: ${n.toFixed(1)}×\n${sLine}\n${SCORING}`;
+      if (n <= 0)       return gr(`P/E: ${n.toFixed(1)} — negative earnings (loss-making)\n${sLine}\n${SCORING}`);
+      if (n <= t.peGood) return gg(tip);
+      if (n <= t.peOk)   return ga(tip);
+      if (n <= t.peWarn) return gr(tip);
+      return gr(`P/E: ${n.toFixed(1)}× — well above ${sector ?? "generic"} range (${t.ctx})\n${SCORING}`);
+    }
+    case "PEGRatio": {
+      if (n == null) return gm("PEG: no data");
+      const tip = `PEG: ${n.toFixed(2)}\nPEG ≤1 = growth at reasonable price, >2 = expensive growth, <0 = no earnings/growth\n${MEASURE}`;
+      if (n <= 0) return gm(`PEG: ${n.toFixed(2)} — negative (no earnings or no growth)\n${MEASURE}`);
+      if (n <= 1) return gg(tip); if (n <= 2) return ga(tip); return gr(tip);
+    }
+    case "ReturnOnEquityTTM": {
+      if (n == null) return gm("ROE: no data");
+      const pct = `${(n * 100).toFixed(1)}%`;
+      const tip = `ROE: ${pct}\n>20% = strong capital efficiency, >10% = acceptable, <0% = destroying value\n${SCORING}`;
+      if (n >= 0.20) return gg(tip); if (n >= 0.10) return ga(tip); if (n >= 0) return gn(tip); return gr(tip);
+    }
+    case "GrossMarginTTM": {
+      if (n == null) return gm("Gross Margin: no data");
+      const t = sp ?? GENERIC_SP;
+      const tip = `Gross Margin: ${(n * 100).toFixed(1)}%\n${sp ? `${sector}: good ≥${(t.gmGood*100).toFixed(0)}%, ok ≥${(t.gmOk*100).toFixed(0)}% · ${t.ctx}` : "Generic thresholds"}\n${MEASURE}`;
+      if (n >= t.gmGood) return gg(tip); if (n >= t.gmOk) return ga(tip); if (n >= 0) return gn(tip); return gr(tip);
+    }
+    case "FCFYield": {
+      if (n == null) return gm("FCF Yield: no data");
+      const tip = `FCF Yield: ${(n * 100).toFixed(1)}%\n>5% = strong cash generation, 2–5% = healthy, <0% = cash burn\n${MEASURE}`;
+      if (n >= 0.05) return gg(tip); if (n >= 0.02) return ga(tip); if (n >= 0) return gn(tip); return gr(tip);
+    }
+    case "DebtToEquity": {
+      if (n == null) return gm("D/E: no data");
+      if (sp?.deHighNormal) return gn(`D/E: ${n.toFixed(2)}\nHigh D/E is structural for ${sector} — not a standalone risk signal\nFocus on ROE / NIM instead\n${MEASURE}`);
+      const tip = `D/E: ${n.toFixed(2)}\n<0.5 = low leverage, 0.5–1.5 = moderate, 1.5–3 = elevated, >3 = high\n${MEASURE}`;
+      if (n <= 0.5) return gg(tip); if (n <= 1.5) return ga(tip); if (n <= 3) return gr(tip); return gr(tip);
+    }
+    case "ProfitMargin": {
+      if (n == null) return gm("Net Profit Margin: no data");
+      const thin = ["Consumer Cyclical","Consumer Defensive","Industrials","Basic Materials","Energy"].includes(sector ?? "");
+      const tip = `Net Profit Margin: ${(n * 100).toFixed(1)}%\n>20% = strong, >10% = healthy, <0% = loss-making${thin ? `\n${sector}: structurally thin-margin sector` : ""}\n${SCORING}`;
+      if (n >= 0.20) return gg(tip); if (n >= 0.10) return ga(tip); if (n >= 0) return gn(tip); return gr(tip);
+    }
+    case "EPS": {
+      if (n == null) return gm("EPS: no data");
+      const tip = `EPS: $${n.toFixed(2)}\nPositive EPS → +5 pts; negative → −10 pts\n${SCORING}`;
+      return n > 0 ? gg(tip) : gr(tip);
+    }
+    case "QuarterlyRevenueGrowthYOY": {
+      if (n == null) return gm("Revenue Growth YoY: no data");
+      const tip = `Revenue Growth YoY: ${(n * 100).toFixed(1)}%\n>20% = strong, >10% = healthy, <0% = contraction\n${SCORING}`;
+      if (n >= 0.20) return gg(tip); if (n >= 0.10) return ga(tip); if (n >= 0) return gn(tip); return gr(tip);
+    }
+    case "EpsGrowth3Y": {
+      if (n == null) return gm("EPS Growth: no data");
+      const tip = `EPS Growth YoY: ${(n * 100).toFixed(1)}%\n>30% = strong, >10% = healthy, <0% = shrinking earnings\n${MEASURE}`;
+      if (n >= 0.30) return gg(tip); if (n >= 0.10) return ga(tip); if (n >= 0) return gn(tip); return gr(tip);
+    }
+    case "52WeekHigh": {
+      if (n == null) return gm("52W High: no data");
+      return gn(`52-Week High: $${n.toLocaleString()}\nProximity used for breakout context\n${MEASURE}`);
+    }
+    // ── Technical ─────────────────────────────────────────────────────────────
+    case "rsi14": {
+      if (n == null) return gm("RSI(14): no data");
+      // Score: 40–60 = neutral momentum (+10), >70 = overbought (−5), <30 = oversold (−20)
+      const tip = `RSI(14): ${n.toFixed(1)}\n40–60 = momentum neutral (+10 pts), >70 = overbought (−5), <30 = oversold (−20)\n${SCORING}`;
+      if (n >= 40 && n <= 60) return gg(tip);
+      if (n > 60 && n <= 70)  return ga(tip);
+      if (n > 70)             return ga(`RSI: ${n.toFixed(1)} — overbought territory (−5 pts)\n${SCORING}`);
+      if (n >= 30)            return ga(tip);
+      return gr(`RSI: ${n.toFixed(1)} — oversold (−20 pts)\n${SCORING}`);
+    }
+    case "volume_vs_avg20": {
+      if (n == null) return gm("Volume vs avg: no data");
+      const tip = `Volume: ${n.toFixed(2)}× 20-day avg\n>1.5× = elevated — conviction signal when aligned with trend\n${SCORING}`;
+      return n >= 1.5 ? ga(tip) : gn(tip); // context-dependent, not inherently bullish
+    }
+    case "macd_hist": {
+      if (n == null) return gm("MACD Hist: no data");
+      const tip = `MACD histogram: ${n.toFixed(4)}\nPositive = bullish momentum, Negative = bearish momentum\n${MEASURE}`;
+      return n > 0 ? ga(tip) : n < 0 ? gr(tip) : gn(tip);
+    }
+    case "adx14": {
+      if (n == null) return gm("ADX(14): no data");
+      const tip = `ADX(14): ${n.toFixed(1)}\n>25 = strong trend (directional score valid), <20 = weak/choppy\n${MEASURE}`;
+      if (n >= 40) return gg(tip); if (n >= 25) return ga(tip); return gn(tip);
+    }
+    case "rs_vs_bench": {
+      if (n == null) return gm("RS vs benchmark: no data");
+      const tip = `RS vs SPY/NIFTY: ${(n * 100).toFixed(1)}%\nPositive = outperforming benchmark, Negative = underperforming\n${MEASURE}`;
+      if (n >= 0.05) return gg(tip); if (n >= 0) return ga(tip); if (n >= -0.05) return gn(tip); return gr(tip);
+    }
+    // ── Sentiment ─────────────────────────────────────────────────────────────
+    case "bullish_pct": {
+      if (n == null) return gm("Bullish %: no data");
+      const v = n > 1 ? n / 100 : n; // stored as fraction or percentage
+      const tip = `Bullish: ${(v * 100).toFixed(1)}% of tagged messages\n>65% = positive signal (scores positively), <35% = bearish signal\n${SCORING}`;
+      if (v >= 0.65) return gg(tip); if (v >= 0.45) return gn(tip); return gr(tip);
+    }
+    case "bearish_pct": {
+      if (n == null) return gm("Bearish %: no data");
+      const v = n > 1 ? n / 100 : n;
+      const tip = `Bearish: ${(v * 100).toFixed(1)}% of tagged messages\nHigh bearish % → negative sentiment score\n${SCORING}`;
+      if (v >= 0.50) return gr(tip); if (v >= 0.35) return ga(tip); return gg(tip);
+    }
+    case "sent_sample": {
+      if (n == null) return gm("Sample size: no data");
+      const tip = `Sentiment sample: ${n} tagged posts\n<5 = noise (shrunk to neutral), 5–50 = moderate confidence, >50 = high confidence`;
+      if (n >= 50) return gg(tip); if (n >= 5) return ga(tip); return gr(tip);
+    }
+    // ── Macro ──────────────────────────────────────────────────────────────────
+    case "macro_danger": {
+      if (n == null) return gm("Macro danger: no data");
+      const tip = `Macro danger: ${n.toFixed(0)}/100\n<40 = no penalty, ≥40 → −10 pts, ≥70 → −25 pts\n${SCORING}`;
+      if (n < 30) return gg(tip); if (n < 50) return gn(tip); if (n < 70) return ga(tip); return gr(tip);
+    }
+    default:
+      return gn("");
+  }
+}
+
 /** Resolve cell value: score fields → row top-level; breakdown fields → breakdown object; else fundamentals */
 function getCell(row: SymbolRow, col: ColDef): string | number | boolean | null {
   if (col.score) return (row as any)[col.key] ?? null;
@@ -1200,18 +1368,29 @@ export default function FundamentalsPage() {
                         // sentiment pct fields stored as fractions (0.65 = 65%) or raw pct
                         const n = Number(raw);
                         const isProbFraction = n <= 1;
-                        content = <span style={{ color: T.text }}>{isProbFraction ? fmtVal(n, true) : `${n.toFixed(1)}%`}</span>;
+                        const ig = indicatorGrade(col.key, n, row.fundamentals?.Sector);
+                        const disp = isProbFraction ? fmtVal(n, true) : `${n.toFixed(1)}%`;
+                        content = <span title={ig.tip || undefined} style={{ color: ig.tip ? ig.color : T.text }}>{disp}</span>;
                       } else if (typeof raw === "string" && isNaN(parseFloat(raw))) {
                         // Text field (regime, source, week_of)
                         const colorMap: Record<string, string> = { bull: T.green, bear: T.red, neutral: T.muted };
-                        content = <span style={{ color: colorMap[raw] ?? T.text, fontSize: 11 }}>{raw}</span>;
+                        const regimeTip: Record<string, string> = {
+                          bull: `Macro regime: Bull · +20 pts to macro score · ${SCORING}`,
+                          bear: `Macro regime: Bear · −30 pts to macro score · ${SCORING}`,
+                          neutral: `Macro regime: Neutral · no regime adjustment · ${SCORING}`,
+                        };
+                        content = <span title={regimeTip[raw] ?? undefined} style={{ color: colorMap[raw] ?? T.text, fontSize: 11 }}>{raw}</span>;
                       } else {
                         const n = Number(raw);
-                        content = <span style={{ color: T.text }}>{isNaN(n) ? String(raw) : fmtVal(n)}</span>;
+                        const ig = indicatorGrade(col.key, isNaN(n) ? raw as string : n, row.fundamentals?.Sector);
+                        content = <span title={ig.tip || undefined} style={{ color: ig.tip ? ig.color : T.text }}>{isNaN(n) ? String(raw) : fmtVal(n)}</span>;
                       }
                     } else {
                       const raw = getCell(row, col);
-                      content = <span style={{ color: raw != null && raw !== "" ? T.text : T.muted }}>
+                      const sector = row.fundamentals?.Sector ?? null;
+                      const ig = indicatorGrade(col.key, raw as string | number | null, sector);
+                      const hasColor = ig.tip.length > 0;
+                      content = <span title={ig.tip || undefined} style={{ color: hasColor ? ig.color : (raw != null && raw !== "" ? T.text : T.muted) }}>
                         {typeof raw === "boolean" ? String(raw) : fmtVal(raw, col.pct)}
                       </span>;
                     }
