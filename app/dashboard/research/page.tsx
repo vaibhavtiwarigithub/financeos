@@ -84,6 +84,7 @@ interface ColDef {
   breakdownField?: string;  // field name inside the breakdown object
   boolField?: boolean;      // render as ✓/✗
   formulaKey?: string;      // score column formula key — shows formula panel button
+  derived?: boolean;        // computed from row data (not stored in any field)
 }
 
 // ── Score formulas — displayed in persistent panel ────────────────────────────
@@ -183,6 +184,10 @@ const ALL_COLS: ColDef[] = [
   // ── Trade column ─────────────────────────────────────────────────────────
   { key: "last_trade_side", label: "Trade", csvLabel: "Last Trade Side", width: 60,
     tooltip: "Last paper trade executed for this symbol: BUY (entry) or SELL (exit). Shows score at time of trade in parentheses." },
+
+  // ── Screener bucket (derived) ─────────────────────────────────────────────
+  { key: "bucket", label: "Style", csvLabel: "Screener Bucket", width: 72, derived: true,
+    tooltip: "Screener bucket: Momentum (RSI>60 + uptrend + rev>10%), Value (cheap P/E + positive FCF), Both, or —. Derived at render time from breakdown data." },
 
   // ── Price at research ─────────────────────────────────────────────────────
   { key: "price_at_research", label: "Price@R", csvLabel: "Price at Research (close)",
@@ -474,6 +479,41 @@ function indicatorGrade(key: string, raw: string | number | null | undefined, se
       return gn("");
   }
 }
+
+type Bucket = "momentum" | "value" | "both" | "neutral";
+function deriveBucket(row: SymbolRow): Bucket {
+  const tb  = row.technical_breakdown   as any;
+  const f   = row.fundamentals;
+  const sp  = SECTOR_PROFILES[f?.Sector ?? ""] ?? GENERIC_SP;
+
+  const rsi      = tb?.rsi14      != null ? Number(tb.rsi14)      : null;
+  const trend    = tb?.trend_20d  as string | undefined;
+  const ema50    = tb?.price_vs_ema50 as string | undefined;
+  const revG     = f?.QuarterlyRevenueGrowthYOY != null ? parseFloat(f.QuarterlyRevenueGrowthYOY) : null;
+  const pe       = f?.PERatio   != null ? parseFloat(f.PERatio)   : null;
+  const fcf      = f?.FCFYield  != null ? parseFloat(f.FCFYield)  : null;
+
+  // Momentum: RSI elevated + price trending up + revenue accelerating
+  const isMomentum = rsi != null && rsi > 60
+    && (trend === "up" || ema50 === "above")
+    && revG != null && revG > 0.10;
+
+  // Value: P/E below sector "good" band and positive cash flow or low-enough P/E
+  const isValue = pe != null && pe > 0 && pe <= sp.peGood
+    && (fcf == null || fcf > 0);  // require non-negative FCF if available
+
+  if (isMomentum && isValue) return "both";
+  if (isMomentum) return "momentum";
+  if (isValue) return "value";
+  return "neutral";
+}
+
+const BUCKET_META: Record<Bucket, { label: string; color: string; tip: string }> = {
+  momentum: { label: "🚀 Mom",  color: "#818cf8", tip: "Momentum: RSI>60, price above 50-day EMA or uptrend, revenue growth >10% YoY" },
+  value:    { label: "💰 Val",  color: "#22c55e", tip: "Value: P/E below sector floor, non-negative FCF yield" },
+  both:     { label: "⚡ Both", color: "#f59e0b", tip: "Both momentum AND value signals present — rare; high-conviction" },
+  neutral:  { label: "—",       color: "#64748b", tip: "Neither momentum nor value criteria met in latest breakdown data" },
+};
 
 /** Resolve cell value: score fields → row top-level; breakdown fields → breakdown object; else fundamentals */
 function getCell(row: SymbolRow, col: ColDef): string | number | boolean | null {
@@ -1321,6 +1361,10 @@ export default function FundamentalsPage() {
                           </span>
                         );
                       }
+                    } else if (col.derived && col.key === "bucket") {
+                      const bkt = deriveBucket(row);
+                      const bm  = BUCKET_META[bkt];
+                      content = <span title={bm.tip} style={{ color: bm.color, fontSize: 10, fontWeight: 700 }}>{bm.label}</span>;
                     } else if (col.score) {
                       const rawScore = (row as any)[col.key];
                       const v = rawScore == null ? null : Number(rawScore);
