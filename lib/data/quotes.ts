@@ -97,36 +97,45 @@ async function fetchMassiveBatchQuotes(
   const chunks: string[][] = [];
   for (let i = 0; i < symbols.length; i += 100) chunks.push(symbols.slice(i, i + 100));
 
+  // Helper: parse one Massive tickers response into results, return symbols found.
+  const parseTickers = (tickers: any[], retrievedAt: string): string[] => {
+    const found: string[] = [];
+    for (const t of tickers) {
+      const sym = t?.ticker;
+      if (!sym) continue;
+      const price = t?.day?.c ?? t?.min?.c ?? t?.prevDay?.c;
+      if (!price || price <= 0) continue;
+      const prevClose = t?.prevDay?.c;
+      const change = t?.todaysChange ?? (prevClose ? price - prevClose : null);
+      const changePct = t?.todaysChangePerc ?? (prevClose ? ((price - prevClose) / prevClose) * 100 : null);
+      results[sym] = {
+        symbol: sym, price,
+        bid: t?.lastQuote?.p ?? null, ask: t?.lastQuote?.P ?? null,
+        change: change ?? null, changePct: changePct ?? null,
+        source: "massive", retrievedAt, stale: false,
+      };
+      found.push(sym);
+    }
+    return found;
+  };
+
   for (const chunk of chunks) {
     const retrievedAt = new Date().toISOString();
-    try {
-      const url = `https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(chunk.join(","))}&apiKey=${apiKey}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const tickers: any[] = data?.tickers ?? [];
-      for (const t of tickers) {
-        const sym = t?.ticker;
-        if (!sym) continue;
-        const price = t?.day?.c ?? t?.min?.c ?? t?.prevDay?.c;
-        if (!price || price <= 0) continue;
-        const prevClose = t?.prevDay?.c;
-        const change = t?.todaysChange ?? (prevClose ? price - prevClose : null);
-        const changePct = t?.todaysChangePerc ?? (prevClose ? ((price - prevClose) / prevClose) * 100 : null);
-        results[sym] = {
-          symbol: sym,
-          price,
-          bid: t?.lastQuote?.p ?? null,
-          ask: t?.lastQuote?.P ?? null,
-          change: change ?? null,
-          changePct: changePct ?? null,
-          source: "massive",
-          retrievedAt,
-          stale: false,
-        };
-      }
-    } catch {
-      // fall through — leaves this chunk's symbols to be filled by AV/cache fallback
+    // stocks pass first; ETF pass only for symbols still missing.
+    // /markets/stocks silently omits ETFs (VOO, XAR, …) which caused them to
+    // fall through to AV on every request. The /etfs endpoint uses the same
+    // response shape so parseTickers handles both.
+    const missing = new Set(chunk);
+    for (const marketType of ["stocks", "etfs"] as const) {
+      const toFetch = marketType === "stocks" ? chunk : [...missing];
+      if (!toFetch.length) break;
+      try {
+        const url = `https://api.massive.com/v2/snapshot/locale/us/markets/${marketType}/tickers?tickers=${encodeURIComponent(toFetch.join(","))}&apiKey=${apiKey}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) continue;
+        const data = await res.json();
+        for (const sym of parseTickers(data?.tickers ?? [], retrievedAt)) missing.delete(sym);
+      } catch { /* fall through */ }
     }
   }
 
