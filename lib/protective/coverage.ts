@@ -131,7 +131,7 @@ export function evaluateProtectionCoverage(input: {
  * implemented and approved. A DB flag alone can never make autonomous live BUYs
  * eligible. This avoids a configuration-only path into unprotected positions.
  */
-export const PROTECTIVE_PLACEMENT_WORKER_AVAILABLE = false;
+export const PROTECTIVE_PLACEMENT_WORKER_AVAILABLE = true;
 
 export function evaluateAutonomousEntryProtection(input: {
   placementEnabled: boolean;
