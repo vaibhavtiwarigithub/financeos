@@ -480,39 +480,74 @@ function indicatorGrade(key: string, raw: string | number | null | undefined, se
   }
 }
 
-type Bucket = "momentum" | "value" | "both" | "neutral";
-function deriveBucket(row: SymbolRow): Bucket {
-  const tb  = row.technical_breakdown   as any;
-  const f   = row.fundamentals;
-  const sp  = SECTOR_PROFILES[f?.Sector ?? ""] ?? GENERIC_SP;
+type Bucket = "momentum" | "value" | "both";
+function deriveBucket(row: SymbolRow): { bucket: Bucket; momPts: number; valPts: number; signals: string[] } {
+  const tb = row.technical_breakdown as any;
+  const f  = row.fundamentals;
+  const sp = SECTOR_PROFILES[f?.Sector ?? ""] ?? GENERIC_SP;
 
-  const rsi      = tb?.rsi14      != null ? Number(tb.rsi14)      : null;
-  const trend    = tb?.trend_20d  as string | undefined;
-  const ema50    = tb?.price_vs_ema50 as string | undefined;
-  const revG     = f?.QuarterlyRevenueGrowthYOY != null ? parseFloat(f.QuarterlyRevenueGrowthYOY) : null;
-  const pe       = f?.PERatio   != null ? parseFloat(f.PERatio)   : null;
-  const fcf      = f?.FCFYield  != null ? parseFloat(f.FCFYield)  : null;
+  const rsi   = tb?.rsi14             != null ? Number(tb.rsi14)                           : null;
+  const trend = tb?.trend_20d         as string | undefined;
+  const ema20 = tb?.price_vs_ema20    as string | undefined;
+  const ema50 = tb?.price_vs_ema50    as string | undefined;
+  const revG  = f?.QuarterlyRevenueGrowthYOY != null ? parseFloat(f.QuarterlyRevenueGrowthYOY) : null;
+  const epsG  = f?.EpsGrowth3Y        != null ? parseFloat(f.EpsGrowth3Y)                  : null;
+  const pe    = f?.PERatio            != null ? parseFloat(f.PERatio)                      : null;
+  const fcf   = f?.FCFYield           != null ? parseFloat(f.FCFYield)                     : null;
+  const roe   = f?.ReturnOnEquityTTM  != null ? parseFloat(f.ReturnOnEquityTTM)            : null;
+  const pm    = f?.ProfitMargin       != null ? parseFloat(f.ProfitMargin)                 : null;
 
-  // Momentum: RSI elevated + price trending up + revenue accelerating
-  const isMomentum = rsi != null && rsi > 60
-    && (trend === "up" || ema50 === "above")
-    && revG != null && revG > 0.10;
+  let mom = 0; let val = 0; const sigs: string[] = [];
 
-  // Value: P/E below sector "good" band and positive cash flow or low-enough P/E
-  const isValue = pe != null && pe > 0 && pe <= sp.peGood
-    && (fcf == null || fcf > 0);  // require non-negative FCF if available
+  // ── Momentum signals ───────────────────────────────────────────────────────
+  if (rsi != null) {
+    if (rsi > 65)       { mom += 2; sigs.push(`RSI ${rsi.toFixed(0)} (strong)`); }
+    else if (rsi > 55)  { mom += 1; sigs.push(`RSI ${rsi.toFixed(0)} (elevated)`); }
+    else if (rsi < 40)  { val += 1; sigs.push(`RSI ${rsi.toFixed(0)} (depressed → value lean)`); }
+  }
+  if (trend === "up")           { mom += 2; sigs.push("uptrend"); }
+  else if (trend === "down")    { val += 1; } // pullback can be value
+  if (ema50 === "above")        { mom += 1; sigs.push("above 50-EMA"); }
+  if (ema20 === "above")        { mom += 1; sigs.push("above 20-EMA"); }
+  if (revG != null) {
+    if (revG > 0.20)            { mom += 2; sigs.push(`rev↑${(revG*100).toFixed(0)}%`); }
+    else if (revG > 0.05)       { mom += 1; sigs.push(`rev↑${(revG*100).toFixed(0)}%`); }
+    else if (revG < 0)          { val += 1; } // contracting revenue → value lean
+  }
+  if (epsG != null && epsG > 0.15) { mom += 1; sigs.push(`EPS↑${(epsG*100).toFixed(0)}%`); }
 
-  if (isMomentum && isValue) return "both";
-  if (isMomentum) return "momentum";
-  if (isValue) return "value";
-  return "neutral";
+  // ── Value signals ─────────────────────────────────────────────────────────
+  if (pe != null && pe > 0) {
+    if (pe <= sp.peGood)        { val += 2; sigs.push(`P/E ${pe.toFixed(1)} (cheap)`); }
+    else if (pe <= sp.peOk)     { val += 1; sigs.push(`P/E ${pe.toFixed(1)} (ok)`); }
+    else if (pe > sp.peWarn)    { mom += 1; } // expensive P/E = market pricing in growth
+  }
+  if (fcf != null) {
+    if (fcf > 0.05)             { val += 2; sigs.push(`FCF ${(fcf*100).toFixed(1)}%`); }
+    else if (fcf > 0.01)        { val += 1; sigs.push(`FCF ${(fcf*100).toFixed(1)}%`); }
+  }
+  if (roe != null && roe > 0.15)  { val += 1; sigs.push(`ROE ${(roe*100).toFixed(0)}%`); }
+  if (pm  != null && pm  > 0.10)  { val += 1; sigs.push(`margin ${(pm*100).toFixed(0)}%`); }
+
+  // ── Always resolve — whichever scored higher wins ─────────────────────────
+  // Tie (including 0-0 = no data) → prefer momentum for growth sectors, value otherwise
+  const growthSectors = ["Technology","Information Technology","Healthcare","Communication Services"];
+  const tieBreak: Bucket = growthSectors.includes(f?.Sector ?? "") ? "momentum" : "value";
+
+  const BOTH_THRESHOLD = 3; // need meaningful signal on BOTH sides to show "Both"
+  const bucket: Bucket =
+    mom >= BOTH_THRESHOLD && val >= BOTH_THRESHOLD ? "both"
+    : mom > val  ? "momentum"
+    : val > mom  ? "value"
+    : tieBreak;
+
+  return { bucket, momPts: mom, valPts: val, signals: sigs };
 }
 
-const BUCKET_META: Record<Bucket, { label: string; color: string; tip: string }> = {
-  momentum: { label: "🚀 Mom",  color: "#818cf8", tip: "Momentum: RSI>60, price above 50-day EMA or uptrend, revenue growth >10% YoY" },
-  value:    { label: "💰 Val",  color: "#22c55e", tip: "Value: P/E below sector floor, non-negative FCF yield" },
-  both:     { label: "⚡ Both", color: "#f59e0b", tip: "Both momentum AND value signals present — rare; high-conviction" },
-  neutral:  { label: "—",       color: "#64748b", tip: "Neither momentum nor value criteria met in latest breakdown data" },
+const BUCKET_META: Record<Bucket, { label: string; color: string }> = {
+  momentum: { label: "🚀 Mom",  color: "#818cf8" },
+  value:    { label: "💰 Val",  color: "#22c55e" },
+  both:     { label: "⚡ Both", color: "#f59e0b" },
 };
 
 /** Resolve cell value: score fields → row top-level; breakdown fields → breakdown object; else fundamentals */
@@ -1362,9 +1397,10 @@ export default function FundamentalsPage() {
                         );
                       }
                     } else if (col.derived && col.key === "bucket") {
-                      const bkt = deriveBucket(row);
-                      const bm  = BUCKET_META[bkt];
-                      content = <span title={bm.tip} style={{ color: bm.color, fontSize: 10, fontWeight: 700 }}>{bm.label}</span>;
+                      const { bucket, momPts, valPts, signals } = deriveBucket(row);
+                      const bm  = BUCKET_META[bucket];
+                      const tip = `${bm.label.replace(/[🚀💰⚡]/u, "").trim()} · mom ${momPts} pts / val ${valPts} pts${signals.length ? `\nSignals: ${signals.join(", ")}` : ""}`;
+                      content = <span title={tip} style={{ color: bm.color, fontSize: 10, fontWeight: 700 }}>{bm.label}</span>;
                     } else if (col.score) {
                       const rawScore = (row as any)[col.key];
                       const v = rawScore == null ? null : Number(rawScore);
