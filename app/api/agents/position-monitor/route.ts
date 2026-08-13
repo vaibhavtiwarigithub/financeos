@@ -115,9 +115,13 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     getBatchQuotes(usSymbols, svc),
     fetchIndiaQuotes(indiaSymbols),
   ]);
+  // dayLowMap: session low from Massive snapshot. Used to detect intraday stop
+  // touches — a stop hit during the session is real even if price recovered by close.
+  const dayLowMap: Record<string, number> = {};
   for (const sym of usSymbols) {
     const q = usQuotes[sym];
     if (q && q.source !== "unavailable" && !q.stale && q.price > 0) priceMap[sym] = q.price;
+    if (q?.dayLow != null && q.dayLow > 0) dayLowMap[sym] = q.dayLow;
   }
   for (const sym of indiaSymbols) {
     const q = indiaQuotes[sym.toUpperCase()];
@@ -419,9 +423,16 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     let exitReason: string | null = null;
     let outcome: string | null = null;
 
-    if (currentPrice <= trailingStop) {
-      exitReason = "stop_hit";
-      outcome = currentPrice > pos.avg_cost ? "win" : "loss";
+    // Use session low (if available) to detect intraday stop touches.
+    // A stop hit mid-session is real even when price recovered by close.
+    // Fill price is trailingStop (stop order assumed placed at that level),
+    // not the session low — filling at the gap extreme is too pessimistic.
+    const posMarket = marketOf(pos, hasMarketColEarly);
+    const sessionLow = posMarket === "us" ? (dayLowMap[pos.symbol] ?? currentPrice) : currentPrice;
+    const priceForStopCheck = Math.min(currentPrice, sessionLow);
+    if (priceForStopCheck <= trailingStop) {
+      exitReason = priceForStopCheck < currentPrice ? "stop_hit_intraday" : "stop_hit";
+      outcome = trailingStop > pos.avg_cost ? "win" : "loss";
     } else if (pos.position_role !== "hedge" && priceTarget && currentPrice >= priceTarget) {
       // Partial profit-taking: close half at target, move stop to breakeven on remainder.
       // Only split if qty >= 2 — a single share must fully close.
@@ -436,7 +447,11 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     }
 
     if (exitReason && outcome) {
-      await closePosition(pos, currentPrice, exitReason, outcome);
+      // Stop exits: fill at trailingStop (the stop order level), not currentPrice.
+      // An intraday or gap stop may have triggered at a price above current close.
+      const fillPrice = exitReason === "stop_hit" || exitReason === "stop_hit_intraday"
+        ? trailingStop : currentPrice;
+      await closePosition(pos, fillPrice, exitReason, outcome);
     } else {
       // Still open — refresh current_price + trailing-stop anchor. This is
       // the update that was missing entirely before: current_price never

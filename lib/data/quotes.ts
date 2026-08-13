@@ -18,6 +18,12 @@ export interface DeterministicQuote {
   source: QuoteSource;
   retrievedAt: string;
   stale: boolean;       // true if > 15 min old during market hours
+  /** Session low (day.l from Massive snapshot). Used by PositionMonitor to check
+   *  intraday stop touches — a stop hit during the session is real even if price
+   *  recovered by close. Null when source can't provide OHLC (AV, price_cache). */
+  dayLow?: number | null;
+  /** Session high (day.h). Stored for trailing-stop anchor accuracy. */
+  dayHigh?: number | null;
 }
 
 const STALE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
@@ -113,6 +119,8 @@ async function fetchMassiveBatchQuotes(
         bid: t?.lastQuote?.p ?? null, ask: t?.lastQuote?.P ?? null,
         change: change ?? null, changePct: changePct ?? null,
         source: "massive", retrievedAt, stale: false,
+        dayLow:  typeof t?.day?.l === "number" && t.day.l > 0 ? t.day.l : null,
+        dayHigh: typeof t?.day?.h === "number" && t.day.h > 0 ? t.day.h : null,
       };
       found.push(sym);
     }

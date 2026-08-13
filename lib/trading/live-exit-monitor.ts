@@ -14,6 +14,8 @@ import { executeApprovedOrder } from "@/lib/trading/execute-order";
 import { isMarketOpenLive } from "@/lib/trading/market-calendar";
 import { loadTradingMandateStrict, tradingWeekdaysBetween } from "@/lib/trading-mandate";
 import { reconstructAccountLivePositions } from "@/lib/trading/live-position-ledger";
+import { cancelProtectiveStop } from "@/lib/protective/placement-worker";
+import { managedLivePositionId } from "@/lib/protective/coverage";
 
 const MARKET_CFG: Record<string, { brokers: string[]; accountCol: string }> = {
   us:    { brokers: ["robinhood", "robinhood_mcp"], accountCol: "active_account_us" },
@@ -135,6 +137,20 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
         results.push({ market, symbol, qty, reason, status: "skipped_duplicate", error: `active sell order ${(activeSellOrder as any).id}` });
         continue;
       }
+
+      // Cancel any resting broker-side protective stop BEFORE submitting the SELL.
+      // Without this, the GTC stop (RH) or GTT (Kite) can trigger AFTER the exit
+      // SELL settles — selling a position we no longer own (naked short risk).
+      // Best-effort: a cancel failure is logged but does NOT abort the SELL (the
+      // protective-orders row is moved to needs_reconcile for manual follow-up).
+      const positionId = managedLivePositionId({
+        market,
+        broker: MARKET_CFG[market].brokers[0],
+        brokerAccountId: account,
+        symbol,
+        qty,
+      });
+      await cancelProtectiveStop({ supabase: svc, positionId, market, brokerAccountId: account }).catch(() => {});
 
       const { data: prop, error: propErr } = await svc.from("trade_proposals").insert({
         symbol, market, side: "sell", order_type: "market", qty,

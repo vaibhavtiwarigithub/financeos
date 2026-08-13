@@ -1106,3 +1106,70 @@ export async function disconnectRobinhoodMcp(svc?: any): Promise<{ ok: boolean; 
   const { error } = await vaultDel(s, [VK.access, VK.refresh, VK.expiry]);
   return { ok: !error, error };
 }
+
+// Place a GTC stop-market SELL order at Robinhood as a protective floor.
+// Called by the protective-stop placement worker AFTER a live BUY fills.
+//
+// Key behaviour: GTC stop-market converts to a MARKET SELL when stop_price is
+// touched. Fill is at whatever bid exists at that moment — no limit floor.
+// RH GTC stops trigger ONLY during the regular session (9:30–16:00 ET); they
+// do NOT fire pre-market or after-hours. This is a protection improvement over
+// our cron-only model, but NOT gap-proof across market sessions.
+//
+// On an ambiguous result (possible success), returns needsReconcile so the
+// caller records the placement as "placing" and lets reconciliation confirm.
+export async function placeRobinhoodGtcStop(opts: {
+  account: string;
+  symbol: string;
+  qty: number;
+  stopPrice: number; // the trigger price — set to trailingStop at placement time
+}): Promise<{ ok: true; brokerOrderId: string; raw?: any } | { ok: false; needsReconcile?: boolean; error: string; raw?: any }> {
+  const svc = createServiceClient();
+  const tk = await getValidAccessToken(svc);
+  if (!tk.ok || !tk.token) return { ok: false, error: tk.error ?? "not connected" };
+
+  const sess = await openSession(tk.token);
+  if (!sess.ok) return { ok: false, error: sess.error ?? "session open failed" };
+  const sid = sess.sessionId;
+
+  const tl = await listTools(tk.token, sid);
+  if (!tl.ok) return { ok: false, error: tl.error ?? "listTools failed" };
+  const tools = tl.tools ?? [];
+  const placeTool = tools.find((t: any) => t.name === "place_equity_order");
+  if (!placeTool) return { ok: false, error: "place_equity_order not offered by the Robinhood MCP server" };
+
+  // Canonical stop-market parameters. Robinhood MCP may map these field names
+  // differently — buildArgsFromSchema resolves against the live tool schema.
+  const canonical = {
+    account: opts.account,
+    symbol: opts.symbol,
+    side: "sell",
+    qty: opts.qty,
+    type: "stop",          // stop_market at RH
+    stopPrice: opts.stopPrice,
+    timeInForce: "gtc",
+  };
+
+  const pArgs = buildArgsFromSchema(placeTool.inputSchema, canonical);
+  if ("__error" in pArgs) return { ok: false, error: `protective stop: ${pArgs.__error}` };
+  if (canonical.account && !["account_number", "account", "account_id"].some(k => k in (pArgs as Record<string, any>))) {
+    return { ok: false, error: "protective stop: account could not be pinned (schema has no account field)" };
+  }
+
+  let place;
+  try {
+    place = await mcpRpc(tk.token, "tools/call", { name: "place_equity_order", arguments: pArgs }, sid);
+  } catch (e) {
+    return { ok: false, needsReconcile: true, error: `protective stop ambiguous (possible success): ${String(e)} — reconcile via get_equity_orders` };
+  }
+  if (!place.ok) {
+    if (place.sent) return { ok: false, needsReconcile: true, error: `protective stop ambiguous: ${place.error}` };
+    return { ok: false, error: `protective stop rejected: ${place.error}` };
+  }
+  const content = place.result?.content ?? place.result;
+  const brokerOrderId = extractOrderId(content);
+  if (!brokerOrderId) {
+    return { ok: false, needsReconcile: true, raw: redact(content), error: "protective stop response had no parseable order id — reconcile before any retry" };
+  }
+  return { ok: true, brokerOrderId, raw: redact(content) };
+}

@@ -19,6 +19,7 @@ import { liveOrdersAllowed, autonomousWorkerAllowed } from "@/lib/autonomy";
 import { isSymbolBlocked } from "@/lib/trading/symbol-policy";
 import { isEtfSymbol } from "@/lib/asset-classification";
 import { isTradingEnabled } from "@/lib/market-controls";
+import { placeProtectiveStop } from "@/lib/protective/placement-worker";
 
 // Fraction of live equity used as the default per-order notional ceiling when
 // strategy_config.max_order_notional is null.
@@ -255,6 +256,7 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
 
   let freshPrice: number | null = null;
   let cfg: any = null;
+  let tradingAccount: string | null = null;   // captured for post-ACK protective stop
   if (orderEnv === "live") {
     const cfgRes = await supabase.from("strategy_config").select("trading_enabled, trading_enabled_us, trading_enabled_india, max_order_notional, max_order_notional_usd, max_order_notional_inr, max_daily_notional_usd, max_daily_notional_inr, max_daily_trades, robinhood_mcp_enabled, autonomy_level").limit(1).maybeSingle();
     cfg = cfgRes.data;
@@ -298,6 +300,7 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
     // Account must be an allowlisted role='trading' account for THIS broker (fail closed).
     const acct = await resolveTradingAccount(supabase, market, brokerKey);
     if (!acct.ok) return { ok: false, status: 403, error: acct.error };
+    tradingAccount = acct.account;
 
     // Kill switch AFTER account resolution so it measures THIS live account's own
     // NAV (P0-1). Side-aware: a trip blocks BUY (new exposure) but not a
@@ -499,6 +502,36 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
       title: `Order #${orderId} recorded but audit journal write failed`,
       detail: `broker_orders #${orderId} (broker_order_id ${result.brokerOrderId}) is durably recorded, but the decision_journal audit entry failed to insert: ${journalErr.message ?? journalErr}. The order state is correct; only the audit log is missing.`,
     }, supabase);
+  }
+
+  // ── Protective stop placement (best-effort, non-blocking) ────────────────
+  // Fires after the BUY is durably recorded. Failure here NEVER un-places the
+  // buy or delays this response. The placement worker is self-gated:
+  //   • PROTECTIVE_PLACEMENT_WORKER_AVAILABLE=false → silently skipped
+  //   • protective_orders_enabled=false (DB) → silently skipped
+  // So this call is safe to include unconditionally: it's a no-op until both
+  // gates are explicitly opened (Part E).
+  if (side === "buy" && orderEnv === "live" && tradingAccount && freshPrice && freshPrice > 0) {
+    placeProtectiveStop({
+      supabase,
+      symbol,
+      market,
+      broker: broker.id,
+      brokerAccountId: tradingAccount,
+      qty,
+      entryPrice: freshPrice,
+      proposalId: proposal_id,
+      proposalBrokerOrderId: result.brokerOrderId,
+    }).catch((e) => {
+      // Swallowed here — the BUY is live regardless. The protective-order table
+      // will have a 'placing' row without a broker id; the reconciliation pass picks it up.
+      void reportIssue({
+        issueKey: `protective-stop-placement-error:${orderId}`,
+        severity: "warn", category: "trading",
+        title: `Protective stop could not be placed after BUY #${orderId} (${qty} ${symbol})`,
+        detail: `placeProtectiveStop threw: ${String(e)}. The BUY is live. Manually place a stop or the reconcile cron will retry.`,
+      }, supabase).catch(() => {});
+    });
   }
 
   return { ok: true, order_id: orderId, broker_order_id: result.brokerOrderId };

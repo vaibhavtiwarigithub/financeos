@@ -237,6 +237,37 @@ export async function placeKiteGtt(opts: {
   return { ok: true, triggerId };
 }
 
+// Place a single-leg Kite GTT stop-loss. Uses type "single" (one trigger/one
+// child order) rather than the two-leg OCO, because at entry we don't yet have
+// a take-profit target. The child is SELL CNC LIMIT at stopPrice — weaker than
+// a market-stop (can miss on a gap) but it's what Kite GTT API supports.
+export async function placeKiteStopGtt(opts: {
+  tradingsymbol: string;
+  exchange?: string;
+  qty: number;
+  lastPrice: number;  // reference quote at placement time
+  stopPrice: number;  // trigger + limit price (same value — limit child)
+}, svc?: any): Promise<{ ok: true; triggerId: number } | { ok: false; error: string }> {
+  const sym = opts.tradingsymbol.replace(/\.(NS|BO)$/i, "");
+  const exchange = opts.exchange ?? (opts.tradingsymbol.toUpperCase().endsWith(".BO") ? "BSE" : "NSE");
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const body: Record<string, string> = {
+    type: "single",
+    tradingsymbol: sym,
+    exchange,
+    trigger_values: JSON.stringify([round2(opts.stopPrice)]),
+    last_price: String(round2(opts.lastPrice)),
+    orders: JSON.stringify([
+      { transaction_type: "SELL", quantity: opts.qty, order_type: "LIMIT", product: "CNC", price: round2(opts.stopPrice) },
+    ]),
+  };
+  const r = await kitePost("/gtt/triggers", body, svc);
+  if (!r.ok) return { ok: false, error: r.error ?? "Kite GTT place failed" };
+  const triggerId = Number(r.data?.trigger_id);
+  if (!Number.isFinite(triggerId)) return { ok: false, error: "GTT single-leg placed but no trigger_id returned" };
+  return { ok: true, triggerId };
+}
+
 // Cancel a Kite GTT trigger by ID. Explicit exits must confirm this cancellation
 // before submitting a SELL, otherwise an untracked trigger could later double-sell.
 export async function cancelKiteGtt(triggerId: number, svc?: any): Promise<{ ok: boolean; error?: string }> {
