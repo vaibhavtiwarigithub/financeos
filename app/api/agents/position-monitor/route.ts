@@ -13,7 +13,9 @@ import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type Tr
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
-import { paperPartialTargetQuantity } from "@/lib/trading/paper-quantity";
+// paperPartialTargetQuantity is intentionally NOT imported: partial exits are
+// disabled by W2-interim (see the target branch below). The helper and its tests
+// stay for W2-full, which reinstates splitting via an exit-fill ledger.
 import { admitMarketLocalSlot } from "@/lib/trading/market-calendar";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
@@ -434,14 +436,22 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       exitReason = priceForStopCheck < currentPrice ? "stop_hit_intraday" : "stop_hit";
       outcome = trailingStop > pos.avg_cost ? "win" : "loss";
     } else if (pos.position_role !== "hedge" && priceTarget && currentPrice >= priceTarget) {
-      // Partial profit-taking: close half at target, move stop to breakeven on remainder.
-      // Only split if qty >= 2 — a single share must fully close.
-      const halfQty = paperPartialTargetQuantity(market as "us" | "india", pos.qty);
-      if (halfQty != null) {
-        await closePosition(pos, currentPrice, "partial_target", "win", halfQty, Number(pos.avg_cost));
-        continue;
-      }
-      // qty == 1 — can't split
+      // W2-INTERIM (2026-08-16): partial profit-taking is DISABLED.
+      //
+      // `execute_paper_exit` implements a partial exit by cloning a residual
+      // `order_side='buy'` lot. The anti-pyramiding trigger
+      // (20260806203000_prevent_paper_alpha_pyramiding.sql) rejects that insert
+      // because the position is by definition still open, and the clone would
+      // additionally collide with the `paper_event_id` and `(market, signal_id)`
+      // unique indexes. The RPC error propagates out of closePosition and aborts
+      // the ENTIRE monitor run, so every later holding silently misses its
+      // stop/target check — this happened on 2026-08-13 and 2026-08-14 (LNC).
+      //
+      // Taking the full target exit is strictly safer than aborting the book
+      // run: it forgoes letting a runner run, but never skips a stop.
+      //
+      // Restore the split only with the append-only exit-fill ledger (W2-full);
+      // do NOT simply re-enable this branch or exempt the trigger.
       exitReason = "target_hit";
       outcome = "win";
     }

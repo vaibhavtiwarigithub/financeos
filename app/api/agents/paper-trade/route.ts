@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isSymbolBlocked } from "@/lib/trading/symbol-policy";
 import { getQuote, getBatchQuotes, computeFillPrice } from "@/lib/data/quotes";
+import { assertFreshQuote } from "@/lib/data/quote-freshness";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { constructPortfolio, DEFAULT_LIMITS, type BookPosition } from "@/lib/portfolio/constructor";
@@ -369,16 +370,25 @@ export async function POST(req: NextRequest) {
       | { ok: true; price: number; fillPrice: number; source: string; retrievedAt: string; bid: number | null; ask: number | null; spread: number }
       | { ok: false; reason: string }
     > {
+      // W1: a quote is not a price until it proves freshness. Both branches go
+      // through assertFreshQuote so a stale cache row can never become a fill —
+      // the defect that bought LNC at a 79-day-old 35.39 while it traded at 45.28.
+      // `retrievedAt` persisted below is the QUOTE's observation time, not now().
       if (market === "india") {
         const q = await fetchIndiaQuote(signal.symbol); // INR, free Yahoo .NS
-        if (!q || q.price <= 0) return { ok: false, reason: "price_unavailable" };
-        const fillPrice = parseFloat((q.price * 1.0005).toFixed(2)); // +0.05% slippage
-        return { ok: true, price: q.price, fillPrice, source: "yahoo_india", retrievedAt: new Date().toISOString(), bid: null, ask: null, spread: 0.0005 };
+        const verdict = assertFreshQuote(
+          q ? { price: q.price, source: "yahoo_india", retrievedAt: q.retrievedAt, stale: q.stale } : null,
+          signal.symbol,
+        );
+        if (!verdict.ok) return { ok: false, reason: verdict.reason };
+        const fillPrice = parseFloat((verdict.price * 1.0005).toFixed(2)); // +0.05% slippage
+        return { ok: true, price: verdict.price, fillPrice, source: verdict.source, retrievedAt: verdict.retrievedAt, bid: null, ask: null, spread: 0.0005 };
       }
       const quote = await getQuote(signal.symbol, supabase);
-      if (quote.source === "unavailable" || quote.price <= 0) return { ok: false, reason: "price_unavailable" };
+      const verdict = assertFreshQuote(quote, signal.symbol);
+      if (!verdict.ok) return { ok: false, reason: verdict.reason };
       const fillPrice = computeFillPrice(quote);
-      return { ok: true, price: quote.price, fillPrice, source: quote.source, retrievedAt: quote.retrievedAt, bid: quote.bid, ask: quote.ask, spread: fillPrice / quote.price - 1 };
+      return { ok: true, price: verdict.price, fillPrice, source: verdict.source, retrievedAt: verdict.retrievedAt, bid: quote.bid, ask: quote.ask, spread: fillPrice / verdict.price - 1 };
     }
 
     // Insert with a resilient retry that strips OPTIONAL columns ONLY when the DB

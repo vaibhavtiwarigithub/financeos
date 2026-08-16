@@ -12,6 +12,7 @@ import { isIndia, fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { checkLivePortfolioLimits } from "@/lib/risk/live-portfolio-gate";
 import { getQuote } from "@/lib/data/quotes";
+import { assertFreshQuote } from "@/lib/data/quote-freshness";
 import { robinhoodHeldQty } from "@/lib/robinhood-mcp";
 import { getKiteHoldings } from "@/lib/kite";
 import { reportIssue } from "@/lib/system-health";
@@ -310,12 +311,38 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
     if (ksBlocks) return { ok: false, status: 403, error: `Kill switch active: ${ks.reason}` };
 
     // Fresh quote → notional cap + price-drift re-check.
+    //
+    // W1: this is the LAST money-path boundary before broker submission, and it
+    // previously kept only `price` — discarding `stale`, `source` and
+    // `retrievedAt`. A quote called "fresh" in a comment is not fresh. Upstream
+    // callers do their own staleness checks, but the manual /api/broker/orders
+    // path reaches this service directly, so it must fail closed independently.
+    let freshQuoteSource: string | null = null;
+    let freshQuoteAsOf: string | null = null;
+    let quoteRejection: string | null = null;
     try {
-      if (market === "india") { const q = await fetchIndiaQuote(symbol); freshPrice = q?.price ?? null; }
-      else { const q = await getQuote(symbol, supabase); freshPrice = q?.price ?? null; }
-    } catch { freshPrice = null; }
-    if (!freshPrice || !Number.isFinite(freshPrice) || freshPrice <= 0) {
-      return { ok: false, status: 502, error: "Could not fetch a fresh quote to validate the order — refusing to submit blind" };
+      const raw = market === "india"
+        ? await fetchIndiaQuote(symbol).then(q => q ? { price: q.price, source: "yahoo_india", retrievedAt: q.retrievedAt, stale: q.stale } : null)
+        : await getQuote(symbol, supabase);
+      const verdict = assertFreshQuote(raw, symbol);
+      if (verdict.ok) {
+        freshPrice = verdict.price;
+        freshQuoteSource = verdict.source;
+        freshQuoteAsOf = verdict.retrievedAt;
+      } else {
+        freshPrice = null;
+        quoteRejection = `${verdict.reason}: ${verdict.detail}`;
+      }
+    } catch (e: any) {
+      freshPrice = null;
+      quoteRejection = `quote_fetch_threw: ${String(e?.message ?? e).slice(0, 200)}`;
+    }
+    if (!freshPrice) {
+      return {
+        ok: false,
+        status: 502,
+        error: `Refusing to submit blind — no fresh quote to validate the order (${quoteRejection ?? "unknown"})`,
+      };
     }
 
     // Per-market notional cap. FAIL CLOSED.
@@ -360,7 +387,7 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
     if (Number.isFinite(approvedPrice) && approvedPrice > 0) {
       const drift = Math.abs(freshPrice - approvedPrice) / approvedPrice;
       if (drift > MAX_PRICE_DRIFT) {
-        return { ok: false, status: 409, error: `Price drifted ${(drift * 100).toFixed(1)}% since approval (approved ${approvedPrice}, now ${freshPrice}) — re-approve required` };
+        return { ok: false, status: 409, error: `Price drifted ${(drift * 100).toFixed(1)}% since approval (approved ${approvedPrice}, now ${freshPrice} from ${freshQuoteSource ?? "unknown"} as-of ${freshQuoteAsOf ?? "unknown"}) — re-approve required` };
       }
     }
 

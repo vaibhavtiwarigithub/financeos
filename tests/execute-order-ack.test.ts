@@ -267,7 +267,14 @@ describe("A3 durable broker acknowledgment — LIVE path", () => {
     h.getActiveBrokerForOrderMock.mockResolvedValue({ ok: true, broker });
     // Live-only collaborators the paper path skipped — all mocked to pass.
     (checkKillSwitches as any).mockResolvedValue({ safe: true, sellAllowed: true });
-    (getQuote as any).mockResolvedValue({ price: 100 });
+    // A realistic DeterministicQuote. The old `{ price: 100 }` stub carried no
+    // source/retrievedAt/stale, so it could never have exercised the freshness
+    // gate — and a bare price clearing the live-order path is exactly the W1
+    // defect (a stale price_cache row filled LNC at a 79-day-old price).
+    (getQuote as any).mockResolvedValue({
+      symbol: "AAPL", price: 100, bid: null, ask: null, change: null, changePct: null,
+      source: "massive", retrievedAt: new Date().toISOString(), stale: false,
+    });
 
     const { resolver, attempts } = makeLiveResolver(() => ({ message: "db unavailable" }));
     const svc = makeClient(resolver, rpcOk);
