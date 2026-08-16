@@ -20,6 +20,19 @@ const nextConfig: NextConfig = {
       include: /node_modules/,
       type: "javascript/auto",
     });
+    // `next build` crashed on Node 24 with:
+    //   TypeError: Cannot read properties of undefined (reading 'length')
+    //     at WasmHash._updateWithBuffer (compiled/webpack/bundle5.js)
+    // webpack's default `xxhash64` hashes through a WebAssembly memory view that
+    // can detach on newer Node runtimes, so the buffer is undefined by the time
+    // the hash reads it. This is a toolchain incompatibility, not app code — it
+    // reproduced on a clean checkout with no local changes.
+    //
+    // sha256 uses Node's own crypto instead of the wasm path. Chunk hashes differ
+    // from xxhash64 (a one-time cache bust) and hashing is marginally slower; both
+    // are irrelevant next to the build not running at all. Safe to revisit once
+    // Next ships a webpack build whose WasmHash tolerates Node 24.
+    config.output = { ...config.output, hashFunction: "sha256" };
     return config;
   },
   // Baseline security headers on every response. X-Frame-Options DENY stops
