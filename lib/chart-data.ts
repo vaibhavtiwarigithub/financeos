@@ -144,10 +144,34 @@ async function writePriceCacheRows(symbol: string, candles: Candle[]): Promise<v
 // Called at end of daily cron — populates DB so all chart requests are instant
 // for the day. Fetches per-symbol through the shared candle resolver
 // (Massive → EODHD → Twelve Data → Alpha Vantage), no subprocess/LLM.
-export async function prewarmPriceCache(symbols: string[], _supabase: any): Promise<{ ok: number; failed: number }> {
+/**
+ * W3: this used to be called fire-and-forget immediately before a serverless
+ * response, so the runtime froze it mid-flight. It happened to finish on
+ * 2026-07-22 and never reliably again, which left 101 of 140 price_cache symbols
+ * stuck at that date — the upstream cause of the stale fills fixed in W1.
+ *
+ * It is now awaited, which means it MUST be bounded: the research route runs on
+ * a 150s budget and an unbounded prewarm could get the whole run reaped. Pass
+ * `deadlineAt` (epoch ms) to stop STARTING new batches once the budget is spent.
+ * In-flight batches finish, so a deadline is a soft stop, not a cancel.
+ *
+ * Returns `skipped` so the caller can tell "finished" from "ran out of time" —
+ * the distinction that was invisible before and let the freeze go unnoticed.
+ */
+export async function prewarmPriceCache(
+  symbols: string[],
+  _supabase: any,
+  opts?: { deadlineAt?: number },
+): Promise<{ ok: number; failed: number; skipped: number }> {
   let ok = 0;
+  let skipped = 0;
   // Modest concurrency so a large watchlist doesn't burst provider budgets.
   for (let i = 0; i < symbols.length; i += 4) {
+    if (opts?.deadlineAt != null && Date.now() >= opts.deadlineAt) {
+      // Out of budget: count everything not yet attempted and stop cleanly.
+      skipped = symbols.length - i;
+      break;
+    }
     const batch = symbols.slice(i, i + 4);
     await Promise.all(batch.map(async (sym) => {
       try {
@@ -174,7 +198,7 @@ export async function prewarmPriceCache(symbols: string[], _supabase: any): Prom
     }));
   }
 
-  return { ok, failed: symbols.length - ok };
+  return { ok, failed: symbols.length - ok - skipped, skipped };
 }
 
 // Normalize candles to % return from first close

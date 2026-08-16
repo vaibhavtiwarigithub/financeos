@@ -618,13 +618,58 @@ export async function POST(req: NextRequest) {
     await resolveIssue(failureIssueKey, supabase);
   }
 
-  // Pre-warm price_cache for researched symbols + benchmark ETFs (fire async, don't block response)
+  // W3: refresh price_cache for researched symbols + benchmark ETFs.
+  //
+  // This was `prewarmPriceCache(...).catch(() => {})` — fired without await
+  // immediately before the response. Unawaited work after a serverless response
+  // is not a durable job: the runtime froze it mid-flight. It completed on
+  // 2026-07-22 and never reliably again, leaving 101 of 140 price_cache symbols
+  // stuck at that date. That stale cache is what PaperTrader then filled against
+  // (15 US fills, errors to 19.6%) until W1 closed the quote gate.
+  //
+  // It is now AWAITED, and therefore bounded: research owns a 150s budget, so
+  // the prewarm gets whatever remains minus a reserve for this response. Running
+  // out of time is reported rather than hidden — a silent partial refresh is
+  // exactly how the original freeze escaped notice for 25 days.
   const BENCHMARK_SYMBOLS = ["VOO", "QQQ", "SPY", "IWM", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLC", "XLP", "XLU", "XLRE", "XLB"];
   const prewarmSymbols = [...new Set([...batch, ...BENCHMARK_SYMBOLS])];
-  prewarmPriceCache(prewarmSymbols, supabase).catch(() => {});
+  const PREWARM_RESPONSE_RESERVE_MS = 5_000;
+  const prewarmDeadline = routeStartedAt + (maxDuration * 1000) - PREWARM_RESPONSE_RESERVE_MS;
+
+  let prewarm = { ok: 0, failed: 0, skipped: prewarmSymbols.length };
+  try {
+    prewarm = await prewarmPriceCache(prewarmSymbols, supabase, { deadlineAt: prewarmDeadline });
+  } catch (e: any) {
+    prewarm = { ok: 0, failed: prewarmSymbols.length, skipped: 0 };
+    console.error(`[research:${runTag}] price_cache prewarm threw:`, e?.message ?? e);
+  }
+
+  // Detector. A prewarm that cannot keep the traded universe fresh is a
+  // money-path problem, not a cosmetic one — it is the precondition for a stale
+  // fill. Surface it instead of returning success over a half-done refresh.
+  const prewarmIssueKey = `price-cache-prewarm-incomplete:${runTag}`;
+  const prewarmUnrefreshed = prewarm.failed + prewarm.skipped;
+  if (prewarmUnrefreshed > 0) {
+    await reportIssue({
+      issueKey: prewarmIssueKey,
+      severity: prewarm.ok === 0 ? "critical" : "warn",
+      category: "data",
+      title: `price_cache prewarm incomplete — ${prewarmUnrefreshed}/${prewarmSymbols.length} symbols not refreshed`,
+      detail:
+        `${prewarm.ok} refreshed, ${prewarm.failed} failed, ${prewarm.skipped} skipped for time ` +
+        `(deadline ${new Date(prewarmDeadline).toISOString()}). Symbols left unrefreshed keep serving their ` +
+        `previous close, and a stale close is what W1's quote gate now REFUSES to fill against — so entries ` +
+        `for those names will be declined rather than mispriced. Investigate provider budgets or raise the ` +
+        `research budget if skipped is persistently high.`,
+      autoExpireAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+    }, supabase);
+  } else {
+    await resolveIssue(prewarmIssueKey, supabase);
+  }
 
   return NextResponse.json({
     success: true, mode: closedDayCatchup ? "closed_day_catchup" : "session",
     processed: results.length, ok, errors: errs, symbols: batch,
+    price_cache_prewarm: { ...prewarm, requested: prewarmSymbols.length },
   });
 }
