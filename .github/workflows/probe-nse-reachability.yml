@@ -12,6 +12,18 @@ on:
     branches: [probe/nse-gh-actions]
   workflow_dispatch:
 
+# STATUS: first run (Sunday, market closed) was INCONCLUSIVE. NSE returned an
+# empty `{}` to the runner AND to a residential IP at the same moment, so
+# "GH IP blocked" could not be separated from "NSE serves nothing off-hours".
+# US/CBOE leg PASSED on the runner with numbers identical to local.
+#
+# To finish the test, re-run this during Indian market hours (09:15-15:30 IST =
+# 03:45-10:00 UTC, Mon-Fri):
+#     gh workflow run probe-nse-reachability.yml --ref probe/nse-gh-actions
+#
+# A `schedule:` trigger is deliberately NOT used: GitHub only fires scheduled
+# workflows from the default branch, so a cron here would silently never run.
+
 permissions:
   contents: read
 
