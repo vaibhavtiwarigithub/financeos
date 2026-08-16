@@ -1,0 +1,143 @@
+# THROWAWAY PROBE — delete after the reachability question is answered.
+# Question: can a GitHub Actions runner reach the NSE option-chain API, or does
+# NSE block Azure/GH IP ranges? Answering this decides whether India GEX can be
+# computed for real or has to fall back to the India-VIX percentile proxy.
+#
+# Read-only. Touches no database, no broker, no scoring. Always exits 0 so the
+# log is the deliverable, not the job status.
+name: Probe NSE reachability
+
+on:
+  push:
+    branches: [probe/nse-gh-actions]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Probe
+        run: |
+          python - <<'PY'
+          import requests, json, math, sys
+          from datetime import datetime
+
+          def line(): print("-" * 60)
+
+          # Runner egress IP — tells us which range NSE saw if it blocks us.
+          try:
+              ip = requests.get("https://api.ipify.org", timeout=10).text
+              print(f"RUNNER EGRESS IP: {ip}")
+          except Exception as e:
+              print(f"egress ip lookup failed: {e}")
+          line()
+
+          UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+          H = {"User-Agent": UA, "Accept": "*/*",
+               "Accept-Language": "en-US,en;q=0.9",
+               "Referer": "https://www.nseindia.com/option-chain"}
+
+          # --- TEST 1: US leg (CBOE). Control — proves the runner has working
+          # egress at all, so an NSE failure is attributable to NSE, not the net.
+          print("TEST 1 — CBOE _SPX.json (US leg)")
+          try:
+              r = requests.get(
+                  "https://cdn.cboe.com/api/global/delayed_quotes/options/_SPX.json",
+                  headers={"User-Agent": UA}, timeout=30)
+              print(f"  status: {r.status_code}  bytes: {len(r.content):,}")
+              if r.status_code == 200:
+                  d = r.json()["data"]
+                  opts = d["options"]
+                  live = [o for o in opts if (o.get("gamma") or 0) and (o.get("open_interest") or 0)]
+                  print(f"  spot: {d['current_price']:,.2f}")
+                  print(f"  contracts: {len(opts):,}  with gamma+OI: {len(live):,}")
+                  print("  RESULT: PASS" if live else "  RESULT: EMPTY")
+              else:
+                  print("  RESULT: FAIL")
+          except Exception as e:
+              print(f"  RESULT: EXCEPTION {type(e).__name__}: {str(e)[:200]}")
+          line()
+
+          # --- TEST 2: NSE homepage. Is the host reachable before we even ask
+          # for JSON? Separates "IP blocked" from "endpoint blocked".
+          print("TEST 2 — NSE homepage reachability + cookie warmup")
+          s = requests.Session()
+          warm_ok = False
+          try:
+              r = s.get("https://www.nseindia.com/option-chain", headers=H, timeout=20)
+              print(f"  status: {r.status_code}  bytes: {len(r.content):,}")
+              print(f"  cookies set: {list(s.cookies.keys())}")
+              warm_ok = r.status_code == 200 and len(s.cookies) > 0
+              print("  RESULT: PASS" if warm_ok else "  RESULT: FAIL")
+          except Exception as e:
+              print(f"  RESULT: EXCEPTION {type(e).__name__}: {str(e)[:200]}")
+          line()
+
+          # --- TEST 3: the endpoint that actually matters.
+          print("TEST 3 — NSE option-chain-v3 (India leg)")
+          expiries = []
+          try:
+              r = s.get("https://www.nseindia.com/api/option-chain-v3?type=Indices&symbol=NIFTY",
+                        headers=H, timeout=25)
+              print(f"  bootstrap status: {r.status_code}  bytes: {len(r.content):,}")
+              if r.status_code == 200:
+                  rec = r.json().get("records", {})
+                  expiries = rec.get("expiryDates", [])
+                  print(f"  expiries returned: {len(expiries)} -> {expiries[:3]}")
+              else:
+                  print(f"  body head: {r.text[:200]}")
+          except Exception as e:
+              print(f"  RESULT: EXCEPTION {type(e).__name__}: {str(e)[:200]}")
+          line()
+
+          # --- TEST 4: full GEX compute on the front expiry. The real end-to-end
+          # question: not just "does it answer" but "is the payload usable".
+          print("TEST 4 — end-to-end GEX compute (front expiry)")
+          if not expiries:
+              print("  SKIPPED — no expiries from TEST 3")
+              print("  RESULT: BLOCKED")
+          else:
+              def bs_gamma(S, K, T, r_, sig):
+                  if T <= 0 or sig <= 0 or S <= 0 or K <= 0: return 0.0
+                  d1 = (math.log(S/K) + (r_ + 0.5*sig*sig)*T) / (sig*math.sqrt(T))
+                  return math.exp(-0.5*d1*d1)/math.sqrt(2*math.pi)/(S*sig*math.sqrt(T))
+              exp = expiries[0]
+              try:
+                  r = s.get(f"https://www.nseindia.com/api/option-chain-v3?type=Indices&symbol=NIFTY&expiry={exp}",
+                            headers=H, timeout=25)
+                  print(f"  status: {r.status_code}")
+                  rec = r.json().get("records", {})
+                  S = rec.get("underlyingValue") or 0
+                  rows = rec.get("data", [])
+                  T = max((datetime.strptime(exp, "%d-%b-%Y") - datetime.utcnow()).days, 0)/365.0
+                  LOT, RF = 75, 0.065
+                  gex, used = 0.0, 0
+                  for row in rows:
+                      for side, sign in (("CE", 1.0), ("PE", -1.0)):
+                          o = row.get(side)
+                          if not o: continue
+                          oi = o.get("openInterest") or 0
+                          iv = (o.get("impliedVolatility") or 0)/100
+                          if oi == 0 or iv <= 0: continue
+                          used += 1
+                          gex += sign*bs_gamma(S, o.get("strikePrice", 0), T, RF, iv)*oi*LOT*S*S*0.01
+                  print(f"  expiry: {exp}   spot: {S:,.0f}   rows: {len(rows)}   legs used: {used}")
+                  print(f"  NET GEX: Rs {gex/1e7:,.0f} Cr per 1% move")
+                  print(f"  REGIME: {'POSITIVE (damped)' if gex > 0 else 'NEGATIVE (amplified)'}")
+                  print("  RESULT: PASS" if used > 0 else "  RESULT: EMPTY PAYLOAD")
+              except Exception as e:
+                  print(f"  RESULT: EXCEPTION {type(e).__name__}: {str(e)[:200]}")
+          line()
+          print("Probe complete. Exit 0 regardless — read the log, not the status.")
+          PY
