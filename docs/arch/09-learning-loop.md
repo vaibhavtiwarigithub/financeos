@@ -427,6 +427,33 @@ price-only OOS IC diagnostic. Backtest reads those results through an owner-only
 API; the browser cannot start the worker. These records are not promotion, scoring,
 or trading inputs.
 
+## Deterministic portfolio simulation (measure-only, P0)
+
+**Files:** `lib/simulation/portfolio-simulator.ts` and its fixture tests.
+**Spec:** `features/portfolio-simulation/FEATURE_ARCHITECTURE.md`.
+
+This pure TypeScript accounting engine evaluates predeclared entry/exit events in
+one native-currency market at a time. It explicitly models cash, costs,
+whole/fractional-share policy, open-name caps, and deterministic same-session
+ordering (exits before entries), so released cash can be redeployed exactly once.
+It does not fetch data, score symbols, select trades, call an LLM, persist rows,
+or reach a paper/live/broker path. A future sealed replay may use it to compare
+exit rules whose holding periods differ; no result can change a strategy without
+the ordinary validation and promotion lifecycle.
+
+## Governed external research (disabled P0 contract)
+
+**Files:** `lib/external-research/contracts.ts` and fixture tests.
+**Specs:** `features/external-research-shadow/FEATURE_ARCHITECTURE.md` and
+`features/external-research-integrations/FEATURE_ARCHITECTURE.md`.
+
+The initial contract rejects every external artifact until a real source commit,
+license/SBOM review, synthetic sandbox proof, and explicit release admission exist.
+It validates a single-market/currency snapshot, exact source/snapshot provenance,
+bounded payloads, finite numbers, and unsafe object keys. It has no dispatcher,
+credential, worker, provider, database, score, strategy, paper, live, or broker
+consumer. This is deliberately a safety foundation, not an enabled Vibe runtime.
+
 ## Performance Truth Layer
 
 **File:** `lib/evaluation/run-evaluation.ts`, `/api/agents/evaluation/*`
