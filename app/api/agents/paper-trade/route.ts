@@ -24,6 +24,7 @@ import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade
 import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-calendar";
 import { paperAllocationSpend, paperEntryQuantity } from "@/lib/trading/paper-quantity";
 import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/earnings-risk";
+import { benchmarkReturnPct, fetchBenchmarkObservation } from "@/lib/paper/benchmark-observation";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -1044,26 +1045,28 @@ export async function POST(req: NextRequest) {
       // Cumulative bench return is measured vs the FIRST recorded bench_nav for
       // this market. Fail-soft: if the benchmark quote is unavailable this run,
       // leave bench_*/alpha null rather than corrupting the series.
-      let benchNav: number | null = null, benchReturnPct: number | null = null;
-      try {
-        const benchSym = market === "india" ? "^NSEI" : "VOO";
-        const q = market === "india" ? await fetchIndiaQuote(benchSym) : await getQuote(benchSym, supabase);
-        const px = (q as any)?.price;
-        benchNav = typeof px === "number" && px > 0 ? px : null;
-        if (benchNav) {
-          const { data: firstPerf } = await supabase.from("paper_performance")
-            .select("bench_nav").eq("market", market).not("bench_nav", "is", null)
-            .order("date", { ascending: true }).limit(1).maybeSingle();
-          const benchStartNav = (firstPerf as any)?.bench_nav ?? benchNav;
-          benchReturnPct = benchStartNav ? ((benchNav - benchStartNav) / benchStartNav) * 100 : null;
-        }
-      } catch { /* benchmark unavailable this run — leave null */ }
+      // W5 — session-dated daily bar, not a quote. The old code accepted any
+      // positive benchmark quote and stored it under the cron's run date, which
+      // is how VOO's 2026-08-11 close ended up under both 2026-08-12 and
+      // 2026-08-13. If today's bar doesn't exist yet, no benchmark is written.
+      let benchNav: number | null = null, benchRetPct: number | null = null;
+      let benchSessionDate: string | null = null, benchSource: string | null = null;
+      const benchResult = await fetchBenchmarkObservation(market as "us" | "india", today);
+      if (benchResult.ok) {
+        benchNav = benchResult.observation.close;
+        benchSessionDate = benchResult.observation.sessionDate;
+        benchSource = benchResult.observation.source;
+        const { data: firstPerf } = await supabase.from("paper_performance")
+          .select("bench_nav").eq("market", market).not("bench_nav", "is", null)
+          .order("date", { ascending: true }).limit(1).maybeSingle();
+        benchRetPct = benchmarkReturnPct(benchNav, (firstPerf as any)?.bench_nav ?? benchNav);
+      }
 
       const truth = paperPerformanceTruth({
         market: market as "us" | "india",
         nav,
         previousNav: previousPerf?.nav == null ? null : Number(previousPerf.nav),
-        benchReturnPct,
+        benchReturnPct: benchRetPct,
         winCount: outcomes.filter((t) => t.outcome === "win").length,
         lossCount: outcomes.filter((t) => t.outcome === "loss").length,
         resolvedTradeCount: resolvedPaperOutcomeCount(outcomes),
@@ -1072,16 +1075,46 @@ export async function POST(req: NextRequest) {
       const perfRow: Record<string, any> = {
         date: today, nav, cash_balance: pool.cash_balance, positions_value: positionsValue,
         ...truth,
-        bench_nav: benchNav, bench_return_pct: benchReturnPct, market,
+        bench_nav: benchNav, bench_return_pct: benchRetPct, market,
         // Back-compat: US readers still keyed on spy_* (VOO tracks the S&P 500 too).
         spy_nav: market === "us" ? benchNav : null,
-        spy_return_pct: market === "us" ? benchReturnPct : null,
+        spy_return_pct: market === "us" ? benchRetPct : null,
+        bench_session_date: benchSessionDate,
+        bench_source: benchSource,
+        // W4 — PaperTrader is NOT the EOD writer. It runs at the open, so its
+        // NAV is a premarket/intraday snapshot.
+        snapshot_type: "intraday",
       };
-      const { error: perfErr } = await supabase.from("paper_performance").upsert(perfRow, { onConflict: "date,market" });
-      if (perfErr) { // pre-057: no market column / composite key
-        delete perfRow.market;
-        const { error: fallbackErr } = await supabase.from("paper_performance").upsert(perfRow, { onConflict: "date" });
-        if (fallbackErr) throw new Error(`paper_performance write failed (${market}): ${fallbackErr.message}`);
+
+      // W4 — one canonical EOD performance writer per market. PaperTrader used
+      // to upsert the same (date, market) key that PositionMonitor writes after
+      // the close, so an intraday mark could overwrite the EOD row. It may now
+      // only CREATE today's row when none exists; it never overwrites one.
+      const { data: existingPerf, error: existingErr } = await supabase
+        .from("paper_performance").select("date").eq("market", market).eq("date", today).maybeSingle();
+      if (existingErr && !isUndefinedColumn(existingErr)) {
+        throw new Error(`paper_performance read failed (${market}): ${existingErr.message}`);
+      }
+      if (existingPerf) {
+        console.warn(`[paper-trade] paper_performance ${market} ${today} already exists — leaving it alone (EOD row is canonical)`);
+      } else {
+        // Insert ladder: drop the not-yet-migrated provenance columns, then the
+        // pre-057 "no market column" case. Conflict = another writer won the
+        // race, which is the outcome we want anyway.
+        const attempt = async (row: Record<string, any>) => supabase.from("paper_performance").insert(row);
+        let perfWrite = await attempt(perfRow);
+        if (perfWrite.error && isUndefinedColumn(perfWrite.error)) {
+          const { bench_session_date, bench_source, snapshot_type, ...legacy } = perfRow;
+          perfWrite = await attempt(legacy);
+          if (perfWrite.error && isUndefinedColumn(perfWrite.error)) {
+            const { market: _m, ...noMarket } = legacy;
+            perfWrite = await attempt(noMarket);
+          }
+        }
+        // 23505 = the EOD/other writer inserted first. Never clobber it.
+        if (perfWrite.error && perfWrite.error.code !== "23505") {
+          throw new Error(`paper_performance write failed (${market}): ${perfWrite.error.message}`);
+        }
       }
       const { error: navErr } = await supabase.from("paper_portfolio").update({ nav }).eq("id", pool.id);
       if (navErr) throw new Error(`paper_portfolio NAV write failed (${market}): ${navErr.message}`);
