@@ -8,7 +8,9 @@
 > **2026-07-28 correction — PROMOTION REMAINS DORMANT, NOT PERMANENTLY CLOSED.** The h5 study measured pooled IC sigma ~0.27 and found no useful `mom_12_1` signal at h5 (mean IC 0.0089, t_HAC 0.32). It did **not** identify an effective breadth of 17: observed IC variance mixes sampling noise, changing point-in-time membership/coverage, and genuine time variation in factor returns. Inverting it with `1/sqrt(n-3)` cannot separate those causes, and an h5 estimate cannot set h20 requirements. The n=400 and sector-neutral tests therefore remain legitimate measure-only experiments rather than rejected escape routes. `POST /api/agents/backtest/promote` still fails closed; no policy can consume these diagnostics.
 > **2026-07-28 US PIT step-4 hardening:** `us_pit_adv20_top400_v2` ranks membership on a complete 20-session trailing dollar-volume window, shares cached session reads across overlapping as-of dates, excludes partial-window names, and persists one top-400 superset so matched n=200/n=400 tests use the same ranking. Report schema v2 retains successful-date cross-section and complete universe provenance. `persist_edge_pit_snapshot()` atomically writes exact snapshots to append-only `edge_universe_members`; it is service-role-only and conflicts fail closed. India PIT membership remains unavailable. These changes improve measure-only evidence and do not enable promotion.
 > **PROMOTION IS DORMANT (2026-07-27).** `POST /api/agents/backtest/promote` fails closed with `promotion_evidence_not_oos` (503) before any write. Adversarial review found one P0 and three P1 issues that each independently disqualify the current path: promotion is non-atomic (supersede-then-insert can leave a segment with no active policy); the evidence is not out-of-sample (~98.4% window overlap AND a current-liquid universe replayed through past dates — survivorship bias that more weekly runs cannot fix); `dsr_z` was not a Deflated Sharpe Ratio and is renamed `t_margin_vs_trials`, with the `dsr` column now written NULL; and experiment lineage is optional and unbound to the edge/market/horizon/segment it justifies. Re-enable only after `features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` is approved and shipped: frozen experiment lineage → PIT universe/inputs → purged market-session OOS folds → aggregate HAC IC → multiple-testing + cost-adjusted validation → atomic promotion RPC.
-> Last updated: 2026-07-27. The deterministic promotion route is implemented
+> Last updated: 2026-08-16 (label-maturation coverage + starvation, W7/W8 — see
+> "Label maturation: coverage, budgets and skip accounting"). Prior note
+> 2026-07-27: The deterministic promotion route is implemented
 > but is governance scaffolding only: production has zero policies, its rolling
 > IC windows are not OOS, its current-universe history is not PIT, its
 > trial-adjusted t margin is not DSR, and supersede/insert is not atomic. The
@@ -264,6 +266,63 @@ This is separate from weight mutation — it runs regardless of the phase gate.
 
 **Deterministic, no LLM.** Replays a Challenger vs the current Champion on walk-forward
 held-out slices of the `decision_observations` ledger.
+
+### Label maturation: coverage, budgets and skip accounting (2026-08-16, W7/W8)
+
+`/api/agents/label-maturation` returned `{success:true, matured:0, skipped:800}`
+for 25 days and every monitoring layer read it as healthy. Labels stop dead at
+2026-07-22 in **both** markets, with 1,738 US / 448 India observations old
+enough to label and unlabelled. Three defects, each individually silent:
+
+1. **Row existence was mistaken for coverage.** `usCandles()` returned any
+   non-empty cached slice. `sinceDate` was `decisionDate − 5 days`, so one
+   stale-but-present `price_cache` row satisfied it and the provider fallback
+   below it was **unreachable** — coverage could never self-heal.
+2. **The candle memo was range-blind.** It was keyed `market:symbol` but spanned
+   all four horizons, so an h2 request's narrow window was reused for a later
+   h20 request of the same symbol and starved it.
+3. **The oldest rows monopolised the budget.** `loadPendingObservations` ordered
+   `ts ASC` and sliced the first 200, so a permanently-failing prefix consumed
+   the entire per-horizon budget every run and newer observations were never
+   reached.
+
+The rule now, in `lib/learning/label-window.ts`:
+
+- **`forwardWindow(candles, decisionDate, horizonDays)`** is the only coverage
+  test — the entry bar plus `horizonDays` forward sessions, or `null`. Never
+  `candles.length > 0`, never a row count.
+- **`CandleResolver`** re-checks coverage on every request, widens the cache
+  read when a later horizon reaches further back than any previous request, and
+  falls through to the provider **exactly once per symbol per run** when
+  coverage is still short. A per-key promise chain keeps the old memo's
+  "one fetch per symbol" property without its range blindness.
+- **Scan budget is decoupled from success budget:** `SCAN_CAP` 2000 observations
+  examined per horizon, `SUCCESS_BUDGET` 200 labels produced. Skipped rows spend
+  the scan budget only. Capacity is split between an oldest-first pass and a
+  deterministic day-rotating cursor (`rotatingOffset`), which visits every page
+  over consecutive days, so the newest observations are always reachable.
+- **`SkipLedger`** reports skips by reason (`no_candles`, `window_incomplete`,
+  `no_entry_price`, `label_unavailable`, `insert_failed`, `exception`) and by
+  symbol, in both the HTTP response and the `agent_runs.result_summary`.
+
+**Detector.** `zeroOutputWithPending` — `matured === 0 && skipped > 0`, the exact
+incident signature — writes `agent_runs.status='error'` instead of `'done'`. A
+fully-drained backlog yields `matured:0, skipped:0` and stays healthy. Regression
+cover is `tests/label-window.test.ts`, which fails if a stale cache short-circuits
+the provider, if the memo starves an h20 window after an h2 request, or if a
+permanently-failing prefix consumes the label budget.
+
+**A rejected design, recorded so it is not rebuilt:** a `label_attempts` column
+on `decision_observations`. One observation participates in h2/h5/h10/h20, so a
+single counter cannot distinguish a transient h20 shortage from a permanent h2
+failure and would exclude valid work for the wrong horizon. A horizon-scoped
+retry ledger keyed `(observation_id, horizon_days)` is the fallback, and only if
+permanent failures survive the coverage fix.
+
+**Open:** draining the 1,738 US / 448 India backlog and confirming the label
+high-watermark advances past 2026-07-22 requires production access and has not
+been done. Until it is, `observation_labels` coverage beyond 2026-07-22 is
+unproven and the US-vs-India scoring comparison stays in question.
 
 ### ATR exit-policy evidence (measure-only)
 
