@@ -25,6 +25,7 @@ import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-
 import { paperAllocationSpend, paperEntryQuantity } from "@/lib/trading/paper-quantity";
 import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/earnings-risk";
 import { benchmarkReturnPct, fetchBenchmarkObservation } from "@/lib/paper/benchmark-observation";
+import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -1135,7 +1136,21 @@ export async function POST(req: NextRequest) {
       await supabase.from("agent_runs").update({
         status: "done", symbols: tradedSymbols, signals_written: filled.length,
         result_summary: `${filled.length} trades filled, ${skipped.length} skipped${skipSummary ? ` (${skipSummary})` : ""}, ${expiredTotal} stale expired. NAV ${navSummary}`,
-        workload_metrics: { skip_reasons: skipReasons },
+        workload_metrics: {
+          skip_reasons: skipReasons,
+          ...runAccountingEnvelope({
+            job: `paper-trade:${marketScope ?? "us"}`,
+            market: (marketScope ?? "us") as "us" | "india",
+            eligible: filled.length + skipped.length,
+            succeeded: filled.length,
+            expectedSkip: expiredTotal,
+            deferred: 0,
+            unavailable: 0,
+            failed: skipped.filter((s: any) => s?.reason === "quote_stale" || s?.reason?.startsWith("error")).length,
+            skipReasons,
+            businessMetrics: { fills: filled.length, expired: expiredTotal },
+          }),
+        },
         completed_at: new Date().toISOString(), tokens_input: 0, tokens_output: 0, claude_calls: 0,
       } as any).eq("id", runId);
     }

@@ -7,15 +7,14 @@ import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadChampionGenome } from "@/lib/validation/genome-live";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 import { setMarketPaused } from "@/lib/market-controls";
 import { computeExitFillPrice, getBatchQuotes } from "@/lib/data/quotes";
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
-// paperPartialTargetQuantity is intentionally NOT imported: partial exits are
-// disabled by W2-interim (see the target branch below). The helper and its tests
-// stay for W2-full, which reinstates splitting via an exit-fill ledger.
+import { paperPartialTargetQuantity } from "@/lib/trading/paper-quantity";
 import { admitMarketLocalSlot } from "@/lib/trading/market-calendar";
 import {
   buildPositionMark, markLedgerRow, navFromMarks, reconcilePersistedNav, summariseMarkCoverage,
@@ -453,6 +452,8 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
 
     let exitReason: string | null = null;
     let outcome: string | null = null;
+    let exitQtyOverride: number | undefined = undefined;
+    let partialStopOverride: number | undefined = undefined;
 
     // Use session low (if available) to detect intraday stop touches.
     // A stop hit mid-session is real even when price recovered by close.
@@ -465,24 +466,24 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       exitReason = priceForStopCheck < currentPrice ? "stop_hit_intraday" : "stop_hit";
       outcome = trailingStop > pos.avg_cost ? "win" : "loss";
     } else if (pos.position_role !== "hedge" && priceTarget && currentPrice >= priceTarget) {
-      // W2-INTERIM (2026-08-16): partial profit-taking is DISABLED.
+      // W2-full (2026-08-17): partial profit-taking restored.
       //
-      // `execute_paper_exit` implements a partial exit by cloning a residual
-      // `order_side='buy'` lot. The anti-pyramiding trigger
-      // (20260806203000_prevent_paper_alpha_pyramiding.sql) rejects that insert
-      // because the position is by definition still open, and the clone would
-      // additionally collide with the `paper_event_id` and `(market, signal_id)`
-      // unique indexes. The RPC error propagates out of closePosition and aborts
-      // the ENTIRE monitor run, so every later holding silently misses its
-      // stop/target check — this happened on 2026-08-13 and 2026-08-14 (LNC).
-      //
-      // Taking the full target exit is strictly safer than aborting the book
-      // run: it forgoes letting a runner run, but never skips a stop.
-      //
-      // Restore the split only with the append-only exit-fill ledger (W2-full);
-      // do NOT simply re-enable this branch or exempt the trigger.
-      exitReason = "target_hit";
-      outcome = "win";
+      // Migration 20260817180000 adds partial_exit_lot boolean to paper_trades
+      // and updates execute_paper_exit to mark residual lots with the flag.
+      // The anti-pyramiding trigger and buy-signal unique indexes are updated to
+      // exempt flagged rows, so the residual INSERT no longer aborts the run.
+      const partialQty = paperPartialTargetQuantity(market, pos.qty);
+      if (partialQty !== null && partialQty < Number(pos.qty)) {
+        // Partial: close half at target, let the runner run with stop→breakeven.
+        exitReason = "partial_target";
+        outcome = "win";
+        exitQtyOverride = partialQty;
+        partialStopOverride = Number(pos.avg_cost); // breakeven stop on remainder
+      } else {
+        // Position too small to split or helper returned null → full exit.
+        exitReason = "target_hit";
+        outcome = "win";
+      }
     }
 
     if (exitReason && outcome) {
@@ -490,7 +491,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       // An intraday or gap stop may have triggered at a price above current close.
       const fillPrice = exitReason === "stop_hit" || exitReason === "stop_hit_intraday"
         ? trailingStop : currentPrice;
-      await closePosition(pos, fillPrice, exitReason, outcome);
+      await closePosition(pos, fillPrice, exitReason, outcome, exitQtyOverride, partialStopOverride);
     } else {
       // Still open — refresh current_price + trailing-stop anchor. This is
       // the update that was missing entirely before: current_price never
@@ -805,6 +806,17 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
         : `Checked ${positions.length}, closed ${closed.length}, updated ${updated.length}, unpriced ${unpricedByMarket.us.length + unpricedByMarket.india.length}, stale scores held ${staleScoresHeld.length}. Mark ledger ${markLedgerStatus}${markLedgerDetail ? ` (${markLedgerDetail})` : ""}.`,
       started_at: startedAt,
       completed_at: new Date().toISOString(),
+      workload_metrics: runAccountingEnvelope({
+        job: `position-monitor:${marketScope ?? "us"}`,
+        market: (marketScope ?? "us") as "us" | "india",
+        eligible: positions.length,
+        succeeded: closed.length + updated.length,
+        expectedSkip: 0,
+        deferred: 0,
+        unavailable: unpricedByMarket.us.length + unpricedByMarket.india.length,
+        failed: 0,
+        businessMetrics: { closed: closed.length, stops_updated: updated.length, stale_held: staleScoresHeld.length },
+      }),
     } as any);
   } catch { /* best-effort — never fail the monitor run over bookkeeping */ }
 
