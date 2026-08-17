@@ -28,7 +28,7 @@ type MandatePreset = Pick<TradingMandate,
 
 export const HORIZON_PRESETS: Record<HorizonStyle, MandatePreset> = {
   short_swing: { min_hold_days: 2, target_hold_days: 5, max_hold_days: 5, score_threshold: 65, stop_loss_pct: 5, target_pct: 12 },
-  swing:       { min_hold_days: 5, target_hold_days: 10, max_hold_days: 15, score_threshold: 60, stop_loss_pct: 7, target_pct: 20 },
+  swing:       { min_hold_days: 5, target_hold_days: 10, max_hold_days: 15, score_threshold: 60, stop_loss_pct: 7, target_pct: 8 },
   position:    { min_hold_days: 10, target_hold_days: 20, max_hold_days: 20, score_threshold: 58, stop_loss_pct: 10, target_pct: 30 },
 };
 

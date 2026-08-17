@@ -102,7 +102,7 @@ export function resolveExecutionRiskReward(args: {
   learned?: { stopMaePctile: unknown; targetMfePctile: unknown; n: unknown } | null;
 }): ExecutionRiskReward {
   const mandateStop = boundedPct(args.mandateStopLossPct, 7, 30);
-  const mandateTarget = boundedPct(args.mandateTargetPct, 20, 100);
+  const mandateTarget = boundedPct(args.mandateTargetPct, 8, 100);
   const learnedN = Number(args.learned?.n);
   const mae = Number(args.learned?.stopMaePctile);
   const mfe = Number(args.learned?.targetMfePctile);
