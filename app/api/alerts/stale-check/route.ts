@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { evaluateRunAccounting, parseRunAccounting } from "@/lib/monitoring/run-accounting";
+import { checkFreshnessContracts } from "@/lib/monitoring/freshness-contracts";
 
 export const dynamic = "force-dynamic";
 
@@ -152,8 +155,66 @@ async function runCheck() {
       return job.label.includes("India") ? isIndiaRun(r) : !isIndiaRun(r);
     };
 
-    const ran = (todaysRuns ?? []).some(matchesMarket);
-    results.push({ job: job.label, ran });
+    // W6. A row existing is NOT evidence the job ran. `agent_runs.status='error'`
+    // has always been written faithfully and read by nothing, so the two
+    // PositionMonitor runs that aborted on 2026-08-13/14 (leaving stops
+    // unevaluated for every holding) were counted here as healthy. An errored
+    // run is a failed run: it does not satisfy the schedule, and it gets its own
+    // alert so the failure is visible even when a later retry succeeds.
+    const marketRuns = (todaysRuns ?? []).filter(matchesMarket);
+    const isError = (r: any) => /^(error|failed)$/i.test(String(r?.status ?? ""));
+    const okRuns = marketRuns.filter((r: any) => !isError(r));
+    const errorRuns = marketRuns.filter(isError);
+    const ran = okRuns.length > 0;
+
+    const failureKey = `run-failed:${job.agentType}:${job.requiresIndia ? "india" : "us"}`;
+    if (errorRuns.length) {
+      const latestError = errorRuns[0];
+      await reportIssue({
+        issueKey: failureKey,
+        severity: ran ? "warn" : "critical",
+        category: "cron",
+        title: `${job.label} recorded ${errorRuns.length} failed run(s) on ${dateStr}`,
+        detail: [
+          `Detected: ${fmtDateTime(now)}`,
+          `agent_runs.status='error' at ${latestError?.started_at ?? "unknown time"}`,
+          `Output: ${String(latestError?.result_summary ?? "none recorded").slice(0, 300)}`,
+          ran
+            ? "A later run for this job/market completed, so the schedule is satisfied — but the failure still happened and its units were not processed."
+            : "No completed run exists for this job/market today. Everything downstream of it is unevaluated.",
+          `Recovery: ${job.recoveryCmd}`,
+        ].join(" · "),
+        autoExpireAt: new Date(Date.now() + 72 * 3600 * 1000).toISOString(),
+      }, svc);
+    } else {
+      await resolveIssue(failureKey, svc);
+    }
+
+    // W6, within-run accounting. `status='done'` says the handler returned; it
+    // says nothing about whether the run accounted for its own work. Jobs that
+    // emit a run-accounting envelope get their reconciliation checked here.
+    // Jobs that do not are UNKNOWN — never assumed healthy.
+    let accounting: string | null = null;
+    for (const run of okRuns) {
+      const parsed = parseRunAccounting((run as any).result_summary);
+      if (!parsed) continue;
+      const verdict = evaluateRunAccounting(parsed);
+      accounting = verdict.state;
+      const key = `run-accounting:${job.agentType}:${job.requiresIndia ? "india" : "us"}`;
+      if (verdict.healthy) { await resolveIssue(key, svc); break; }
+      const worst = verdict.findings.some((f) => f.severity === "critical") ? "critical" : "warn";
+      await reportIssue({
+        issueKey: key,
+        severity: worst,
+        category: "cron",
+        title: `${job.label}: run state ${verdict.state} — ${verdict.findings[0].title}`,
+        detail: [verdict.summary, ...verdict.findings.map((f) => f.detail), `Recovery: ${job.recoveryCmd}`].join(" · "),
+        autoExpireAt: new Date(Date.now() + 72 * 3600 * 1000).toISOString(),
+      }, svc);
+      break;
+    }
+
+    results.push({ job: job.label, ran, errored: errorRuns.length, accounting });
     if (ran) continue;
 
     // Missing — dedup on an open alert with the same job label for today.
@@ -196,7 +257,24 @@ async function runCheck() {
     });
   }
 
-  return NextResponse.json({ checked: true, hour, indiaEnabled, results });
+  // W6, cross-run layer. Liveness checks above ask "did each job run today".
+  // They cannot see a job that runs daily, reports success, and moves nothing —
+  // which is precisely how label maturation produced zero labels for 25 days.
+  // The freshness registry asks the complementary question: did the watermark
+  // of the table each job is responsible for actually advance, PER SYMBOL.
+  const freshness = await checkFreshnessContracts(svc, { now, includeIndia: indiaEnabled });
+
+  return NextResponse.json({
+    checked: true,
+    hour,
+    indiaEnabled,
+    results,
+    freshness: freshness.map((f) => ({
+      contract: f.contractId, version: f.version, breached: f.breached,
+      coverage: Number(f.coverage.toFixed(3)), scopes: f.totalScopes,
+      newest: f.newestWatermark, kind: f.kind,
+    })),
+  });
 }
 
 // The checker writes alerts and journal rows through a service-role client, so
