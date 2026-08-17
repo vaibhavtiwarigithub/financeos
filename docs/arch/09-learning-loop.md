@@ -8,7 +8,9 @@
 > **2026-07-28 correction — PROMOTION REMAINS DORMANT, NOT PERMANENTLY CLOSED.** The h5 study measured pooled IC sigma ~0.27 and found no useful `mom_12_1` signal at h5 (mean IC 0.0089, t_HAC 0.32). It did **not** identify an effective breadth of 17: observed IC variance mixes sampling noise, changing point-in-time membership/coverage, and genuine time variation in factor returns. Inverting it with `1/sqrt(n-3)` cannot separate those causes, and an h5 estimate cannot set h20 requirements. The n=400 and sector-neutral tests therefore remain legitimate measure-only experiments rather than rejected escape routes. `POST /api/agents/backtest/promote` still fails closed; no policy can consume these diagnostics.
 > **2026-07-28 US PIT step-4 hardening:** `us_pit_adv20_top400_v2` ranks membership on a complete 20-session trailing dollar-volume window, shares cached session reads across overlapping as-of dates, excludes partial-window names, and persists one top-400 superset so matched n=200/n=400 tests use the same ranking. Report schema v2 retains successful-date cross-section and complete universe provenance. `persist_edge_pit_snapshot()` atomically writes exact snapshots to append-only `edge_universe_members`; it is service-role-only and conflicts fail closed. India PIT membership remains unavailable. These changes improve measure-only evidence and do not enable promotion.
 > **PROMOTION IS DORMANT (2026-07-27).** `POST /api/agents/backtest/promote` fails closed with `promotion_evidence_not_oos` (503) before any write. Adversarial review found one P0 and three P1 issues that each independently disqualify the current path: promotion is non-atomic (supersede-then-insert can leave a segment with no active policy); the evidence is not out-of-sample (~98.4% window overlap AND a current-liquid universe replayed through past dates — survivorship bias that more weekly runs cannot fix); `dsr_z` was not a Deflated Sharpe Ratio and is renamed `t_margin_vs_trials`, with the `dsr` column now written NULL; and experiment lineage is optional and unbound to the edge/market/horizon/segment it justifies. Re-enable only after `features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` is approved and shipped: frozen experiment lineage → PIT universe/inputs → purged market-session OOS folds → aggregate HAC IC → multiple-testing + cost-adjusted validation → atomic promotion RPC.
-> Last updated: 2026-08-16 (label-maturation coverage + starvation, W7/W8 — see
+> Last updated: 2026-08-17 (h60/h120 evaluation horizons — see "Evaluation
+> horizons are decoupled from holding period"; 2026-08-16 label-maturation
+> coverage + starvation W7/W8 — see
 > "Label maturation: coverage, budgets and skip accounting"). Prior note
 > 2026-07-27: The deterministic promotion route is implemented
 > but is governance scaffolding only: production has zero policies, its rolling
@@ -49,8 +51,38 @@ The loop is:
 
 Every new ResearchAgent decision stores an indicative stop/objective/horizon in
 `decision_observations.features.trade_plan`. Nightly label maturation already
-stores immutable 2/5/10/20-session forward return, benchmark-neutral return,
-MFE, and MAE in `observation_labels`.
+stores immutable 2/5/10/20/60/120-session forward return, benchmark-neutral
+return, MFE, and MAE in `observation_labels`.
+
+### Evaluation horizons are decoupled from holding period (2026-08-17)
+
+`HORIZONS` in `app/api/agents/label-maturation/route.ts` is `[2, 5, 10, 20, 60,
+120]`. h60/h120 were added on 2026-08-17. The trading mandate holds 5–15 days;
+the long horizons are **not** a mandate change and no position is held longer
+because of them. Every horizon is labelled from the same observation, so the
+long ones answer a question the ≤20d labels structurally cannot: *are we exiting
+too early?*
+
+They were added before they could produce anything, deliberately. Maturation is
+calendar-bound: `maturityCutoff(60)` is `now-85d` against an oldest observation
+of 2026-07-06, so h60/h120 matched zero rows at merge time and exit on the first
+empty page. First h60 label ≈ 2026-09-29; roughly 20 independent decision dates
+by late October. Starting the clock early is the whole point — no engineering
+compresses forward time.
+
+**Read long-horizon results by distinct decision DATES, not label count.**
+Observations scored on one day share that day's market shock and are one draw,
+not N. At h20 the sample was already only ~10 dates per market when the long
+horizons were added.
+
+**Provider depth is load-bearing.** `CandleResolver.providerTried` is keyed
+`market:symbol`, so each symbol is fetched at most once per run and that single
+fetch must satisfy the *longest* horizon. India's provider range was widened
+`3mo` → `2y` for exactly this reason: a ~63-bar series cannot cover a
+120-session forward window at any decision date, and the fetch is never retried,
+so short coverage would starve the long horizons silently for the whole run. US
+needed no change (`lib/data/candles.ts` fetches Yahoo at `range=1y`, ~251 bars).
+`tests/label-window.test.ts` pins this contract.
 
 `lib/learning/plan-calibration.ts` joins those two truths only when the label
 horizon exactly matches the original plan horizon. It reports objective reach,
