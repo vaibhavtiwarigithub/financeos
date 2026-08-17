@@ -36,25 +36,36 @@ async function loadBenchmarks(svc: any): Promise<BenchmarkConfig[]> {
 }
 
 async function upsertPaperObservations(svc: any, benchmark: BenchmarkConfig) {
-  const { data, error } = await svc
+  const query = (columns: string) => svc
     .from("paper_performance")
-    .select("date, bench_nav")
+    .select(columns)
     .eq("market", benchmark.market)
     .not("bench_nav", "is", null)
     .order("date", { ascending: true })
     .limit(500);
+  let { data, error } = await query("date, bench_nav, bench_session_date, bench_source");
+  // The migration is intentionally not assumed to be applied yet.
+  if (error) ({ data, error } = await query("date, bench_nav"));
   if (error) return;
   const rows = (data ?? [])
-    .map((r: any) => ({
-      benchmark_id: benchmark.id,
-      component_symbol: benchmark.provider_symbol ?? benchmark.symbol ?? benchmark.label,
-      date: String(r.date).slice(0, 10),
-      close: Number(r.bench_nav),
-      currency: benchmark.currency,
-      provider: "paper_performance",
-      source_status: Number(r.bench_nav) > 0 ? "ok" : "missing",
-      error: null,
-    }))
+    .map((r: any) => {
+      const date = String(r.date).slice(0, 10);
+      const session = r.bench_session_date ? String(r.bench_session_date).slice(0, 10) : null;
+      return {
+        benchmark_id: benchmark.id,
+        component_symbol: benchmark.provider_symbol ?? benchmark.symbol ?? benchmark.label,
+        date,
+        close: Number(r.bench_nav),
+        currency: benchmark.currency,
+        provider: r.bench_source ? String(r.bench_source) : "paper_performance",
+        source_status: !(Number(r.bench_nav) > 0) ? "missing"
+          : session != null && session !== date ? "unpriceable"
+          : "ok",
+        error: session != null && session !== date
+          ? `benchmark close belongs to session ${session}, not ${date}`
+          : null,
+      };
+    })
     .filter((r: any) => Number.isFinite(r.close) && r.close > 0);
   if (rows.length) {
     await svc.from("benchmark_price_observations").upsert(rows, { onConflict: "benchmark_id,component_symbol,date" });
@@ -202,7 +213,11 @@ async function buildScorecards(svc: any) {
   }
 
   if (rows.length) {
-    const payload = rows.map((r) => ({ ...r, updated_at: new Date().toISOString() }));
+    const payload = rows.map((r) => ({
+      ...r,
+      coverage_pct: r.coverage_pct == null ? null : Math.min(100, r.coverage_pct),
+      updated_at: new Date().toISOString(),
+    }));
     const { error } = await svc.from("benchmark_scorecard").upsert(payload, {
       onConflict: "market,currency,book,book_scope,benchmark_id,horizon,as_of",
     });

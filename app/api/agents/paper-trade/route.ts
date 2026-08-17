@@ -24,6 +24,7 @@ import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade
 import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-calendar";
 import { paperAllocationSpend, paperEntryQuantity } from "@/lib/trading/paper-quantity";
 import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/earnings-risk";
+import { benchmarkReturnPct, fetchBenchmarkObservation } from "@/lib/paper/benchmark-observation";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -1041,29 +1042,26 @@ export async function POST(req: NextRequest) {
 
       // Per-market benchmark for alpha + the return-vs-benchmark chart:
       // US = VOO, India = NIFTY 50 (^NSEI). Stored provider-neutral in bench_*.
-      // Cumulative bench return is measured vs the FIRST recorded bench_nav for
-      // this market. Fail-soft: if the benchmark quote is unavailable this run,
-      // leave bench_*/alpha null rather than corrupting the series.
-      let benchNav: number | null = null, benchReturnPct: number | null = null;
-      try {
-        const benchSym = market === "india" ? "^NSEI" : "VOO";
-        const q = market === "india" ? await fetchIndiaQuote(benchSym) : await getQuote(benchSym, supabase);
-        const px = (q as any)?.price;
-        benchNav = typeof px === "number" && px > 0 ? px : null;
-        if (benchNav) {
-          const { data: firstPerf } = await supabase.from("paper_performance")
-            .select("bench_nav").eq("market", market).not("bench_nav", "is", null)
-            .order("date", { ascending: true }).limit(1).maybeSingle();
-          const benchStartNav = (firstPerf as any)?.bench_nav ?? benchNav;
-          benchReturnPct = benchStartNav ? ((benchNav - benchStartNav) / benchStartNav) * 100 : null;
-        }
-      } catch { /* benchmark unavailable this run — leave null */ }
+      // A daily benchmark value must be the bar for this market session. A quote
+      // from an earlier close may not be relabelled as today's close.
+      let benchNav: number | null = null, benchRetPct: number | null = null;
+      let benchSessionDate: string | null = null, benchSource: string | null = null;
+      const benchResult = await fetchBenchmarkObservation(market as "us" | "india", today);
+      if (benchResult.ok) {
+        benchNav = benchResult.observation.close;
+        benchSessionDate = benchResult.observation.sessionDate;
+        benchSource = benchResult.observation.source;
+        const { data: firstPerf } = await supabase.from("paper_performance")
+          .select("bench_nav").eq("market", market).not("bench_nav", "is", null)
+          .order("date", { ascending: true }).limit(1).maybeSingle();
+        benchRetPct = benchmarkReturnPct(benchNav, (firstPerf as any)?.bench_nav ?? benchNav);
+      }
 
       const truth = paperPerformanceTruth({
         market: market as "us" | "india",
         nav,
         previousNav: previousPerf?.nav == null ? null : Number(previousPerf.nav),
-        benchReturnPct,
+        benchReturnPct: benchRetPct,
         winCount: outcomes.filter((t) => t.outcome === "win").length,
         lossCount: outcomes.filter((t) => t.outcome === "loss").length,
         resolvedTradeCount: resolvedPaperOutcomeCount(outcomes),
@@ -1072,16 +1070,37 @@ export async function POST(req: NextRequest) {
       const perfRow: Record<string, any> = {
         date: today, nav, cash_balance: pool.cash_balance, positions_value: positionsValue,
         ...truth,
-        bench_nav: benchNav, bench_return_pct: benchReturnPct, market,
+        bench_nav: benchNav, bench_return_pct: benchRetPct, market,
         // Back-compat: US readers still keyed on spy_* (VOO tracks the S&P 500 too).
         spy_nav: market === "us" ? benchNav : null,
-        spy_return_pct: market === "us" ? benchReturnPct : null,
+        spy_return_pct: market === "us" ? benchRetPct : null,
+        bench_session_date: benchSessionDate,
+        bench_source: benchSource,
+        snapshot_type: "intraday",
       };
-      const { error: perfErr } = await supabase.from("paper_performance").upsert(perfRow, { onConflict: "date,market" });
-      if (perfErr) { // pre-057: no market column / composite key
-        delete perfRow.market;
-        const { error: fallbackErr } = await supabase.from("paper_performance").upsert(perfRow, { onConflict: "date" });
-        if (fallbackErr) throw new Error(`paper_performance write failed (${market}): ${fallbackErr.message}`);
+
+      // PaperTrader is an intraday writer. It may create a same-day snapshot but
+      // must never overwrite PositionMonitor's post-close canonical EOD mark.
+      const { data: existingPerf, error: existingErr } = await supabase
+        .from("paper_performance").select("date").eq("market", market).eq("date", today).maybeSingle();
+      if (existingErr && !isUndefinedColumn(existingErr)) {
+        throw new Error(`paper_performance read failed (${market}): ${existingErr.message}`);
+      }
+      if (!existingPerf) {
+        const attempt = async (row: Record<string, any>) => supabase.from("paper_performance").insert(row);
+        let perfWrite = await attempt(perfRow);
+        if (perfWrite.error && isUndefinedColumn(perfWrite.error)) {
+          const { bench_session_date, bench_source, snapshot_type, ...legacy } = perfRow;
+          perfWrite = await attempt(legacy);
+          if (perfWrite.error && isUndefinedColumn(perfWrite.error)) {
+            const { market: _market, ...noMarket } = legacy;
+            perfWrite = await attempt(noMarket);
+          }
+        }
+        // Another writer winning the unique-key race is safe: do not clobber it.
+        if (perfWrite.error && perfWrite.error.code !== "23505") {
+          throw new Error(`paper_performance write failed (${market}): ${perfWrite.error.message}`);
+        }
       }
       const { error: navErr } = await supabase.from("paper_portfolio").update({ nav }).eq("id", pool.id);
       if (navErr) throw new Error(`paper_portfolio NAV write failed (${market}): ${navErr.message}`);

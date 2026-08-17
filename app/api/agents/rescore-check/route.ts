@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { isFreshSessionDate } from "@/lib/data/price-cache-freshness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -60,21 +61,35 @@ export async function POST(req: NextRequest) {
   }
 
   const flags: any[] = [];
+  const skipped: Record<string, number> = {};
+  const staleSymbols: { symbol: string; asOf: string }[] = [];
+  const skip = (reason: string) => { skipped[reason] = (skipped[reason] ?? 0) + 1; };
   const now = Date.now();
+  let evaluated = 0;
   for (const sym of symbols) {
     const sig = latest[sym];
     const rows = bySymbol[sym];
-    if (!rows?.length) continue;
+    if (!rows?.length) { skip("no_price_data"); continue; }
 
     const sigDay = sig.date.slice(0, 10);
     const daysSince = (now - new Date(sig.date).getTime()) / 86400_000;
-    if (daysSince < MIN_DAYS_SINCE) continue;
+    if (daysSince < MIN_DAYS_SINCE) { skip("too_recent"); continue; }
 
-    const currentClose = rows[0].close; // rows sorted date desc
-    const signalRow = rows.find(r => r.date <= sigDay) ?? rows[rows.length - 1];
+    const currentRow = rows[0];
+    if (!isFreshSessionDate(currentRow.date, "us")) {
+      skip("stale_price_cache");
+      staleSymbols.push({ symbol: sym, asOf: currentRow.date });
+      continue;
+    }
+
+    const signalRow = rows.find(r => r.date <= sigDay);
+    if (!signalRow) { skip("no_bar_at_signal_date"); continue; }
+
+    const currentClose = currentRow.close;
     const signalClose = signalRow.close;
-    if (!currentClose || !signalClose) continue;
+    if (!currentClose || !signalClose) { skip("unusable_close"); continue; }
 
+    evaluated++;
     const movePct = ((currentClose - signalClose) / signalClose) * 100;
 
     let flag: string | null = null;
@@ -106,9 +121,16 @@ export async function POST(req: NextRequest) {
     inserted++;
   }
 
-  // "evaluated" = symbols that actually had price data (not just candidates).
-  const evaluated = symbols.filter(s => (bySymbol[s]?.length ?? 0) > 0).length;
-  return NextResponse.json({ candidates: symbols.length, evaluated, flagged: flags.length, new_flags: inserted, flags });
+  return NextResponse.json({
+    candidates: symbols.length,
+    evaluated,
+    flagged: flags.length,
+    new_flags: inserted,
+    skipped,
+    stale_symbols: staleSymbols.slice(0, 20),
+    degraded: symbols.length > 0 && evaluated === 0,
+    flags,
+  });
 }
 
 // GET: recent rescore flags (from learning_log)

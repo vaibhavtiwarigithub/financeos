@@ -141,7 +141,10 @@ BEGIN
   ) THEN
     ALTER TABLE public.paper_performance
       ADD CONSTRAINT paper_performance_bench_session_matches_date
-      CHECK (bench_nav IS NULL OR bench_session_date IS NULL OR bench_session_date = date)
+      CHECK (
+        bench_nav IS NULL
+        OR (bench_session_date IS NOT NULL AND bench_session_date = date)
+      )
       NOT VALID;
   END IF;
 END $$;

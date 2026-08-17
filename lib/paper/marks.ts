@@ -184,6 +184,11 @@ export function positionsValueFromMarks(marks: PositionMark[]): number {
   return marks.reduce((sum, m) => sum + m.qty * m.mark, 0);
 }
 
+/** Canonical NAV for one already market-scoped pool and its sourced marks. */
+export function navFromMarks(cash: number, marks: PositionMark[]): number {
+  return cash + positionsValueFromMarks(marks);
+}
+
 export interface NavCheck {
   name: string;
   ok: boolean;
@@ -230,7 +235,7 @@ const tolFor = (v: number) => Math.max(0.01, Math.abs(v) * 1e-6);
  */
 export function reconcilePersistedNav(input: NavReconcileInput): NavReconciliation {
   const positionsValue = positionsValueFromMarks(input.marks);
-  const navFromMarks = input.cash + positionsValue;
+  const expectedNav = navFromMarks(input.cash, input.marks);
   const coverage = summariseMarkCoverage(input.marks);
   const checks: NavCheck[] = [];
 
@@ -246,11 +251,11 @@ export function reconcilePersistedNav(input: NavReconcileInput): NavReconciliati
     checks.push({ name, ok: diff <= tolerance, expected, actual: a, diff, tolerance, detail });
   };
 
-  compare("paper_portfolio.nav", navFromMarks, input.persistedPortfolioNav,
+  compare("paper_portfolio.nav", expectedNav, input.persistedPortfolioNav,
     "persisted portfolio NAV vs cash + mark-to-market");
   compare("paper_portfolio.cash_balance", input.cash, input.persistedPortfolioCash,
     "persisted cash vs the cash this run credited");
-  compare("paper_performance.nav", navFromMarks, input.persistedPerformanceNav,
+  compare("paper_performance.nav", expectedNav, input.persistedPerformanceNav,
     "persisted EOD performance NAV vs cash + mark-to-market");
   if (input.ledgerCash != null && Number.isFinite(input.ledgerCash)) {
     // Wider tolerance: the ledger identity is an independent derivation over
@@ -280,7 +285,7 @@ export function reconcilePersistedNav(input: NavReconcileInput): NavReconciliati
     (c.diff != null ? ` (drift ${c.diff.toFixed(4)} > tol ${c.tolerance.toFixed(4)})` : "") +
     ` — ${c.detail}`);
 
-  return { ok: violations.length === 0, navFromMarks, positionsValue, coverage, checks, violations };
+  return { ok: violations.length === 0, navFromMarks: expectedNav, positionsValue, coverage, checks, violations };
 }
 
 /** Row shape for the append-only `paper_position_marks` ledger. */

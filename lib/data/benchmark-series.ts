@@ -17,11 +17,21 @@
 // collapse into a single fetch rather than racing into two.
 
 import { fetchYahooCandles } from "@/lib/india-data";
+import { assessSeries } from "@/lib/data/price-cache-freshness";
 
 export interface BenchmarkBar {
   date: string; // YYYY-MM-DD
   close: number;
 }
+
+export interface BenchmarkSeries {
+  bars: BenchmarkBar[];
+  asOf: string | null;
+  stale: boolean;
+  reason: "ok" | "no_data" | "insufficient_coverage" | "stale_series";
+}
+
+const MIN_BENCHMARK_BARS = 30;
 
 /** The benchmark each market's beta is measured against. Never cross-market. */
 export const BENCHMARK_BY_MARKET: Record<string, string> = {
@@ -34,14 +44,14 @@ export function benchmarkFor(market: string): string | null {
 }
 
 const TTL_MS = 30 * 60_000;
-const cache = new Map<string, { at: number; series: Promise<BenchmarkBar[]> }>();
+const cache = new Map<string, { at: number; series: Promise<BenchmarkSeries> }>();
 
 /** Test-only: drop the run-level cache so a test can control what is returned. */
 export function __resetBenchmarkCache(): void {
   cache.clear();
 }
 
-async function loadUsBenchmark(supabase: any): Promise<BenchmarkBar[]> {
+async function loadUsBenchmark(supabase: any): Promise<BenchmarkSeries> {
   // price_cache is filled by the daily kairos-price-cache-fill job. Reading it is a
   // DB read, not a provider call. limit 260 mirrors the pre-existing regime read so
   // regime features stay byte-identical.
@@ -51,12 +61,18 @@ async function loadUsBenchmark(supabase: any): Promise<BenchmarkBar[]> {
     .eq("symbol", BENCHMARK_BY_MARKET.us)
     .order("date", { ascending: true })
     .limit(260);
-  return (data ?? [])
+  const bars = (data ?? [])
     .map((r: any) => ({ date: String(r.date), close: parseFloat(r.close) }))
     .filter((b: BenchmarkBar) => Number.isFinite(b.close) && b.close > 0);
+  const verdict = assessSeries(bars, {
+    symbol: BENCHMARK_BY_MARKET.us,
+    market: "us",
+    minBars: MIN_BENCHMARK_BARS,
+  });
+  return { bars, asOf: verdict.asOf, stale: !verdict.ok, reason: verdict.reason };
 }
 
-async function loadIndiaBenchmark(): Promise<BenchmarkBar[]> {
+async function loadIndiaBenchmark(): Promise<BenchmarkSeries> {
   // "2y", not "1y". computeTechnicals only computes RS when the benchmark series
   // has >= 252 closes, but NSE trades ~246 days a year (more holidays than NYSE),
   // so a 1-year ^NSEI range returned 246 usable closes and India's rs_vs_benchmark
@@ -66,23 +82,45 @@ async function loadIndiaBenchmark(): Promise<BenchmarkBar[]> {
   // satisfies the availability gate; it does not widen the measured window or
   // change the US path.
   const candles = await fetchYahooCandles(BENCHMARK_BY_MARKET.india, "2y");
-  return candles
+  const bars = candles
     .map((c) => ({ date: c.date, close: c.close }))
     .filter((b) => Number.isFinite(b.close) && b.close > 0);
+  // Yahoo can also return a frozen successful response. Apply the identical
+  // session-date rule instead of assuming a live fetch is fresh.
+  const verdict = assessSeries(bars, {
+    symbol: BENCHMARK_BY_MARKET.india,
+    market: "india",
+    minBars: MIN_BENCHMARK_BARS,
+  });
+  return { bars, asOf: verdict.asOf, stale: !verdict.ok, reason: verdict.reason };
 }
+
+const EMPTY: BenchmarkSeries = { bars: [], asOf: null, stale: true, reason: "no_data" };
 
 /**
  * Benchmark daily closes for a market, oldest-first. Cached per process for 30
  * minutes and deduped while in flight. Never throws — resolves to [] on any error,
  * which downstream reads as "beta unmeasurable" rather than as a fabricated value.
  */
-export async function getBenchmarkSeries(market: string, supabase: any): Promise<BenchmarkBar[]> {
+export async function getBenchmarkSeriesStatus(market: string, supabase: any): Promise<BenchmarkSeries> {
   const hit = cache.get(market);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.series;
 
-  const series = (market === "india" ? loadIndiaBenchmark() : loadUsBenchmark(supabase)).catch(
-    () => [] as BenchmarkBar[],
-  );
+  const series = (market === "india" ? loadIndiaBenchmark() : loadUsBenchmark(supabase)).catch(() => EMPTY);
   cache.set(market, { at: Date.now(), series });
   return series;
+}
+
+/**
+ * Benchmark daily closes for a market, oldest-first. A stale or under-covered
+ * series is deliberately represented as unavailable so downstream beta/RS
+ * calculations abstain rather than silently using fossil data.
+ */
+export async function getBenchmarkSeries(market: string, supabase: any): Promise<BenchmarkBar[]> {
+  const status = await getBenchmarkSeriesStatus(market, supabase);
+  if (status.stale) {
+    console.warn(`[benchmark-series] ${market}: unavailable — ${status.reason} (asOf=${status.asOf ?? "none"}, bars=${status.bars.length})`);
+    return [];
+  }
+  return status.bars;
 }

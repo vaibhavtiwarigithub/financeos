@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchIndiaQuote, fetchIndiaQuotes, fetchYahooQuotes } from "@/lib/india-data";
+import { fetchIndiaQuotes, fetchYahooQuotes } from "@/lib/india-data";
 import { classifyOutcome } from "@/lib/trade-outcome";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadChampionGenome } from "@/lib/validation/genome-live";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { setMarketPaused } from "@/lib/market-controls";
-import { computeExitFillPrice, getBatchQuotes, getQuote } from "@/lib/data/quotes";
+import { computeExitFillPrice, getBatchQuotes } from "@/lib/data/quotes";
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
@@ -18,7 +18,7 @@ import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS }
 // stay for W2-full, which reinstates splitting via an exit-fill ledger.
 import { admitMarketLocalSlot } from "@/lib/trading/market-calendar";
 import {
-  buildPositionMark, markLedgerRow, reconcilePersistedNav,
+  buildPositionMark, markLedgerRow, navFromMarks, reconcilePersistedNav, summariseMarkCoverage,
   type PositionMark,
 } from "@/lib/paper/marks";
 import { benchmarkReturnPct, fetchBenchmarkObservation } from "@/lib/paper/benchmark-observation";
@@ -508,17 +508,61 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
 
   // Recompute + persist NAV PER MARKET = that pool's cash + mark-to-market of its
   // still-open positions. Each currency stays in its own pool; never summed.
-  const { data: stillOpen } = await svc.from("paper_positions").select("qty, avg_cost, current_price, market");
+  const { data: stillOpen } = await svc.from("paper_positions")
+    .select("id, symbol, qty, avg_cost, current_price, updated_at, market");
   const today = new Date().toISOString().slice(0, 10);
+  const markRunId = `position_monitor:${startedAt}`;
   // Track NAV/performance write failures (P0-4): a rejected update must fail the
   // run visibly, not be swallowed. Also track NAV-invariant drift (read-only).
   const navWriteErrors: string[] = [];
   let navInvariantOk = true;
   const navInvariantDrift: Record<string, number> = {};
+  const markCoverageByMarket: Record<string, unknown> = {};
+  const navChecksByMarket: Record<string, unknown> = {};
+  let markLedgerStatus: "written" | "unavailable" | "not_attempted" = "not_attempted";
+  let markLedgerDetail: string | null = null;
   for (const [market, pool] of poolByMarket) {
     const mktPos = (stillOpen ?? []).filter((p: any) => marketOf(p, hasMarketCol) === market);
-    const positionsValue = mktPos.reduce((sum: number, p: any) => sum + Number(p.qty ?? 0) * Number(p.current_price ?? p.avg_cost ?? 0), 0);
-    const newNav = cashByMarket[market] + positionsValue;
+    const marks: PositionMark[] = mktPos.map((p: any) => buildPositionMark({
+      positionId: String(p.id), symbol: String(p.symbol), market: market as "us" | "india",
+      qty: Number(p.qty ?? 0), avgCost: Number(p.avg_cost ?? 0),
+      persistedPrice: p.current_price == null ? null : Number(p.current_price),
+      persistedAt: p.updated_at ?? null,
+      livePrice: priceMap[String(p.symbol)] ?? null,
+      liveSource: quoteMeta[String(p.symbol)]?.source ?? null,
+      liveObservedAt: quoteMeta[String(p.symbol)]?.observedAt ?? null,
+    }));
+    const newNav = navFromMarks(cashByMarket[market], marks);
+    const positionsValue = newNav - cashByMarket[market];
+    const coverage = summariseMarkCoverage(marks);
+    markCoverageByMarket[market] = coverage;
+
+    if (marks.length) {
+      const { error: ledgerErr } = await svc.from("paper_position_marks")
+        .insert(marks.filter(m => m.qty > 0 && m.mark > 0)
+          .map(m => markLedgerRow(m, { runId: markRunId, sessionDate: today })));
+      if (!ledgerErr) markLedgerStatus = "written";
+      else if (isMissingSchema(ledgerErr)) {
+        markLedgerStatus = "unavailable";
+        markLedgerDetail = "paper_position_marks migration not applied yet";
+      } else {
+        markLedgerStatus = "unavailable";
+        markLedgerDetail = ledgerErr.message;
+      }
+    }
+
+    const staleIssueKey = `paper-nav-stale-marks:${market}`;
+    if (coverage.liveQty < coverage.totalQty) {
+      const staleSymbols = marks.filter(m => m.stale).map(m => `${m.symbol} (${m.provenance})`);
+      await reportIssue({
+        issueKey: staleIssueKey, severity: "warn", category: "paper-truth",
+        title: `Paper NAV blends stale marks — ${market.toUpperCase()} (${(coverage.staleValuePct ?? 0).toFixed(1)}% of position value)`,
+        detail: `No fresh quote this run for: ${staleSymbols.join(", ")}. See paper_position_marks for provenance.`,
+        autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+      }, svc);
+    } else {
+      await resolveIssue(staleIssueKey, svc);
+    }
 
     // Deterministic NAV invariant (read-only): nav must equal cash + mark-to-market
     // of this market's open lots within a currency-cent tolerance. If a future
@@ -548,6 +592,10 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     }).eq("id", pool.id);
     if (portfolioErr) navWriteErrors.push(`paper_portfolio(${market}): ${portfolioErr.message}`);
 
+    // NaN denotes an unavailable independent ledger derivation; the
+    // reconciliation helper intentionally skips non-finite optional input.
+    let ledgerCash = Number.NaN;
+
     // Ledger reconciliation guard: cash MUST equal seed − Σopen-cost + Σrealized.
     // A drift means a cash write was silently lost (this is exactly how the old
     // open_positions-column bug leaked ₹197k of close-proceeds and tripped a
@@ -561,8 +609,9 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
         .select("realized_pnl").eq("market", market).not("closed_at", "is", null);
       const realized = (realizedRows ?? []).reduce(
         (s: number, r: any) => s + Number(r.realized_pnl ?? 0), 0);
-      const ledgerCash = seed - openCost + realized;
-      const drift = Math.abs(cashByMarket[market] - ledgerCash);
+      const computedLedgerCash = seed - openCost + realized;
+      ledgerCash = computedLedgerCash;
+      const drift = Math.abs(cashByMarket[market] - computedLedgerCash);
       const tol = Math.max(1, seed * 0.005); // 0.5% of seed
       if (drift > tol) {
         await reportIssue({
@@ -580,6 +629,8 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     // paper_performance so bench_nav stays current even on no-trade days.
     let benchNav: number | null = null;
     let benchReturnPct: number | null = null;
+    let benchSessionDate: string | null = null;
+    let benchSource: string | null = null;
     const [previousPerfResult, resolvedTradesResult] = await Promise.all([
       svc.from("paper_performance").select("nav").eq("market", market)
         .lt("date", today).order("date", { ascending: false }).limit(1).maybeSingle(),
@@ -591,21 +642,16 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     const previousPerf = previousPerfResult.data;
     const resolvedTrades = resolvedTradesResult.data;
     const outcomes = (resolvedTrades ?? []) as Array<{ outcome: string | null }>;
-    try {
-      const benchSym = market === "india" ? "^NSEI" : "VOO";
-      const q = market === "india"
-        ? await fetchIndiaQuote(benchSym)
-        : await getQuote(benchSym, svc);
-      const px = (q as any)?.price;
-      benchNav = typeof px === "number" && px > 0 ? px : null;
-      if (benchNav) {
-        const { data: firstPerf } = await svc.from("paper_performance")
-          .select("bench_nav").eq("market", market).not("bench_nav", "is", null)
-          .order("date", { ascending: true }).limit(1).maybeSingle();
-        const benchStart = (firstPerf as any)?.bench_nav ?? benchNav;
-        benchReturnPct = benchStart ? ((benchNav - benchStart) / benchStart) * 100 : null;
-      }
-    } catch { /* benchmark unavailable this run — leave null */ }
+    const benchResult = await fetchBenchmarkObservation(market as "us" | "india", today);
+    if (benchResult.ok) {
+      benchNav = benchResult.observation.close;
+      benchSessionDate = benchResult.observation.sessionDate;
+      benchSource = benchResult.observation.source;
+      const { data: firstPerf } = await svc.from("paper_performance")
+        .select("bench_nav").eq("market", market).not("bench_nav", "is", null)
+        .order("date", { ascending: true }).limit(1).maybeSingle();
+      benchReturnPct = benchmarkReturnPct(benchNav, (firstPerf as any)?.bench_nav ?? benchNav);
+    }
 
     const truth = paperPerformanceTruth({
       market: market as "us" | "india",
@@ -624,16 +670,61 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       bench_nav: benchNav, bench_return_pct: benchReturnPct,
       spy_nav: market === "us" ? benchNav : null,
       spy_return_pct: market === "us" ? benchReturnPct : null,
+      bench_session_date: benchSessionDate,
+      bench_source: benchSource,
+      snapshot_type: "eod",
       updated_at: new Date().toISOString(),
     };
     // PostgREST returns { error } rather than throwing, so the old `.catch` never
     // fired on a real write failure. Capture the error; on the pre-057 "no market
     // column" case, retry keyed on date only (preserving prior fallback behavior);
     // any surviving error fails the run visibly.
-    const { error: perfErr } = await svc.from("paper_performance").upsert(perfRow, { onConflict: "date,market" });
+    let { error: perfErr } = await svc.from("paper_performance").upsert(perfRow, { onConflict: "date,market" });
+    if (perfErr && isMissingSchema(perfErr)) {
+      const { bench_session_date, bench_source, snapshot_type, ...legacyPerfRow } = perfRow;
+      ({ error: perfErr } = await svc.from("paper_performance").upsert(legacyPerfRow, { onConflict: "date,market" }));
+    }
     if (perfErr) {
-      const { error: perfErr2 } = await svc.from("paper_performance").upsert({ ...perfRow, market: undefined }, { onConflict: "date" });
+      const { market: _market, bench_session_date, bench_source, snapshot_type, ...noMarketPerfRow } = perfRow;
+      const { error: perfErr2 } = await svc.from("paper_performance").upsert(noMarketPerfRow, { onConflict: "date" });
       if (perfErr2) navWriteErrors.push(`paper_performance(${market}): ${perfErr2.message}`);
+    }
+
+    // Re-read durable rows after both writes. This compares persisted values to
+    // a NAV independently computed from this run's sourced marks; unlike the
+    // former self-comparison it can fail on a dropped/partial write.
+    const [persistedPoolResult, persistedPerfResult] = await Promise.all([
+      svc.from("paper_portfolio").select("nav,cash_balance").eq("id", pool.id).maybeSingle(),
+      svc.from("paper_performance").select("nav").eq("market", market).eq("date", today).maybeSingle(),
+    ]);
+    if (persistedPoolResult.error) navWriteErrors.push(`paper_portfolio_readback(${market}): ${persistedPoolResult.error.message}`);
+    if (persistedPerfResult.error && !isMissingSchema(persistedPerfResult.error)) {
+      navWriteErrors.push(`paper_performance_readback(${market}): ${persistedPerfResult.error.message}`);
+    }
+    const reconciliation = reconcilePersistedNav({
+      market: market as "us" | "india",
+      cash: cashByMarket[market],
+      marks,
+      persistedPortfolioNav: (persistedPoolResult.data as any)?.nav,
+      persistedPortfolioCash: (persistedPoolResult.data as any)?.cash_balance,
+      persistedPerformanceNav: (persistedPerfResult.data as any)?.nav,
+      ledgerCash,
+    });
+    navChecksByMarket[market] = reconciliation;
+    if (!reconciliation.ok) {
+      navInvariantOk = false;
+      navInvariantDrift[market] = Math.max(
+        ...reconciliation.checks.filter(c => c.diff != null).map(c => Math.abs(c.diff!)),
+        0,
+      );
+      await reportIssue({
+        issueKey: `paper-nav-reconciliation:${market}`,
+        severity: "critical", category: "paper-truth",
+        title: `Paper NAV reconciliation failed — ${market.toUpperCase()}`,
+        detail: reconciliation.violations.join("; ").slice(0, 500),
+      }, svc);
+    } else {
+      await resolveIssue(`paper-nav-reconciliation:${market}`, svc);
     }
 
     // A: Portfolio NAV drawdown circuit breaker.
@@ -712,6 +803,10 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     nav_write_errors: navWriteErrors,
     nav_invariant_ok: navInvariantOk,
     nav_invariant_drift: navInvariantDrift,
+    mark_ledger_status: markLedgerStatus,
+    mark_ledger_detail: markLedgerDetail,
+    mark_coverage: markCoverageByMarket,
+    nav_reconciliation: navChecksByMarket,
   };
 }
 
