@@ -178,8 +178,8 @@ Rules:
       task: "screen",
       prompt: themePrompt,
       // User-selectable in Settings → Agents → LLM Config (agent_name="theme-scout").
-      // Default stays Groq llama (free) — the panel now controls it for real.
-      model: await getConfiguredModel(supabase, "theme-scout", "llama-3.3-70b-versatile"),
+      // Default: deepseek-chat (cheap extraction task; policy = DeepSeek by default).
+      model: await getConfiguredModel(supabase, "theme-scout", "deepseek-chat"),
     });
 
     // Parse JSON from response

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 import { fetchYahooCandles } from "@/lib/india-data";
 import { computeLabel } from "@/lib/learning/label-math";
 import {
@@ -310,12 +311,27 @@ export async function POST(req: NextRequest) {
       const svc = createServiceClient();
       const reasons = Object.entries(result.skipReasons)
         .map(([reason, n]) => `${reason}=${n}`).join(" ") || "none";
+      // W6 run-accounting envelope. skipped obs are unavailable (data missing) not failed;
+      // zeroOutputWithPending is the incident signature from the 2026-08 pipeline incident.
+      const accounting = runAccountingEnvelope({
+        job: `label-maturation:${result.market}`,
+        market: result.market === "us" || result.market === "india" ? result.market : undefined,
+        eligible: result.scanned,
+        succeeded: result.matured,
+        expectedSkip: 0,
+        deferred: 0,
+        unavailable: result.skipped,
+        failed: 0,
+        skipReasons: result.skipReasons,
+        businessMetrics: { atr_labeled: result.atrLabeled, provider_fetches: result.providerFetches },
+      });
       await svc.from("agent_runs").insert({
         agent_type: "label_maturation",
         // A zero-output run over a non-empty backlog must not read as "done".
         status: result.zeroOutputWithPending ? "error" : "done",
         trigger_source: isCron ? "scheduled" : "manual",
         result_summary: `Matured ${result.matured}, skipped ${result.skipped} (${reasons}), scanned ${result.scanned}, ATR ${result.atrLabeled}/${result.matured} (${result.market}).`,
+        workload_metrics: accounting,
         completed_at: new Date().toISOString(),
       } as any);
     } catch { /* best-effort */ }

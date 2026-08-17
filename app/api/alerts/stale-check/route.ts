@@ -135,7 +135,7 @@ async function runCheck() {
     // guard does; resiliently treats "can't tell" as a US-shaped run).
     const { data: todaysRuns } = await svc
       .from("agent_runs")
-      .select("id, started_at, status, symbols, market, result_summary")
+      .select("id, started_at, status, symbols, market, result_summary, workload_metrics")
       .eq("agent_type", job.agentType)
       .gte("started_at", expectedDayStart.toISOString())
       .lt("started_at", expectedDayEnd.toISOString())
@@ -196,7 +196,9 @@ async function runCheck() {
     // Jobs that do not are UNKNOWN — never assumed healthy.
     let accounting: string | null = null;
     for (const run of okRuns) {
-      const parsed = parseRunAccounting((run as any).result_summary);
+      // W6: producers write the envelope into workload_metrics (JSONB). Fall back
+      // to result_summary for older rows that pre-date the wiring.
+      const parsed = parseRunAccounting((run as any).workload_metrics ?? (run as any).result_summary);
       if (!parsed) continue;
       const verdict = evaluateRunAccounting(parsed);
       accounting = verdict.state;

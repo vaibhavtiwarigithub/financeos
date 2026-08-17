@@ -10,6 +10,7 @@ import { RISK_PROFILES } from "@/lib/risk-profiles";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { emitAlert } from "@/lib/alerts/emit";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 import {
   getClosedDayCatchupEligibility,
   getMarketDayStatus,
@@ -598,6 +599,19 @@ export async function POST(req: NextRequest) {
   if (runId) {
     const holdingProcessed = entries.filter((entry, i) => entry.isHeld && results[i] && !results[i].error).length;
     const candidateProcessed = entries.filter((entry, i) => !entry.isHeld && results[i] && !results[i].error).length;
+    // W6 run-accounting envelope — reconciles every entry under exactly one bucket
+    // so stale-check can verify the job accounted for its own work.
+    const accounting = runAccountingEnvelope({
+      job: `research:${marketScope ?? "us"}${discoveryOnly ? ":discovery" : ""}`,
+      market: (marketScope ?? "us") as "us" | "india",
+      eligible: entries.length,
+      succeeded: ok,
+      expectedSkip: 0,
+      deferred: deferred.length,
+      unavailable: 0,
+      failed: errs,
+      businessMetrics: { signals: ok, holdings: holdingProcessed, candidates: candidateProcessed },
+    });
     await supabase.from("agent_runs").update({
       status: "done",
       signals_written: ok,
@@ -609,6 +623,7 @@ export async function POST(req: NextRequest) {
         candidate_processed: candidateProcessed,
         deferred: deferred.length,
         failed_symbols: failedDetails,
+        ...accounting,
       },
       completed_at: new Date().toISOString(),
     } as any).eq("id", runId);
