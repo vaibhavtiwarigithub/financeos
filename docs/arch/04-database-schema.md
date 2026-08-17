@@ -1,4 +1,6 @@
 # Kairos — Database Schema
+> 2026-08-16 (`20260816180000_paper_mark_and_benchmark_provenance.sql`, **WRITTEN, NOT YET APPLIED** — Supabase MCP was disconnected, so this could not be applied or verified): W4/W5 of the evaluation-pipeline-integrity remediation. Adds the append-only `paper_position_marks` ledger and three provenance columns on `paper_performance` (`bench_session_date`, `bench_source`, `snapshot_type`). Every consumer tolerates their absence (PostgREST `PGRST204`/`42P01` retry ladders drop the columns and skip the ledger), so the code ships inert ahead of the migration — but nothing may DEPEND on these objects until an `information_schema` check proves them applied.
+>
 > 2026-08-08 (`20260808210000_property_value_intelligence.sql`, applied + verified): `property_value_observations` and `property_value_references` provide encrypted owner-only value evidence and deterministic derived-reference lineage. Both are append-only through row and truncate triggers plus revoked service-role mutation privileges. They are isolated from Investing and do not authorize an AVM; the derived layer is market-index scenario support only.
 >
 > 2026-08-08 (`20260808194000_defer_unverified_property_valuation_sources.sql`, applied + verified): `maricopa-sales` and `tcad-appraisal` are now `contract_pending`, and all active valuation scopes for those source keys were deactivated. Historical append-only parcel and sale evidence remains intact. This is a source-contract control, not a data deletion: the API rejects new scopes and the worker exits before it reads credentials, scope rows, or source URLs.
@@ -639,7 +641,37 @@ another market.
 | `bench_nav` | numeric | Benchmark (VOO/^NSEI) NAV on this date |
 | `bench_return_pct` | numeric | Benchmark return from its first recorded same-market observation |
 | `alpha_pct` | numeric | `total_pnl_pct - bench_return_pct` |
+| `bench_session_date` | date | **(migration 20260816180000 — NOT YET APPLIED)** The market session the benchmark close actually belongs to. A `NOT VALID` CHECK enforces `bench_session_date = date` on new/updated rows. Added because `bench_nav` 708.42 — VOO's 2026-08-11 close — was stored under BOTH 2026-08-12 and 2026-08-13: both writers accepted any positive benchmark *quote* and labelled it with the cron run date. Benchmark levels are now built from session-dated daily bars (`lib/paper/benchmark-observation.ts`); when today's bar does not exist, no benchmark is written for today. |
+| `bench_source` | text | **(NOT YET APPLIED)** Provider of the benchmark daily bar (`yahoo`, `massive`, ...). |
+| `snapshot_type` | text | **(NOT YET APPLIED)** `eod` \| `intraday`. `PositionMonitor` is the ONE canonical EOD writer per market. `PaperTrader` runs at the open and may now only CREATE today's row when none exists — it never upserts over an EOD row, which it previously could. |
 | UNIQUE | `(date, market)` | One row per day per market |
+
+### `paper_position_marks` (migration 20260816180000 — **NOT YET APPLIED**)
+Append-only NAV mark ledger: one row per open position per PositionMonitor run.
+`paper_positions.current_price` is mutated in place and `paper_nav_history` keeps
+aggregates only, so before this table a bad mark was **unrecoverable** the moment
+the next run overwrote it. On 2026-08-12 the US paper NAV moved +2.70% and then
+−2.97% while the nine held positions actually moved −0.48%; that round trip can
+never be attributed, because the provenance to explain it was never written.
+This ledger cannot recover the past — it makes the next such move explicable.
+
+Writes are service-role only; UPDATE/DELETE are blocked by trigger. CHECK
+constraints are the DB-level detector: `qty > 0`, `mark_price > 0`, non-empty
+`source` and `reason`, a `live_quote` mark must carry `observed_at`, and `stale`
+must equal `provenance <> 'live_quote'`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `run_id` | text | `position_monitor:<started_at>` |
+| `session_date` | date | Session the mark set belongs to |
+| `market` | text | `us` \| `india` |
+| `position_id` / `symbol` | text | |
+| `qty` / `mark_price` | numeric | The exact weight this position contributed to NAV |
+| `source` | text | Provider, or the explicit fallback that produced the mark |
+| `observed_at` | timestamptz | The mark's OWN observation time, not when the run read it |
+| `provenance` | text | `live_quote` \| `carry_forward` \| `entry_cost` |
+| `stale` / `age_days` | boolean / numeric | Anything not `live_quote` is stale weight |
+| `reason` | text | Why this mark and not a fresher one |
 
 ### `live_performance` (migration 169, RLS tightened 20260713112754)
 Daily equity curve per LIVE account - the live analogue of `paper_performance`, backing the per-account **Live Portfolio vs VOO** chart. Robinhood's MCP exposes NO account-value history (`get_equity_historicals` is per-symbol OHLC; `get_portfolio` is current-only), so this cannot be backfilled - it is **accrued forward**: each account-snapshot refresh (`/api/live-account/refresh-snapshot`, `robinhood_mcp` source plus connected registry MCP brokers such as Webull) upserts one row/account/day with real broker equity + that day's VOO close. Until >=2 real days exist for the selected accounts, `/api/live-portfolio/performance` falls back to a **labeled constant-holdings estimate** (`estimated:true`) reconstructed from current holdings x Massive symbol history. Service-role writes; owner-email authenticated SELECT only.

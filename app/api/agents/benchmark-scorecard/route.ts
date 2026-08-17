@@ -36,25 +36,46 @@ async function loadBenchmarks(svc: any): Promise<BenchmarkConfig[]> {
 }
 
 async function upsertPaperObservations(svc: any, benchmark: BenchmarkConfig) {
-  const { data, error } = await svc
+  // W5: read the benchmark's own session date when the column exists. A level
+  // whose session does not match the row it sits on is a mislabelled
+  // observation (VOO's 2026-08-11 close was stored under both 2026-08-12 and
+  // 2026-08-13) and must never be promoted into the scorecard series.
+  const query = (cols: string) => svc
     .from("paper_performance")
-    .select("date, bench_nav")
+    .select(cols)
     .eq("market", benchmark.market)
     .not("bench_nav", "is", null)
     .order("date", { ascending: true })
     .limit(500);
+  // Falls back to the legacy shape until the provenance migration is applied.
+  let { data, error } = await query("date, bench_nav, bench_session_date, bench_source");
+  if (error) ({ data, error } = await query("date, bench_nav"));
   if (error) return;
   const rows = (data ?? [])
-    .map((r: any) => ({
-      benchmark_id: benchmark.id,
-      component_symbol: benchmark.provider_symbol ?? benchmark.symbol ?? benchmark.label,
-      date: String(r.date).slice(0, 10),
-      close: Number(r.bench_nav),
-      currency: benchmark.currency,
-      provider: "paper_performance",
-      source_status: Number(r.bench_nav) > 0 ? "ok" : "missing",
-      error: null,
-    }))
+    .map((r: any) => {
+      const date = String(r.date).slice(0, 10);
+      const session = r.bench_session_date ? String(r.bench_session_date).slice(0, 10) : null;
+      return {
+        benchmark_id: benchmark.id,
+        component_symbol: benchmark.provider_symbol ?? benchmark.symbol ?? benchmark.label,
+        date,
+        close: Number(r.bench_nav),
+        currency: benchmark.currency,
+        provider: r.bench_source ? String(r.bench_source) : "paper_performance",
+        // A level that PROVES it belongs to a different session is rejected —
+        // `loadBenchmarkLevels` only reads source_status='ok', so a mislabelled
+        // close can no longer enter the scorecard series. Legacy rows carry no
+        // session date and keep their existing status; the contaminated
+        // 2026-07-27..08-14 window is tainted upstream and deliberately not
+        // rewritten here.
+        source_status: !(Number(r.bench_nav) > 0) ? "missing"
+          : session != null && session !== date ? "session_mismatch"
+          : "ok",
+        error: session != null && session !== date
+          ? `benchmark close belongs to session ${session}, not ${date}`
+          : null,
+      };
+    })
     .filter((r: any) => Number.isFinite(r.close) && r.close > 0);
   if (rows.length) {
     await svc.from("benchmark_price_observations").upsert(rows, { onConflict: "benchmark_id,component_symbol,date" });
@@ -202,7 +223,15 @@ async function buildScorecards(svc: any) {
   }
 
   if (rows.length) {
-    const payload = rows.map((r) => ({ ...r, updated_at: new Date().toISOString() }));
+    // Coverage is observations / EXPECTED trading days, and the expectation is a
+    // 5/7 calendar approximation — so a full window legitimately overshoots
+    // (US 1M reported 104.5%). Coverage above 100% is not a real signal; clamp
+    // it so the displayed number cannot claim more sessions than exist.
+    const payload = rows.map((r) => ({
+      ...r,
+      coverage_pct: r.coverage_pct == null ? null : Math.min(100, r.coverage_pct),
+      updated_at: new Date().toISOString(),
+    }));
     const { error } = await svc.from("benchmark_scorecard").upsert(payload, {
       onConflict: "market,currency,book,book_scope,benchmark_id,horizon,as_of",
     });
