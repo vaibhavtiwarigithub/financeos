@@ -17,6 +17,11 @@ import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS }
 // disabled by W2-interim (see the target branch below). The helper and its tests
 // stay for W2-full, which reinstates splitting via an exit-fill ledger.
 import { admitMarketLocalSlot } from "@/lib/trading/market-calendar";
+import {
+  buildPositionMark, markLedgerRow, reconcilePersistedNav,
+  type PositionMark,
+} from "@/lib/paper/marks";
+import { benchmarkReturnPct, fetchBenchmarkObservation } from "@/lib/paper/benchmark-observation";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -36,6 +41,18 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const marketOf = (p: any, hasMarketCol: boolean) => (hasMarketCol ? String(p.market ?? "us") : "us");
+
+// Provenance of a quote accepted this run, kept alongside the bare price so the
+// NAV mark it produces can be attributed afterwards. Before W4 only the number
+// survived, which is why the 2026-08-12 NAV round trip is unexplainable.
+type QuoteProvenance = { source: string; observedAt: string | null };
+
+// PostgREST reports an unknown column as PGRST204 and an unknown relation as
+// 42P01. Both mean "the migration for this hasn't been applied yet", and both
+// must leave the money path running rather than failing the whole book run.
+const isMissingSchema = (err: any) =>
+  err?.code === "PGRST204" || err?.code === "42P01" ||
+  /column .* does not exist|could not find the .* column|relation .* does not exist/i.test(String(err?.message ?? ""));
 
 // Always leave a trace when a scheduled run throws, so the stale-check sees an
 // (errored) run instead of silence, and the real error is captured for diagnosis.
@@ -120,14 +137,23 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   // dayLowMap: session low from Massive snapshot. Used to detect intraday stop
   // touches — a stop hit during the session is real even if price recovered by close.
   const dayLowMap: Record<string, number> = {};
+  // W4: keep the accepted quote's source and its OWN observation time, not just
+  // the price. Every mark written below is attributable because of this map.
+  const quoteMeta: Record<string, QuoteProvenance> = {};
   for (const sym of usSymbols) {
     const q = usQuotes[sym];
-    if (q && q.source !== "unavailable" && !q.stale && q.price > 0) priceMap[sym] = q.price;
+    if (q && q.source !== "unavailable" && !q.stale && q.price > 0) {
+      priceMap[sym] = q.price;
+      quoteMeta[sym] = { source: q.source, observedAt: q.retrievedAt ?? null };
+    }
     if (q?.dayLow != null && q.dayLow > 0) dayLowMap[sym] = q.dayLow;
   }
   for (const sym of indiaSymbols) {
     const q = indiaQuotes[sym.toUpperCase()];
-    if (q && !q.stale && q.price > 0) priceMap[sym] = q.price;
+    if (q && !q.stale && q.price > 0) {
+      priceMap[sym] = q.price;
+      quoteMeta[sym] = { source: "yahoo_india", observedAt: q.retrievedAt ?? null };
+    }
   }
   // Massive/cache/AV occasionally miss an otherwise liquid US holding. Exhaust
   // one independent, keyless source for only that unresolved tail. Yahoo remains
@@ -138,7 +164,10 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     const yahooQuotes = await fetchYahooQuotes(unresolvedUs, "us");
     for (const sym of unresolvedUs) {
       const q = yahooQuotes[sym.toUpperCase()];
-      if (q && !q.stale && q.price > 0) priceMap[sym] = q.price;
+      if (q && !q.stale && q.price > 0) {
+        priceMap[sym] = q.price;
+        quoteMeta[sym] = { source: "yahoo_us", observedAt: q.retrievedAt ?? null };
+      }
     }
   }
   const unpricedByMarket: Record<"us" | "india", string[]> = {
