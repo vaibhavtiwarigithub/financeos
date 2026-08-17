@@ -641,12 +641,12 @@ another market.
 | `bench_nav` | numeric | Benchmark (VOO/^NSEI) NAV on this date |
 | `bench_return_pct` | numeric | Benchmark return from its first recorded same-market observation |
 | `alpha_pct` | numeric | `total_pnl_pct - bench_return_pct` |
-| `bench_session_date` | date | **(migration 20260816180000 — NOT YET APPLIED)** The market session the benchmark close actually belongs to. A `NOT VALID` CHECK enforces `bench_session_date = date` on new/updated rows. Added because `bench_nav` 708.42 — VOO's 2026-08-11 close — was stored under BOTH 2026-08-12 and 2026-08-13: both writers accepted any positive benchmark *quote* and labelled it with the cron run date. Benchmark levels are now built from session-dated daily bars (`lib/paper/benchmark-observation.ts`); when today's bar does not exist, no benchmark is written for today. |
-| `bench_source` | text | **(NOT YET APPLIED)** Provider of the benchmark daily bar (`yahoo`, `massive`, ...). |
-| `snapshot_type` | text | **(NOT YET APPLIED)** `eod` \| `intraday`. `PositionMonitor` is the ONE canonical EOD writer per market. `PaperTrader` runs at the open and may now only CREATE today's row when none exists — it never upserts over an EOD row, which it previously could. |
+| `bench_session_date` | date | **(migration 20260816180000 — applied 2026-08-17)** The market session the benchmark close actually belongs to. A `NOT VALID` CHECK enforces `bench_session_date = date` on new/updated rows. Added because `bench_nav` 708.42 — VOO's 2026-08-11 close — was stored under BOTH 2026-08-12 and 2026-08-13: both writers accepted any positive benchmark *quote* and labelled it with the cron run date. Benchmark levels are now built from session-dated daily bars (`lib/paper/benchmark-observation.ts`); when today's bar does not exist, no benchmark is written for today. |
+| `bench_source` | text | **(applied 2026-08-17)** Provider of the benchmark daily bar (`yahoo`, `massive`, ...). |
+| `snapshot_type` | text | **(applied 2026-08-17)** `eod` \| `intraday`. `PositionMonitor` is the ONE canonical EOD writer per market. `PaperTrader` runs at the open and may now only CREATE today's row when none exists — it never upserts over an EOD row, which it previously could. |
 | UNIQUE | `(date, market)` | One row per day per market |
 
-### `paper_position_marks` (migration 20260816180000 — **NOT YET APPLIED**)
+### `paper_position_marks` (migration 20260816180000 — **applied 2026-08-17**)
 Append-only NAV mark ledger: one row per open position per PositionMonitor run.
 `paper_positions.current_price` is mutated in place and `paper_nav_history` keeps
 aggregates only, so before this table a bad mark was **unrecoverable** the moment

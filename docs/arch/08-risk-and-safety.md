@@ -24,7 +24,7 @@
 >
 > **Detectors:** `tests/paper-mark-provenance.test.ts` (the reconciliation MUST fail on a disagreeing persisted NAV — the old self-comparison could not), `tests/benchmark-session-alignment.test.ts` (the previous session's close MUST be refused under today's date), `tests/paper-nav-writer-contract.test.ts` (route-shaped: no `invariantExpected`, no second EOD upsert, no benchmark-from-quote, coverage clamped).
 >
-> **Migration `20260816180000_paper_mark_and_benchmark_provenance.sql` is WRITTEN AND NOT APPLIED** (Supabase MCP disconnected). All consumers tolerate its absence; **every US relative-performance figure remains void until it is applied and verified.**
+> **Migration `20260816180000_paper_mark_and_benchmark_provenance.sql` APPLIED 2026-08-17.** `paper_position_marks` table live; `bench_session_date`, `bench_source`, `snapshot_type` columns on `paper_performance` live. US relative-performance figures now have session provenance.
 >
 > 2026-08-13: **Hybrid protective-stop PLACEMENT WORKER — Parts A–D shipped; Part E (activation) is owner-gated.** The shadow scaffold from 2026-07-18 now has a full broker-placement path, still behind the same two false-by-default gates:
 >
