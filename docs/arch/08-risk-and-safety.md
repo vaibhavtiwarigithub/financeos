@@ -355,6 +355,73 @@ Every material state transition must have an append-only event/journal record. C
 
 ---
 
+## Run accounting, not liveness (W6, 2026-08-16)
+
+**The defect class.** In the 2026-08 evaluation-pipeline incident, five separate checks
+could only ever report green. Three were monitoring:
+
+| Check | Why it could not fail |
+|---|---|
+| `label-maturation` response | returned `{"success":true,"matured":0,"skipped":800}` for 25 consecutive days |
+| `agent_runs.status` | recorded `done` for that same zero-output run |
+| `stale-check` | asked "did it run", never "did it produce" — and `status='error'` was written faithfully and read by nothing, so the US PositionMonitor runs that aborted on 2026-08-13 and 2026-08-14 (stops unevaluated for every remaining holding after the failure) counted as healthy |
+
+**The rejected fix.** `assertProductiveRun({attempted, produced})` was proposed and
+refuted. Zero output is frequently CORRECT — no qualifying signal, no exits needed, no
+new research. `{"skipped":true,"reason":"weekend + shallow backlog","backlog":0}` is a
+healthy response. A check that alerts on it trains the operator to ignore the channel.
+
+**Layer 1 — within-run accounting** (`lib/monitoring/run-accounting.ts`, pure, no schema).
+A run reports counts over the units it owned, not a boolean:
+
+```
+state    = no_work | completed | partial | blocked | failed
+eligible = succeeded + expected_skip + deferred + unavailable + failed
+```
+
+Reason buckets are heterogeneous by design — `expected_skip` (legitimately no work),
+`deferred` (real work postponed by a budget/cursor), `unavailable` (a needed input was
+missing), `failed` (tried and errored). Encoding those semantics is exactly why the
+contract lives in code and not in a mutable config table: a DB row would move the
+judgement outside code review.
+
+Alerts fire on, and only on:
+1. any failed unit (critical) — regardless of how many succeeded alongside it;
+2. an impossible reconciliation — the equation not balancing, or a negative count. The
+   job lost track of its own work;
+3. `eligible > 0 && succeeded == 0`, reported **with** the blocker reason so the alert
+   says *why*. A run that can name no blocker says so explicitly.
+
+`eligible == 0` is `no_work` and is healthy. **Business metrics (`trades_filled`,
+`positions_closed`, `labels_written`) are telemetry and are NEVER health criteria** — a
+day with zero fills is normal; a day where 12 holdings were eligible and none were
+evaluated is not.
+
+**Layer 2 — cross-run freshness contracts** (`lib/monitoring/freshness-contracts.ts`).
+Run accounting cannot see a job that reports `no_work` every day for 25 days: each run is
+individually healthy and the pipeline is collectively dead. A versioned in-code registry
+(`FRESHNESS_REGISTRY_VERSION`, plus a per-contract `version` so a loosened threshold is a
+reviewable diff) asserts that each ledger's high-watermark advances within its grace
+window: `price_cache` (US, per symbol), `observation_labels`, `decision_observations`
+(US + India).
+
+**Per-scope, never aggregate.** A table-wide `max(date)` on `price_cache` read healthy at
+Aug 13 while **101 of 140 symbols sat frozen at Jul 22** — one refreshed symbol made the
+whole table look alive. Contracts with a natural scope are evaluated per scope value
+against a declared `minCoverage`. Grace defaults to 96h (weekend + a one-day exchange
+holiday), matching the off-hours EOD allowance in `lib/data/quotes.ts`.
+
+An **empty read is UNKNOWN and alerts** — "no rows" and "the query is wrong" are
+indistinguishable, so it is never treated as proof of health. Likewise a job that writes
+no run-accounting envelope is UNKNOWN, never assumed healthy.
+
+**Both layers are read-only over the monitored tables**; the only writes are `agent_alerts`
+rows via `reportIssue`/`resolveIssue`. No migration, no schema change. Both modules are
+importable by any agent route; adopting the envelope in a producing route (position-monitor,
+paper-trade, label-maturation, research/cron) is a separate change.
+
+---
+
 ## Launch blockers for L4
 
 - shared execution kernel used by all live paths;
