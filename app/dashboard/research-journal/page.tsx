@@ -4,6 +4,7 @@ import PageHeader from "@/components/dashboard/PageHeader";
 import ResearchFunnel from "@/components/dashboard/ResearchFunnel";
 import ScoreTrackerPanel from "@/components/dashboard/ScoreTrackerPanel";
 import DecisionReviewPanel from "@/components/dashboard/DecisionReviewPanel";
+import PipelineHealthTab from "@/components/dashboard/PipelineHealthTab";
 import { useMarket, type Market } from "@/lib/market-context";
 import { useSearchParams } from "next/navigation";
 
@@ -144,8 +145,8 @@ function EvolutionTab() {
 export default function ResearchJournalPage() {
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get("tab");
-  const [tab, setTab] = useState<"funnel" | "evolution" | "scores" | "review">(
-    requestedTab === "evolution" || requestedTab === "scores" || requestedTab === "review" ? requestedTab : "funnel"
+  const [tab, setTab] = useState<"funnel" | "evolution" | "scores" | "review" | "pipeline">(
+    requestedTab === "evolution" || requestedTab === "scores" || requestedTab === "review" || requestedTab === "pipeline" ? requestedTab : "funnel"
   );
 
   // ── Deep link: /dashboard/research-journal?symbol=<SYM>&market=<us|india> ────
@@ -196,18 +197,18 @@ export default function ResearchJournalPage() {
         ]}
       />
       <div style={{ padding: "0 28px 32px" }}>
-        <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
-          {(["funnel", "evolution", "scores", "review"] as const).map(t => (
+        <div style={{ display: "flex", gap: "8px", marginBottom: "20px", flexWrap: "wrap" }}>
+          {(["funnel", "evolution", "scores", "review", "pipeline"] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: "8px 18px", borderRadius: "8px", cursor: "pointer", fontSize: "13px", fontWeight: 600,
               background: tab === t ? T.accentBg : T.surface, border: `1px solid ${tab === t ? T.accent : T.border}`,
               color: tab === t ? T.accent : T.textSub,
             }}>
-              {t === "funnel" ? "Daily Funnel" : t === "evolution" ? "Evolution" : t === "scores" ? "Score Tracker" : "Decision Review"}
+              {t === "funnel" ? "Daily Funnel" : t === "evolution" ? "Evolution" : t === "scores" ? "Score Tracker" : t === "review" ? "Decision Review" : "Pipeline Health"}
             </button>
           ))}
         </div>
-        {tab === "funnel" ? <ResearchFunnel focusSymbol={focusSymbol} /> : tab === "evolution" ? <EvolutionTab /> : tab === "scores" ? <ScoreTrackerPanel embedded /> : <DecisionReviewPanel />}
+        {tab === "funnel" ? <ResearchFunnel focusSymbol={focusSymbol} /> : tab === "evolution" ? <EvolutionTab /> : tab === "scores" ? <ScoreTrackerPanel embedded /> : tab === "review" ? <DecisionReviewPanel /> : <PipelineHealthTab />}
       </div>
     </div>
   );

@@ -225,6 +225,9 @@ export async function POST(req: NextRequest) {
     ? marketEntries.filter(e => !e.isHeld && DISCOVERY_SOURCES.includes(String(e.discovery_source ?? "")))
     : marketEntries;
   const batch = entries.map(e => e.symbol);
+  // Set queue depth now that entries is resolved (closedDayCatchup already set this
+  // for catchup runs; for normal session runs it was always null — set it here).
+  if (queueDepthAtStart === null) queueDepthAtStart = entries.length;
 
   if (entries.length === 0) {
     return NextResponse.json({ skipped: true, reason: `No ${marketScope ?? "any"}-market symbols to research (check market_focus).` });
