@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { isFreshSessionDate } from "@/lib/data/price-cache-freshness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -13,6 +14,23 @@ export const maxDuration = 60;
 //   - HIGH score (>=60, "buy") but price fell                → overscored (thesis failing)
 // Writes a [RESCORE] note to learning_log (the learner reads this) and returns flags.
 // Cron-able via x-cron-secret. Uses price_cache only (no external API budget).
+//
+// W9 — this route publishes LEARNER FEEDBACK, so a wrong price here does not just
+// mislead a reader, it corrupts the evaluation layer that scoring is calibrated
+// against. Two ways it could do that, both now closed:
+//
+//  1. It treated the newest cached row as "current" with no as-of check. For the
+//     101 symbols frozen at 2026-07-22 the "move since signal" was measured to a
+//     fossil close, so a flat symbol could be flagged OVERSCORED forever and a
+//     genuine move would never be seen at all.
+//  2. When no bar existed at or before the signal date it fell back to
+//     `rows[rows.length - 1]` — the OLDEST row in the window, which may well be
+//     AFTER the signal. That measures a window that is not the one being judged,
+//     and it silently produced a number rather than declining to.
+//
+// Both now skip with a counted reason. `skipped` in the response is the detector:
+// a run that evaluates nothing says so instead of returning `flags: []` — the same
+// "green because it did nothing" failure this whole remediation exists to kill.
 
 const LOOKBACK_DAYS = 30;
 const MIN_DAYS_SINCE = 3;      // give the thesis time to play out
@@ -60,21 +78,41 @@ export async function POST(req: NextRequest) {
   }
 
   const flags: any[] = [];
+  const skipped: Record<string, number> = {};
+  const staleSymbols: { symbol: string; asOf: string }[] = [];
+  const skip = (reason: string) => { skipped[reason] = (skipped[reason] ?? 0) + 1; };
+
   const now = Date.now();
+  let evaluated = 0;
   for (const sym of symbols) {
     const sig = latest[sym];
     const rows = bySymbol[sym];
-    if (!rows?.length) continue;
+    if (!rows?.length) { skip("no_price_data"); continue; }
 
     const sigDay = sig.date.slice(0, 10);
     const daysSince = (now - new Date(sig.date).getTime()) / 86400_000;
-    if (daysSince < MIN_DAYS_SINCE) continue;
+    if (daysSince < MIN_DAYS_SINCE) { skip("too_recent"); continue; }
 
-    const currentClose = rows[0].close; // rows sorted date desc
-    const signalRow = rows.find(r => r.date <= sigDay) ?? rows[rows.length - 1];
+    // AS-OF: rows are date-desc, so rows[0] is the newest bar we hold. It may only
+    // stand in for "current" if it is the last completed session — the bar's own
+    // market date decides, never when the row was written.
+    const currentRow = rows[0];
+    if (!isFreshSessionDate(currentRow.date, "us")) {
+      skip("stale_price_cache");
+      staleSymbols.push({ symbol: sym, asOf: currentRow.date });
+      continue;
+    }
+
+    // COVERAGE: the anchor must genuinely be at or before the signal. No fallback
+    // to the oldest row — a window that isn't the signal's window is not evidence.
+    const signalRow = rows.find(r => r.date <= sigDay);
+    if (!signalRow) { skip("no_bar_at_signal_date"); continue; }
+
+    const currentClose = currentRow.close;
     const signalClose = signalRow.close;
-    if (!currentClose || !signalClose) continue;
+    if (!currentClose || !signalClose) { skip("unusable_close"); continue; }
 
+    evaluated++;
     const movePct = ((currentClose - signalClose) / signalClose) * 100;
 
     let flag: string | null = null;
@@ -106,9 +144,21 @@ export async function POST(req: NextRequest) {
     inserted++;
   }
 
-  // "evaluated" = symbols that actually had price data (not just candidates).
-  const evaluated = symbols.filter(s => (bySymbol[s]?.length ?? 0) > 0).length;
-  return NextResponse.json({ candidates: symbols.length, evaluated, flagged: flags.length, new_flags: inserted, flags });
+  // "evaluated" = symbols whose move was actually measurable against a fresh
+  // current bar AND a real signal-date anchor. It is no longer "had any row at
+  // all" — that count went up while the data underneath went dead.
+  return NextResponse.json({
+    candidates: symbols.length,
+    evaluated,
+    flagged: flags.length,
+    new_flags: inserted,
+    skipped,
+    stale_symbols: staleSymbols.slice(0, 20),
+    // The detector: candidates arrived but nothing could be judged. Silence here
+    // is a data outage, not a clean bill of health.
+    degraded: symbols.length > 0 && evaluated === 0,
+    flags,
+  });
 }
 
 // GET: recent rescore flags (from learning_log)

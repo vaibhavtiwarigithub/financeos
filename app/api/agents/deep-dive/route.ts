@@ -8,6 +8,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { fetchIndiaOverview, fetchIndiaQuote, isIndia } from "@/lib/india-data";
 import { isPlausibleWatchlistSymbol } from "@/lib/watchlist-symbols";
+import { isFreshSessionDate } from "@/lib/data/price-cache-freshness";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,10 @@ export const dynamic = "force-dynamic";
 // from Settings -> Agents -> LLM Config (agent_config, agent_name="deep-dive")
 // — defaults to deepseek-reasoner since there's no ANTHROPIC_API_KEY today.
 
-async function fetchQuote(symbol: string): Promise<{ price: number; changePct: number; source: string } | null> {
+// W9 — `asOf`/`stale` ride along with the quote. This bundle is handed to an LLM
+// as the current price; an unlabelled frozen close does not just mislead the
+// owner, it is reasoned over as fact by every layer of the debate.
+async function fetchQuote(symbol: string): Promise<{ price: number; changePct: number; source: string; asOf?: string; stale?: boolean } | null> {
   const apiKey = process.env.MASSIVE_API_KEY;
   if (apiKey) {
     try {
@@ -32,9 +36,18 @@ async function fetchQuote(symbol: string): Promise<{ price: number; changePct: n
     } catch { /* fall through */ }
   }
   const svc = createServiceClient();
-  const { data } = await svc.from("price_cache").select("close, open").eq("symbol", symbol).order("date", { ascending: false }).limit(1);
+  const { data } = await svc.from("price_cache").select("date, close, open").eq("symbol", symbol).order("date", { ascending: false }).limit(1);
   const c = data?.[0] as any;
-  if (c) return { price: Number(c.close), changePct: ((Number(c.close) - Number(c.open)) / Number(c.open)) * 100, source: "cache" };
+  if (c) {
+    const asOf = String(c.date);
+    return {
+      price: Number(c.close),
+      changePct: ((Number(c.close) - Number(c.open)) / Number(c.open)) * 100,
+      source: "cache",
+      asOf,
+      stale: !isFreshSessionDate(asOf, "us"),
+    };
+  }
   return null;
 }
 
@@ -104,7 +117,9 @@ export async function POST(req: NextRequest) {
   // ── Data bundle: quote + fundamentals + our signal scores + macro + holding ──
   const [quote, fundamentals, { data: sig }, { data: macro }, { data: pos }, { data: wl }] = await Promise.all([
     signalMarket === "india"
-      ? fetchIndiaQuote(symbol).then(row => row ? { price: row.price, changePct: row.changePct, source: "yahoo" } : null)
+      // India quotes are fetched live from Yahoo per call — never from price_cache,
+      // so they cannot freeze. Typed identically so the bundle has one shape.
+      ? fetchIndiaQuote(symbol).then(row => row ? { price: row.price, changePct: row.changePct, source: "yahoo", asOf: undefined as string | undefined, stale: false } : null)
       : fetchQuote(symbol),
     signalMarket === "india"
       ? fetchIndiaOverview(symbol).then(formatOverview).catch(() => null)
@@ -123,7 +138,12 @@ export async function POST(req: NextRequest) {
 
   const bundle = [
     `SYMBOL: ${symbol} (${companyName}) | MARKET: ${signalMarket}`,
-    quote ? `PRICE: ${signalMarket === "india" ? "INR " : "$"}${quote.price?.toFixed(2)} (${quote.changePct >= 0 ? "+" : ""}${quote.changePct?.toFixed(2)}% last session, src=${quote.source})` : `PRICE: unavailable`,
+    quote
+      ? `PRICE: ${signalMarket === "india" ? "INR " : "$"}${quote.price?.toFixed(2)} (${quote.changePct >= 0 ? "+" : ""}${quote.changePct?.toFixed(2)}% last session, src=${quote.source}${quote.asOf ? `, as-of ${quote.asOf}` : ""})`
+        + (quote.stale
+          ? `\n  ⚠ STALE PRICE — this close is from ${quote.asOf} and is NOT current. Do not treat it as today's price, do not compute a current move from it, and say so in your verdict.`
+          : "")
+      : `PRICE: unavailable`,
     fundamentals ? `FUNDAMENTALS (${signalMarket === "india" ? "Yahoo India" : "Alpha Vantage"}): ${fundamentals}` : `FUNDAMENTALS: unavailable`,
     `HELD IN PAPER PORTFOLIO: ${isHeld ? "YES" : "NO"}`,
     s ? `PRIOR RESEARCH SIGNAL (${new Date(s.created_at).toISOString().slice(0,10)}): direction=${s.direction}, analyst_score=${s.analyst_score}/100 | dims: fundamental=${s.fundamental_score ?? "?"}, technical=${s.technical_score ?? "?"}, sentiment=${s.sentiment_score ?? "?"}, macro=${s.macro_score ?? "?"}, insider=${s.insider_score ?? "?"}\n  rationale: ${(s.rationale ?? "").slice(0, 400)}` : `PRIOR RESEARCH SIGNAL: none on record`,

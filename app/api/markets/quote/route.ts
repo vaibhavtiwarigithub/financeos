@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { isFreshSessionDate } from "@/lib/data/price-cache-freshness";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,11 @@ export async function GET(req: NextRequest) {
     const prev = data[1];
     const price = Number(cur.close);
     const prevClose = prev ? Number(prev.close) : Number(cur.open);
+    // W9 — this is a cached EOD bar, not a live quote. When the cache freezes it
+    // keeps answering with the same number and nothing in the payload said so.
+    // asOf/stale ride along so the UI can label it instead of implying "now".
+    const asOf = String(cur.date);
+    const stale = !isFreshSessionDate(asOf, "us");
     return NextResponse.json({
       symbol, price,
       open: Number(cur.open), high: Number(cur.high), low: Number(cur.low),
@@ -55,6 +61,9 @@ export async function GET(req: NextRequest) {
       change: price - prevClose,
       changePct: ((price - prevClose) / prevClose) * 100,
       source: "cache",
+      asOf,
+      stale,
+      ...(stale ? { staleNote: `Last cached close ${asOf} — not current` } : {}),
     });
   }
 

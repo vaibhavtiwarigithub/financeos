@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { callLLM } from "@/lib/llm-router";
 import { fetchIndiaIndices } from "@/lib/india-data";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { isFreshSessionDate } from "@/lib/data/price-cache-freshness";
 import {
   buildLiveRiskBriefing,
   latestCompleteRiskRuns,
@@ -593,6 +594,7 @@ export async function POST(req: NextRequest) {
   // (that table is populated from US-only feeds) -- Yahoo's live quote is
   // used instead, same source PaperTrader itself fills India orders from.
   const positions = rawPositions ?? [];
+  const staleMarks: { symbol: string; asOf: string }[] = [];
   const positionLines: string[] = [];
   const positionsStruct: { symbol: string; direction: string; qty: number; entry: number; current: number | null; pnl: number | null; pnlPct: number | null }[] = [];
   for (const p of positions) {
@@ -605,12 +607,19 @@ export async function POST(req: NextRequest) {
       } else {
         const { data: cache } = await svc
           .from("price_cache")
-          .select("close")
+          .select("date, close")
           .eq("symbol", p.symbol)
           .order("date", { ascending: false })
           .limit(1)
           .single();
         currentPrice = cache?.close ? Number(cache.close) : null;
+        // W9 — the briefing reports P&L "now". When price_cache freezes, that
+        // number is a fossil and the email said nothing. Label it rather than
+        // dropping it: a stale mark is still the best mark we have, but the
+        // owner (and the LLM reading this bundle) must know which it is.
+        if (currentPrice != null && cache?.date && !isFreshSessionDate(String(cache.date), "us")) {
+          staleMarks.push({ symbol: p.symbol, asOf: String(cache.date) });
+        }
       }
     }
     // paper_positions columns: qty, avg_cost, current_price (no status/direction/
@@ -704,6 +713,9 @@ ${portfolioBlock}
 
 OPEN PAPER POSITIONS:
 ${positionLines.length > 0 ? positionLines.join("\n") : "  • No open positions"}
+${staleMarks.length > 0
+  ? `  ⚠ STALE MARKS — the "now" price for ${staleMarks.map(m => `${m.symbol} (as-of ${m.asOf})`).join(", ")} came from a frozen price cache and is NOT current. The P&L shown for those positions is not today's P&L. Say so explicitly; do not draw conclusions from their moves.`
+  : ""}
 
 LIVE ROBINHOOD ACCOUNT (••••8641, read-only):
 ${liveBlock}
