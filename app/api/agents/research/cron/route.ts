@@ -306,7 +306,18 @@ export async function POST(req: NextRequest) {
   const processingDeadline = routeStartedAt + BUDGET_MS;
   const results: any[] = new Array(entries.length);
   const holdingIndexes = entries.map((entry, i) => entry.isHeld ? i : -1).filter(i => i >= 0);
-  const candidateIndexes = entries.map((entry, i) => !entry.isHeld ? i : -1).filter(i => i >= 0);
+  // Discovery sources (screener/basket) are promoted to the front of the candidate
+  // queue so worker-0 (the candidate-preferring worker) scores new names before
+  // watchlist re-scores. gatherSymbols orders watchlist ahead of screener, which
+  // caused screener candidates to be structurally last and always budget-cut.
+  const candidateIndexes = entries
+    .map((entry, i) => !entry.isHeld ? i : -1)
+    .filter(i => i >= 0)
+    .sort((a, b) => {
+      const aDisc = DISCOVERY_SOURCES.includes(String((entries[a] as any).discovery_source ?? "")) ? 0 : 1;
+      const bDisc = DISCOVERY_SOURCES.includes(String((entries[b] as any).discovery_source ?? "")) ? 0 : 1;
+      return aDisc - bDisc;
+    });
   let holdingCursor = 0;
   let candidateCursor = 0;
   const takeIndex = (preferred: "holding" | "candidate"): number | null => {
