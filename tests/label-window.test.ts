@@ -248,3 +248,48 @@ describe("scan budget vs success budget", () => {
     expect(labelled.some((r) => !oldestFirst.has(r))).toBe(true);
   });
 });
+
+// ── Long-horizon coverage (h60 / h120, added 2026-08-17) ─────────────────────
+// The resolver fetches each symbol AT MOST ONCE per run (providerTried is keyed
+// market:symbol), so that single fetch has to satisfy the LONGEST horizon in
+// play. India's provider used to fetch "3mo" (~63 bars) — enough for h20, never
+// enough for h120 — and because the fetch is not retried, short coverage would
+// have starved the long horizons silently for the whole run.
+describe("long-horizon forward coverage", () => {
+  const DECISION = "2026-01-05";
+
+  it("a 3mo-sized series cannot cover h120 — the regression the range widening prevents", () => {
+    const shallow = bars("2026-01-02", 63); // ~3 months of sessions
+    expect(hasForwardCoverage(shallow, DECISION, 20)).toBe(true);
+    // h60 clears only because the decision sits at the very front of the series
+    // (61 forward bars, 1 to spare) — a decision even two sessions later fails.
+    expect(hasForwardCoverage(shallow, DECISION, 60)).toBe(true);
+    expect(hasForwardCoverage(shallow, "2026-01-07", 60)).toBe(false);
+    // h120 is unreachable from a 3mo series at ANY decision date in it.
+    expect(hasForwardCoverage(shallow, DECISION, 120)).toBe(false);
+  });
+
+  it("a 2y-sized series covers h120, and the window is exactly 120 forward sessions", () => {
+    const deep = bars("2026-01-02", 400);
+    expect(hasForwardCoverage(deep, DECISION, 120)).toBe(true);
+    const w = forwardWindow(deep, DECISION, 120)!;
+    expect(w.entry.date).toBe(DECISION);
+    expect(w.after.every((c) => c.date > w.entry.date)).toBe(true);
+    expect(w.after.length).toBeGreaterThanOrEqual(120);
+    // The label reads after[h-1] as the exit bar — it must exist.
+    expect(w.after[119]).toBeDefined();
+  });
+
+  it("one provider fetch serves every horizon — a short first fetch would starve h120", async () => {
+    const deep = bars("2026-01-02", 400);
+    const r = new CandleResolver({
+      cache: async () => [],
+      provider: async () => deep,
+    });
+    // Short horizon first, exactly as the HORIZONS loop orders them.
+    await r.resolve("us", "AAPL", DECISION, 2, "2025-12-28");
+    const series = await r.resolve("us", "AAPL", DECISION, 120, "2025-12-28");
+    expect(r.providerFetches).toBe(1);
+    expect(hasForwardCoverage(series, DECISION, 120)).toBe(true);
+  });
+});

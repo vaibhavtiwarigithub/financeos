@@ -33,7 +33,22 @@ export const maxDuration = 300;
 // per-horizon budget is now split scan-vs-success with a rotating second pass
 // so a permanently-failing oldest prefix cannot starve newer observations.
 
-const HORIZONS = [2, 5, 10, 20] as const;
+// 2026-08-17: h60 and h120 added. Evaluation horizon is DECOUPLED from holding
+// period (the mandate trades a 5-15 day hold) — these labels answer "are we
+// exiting too early", which the <=20d labels structurally cannot.
+//
+// They produce nothing until roughly 2026-09-29: maturityCutoff(60) is now-85d
+// and the oldest observation is 2026-07-06, so every h60/h120 page comes back
+// empty and exits immediately. That is the point — maturation is calendar-bound
+// and cannot be compressed, so the clock has to start before the answer is
+// wanted. Cost until then is two empty queries per run.
+const HORIZONS = [2, 5, 10, 20, 60, 120] as const;
+
+/** India provider range. The resolver fetches each symbol at most ONCE per run
+ *  (providerTried is keyed market:symbol), so this single fetch has to satisfy
+ *  the LONGEST horizon — the previous "3mo" (~63 bars) could never cover a
+ *  120-session forward window, and would have starved h60/h120 silently. */
+const INDIA_PROVIDER_RANGE = "2y";
 
 const PAGE_SIZE = 200;
 /** Labels to produce per horizon per run. */
@@ -67,11 +82,13 @@ function makeResolver(svc: any): CandleResolver {
     },
     provider: async (market, symbol) => {
       if (market === "india") {
-        const raw = await fetchYahooCandles(symbol, "3mo");
+        const raw = await fetchYahooCandles(symbol, INDIA_PROVIDER_RANGE);
         return raw.map((c: any) => ({ date: c.date, close: c.close, high: c.high, low: c.low }));
       }
       // Research does not guarantee that every observed US symbol is written to
       // price_cache, and a present-but-stale row must not suppress this fetch.
+      // US needs no explicit range: lib/data/candles.ts fetches Yahoo at range=1y
+      // (~251 bars), which already covers a 120-session forward window.
       const resolved = await fetchUsCandles(symbol, async () => [], 3);
       if (resolved.candles.length > 0) {
         const rows = resolved.candles.map((c) => ({
