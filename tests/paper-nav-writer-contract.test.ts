@@ -114,11 +114,13 @@ describe("market scoping: a scoped run cannot write another market's book", () =
   it("skips non-scoped markets in the mark/NAV write loop", () => {
     expect(monitor).toContain("if (marketScope && market !== marketScope) continue;");
     // The guard must sit inside the poolByMarket loop, before the write.
+    // Newline-agnostic: this file's `code()` helper does not normalise CRLF.
+    expect(monitor).toMatch(/for \(const pos of positions\)\s*\{\s*try\s*\{/);
     const loopAt = monitor.indexOf("for (const [market, pool] of poolByMarket)");
     const guardAt = monitor.indexOf("if (marketScope && market !== marketScope) continue;");
     const perfAt = monitor.indexOf('from("paper_performance").upsert');
-    expect(loopAt).toBeGreaterThan(-1);
     expect(guardAt).toBeGreaterThan(loopAt);
+    expect(loopAt).toBeGreaterThan(-1);
     expect(perfAt).toBeGreaterThan(guardAt);
   });
 
@@ -127,5 +129,51 @@ describe("market scoping: a scoped run cannot write another market's book", () =
     // from carry-forward marks hours before the market closed.
     expect(monitor).not.toMatch(/snapshot_type:\s*"eod"\s*,/);
     expect(monitor).toContain('expectedNewestSession(market as "us" | "india") === today ? "eod" : "intraday"');
+  });
+});
+
+// ── 2026-08-18: one position's failure must not blank the whole book ─────────
+//
+// The 20:15 US run died on `execute_paper_exit denied (MSFT):
+// position_lot_qty_mismatch`. The throw escaped the per-position loop and killed
+// the run: no marks, no NAV, and the other 12 US positions never evaluated. The
+// 2026-08-14 run died identically on LNC (`existing_open_position`).
+//
+// The RPC denial is CORRECT and must stay — MSFT's only lot closed on
+// 2026-08-03 while its paper_positions row survived, so closing 0.472499 that no
+// open lot backs would double-count a realized trade. The fix isolates the
+// failure rather than silencing the guard.
+describe("a single position's exit failure is isolated, not fatal", () => {
+  it("wraps the per-position loop body and records the failure", () => {
+    expect(monitor).toContain("const exitFailures:");
+    // Newline-agnostic: this file's `code()` helper does not normalise CRLF.
+    expect(monitor).toMatch(/for \(const pos of positions\)\s*\{\s*try\s*\{/);
+    expect(monitor).toContain("exitFailures.push({");
+  });
+
+  it("still reaches the NAV/mark write after a failure", () => {
+    // The whole point: marks and NAV are written even when a position threw.
+    const catchAt = monitor.indexOf("exitFailures.push({");
+    const navAt = monitor.indexOf('from("paper_performance").upsert');
+    expect(catchAt).toBeGreaterThan(-1);
+    expect(navAt).toBeGreaterThan(catchAt);
+  });
+
+  it("counts failures as FAILED units, so the run cannot report healthy", () => {
+    expect(monitor).toContain("failed: exitFailures.length");
+    expect(monitor).not.toMatch(/failed:\s*0\s*,\s*businessMetrics:\s*\{\s*closed/);
+  });
+
+  it("raises a critical naming the unevaluated symbols", () => {
+    // BOTH the reportIssue and the resolveIssue must use the key. A bare
+    // toContain passed even when the reportIssue key was renamed, because the
+    // resolveIssue occurrence satisfied it — the assertion was decorative.
+    const keyHits = monitor.split("position-monitor-exit-failed:").length - 1;
+    expect(keyHits).toBeGreaterThanOrEqual(2);
+    expect(monitor).toContain("stops/targets were NOT checked this run");
+  });
+
+  it("does NOT suppress the RPC denial — the guard still throws", () => {
+    expect(monitor).toContain("execute_paper_exit denied (");
   });
 });

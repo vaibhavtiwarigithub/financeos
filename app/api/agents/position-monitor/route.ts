@@ -320,7 +320,25 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     }
   }
 
+  // Per-position isolation (2026-08-18). A single position's exit failure MUST
+  // NOT abort the run.
+  //
+  // Production: on 2026-08-18 20:15 `execute_paper_exit denied (MSFT):
+  // position_lot_qty_mismatch` threw out of this loop and killed the whole run —
+  // no marks, no NAV, and the other 12 US positions never evaluated. The
+  // 2026-08-14 run died the same way on LNC (`existing_open_position`). One
+  // symbol's data defect blanking the entire book's monitoring is a far worse
+  // outcome than that symbol going unevaluated.
+  //
+  // The RPC denial itself is CORRECT and stays: MSFT's only lot closed on
+  // 2026-08-03 while its paper_positions row survived, so the parity check
+  // refuses to close 0.472499 that no open lot backs. Suppressing the guard
+  // would double-count a realized trade. We isolate the failure, not silence it:
+  // it is recorded, alerted, and counted as a `failed` unit in the W6 envelope,
+  // which marks the run `error` while still letting it finish its other work.
+  const exitFailures: Array<{ symbol: string; market: string; reason: string }> = [];
   for (const pos of positions) {
+   try {
     const currentPrice = priceMap[pos.symbol];
     const market = marketOf(pos, hasMarketCol) as "us" | "india";
     const sc = latestScore[`${market}:${String(pos.symbol)}`];
@@ -514,6 +532,31 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       }).eq("id", pos.id);
       updated.push(pos.symbol);
     }
+   } catch (err: unknown) {
+    // Isolated: this position is not evaluated, every other one still is.
+    const reason = err instanceof Error ? err.message : String(err);
+    exitFailures.push({
+      symbol: String(pos.symbol),
+      market: marketOf(pos, hasMarketCol),
+      reason,
+    });
+   }
+  }
+
+  if (exitFailures.length > 0) {
+    await reportIssue({
+      issueKey: `position-monitor-exit-failed:${marketScope ?? "all"}`,
+      severity: "critical", category: "risk",
+      title: `PositionMonitor could not evaluate ${exitFailures.length} position(s)`,
+      detail:
+        `These positions were SKIPPED and their stops/targets were NOT checked this run: ` +
+        exitFailures.map((f) => `${f.symbol} (${f.market}) — ${f.reason}`).join("; ") +
+        `. Every other position was evaluated normally. A lot/position parity ` +
+        `mismatch means the ledger disagrees with the position row and must be ` +
+        `reconciled through the transactional exit path — never by deleting rows.`,
+    }, svc);
+  } else {
+    await resolveIssue(`position-monitor-exit-failed:${marketScope ?? "all"}`, svc);
   }
 
   // Recompute + persist NAV PER MARKET = that pool's cash + mark-to-market of its
@@ -840,8 +883,17 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
         expectedSkip: 0,
         deferred: 0,
         unavailable: unpricedByMarket.us.length + unpricedByMarket.india.length,
-        failed: 0,
-        businessMetrics: { closed: closed.length, stops_updated: updated.length, stale_held: staleScoresHeld.length },
+        // Positions whose evaluation threw (e.g. a denied exit). Isolated above
+        // so the run continues, but they ARE failed units: the W6 contract fires
+        // a critical on any failed unit regardless of how many succeeded, which
+        // is right — a position whose stop went unchecked is not a healthy run.
+        failed: exitFailures.length,
+        businessMetrics: {
+          closed: closed.length,
+          stops_updated: updated.length,
+          stale_held: staleScoresHeld.length,
+          exit_failures: exitFailures.length,
+        },
       }),
     } as any);
   } catch { /* best-effort — never fail the monitor run over bookkeeping */ }
