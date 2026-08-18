@@ -15,9 +15,17 @@ const US_DAYS_DEFAULT = 420;
 // KNOWN CEILING on the US branch below: Massive is plan-capped at a 2-year
 // lookback (HTTP 403 NOT_AUTHORIZED beyond it, measured 2026-07-28), so a US
 // `days` above ~730 silently yields only ~500 bars. Yahoo serves 5y for US too
-// and is already imported here — but switching the US branch to it changes live
-// ResearchAgent scoring inputs, so it is build-order step 4 in
-// features/walk-forward-ic-folds/, not a drive-by change.
+// and is already imported here.
+//
+// CORRECTION (2026-08-18): the note here used to say switching the US branch to
+// Yahoo "changes live ResearchAgent scoring inputs". That is not true —
+// `resolveCandles` is reached ONLY from lib/edges/compute.ts (EdgeScout) and
+// lib/edges/ic.ts (edge-IC), both measure-only; `lib/research-agent.ts` imports
+// nothing from lib/edges. The real reason to be careful is different: edge IC is
+// what `lib/gates/promotion-gate.ts` reasons about, so changing which provider
+// serves a symbol changes a measured input to a promotion decision. Yahoo is
+// therefore added as a LAST RESORT (additive, rescues `unavailable` only) rather
+// than promoted ahead of the budgeted providers.
 
 export interface CandleResult { candles: Candle[]; source: string }
 
@@ -31,7 +39,26 @@ export async function resolveCandles(symbol: string, market: Market, days: numbe
   c = await fetchEodhdCandles(symbol, days).catch(() => [] as Candle[]);
   if (c.length) return { candles: c, source: "eodhd" };
   c = await fetchTwelveDataCandles(symbol, days).catch(() => [] as Candle[]);
-  return { candles: c, source: c.length ? "twelvedata" : "unavailable" };
+  if (c.length) return { candles: c, source: "twelvedata" };
+  // LAST RESORT ONLY, added 2026-08-18. Strictly additive: every branch above is
+  // unchanged, so no symbol that resolves today changes source or value — this
+  // only rescues symbols that previously returned `unavailable`.
+  //
+  // Why it matters: Massive per-symbol candles are PACED at 12.5s (5/min), so a
+  // 300-symbol EdgeScout run gets most Massive calls refused and cascades into
+  // EODHD, whose free-tier budget is 20/day. Measured 2026-08-17: Massive
+  // resolved 12 symbols, EODHD exactly 20 (its cap), TwelveData 24 — everything
+  // past that got nothing at all. Yahoo carries NO daily budget
+  // (PROVIDERS.yahoo.dailyBudget === null) and already serves the India branch
+  // of this same function.
+  //
+  // Deliberately NOT moved ahead of EODHD/TwelveData, which is what would
+  // actually cut the budget spend: doing so changes WHICH provider serves a
+  // symbol, and therefore the measured IC that `lib/gates/promotion-gate.ts`
+  // reasons about. That is a decision-affecting change and needs its own
+  // approval, not a drive-by reorder.
+  c = await fetchYahooCandles(symbol, yahooRange(days)).catch(() => [] as Candle[]);
+  return { candles: c, source: c.length ? "yahoo_us_last_resort" : "unavailable" };
 }
 
 // Broad-market benchmark per market (for relative-strength). SPY for US, NIFTY 50
