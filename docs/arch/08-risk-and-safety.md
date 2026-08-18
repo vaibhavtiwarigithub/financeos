@@ -1,4 +1,16 @@
 # Kairos — Risk & Safety
+> 2026-08-18: **W5 US benchmark was never written — the provider ladder's recency guard is too weak for an EXACT session.**
+>
+> **W5 itself works.** India recorded `bench_nav` 24245.70 / `bench_session_date` 2026-08-18 / `bench_source` yahoo on the 11:15 UTC run. The migration and both write paths are correct. Only US was null, on every row since the migration.
+>
+> **The defect.** `fetchUsCandles` accepts the FIRST provider whose newest bar is inside a generic `MAX_BAR_AGE_DAYS = 4` guard. The US PositionMonitor runs 16:15 ET — fifteen minutes after the close — and Yahoo has not published the settled VOO daily bar that soon. Its newest bar was 2026-08-14: three days old, therefore "fresh", so the ladder returned it and **never tried Massive, which DID have 2026-08-17 (close 710.27)**. `selectBenchmarkObservation` then correctly refused to store a non-matching session, so the US book recorded no benchmark at all. India was unaffected because its cron runs 1h15m after the NSE close, by which time Yahoo has published. Proof in `av_cache`: `YAHOO_CANDLES:VOO` at `cache_date` 2026-08-17 has `newest_bar` 2026-08-14, while `YAHOO_CANDLES:^NSEI` at the same cache_date has 2026-08-17.
+>
+> **A generic age guard cannot answer an exact-session question.** "Newest bar is under 4 days old" and "there is a bar for session X" are different predicates, and only the second is what a benchmark observation needs. The fix stays inside `benchmark-observation.ts`: on `benchmark_session_mismatch` — and ONLY that reason — ask the next provider directly. A `benchmark_bars_stale` result means the provider is stranded and is not retried. `fetchUsCandles` is untouched, because its other caller (label maturation) legitimately wants a long series rather than one date.
+>
+> **Rejection reasons stay honest.** When neither provider supplies the session, the ORIGINAL rejection is reported — it names the provider the ladder actually chose, not the fallback.
+>
+> **Detector:** `tests/benchmark-session-alignment.test.ts` — the fallback resolves the session; no second call is spent when the primary already has it; a stranded provider is NOT retried; both-miss still refuses; India spends no fallback call. **Mutation-verified** (neutering the fallback fails). Dates are RELATIVE, per the note at the top of that file: the stale guard is wall-clock, so pinned literals would drift into the `stale` branch and start asserting the wrong thing.
+
 > 2026-08-18: **A market-scoped PositionMonitor run was writing the OTHER market's book.**
 >
 > Both crons are correctly scoped (`?market=us`, `?market=india`), yet the India run at 11:15 UTC wrote 13 US marks and a US `paper_performance` row stamped `snapshot_type='eod'` at **07:15 ET — before the US session opened**. The W4 "ONE canonical EOD writer per market" invariant was broken from a direction W4 did not anticipate: not a second writer racing the same market, but the *other market's schedule* reaching across.

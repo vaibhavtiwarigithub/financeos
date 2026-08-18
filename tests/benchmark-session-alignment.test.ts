@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   benchmarkReturnPct,
   benchmarkSymbol,
+  fetchBenchmarkObservation,
   selectBenchmarkObservation,
 } from "@/lib/paper/benchmark-observation";
 
@@ -96,5 +97,91 @@ describe("benchmark return baseline", () => {
   it("returns null rather than a fake 0% when there is no baseline", () => {
     expect(benchmarkReturnPct(110, null)).toBeNull();
     expect(benchmarkReturnPct(110, 0)).toBeNull();
+  });
+});
+
+// ── 2026-08-18: the ladder's recency guard is too weak for an EXACT session ──
+//
+// Production: on 2026-08-17 the US book recorded NO benchmark while India
+// recorded one fine. `fetchUsCandles` accepts the first provider whose newest
+// bar is within a generic 4-day guard. Yahoo had not published the settled VOO
+// bar 15 minutes after the US close, so its newest was 2026-08-14 — 3 days old,
+// therefore "fresh" — and the ladder returned it without ever trying Massive,
+// which DID have 2026-08-17 at 710.27. av_cache proves it:
+// YAHOO_CANDLES:VOO @ cache_date 2026-08-17 had newest_bar 2026-08-14.
+//
+// Dates stay RELATIVE, per the note at the top of this file: the stale guard is
+// wall-clock, so pinned 2026-08 literals would drift into `stale` and start
+// asserting the wrong branch.
+describe("US benchmark falls through to the next provider on a session miss", () => {
+  const SESSION = dayOffset(0);
+  // Yahoo as it actually was: usable bars, newest 3 days old (INSIDE the 4-day
+  // guard, so the ladder accepts it), but no bar for the session asked about.
+  const yahooShort = [bar(dayOffset(5), 705), bar(dayOffset(4), 708.42), bar(dayOffset(3), 714.95)];
+
+  it("uses the fallback provider's bar when the primary lacks the just-closed session", async () => {
+    let fallbackCalls = 0;
+    const res = await fetchBenchmarkObservation("us", SESSION, {
+      us: async () => ({ candles: yahooShort, source: "yahoo" }),
+      usFallback: async () => { fallbackCalls++; return [...yahooShort, bar(SESSION, 710.27)]; },
+      india: async () => [],
+    });
+
+    expect(fallbackCalls).toBe(1);
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.observation.sessionDate).toBe(SESSION);
+      expect(res.observation.close).toBe(710.27);
+      expect(res.observation.source).toBe("massive");
+    }
+  });
+
+  it("spends NO second call when the primary already has the session", async () => {
+    let fallbackCalls = 0;
+    const res = await fetchBenchmarkObservation("us", SESSION, {
+      us: async () => ({ candles: [...yahooShort, bar(SESSION, 710.27)], source: "yahoo" }),
+      usFallback: async () => { fallbackCalls++; return []; },
+      india: async () => [],
+    });
+    expect(fallbackCalls).toBe(0);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.observation.source).toBe("yahoo");
+  });
+
+  it("a STRANDED provider is not retried — that is a different failure", async () => {
+    let fallbackCalls = 0;
+    const res = await fetchBenchmarkObservation("us", SESSION, {
+      us: async () => ({ candles: [bar(dayOffset(40), 600)], source: "yahoo" }),
+      usFallback: async () => { fallbackCalls++; return []; },
+      india: async () => [],
+    });
+    expect(fallbackCalls).toBe(0);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("benchmark_bars_stale");
+  });
+
+  it("when neither provider has the session it still refuses, reporting the ladder's own reason", async () => {
+    const res = await fetchBenchmarkObservation("us", SESSION, {
+      us: async () => ({ candles: yahooShort, source: "yahoo" }),
+      usFallback: async () => yahooShort,
+      india: async () => [],
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toBe("benchmark_session_mismatch");
+      expect(res.detail).toContain("yahoo");
+    }
+  });
+
+  it("India is unaffected — one provider, no fallback call", async () => {
+    let fallbackCalls = 0;
+    const res = await fetchBenchmarkObservation("india", SESSION, {
+      us: async () => ({ candles: [], source: "none" }),
+      usFallback: async () => { fallbackCalls++; return []; },
+      india: async () => [bar(SESSION, 24245.7)],
+    });
+    expect(fallbackCalls).toBe(0);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.observation.source).toBe("yahoo");
   });
 });

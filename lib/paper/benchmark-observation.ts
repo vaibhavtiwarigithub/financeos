@@ -21,7 +21,7 @@
 // session-equality check below is strictly stronger than any age heuristic.
 
 import type { Candle } from "@/lib/data/technicals";
-import { fetchUsCandles, fetchYahooCandles, newestBarIsStale } from "@/lib/data/candles";
+import { fetchMassiveCandles, fetchUsCandles, fetchYahooCandles, newestBarIsStale } from "@/lib/data/candles";
 
 export type BenchmarkMarket = "us" | "india";
 
@@ -94,17 +94,49 @@ export function selectBenchmarkObservation(
  * and recency guard; India uses the same Yahoo daily-bar adapter that already
  * serves .NS/^NSEI symbols.
  */
+export interface BenchmarkFetchers {
+  us: (symbol: string) => Promise<{ candles: Candle[]; source: string }>;
+  usFallback: (symbol: string) => Promise<Candle[]>;
+  india: (symbol: string) => Promise<Candle[]>;
+}
+
+const DEFAULT_FETCHERS: BenchmarkFetchers = {
+  us: (symbol) => fetchUsCandles(symbol, async () => [] as Candle[]),
+  usFallback: (symbol) => fetchMassiveCandles(symbol),
+  india: (symbol) => fetchYahooCandles(symbol),
+};
+
 export async function fetchBenchmarkObservation(
   market: BenchmarkMarket,
   expectedSessionDate: string,
+  fetchers: BenchmarkFetchers = DEFAULT_FETCHERS,
 ): Promise<BenchmarkObservationResult> {
   const symbol = benchmarkSymbol(market);
   try {
     if (market === "us") {
-      const { candles, source } = await fetchUsCandles(symbol, async () => [] as Candle[]);
-      return selectBenchmarkObservation(candles, symbol, source, expectedSessionDate);
+      const { candles, source } = await fetchers.us(symbol);
+      const primary = selectBenchmarkObservation(candles, symbol, source, expectedSessionDate);
+      if (primary.ok || primary.reason !== "benchmark_session_mismatch") return primary;
+
+      // `fetchUsCandles` accepts the FIRST provider whose newest bar is within a
+      // generic 4-day recency guard. That guard is too weak for a caller that
+      // needs one EXACT session: on 2026-08-17 Yahoo had not yet published the
+      // settled VOO bar 15 minutes after the US close, so its newest bar was
+      // 2026-08-14 — only 3 days old, therefore "fresh" — and the ladder
+      // returned it without ever trying Massive, which DID have 2026-08-17
+      // (close 710.27). The US book then recorded no benchmark at all, while
+      // India (running 1h15m after its close) recorded one fine.
+      //
+      // So when the ladder's pick simply lacks the session, ask the next
+      // provider directly. A mismatch is not the same as a stranded provider,
+      // and only the mismatch is worth a second call.
+      const fallbackCandles = await fetchers.usFallback(symbol);
+      const secondary = selectBenchmarkObservation(fallbackCandles, symbol, "massive", expectedSessionDate);
+      // If the fallback also cannot supply the session, report the ORIGINAL
+      // rejection — it describes the provider the ladder actually chose.
+      return secondary.ok ? secondary : primary;
     }
-    const candles = await fetchYahooCandles(symbol);
+    const candles = await fetchers.india(symbol);
     return selectBenchmarkObservation(candles, symbol, "yahoo", expectedSessionDate);
   } catch (err) {
     return {
