@@ -17,7 +17,11 @@ describe("agent source pipeline remediation", () => {
 
   it("batches market-local PositionMonitor prices and exposes unevaluated names", () => {
     const route = read("app/api/agents/position-monitor/route.ts");
-    expect(route).toContain("getBatchQuotes(usSymbols, svc)");
+    // 2026-08-18: US moved to settled daily bars. The Massive key is 403
+    // NOT_AUTHORIZED for /v2/snapshot, so the old batch path resolved nothing
+    // and the book silently marked at stale prices. Still ONE batched call.
+    expect(route).toContain('getSettledDailyQuotes(usSymbols, svc, "us")');
+    expect(route).not.toContain("getBatchQuotes(usSymbols, svc)");
     expect(route).toContain("fetchIndiaQuotes(indiaSymbols)");
     expect(route).toContain('fetchYahooQuotes(unresolvedUs, "us")');
     expect(route).toContain("!q.stale");

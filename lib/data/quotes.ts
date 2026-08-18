@@ -142,21 +142,141 @@ async function fetchMassiveBatchQuotes(
     // /markets/stocks silently omits ETFs (VOO, XAR, …) which caused them to
     // fall through to AV on every request. The /etfs endpoint uses the same
     // response shape so parseTickers handles both.
-    const missing = new Set(chunk);
-    for (const marketType of ["stocks", "etfs"] as const) {
-      const toFetch = marketType === "stocks" ? chunk : [...missing];
-      if (!toFetch.length) break;
-      try {
-        const url = `https://api.massive.com/v2/snapshot/locale/us/markets/${marketType}/tickers?tickers=${encodeURIComponent(toFetch.join(","))}&apiKey=${apiKey}`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        if (!res.ok) continue;
-        const data = await res.json();
-        for (const sym of parseTickers(data?.tickers ?? [], retrievedAt)) missing.delete(sym);
-      } catch { /* fall through */ }
+    // The `/markets/etfs` pass that used to run here was removed 2026-08-18: that
+    // endpoint returns HTTP 404 (it does not exist), so it never resolved a
+    // single ETF. `getSettledDailyQuotes` below covers ETFs correctly — XAR and
+    // VOO are both present in the grouped-daily feed.
+    try {
+      const url = `https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(chunk.join(","))}&apiKey=${apiKey}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) {
+        // NEVER swallow this. On 2026-08-18 the deployed key was found to be
+        // 403 NOT_AUTHORIZED for every snapshot endpoint, so this "primary batch
+        // path" had been returning zero US quotes on every call — silently, for
+        // an unknown period. The book then fell through to a stale price_cache
+        // bar that was mislabelled fresh, and the US NAV was overstated enough
+        // to flip its sign. An entitlement failure must be loud.
+        console.error(
+          `[quotes] Massive snapshot HTTP ${res.status} for ${chunk.length} symbol(s) — ` +
+          `no live US quotes from this path. ${res.status === 403
+            ? "Key is NOT ENTITLED to /v2/snapshot; settled daily bars come from getSettledDailyQuotes instead."
+            : "Transient or upstream error."}`
+        );
+        continue;
+      }
+      const data = await res.json();
+      parseTickers(data?.tickers ?? [], retrievedAt);
+    } catch (err) {
+      console.error(`[quotes] Massive snapshot fetch failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   return results;
+}
+
+/**
+ * Settled daily bars for a whole market in ONE call.
+ *
+ * WHY THIS EXISTS. The deployed `MASSIVE_API_KEY` is not entitled to any
+ * `/v2/snapshot` endpoint (403 NOT_AUTHORIZED) or `/v2/last/trade`, so the
+ * snapshot batch path above resolves NOTHING for US symbols. Verified against
+ * the live API on 2026-08-18. What the key IS entitled to:
+ *
+ *   /v2/aggs/grouped/locale/us/market/stocks/{date}   -> 200, 12,549 tickers
+ *   /v2/aggs/ticker/{sym}/prev                        -> 200
+ *   /v2/aggs/ticker/{sym}/range/1/day/...             -> 200 (DELAYED)
+ *
+ * The grouped endpoint returns every US ticker's settled OHLCV for one session
+ * in a single request — strictly better than the per-symbol snapshot for
+ * post-close work, and it includes ETFs (XAR, VOO), so no second pass is needed.
+ *
+ * SCOPE. These are SETTLED DAILY bars, not intraday. This is exactly right for
+ * post-close consumers (PositionMonitor marks/stops/targets at 16:15 ET) and
+ * WRONG for intraday callers like the Live Portfolio refresh — which is why this
+ * is a separate function and not a blanket replacement inside `getBatchQuotes`.
+ *
+ * Freshness is not asserted here beyond the requested session: the caller asks
+ * for `expectedNewestSession`, and a bar returned for that date IS that session.
+ */
+export async function fetchMassiveGroupedDaily(
+  sessionDate: string,
+  symbols: string[],
+  apiKey: string,
+): Promise<Record<string, DeterministicQuote>> {
+  const out: Record<string, DeterministicQuote> = {};
+  if (!apiKey || symbols.length === 0) return out;
+  const want = new Set(symbols);
+  try {
+    const url = `https://api.massive.com/v2/aggs/grouped/locale/us/market/stocks/${sessionDate}?adjusted=true&apiKey=${apiKey}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) {
+      console.error(`[quotes] Massive grouped-daily HTTP ${res.status} for ${sessionDate} — no settled US bars this run.`);
+      return out;
+    }
+    const data = await res.json();
+    const rows: any[] = Array.isArray(data?.results) ? data.results : [];
+    // A 200 with an empty body means the session has no published bars yet
+    // (too soon after the close, or a non-trading day). That is not the same as
+    // "these symbols have no price" and must not read as one.
+    if (rows.length === 0) {
+      console.error(`[quotes] Massive grouped-daily returned 0 rows for ${sessionDate} — session not published yet?`);
+      return out;
+    }
+    // The bar's own session close is its provenance, never the time we read it.
+    const retrievedAt = `${sessionDate}T20:00:00Z`;
+    for (const row of rows) {
+      const sym = row?.T;
+      if (!sym || !want.has(sym)) continue;
+      const close = Number(row?.c);
+      if (!Number.isFinite(close) || close <= 0) continue;
+      const open = Number(row?.o);
+      const change = Number.isFinite(open) && open > 0 ? close - open : null;
+      out[sym] = {
+        symbol: sym,
+        price: close,
+        bid: null,
+        ask: null,
+        change,
+        changePct: change != null && Number.isFinite(open) && open > 0 ? (change / open) * 100 : null,
+        source: "massive",
+        retrievedAt,
+        stale: false,
+        dayLow: Number.isFinite(Number(row?.l)) && Number(row.l) > 0 ? Number(row.l) : null,
+        dayHigh: Number.isFinite(Number(row?.h)) && Number(row.h) > 0 ? Number(row.h) : null,
+      };
+    }
+  } catch (err) {
+    console.error(`[quotes] Massive grouped-daily fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return out;
+}
+
+/**
+ * Post-close batch quotes: settled daily bars first, existing chain for the tail.
+ *
+ * Use this from consumers that run AFTER the close and want the session's
+ * settled price (PositionMonitor). Intraday consumers must keep using
+ * `getBatchQuotes`.
+ */
+export async function getSettledDailyQuotes(
+  symbols: string[],
+  supabase: any,
+  market: "us" | "india" = "us",
+  now: Date = new Date(),
+): Promise<Record<string, DeterministicQuote>> {
+  if (symbols.length === 0) return {};
+  // India is not covered by the US grouped endpoint; fall straight through.
+  if (market !== "us") return getBatchQuotes(symbols, supabase);
+
+  const session = expectedNewestSession("us", now);
+  const grouped = await fetchMassiveGroupedDaily(session, symbols, process.env.MASSIVE_API_KEY ?? "");
+  const missing = symbols.filter((s) => !grouped[s]);
+  if (missing.length === 0) return grouped;
+  // Anything the grouped feed did not carry (delisted, non-US, not yet
+  // published) still goes through the ordinary chain, which fails closed on
+  // staleness rather than inventing a price.
+  const rest = await getBatchQuotes(missing, supabase);
+  return { ...grouped, ...rest };
 }
 
 /** Try price_cache for most recent closing price (EOD fallback) */

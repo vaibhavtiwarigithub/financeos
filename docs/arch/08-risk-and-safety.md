@@ -1,4 +1,22 @@
 # Kairos — Risk & Safety
+> 2026-08-18: **The US quote path had no working live source — the Massive key is not entitled to `/v2/snapshot`.**
+>
+> **What was broken.** `fetchMassiveBatchQuotes`, described in code as "the primary batch path", was returning **zero US quotes on every call**: the deployed `MASSIVE_API_KEY` gets `403 NOT_AUTHORIZED` on every `/v2/snapshot` endpoint and on `/v2/last/trade`. `if (!res.ok) continue;` swallowed it. The `/markets/etfs` second pass was also dead — that endpoint returns **404** and had never resolved a single ETF. With Massive silent, AV's 25/day budget exhausted since 2026-07-23, and `price_cache` holding only symbols the *research* path scores (never the holdings), the chain collapsed to a stale cached bar — which the pre-2026-08-17 adapter then relabelled fresh.
+>
+> **Cost, measured not estimated.** On 2026-08-17 all 13 US holdings were marked at the **2026-08-14** close. Marked position value 7,725.11 vs true 7,667.32 against that session's real closes: NAV overstated **$57.79**. The reported **+0.239%** was in truth **−0.339%** — *the sign flips, the entire gain was mismarking*. Per-name drift reached **−3.92%** (SMCI), **−3.89%** (INFY), **−3.04%** (MSFT); against a 7% stop that is over half the stop distance, so stop and target evaluation were affected, not merely NAV display.
+>
+> **The fix.** The key IS entitled to `/v2/aggs/grouped/locale/us/market/stocks/{date}` — **12,549 tickers, settled OHLCV, one call** — verified against the live API. New `fetchMassiveGroupedDaily` + `getSettledDailyQuotes` (`lib/data/quotes.ts`); PositionMonitor's US path now uses it. It includes ETFs (XAR, VOO), so the dead `/etfs` pass is deleted rather than repaired, and it carries OHLC so the `dayLow` intraday-stop check survives the move.
+>
+> **Deliberately NOT a blanket swap.** Grouped daily is settled/EOD and marked DELAYED. That is correct for a post-close consumer (PositionMonitor runs 16:15 ET) and WRONG for intraday callers — `live-portfolio` and `lib/market-data.ts` keep the existing chain. Hence a separate function, not a replacement inside `getBatchQuotes`.
+>
+> **An entitlement failure is now loud.** A non-OK snapshot response logs the status and says whether the key is unentitled; a grouped 200-with-zero-rows is reported as "session not published", never as "these symbols have no price".
+>
+> **Detector:** `tests/massive-grouped-daily.test.ts` — a 403 must yield no quotes AND log; zero rows must not read as no-price; non-positive closes are refused rather than marking a position at zero; ETFs resolve. `tests/agent-source-pipeline-remediation.test.ts` re-pinned to the settled path.
+>
+> **History annotated, not rewritten.** `paper_performance` 2026-08-17 US is `tainted=true` with the full quantified reason and the corrected reading. **`nav` is left as recorded** — the frozen-history rule in the Scoring Data-Truth Review Protocol forbids re-deciding the past. Earlier US rows (2026-08-10..14) were already tainted by the prior remediation.
+>
+> **Open, unresolved:** an unscoped PositionMonitor run wrote a US row tagged `snapshot_type='eod'` at 11:15 UTC (07:15 ET, pre-open) on 2026-08-18, which breaks the W4 "one canonical EOD writer per market" invariant from the other market's schedule. Not fixed here.
+
 > 2026-08-17: **Codex composite/data-truth audit remediation — a stale bar could drive live exit decisions.**
 >
 > **P0-1 (money path).** At 16:15 ET Monday 2026-08-17 all 13 US positions were marked, **stop-checked and target-checked** against Friday's close. `priceMap` in `position-monitor` feeds `priceForStopCheck`, the `currentPrice >= priceTarget` partial/target branch, the time-stop fill price AND the W4 mark ledger — one stale number reached every exit decision, not merely NAV display. The monitor's own `!q.stale` guard was correct; the **adapter lied**. Two defects in `lib/data/quotes.ts`: (a) `isStale()` asked "under 4 CALENDAR days old" — Friday's bar is 3.01d on Monday afternoon, so it passed; (b) `parseTickers` stamped `stale:false` unconditionally even when the price fell through to Massive's `prevDay.c`, i.e. last session's close wearing this run's timestamp. Both fixed at the adapter, so every caller inherits the correction.

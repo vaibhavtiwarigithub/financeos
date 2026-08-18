@@ -9,7 +9,7 @@ import { loadChampionGenome } from "@/lib/validation/genome-live";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 import { setMarketPaused } from "@/lib/market-controls";
-import { computeExitFillPrice, getBatchQuotes } from "@/lib/data/quotes";
+import { computeExitFillPrice, getSettledDailyQuotes } from "@/lib/data/quotes";
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
@@ -129,8 +129,16 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   const indiaSymbols = [...new Set<string>(positions
     .filter((p: any) => marketOf(p, hasMarketCol) === "india")
     .map((p: any): string => String(p.symbol)))];
+  // US: settled daily bars, not the snapshot batch. The deployed Massive key is
+  // 403 NOT_AUTHORIZED for every /v2/snapshot endpoint, so `getBatchQuotes`
+  // resolved ZERO US symbols and the book fell through to a stale price_cache
+  // bar. On 2026-08-17 that marked all 13 holdings at Friday's prices: NAV was
+  // overstated by $57.79, flipping the reported US result from +0.24% to -0.34%,
+  // and per-name drift reached 3.92% against a 7% stop. This monitor runs after
+  // the close, so the settled session bar is the correct price anyway — and the
+  // grouped feed carries OHLC, so `dayLow` for the intraday-stop check survives.
   const [usQuotes, indiaQuotes] = await Promise.all([
-    getBatchQuotes(usSymbols, svc),
+    getSettledDailyQuotes(usSymbols, svc, "us"),
     fetchIndiaQuotes(indiaSymbols),
   ]);
   // dayLowMap: session low from Massive snapshot. Used to detect intraday stop
