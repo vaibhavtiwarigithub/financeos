@@ -384,8 +384,25 @@ export async function POST(req: NextRequest) {
           case "query_learner_config": {
             const { data: config } = await svc.from("learner_config").select("*");
             const { data: weights } = await svc.from("signal_weights").select("*").single();
-            const { data: strategy } = await svc.from("strategy_config").select("risk_profile, score_threshold").single();
-            return JSON.stringify({ config: config ?? [], currentWeights: weights, strategy, autoGuardTripped, totalClosedTrades });
+            // P2-6 (2026-08-17): the money path reads per-market `trading_mandates`
+            // (threshold 60, stop 7%, target 8%). `strategy_config.score_threshold`
+            // is 52 and is NOT what any entry decision uses. Returning it here let
+            // the learner describe and optimise a policy the system does not run.
+            // Return the authoritative mandates; keep risk_profile (still real) and
+            // label the legacy field so it cannot be mistaken for the live gate.
+            const { data: strategyRow } = await svc.from("strategy_config").select("risk_profile, score_threshold").single();
+            const { data: mandates } = await svc.from("trading_mandates")
+              .select("market, horizon_style, score_threshold, stop_loss_pct, target_pct, min_hold_days, target_hold_days, max_hold_days, version");
+            const strategy = {
+              risk_profile: (strategyRow as any)?.risk_profile ?? null,
+              legacy_score_threshold_NOT_USED: (strategyRow as any)?.score_threshold ?? null,
+            };
+            return JSON.stringify({
+              config: config ?? [], currentWeights: weights, strategy,
+              activeMandates: mandates ?? [],
+              policyNote: "Entry/exit decisions use activeMandates (per market). strategy_config.score_threshold is legacy and is not read by the money path.",
+              autoGuardTripped, totalClosedTrades,
+            });
           }
 
           case "read_past_learnings": {

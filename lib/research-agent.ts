@@ -2055,7 +2055,26 @@ export async function processSymbol(
   const directionNote: string = gate.note + guardRun.note + (earningsRepricing.pending
     ? ` [earnings repricing barrier: reported ${earningsRepricing.reportDate}; no post-event daily candle]`
     : "");
-  const entryEligible = !earningsRepricing.pending && signalDirection === "long" && analystScore >= (scoreThreshold ?? 60);
+  // P1-3 (2026-08-17): the deterministic breakdown veto is a HARD veto on NEW
+  // LONG ENTRIES, not merely a technical-score cap.
+  //
+  // `detectBreakdownVeto` caps the technical score at 20 (lib/data/technicals.ts),
+  // but the composite renormalises across the other dimensions, so a strong
+  // fundamental could still clear the threshold on a confirmed high-volume
+  // breakdown — exactly the pattern the veto exists to refuse. Production carried
+  // 7 such rows with `breakdown_veto.vetoed = true` AND `entry_eligible = true`
+  // (CPCAP.NS 60/tech 20, SIMO 61/tech 20, APP, EXEL, MUTHOOTFIN.NS). None
+  // reached a fill, but only because unrelated downstream caps happened to catch
+  // them — that is luck, not a gate.
+  //
+  // Scope is deliberately narrow: this suppresses NEW ENTRIES ONLY. Held-position
+  // exits are evaluated by PositionMonitor against the score and never read this
+  // flag, so a breakdown can never delay or block getting OUT of a position.
+  const breakdownVetoed = ((scores.evidence?.technical as any)?.breakdown_veto as any)?.vetoed === true;
+  const entryEligible = !earningsRepricing.pending
+    && !breakdownVetoed
+    && signalDirection === "long"
+    && analystScore >= (scoreThreshold ?? 60);
   const researchHorizonDays = resolveHorizonDays(
     tradingMandate,
     (champion as any)?.genome?.horizon_days ?? null,
@@ -2514,6 +2533,8 @@ export async function processSymbol(
             ? `Eligible: long direction and score ${analystScore} >= threshold ${scoreThreshold ?? 60}`
             : earningsRepricing.pending
               ? `Abstained: reported earnings on ${earningsRepricing.reportDate} needs a post-event daily candle`
+              : breakdownVetoed
+              ? `Rejected: breakdown veto — ${(((scores.evidence?.technical as any)?.breakdown_veto as any)?.reasons ?? []).join("; ") || "confirmed technical breakdown"}`
               : thinEvidence
               ? `Abstained: thin evidence (${includedDims.length}/5 usable dimensions)`
               : llmParseFailed
@@ -2523,6 +2544,7 @@ export async function processSymbol(
                   : `Abstained: score passed but direction was ${signalDirection}; score alone cannot authorize entry`,
           detail: {
             analyst_score: analystScore, score_threshold: scoreThreshold ?? 60,
+            breakdown_vetoed: breakdownVetoed,
             direction: signalDirection, screener, discovery, included_dimensions: includedDims,
             thin_evidence: thinEvidence, thesis_parse_failed: llmParseFailed,
             earnings_repricing: earningsRepricing,

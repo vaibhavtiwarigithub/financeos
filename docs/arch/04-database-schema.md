@@ -646,6 +646,17 @@ another market.
 | `snapshot_type` | text | **(applied 2026-08-17)** `eod` \| `intraday`. `PositionMonitor` is the ONE canonical EOD writer per market. `PaperTrader` runs at the open and may now only CREATE today's row when none exists — it never upserts over an EOD row, which it previously could. |
 | UNIQUE | `(date, market)` | One row per day per market |
 
+### `v_decision_quality` (migration 20260817200000 — applied 2026-08-17)
+`data_confidence` now SURFACES `decision_observations.evidence_confidence` — the
+frozen contract the decision was made under — instead of recomputing a rival
+number from a hardcoded per-market applicability list. The old computation
+survives as **`structural_coverage`** (diagnostic only; must never gate an order)
+and **`confidence_source`** is `observation` or `derived` per row. Read by the
+paper-fill RPC, `/api/kite/order`, `execute-order` and Decision Review, so the
+swap was proven gate-neutral first: 0 of 4,628 rows cross the 0.5 threshold in
+either direction. New columns are appended (CREATE OR REPLACE cannot reorder),
+so every existing consumer keeps its column positions.
+
 ### `paper_position_marks` (migration 20260816180000 — **applied 2026-08-17**)
 Append-only NAV mark ledger: one row per open position per PositionMonitor run.
 `paper_positions.current_price` is mutated in place and `paper_nav_history` keeps

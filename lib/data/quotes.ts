@@ -5,6 +5,7 @@
  */
 
 import { avCachedFetch } from "@/lib/av-cache";
+import { expectedNewestSession } from "@/lib/data/completed-candles";
 
 export type QuoteSource = "massive" | "alpha_vantage" | "price_cache" | "unavailable";
 
@@ -109,8 +110,16 @@ async function fetchMassiveBatchQuotes(
     for (const t of tickers) {
       const sym = t?.ticker;
       if (!sym) continue;
-      const price = t?.day?.c ?? t?.min?.c ?? t?.prevDay?.c;
+      // Which field supplied the price decides whether this is a CURRENT-session
+      // observation or last session's close wearing today's timestamp. `day`/`min`
+      // are current-session; `prevDay` is by definition the previous close, so it
+      // must never be stamped fresh (2026-08-17: it was, unconditionally).
+      const dayClose = t?.day?.c;
+      const minClose = t?.min?.c;
+      const prevClose0 = t?.prevDay?.c;
+      const price = dayClose ?? minClose ?? prevClose0;
       if (!price || price <= 0) continue;
+      const fromPrevDay = dayClose == null && minClose == null && prevClose0 != null;
       const prevClose = t?.prevDay?.c;
       const change = t?.todaysChange ?? (prevClose ? price - prevClose : null);
       const changePct = t?.todaysChangePerc ?? (prevClose ? ((price - prevClose) / prevClose) * 100 : null);
@@ -118,7 +127,7 @@ async function fetchMassiveBatchQuotes(
         symbol: sym, price,
         bid: t?.lastQuote?.p ?? null, ask: t?.lastQuote?.P ?? null,
         change: change ?? null, changePct: changePct ?? null,
-        source: "massive", retrievedAt, stale: false,
+        source: "massive", retrievedAt, stale: fromPrevDay,
         dayLow:  typeof t?.day?.l === "number" && t.day.l > 0 ? t.day.l : null,
         dayHigh: typeof t?.day?.h === "number" && t.day.h > 0 ? t.day.h : null,
       };
@@ -165,7 +174,19 @@ async function fetchCachedQuote(symbol: string, supabase: any): Promise<Determin
 
     // Freshness follows the market date represented by the bar, not when an old
     // row happened to be re-read or re-cached.
+    //
+    // 2026-08-17: this previously used `isStale(retrievedAt)`, a 4-CALENDAR-DAY
+    // window. At 16:15 ET on Monday `isMarketHours()` is false, so Friday's bar
+    // (age 3.01d < 4d) was returned `stale:false` and every US position was
+    // marked, stop-checked and target-checked against a three-day-old close.
+    //
+    // The question is not "how many days old" but "is this the session that
+    // should exist by now". NOTE: W9's `isFreshSessionDate` is NOT sufficient
+    // here — it delegates to `lastCompletedMarketSession`, which always steps
+    // back a day and so still accepts Friday at 16:15 ET Monday. That leniency
+    // is right for an EOD cache mid-session and wrong after the close.
     const retrievedAt = data.date + "T20:00:00Z";
+    const barMarket = symbol.endsWith(".NS") ? "india" : "us";
     return {
       symbol,
       price: Number(data.close),
@@ -175,7 +196,7 @@ async function fetchCachedQuote(symbol: string, supabase: any): Promise<Determin
       changePct: null,
       source: "price_cache",
       retrievedAt,
-      stale: isStale(retrievedAt),
+      stale: String(data.date) < expectedNewestSession(barMarket, new Date()),
     };
   } catch {
     return null;

@@ -370,6 +370,16 @@ export const MAX_MACRO_AGE_DAYS = 10;
 // THIS week, which the age bound alone cannot catch.
 const MIN_MACRO_INDICATORS = 3;
 
+// MacroSentinel's full FRED indicator universe: yield curve (y2/y10 -> one
+// verdict), unemployment, payrolls, GDP, CPI, retail sales, fed funds, durables.
+// Exposed so a consumer reads "3/8", not a bare "3" that looks complete.
+//
+// MEASUREMENT ONLY. This does NOT gate, discount, or reweight anything: macro
+// still enters at its full base weight above MIN_MACRO_INDICATORS. Whether a
+// thin-coverage verdict should carry reduced weight is a live scoring change
+// and needs a frozen shadow counterfactual before it may touch the money path.
+export const MACRO_INDICATOR_UNIVERSE = 8;
+
 function macroRowAgeDays(weekOf: unknown, now: Date): number {
   if (typeof weekOf !== "string") return Infinity; // unverifiable age → fail closed
   const t = Date.parse(`${weekOf}T00:00:00Z`);
@@ -498,6 +508,10 @@ async function fetchMacroScore(supabase: any, market: MarketScope, now: Date): P
         as_of: chosen.week_of,
         age_days: Math.floor(chosen.ageDays),
         indicators_available: chosen.indicators,
+        indicators_expected: MACRO_INDICATOR_UNIVERSE,
+        // e.g. "3/8" — a partial macro read must not present as a complete one.
+        coverage: `${chosen.indicators}/${MACRO_INDICATOR_UNIVERSE}`,
+        coverage_pct: Math.round((chosen.indicators / MACRO_INDICATOR_UNIVERSE) * 100),
         ...(rejected.length ? { skipped_rows: rejected } : {}),
       },
       available: true,
