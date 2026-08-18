@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
-import { evaluateGate } from "@/lib/gates/promotion-gate";
+import { evaluateGate, providerRegimeKey } from "@/lib/gates/promotion-gate";
 
 export const dynamic = "force-dynamic";
 
@@ -131,7 +131,7 @@ export async function POST(req: NextRequest) {
     // Evidence: IC windows for this edge/market/segment inside the horizon band.
     let icQuery = svc
       .from("edge_ic_history")
-      .select("window_end, created_at, ic, t_stat, horizon, formula_version, run_fingerprint, segment_type, segment_value")
+      .select("window_end, created_at, ic, t_stat, horizon, formula_version, run_fingerprint, segment_type, segment_value, provider_report")
       .eq("edge_id", edgeId)
       .eq("market", market)
       // ONE horizon per evaluation. A band filter (gte/lte) interleaves 5d/10d/20d
@@ -160,6 +160,7 @@ export async function POST(req: NextRequest) {
       window_end: string; created_at: string;
       ic: number | null; t_stat: number | null;
       formula_version: string | null; run_fingerprint: string | null;
+      provider_report: { providerCounts?: Record<string, number> } | null;
     };
     const usable = ((icRows ?? []) as IcRow[]).filter(
       (r) => r.ic !== null && r.t_stat !== null,
@@ -215,6 +216,12 @@ export async function POST(req: NextRequest) {
       ics: rows.map((r) => Number(r.ic)),
       tStats: rows.map((r) => Number(r.t_stat)),
       trialsRun,
+      // Provider-regime segmentation. IC computed on Yahoo bars (US ladder moved
+      // Yahoo-first 2026-08-18) is not the same measurement as IC computed on
+      // Massive/EODHD/TwelveData bars, and this query spans a 1000-day window,
+      // so without this the stability check would compare a Yahoo latest window
+      // against a Massive earliest one and call the difference "stability".
+      providerRegimes: rows.map((r) => providerRegimeKey(r.provider_report?.providerCounts)),
     });
 
     const segment = { market, sector, regime, horizon_days_min: hMin, horizon_days_max: hMax };

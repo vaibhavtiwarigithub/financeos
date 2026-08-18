@@ -33,6 +33,31 @@ const IC_MIN = 0.02;     // IC floor — matches classifyEdgeIC in lib/edges/ic.
 const T_HURDLE = 2.0;    // priored-factor t-stat standard
 const STABILITY_RATIO_MIN = 0.5; // latest IC must be ≥ 50% of earliest IC
 
+/**
+ * Canonical provider-regime key for one IC window, from its `providerCounts`.
+ *
+ * Why this exists: on 2026-08-18 the US edge/IC candle ladder moved to
+ * Yahoo-first (lifting Massive's 2-year lookback cap). IC computed on Yahoo bars
+ * is not the same measurement as IC computed on Massive/EODHD/TwelveData bars,
+ * yet both land in `edge_ic_history` and this gate reads a 1000-day window — so
+ * a promotion evaluated across the boundary would compare a Yahoo latest window
+ * against a Massive earliest window and call the difference "stability".
+ *
+ * DOMINANT provider, not the exact count map: `{eodhd:20, massive:6}` and
+ * `{eodhd:19, massive:7}` are the same regime, and keying on the full map would
+ * over-segment on ordinary run-to-run jitter and starve the gate of windows.
+ * Ties break alphabetically so the key is deterministic.
+ */
+export function providerRegimeKey(counts: Record<string, number> | null | undefined): string {
+  if (!counts || typeof counts !== "object") return "unknown";
+  const entries = Object.entries(counts)
+    .map(([name, n]) => [name, Number(n)] as const)
+    .filter(([name, n]) => !!name && Number.isFinite(n) && n > 0);
+  if (entries.length === 0) return "unknown";
+  entries.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  return entries[0][0];
+}
+
 // Inverse normal CDF (Abramowitz & Stegun 26.2.23, max error 4.5e-4).
 // Used only for DSR E_max_t computation — this precision is sufficient.
 function normInv(p: number): number {
@@ -79,6 +104,18 @@ export interface GateInput {
   tStats: number[];
   /** backtest_experiments.variants_run — minimum 1, used for DSR penalty. */
   trialsRun: number;
+  /**
+   * Provider-regime key per window, same order as `ics`. Optional: when absent
+   * the gate behaves exactly as before (no segmentation).
+   *
+   * When present, ONLY the trailing run of windows sharing the latest window's
+   * regime is evaluated. Older windows from a different regime are DROPPED, not
+   * blended — mixing them makes the stability check compare two different
+   * measurements. Dropping can leave fewer than MIN_WINDOWS, which fails CLOSED
+   * with its own reason: after a provider change the correct answer is "not
+   * enough clean evidence yet", not a promotion on mixed data.
+   */
+  providerRegimes?: string[];
 }
 
 export interface GateResult {
@@ -101,16 +138,64 @@ export interface GateResult {
    * the windows overlap ~98%. See the banner at the top of this file.
    */
   ic_stability_pass: boolean;
-  /** Number of IC windows evaluated. */
+  /** Number of IC windows evaluated (AFTER provider-regime segmentation). */
   sample_n: number;
+  /** Regime the evaluated windows share, when segmentation was applied. */
+  provider_regime?: string;
+  /** Windows discarded for belonging to an older provider regime. */
+  windows_dropped_other_regime?: number;
   /** Non-empty when pass=false. Each entry is a machine-readable failure code. */
   reasons: string[];
 }
 
 export function evaluateGate(input: GateInput): GateResult {
-  const { ics, tStats, trialsRun } = input;
-  const n = ics.length;
+  const { trialsRun } = input;
+  let ics = input.ics;
+  let tStats = input.tStats;
   const reasons: string[] = [];
+  let providerRegime: string | undefined;
+  let windowsDropped: number | undefined;
+
+  // Provider-regime segmentation, before any statistic is computed.
+  const regimes = input.providerRegimes;
+  if (regimes) {
+    if (regimes.length !== ics.length) {
+      return {
+        pass: false, t_margin_vs_trials: null, t_stat_latest: null,
+        ic_stability_pass: false, sample_n: ics.length,
+        reasons: ["invalid_gate_input"],
+      };
+    }
+    const latest = regimes[regimes.length - 1];
+    providerRegime = latest;
+    if (!latest || latest === "unknown") {
+      // A window that cannot name the data it was computed on cannot be
+      // segmented, and therefore cannot be trusted to be like-for-like.
+      return {
+        pass: false, t_margin_vs_trials: null, t_stat_latest: null,
+        ic_stability_pass: false, sample_n: ics.length,
+        provider_regime: latest || "unknown", windows_dropped_other_regime: 0,
+        reasons: ["provider_regime_unknown"],
+      };
+    }
+    let start = regimes.length;
+    while (start > 0 && regimes[start - 1] === latest) start--;
+    windowsDropped = start;
+    if (start > 0) {
+      ics = ics.slice(start);
+      tStats = tStats.slice(start);
+    }
+    if (ics.length < MIN_WINDOWS) {
+      return {
+        pass: false, t_margin_vs_trials: null, t_stat_latest: null,
+        ic_stability_pass: false, sample_n: ics.length,
+        provider_regime: latest, windows_dropped_other_regime: windowsDropped,
+        reasons: [`insufficient_windows_in_provider_regime:${ics.length}<${MIN_WINDOWS}:${latest}`],
+      };
+    }
+  }
+
+  const n = ics.length;
 
   if (
     tStats.length !== n ||
@@ -124,6 +209,8 @@ export function evaluateGate(input: GateInput): GateResult {
       t_stat_latest: null,
       ic_stability_pass: false,
       sample_n: n,
+      provider_regime: providerRegime,
+      windows_dropped_other_regime: windowsDropped,
       reasons: ["invalid_gate_input"],
     };
   }
@@ -135,6 +222,8 @@ export function evaluateGate(input: GateInput): GateResult {
       t_stat_latest: null,
       ic_stability_pass: false,
       sample_n: n,
+      provider_regime: providerRegime,
+      windows_dropped_other_regime: windowsDropped,
       reasons: [`insufficient_windows:${n}<${MIN_WINDOWS}`],
     };
   }
@@ -179,6 +268,8 @@ export function evaluateGate(input: GateInput): GateResult {
     t_stat_latest: Number.isFinite(tStatLatest) ? tStatLatest : null,
     ic_stability_pass: icStabilityPass,
     sample_n: n,
+    provider_regime: providerRegime,
+    windows_dropped_other_regime: windowsDropped,
     reasons,
   };
 }

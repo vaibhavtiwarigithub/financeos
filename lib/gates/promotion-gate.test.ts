@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { evaluateGate } from "./promotion-gate";
+import { evaluateGate, providerRegimeKey } from "./promotion-gate";
 
 // A clean-passing edge: IC well above floor, strong t-stats, no decay, 1 trial.
 const PASSING = { ics: [0.05, 0.055, 0.06], tStats: [2.4, 2.6, 2.8], trialsRun: 1 };
@@ -93,4 +93,94 @@ describe("evaluateGate", () => {
       expect(r.reasons).toEqual(["invalid_gate_input"]);
     },
   );
+});
+
+// ── Provider-regime segmentation (2026-08-18) ───────────────────────────────
+//
+// The US edge/IC candle ladder moved to Yahoo-first, lifting Massive's 2-year
+// lookback cap. IC computed on Yahoo bars is a different measurement from IC on
+// Massive/EODHD/TwelveData bars, but both land in edge_ic_history and the promote
+// route reads a 1000-day window. Without segmentation the stability check would
+// compare a Yahoo latest window against a Massive earliest window and report the
+// difference as "stability".
+describe("providerRegimeKey", () => {
+  it("names the dominant provider", () => {
+    expect(providerRegimeKey({ eodhd: 20, massive: 6, twelvedata: 11 })).toBe("eodhd");
+    expect(providerRegimeKey({ yahoo_us: 37 })).toBe("yahoo_us");
+  });
+
+  it("ignores run-to-run jitter — same regime, same key", () => {
+    // Over-segmenting on exact counts would starve the gate of windows.
+    expect(providerRegimeKey({ eodhd: 20, massive: 6 }))
+      .toBe(providerRegimeKey({ eodhd: 19, massive: 7 }));
+  });
+
+  it("breaks ties deterministically", () => {
+    expect(providerRegimeKey({ massive: 5, eodhd: 5 })).toBe("eodhd");
+    expect(providerRegimeKey({ eodhd: 5, massive: 5 })).toBe("eodhd");
+  });
+
+  it("returns 'unknown' for missing, empty, or zero-count reports", () => {
+    expect(providerRegimeKey(undefined)).toBe("unknown");
+    expect(providerRegimeKey(null)).toBe("unknown");
+    expect(providerRegimeKey({})).toBe("unknown");
+    expect(providerRegimeKey({ eodhd: 0 })).toBe("unknown");
+  });
+});
+
+describe("evaluateGate — provider-regime segmentation", () => {
+  const OLD = "eodhd";
+  const NEW = "yahoo_us";
+
+  it("is unchanged when no regimes are supplied (back-compat)", () => {
+    expect(evaluateGate(PASSING).pass).toBe(evaluateGate({ ...PASSING }).pass);
+    expect(evaluateGate(PASSING).provider_regime).toBeUndefined();
+  });
+
+  it("evaluates only the latest regime's windows, dropping the older ones", () => {
+    // 3 clean new-regime windows preceded by 3 old-regime windows.
+    const r = evaluateGate({
+      ics: [0.9, 0.9, 0.9, ...PASSING.ics],
+      tStats: [9, 9, 9, ...PASSING.tStats],
+      trialsRun: PASSING.trialsRun,
+      providerRegimes: [OLD, OLD, OLD, NEW, NEW, NEW],
+    });
+    expect(r.provider_regime).toBe(NEW);
+    expect(r.windows_dropped_other_regime).toBe(3);
+    expect(r.sample_n).toBe(PASSING.ics.length);
+    // The absurd 0.9 old-regime ICs must not have entered the stability check.
+    expect(r.pass).toBe(evaluateGate(PASSING).pass);
+  });
+
+  it("FAILS CLOSED right after a provider change — too few clean windows", () => {
+    const r = evaluateGate({
+      ics: [0.05, 0.05, 0.05, 0.05],
+      tStats: [3, 3, 3, 3],
+      trialsRun: 1,
+      providerRegimes: [OLD, OLD, OLD, NEW],
+    });
+    expect(r.pass).toBe(false);
+    expect(r.sample_n).toBe(1);
+    expect(r.windows_dropped_other_regime).toBe(3);
+    expect(r.reasons[0]).toBe(`insufficient_windows_in_provider_regime:1<3:${NEW}`);
+  });
+
+  it("refuses a window that cannot name its own data", () => {
+    const r = evaluateGate({ ...PASSING, providerRegimes: [OLD, OLD, "unknown"] });
+    expect(r.pass).toBe(false);
+    expect(r.reasons).toContain("provider_regime_unknown");
+  });
+
+  it("rejects a regimes array that does not line up with the windows", () => {
+    const r = evaluateGate({ ...PASSING, providerRegimes: [NEW] });
+    expect(r.pass).toBe(false);
+    expect(r.reasons).toContain("invalid_gate_input");
+  });
+
+  it("does not drop anything when every window shares one regime", () => {
+    const r = evaluateGate({ ...PASSING, providerRegimes: PASSING.ics.map(() => NEW) });
+    expect(r.windows_dropped_other_regime).toBe(0);
+    expect(r.sample_n).toBe(PASSING.ics.length);
+    expect(r.pass).toBe(evaluateGate(PASSING).pass);
+  });
 });
