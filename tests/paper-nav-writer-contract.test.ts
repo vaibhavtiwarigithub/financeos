@@ -46,7 +46,11 @@ describe("W4: the NAV invariant compares independent sources", () => {
 
 describe("W4: one canonical EOD performance writer per market", () => {
   it("PositionMonitor is the EOD writer", () => {
-    expect(monitor).toMatch(/snapshot_type:\s*"eod"/);
+    // 2026-08-18: no longer an unconditional literal — PositionMonitor is still
+    // the ONLY writer that may produce `eod`, but only after that market's close.
+    // A pre-close run writes `intraday` (see the market-scoping block below).
+    expect(monitor).toMatch(/snapshot_type:.*"eod".*"intraday"/);
+    expect(monitor).toContain("expectedNewestSession");
   });
 
   it("PaperTrader writes an intraday snapshot and never upserts the EOD key", () => {
@@ -81,5 +85,47 @@ describe("W5: benchmark levels come from session-dated bars, not quotes", () => 
 
   it("displayed coverage cannot exceed 100%", () => {
     expect(scorecard).toMatch(/Math\.min\(100, r\.coverage_pct\)/);
+  });
+});
+
+// ── 2026-08-18: a market-scoped run must touch ONLY its own market ───────────
+//
+// Both PositionMonitor crons are correctly scoped (`?market=us`, `?market=india`),
+// yet the India run at 11:15 UTC wrote 13 US marks and a US `paper_performance`
+// row stamped `snapshot_type='eod'` at 07:15 ET — before the US session opened.
+// The scoping was defeated inside the route by two UNFILTERED reads: the
+// `stillOpen` re-read of paper_positions, and the `poolByMarket` map that drives
+// the mark/NAV write loop. Neither is reachable from a unit test of the helpers;
+// both are shapes in the route.
+describe("market scoping: a scoped run cannot write another market's book", () => {
+  it("re-reads open positions scoped to the run's market", () => {
+    // Assert the guard positively: the re-read must be built as a query that
+    // gets a market filter before it is awaited. A negative on the select text
+    // is useless — the same select survives, merely bound to a variable.
+    expect(monitor).toContain('stillOpenQuery.eq("market", marketScope)');
+    const buildAt = monitor.indexOf("let stillOpenQuery");
+    const guardAt = monitor.indexOf('stillOpenQuery.eq("market", marketScope)');
+    const awaitAt = monitor.indexOf("await stillOpenQuery");
+    expect(buildAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeGreaterThan(buildAt);
+    expect(awaitAt).toBeGreaterThan(guardAt);
+  });
+
+  it("skips non-scoped markets in the mark/NAV write loop", () => {
+    expect(monitor).toContain("if (marketScope && market !== marketScope) continue;");
+    // The guard must sit inside the poolByMarket loop, before the write.
+    const loopAt = monitor.indexOf("for (const [market, pool] of poolByMarket)");
+    const guardAt = monitor.indexOf("if (marketScope && market !== marketScope) continue;");
+    const perfAt = monitor.indexOf('from("paper_performance").upsert');
+    expect(loopAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeGreaterThan(loopAt);
+    expect(perfAt).toBeGreaterThan(guardAt);
+  });
+
+  it("never hard-codes snapshot_type 'eod' — a pre-close row is 'intraday'", () => {
+    // The unconditional literal is the defect: it stamped `eod` on a row built
+    // from carry-forward marks hours before the market closed.
+    expect(monitor).not.toMatch(/snapshot_type:\s*"eod"\s*,/);
+    expect(monitor).toContain('expectedNewestSession(market as "us" | "india") === today ? "eod" : "intraday"');
   });
 });

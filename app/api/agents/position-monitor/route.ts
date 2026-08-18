@@ -10,6 +10,7 @@ import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 import { setMarketPaused } from "@/lib/market-controls";
 import { computeExitFillPrice, getSettledDailyQuotes } from "@/lib/data/quotes";
+import { expectedNewestSession } from "@/lib/data/completed-candles";
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
@@ -517,8 +518,14 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
 
   // Recompute + persist NAV PER MARKET = that pool's cash + mark-to-market of its
   // still-open positions. Each currency stays in its own pool; never summed.
-  const { data: stillOpen } = await svc.from("paper_positions")
+  // Scoped like the read at the top of the run. This re-read was UNFILTERED,
+  // so a `?market=india` run still loaded all 27 positions and, with the
+  // equally-unfiltered pool map below, marked and wrote EOD rows for BOTH
+  // markets — see the loop guard on `poolByMarket`.
+  let stillOpenQuery = svc.from("paper_positions")
     .select("id, symbol, qty, avg_cost, current_price, updated_at, market");
+  if (marketScope && hasMarketCol) stillOpenQuery = stillOpenQuery.eq("market", marketScope);
+  const { data: stillOpen } = await stillOpenQuery;
   const today = new Date().toISOString().slice(0, 10);
   // Synthetic run key for the mark ledger. agent_runs' own id isn't minted until
   // the end of this function, and the ledger row must name the run that wrote it.
@@ -534,6 +541,13 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   let markLedgerStatus: "written" | "unavailable" | "not_attempted" = "not_attempted";
   let markLedgerDetail: string | null = null;
   for (const [market, pool] of poolByMarket) {
+    // 2026-08-18: `poolByMarket` holds EVERY portfolio row and was never scoped,
+    // so the India cron (11:15 UTC) wrote a US mark set and a US
+    // `paper_performance` row stamped `snapshot_type='eod'` at 07:15 ET — before
+    // the US session had even opened. That breaks the W4 invariant of ONE
+    // canonical EOD writer per market, arriving from the other market's
+    // schedule. A market-scoped run touches only its own market.
+    if (marketScope && market !== marketScope) continue;
     const mktPos = (stillOpen ?? []).filter((p: any) => marketOf(p, hasMarketCol) === market);
 
     // W4 — every open qty gets exactly ONE mark, and that mark says where it
@@ -692,8 +706,12 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       // applied yet (see the retry below), so this file is safe to ship first.
       bench_session_date: benchSessionDate,
       bench_source: benchSource,
-      // PositionMonitor is the ONE canonical EOD writer per market.
-      snapshot_type: "eod",
+      // PositionMonitor is the ONE canonical EOD writer per market — but only
+      // once THAT market's session has actually closed. An unscoped or manual
+      // run firing before the close would otherwise stamp `eod` on a row built
+      // from carry-forward marks, which is the same lie in a different costume.
+      // `expectedNewestSession` returns today only after today's close.
+      snapshot_type: expectedNewestSession(market as "us" | "india") === today ? "eod" : "intraday",
     };
     // PostgREST returns { error } rather than throwing, so the old `.catch` never
     // fired on a real write failure. Retry ladder: drop the not-yet-migrated

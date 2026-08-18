@@ -1,4 +1,14 @@
 # Kairos — Risk & Safety
+> 2026-08-18: **A market-scoped PositionMonitor run was writing the OTHER market's book.**
+>
+> Both crons are correctly scoped (`?market=us`, `?market=india`), yet the India run at 11:15 UTC wrote 13 US marks and a US `paper_performance` row stamped `snapshot_type='eod'` at **07:15 ET — before the US session opened**. The W4 "ONE canonical EOD writer per market" invariant was broken from a direction W4 did not anticipate: not a second writer racing the same market, but the *other market's schedule* reaching across.
+>
+> **Scoping was defeated inside the route, not at the schedule.** Two reads ignored `marketScope`: the `stillOpen` re-read of `paper_positions` (unfiltered `select`), and `poolByMarket`, built from **every** `paper_portfolio` row. The mark/NAV write loop iterates `poolByMarket`, so it processed both books regardless of scope. Fixed by scoping the re-read and skipping non-scoped markets in the loop before any write.
+>
+> **`snapshot_type` is no longer an unconditional literal.** Even a legitimate unscoped or manual run must not stamp `eod` on a row built from carry-forward marks hours before the close — the same lie in a different costume. It is now `expectedNewestSession(market) === today ? "eod" : "intraday"`, reusing the post-close predicate added with the grouped-daily work.
+>
+> **Detector:** `tests/paper-nav-writer-contract.test.ts` — the guard must sit inside the pool loop *before* the `paper_performance` upsert (positional assertion, not mere presence); the re-read must acquire its market filter before it is awaited; the bare `snapshot_type: "eod"` literal is banned. **Mutation-verified** — removing the loop guard fails the suite. The pre-existing "PositionMonitor is the EOD writer" pin was updated rather than deleted: its intent (PositionMonitor, never PaperTrader, owns the `eod` row) is preserved and now also asserts the post-close condition.
+
 > 2026-08-18: **The US quote path had no working live source — the Massive key is not entitled to `/v2/snapshot`.**
 >
 > **What was broken.** `fetchMassiveBatchQuotes`, described in code as "the primary batch path", was returning **zero US quotes on every call**: the deployed `MASSIVE_API_KEY` gets `403 NOT_AUTHORIZED` on every `/v2/snapshot` endpoint and on `/v2/last/trade`. `if (!res.ok) continue;` swallowed it. The `/markets/etfs` second pass was also dead — that endpoint returns **404** and had never resolved a single ETF. With Massive silent, AV's 25/day budget exhausted since 2026-07-23, and `price_cache` holding only symbols the *research* path scores (never the holdings), the chain collapsed to a stale cached bar — which the pre-2026-08-17 adapter then relabelled fresh.
