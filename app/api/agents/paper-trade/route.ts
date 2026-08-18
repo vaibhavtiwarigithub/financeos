@@ -1138,18 +1138,32 @@ export async function POST(req: NextRequest) {
         result_summary: `${filled.length} trades filled, ${skipped.length} skipped${skipSummary ? ` (${skipSummary})` : ""}, ${expiredTotal} stale expired. NAV ${navSummary}`,
         workload_metrics: {
           skip_reasons: skipReasons,
-          ...runAccountingEnvelope({
-            job: `paper-trade:${marketScope ?? "us"}`,
-            market: (marketScope ?? "us") as "us" | "india",
-            eligible: filled.length + skipped.length,
-            succeeded: filled.length,
-            expectedSkip: expiredTotal,
-            deferred: 0,
-            unavailable: 0,
-            failed: skipped.filter((s: any) => s?.reason === "quote_stale" || s?.reason?.startsWith("error")).length,
-            skipReasons,
-            businessMetrics: { fills: filled.length, expired: expiredTotal },
-          }),
+          // W6 taxonomy, corrected 2026-08-18. `quote_stale` was being counted as
+          // FAILED, which raised a critical "run state failed" on a run that had
+          // behaved exactly as designed: the W1 freshness gate refusing to fill on
+          // a stale quote is the safety property working, not an error. Per the
+          // envelope contract `failed` means "tried and errored"; a missing/stale
+          // input is `unavailable`, and a cap/sector/sizing refusal is a
+          // legitimate no-work outcome (`expectedSkip`). Miscategorising these
+          // both cried wolf AND made the reconciliation unbalanceable.
+          ...(() => {
+            const isError = (r: any) => typeof r === "string" && r.startsWith("error");
+            const failedN = skipped.filter((s: any) => isError(s?.reason)).length;
+            const unavailableN = skipped.filter((s: any) => s?.reason === "quote_stale").length;
+            const gateSkips = skipped.length - failedN - unavailableN;
+            return runAccountingEnvelope({
+              job: `paper-trade:${marketScope ?? "us"}`,
+              market: (marketScope ?? "us") as "us" | "india",
+              eligible: filled.length + skipped.length + expiredTotal,
+              succeeded: filled.length,
+              expectedSkip: expiredTotal + gateSkips,
+              deferred: 0,
+              unavailable: unavailableN,
+              failed: failedN,
+              skipReasons,
+              businessMetrics: { fills: filled.length, expired: expiredTotal },
+            });
+          })(),
         },
         completed_at: new Date().toISOString(), tokens_input: 0, tokens_output: 0, claude_calls: 0,
       } as any).eq("id", runId);

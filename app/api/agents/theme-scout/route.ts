@@ -179,7 +179,7 @@ Rules:
       prompt: themePrompt,
       // User-selectable in Settings → Agents → LLM Config (agent_name="theme-scout").
       // Default: deepseek-chat (cheap extraction task; policy = DeepSeek by default).
-      model: await getConfiguredModel(supabase, "theme-scout", "deepseek-chat"),
+      model: await getConfiguredModel(supabase, "theme-scout", "deepseek-v4-flash"),
     });
 
     // Parse JSON from response

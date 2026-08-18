@@ -330,17 +330,30 @@ export async function POST(req: NextRequest) {
         .map(([reason, n]) => `${reason}=${n}`).join(" ") || "none";
       // W6 run-accounting envelope. skipped obs are unavailable (data missing) not failed;
       // zeroOutputWithPending is the incident signature from the 2026-08 pipeline incident.
+      //
+      // `eligible` is the units this run ATTEMPTED (matured + skipped), NOT
+      // `result.scanned`. Scanned is the raw paged-through count, and the W8
+      // loader deliberately pages PAST unlabelable rows on a scan budget — those
+      // rows were never units this run owned. Passing scanned made the envelope
+      // unbalanceable by construction (eligible 6324 vs 494 accounted) and fired
+      // a critical "5830 units unaccounted for" every single night. A monitor
+      // that cries wolf nightly is worse than no monitor. Scanned is telemetry.
+      const attempted = result.matured + result.skipped;
       const accounting = runAccountingEnvelope({
         job: `label-maturation:${result.market}`,
         market: result.market === "us" || result.market === "india" ? result.market : undefined,
-        eligible: result.scanned,
+        eligible: attempted,
         succeeded: result.matured,
         expectedSkip: 0,
         deferred: 0,
         unavailable: result.skipped,
         failed: 0,
         skipReasons: result.skipReasons,
-        businessMetrics: { atr_labeled: result.atrLabeled, provider_fetches: result.providerFetches },
+        businessMetrics: {
+          atr_labeled: result.atrLabeled,
+          provider_fetches: result.providerFetches,
+          scanned: result.scanned,
+        },
       });
       await svc.from("agent_runs").insert({
         agent_type: "label_maturation",
