@@ -6,11 +6,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // providers. Measured 2026-08-17 — Massive resolved 12, EODHD exactly 20 (its
 // cap), TwelveData 24; everything past that returned `unavailable`.
 //
-// Yahoo carries NO daily budget and already serves the India branch of the same
-// function. It is added as a LAST RESORT: strictly additive, so no symbol that
-// resolves today changes source or value. Moving it EARLIER would cut budget
-// spend but change which provider serves a symbol — and therefore the IC written
-// to edge_ic_history, which lib/gates/promotion-gate.ts reads. Out of scope here.
+// Yahoo carries NO daily budget, is unpaced, and already served the India branch
+// of the same function. Owner-approved 2026-08-18 to go FIRST for US as well —
+// build-order step 4 of features/walk-forward-ic-folds/. It also lifts the 2-year
+// Massive lookback ceiling that made US walk-forward IC folds unbuildable
+// (~12 usable as-of dates on 2y vs ~50 on Yahoo's 5y).
+//
+// This DOES change which provider serves a US symbol, and therefore the IC
+// written to edge_ic_history that lib/gates/promotion-gate.ts reads. Taken
+// deliberately, not as a drive-by: rows either side of 2026-08-18 are not
+// like-for-like and must be segmented by providerCounts before comparison.
 
 const massive = vi.fn();
 const eodhd = vi.fn();
@@ -38,49 +43,56 @@ beforeEach(() => {
   for (const m of [massive, eodhd, twelve, yahoo]) m.mockResolvedValue([]);
 });
 
-describe("US edge candles: Yahoo is a last resort, never a reorder", () => {
-  it("rescues a symbol every budgeted provider failed on — previously 'unavailable'", async () => {
-    yahoo.mockResolvedValue(bars(400));
+describe("US edge candles: Yahoo first", () => {
+  it("serves US from Yahoo without touching any budgeted provider", async () => {
+    yahoo.mockResolvedValue(bars(500));
     const r = await resolveCandles("AAPL", "us", 420);
-    expect(r.source).toBe("yahoo_us_last_resort");
-    expect(r.candles).toHaveLength(400);
-    // It ran only after all three budgeted providers were exhausted.
-    expect(massive).toHaveBeenCalledOnce();
-    expect(eodhd).toHaveBeenCalledOnce();
-    expect(twelve).toHaveBeenCalledOnce();
+
+    expect(r.source).toBe("yahoo_us");
+    expect(r.candles).toHaveLength(500);
+    // The whole point: the paced/capped providers are never reached.
+    expect(massive).not.toHaveBeenCalled();
+    expect(eodhd).not.toHaveBeenCalled();
+    expect(twelve).not.toHaveBeenCalled();
   });
 
-  it("does NOT change a symbol Massive already serves — no reorder, no extra call", async () => {
+  it("asks Yahoo for a range that COVERS the request — 420d must not become 1y", async () => {
+    yahoo.mockResolvedValue(bars(500));
+    await resolveCandles("AAPL", "us", 420);
+    // yahooRange(420) -> "2y"; a "1y" ask returns ~251 sessions, below the 273
+    // that 12-1 momentum needs (252 + 21), which silently truncates the factor.
+    expect(yahoo).toHaveBeenCalledWith("AAPL", "420d");
+  });
+
+  it("falls back through the budgeted ladder when Yahoo has nothing", async () => {
     massive.mockResolvedValue(bars(300));
     const r = await resolveCandles("NVDA", "us", 420);
     expect(r.source).toBe("massive");
+    expect(yahoo).toHaveBeenCalledOnce();
     expect(eodhd).not.toHaveBeenCalled();
-    expect(twelve).not.toHaveBeenCalled();
-    expect(yahoo).not.toHaveBeenCalled();
   });
 
-  it("leaves the EODHD and TwelveData branches intact", async () => {
+  it("keeps EODHD and TwelveData reachable as later fallbacks", async () => {
     eodhd.mockResolvedValue(bars(300));
     expect((await resolveCandles("AMD", "us", 420)).source).toBe("eodhd");
-    expect(yahoo).not.toHaveBeenCalled();
 
     eodhd.mockResolvedValue([]);
     twelve.mockResolvedValue(bars(300));
     expect((await resolveCandles("MU", "us", 420)).source).toBe("twelvedata");
-    expect(yahoo).not.toHaveBeenCalled();
   });
 
-  it("still reports 'unavailable' when even Yahoo has nothing — no invented series", async () => {
+  it("still reports 'unavailable' when every provider has nothing — no invented series", async () => {
     const r = await resolveCandles("DELISTED", "us", 420);
     expect(r.source).toBe("unavailable");
     expect(r.candles).toEqual([]);
   });
 
-  it("India is untouched — one Yahoo call, no US ladder", async () => {
+  it("US and India both resolve to Yahoo but stay separately labelled", async () => {
     yahoo.mockResolvedValue(bars(300));
-    const r = await resolveCandles("TCS.NS", "india", 420);
-    expect(r.source).toBe("yahoo_india");
+    expect((await resolveCandles("TCS.NS", "india", 420)).source).toBe("yahoo_india");
+    expect((await resolveCandles("AAPL", "us", 420)).source).toBe("yahoo_us");
+    // providerCounts in lib/edges/ic.ts keys off these strings, so the source
+    // change is attributable per run rather than silent.
     expect(massive).not.toHaveBeenCalled();
-    expect(eodhd).not.toHaveBeenCalled();
   });
 });

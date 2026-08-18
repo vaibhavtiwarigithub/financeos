@@ -16,9 +16,15 @@
 // Unlike Yahoo's fundamentals endpoints (v7 quote, v10 quoteSummary), the chart
 // endpoint needs no cookie+crumb handshake.
 //
-// NOTE: this module is currently called only where fetchIndiaCandles was called.
-// Routing US deep history through it is a separate, unapproved change (build-order
-// step 4) because it would alter live ResearchAgent scoring inputs.
+// 2026-08-18: US deep history now routes through here too — `resolveCandles()`
+// in lib/edges/data.ts goes Yahoo-first for BOTH markets (build-order step 4,
+// owner-approved). The old note here claimed that would "alter live ResearchAgent
+// scoring inputs"; that was false. `resolveCandles` is reached only from
+// lib/edges/compute.ts and lib/edges/ic.ts, both measure-only, and
+// lib/research-agent.ts imports nothing from lib/edges. The main research path
+// (`fetchUsCandles` in lib/data/candles.ts) has its own local 1y Yahoo fetcher
+// and is untouched by this. The real coupling is edge_ic_history -> promotion
+// gate, which is why it needed an explicit decision.
 
 import type { Candle } from "@/lib/data/technicals";
 

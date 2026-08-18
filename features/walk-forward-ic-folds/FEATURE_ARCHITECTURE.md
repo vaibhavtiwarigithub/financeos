@@ -3,7 +3,7 @@
 ## Status
 
 Architecture status: **MEASURE-ONLY — promotion dormant**
-Architecture approved: Steps 2-3 shipped; US step 4 shipped; India step 4 blocked
+Architecture approved: Steps 2-3 shipped; US step 4 shipped; India step 4 blocked. Yahoo-first candle routing shipped 2026-08-18 (Annex B1).
 Approved scope: diagnostics and evidence hardening only
 Approved date: 2026-07-28
 Implementation allowed: Measurement work may continue; policy promotion may not.
@@ -571,10 +571,27 @@ chart fetcher**. It is India-only by naming accident, not by capability — it
 takes any symbol and any range, and `indiaRange()` already maps >900d → `3y` and
 >1400d → `5y`. The 251-bar figure in the system map is simply the 1y default.
 
-**Proposed (NOT approved, step 4 scope):** rename it to `fetchYahooCandles` and
-use it as the DEEP-HISTORY source for both markets in the validation path, while
-Massive stays primary for recent/live US data. No new provider, no new key, no
-cost.
+**SHIPPED 2026-08-18 (owner-approved).** `fetchYahooCandles` is now the FIRST
+source for both markets in `resolveCandles()` (`lib/edges/data.ts`), lifting the
+2-year Massive ceiling on US IC history. `fetchUsCandles()` — the main research
+path, which has its own local 1y Yahoo fetcher — is untouched, so live scoring
+inputs did not move. No new provider, no new key, no cost.
+
+Two effects, both intended:
+- **Depth:** US IC history goes from ~2y (~12 usable non-overlapping h20 as-of
+  dates, below the 12/fold floor) to 5y (~50), which is what makes 1C buildable.
+- **Budget:** EdgeScout no longer cascades into EODHD's 20/day free tier. Measured
+  2026-08-17 before the change: Massive 12 symbols, EODHD 20 (its cap),
+  TwelveData 24, remainder `unavailable` — because Massive per-symbol candles are
+  paced at 12.5s (5/min).
+
+**Discontinuity — read before comparing IC across the boundary.** `edge_ic_history`
+rows written from 2026-08-18 are computed on Yahoo bars where earlier rows used
+Massive/EODHD/TwelveData. The per-run `providerCounts` (`lib/edges/ic.ts`) records
+which, so the change is attributable rather than silent, but rows either side are
+NOT like-for-like. `lib/gates/promotion-gate.ts` reads this table over a 1000-day
+window, so a promotion evaluated across the boundary mixes sources — segment by
+`providerCounts` before treating a change in IC as signal.
 
 Recomputed 1C feasibility with 5 years (~1254 sessions, minus a 252-day feature
 lookback, non-overlapping at h20 → ~50 as-of dates):

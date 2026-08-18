@@ -1,4 +1,10 @@
 # Kairos — Learning Loop
+
+> 2026-08-18: **Edge/IC candles route Yahoo-first for BOTH markets** (`lib/edges/data.ts::resolveCandles`, owner-approved, build-order step 4 of `features/walk-forward-ic-folds/`). Massive is plan-capped at a 2-year lookback, which held US IC history to ~12 usable non-overlapping h20 as-of dates — below the 12/fold floor, so walk-forward IC folds were unbuildable on US. Yahoo serves 5y (~50 dates), keyless and unpaced. It also ends the EODHD exhaustion: Massive per-symbol candles are paced at 12.5s (5/min), so a ~300-symbol EdgeScout run cascaded into EODHD's 20/day free tier (measured 2026-08-17: Massive 12, EODHD 20 = its cap, TwelveData 24, remainder unavailable).
+>
+> **`fetchUsCandles` — the main research path — is untouched.** It has its own local 1y Yahoo fetcher; live ResearchAgent scoring inputs did not move. Two files carried a comment claiming otherwise; both were false and are corrected. `resolveCandles` is reached only from `edges/compute.ts` and `edges/ic.ts`, both measure-only, and `research-agent.ts` imports nothing from `lib/edges`.
+>
+> **Discontinuity, stated because a promotion gate reads this table.** `edge_ic_history` rows from 2026-08-18 are computed on Yahoo bars where earlier rows used Massive/EODHD/TwelveData. Per-run `providerCounts` records which, so it is attributable rather than silent — but rows either side are NOT like-for-like. `lib/gates/promotion-gate.ts` reads a 1000-day window, so a promotion evaluated across the boundary mixes sources; segment by `providerCounts` before reading an IC change as signal. No historical row was rewritten.
 > **2026-08-01 weight-resolution correction:** live ResearchAgent scoring reads
 > the market champion, then the static risk-profile baseline. `learning_priors`
 > and global `signal_weights` are learner configuration/proposal inputs, not
