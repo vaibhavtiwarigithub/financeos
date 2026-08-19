@@ -177,3 +177,33 @@ describe("a single position's exit failure is isolated, not fatal", () => {
     expect(monitor).toContain("execute_paper_exit denied (");
   });
 });
+
+// ── 2026-08-19: a disputed quote must not price an EXIT ─────────────────────
+//
+// The cross-check first landed only inside buildPositionMark, which runs AFTER
+// the exit loop. It corrected the mark while the exit decision still used the
+// disputed price: that run closed LULU at ~119.55 (the 08-14 price; 08-18 close
+// was 119.01) and MSFT at ~487.65 (a carried 08-17 value; 08-18 close 481.63).
+// The reason string even claimed the quote was "refused for stop/target
+// evaluation" — it was not. The gate must sit on priceMap, before any exit.
+describe("disputed quotes are refused BEFORE exits are evaluated", () => {
+  it("gates priceMap, not just the mark", () => {
+    expect(monitor).toContain("const disputedSymbols:");
+    expect(monitor).toContain("delete priceMap[sym];");
+  });
+
+  it("the gate runs BEFORE the exit loop, not after", () => {
+    const gateAt = monitor.indexOf("delete priceMap[sym];");
+    const exitLoopAt = monitor.indexOf("for (const pos of positions)");
+    const markAt = monitor.indexOf("buildPositionMark({");
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(exitLoopAt).toBeGreaterThan(gateAt);   // exits see the gated map
+    expect(markAt).toBeGreaterThan(gateAt);
+  });
+
+  it("raises a critical naming the refused symbols", () => {
+    const hits = monitor.split("position-monitor-quote-disputed:").length - 1;
+    expect(hits).toBeGreaterThanOrEqual(2); // report AND resolve paths
+    expect(monitor).toContain("too doubtful to sell on");
+  });
+});

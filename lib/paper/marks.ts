@@ -117,6 +117,12 @@ export function buildPositionMark(input: PositionMarkInput, now = new Date()): P
   // disputed quote FAILS CLOSED to the carried mark rather than being used —
   // and the reason records both numbers so the disagreement is auditable.
   //
+  // NOTE: this guard protects the MARK only. Exits are decided earlier, from
+  // `priceMap` in the position-monitor route, which gates disputed symbols
+  // separately BEFORE the exit loop. An earlier version of this comment
+  // claimed the mark guard covered stop/target evaluation; it did not, and
+  // four positions closed on stale prices on 2026-08-19 as a result.
+  //
   // Fail-closed is only safe because a disagreement is genuinely rare:
   // measured 2026-08-18, Massive /prev and Yahoo agreed to the cent on every US
   // holding (MSFT 481.63/481.63, NVDA 219.74/219.74, XAR 290.43/290.43).
@@ -157,7 +163,7 @@ export function buildPositionMark(input: PositionMarkInput, now = new Date()): P
       reason: disputed
         ? `quote DISPUTED — ${input.liveSource || "primary"} ${live} vs ${input.crossSource || "cross"} ${cross} ` +
           `(${((Math.abs(live! - cross!) / cross!) * 100).toFixed(3)}% > ${MARK_CROSSCHECK_TOLERANCE_PCT}% tolerance); ` +
-          `refused for marking and for stop/target evaluation, carried last persisted mark` +
+          `refused for marking, carried last persisted mark` +
           (ageDays == null ? "" : ` (${ageDays.toFixed(1)}d old)`)
         : ageDays == null
         ? "no fresh quote; carried last persisted mark (age unknown)"

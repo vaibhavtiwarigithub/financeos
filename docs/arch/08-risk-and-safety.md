@@ -1,4 +1,15 @@
 # Kairos — Risk & Safety
+> 2026-08-19: **CORRECTION — the mark cross-check did not protect exits, and four positions closed on stale prices before it was fixed.**
+>
+> The entry below claims a disputed quote is "REFUSED for marking AND for stop/target evaluation". That was **false as shipped**. The guard lived only in `buildPositionMark`, which runs AFTER the exit loop; the exit loop reads `priceMap` directly. The 20:15 run corrected the marks and exited anyway.
+>
+> **What it cost.** The US chain fell through to Alpha Vantage — which served the PREVIOUS session's close — while Yahoo carried the current one. Six of ten marks were flagged disputed (KGC 9.36%, XAR 3.79%, OXY 2.86%, TSM 2.38%, BAC 1.43%, NVDA 1.00%), and four positions still closed: LULU at ~119.55 (the 2026-08-14 price; the 08-18 close was 119.01) and MSFT at ~487.65 (a carried 08-17 value; 08-18 close 481.63), plus MA and SMCI. Eight lots, now `tainted` + `excluded_from_learning`; `realized_pnl` left intact to preserve the cash-ledger identity.
+>
+> **Fix.** The gate now sits on `priceMap` itself, before any exit is evaluated: a disputed symbol is deleted from the map and reported UNPRICED, so no stop, target or time-stop can fill on it, and a critical names every refused symbol. A price too doubtful to record is too doubtful to sell on. Pinned positionally in `tests/paper-nav-writer-contract.test.ts` — the gate must precede both the exit loop and `buildPositionMark` — and mutation-verified.
+>
+> **Confirmed by the same run (these DID work):** the per-position isolation fix and the MSFT residual-lot reconstruction — the run completed `done`, 14/14 succeeded, `exit_failures=0`, where the previous two runs aborted entirely. India wrote `bench_source=yahoo(unconfirmed)`, exactly the honest label the cross-check contract specifies when only one vendor resolves.
+>
+> **Still unresolved:** no vendor publishes the current session's settled close at 16:15 ET. Massive `/prev` returned 2026-08-18 closes when queried at 20:16 UTC on 2026-08-19, and grouped publishes next-day. So the US monitor cannot mark the session it just watched close. US `bench_nav` for 2026-08-19 is NULL for the same reason — correctly refused rather than mislabelled. This needs a run-timing decision (move the US monitor later, or add a next-morning settle pass); it is NOT a code bug and is not built.
 > 2026-08-19: **Position marks are now corroborated by an independent vendor, and a DISPUTED quote fails closed.**
 >
 > A mark is not a display number — it prices the stop and target checks. Yahoo demonstrably serves PROVISIONAL values it later retracts (the 2026-08-18 ^NSEI case wrote a 0.375% error into `paper_performance`), and the exact-session rule validates the DATE, never the VALUE. So each live mark is compared against a DIFFERENT vendor: US → Yahoo per-symbol (primary chain is Massive-based), India → Upstox (primary is Yahoo). Both keyless and unbudgeted.
