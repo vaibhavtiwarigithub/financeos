@@ -1,3 +1,42 @@
+## 2026-08-19 — India benchmark provenance stamped; Yahoo ^NSEI null-close gaps found
+
+**India values were already correct.** Re-fetched every ^NSEI settled close and
+compared: 24 of 24 checkable dates matched the stored `bench_nav` exactly. No lag,
+no frozen stretches, no duplicates — none of the US corruption.
+
+**Why India escaped is timing, not better code.** Both markets run the identical
+path. India's cron fires 11:15 UTC = 15:45 IST, 1h15m after the 15:30 close, by
+which time Yahoo has published. The US cron fires 16:15 ET, fifteen minutes after
+the close, before publication — so it captured whatever was there and stamped it
+with the run date. Luck of scheduling, not design.
+
+**Stamped 25 of 28 rows** with `bench_session_date = date` and
+`bench_source = yahoo`. Provenance only — the UPDATE joined on
+`round(bench_nav,2) = independently re-fetched close`, so a row could only be
+stamped by proving itself. Zero values changed.
+
+**3 rows deliberately LEFT UNPROVEN:** 2026-07-21 (24187.7), 07-22 (23996.25),
+07-31 (24383.6).
+
+**Why — a provider defect worth knowing.** Yahoo's ^NSEI 1y series carries eight
+bars whose close is NULL: 2026-01-15, 05-01, 05-28, 06-26, 07-21, 07-22, 07-31,
+08-18. The session slot exists; the close does not. The January and May ones are
+still null months later, so these are permanent data gaps, not settlement lag.
+Our benchmark captured a value on four of those dates — numbers Yahoo briefly
+served and has since dropped. They are not demonstrably wrong, they are
+**permanently uncorroborable from that source**, so stamping provenance on them
+would assert a proof that does not exist. NULL provenance is the honest signal.
+
+2026-08-18 India (24245.699) is the fourth. It already carries provenance because
+the live W5 path wrote it under the exact-session rule at fetch time — correct
+behaviour given the data then available — but Yahoo now returns null for that
+session, so it too cannot be re-verified.
+
+**Open risk this exposes:** the benchmark can silently capture a provisional value
+on a Yahoo null-close date. The exact-session check catches a WRONG DATE; it cannot
+catch a value the provider later retracts. A cross-provider check for India (no
+Massive equivalent — NSE is not covered) would be the fix, and is not built.
+
 ## 2026-08-19 — US benchmark series rebuilt on true session closes (scope grew)
 
 Asked to fix the Aug 12/13 duplicate `bench_nav`. The duplicate was real, but it
