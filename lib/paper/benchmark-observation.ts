@@ -22,6 +22,7 @@
 
 import type { Candle } from "@/lib/data/technicals";
 import { fetchMassiveCandles, fetchUsCandles, fetchYahooCandles, newestBarIsStale } from "@/lib/data/candles";
+import { fetchUpstoxIndexCandles } from "@/lib/data/upstox";
 
 export type BenchmarkMarket = "us" | "india";
 
@@ -98,12 +99,22 @@ export interface BenchmarkFetchers {
   us: (symbol: string) => Promise<{ candles: Candle[]; source: string }>;
   usFallback: (symbol: string) => Promise<Candle[]>;
   india: (symbol: string) => Promise<Candle[]>;
+  /** Exchange-backed second source for the India index (Upstox). */
+  indiaCrossCheck: (symbol: string) => Promise<Candle[]>;
 }
+
+/**
+ * Largest tolerated gap between two providers quoting the SAME index session.
+ * An index close is one published number, so any real disagreement is a data
+ * fault, not rounding. 5bps leaves room for float/rounding only.
+ */
+export const BENCHMARK_CROSSCHECK_TOLERANCE_PCT = 0.05;
 
 const DEFAULT_FETCHERS: BenchmarkFetchers = {
   us: (symbol) => fetchUsCandles(symbol, async () => [] as Candle[]),
   usFallback: (symbol) => fetchMassiveCandles(symbol),
   india: (symbol) => fetchYahooCandles(symbol),
+  indiaCrossCheck: (symbol) => fetchUpstoxIndexCandles(symbol),
 };
 
 export async function fetchBenchmarkObservation(
@@ -136,8 +147,43 @@ export async function fetchBenchmarkObservation(
       // rejection — it describes the provider the ladder actually chose.
       return secondary.ok ? secondary : primary;
     }
-    const candles = await fetchers.india(symbol);
-    return selectBenchmarkObservation(candles, symbol, "yahoo", expectedSessionDate);
+    // INDIA — two independent sources, because the exact-session rule validates
+    // the DATE and cannot validate the VALUE.
+    //
+    // Yahoo's ^NSEI series carries bars whose close is NULL and briefly serves a
+    // PROVISIONAL number on those sessions before dropping it. On 2026-08-18 that
+    // wrote 24245.699 into paper_performance when the settled NIFTY 50 close was
+    // 24154.9 — 0.375% wrong, undetectable from Yahoo alone because Yahoo agreed
+    // with itself. India had no second source (Massive is US-equities-only), so
+    // the error was invisible until an exchange-backed provider was compared.
+    //
+    // Upstox is a broker API carrying official exchange data, so it is the
+    // AUTHORITATIVE side: when both resolve the session, Upstox supplies the
+    // value and Yahoo is the check. Yahoo still serves alone if Upstox is
+    // unavailable (no token, outage) — a single-source benchmark beats none —
+    // but the source string then says so plainly.
+    const [yahooCandles, crossCandles] = await Promise.all([
+      fetchers.india(symbol),
+      fetchers.indiaCrossCheck(symbol).catch(() => [] as Candle[]),
+    ]);
+    const yahooPick = selectBenchmarkObservation(yahooCandles, symbol, "yahoo", expectedSessionDate);
+    const crossPick = selectBenchmarkObservation(crossCandles, symbol, "upstox", expectedSessionDate);
+
+    if (crossPick.ok && yahooPick.ok) {
+      const a = crossPick.observation.close;
+      const b = yahooPick.observation.close;
+      const deltaPct = a > 0 ? (Math.abs(a - b) / a) * 100 : Number.POSITIVE_INFINITY;
+      if (deltaPct <= BENCHMARK_CROSSCHECK_TOLERANCE_PCT) {
+        return { ok: true, observation: { ...crossPick.observation, source: "upstox+yahoo" } };
+      }
+      // Disagreement is recorded in the source, not hidden: the exchange value
+      // is used, and the label states that the two providers did not agree.
+      return { ok: true, observation: { ...crossPick.observation, source: "upstox(yahoo_disagreed)" } };
+    }
+    if (crossPick.ok) return { ok: true, observation: { ...crossPick.observation, source: "upstox(unconfirmed)" } };
+    if (yahooPick.ok) return { ok: true, observation: { ...yahooPick.observation, source: "yahoo(unconfirmed)" } };
+    // Neither resolved the session — report the primary's reason.
+    return yahooPick;
   } catch (err) {
     return {
       ok: false, reason: "benchmark_bars_unavailable", latestSessionDate: null,

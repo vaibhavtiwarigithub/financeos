@@ -100,6 +100,52 @@ export async function fetchUpstoxCandles(symbol: string, days = 160): Promise<Ca
   } catch { return []; }
 }
 
+// Index daily candles via Upstox. Indices are NOT in `upstox_instruments`:
+// refreshInstruments() filters the master to instrument_type=EQ / segment=NSE_EQ,
+// so getInstrumentKey() cannot resolve them. Upstox keys indices statically, and
+// the key is EXACT — "NSE_INDEX|Nifty 50" resolves while "NSE_INDEX|NIFTY 50"
+// returns UDAPI100011 Invalid Instrument key (verified 2026-08-19).
+export const UPSTOX_INDEX_KEYS: Record<string, string> = {
+  "^NSEI": "NSE_INDEX|Nifty 50",
+  "NIFTY50": "NSE_INDEX|Nifty 50",
+  "^NSEBANK": "NSE_INDEX|Nifty Bank",
+};
+
+/**
+ * Daily candles for an NSE INDEX, straight from the exchange-backed broker API.
+ *
+ * Exists to cross-check the India benchmark. Yahoo's ^NSEI series carries bars
+ * whose close is NULL (2026-01-15, 05-01, 05-28, 06-26, 07-21, 07-22, 07-31,
+ * 08-18 in the 1y window) and, worse, briefly serves a PROVISIONAL value on those
+ * sessions before dropping it. On 2026-08-18 that put 24245.699 into
+ * paper_performance when the settled NIFTY 50 close was 24154.9 — a 0.375% error
+ * that no single-source check could catch, because the exact-session rule
+ * validates the DATE, not the VALUE.
+ */
+export async function fetchUpstoxIndexCandles(symbol: string, days = 60): Promise<Candle[]> {
+  if (!token()) return [];
+  const key = UPSTOX_INDEX_KEYS[symbol.toUpperCase()] ?? UPSTOX_INDEX_KEYS[symbol];
+  if (!key) return [];
+  try {
+    const to = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - days * 2 * 86400000).toISOString().slice(0, 10);
+    const url = `https://api.upstox.com/v3/historical-candle/${encodeURIComponent(key)}/days/1/${to}/${from}`;
+    const json = await providerCachedFetch("upstox", `UPSTOX_INDEX:${key}:${days}`, url, {
+      timeoutMs: 8000,
+      headers: await authHeaders(),
+      isThrottled: (j) => j?.status !== "success",
+    });
+    const rows: any[] = json?.data?.candles ?? [];
+    return rows
+      .map((c: any[]) => ({
+        date: String(c[0]).slice(0, 10),
+        open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] ?? 0,
+      }))
+      .filter((c: Candle) => Number.isFinite(c.close) && c.close > 0)
+      .sort((a: Candle, b: Candle) => a.date.localeCompare(b.date));
+  } catch { return []; }
+}
+
 // India LTP quote via Upstox market-quote.
 export async function fetchUpstoxQuote(symbol: string): Promise<{ price: number; changePct: number } | null> {
   if (!token()) return null;

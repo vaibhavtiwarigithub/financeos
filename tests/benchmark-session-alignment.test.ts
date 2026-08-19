@@ -125,6 +125,7 @@ describe("US benchmark falls through to the next provider on a session miss", ()
       us: async () => ({ candles: yahooShort, source: "yahoo" }),
       usFallback: async () => { fallbackCalls++; return [...yahooShort, bar(SESSION, 710.27)]; },
       india: async () => [],
+      indiaCrossCheck: async () => [],
     });
 
     expect(fallbackCalls).toBe(1);
@@ -142,6 +143,7 @@ describe("US benchmark falls through to the next provider on a session miss", ()
       us: async () => ({ candles: [...yahooShort, bar(SESSION, 710.27)], source: "yahoo" }),
       usFallback: async () => { fallbackCalls++; return []; },
       india: async () => [],
+      indiaCrossCheck: async () => [],
     });
     expect(fallbackCalls).toBe(0);
     expect(res.ok).toBe(true);
@@ -154,6 +156,7 @@ describe("US benchmark falls through to the next provider on a session miss", ()
       us: async () => ({ candles: [bar(dayOffset(40), 600)], source: "yahoo" }),
       usFallback: async () => { fallbackCalls++; return []; },
       india: async () => [],
+      indiaCrossCheck: async () => [],
     });
     expect(fallbackCalls).toBe(0);
     expect(res.ok).toBe(false);
@@ -165,6 +168,7 @@ describe("US benchmark falls through to the next provider on a session miss", ()
       us: async () => ({ candles: yahooShort, source: "yahoo" }),
       usFallback: async () => yahooShort,
       india: async () => [],
+      indiaCrossCheck: async () => [],
     });
     expect(res.ok).toBe(false);
     if (!res.ok) {
@@ -173,15 +177,87 @@ describe("US benchmark falls through to the next provider on a session miss", ()
     }
   });
 
-  it("India is unaffected — one provider, no fallback call", async () => {
+  it("India never spends the US fallback call", async () => {
+    // 2026-08-19: India gained its OWN second source (Upstox), so the source
+    // string is no longer a bare "yahoo". The invariant this test exists for is
+    // unchanged: the US-only fallback must never be called on the India path.
     let fallbackCalls = 0;
     const res = await fetchBenchmarkObservation("india", SESSION, {
       us: async () => ({ candles: [], source: "none" }),
       usFallback: async () => { fallbackCalls++; return []; },
       india: async () => [bar(SESSION, 24245.7)],
+      indiaCrossCheck: async () => [],
     });
     expect(fallbackCalls).toBe(0);
     expect(res.ok).toBe(true);
-    if (res.ok) expect(res.observation.source).toBe("yahoo");
+    if (res.ok) expect(res.observation.source).toBe("yahoo(unconfirmed)");
+  });
+});
+
+// ── India cross-provider check (2026-08-19) ─────────────────────────────────
+//
+// The exact-session rule validates the DATE, never the VALUE. Yahoo's ^NSEI
+// series carries NULL-close bars and briefly serves a PROVISIONAL number on
+// those sessions before dropping it. On 2026-08-18 that wrote 24245.699 into
+// paper_performance when the settled NIFTY 50 close was 24154.9 — 0.375% wrong,
+// and invisible from Yahoo alone because Yahoo agreed with itself. Upstox is a
+// broker API carrying official exchange data, so it is the authoritative side.
+describe("India benchmark is cross-checked against the exchange source", () => {
+  const SESSION = dayOffset(0);
+  const f = (yahoo: number | null, upstox: number | null) => ({
+    us: async () => ({ candles: [], source: "none" }),
+    usFallback: async () => [],
+    india: async () => (yahoo == null ? [] : [bar(SESSION, yahoo)]),
+    indiaCrossCheck: async () => (upstox == null ? [] : [bar(SESSION, upstox)]),
+  });
+
+  it("labels agreement from both providers", async () => {
+    const r = await fetchBenchmarkObservation("india", SESSION, f(24154.9, 24154.9));
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.observation.source).toBe("upstox+yahoo");
+      expect(r.observation.close).toBe(24154.9);
+    }
+  });
+
+  it("takes the EXCHANGE value and flags the disagreement — the real 2026-08-18 case", async () => {
+    const r = await fetchBenchmarkObservation("india", SESSION, f(24245.699, 24154.9));
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.observation.close).toBe(24154.9);
+      expect(r.observation.source).toBe("upstox(yahoo_disagreed)");
+    }
+  });
+
+  it("tolerates rounding-scale differences without crying wolf", async () => {
+    const r = await fetchBenchmarkObservation("india", SESSION, f(24154.905, 24154.9));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.observation.source).toBe("upstox+yahoo");
+  });
+
+  it("still produces a benchmark when only one provider resolves — labelled unconfirmed", async () => {
+    const onlyUpstox = await fetchBenchmarkObservation("india", SESSION, f(null, 24154.9));
+    expect(onlyUpstox.ok).toBe(true);
+    if (onlyUpstox.ok) expect(onlyUpstox.observation.source).toBe("upstox(unconfirmed)");
+
+    const onlyYahoo = await fetchBenchmarkObservation("india", SESSION, f(24245.699, null));
+    expect(onlyYahoo.ok).toBe(true);
+    if (onlyYahoo.ok) expect(onlyYahoo.observation.source).toBe("yahoo(unconfirmed)");
+  });
+
+  it("refuses when neither provider has the session", async () => {
+    const r = await fetchBenchmarkObservation("india", SESSION, f(null, null));
+    expect(r.ok).toBe(false);
+  });
+
+  it("a cross-check outage cannot break the India path", async () => {
+    const r = await fetchBenchmarkObservation("india", SESSION, {
+      us: async () => ({ candles: [], source: "none" }),
+      usFallback: async () => [],
+      india: async () => [bar(SESSION, 24154.9)],
+      indiaCrossCheck: async () => { throw new Error("upstox 500"); },
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.observation.source).toBe("yahoo(unconfirmed)");
   });
 });
