@@ -28,6 +28,14 @@ import { computeNav } from "@/lib/paper/nav-math";
 
 export type Market = "us" | "india";
 
+/**
+ * Largest tolerated gap between two vendors quoting the SAME equity session.
+ * Wider than the index tolerance (5bps) because equity feeds differ on
+ * adjustment conventions, but far below the 0.375% provisional-value error that
+ * motivated this check.
+ */
+export const MARK_CROSSCHECK_TOLERANCE_PCT = 0.1;
+
 /** How a mark was obtained. Anything that is not `live_quote` is stale weight. */
 export type MarkProvenance =
   /** A quote fetched this run that passed the adapter's freshness rule. */
@@ -47,6 +55,13 @@ export interface PositionMarkInput {
   persistedPrice?: number | null;
   /** `paper_positions.updated_at` — when that persisted price was written. */
   persistedAt?: string | null;
+  /**
+   * Independent second-source price for the SAME session, when one is available.
+   * Massive `/prev` for US, Upstox for India — different vendors, so agreement is
+   * real corroboration rather than one vendor agreeing with itself.
+   */
+  crossPrice?: number | null;
+  crossSource?: string | null;
   /** Price accepted from a fresh quote this run, if any. */
   livePrice?: number | null;
   /** Provider that produced the live quote (`massive`, `yahoo`, ...). */
@@ -94,7 +109,22 @@ export function buildPositionMark(input: PositionMarkInput, now = new Date()): P
   };
 
   const live = num(input.livePrice);
-  if (live != null && live > 0) {
+  const cross = num(input.crossPrice);
+  // A live price contradicted by an independent source is not a price we may
+  // stop or target on. Yahoo demonstrably serves PROVISIONAL values that it
+  // later retracts (the 2026-08-18 ^NSEI case put a 0.375% error into
+  // paper_performance), and a mark drives exit decisions, not just NAV. So a
+  // disputed quote FAILS CLOSED to the carried mark rather than being used —
+  // and the reason records both numbers so the disagreement is auditable.
+  //
+  // Fail-closed is only safe because a disagreement is genuinely rare:
+  // measured 2026-08-18, Massive /prev and Yahoo agreed to the cent on every US
+  // holding (MSFT 481.63/481.63, NVDA 219.74/219.74, XAR 290.43/290.43).
+  const disputed =
+    live != null && live > 0 && cross != null && cross > 0 &&
+    (Math.abs(live - cross) / cross) * 100 > MARK_CROSSCHECK_TOLERANCE_PCT;
+
+  if (live != null && live > 0 && !disputed) {
     const observedAt = input.liveObservedAt ?? null;
     const observedMs = observedAt ? Date.parse(observedAt) : NaN;
     return {
@@ -105,7 +135,9 @@ export function buildPositionMark(input: PositionMarkInput, now = new Date()): P
       provenance: "live_quote",
       stale: false,
       ageDays: Number.isFinite(observedMs) ? (now.getTime() - observedMs) / 86_400_000 : null,
-      reason: `fresh quote from ${input.liveSource || "unknown"}`,
+      reason: cross != null && cross > 0
+        ? `fresh quote from ${input.liveSource || "unknown"}, corroborated by ${input.crossSource || "second source"}`
+        : `fresh quote from ${input.liveSource || "unknown"} (uncorroborated — no second source this run)`,
     };
   }
 
@@ -122,7 +154,12 @@ export function buildPositionMark(input: PositionMarkInput, now = new Date()): P
       provenance: "carry_forward",
       stale: true,
       ageDays,
-      reason: ageDays == null
+      reason: disputed
+        ? `quote DISPUTED — ${input.liveSource || "primary"} ${live} vs ${input.crossSource || "cross"} ${cross} ` +
+          `(${((Math.abs(live! - cross!) / cross!) * 100).toFixed(3)}% > ${MARK_CROSSCHECK_TOLERANCE_PCT}% tolerance); ` +
+          `refused for marking and for stop/target evaluation, carried last persisted mark` +
+          (ageDays == null ? "" : ` (${ageDays.toFixed(1)}d old)`)
+        : ageDays == null
         ? "no fresh quote; carried last persisted mark (age unknown)"
         : `no fresh quote; carried last persisted mark (${ageDays.toFixed(1)}d old)`,
     };

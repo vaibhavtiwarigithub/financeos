@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchIndiaQuotes, fetchYahooQuotes } from "@/lib/india-data";
+import { fetchUpstoxCandles } from "@/lib/data/upstox";
 import { classifyOutcome } from "@/lib/trade-outcome";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -178,6 +179,35 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       }
     }
   }
+  // ── Independent second source for the marks ────────────────────────────────
+  // A mark drives stop and target evaluation, so a price no second vendor will
+  // confirm must not silently move money. Different vendor per market:
+  //   US    -> Yahoo per-symbol (the primary chain is Massive-based)
+  //   India -> Upstox, the exchange-backed broker API (primary is Yahoo)
+  // Both are keyless/unbudgeted. Best-effort throughout: no cross price simply
+  // means the mark is recorded as uncorroborated, never as disputed.
+  const crossPrice: Record<string, number> = {};
+  const crossSource: Record<string, string> = {};
+  try {
+    const usToCheck = usSymbols.filter((s) => priceMap[s] != null && quoteMeta[s]?.source !== "yahoo_us");
+    if (usToCheck.length > 0) {
+      const yq = await fetchYahooQuotes(usToCheck, "us");
+      for (const sym of usToCheck) {
+        const q = yq[sym.toUpperCase()];
+        if (q && !q.stale && q.price > 0) { crossPrice[sym] = q.price; crossSource[sym] = "yahoo_us"; }
+      }
+    }
+  } catch { /* corroboration is best-effort — never break the run */ }
+  await Promise.all(indiaSymbols.filter((s) => priceMap[s] != null).map(async (sym) => {
+    try {
+      const bars = await fetchUpstoxCandles(sym, 5);
+      const newest = bars.length ? bars[bars.length - 1] : null;
+      if (newest && Number.isFinite(newest.close) && newest.close > 0) {
+        crossPrice[sym] = newest.close; crossSource[sym] = "upstox";
+      }
+    } catch { /* best-effort */ }
+  }));
+
   const unpricedByMarket: Record<"us" | "india", string[]> = {
     us: usSymbols.filter(sym => priceMap[sym] == null),
     india: indiaSymbols.filter(sym => priceMap[sym] == null),
@@ -609,6 +639,8 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       livePrice: priceMap[String(p.symbol)] ?? null,
       liveSource: quoteMeta[String(p.symbol)]?.source ?? null,
       liveObservedAt: quoteMeta[String(p.symbol)]?.observedAt ?? null,
+      crossPrice: crossPrice[String(p.symbol)] ?? null,
+      crossSource: crossSource[String(p.symbol)] ?? null,
     }));
     const newNav = navFromMarks(cashByMarket[market], marks);
     const positionsValue = newNav - cashByMarket[market];
