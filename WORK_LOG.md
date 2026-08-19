@@ -1,3 +1,48 @@
+## 2026-08-18 — MSFT residual-lot reconstruction + VOO benchmark backfill (owner-approved)
+
+**MSFT was not a phantom position — it was a LOST LEDGER LOT.** My first reading
+("orphaned position, delete it") was wrong. `exit_reason` on the closed trade is
+`partial_target`: the 2026-08-03 partial exit closed the sold half, and the
+residual buy lot it should have inserted was rejected by the anti-pyramiding
+trigger and the two buy-unique indexes — the W2-interim defect that
+`20260817180000_w2_full_partial_exit_ledger` later fixed with `partial_exit_lot`.
+The remaining 0.472499 was genuinely held; only its lot record was missing.
+
+Deleting the position would have forfeited a real half-position. The correct
+repair was to reconstruct the residual lot the RPC failed to write.
+
+Two independent invariants confirmed the diagnosis and the fix:
+
+| Check | Before | After |
+|---|---|---|
+| lot/position parity (MSFT) | 0 vs 0.472499 | 0.472499 = 0.472499 |
+| US cash-ledger drift | **-$185.20** | **$0.0005** |
+
+`0.472499 x 391.9659 = 185.2035` — the drift equalled the missing lot cost to the
+cent, which is why this is a reconstruction rather than a guess. Book-wide: 0 of
+27 positions now drift. The residual carries `partial_exit_lot=true`, inherits the
+parent's `tainted`/`excluded_from_learning`, and its rationale records the repair.
+
+**Consequence:** `execute_paper_exit` will stop denying MSFT, so the 20:15 run can
+complete. Combined with the per-position isolation fix (`8d83227d`), a single bad
+row can no longer blank the book either.
+
+**VOO backfill.** Aug 17 = 710.27 (grouped endpoint), Aug 18 = 705.40 (`/prev`,
+whose payload dates the bar 2026-08-18). Both stored with `bench_session_date` and
+`bench_source`, so they are session-identified rather than run-date-stamped.
+`alpha_pct` deliberately left NULL on both: it derives from NAV, and both NAVs are
+untrustworthy.
+
+**Aug 18 row tainted — reversing an earlier call.** I had declined to flag it on the
+reasoning that the 20:15 run would replace it. That run aborted, and tomorrow writes
+an Aug 19 row, so this one is final and wrong: a pre-open (07:15 ET) carry-forward
+NAV still labelled `snapshot_type=eod`. `snapshot_type` was left as-is rather than
+corrected, because consumers filtering on `eod` were not audited and a vanishing row
+is its own distortion — the taint reason states the mislabel explicitly.
+
+**Still open:** Aug 12 and Aug 13 share `bench_nav` 708.42 (VOO 2026-08-11 close
+under two dates — the original W5 defect). Not rewritten; both rows already tainted.
+
 # WORK_LOG.md — Active Task Tracker
 
 | 2026-08-17 Exit-policy diagnosis (US −7.4pp underperformance) | Claude / Opus 5 | completed | 2026-08-17 | Ran the money-path exit review on 135 closed trades + 1,885 labelled observations, US and India separated. **Headline, structural not statistical: the +20% price target is unreachable and has NEVER fired — zero `target_hit` exits in 135 closed trades.** Across 1,885 labels, max-favorable-excursion within the hold window averages 5.4–5.8% (p90 11.8–12.1%); the share ever touching +20% is US h10 **3.8%**, India h10 **0.0%** (max MFE ever recorded 18.44%). The target sits ~3.5x average MFE and above p90, so exits are effectively "hold 10 days or stop at −7%". **Direct consequence: W2-full partial exits, restored earlier today, are gated on that same `priceTarget` and will fire on ~4% of US and ~0% of India positions — the feature is near-inert as shipped.** **Second finding, contra my own framing: stops are CORRECT, not the leak.** `stop_hit` carries the largest negative total (US −$225 on 5 trades, India −₹15,883 on 7) but every labelled stop-out kept falling — HOOD exited −10.2% vs **−21.3% at h20** (MAE −27.3%), RDDT exited −14.3% with MAE −27.0%, AAPL and KPEL.NS likewise. **Zero recoveries.** The stop is limiting loss, not creating it. Time-stop does all real work (32/50 US, 55/85 India exits) and is profitable in India (+2.69% avg, 64% win) but flat in US (+0.88%, 37.5%). **Third: the alarming US selection result did NOT survive its own control — and this is the same trap refuted this morning.** Traded-vs-benchmark gave US h10 −2.11pp at date-clustered t=**−3.42**, which looks decisive; but all 8 US decision dates fall in the Jul 9–27 selloff window. Differencing traded against *untraded scored names on identical dates per market* (paired, so the window cancels exactly) collapses it: US selection delta **−1.20pp, t=−1.44**; India **+1.47pp, t=+1.52**. **Neither market's selection is distinguishable from zero.** Acting on the −3.42 would have tuned a live strategy on a market window for the second time in one day. **Binding constraint unchanged: 8 US / 13 India independent dates.** No target, stop, horizon, threshold or weight changed — retargeting is a live money-path formula and per protocol needs a frozen read-only counterfactual first. Recommended next: derive the target from the realized MFE distribution or ATR (the `atr_exit_outcomes` machinery already populates 403/405 recent labels) rather than a fixed +20%. |
