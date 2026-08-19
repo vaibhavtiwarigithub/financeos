@@ -1,3 +1,43 @@
+## 2026-08-19 — US benchmark series rebuilt on true session closes (scope grew)
+
+Asked to fix the Aug 12/13 duplicate `bench_nav`. The duplicate was real, but it
+was a symptom: **the entire US benchmark series was wrong.**
+
+- **Frozen stretches.** Jul 13, 14, 15, 16, 17 and 20 all carried the identical
+  693.85999 while VOO actually traded 688.50 -> 682.21. Jul 22, 23, 24 all carried
+  687.90 while VOO fell 687.03 -> 679.14. The vs-VOO line was flat where the
+  benchmark moved most.
+- **One-session lag elsewhere.** Aug 14 stored 714.95 = Aug 13's close; Aug 12
+  stored 708.42 = Aug 11's; and so on down the series.
+- **The baseline was mislabelled too.** The first row (2026-07-10) stored 690.69,
+  which is 2026-07-09's close. Every `bench_return_pct` was anchored one session
+  early, so relative performance was wrong for the whole book, not just near the
+  duplicate.
+
+All of this is the W5 defect end to end: a benchmark *quote* accepted and stamped
+with the cron run date instead of the bar's own session.
+
+**Correction.** 28 US rows rebuilt from VOO's true daily closes
+(`/v2/aggs/ticker/VOO/range/1/day`, the entitled endpoint), each written with
+`bench_session_date = date` and `bench_source = massive` so the row proves its own
+correctness. Baseline re-anchored to 2026-07-10's real close (693.86).
+`bench_return_pct` recomputed for all; `alpha_pct` recomputed only where it already
+existed, using the unchanged `total_pnl_pct`.
+
+**Post-conditions verified:** 28/28 rows have `bench_session_date = date`, 0
+unidentified, 28 distinct levels, **0 consecutive duplicates**.
+
+**NOT touched:** `nav`, `total_pnl_pct`, and every taint flag. NAV remains
+untrustworthy for Aug 10 onward (stale marks, and until today the MSFT residual-lot
+break), so alpha computed from it is still only as good as its NAV — the benchmark
+half is now correct, the portfolio half is not. Aug 17/18 keep `alpha_pct` NULL for
+that reason.
+
+**Why a historical rewrite was acceptable here:** a benchmark close is an objective
+external fact, not a past decision. The frozen-history rule protects decisions and
+realized P&L, neither of which moved. Every corrected row now carries the session it
+belongs to, which is exactly what the old rows could not do.
+
 ## 2026-08-18 — MSFT residual-lot reconstruction + VOO benchmark backfill (owner-approved)
 
 **MSFT was not a phantom position — it was a LOST LEDGER LOT.** My first reading
