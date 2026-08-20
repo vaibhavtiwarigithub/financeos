@@ -1,4 +1,6 @@
-# Kairos — Crons & Scheduling
+# Kairos — Crons & Scheduling
+> 2026-08-20: **`kairos-settle-check-us` added — `0 13 * * 1-5` (09:00 ET).** Next-day settlement check for US paper marks. Runs after the Massive grouped daily feed publishes the prior session and before the next US session opens. Timing evidence: 2026-08-17's grouped bars were available ~13:40 UTC on 08-18, while 2026-08-18's were still absent at 00:55 UTC on 08-19 — the feed lands overnight, not the same evening. If it runs before publication it reports `nothing_to_compare`, never a false pass. MEASURE-ONLY: writes no NAV, no position price, no trade.
+
 > Last updated: 2026-08-08 (Property collection runs Sunday at 10:00 UTC, Property forecasts at 10:30 UTC, and Capital Plan area snapshots at 10:45 UTC. The final job reads only already-persisted Property observations, so it makes no provider call and cannot turn unavailable ZIP/PIN/locality data into a local prediction. All three remain outside securities scoring, orders, and money movement.)
 
 > 2026-08-09: When the explicitly gated `census-acs` source is active and its

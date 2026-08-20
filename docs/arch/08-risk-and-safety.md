@@ -1,4 +1,15 @@
 # Kairos — Risk & Safety
+> 2026-08-20: **Settle pass — US marks finally get a second opinion, one day late.**
+>
+> The US monitor marks at 16:15 ET from Yahoo, the only vendor carrying the just-closed session at that hour, and Yahoo cannot corroborate Yahoo — so those marks ship `uncorroborated`. The grouped feed (12,549 tickers, ONE entitled call) publishes the following morning and IS independent. `kairos-settle-check-us` (`0 13 * * 1-5`, 09:00 ET) compares yesterday's live marks against it.
+>
+> **It writes no money state.** No NAV, no `paper_positions.current_price`, no trade. A drift beyond `SETTLE_TOLERANCE_PCT` (0.25%) TAINTS that session's `paper_performance` row with the measured per-symbol drift and net NAV impact, and raises a critical — but `nav` is left exactly as recorded. The exits for that session already filled at the marked price; restating NAV afterwards would re-decide a closed session, which the frozen-history rule forbids. Labelling it untrustworthy is honest; silently replacing it is not.
+>
+> **Tolerance is looser than the intraday cross-check (0.1%) on purpose.** Yahoo's 16:15 print is near-final rather than fully settled. Measured 2026-08-19: exact on NVDA and XAR, 0.07% out on KGC. 0.25% catches a real mismarking — the AV-stale case was 1.00–9.36% — without firing on ordinary settlement revision.
+>
+> **`nothing_to_compare` neither raises nor resolves.** An unpublished feed is not evidence the marks were right, and "nothing to compare" must never collapse into "everything agreed" — the same failure mode as the W6 liveness checks that could only report green. Marks already labelled `carry_forward` or `entry_cost` are skipped rather than double-reported.
+>
+> **Detector:** `tests/settle-check.test.ts` — corroboration, the measured KGC revision tolerated, the AV-stale drift flagged with its NAV impact, stale marks not re-flagged, missing closes counted UNVERIFIABLE not agreed, an empty feed not reading as corroborated, and opposite drifts netting to zero while both stay flagged. Route-shaped assertions pin that it never touches `paper_positions`/`paper_trades`/`nav`. **Mutation-verified twice.**
 > 2026-08-20: **Yahoo is now the PRIMARY source for US settled marks — the data was never missing at 16:15 ET, the route was asking the wrong vendor.**
 >
 > The 2026-08-19 entry below concluded that no vendor publishes the current session's close at 16:15 ET, and proposed moving the US monitor later. **That conclusion was wrong.** Checking the settled 2026-08-19 closes against what each vendor returned during that 20:15 run: Yahoo gave NVDA 217.56 and XAR 284.10 — exact — and KGC 29.92 against a settled 29.90 (0.07%). Alpha Vantage gave 219.74 / 294.87 / 27.12: the PREVIOUS session throughout. Yahoo had it; the chain preferred AV.
