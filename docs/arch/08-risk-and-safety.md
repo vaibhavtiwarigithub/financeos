@@ -1,4 +1,13 @@
 # Kairos — Risk & Safety
+> 2026-08-20: **Yahoo is now the PRIMARY source for US settled marks — the data was never missing at 16:15 ET, the route was asking the wrong vendor.**
+>
+> The 2026-08-19 entry below concluded that no vendor publishes the current session's close at 16:15 ET, and proposed moving the US monitor later. **That conclusion was wrong.** Checking the settled 2026-08-19 closes against what each vendor returned during that 20:15 run: Yahoo gave NVDA 217.56 and XAR 284.10 — exact — and KGC 29.92 against a settled 29.90 (0.07%). Alpha Vantage gave 219.74 / 294.87 / 27.12: the PREVIOUS session throughout. Yahoo had it; the chain preferred AV.
+>
+> **Cause.** `getSettledDailyQuotes` tried the grouped feed (which publishes NEXT-DAY, so empty at 16:15) and then fell straight to the ordinary chain — Massive snapshot (403), `price_cache` (stale), Alpha Vantage (previous session). Yahoo was relegated to the unresolved tail, which never ran because AV had already answered. Yahoo now sits between grouped and the ordinary chain. It is keyless and unbudgeted, so preferring it costs no quota, and the schedule is unchanged: exits still run at 16:15, now on correct prices.
+>
+> **Consequence, stated plainly: US marks lose their second opinion.** Yahoo cannot corroborate Yahoo — that circularity is exactly what let the ^NSEI provisional value pass as "verified". The cross-check filter now excludes any Yahoo-sourced primary, so US marks are labelled `uncorroborated` rather than falsely confirmed. Real US corroboration needs the next-day grouped feed via a settle pass; Massive `/prev` is per-symbol and paced at 12.5s (13 symbols ≈ 162s > the 120s route ceiling). NOT built.
+>
+> **Also rejected on evidence:** moving the US monitor past 20:00 ET would cross 00:00 UTC, and the route derives `today` from the UTC date — NAV would be written under the following session.
 > 2026-08-19: **CORRECTION — the mark cross-check did not protect exits, and four positions closed on stale prices before it was fixed.**
 >
 > The entry below claims a disputed quote is "REFUSED for marking AND for stop/target evaluation". That was **false as shipped**. The guard lived only in `buildPositionMark`, which runs AFTER the exit loop; the exit loop reads `priceMap` directly. The 20:15 run corrected the marks and exited anyway.

@@ -189,7 +189,15 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   const crossPrice: Record<string, number> = {};
   const crossSource: Record<string, string> = {};
   try {
-    const usToCheck = usSymbols.filter((s) => priceMap[s] != null && quoteMeta[s]?.source !== "yahoo_us");
+    // NEVER cross-check a vendor against itself. Since 2026-08-20 Yahoo is the
+    // PRIMARY for US settled marks, so a Yahoo "cross" would be the same feed
+    // agreeing with itself — the precise circular check that let the ^NSEI
+    // provisional value pass as verified. Those symbols are left uncorroborated
+    // and say so, which is weaker than a real second opinion but honest.
+    // Genuine US corroboration needs the next-day grouped feed (a settle pass),
+    // because Massive /prev is per-symbol and paced at 12.5s.
+    const usToCheck = usSymbols.filter((s) =>
+      priceMap[s] != null && !String(quoteMeta[s]?.source ?? "").toLowerCase().startsWith("yahoo"));
     if (usToCheck.length > 0) {
       const yq = await fetchYahooQuotes(usToCheck, "us");
       for (const sym of usToCheck) {

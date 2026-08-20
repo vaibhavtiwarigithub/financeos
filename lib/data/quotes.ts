@@ -6,8 +6,9 @@
 
 import { avCachedFetch } from "@/lib/av-cache";
 import { expectedNewestSession } from "@/lib/data/completed-candles";
+import { fetchYahooQuotes } from "@/lib/india-data";
 
-export type QuoteSource = "massive" | "alpha_vantage" | "price_cache" | "unavailable";
+export type QuoteSource = "massive" | "alpha_vantage" | "price_cache" | "yahoo" | "unavailable";
 
 export interface DeterministicQuote {
   symbol: string;
@@ -270,13 +271,47 @@ export async function getSettledDailyQuotes(
 
   const session = expectedNewestSession("us", now);
   const grouped = await fetchMassiveGroupedDaily(session, symbols, process.env.MASSIVE_API_KEY ?? "");
-  const missing = symbols.filter((s) => !grouped[s]);
+  let missing = symbols.filter((s) => !grouped[s]);
   if (missing.length === 0) return grouped;
-  // Anything the grouped feed did not carry (delisted, non-US, not yet
-  // published) still goes through the ordinary chain, which fails closed on
-  // staleness rather than inventing a price.
+
+  // YAHOO BEFORE THE ORDINARY CHAIN. Measured 2026-08-19/20: the grouped feed
+  // publishes NEXT-DAY, so at 16:15 ET it returns nothing and the ordinary chain
+  // then resolves from Alpha Vantage — which serves the PREVIOUS session's
+  // close. Yahoo already carries the just-closed session at that hour. Comparing
+  // what each vendor gave during the 20:15 run against the settled 2026-08-19
+  // closes: Yahoo NVDA 217.56 / XAR 284.10 were exact, KGC 29.92 vs 29.90 was
+  // 0.07% out, while AV gave 219.74 / 294.87 / 27.12 — all the prior session.
+  //
+  // That mis-ordering closed four positions on stale prices before the priceMap
+  // cross-check gate caught it. Yahoo is keyless and unbudgeted, so preferring
+  // it here costs no quota.
+  const yahooResults: Record<string, DeterministicQuote> = {};
+  try {
+    const yq = await fetchYahooQuotes(missing, "us");
+    for (const sym of missing) {
+      const q = yq[sym.toUpperCase()];
+      if (q && !q.stale && q.price > 0) {
+        yahooResults[sym] = {
+          symbol: sym,
+          price: q.price,
+          bid: null,
+          ask: null,
+          change: null,
+          changePct: Number.isFinite(q.changePct) ? q.changePct : null,
+          source: "yahoo",
+          retrievedAt: q.retrievedAt ?? new Date().toISOString(),
+          stale: false,
+        };
+      }
+    }
+  } catch { /* fall through to the ordinary chain */ }
+  missing = missing.filter((s) => !yahooResults[s]);
+  if (missing.length === 0) return { ...grouped, ...yahooResults };
+
+  // Whatever neither the grouped feed nor Yahoo carried still goes through the
+  // ordinary chain, which fails closed on staleness rather than inventing a price.
   const rest = await getBatchQuotes(missing, supabase);
-  return { ...grouped, ...rest };
+  return { ...grouped, ...yahooResults, ...rest };
 }
 
 /** Try price_cache for most recent closing price (EOD fallback) */

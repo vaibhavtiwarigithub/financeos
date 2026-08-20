@@ -76,3 +76,25 @@ describe("position marks are corroborated by an independent vendor", () => {
     expect(m.provenance).toBe("live_quote");
   });
 });
+
+/**
+ * 2026-08-20: Yahoo became the PRIMARY for US settled marks (grouped publishes
+ * next-day; the old chain resolved from Alpha Vantage, which serves the previous
+ * session). A vendor may never corroborate itself — that circularity is exactly
+ * what let the ^NSEI provisional value pass as "verified".
+ */
+describe("a vendor may not corroborate itself", () => {
+  const src = (s: string) => ({ ...base, liveSource: s, livePrice: 481.63 });
+
+  it("marks a Yahoo-primary quote uncorroborated when no other vendor supplied one", () => {
+    const m = buildPositionMark({ ...src("yahoo"), crossPrice: null, crossSource: null }, NOW);
+    expect(m.provenance).toBe("live_quote");
+    expect(m.reason).toContain("uncorroborated");
+  });
+
+  it("route filter excludes yahoo-sourced primaries from the yahoo cross-check", () => {
+    const route = require("node:fs").readFileSync("app/api/agents/position-monitor/route.ts", "utf8");
+    expect(route).toMatch(/toLowerCase\(\)\.startsWith\("yahoo"\)/);
+    expect(route).not.toContain('quoteMeta[s]?.source !== "yahoo_us"');
+  });
+});
