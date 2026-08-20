@@ -22,6 +22,21 @@ import { compareSettledMarks, SETTLE_TOLERANCE_PCT, type SettleMark } from "@/li
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+/**
+ * Best-effort insert.
+ *
+ * The PostgREST query builder is a THENABLE, not a Promise: it implements
+ * `.then` so `await` works, but it has no `.catch`. Writing
+ * `svc.from(x).insert(y).catch(() => {})` therefore throws
+ * `TypeError: ... .catch is not a function` rather than swallowing anything —
+ * and when the same pattern is used inside a catch block it masks the original
+ * error completely, which is exactly how this route's first production run
+ * returned a 500 with no agent_runs row and no message.
+ */
+async function bestEffortInsert(svc: any, table: string, row: Record<string, unknown>): Promise<void> {
+  try { await svc.from(table).insert(row as any); } catch { /* bookkeeping only */ }
+}
+
 export async function POST(req: NextRequest) {
   const startedAt = new Date().toISOString();
   if (!verifyCronSecret(req)) {
@@ -88,7 +103,7 @@ export async function POST(req: NextRequest) {
     // `nothing_to_compare` deliberately neither raises nor resolves: an
     // unpublished feed is not evidence that the marks were right.
 
-    await svc.from("agent_runs").insert({
+    await bestEffortInsert(svc, "agent_runs", {
       agent_type: "settle_check",
       market: "us",
       status: result.verdict === "drift_detected" ? "error" : "done",
@@ -114,16 +129,16 @@ export async function POST(req: NextRequest) {
           businessMetrics: { beyond_tolerance: result.beyond.length, nav_drift: result.navDrift },
         }),
       },
-    } as any).catch(() => {});
+    });
 
     return NextResponse.json({ success: true, ...result });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    await svc.from("agent_runs").insert({
+    await bestEffortInsert(svc, "agent_runs", {
       agent_type: "settle_check", market: "us", status: "error",
       trigger_source: "scheduled", result_summary: `SettleCheck failed: ${msg}`,
       started_at: startedAt, completed_at: new Date().toISOString(),
-    } as any).catch(() => {});
+    });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

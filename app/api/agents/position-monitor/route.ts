@@ -107,7 +107,11 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       result_summary: "No open positions for this market.",
       started_at: startedAt,
       completed_at: new Date().toISOString(),
-    } as any).catch(() => {});
+    } as any);
+    // NOTE: no `.catch()` here. The PostgREST builder is a THENABLE without a
+    // `.catch` method, so `.catch(() => {})` throws TypeError rather than
+    // swallowing — the bug that made settle-check's first run return a bare 500.
+    // This branch (no open positions) had simply never been exercised.
     return { checked: 0, closed: 0, closedDetails: [], updated: 0 };
   }
 
