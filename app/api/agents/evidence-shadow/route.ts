@@ -83,13 +83,26 @@ export async function GET(req: NextRequest) {
       : Promise.resolve({ data: [] as any[] }),
   ]);
 
-  const symbols = [...new Set<string>([
+  const allSymbols = [...new Set<string>([
     ...((wlRes.data ?? []) as any[])
       .filter((r: any) => r.research_enabled !== false)
       .map((r: any) => String(r.symbol).toUpperCase()),
     ...((rqRes.data ?? []) as any[]).map((r: any) => String(r.symbol).toUpperCase()),
     ...((sigRes.data ?? []) as any[]).map((r: any) => String(r.symbol).toUpperCase()),
-  ])];
+  ])].sort();
+
+  // Rotating cursor persisted in app_settings: without it, every tick restarts at
+  // index 0 and the 45s wallclock only ever reaches the same leading slice of the
+  // universe (observed: ~42/140 US symbols ever got a shadow attempt across 5 days
+  // of ticks) — the trailing symbols starve forever. Sorting the universe above
+  // makes the slice order stable across ticks so the offset means the same thing
+  // each time; this rotates the start point so every tick works a fresh slice.
+  const cursorKey = `evidence_shadow_cursor:${market}`;
+  const { data: cursorRow } = await svc.from("app_settings").select("value").eq("key", cursorKey).maybeSingle();
+  const startOffset = allSymbols.length > 0 ? (Number(cursorRow?.value ?? 0) % allSymbols.length + allSymbols.length) % allSymbols.length : 0;
+  const symbols = allSymbols.length > 0
+    ? [...allSymbols.slice(startOffset), ...allSymbols.slice(0, startOffset)]
+    : allSymbols;
 
   let resolvedFresh = 0, resolvedLive = 0, unavailable = 0, symbolsDone = 0;
   const perIntent: Record<string, { ok: number; unavailable: number }> = {};
@@ -134,6 +147,11 @@ export async function GET(req: NextRequest) {
         perIntent[intent].unavailable++;
       }
     }
+  }
+
+  if (allSymbols.length > 0) {
+    const nextOffset = (startOffset + symbolsDone) % allSymbols.length;
+    await svc.from("app_settings").upsert({ key: cursorKey, value: String(nextOffset), updated_at: new Date().toISOString() });
   }
 
   return NextResponse.json({
