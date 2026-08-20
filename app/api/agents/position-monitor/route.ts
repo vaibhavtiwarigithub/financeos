@@ -19,7 +19,7 @@ import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS }
 import { paperPartialTargetQuantity } from "@/lib/trading/paper-quantity";
 import { admitMarketLocalSlot } from "@/lib/trading/market-calendar";
 import {
-  buildPositionMark, MARK_CROSSCHECK_TOLERANCE_PCT, markLedgerRow, navFromMarks, reconcilePersistedNav, summariseMarkCoverage,
+  buildPositionMark, MARK_CROSSCHECK_TOLERANCE_PCT, MARK_DISPUTE_REFUSE_PCT, markLedgerRow, navFromMarks, reconcilePersistedNav, summariseMarkCoverage,
   type PositionMark,
 } from "@/lib/paper/marks";
 import { benchmarkReturnPct, fetchBenchmarkObservation } from "@/lib/paper/benchmark-observation";
@@ -235,7 +235,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     const cross = crossPrice[sym];
     if (live == null || cross == null || !(cross > 0)) continue;
     const deltaPct = (Math.abs(live - cross) / cross) * 100;
-    if (deltaPct > MARK_CROSSCHECK_TOLERANCE_PCT) {
+    if (deltaPct > MARK_DISPUTE_REFUSE_PCT) {
       disputedSymbols.push(`${sym} (${quoteMeta[sym]?.source ?? "primary"} ${live} vs ${crossSource[sym]} ${cross}, ${deltaPct.toFixed(3)}%)`);
       delete priceMap[sym];
     }
@@ -246,7 +246,8 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       severity: "critical", category: "paper-truth",
       title: `${disputedSymbols.length} quote(s) refused — providers disagree`,
       detail:
-        `Two independent vendors disagreed by more than ${MARK_CROSSCHECK_TOLERANCE_PCT}% on these symbols, so their ` +
+        `Two independent vendors disagreed by more than ${MARK_DISPUTE_REFUSE_PCT}% on these symbols — a gap no ordinary ` +
+        `vendor difference explains — so their ` +
         `prices were REFUSED for marking AND for stop/target/time-stop evaluation this run: ${disputedSymbols.join("; ")}. ` +
         `Those positions are reported unpriced and were not exited. A price too doubtful to record is too doubtful to sell on.`,
     }, svc);

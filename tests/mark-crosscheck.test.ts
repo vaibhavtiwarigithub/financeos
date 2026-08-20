@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPositionMark, MARK_CROSSCHECK_TOLERANCE_PCT } from "@/lib/paper/marks";
+import { buildPositionMark, MARK_CROSSCHECK_TOLERANCE_PCT, MARK_DISPUTE_REFUSE_PCT } from "@/lib/paper/marks";
 
 /**
  * A mark drives stop and target evaluation, not just NAV, so a price no second
@@ -31,18 +31,43 @@ describe("position marks are corroborated by an independent vendor", () => {
     expect(m.reason).toContain("corroborated by yahoo_us");
   });
 
-  it("REFUSES a disputed quote — it must not price a stop or target", () => {
-    // 0.375%: the real ^NSEI provisional-value error, well past tolerance.
-    const m = buildPositionMark({ ...base, livePrice: 483.44, crossPrice: 481.63, crossSource: "yahoo_us" }, NOW);
+  it("REFUSES a GROSSLY disputed quote — it must not price a stop or target", () => {
+    // 9.36%: the real KGC stale-Alpha-Vantage case. No vendor difference
+    // explains a gap that size.
+    const m = buildPositionMark({ ...base, livePrice: 526.7, crossPrice: 481.63, crossSource: "yahoo_us" }, NOW);
     expect(m.provenance).toBe("carry_forward");
     expect(m.stale).toBe(true);
     expect(m.mark).toBe(470);            // the carried mark, NOT the disputed price
     expect(m.reason).toContain("DISPUTED");
-    expect(m.reason).toContain("483.44");  // both numbers preserved for audit
+    expect(m.reason).toContain("526.7");   // both numbers preserved for audit
     expect(m.reason).toContain("481.63");
   });
 
-  it("tolerates vendor rounding without crying wolf", () => {
+  // 2026-08-20 regression: a single 0.1% gate refused all 13 India holdings and
+  // left the book unmonitored. `fetchIndiaQuotes` returns a last-traded QUOTE
+  // while `fetchUpstoxCandles` returns the settled daily CLOSE — different
+  // measurements, so sub-1% gaps are expected and must not stop monitoring.
+  it("USES a mildly divergent quote and records the gap — the India regression", () => {
+    // HINDALCO: yahoo_india 1029.85 vs upstox 1038.95 = 0.876%.
+    const m = buildPositionMark(
+      { ...base, symbol: "HINDALCO.NS", livePrice: 1029.85, crossPrice: 1038.95, crossSource: "upstox" }, NOW);
+    expect(m.provenance).toBe("live_quote");   // NOT refused
+    expect(m.stale).toBe(false);
+    expect(m.mark).toBe(1029.85);
+    expect(m.reason).toContain("0.876%");
+    expect(m.reason).toContain("upstox");
+    expect(m.reason).not.toContain("DISPUTED");
+  });
+
+  it("the two thresholds are ordered and both do real work", () => {
+    expect(MARK_DISPUTE_REFUSE_PCT).toBeGreaterThan(MARK_CROSSCHECK_TOLERANCE_PCT);
+    // The AV wrong-session error on NVDA was 1.002% — BELOW India's legitimate
+    // 0.876% neighbourhood. Magnitude alone cannot separate them, which is why
+    // the refuse gate sits well above both and catches only gross errors.
+    expect(MARK_DISPUTE_REFUSE_PCT).toBeGreaterThan(1.002);
+  });
+
+  it("treats rounding-scale agreement as corroboration", () => {
     const within = 481.63 * (1 + (MARK_CROSSCHECK_TOLERANCE_PCT / 100) * 0.5);
     const m = buildPositionMark({ ...base, livePrice: within, crossPrice: 481.63, crossSource: "yahoo_us" }, NOW);
     expect(m.provenance).toBe("live_quote");
@@ -61,7 +86,7 @@ describe("position marks are corroborated by an independent vendor", () => {
     expect(withOutage.mark).toBe(481.63);
   });
 
-  it("a disputed quote with NO carried mark falls to entry cost, never to the disputed price", () => {
+  it("a grossly disputed quote with NO carried mark falls to entry cost, never to the disputed price", () => {
     const m = buildPositionMark(
       { ...base, persistedPrice: null, persistedAt: null, livePrice: 999, crossPrice: 481.63, crossSource: "yahoo_us" },
       NOW,

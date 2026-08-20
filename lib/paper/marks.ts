@@ -36,6 +36,29 @@ export type Market = "us" | "india";
  */
 export const MARK_CROSSCHECK_TOLERANCE_PCT = 0.1;
 
+/**
+ * Gross disagreement — the only level that BLOCKS an exit.
+ *
+ * 2026-08-20 regression: a single 0.1% threshold gating exits refused all 13
+ * India holdings and left the book unmonitored for a session. The comparison is
+ * not apples-to-apples — `fetchIndiaQuotes` returns Yahoo's last-traded QUOTE
+ * while `fetchUpstoxCandles` returns the official settled daily CLOSE — so
+ * ordinary gaps of 0.1–0.9% are expected (HINDALCO 0.876%, DIVISLAB 0.117%).
+ *
+ * Magnitude alone cannot separate signal from noise: the Alpha Vantage
+ * wrong-session error on NVDA was 1.002%, BELOW India's legitimate HINDALCO gap
+ * of 0.876%. So the two thresholds do different jobs:
+ *   - CROSSCHECK (0.1%)  — record the disagreement on the mark. Advisory.
+ *   - REFUSE     (3.0%)  — block marking AND exits. Reserved for a gap no
+ *                          vendor difference explains (the AV-stale cases ran
+ *                          up to 9.36%; KPL.NS at 5.15% is a genuine outlier
+ *                          worth refusing).
+ *
+ * A price that is merely imprecise should not stop the book being monitored;
+ * only one that is probably WRONG should.
+ */
+export const MARK_DISPUTE_REFUSE_PCT = 3.0;
+
 /** How a mark was obtained. Anything that is not `live_quote` is stale weight. */
 export type MarkProvenance =
   /** A quote fetched this run that passed the adapter's freshness rule. */
@@ -126,9 +149,13 @@ export function buildPositionMark(input: PositionMarkInput, now = new Date()): P
   // Fail-closed is only safe because a disagreement is genuinely rare:
   // measured 2026-08-18, Massive /prev and Yahoo agreed to the cent on every US
   // holding (MSFT 481.63/481.63, NVDA 219.74/219.74, XAR 290.43/290.43).
-  const disputed =
-    live != null && live > 0 && cross != null && cross > 0 &&
-    (Math.abs(live - cross) / cross) * 100 > MARK_CROSSCHECK_TOLERANCE_PCT;
+  const crossDeltaPct =
+    live != null && live > 0 && cross != null && cross > 0
+      ? (Math.abs(live - cross) / cross) * 100
+      : null;
+  // Only a GROSS gap refuses the quote. A small one is recorded and used.
+  const disputed = crossDeltaPct != null && crossDeltaPct > MARK_DISPUTE_REFUSE_PCT;
+  const divergent = crossDeltaPct != null && crossDeltaPct > MARK_CROSSCHECK_TOLERANCE_PCT && !disputed;
 
   if (live != null && live > 0 && !disputed) {
     const observedAt = input.liveObservedAt ?? null;
@@ -141,7 +168,11 @@ export function buildPositionMark(input: PositionMarkInput, now = new Date()): P
       provenance: "live_quote",
       stale: false,
       ageDays: Number.isFinite(observedMs) ? (now.getTime() - observedMs) / 86_400_000 : null,
-      reason: cross != null && cross > 0
+      reason: divergent
+        ? `fresh quote from ${input.liveSource || "unknown"} ${live}, but ${input.crossSource || "second source"} said ${cross} ` +
+          `(${crossDeltaPct!.toFixed(3)}% apart — within the ${MARK_DISPUTE_REFUSE_PCT}% refuse threshold, so used and recorded). ` +
+          `A live quote and a settled daily close are different measurements and need not match exactly.`
+        : cross != null && cross > 0
         ? `fresh quote from ${input.liveSource || "unknown"}, corroborated by ${input.crossSource || "second source"}`
         : `fresh quote from ${input.liveSource || "unknown"} (uncorroborated — no second source this run)`,
     };
