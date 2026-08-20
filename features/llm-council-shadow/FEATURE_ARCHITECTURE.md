@@ -1,6 +1,7 @@
 # LLM Council — Shadow Annotation
 
-**Status:** DRAFT PROPOSAL — not approved, not implemented.
+**Status:** DEFERRED by owner decision, 2026-08-20. Not approved, not implemented.
+**Revive when:** the US equity book clears its own evidence floor (`n >= 60` closed trades with h10 labels AND `nEffective = n/10 >= 12` per market). Until the strategy that already exists is measurable, a second lane multiplies the measurement burden rather than diversifying it.
 **Date:** 2026-08-20
 **Scope:** measure whether a multi-model review would have improved decisions. Writes no direction, no size, no order.
 
