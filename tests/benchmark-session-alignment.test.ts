@@ -126,6 +126,7 @@ describe("US benchmark falls through to the next provider on a session miss", ()
       usFallback: async () => { fallbackCalls++; return [...yahooShort, bar(SESSION, 710.27)]; },
       india: async () => [],
       indiaCrossCheck: async () => [],
+      usQuote: async () => null,
     });
 
     expect(fallbackCalls).toBe(1);
@@ -144,6 +145,7 @@ describe("US benchmark falls through to the next provider on a session miss", ()
       usFallback: async () => { fallbackCalls++; return []; },
       india: async () => [],
       indiaCrossCheck: async () => [],
+      usQuote: async () => null,
     });
     expect(fallbackCalls).toBe(0);
     expect(res.ok).toBe(true);
@@ -157,6 +159,7 @@ describe("US benchmark falls through to the next provider on a session miss", ()
       usFallback: async () => { fallbackCalls++; return []; },
       india: async () => [],
       indiaCrossCheck: async () => [],
+      usQuote: async () => null,
     });
     expect(fallbackCalls).toBe(0);
     expect(res.ok).toBe(false);
@@ -169,6 +172,7 @@ describe("US benchmark falls through to the next provider on a session miss", ()
       usFallback: async () => yahooShort,
       india: async () => [],
       indiaCrossCheck: async () => [],
+      usQuote: async () => null,
     });
     expect(res.ok).toBe(false);
     if (!res.ok) {
@@ -187,6 +191,7 @@ describe("US benchmark falls through to the next provider on a session miss", ()
       usFallback: async () => { fallbackCalls++; return []; },
       india: async () => [bar(SESSION, 24245.7)],
       indiaCrossCheck: async () => [],
+      usQuote: async () => null,
     });
     expect(fallbackCalls).toBe(0);
     expect(res.ok).toBe(true);
@@ -209,6 +214,7 @@ describe("India benchmark is cross-checked against the exchange source", () => {
     usFallback: async () => [],
     india: async () => (yahoo == null ? [] : [bar(SESSION, yahoo)]),
     indiaCrossCheck: async () => (upstox == null ? [] : [bar(SESSION, upstox)]),
+    usQuote: async () => null,
   });
 
   it("labels agreement from both providers", async () => {
@@ -256,8 +262,99 @@ describe("India benchmark is cross-checked against the exchange source", () => {
       usFallback: async () => [],
       india: async () => [bar(SESSION, 24154.9)],
       indiaCrossCheck: async () => { throw new Error("upstox 500"); },
+      usQuote: async () => null,
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.observation.source).toBe("yahoo(unconfirmed)");
+  });
+});
+
+// ── 2026-08-20: the US benchmark could not resolve the just-closed session ──
+//
+// US bench_nav was NULL two sessions running while NAV itself was correct: at
+// 16:15 ET no vendor has published VOO's settled bar (Yahoo chart lacks it,
+// Massive grouped publishes next-day, Massive /range ends yesterday). NAV is now
+// marked from the 16:15 print, so a 16:15 benchmark is LIKE-FOR-LIKE — pairing a
+// 16:15 NAV with a settled close is the greater inconsistency.
+describe("US benchmark falls back to the session quote, under a hard guard", () => {
+  const TODAY = dayOffset(0);
+  // Production shape: Yahoo's chart DOES return a healthy series, it simply ends
+  // at the previous session. That is `benchmark_session_mismatch`, which is the
+  // ONLY state the quote fallback rescues.
+  const sessionMissing = {
+    us: async () => ({ candles: [bar(dayOffset(3), 700), bar(dayOffset(2), 702), bar(dayOffset(1), 704)], source: "yahoo" }),
+    usFallback: async () => [] as any,
+    india: async () => [] as any,
+    indiaCrossCheck: async () => [] as any,
+  };
+
+  it("uses the quote when no vendor has the just-closed session", async () => {
+    const r = await fetchBenchmarkObservation("us", TODAY, {
+      ...sessionMissing, usQuote: async () => ({ price: 705.4, stale: false }),
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.observation.close).toBe(705.4);
+      expect(r.observation.sessionDate).toBe(TODAY);
+      // Labelled provisional so the settle pass knows to revisit it.
+      expect(r.observation.source).toBe("yahoo_quote(provisional)");
+    }
+  });
+
+  it("REFUSES to backfill an older session from a quote — the hard guard", async () => {
+    // A quote says nothing about any session other than the current one.
+    let quoteCalls = 0;
+    // dayOffset(5) is absent from the fixture series (which holds 3/2/1) and is
+    // not the current session either, so the guard must refuse without asking.
+    const r = await fetchBenchmarkObservation("us", dayOffset(5), {
+      ...sessionMissing, usQuote: async () => { quoteCalls++; return { price: 705.4, stale: false }; },
+    });
+    expect(r.ok).toBe(false);
+    expect(quoteCalls).toBe(0);   // never even asked
+  });
+
+  it("refuses a stale quote rather than dating it to today", async () => {
+    const r = await fetchBenchmarkObservation("us", TODAY, {
+      ...sessionMissing, usQuote: async () => ({ price: 705.4, stale: true }),
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it("prefers a real daily BAR whenever one exists — quote is last resort", async () => {
+    let quoteCalls = 0;
+    const r = await fetchBenchmarkObservation("us", TODAY, {
+      us: async () => ({ candles: [bar(TODAY, 710.27)], source: "yahoo" }),
+      usFallback: async () => [],
+      india: async () => [],
+      indiaCrossCheck: async () => [],
+      usQuote: async () => { quoteCalls++; return { price: 999, stale: false }; },
+    });
+    expect(quoteCalls).toBe(0);
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.observation.close).toBe(710.27); expect(r.observation.source).toBe("yahoo"); }
+  });
+
+  it("does NOT rescue a total provider outage — only a missing session", async () => {
+    // With no bars at all we cannot tell the series is sane, so a lone quote is
+    // refused. The fallback narrows a WORKING provider to one missing session;
+    // it is not a substitute for having no data.
+    let quoteCalls = 0;
+    const r = await fetchBenchmarkObservation("us", TODAY, {
+      us: async () => ({ candles: [] as any, source: "yahoo" }),
+      usFallback: async () => [] as any,
+      india: async () => [] as any,
+      indiaCrossCheck: async () => [] as any,
+      usQuote: async () => { quoteCalls++; return { price: 705.4, stale: false }; },
+    });
+    expect(r.ok).toBe(false);
+    expect(quoteCalls).toBe(0);
+    if (!r.ok) expect(r.reason).toBe("benchmark_bars_unavailable");
+  });
+
+  it("a quote-source outage cannot break the path", async () => {
+    const r = await fetchBenchmarkObservation("us", TODAY, {
+      ...sessionMissing, usQuote: async () => { throw new Error("yahoo 500"); },
+    });
+    expect(r.ok).toBe(false);   // refuses cleanly, does not throw
   });
 });

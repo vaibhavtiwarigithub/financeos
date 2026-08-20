@@ -23,6 +23,8 @@
 import type { Candle } from "@/lib/data/technicals";
 import { fetchMassiveCandles, fetchUsCandles, fetchYahooCandles, newestBarIsStale } from "@/lib/data/candles";
 import { fetchUpstoxIndexCandles } from "@/lib/data/upstox";
+import { fetchYahooQuotes } from "@/lib/india-data";
+import { expectedNewestSession } from "@/lib/data/completed-candles";
 
 export type BenchmarkMarket = "us" | "india";
 
@@ -101,6 +103,12 @@ export interface BenchmarkFetchers {
   india: (symbol: string) => Promise<Candle[]>;
   /** Exchange-backed second source for the India index (Upstox). */
   indiaCrossCheck: (symbol: string) => Promise<Candle[]>;
+  /**
+   * Last-traded QUOTE for the US benchmark. Used only when no vendor has
+   * published the session's daily bar yet — see the guard in
+   * `fetchBenchmarkObservation`.
+   */
+  usQuote: (symbol: string) => Promise<{ price: number; stale: boolean } | null>;
 }
 
 /**
@@ -115,6 +123,11 @@ const DEFAULT_FETCHERS: BenchmarkFetchers = {
   usFallback: (symbol) => fetchMassiveCandles(symbol),
   india: (symbol) => fetchYahooCandles(symbol),
   indiaCrossCheck: (symbol) => fetchUpstoxIndexCandles(symbol),
+  usQuote: async (symbol) => {
+    const q = await fetchYahooQuotes([symbol], "us");
+    const hit = q[symbol.toUpperCase()];
+    return hit && hit.price > 0 ? { price: hit.price, stale: !!hit.stale } : null;
+  },
 };
 
 export async function fetchBenchmarkObservation(
@@ -143,9 +156,45 @@ export async function fetchBenchmarkObservation(
       // and only the mismatch is worth a second call.
       const fallbackCandles = await fetchers.usFallback(symbol);
       const secondary = selectBenchmarkObservation(fallbackCandles, symbol, "massive", expectedSessionDate);
-      // If the fallback also cannot supply the session, report the ORIGINAL
-      // rejection — it describes the provider the ladder actually chose.
-      return secondary.ok ? secondary : primary;
+      if (secondary.ok) return secondary;
+
+      // LAST RESORT: the session's last-traded QUOTE.
+      //
+      // The rule at the top of this file — "a benchmark observation is a DAILY
+      // BAR, not a quote" — exists because the original defect was an
+      // UNSESSION-IDENTIFIED quote stamped with the cron run date. The quote
+      // itself was never the problem; the missing session identity was.
+      //
+      // At 16:15 ET no vendor has published VOO's settled bar (measured
+      // 2026-08-19/20: Yahoo's chart endpoint lacks it, Massive grouped
+      // publishes next-day, Massive /range still ends yesterday), so US
+      // bench_nav was NULL two sessions running while NAV itself was fine.
+      //
+      // Consistency argument: NAV is now marked from the same 16:15 print, so a
+      // 16:15 benchmark is LIKE-FOR-LIKE. Pairing a 16:15 NAV with a settled
+      // close is the greater inconsistency.
+      //
+      // HARD GUARD: only when the session being asked about is the one that has
+      // just closed. A quote says nothing about any OTHER session, so this can
+      // never backfill history — it resolves today or not at all. The source
+      // says `provisional` so the settle pass can revisit it.
+      if (expectedNewestSession("us") === expectedSessionDate) {
+        const quote = await fetchers.usQuote(symbol).catch(() => null);
+        if (quote && quote.price > 0 && !quote.stale) {
+          return {
+            ok: true,
+            observation: {
+              symbol,
+              sessionDate: expectedSessionDate,
+              close: quote.price,
+              source: "yahoo_quote(provisional)",
+            },
+          };
+        }
+      }
+      // Nothing could supply the session — report the ORIGINAL rejection, which
+      // describes the provider the ladder actually chose.
+      return primary;
     }
     // INDIA — two independent sources, because the exact-session rule validates
     // the DATE and cannot validate the VALUE.
