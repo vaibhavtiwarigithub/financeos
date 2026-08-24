@@ -14,6 +14,7 @@
  */
 
 import { MAX_MACRO_AGE_DAYS } from "@/lib/data/scores";
+import { assessMacroIndicators, computeMacroRegime, MIN_MACRO_INDICATORS } from "@/lib/data/macro-regime-integrity";
 
 export type MarketScope = "us" | "india";
 
@@ -113,7 +114,7 @@ export interface ChosenMacroRegime extends MacroRegimeRow {
  * would describe a macro backdrop the money path refuses to score — the exact
  * inconsistency this whole fix exists to remove.
  */
-export const MIN_MACRO_INDICATORS = 3;
+export { MIN_MACRO_INDICATORS };
 
 export { MAX_MACRO_AGE_DAYS };
 
@@ -122,10 +123,6 @@ function macroRowAgeDays(weekOf: unknown, now: Date): number {
   const t = Date.parse(`${weekOf}T00:00:00Z`);
   if (!Number.isFinite(t)) return Infinity;
   return (now.getTime() - t) / 86_400_000;
-}
-
-function macroIndicatorCount(rawIndicators: unknown): number {
-  return Array.isArray(rawIndicators) ? rawIndicators.length : -1;
 }
 
 export interface MacroRegimeSelection {
@@ -152,18 +149,29 @@ export function selectMacroRegime(rows: MacroRegimeRow[] | null | undefined, now
     if (!r) continue;
     const regime = String(r.regime ?? "").toLowerCase();
     const ageDays = macroRowAgeDays(r.week_of, now);
-    const indicators = macroIndicatorCount(r.raw_indicators);
+    const integrity = assessMacroIndicators(r.raw_indicators);
+    const recomputed = computeMacroRegime(r.raw_indicators);
+    const indicators = integrity.indicatorsAvailable;
     let reason: string | null = null;
     if (regime === "unknown" || regime === "") reason = "no verdict (regime unknown)";
     else if (ageDays > MAX_MACRO_AGE_DAYS) reason = `stale: ${Math.floor(ageDays)}d old > ${MAX_MACRO_AGE_DAYS}d bound`;
-    else if (indicators < MIN_MACRO_INDICATORS) {
-      reason = `only ${indicators < 0 ? "unverifiable" : indicators} indicator(s) < ${MIN_MACRO_INDICATORS} — failed run, not a real verdict`;
+    else if (!integrity.usable) {
+      reason = `${integrity.reason} — failed run, not a real verdict`;
     }
     if (reason) {
       rejected.push({ week_of: r.week_of, regime: r.regime, reason });
       continue;
     }
-    return { chosen: { ...r, ageDays, indicators }, rejected };
+    return {
+      chosen: {
+        ...r,
+        regime: recomputed.regime,
+        danger_score: recomputed.danger_score,
+        ageDays,
+        indicators,
+      },
+      rejected,
+    };
   }
   return { chosen: null, rejected };
 }

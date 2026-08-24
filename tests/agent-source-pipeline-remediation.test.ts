@@ -128,7 +128,7 @@ describe("agent source pipeline remediation", () => {
     expect(learner).toContain('if (LEARN_MARKET === "india")');
     expect(learner).toContain("structurally inapplicable to the India learner cohort");
     expect(macro).toContain('.select("id, regime, raw_indicators")');
-    expect(macro).toContain("existingIndicatorCount >= 3");
+    expect(macro).toContain("assessMacroIndicators((existing as any).raw_indicators).usable");
   });
 
   it("keeps dormant autonomous live market-local", () => {

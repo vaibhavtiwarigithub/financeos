@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paperPerformanceTruth } from "@/lib/paper-nav";
+import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 
 describe("paperPerformanceTruth", () => {
   it("derives India P&L from the INR seed, not a prior writer's stale fields", () => {
@@ -44,5 +44,15 @@ describe("paperPerformanceTruth", () => {
       winCount: 4, lossCount: 8, resolvedTradeCount: 13,
     });
     expect(truth.win_rate).toBe(4 / 13);
+  });
+
+  it("does not relabel null or unknown outcomes as breakeven", () => {
+    expect(resolvedPaperOutcomeCount([
+      { outcome: "win" },
+      { outcome: "loss" },
+      { outcome: "breakeven" },
+      { outcome: null },
+      { outcome: "unknown" },
+    ])).toBe(3);
   });
 });

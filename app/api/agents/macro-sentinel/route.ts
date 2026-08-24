@@ -3,17 +3,17 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { fredSeries, fredSeriesDated, observationMonthsBefore, FRED_SERIES } from "@/lib/data/fred-macro";
+import {
+  assessMacroIndicators,
+  computeMacroRegime,
+  MIN_MACRO_INDICATORS,
+  type MacroIndicatorEvidence,
+} from "@/lib/data/macro-regime-integrity";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-interface Indicator {
-  name: string;
-  value: number | null;
-  signal: "green" | "yellow" | "orange" | "red";
-  description: string;
-  weight: number; // 1=low, 2=medium, 3=high
-}
+type Indicator = MacroIndicatorEvidence;
 
 // Macro indicators now source from FRED (official, free, keyed, no AV budget
 // contention) instead of Alpha Vantage's rate-limited economic endpoints —
@@ -214,54 +214,6 @@ async function fetchIndicators(): Promise<Indicator[]> {
   return indicators;
 }
 
-function computeRegime(indicators: Indicator[]): {
-  danger_score: number | null;
-  regime: "green" | "yellow" | "orange" | "red" | "unknown";
-  signals_triggered: number;
-  indicators_available: number;
-} {
-  const SIGNAL_WEIGHTS: Record<string, number> = { green: 0, yellow: 1, orange: 2, red: 3 };
-  let weightedScore = 0;
-  let totalWeight = 0;
-  let signals_triggered = 0;
-
-  for (const ind of indicators) {
-    const sw = SIGNAL_WEIGHTS[ind.signal] ?? 0;
-    weightedScore += sw * ind.weight;
-    totalWeight += 3 * ind.weight; // max per indicator
-    if (ind.signal !== "green") signals_triggered++;
-  }
-
-  // Need at least 3 indicators to compute a meaningful regime. Fewer than
-  // that (including zero) is NOT evidence of a healthy economy — it means
-  // we don't have enough real data to say anything. Report an explicit
-  // "unknown" regime with a null danger score instead of defaulting to a
-  // favorable GREEN/0 verdict.
-  if (indicators.length < 3) {
-    return {
-      danger_score: null,
-      regime: "unknown" as const,
-      signals_triggered: 0,
-      indicators_available: indicators.length,
-    };
-  }
-
-  const danger_score = totalWeight > 0 ? Math.round((weightedScore / totalWeight) * 100) : 0;
-
-  let regime: "green" | "yellow" | "orange" | "red" = "green";
-  if (danger_score >= 60) regime = "red";
-  else if (danger_score >= 40) regime = "orange";
-  else if (danger_score >= 20) regime = "yellow";
-
-  // Override: if both HIGH signals fire red/orange, escalate
-  const highSignals = indicators.filter(
-    (i) => i.weight === 3 && (i.signal === "red" || i.signal === "orange")
-  );
-  if (highSignals.length >= 2 && regime === "yellow") regime = "orange";
-
-  return { danger_score, regime, signals_triggered, indicators_available: indicators.length };
-}
-
 export async function GET() {
   return NextResponse.json({ message: "Use POST to run MacroSentinel" });
 }
@@ -287,10 +239,8 @@ export async function POST(req: NextRequest) {
     .single();
   // A healthy GREEN week legitimately has zero triggered warnings. Completeness
   // is the number of real indicators, not whether any of them happened to fire.
-  const existingIndicatorCount = Array.isArray((existing as any)?.raw_indicators)
-    ? (existing as any).raw_indicators.length
-    : 0;
-  if (existing && (existing as any).regime !== "unknown" && existingIndicatorCount >= 3) {
+  if (existing && (existing as any).regime !== "unknown"
+      && assessMacroIndicators((existing as any).raw_indicators).usable) {
     return NextResponse.json({ message: "Already ran this week", cached: true });
   }
   // Delete bad/incomplete run so we can retry
@@ -300,7 +250,10 @@ export async function POST(req: NextRequest) {
   }
 
   const indicators = await fetchIndicators();
-  const { danger_score, regime, signals_triggered, indicators_available } = computeRegime(indicators);
+  const {
+    danger_score, regime, signals_triggered, indicators_available,
+    data_confidence, unavailable_reason,
+  } = computeMacroRegime(indicators);
 
   // Build summary
   const topSignals = indicators
@@ -319,10 +272,10 @@ export async function POST(req: NextRequest) {
   // NOT a rate limit. (b) key present but FRED throttled/unavailable this run.
   const fredKeyMissing = !process.env.FRED_API_KEY;
   const summary =
-    indicators_available < 3
+    indicators_available < MIN_MACRO_INDICATORS || unavailable_reason
       ? (fredKeyMissing
           ? `No verdict: FRED_API_KEY is not configured on this deployment, so all 8 macro indicators returned empty (0/8). This is a config gap, not a rate limit — add FRED_API_KEY to the Vercel environment (free key from fredapi.stlouisfed.org), then re-run.`
-          : `Insufficient data: only ${indicators_available}/8 indicators available this run (FRED likely throttled or briefly unavailable). No verdict — try "Run Now" again shortly.`)
+          : `Insufficient data: ${unavailable_reason ?? `only ${indicators_available}/8 indicators available`} (FRED likely throttled or briefly unavailable). No verdict — try "Run Now" again shortly.`)
       : signals_triggered === 0
       ? `No recession signals across ${indicators_available}/8 indicators. Economy in expansion.`
       : `${signals_triggered} signal(s) triggered (${indicators_available}/8 indicators available). Top: ${topSignals}`;
@@ -365,5 +318,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ danger_score, regime, signals_triggered, summary, indicators });
+  return NextResponse.json({
+    danger_score, regime, signals_triggered, summary, indicators,
+    indicators_available, data_confidence, unavailable_reason,
+  });
 }

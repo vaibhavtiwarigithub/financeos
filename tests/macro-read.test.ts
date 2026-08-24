@@ -7,6 +7,7 @@ import {
   isMacroReadSupported,
   selectMacroRegime,
 } from "@/lib/macro-read";
+import { MACRO_INDICATOR_WEIGHTS } from "@/lib/data/macro-regime-integrity";
 
 // NARRATIVE-PATH TESTS for the Agent Mind macro read
 // (app/api/agent-mind/macro-read/route.ts). This read does NOT feed scoring,
@@ -28,8 +29,15 @@ import {
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 /** The exact prod macro_regime table as of 2026-07-17 (verified via MCP). */
+const REAL_INDICATORS = Object.entries(MACRO_INDICATOR_WEIGHTS).map(([name, weight]) => ({
+  name, weight, value: 1, signal: "yellow", description: name,
+}));
+const ORANGE_40 = REAL_INDICATORS.slice(0, 7).map((row, index) => ({
+  ...row,
+  signal: index < 2 ? "orange" : index === 6 ? "green" : "yellow",
+}));
 const PROD_ROWS = [
-  { week_of: "2026-07-13", regime: "orange", danger_score: 40, summary: "Mixed signals.", raw_indicators: new Array(7).fill({ signal: "yellow" }) },
+  { week_of: "2026-07-13", regime: "orange", danger_score: 40, summary: "Mixed signals.", raw_indicators: ORANGE_40 },
   { week_of: "2026-07-06", regime: "unknown", danger_score: 0, summary: "Insufficient data.", raw_indicators: [] },
   { week_of: "2026-06-30", regime: "green", danger_score: 0, summary: "No recession signals. Economy in expansion.", raw_indicators: [] },
 ];
@@ -134,20 +142,20 @@ describe("US regime selection — absent is not calm", () => {
     const freshFossil = [{ week_of: "2026-07-13", regime: "green", danger_score: 0, summary: "No recession signals. Economy in expansion.", raw_indicators: [] }];
     const { chosen, rejected } = selectMacroRegime(freshFossil, NOW);
     expect(chosen).toBeNull();
-    expect(rejected[0].reason).toBe(`only 0 indicator(s) < ${MIN_MACRO_INDICATORS} — failed run, not a real verdict`);
+    expect(rejected[0].reason).toContain(`requires >=${MIN_MACRO_INDICATORS} indicators`);
   });
 
   it("rejects the 1-indicator red fossil (prod row id=1) too — floor is not directional", () => {
     // The floor rejects on EVIDENCE COUNT, not on direction: a bearish fossil is
     // as untrustworthy as a calm one. Prod id=1: red, danger 100, 1 indicator.
-    const redFossil = [{ week_of: "2026-07-13", regime: "red", danger_score: 100, summary: "Recession imminent.", raw_indicators: [{ signal: "red" }] }];
+    const redFossil = [{ week_of: "2026-07-13", regime: "red", danger_score: 100, summary: "Recession imminent.", raw_indicators: [{ ...REAL_INDICATORS[0], signal: "red" }] }];
     const { chosen, rejected } = selectMacroRegime(redFossil, NOW);
     expect(chosen).toBeNull();
-    expect(rejected[0].reason).toContain(`only 1 indicator(s) < ${MIN_MACRO_INDICATORS}`);
+    expect(rejected[0].reason).toContain("coverage 1/8");
   });
 
   it("rejects a verdict older than the age bound even when well-evidenced", () => {
-    const stale = [{ week_of: "2026-06-01", regime: "green", danger_score: 5, summary: "Calm.", raw_indicators: new Array(8).fill({ signal: "green" }) }];
+    const stale = [{ week_of: "2026-06-01", regime: "green", danger_score: 5, summary: "Calm.", raw_indicators: REAL_INDICATORS }];
     const { chosen, rejected } = selectMacroRegime(stale, NOW);
     expect(chosen).toBeNull();
     expect(rejected[0].reason).toContain(`> ${MAX_MACRO_AGE_DAYS}d bound`);

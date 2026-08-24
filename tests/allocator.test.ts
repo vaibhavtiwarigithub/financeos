@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { allocate, normalizeRegime, computeAllocation, computeAllocationDetailed, type SleeveRow } from "@/lib/allocation/allocator";
+import { MACRO_INDICATOR_WEIGHTS } from "@/lib/data/macro-regime-integrity";
 
 const US: SleeveRow[] = [
   { market: "us", sleeve: "equity", target_pct: 70, min_pct: 0, max_pct: 90, instruments: [], enabled: true },
@@ -103,7 +104,14 @@ function makeSvc(opts: { allocationEnabled?: boolean; macroRows?: any[]; sleeves
 }
 
 // The real prod row (2026-07-13): a legitimate, indicator-backed verdict.
-const FRESH_US_ROW = { regime: "orange", week_of: "2026-07-13", raw_indicators: new Array(7).fill({ k: 1 }) };
+const REAL_INDICATORS = Object.entries(MACRO_INDICATOR_WEIGHTS).map(([name, weight]) => ({
+  name, weight, value: 1, signal: "yellow", description: name,
+}));
+const ORANGE_40 = REAL_INDICATORS.slice(0, 7).map((row, index) => ({
+  ...row,
+  signal: index < 2 ? "orange" : index === 6 ? "green" : "yellow",
+}));
+const FRESH_US_ROW = { regime: "orange", week_of: "2026-07-13", raw_indicators: ORANGE_40 };
 // The real prod FOSSIL (2026-06-30): `green` / danger 0 / signals 0 off ZERO
 // indicators, summary "No recession signals. Economy in expansion." A failed
 // run written out as a calm verdict.
@@ -173,12 +181,12 @@ describe("computeAllocation — macro market scoping", () => {
     expect(rej).toHaveLength(1);
     // Rejected on ZERO indicators — NOT on age (it is 1 day old here) and NOT
     // on signals_triggered=0 (a genuinely calm week looks like that).
-    expect(rej[0].reason).toMatch(/only 0 indicator\(s\) < 3 — failed run/);
+    expect(rej[0].reason).toMatch(/coverage 0\/8.*requires >=6 indicators/);
     expect(rej[0].reason).not.toMatch(/stale/);
   });
 
   it("an `unknown` verdict is skipped in favour of the prior row IF that row is usable", async () => {
-    const prior = { regime: "orange", week_of: "2026-07-13", raw_indicators: new Array(5).fill({ k: 1 }) };
+    const prior = { regime: "orange", week_of: "2026-07-13", raw_indicators: ORANGE_40 };
     const { svc } = makeSvc({
       macroRows: [{ regime: "unknown", week_of: "2026-07-20", raw_indicators: [] }, prior],
       sleeves: US_SLEEVES,
@@ -206,7 +214,7 @@ describe("computeAllocation — macro market scoping", () => {
     });
     const r = await computeAllocationDetailed(svc, "us", NOW);
     expect(r.targets).toBeNull();
-    expect((r.macro as any).rejectedRows[0].reason).toMatch(/unverifiable indicator/);
+    expect((r.macro as any).rejectedRows[0].reason).toMatch(/unverifiable raw_indicators/);
   });
 
   it("no macro_regime rows at all → UNAVAILABLE, never a calm default", async () => {
@@ -221,7 +229,7 @@ describe("computeAllocation — macro market scoping", () => {
     // real vocabulary (green/orange/red) all normalizes to `neutral` today — see
     // the normalizeRegime vocabulary gap reported alongside this fix. `bear` is
     // used here purely to prove regime→tilt is wired end-to-end.
-    const bear = { regime: "bear", week_of: "2026-07-13", raw_indicators: new Array(7).fill({ k: 1 }) };
+    const bear = { regime: "bear", week_of: "2026-07-13", raw_indicators: ORANGE_40 };
     const { svc } = makeSvc({ macroRows: [bear], sleeves: US_SLEEVES });
     const r = await computeAllocationDetailed(svc, "us", NOW);
     const equity = r.targets!.find(x => x.sleeve === "equity")!.targetPct;

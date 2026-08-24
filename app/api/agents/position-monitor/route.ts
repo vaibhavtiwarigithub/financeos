@@ -22,7 +22,7 @@ import {
   buildPositionMark, MARK_CROSSCHECK_TOLERANCE_PCT, MARK_DISPUTE_REFUSE_PCT, markLedgerRow, navFromMarks, reconcilePersistedNav, summariseMarkCoverage,
   type PositionMark,
 } from "@/lib/paper/marks";
-import { benchmarkReturnPct, fetchBenchmarkObservation } from "@/lib/paper/benchmark-observation";
+import { benchmarkReturnPct, fetchBenchmarkObservation, isConfirmedBenchmarkObservation } from "@/lib/paper/benchmark-observation";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -799,7 +799,11 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       const { data: firstPerf } = await svc.from("paper_performance")
         .select("bench_nav").eq("market", market).not("bench_nav", "is", null)
         .order("date", { ascending: true }).limit(1).maybeSingle();
-      benchReturnPct = benchmarkReturnPct(benchNav, (firstPerf as any)?.bench_nav ?? benchNav);
+      // Preserve the observed level for the next-day settle pass, but an alpha
+      // value requires confirmed same-session benchmark provenance.
+      if (isConfirmedBenchmarkObservation(market as "us" | "india", benchSource)) {
+        benchReturnPct = benchmarkReturnPct(benchNav, (firstPerf as any)?.bench_nav ?? benchNav);
+      }
     } else {
       // A gap is honest; a benchmark stamped with the wrong session is not.
       benchSkipReason = `${benchResult.reason}: ${benchResult.detail}`;

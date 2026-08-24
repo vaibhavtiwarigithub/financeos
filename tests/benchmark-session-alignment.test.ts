@@ -10,7 +10,9 @@ import {
   benchmarkReturnPct,
   benchmarkSymbol,
   fetchBenchmarkObservation,
+  isConfirmedBenchmarkObservation,
   selectBenchmarkObservation,
+  CONFIRMED_BENCHMARK_SOURCES,
 } from "@/lib/paper/benchmark-observation";
 
 const bar = (date: string, close: number) => ({ date, open: close, high: close, low: close, close, volume: 1 });
@@ -97,6 +99,16 @@ describe("benchmark return baseline", () => {
   it("returns null rather than a fake 0% when there is no baseline", () => {
     expect(benchmarkReturnPct(110, null)).toBeNull();
     expect(benchmarkReturnPct(110, 0)).toBeNull();
+  });
+});
+
+describe("benchmark alpha provenance", () => {
+  it("allows alpha only from a confirmed same-session source", () => {
+    expect(isConfirmedBenchmarkObservation("us", "massive")).toBe(true);
+    expect(isConfirmedBenchmarkObservation("us", "yahoo_quote(provisional)")).toBe(false);
+    expect(isConfirmedBenchmarkObservation("india", "upstox+yahoo")).toBe(true);
+    expect(isConfirmedBenchmarkObservation("india", "upstox(unconfirmed)")).toBe(false);
+    expect(isConfirmedBenchmarkObservation("india", "upstox(yahoo_disagreed)")).toBe(false);
   });
 });
 
@@ -286,6 +298,7 @@ describe("US benchmark falls back to the session quote, under a hard guard", () 
     usFallback: async () => [] as any,
     india: async () => [] as any,
     indiaCrossCheck: async () => [] as any,
+    expectedUsSession: () => TODAY,
   };
 
   it("uses the quote when no vendor has the just-closed session", async () => {
@@ -356,5 +369,39 @@ describe("US benchmark falls back to the session quote, under a hard guard", () 
       ...sessionMissing, usQuote: async () => { throw new Error("yahoo 500"); },
     });
     expect(r.ok).toBe(false);   // refuses cleanly, does not throw
+  });
+});
+
+// ── 2026-08-21: confirmation must fail CLOSED on unknown provenance ─────────
+//
+// The predicate previously excluded US sources containing "provisional" or
+// "unconfirmed". That fails OPEN: a future source string that is provisional but
+// lacks those substrings would silently authorise an alpha claim. Everything
+// else in this area fails closed.
+describe("benchmark confirmation is an allowlist", () => {
+  it("accepts only settled daily-bar sources for US", () => {
+    for (const s of CONFIRMED_BENCHMARK_SOURCES.us) {
+      expect(isConfirmedBenchmarkObservation("us", s)).toBe(true);
+    }
+    expect(isConfirmedBenchmarkObservation("us", "yahoo_quote(provisional)")).toBe(false);
+  });
+
+  it("requires genuine two-vendor agreement for India", () => {
+    expect(isConfirmedBenchmarkObservation("india", "upstox+yahoo")).toBe(true);
+    for (const s of ["upstox", "yahoo", "upstox(unconfirmed)", "yahoo(unconfirmed)", "upstox(yahoo_disagreed)"]) {
+      expect(isConfirmedBenchmarkObservation("india", s)).toBe(false);
+    }
+  });
+
+  it("refuses an UNKNOWN source rather than assuming it is fine", () => {
+    // The whole point of the allowlist: a provenance nobody has classified is
+    // not evidence. Under the old exclusion rule this returned TRUE for US.
+    expect(isConfirmedBenchmarkObservation("us", "some_new_vendor_beta")).toBe(false);
+    expect(isConfirmedBenchmarkObservation("india", "some_new_vendor_beta")).toBe(false);
+  });
+
+  it("refuses null/empty provenance", () => {
+    expect(isConfirmedBenchmarkObservation("us", null)).toBe(false);
+    expect(isConfirmedBenchmarkObservation("us", "")).toBe(false);
   });
 });

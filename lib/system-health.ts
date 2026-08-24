@@ -80,11 +80,14 @@ export async function reportIssue(
 export async function resolveIssue(issueKey: string, client?: SupabaseClient): Promise<void> {
   const svc = client ?? createServiceClient();
   try {
-    await svc
+    const { error } = await svc
       .from("agent_alerts")
       .update({ resolved: true, resolved_at: new Date().toISOString() })
       .eq("issue_key", issueKey)
       .eq("resolved", false);
+    if (error) {
+      console.error(`[system-health] resolveIssue(${issueKey}) failed:`, error.message);
+    }
   } catch (e) {
     console.error(`[system-health] resolveIssue(${issueKey}) threw:`, e);
   }

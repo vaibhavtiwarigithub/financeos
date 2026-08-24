@@ -52,6 +52,34 @@ export function benchmarkSymbol(market: BenchmarkMarket): string {
 }
 
 /**
+ * A benchmark level may be useful for display and later settlement even when
+ * it is provisional or single-source. It is not, however, enough evidence for
+ * an alpha claim. Keep this decision centralized so the two paper-performance
+ * writers cannot silently disagree.
+ */
+export const CONFIRMED_BENCHMARK_SOURCES: Record<BenchmarkMarket, readonly string[]> = {
+  // US: any provider that supplied a settled DAILY BAR for the exact session.
+  // `yahoo_quote(provisional)` is deliberately absent — a 16:15 print is not a
+  // settled close.
+  us: ["yahoo", "massive", "eodhd", "twelvedata", "alpha_vantage"],
+  // India: only genuine two-vendor agreement. `upstox(yahoo_disagreed)`,
+  // `upstox(unconfirmed)` and `yahoo(unconfirmed)` are each a single opinion.
+  india: ["upstox+yahoo"],
+} as const;
+
+export function isConfirmedBenchmarkObservation(market: BenchmarkMarket, source: string | null | undefined): boolean {
+  if (!source) return false;
+  // ALLOWLIST, not exclusion.
+  //
+  // This was `!source.includes("provisional") && !source.includes("unconfirmed")`
+  // for US, which fails OPEN: any source string added later that is provisional
+  // but happens not to contain those substrings would silently authorise an
+  // alpha claim. Every other guard in this area fails closed, and an unknown
+  // provenance is exactly where the conservative answer is "not confirmed".
+  return CONFIRMED_BENCHMARK_SOURCES[market].includes(source);
+}
+
+/**
  * Pure core: pick the bar for `expectedSessionDate`, or reject with a reason.
  *
  * Deliberately exact. The whole incident was a near-miss date being treated as
@@ -109,6 +137,12 @@ export interface BenchmarkFetchers {
    * `fetchBenchmarkObservation`.
    */
   usQuote: (symbol: string) => Promise<{ price: number; stale: boolean } | null>;
+  /**
+   * Injectable completed-session resolver. This keeps the quote fallback
+   * deterministic in tests while production continues to use the market
+   * calendar-aware resolver below.
+   */
+  expectedUsSession?: () => string;
 }
 
 /**
@@ -128,6 +162,7 @@ const DEFAULT_FETCHERS: BenchmarkFetchers = {
     const hit = q[symbol.toUpperCase()];
     return hit && hit.price > 0 ? { price: hit.price, stale: !!hit.stale } : null;
   },
+  expectedUsSession: () => expectedNewestSession("us"),
 };
 
 export async function fetchBenchmarkObservation(
@@ -178,7 +213,7 @@ export async function fetchBenchmarkObservation(
       // just closed. A quote says nothing about any OTHER session, so this can
       // never backfill history — it resolves today or not at all. The source
       // says `provisional` so the settle pass can revisit it.
-      if (expectedNewestSession("us") === expectedSessionDate) {
+      if ((fetchers.expectedUsSession?.() ?? expectedNewestSession("us")) === expectedSessionDate) {
         const quote = await fetchers.usQuote(symbol).catch(() => null);
         if (quote && quote.price > 0 && !quote.stale) {
           return {

@@ -39,6 +39,9 @@ export interface FreshnessContract {
   watermarkType: "date" | "timestamp";
   /** Evaluate freshness separately per distinct value of this column. */
   scopeColumn?: string;
+  /** Restrict a historical cache to scopes that can currently affect money or
+   * evaluation paths. Without this, retired symbols remain permanent alerts. */
+  scopeUniverse?: "active_us_price_symbols";
   /** Column to filter by market, when the table carries one. */
   marketColumn?: string;
   /** How long the watermark may sit still before it is a defect. */
@@ -67,6 +70,7 @@ export const FRESHNESS_CONTRACTS: FreshnessContract[] = [
     watermarkColumn: "date",
     watermarkType: "date",
     scopeColumn: "symbol",
+    scopeUniverse: "active_us_price_symbols",
     graceHours: WEEKEND_SAFE_HOURS,
     // 101/140 symbols were frozen while the table max looked current. At 0.9 the
     // real event trips at 28% coverage and a handful of delisted/retired tickers
@@ -159,17 +163,19 @@ export function evaluateFreshness(
 ): FreshnessResult {
   const cutoff = now.getTime() - contract.graceHours * 3600_000;
   const newestByScope = new Map<string, number>();
+  const allScopes = new Set<string>();
   for (const row of rows) {
-    const ms = toMs(row.watermark, contract.watermarkType);
-    if (!Number.isFinite(ms)) continue;
     const scope = contract.scopeColumn ? String(row.scope ?? "") : "__all__";
     if (!scope && contract.scopeColumn) continue;
+    allScopes.add(scope);
+    const ms = toMs(row.watermark, contract.watermarkType);
+    if (!Number.isFinite(ms)) continue;
     const prev = newestByScope.get(scope);
     if (prev == null || ms > prev) newestByScope.set(scope, ms);
   }
 
   const base = { contractId: contract.id, version: contract.version };
-  if (newestByScope.size === 0) {
+  if (allScopes.size === 0) {
     return {
       ...base,
       breached: true,
@@ -184,12 +190,14 @@ export function evaluateFreshness(
     };
   }
 
-  const stale = [...newestByScope.entries()].filter(([, ms]) => ms < cutoff).map(([scope]) => scope).sort();
-  const total = newestByScope.size;
+  const stale = [...allScopes]
+    .filter((scope) => (newestByScope.get(scope) ?? -Infinity) < cutoff)
+    .sort();
+  const total = allScopes.size;
   const coverage = (total - stale.length) / total;
-  const newestMs = Math.max(...newestByScope.values());
-  const newestWatermark = new Date(newestMs).toISOString();
-  const ageHours = (now.getTime() - newestMs) / 3600_000;
+  const newestMs = newestByScope.size ? Math.max(...newestByScope.values()) : NaN;
+  const newestWatermark = Number.isFinite(newestMs) ? new Date(newestMs).toISOString() : null;
+  const ageHours = Number.isFinite(newestMs) ? (now.getTime() - newestMs) / 3600_000 : null;
 
   if (coverage >= contract.minCoverage) {
     return {
@@ -201,15 +209,17 @@ export function evaluateFreshness(
 
   const everythingStale = stale.length === total;
   return {
-    ...base,
-    breached: true,
+      ...base,
+      breached: true,
     coverage,
     totalScopes: total,
     staleScopes: stale,
-    newestWatermark,
-    kind: everythingStale ? "stale" : "coverage",
-    detail: everythingStale
-      ? `Newest ${contract.watermarkColumn} is ${newestWatermark}, ${ageHours.toFixed(0)}h old against a ${contract.graceHours}h grace. The watermark is not advancing.`
+      newestWatermark,
+      kind: newestByScope.size === 0 ? "empty" : everythingStale ? "stale" : "coverage",
+      detail: everythingStale
+      ? newestWatermark && ageHours != null
+        ? `Newest ${contract.watermarkColumn} is ${newestWatermark}, ${ageHours.toFixed(0)}h old against a ${contract.graceHours}h grace. The watermark is not advancing.`
+        : `All ${total} required scope(s) are missing a usable ${contract.watermarkColumn} within the last ${contract.lookbackDays} days.`
       : `${stale.length}/${total} scope(s) are past the ${contract.graceHours}h grace — coverage ${(coverage * 100).toFixed(0)}% vs required ${(contract.minCoverage * 100).toFixed(0)}%. `
         + `Aggregate max(${contract.watermarkColumn})=${newestWatermark} looks healthy and is hiding them. `
         + `Stale: ${stale.slice(0, 15).join(", ")}${stale.length > 15 ? ` … +${stale.length - 15} more` : ""}.`,
@@ -239,11 +249,46 @@ export async function checkFreshnessContracts(
         ? since.toISOString().slice(0, 10)
         : since.toISOString();
 
+      // An unscoped freshness contract needs the true MAX watermark, not an
+      // arbitrary PostgREST page. `limit(50000)` without ordering caused the
+      // label monitor to keep reading an older Aug-17 row even while hundreds
+      // of labels matured through Aug-21. For scoped contracts we still need
+      // every scope, so retain the bounded window and derive each max in memory.
+      let requiredScopes: Set<string> | null = null;
+      if (contract.scopeUniverse === "active_us_price_symbols") {
+        const decisionSince = new Date(now.getTime() - 7 * 86400_000).toISOString();
+        const [decisions, positions] = await Promise.all([
+          svc.from("decision_observations")
+            .select("symbol")
+            .eq("market", "us")
+            .gte("ts", decisionSince)
+            .limit(5000),
+          svc.from("paper_positions")
+            .select("symbol")
+            .eq("market", "us")
+            .is("exit_reason", null)
+            .gt("qty", 0)
+            .limit(500),
+        ]);
+        if (decisions.error || positions.error) {
+          throw new Error(`active price scope unavailable: ${decisions.error?.message ?? positions.error?.message}`);
+        }
+        requiredScopes = new Set([
+          ...(decisions.data ?? []).map((row: any) => String(row.symbol ?? "").toUpperCase()),
+          ...(positions.data ?? []).map((row: any) => String(row.symbol ?? "").toUpperCase()),
+        ].filter(Boolean));
+      }
+
       let query = svc.from(contract.table)
         .select(columns)
-        .gte(contract.watermarkColumn, sinceValue)
-        .limit(50000);
+        .gte(contract.watermarkColumn, sinceValue);
       if (contract.marketColumn) query = query.eq(contract.marketColumn, contract.market);
+      if (requiredScopes?.size && contract.scopeColumn) {
+        query = query.in(contract.scopeColumn, [...requiredScopes]);
+      }
+      query = query.order(contract.watermarkColumn, { ascending: false });
+      if (!contract.scopeColumn) query = query.limit(1);
+      else query = query.limit(50000);
 
       const { data, error } = await query;
       if (error) {
@@ -267,6 +312,12 @@ export async function checkFreshnessContracts(
         scope: contract.scopeColumn ? row[contract.scopeColumn] : null,
         watermark: row[contract.watermarkColumn] ?? null,
       }));
+      if (requiredScopes && contract.scopeColumn) {
+        const returned = new Set(rows.map((row) => String(row.scope ?? "").toUpperCase()));
+        for (const scope of requiredScopes) {
+          if (!returned.has(scope)) rows.push({ scope, watermark: null });
+        }
+      }
       const result = evaluateFreshness(contract, rows, now);
       results.push(result);
 
@@ -287,6 +338,19 @@ export async function checkFreshnessContracts(
       }, svc);
     } catch (e) {
       console.error(`[freshness] ${contract.id} threw:`, e);
+      const message = e instanceof Error ? e.message : String(e);
+      await reportIssue({
+        issueKey,
+        severity: "warn",
+        category: "data",
+        title: `Freshness contract ${contract.id} could not be evaluated`,
+        detail: `Freshness is UNKNOWN because the monitor failed before evaluation: ${message}`,
+      }, svc).catch(() => undefined);
+      results.push({
+        contractId: contract.id, version: contract.version, breached: true, coverage: 0,
+        totalScopes: 0, staleScopes: [], newestWatermark: null, kind: "empty",
+        detail: `monitor failed: ${message}`,
+      });
     }
   }
 

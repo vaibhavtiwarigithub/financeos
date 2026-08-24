@@ -22,6 +22,7 @@
 // no import cycle between the two. This module reports the RAW regime label and
 // leaves normalization to the allocator, which owns the Regime enum.
 import { MAX_MACRO_AGE_DAYS } from "@/lib/data/scores";
+import { assessMacroIndicators, computeMacroRegime, MIN_MACRO_INDICATORS } from "@/lib/data/macro-regime-integrity";
 
 export type MarketScope = "us" | "india";
 
@@ -40,8 +41,6 @@ export type MarketScope = "us" | "india";
 // `signals_triggered = 0` is explicitly NOT the discriminator: a genuinely calm
 // week legitimately trips zero signals, and rejecting those would discard real
 // `green` verdicts and bias the book bearish.
-const MIN_MACRO_INDICATORS = 3;
-
 function macroRowAgeDays(weekOf: unknown, now: Date): number {
   if (typeof weekOf !== "string") return Infinity; // unverifiable age → fail closed
   const t = Date.parse(`${weekOf}T00:00:00Z`);
@@ -52,10 +51,6 @@ function macroRowAgeDays(weekOf: unknown, now: Date): number {
 // `raw_indicators` is a jsonb ARRAY of indicator objects. A non-array
 // (null/absent) means we cannot PROVE the run had evidence → fail closed (-1)
 // rather than assume it did.
-function macroIndicatorCount(rawIndicators: unknown): number {
-  return Array.isArray(rawIndicators) ? rawIndicators.length : -1;
-}
-
 export type AllocationRegime =
   | { available: true; rawRegime: string; asOf: string; ageDays: number; indicators: number }
   | { available: false; reason: string; rejectedRows?: Record<string, unknown>[] };
@@ -113,13 +108,15 @@ export async function loadAllocationRegime(
       if (!r) continue;
       const raw = String(r.regime ?? "").toLowerCase();
       const ageDays = macroRowAgeDays(r.week_of, now);
-      const indicators = macroIndicatorCount(r.raw_indicators);
+      const integrity = assessMacroIndicators(r.raw_indicators);
+      const recomputed = computeMacroRegime(r.raw_indicators);
+      const indicators = integrity.indicatorsAvailable;
 
       let reason: string | null = null;
       if (raw === "unknown" || raw === "") reason = "no verdict (regime unknown)";
       else if (ageDays > MAX_MACRO_AGE_DAYS) reason = `stale: ${Math.floor(ageDays)}d old > ${MAX_MACRO_AGE_DAYS}d bound`;
-      else if (indicators < MIN_MACRO_INDICATORS) {
-        reason = `only ${indicators < 0 ? "unverifiable" : indicators} indicator(s) < ${MIN_MACRO_INDICATORS} — failed run, not a real verdict`;
+      else if (!integrity.usable) {
+        reason = `${integrity.reason} — failed run, not a real verdict`;
       }
       if (reason) {
         rejected.push({ week_of: r.week_of, regime: r.regime, reason });
@@ -127,7 +124,7 @@ export async function loadAllocationRegime(
       }
       return {
         available: true,
-        rawRegime: String(r.regime),
+        rawRegime: recomputed.regime,
         asOf: String(r.week_of),
         ageDays,
         indicators,

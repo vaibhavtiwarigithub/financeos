@@ -24,7 +24,7 @@ import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade
 import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-calendar";
 import { paperAllocationSpend, paperEntryQuantity } from "@/lib/trading/paper-quantity";
 import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/earnings-risk";
-import { benchmarkReturnPct, fetchBenchmarkObservation } from "@/lib/paper/benchmark-observation";
+import { benchmarkReturnPct, fetchBenchmarkObservation, isConfirmedBenchmarkObservation } from "@/lib/paper/benchmark-observation";
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
@@ -1060,7 +1060,11 @@ export async function POST(req: NextRequest) {
         const { data: firstPerf } = await supabase.from("paper_performance")
           .select("bench_nav").eq("market", market).not("bench_nav", "is", null)
           .order("date", { ascending: true }).limit(1).maybeSingle();
-        benchRetPct = benchmarkReturnPct(benchNav, (firstPerf as any)?.bench_nav ?? benchNav);
+        // Store the level/provenance for later settlement, but do not publish
+        // alpha from a provisional or single-source observation.
+        if (isConfirmedBenchmarkObservation(market as "us" | "india", benchSource)) {
+          benchRetPct = benchmarkReturnPct(benchNav, (firstPerf as any)?.bench_nav ?? benchNav);
+        }
       }
 
       const truth = paperPerformanceTruth({

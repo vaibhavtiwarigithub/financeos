@@ -1006,6 +1006,7 @@ interface MacroRegime {
   regime: "green" | "yellow" | "orange" | "red" | "unknown";
   signals_triggered: number;
   summary: string | null;
+  raw_indicators?: Array<MacroSignal & { name: string; weight: number }>;
 }
 
 const REGIME_STYLES: Record<string, { bg: string; color: string; border: string }> = {
@@ -1022,6 +1023,7 @@ const SIGNAL_COLORS: Record<string, string> = {
   orange: "#FB923C",
   red:    "#F87171",
 };
+const MACRO_SIGNAL_POINTS: Record<string, number> = { green: 0, yellow: 1, orange: 2, red: 3 };
 
 // Agent Mind Phase 3 — plain-English read of what the current macro backdrop
 // means for the current book. Advisory only; generated at most once/day.
@@ -1157,6 +1159,10 @@ function MacroSentinelCard() {
 
   const latest = macroData?.regimes?.[0] ?? null;
   const signals = macroData?.latest_signals ?? [];
+  const rawIndicators = Array.isArray(latest?.raw_indicators) ? latest.raw_indicators : [];
+  const availableWeight = rawIndicators.reduce((sum, row) => sum + (Number.isFinite(Number(row.weight)) ? Number(row.weight) : 0), 0);
+  const structuralWeight = 16;
+  const macroConfidence = Math.min(1, availableWeight / structuralWeight);
   const hasData = !!latest;
   const regime = latest?.regime ?? "green";
   const isUnknown = regime === "unknown";
@@ -1292,11 +1298,15 @@ function MacroSentinelCard() {
           {signals.length > 0 && (
             <div style={{ marginBottom: "12px" }}>
               <div style={{ fontSize: "11px", color: T.muted, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>
-                Signal Breakdown
+                Signal Breakdown · {rawIndicators.length}/8 dimensions · {(macroConfidence * 100).toFixed(0)}% structural-weight coverage
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                 {signals.map((sig) => {
                   const sigColor = SIGNAL_COLORS[sig.signal] ?? T.muted;
+                  const raw = rawIndicators.find((row) => row.name === sig.indicator);
+                  const contribution = raw
+                    ? (MACRO_SIGNAL_POINTS[sig.signal] * raw.weight / (3 * structuralWeight)) * 100
+                    : null;
                   return (
                     <div
                       key={sig.indicator}
@@ -1311,7 +1321,10 @@ function MacroSentinelCard() {
                       }}
                     >
                       <span style={{ color: sigColor, fontSize: "10px", flexShrink: 0 }}>■</span>
-                      <span style={{ flex: "1 1 0", fontSize: "12px", color: T.text, fontWeight: 500 }}>{sig.indicator}</span>
+                      <span style={{ flex: "1 1 0", fontSize: "12px", color: T.text, fontWeight: 500 }}>
+                        {sig.indicator}
+                        <span style={{ display: "block", color: T.muted, fontSize: "10px", fontWeight: 400, marginTop: "2px" }}>{sig.description}</span>
+                      </span>
                       <span style={{
                         fontFamily: "'JetBrains Mono', monospace",
                         fontSize: "11px",
@@ -1320,6 +1333,9 @@ function MacroSentinelCard() {
                         textAlign: "right",
                       }}>
                         {sig.value !== null ? sig.value : "—"}
+                      </span>
+                      <span style={{ color: T.muted, fontSize: "10px", minWidth: "78px", textAlign: "right" }}>
+                        {raw ? `weight ${raw.weight} · ${contribution?.toFixed(1)} pts` : "weight unavailable"}
                       </span>
                       <span style={{
                         fontSize: "10px",
@@ -1362,7 +1378,7 @@ function MacroSentinelCard() {
           {macroShowExplain && (
             <div style={{ marginTop: "10px", background: T.surface, borderRadius: "8px", padding: "12px 14px", fontSize: "12px", color: T.textSub, lineHeight: "1.7" }}>
               <div style={{ marginBottom: "6px", fontWeight: 600, color: T.text }}>Scoring Methodology</div>
-              <div>Danger Score = weighted average of 8 indicators. Each indicator is scored GREEN/YELLOW/ORANGE/RED and weighted by predictive reliability (HIGH=3, MEDIUM=2, LOW=1).</div>
+              <div>Danger Score uses all 8 structural dimensions: Σ(signal level 0–3 × reliability weight) ÷ 48. Missing dimensions add no danger points but remain in the denominator and lower the separately shown evidence coverage; fewer than 6/8 or below 75% structural-weight coverage produces UNKNOWN, not a renormalized verdict.</div>
               <div style={{ marginTop: "8px" }}>
                 <span style={{ color: "#34D399", fontWeight: 600 }}>0–20 GREEN:</span> Expansion. Economy healthy. No action needed.<br />
                 <span style={{ color: "#FBBF24", fontWeight: 600 }}>20–40 YELLOW:</span> Caution. 1–2 weak signals. Monitor closely.<br />
@@ -1733,6 +1749,10 @@ export default function MarketsPage() {
                   Consistent with the "macro sentinel" NotSupportedNote below:
                   this read is downstream of that same US-only sentinel. */}
               <div style={{ marginBottom: "16px" }}>
+                <PolicyEventLedger market="india" />
+              </div>
+
+              <div style={{ marginBottom: "16px" }}>
                 <MacroReadCard market="india" />
               </div>
 
@@ -1902,7 +1922,7 @@ export default function MarketsPage() {
       </div>
 
       <div style={{ marginBottom: "16px" }}>
-        <PolicyEventLedger />
+        <PolicyEventLedger market="us" />
       </div>
 
       {/* What the macro backdrop means for your book (Agent Mind, Phase 3).

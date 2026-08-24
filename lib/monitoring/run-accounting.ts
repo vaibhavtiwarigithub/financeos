@@ -26,7 +26,7 @@
 // Cross-RUN freshness (did the high-watermark actually advance over days?)
 // is the other half and lives in ./freshness-contracts.ts.
 
-export type RunState = "no_work" | "completed" | "partial" | "blocked" | "failed";
+export type RunState = "no_work" | "no_action" | "completed" | "partial" | "blocked" | "failed";
 
 export type RunFindingCode =
   | "reconciliation_mismatch"
@@ -106,8 +106,10 @@ function counts(a: RunAccounting): string {
  *  1. any failed unit
  *  2. an impossible reconciliation (the eligible equation does not balance,
  *     or a count is negative)
- *  3. eligible > 0 && succeeded === 0 — reported WITH the blocker reason so the
- *     alert says why, not just that
+ *  3. eligible > 0 && succeeded === 0 while any unit is deferred,
+ *     unavailable, or failed — reported WITH the blocker reason so the alert
+ *     says why, not just that. A run whose eligible units are ALL legitimate
+ *     expected skips is healthy `no_action`, not blocked.
  *
  * Never alerts on: zero eligible units (that is `no_work`, the healthy weekend
  * / empty-backlog case), or on any business metric being zero.
@@ -147,11 +149,14 @@ export function evaluateRunAccounting(a: RunAccounting): RunVerdict {
     });
   }
 
-  const blocked = a.eligible > 0 && a.succeeded === 0;
+  const blocked = a.eligible > 0 && a.succeeded === 0
+    && (a.deferred > 0 || a.unavailable > 0 || a.failed > 0);
   if (blocked) {
     const why = a.blockers?.length
       ? a.blockers.join("; ")
-      : "the job named no blocker — it processed nothing and could not say why";
+      : a.skipReasons && Object.keys(a.skipReasons).length
+        ? Object.entries(a.skipReasons).map(([reason, count]) => `${reason}=${count}`).join(", ")
+        : "the job named no blocker — it processed nothing and could not say why";
     findings.push({
       code: "blocked_run",
       severity: a.failed > 0 ? "critical" : "warn",
@@ -166,6 +171,7 @@ export function evaluateRunAccounting(a: RunAccounting): RunVerdict {
   if (a.failed > 0 && a.succeeded === 0) state = "failed";
   else if (a.failed > 0) state = "partial";
   else if (a.eligible === 0) state = "no_work";
+  else if (a.succeeded === 0 && a.expectedSkip === a.eligible) state = "no_action";
   else if (a.succeeded === 0) state = "blocked";
   else if (a.deferred + a.unavailable > 0) state = "partial";
   else state = "completed";

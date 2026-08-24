@@ -41,10 +41,10 @@ describe("run accounting — within-run reconciliation", () => {
     expect(v.healthy).toBe(true);
   });
 
-  it("eligible > 0 && succeeded === 0 ALERTS, and carries the blocker reason", () => {
+  it("unavailable eligible work with zero successes ALERTS, and carries the blocker reason", () => {
     // The 2026-08 incident, exactly: {"success":true,"matured":0,"skipped":800}.
     const v = evaluateRunAccounting(acct({
-      eligible: 800, expectedSkip: 800,
+      eligible: 800, unavailable: 800,
       blockers: ["price_cache slice non-empty but stale, provider fallback unreachable"],
       skipReasons: { stale_cache_hit: 800 },
     }));
@@ -55,9 +55,21 @@ describe("run accounting — within-run reconciliation", () => {
   });
 
   it("a blocked run with NO named blocker still alerts and says so", () => {
-    const v = evaluateRunAccounting(acct({ eligible: 12, expectedSkip: 12 }));
+    const v = evaluateRunAccounting(acct({ eligible: 12, deferred: 12 }));
     expect(v.healthy).toBe(false);
     expect(v.findings[0].detail).toContain("named no blocker");
+  });
+
+  it("all legitimate expected skips are healthy no-action", () => {
+    const v = evaluateRunAccounting(acct({
+      job: "paper_trader",
+      eligible: 10,
+      expectedSkip: 10,
+      skipReasons: { exposure_cap: 8, reentry_cooldown: 2 },
+    }));
+    expect(v.state).toBe("no_action");
+    expect(v.healthy).toBe(true);
+    expect(v.findings).toEqual([]);
   });
 
   it("any failed unit alerts, even when most units succeeded", () => {
@@ -173,6 +185,21 @@ describe("freshness contracts — cross-run watermark advance", () => {
       expect(c.impact.length).toBeGreaterThan(20);
       expect(c.recovery.length).toBeGreaterThan(10);
     }
+  });
+
+  it("a required scope with no cache row remains in the denominator and alerts", () => {
+    const r = evaluateFreshness(priceCache, [
+      { scope: "FRESH", watermark: "2026-08-13" },
+      { scope: "MISSING", watermark: null },
+    ], NOW);
+    expect(r.totalScopes).toBe(2);
+    expect(r.coverage).toBe(0.5);
+    expect(r.staleScopes).toEqual(["MISSING"]);
+    expect(r.breached).toBe(true);
+  });
+
+  it("the US price contract monitors the active universe, not retired cache symbols", () => {
+    expect(priceCache.scopeUniverse).toBe("active_us_price_symbols");
   });
 });
 

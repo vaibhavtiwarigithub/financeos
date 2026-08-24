@@ -8,6 +8,12 @@ import { computeTechnicals, detectBreakdownVeto, scoreTechnicals } from "./techn
 import type { DeterministicQuote } from "./quotes";
 import { writeEvidence, writeBatchEvidence, type SourceName } from "./evidence";
 import { isIndia } from "@/lib/india-data";
+import {
+  assessMacroIndicators,
+  computeMacroRegime,
+  MACRO_INDICATOR_UNIVERSE,
+  MIN_MACRO_INDICATORS,
+} from "@/lib/data/macro-regime-integrity";
 
 export type MarketScope = "us" | "india";
 
@@ -368,8 +374,6 @@ export const MAX_MACRO_AGE_DAYS = 10;
 // fossil: 1 indicator.) Checking `raw_indicators` length >= 3 rejects those
 // legacy rows on their own evidence, and would still reject a fossil written
 // THIS week, which the age bound alone cannot catch.
-const MIN_MACRO_INDICATORS = 3;
-
 // MacroSentinel's full FRED indicator universe: yield curve (y2/y10 -> one
 // verdict), unemployment, payrolls, GDP, CPI, retail sales, fed funds, durables.
 // Exposed so a consumer reads "3/8", not a bare "3" that looks complete.
@@ -378,7 +382,7 @@ const MIN_MACRO_INDICATORS = 3;
 // still enters at its full base weight above MIN_MACRO_INDICATORS. Whether a
 // thin-coverage verdict should carry reduced weight is a live scoring change
 // and needs a frozen shadow counterfactual before it may touch the money path.
-export const MACRO_INDICATOR_UNIVERSE = 8;
+export { MACRO_INDICATOR_UNIVERSE };
 
 function macroRowAgeDays(weekOf: unknown, now: Date): number {
   if (typeof weekOf !== "string") return Infinity; // unverifiable age → fail closed
@@ -390,10 +394,6 @@ function macroRowAgeDays(weekOf: unknown, now: Date): number {
 // Number of real indicators behind the verdict. `raw_indicators` is a jsonb
 // ARRAY of indicator objects. A non-array (null/absent) means we cannot prove
 // the run had evidence → fail closed rather than assume it did.
-function macroIndicatorCount(rawIndicators: unknown): number {
-  return Array.isArray(rawIndicators) ? rawIndicators.length : -1;
-}
-
 export interface MacroResult {
   score: number;
   evidence: Record<string, unknown>;
@@ -461,20 +461,31 @@ async function fetchMacroScore(supabase: any, market: MarketScope, now: Date): P
       if (!r) continue;
       const regime = String(r.regime ?? "").toLowerCase();
       const ageDays = macroRowAgeDays(r.week_of, now);
-      const indicators = macroIndicatorCount(r.raw_indicators);
-      const dangerScore = r.danger_score == null ? Number.NaN : Number(r.danger_score);
+      const integrity = assessMacroIndicators(r.raw_indicators);
+      const recomputed = computeMacroRegime(r.raw_indicators);
+      const indicators = integrity.indicatorsAvailable;
+      const dangerScore = recomputed.danger_score == null ? Number.NaN : recomputed.danger_score;
       let reason: string | null = null;
       if (regime === "unknown" || regime === "") reason = "no verdict (regime unknown)";
       else if (!Number.isFinite(dangerScore) || dangerScore < 0 || dangerScore > 100) reason = "danger score missing or outside 0..100";
       else if (ageDays > MAX_MACRO_AGE_DAYS) reason = `stale: ${Math.floor(ageDays)}d old > ${MAX_MACRO_AGE_DAYS}d bound`;
-      else if (indicators < MIN_MACRO_INDICATORS) {
-        reason = `only ${indicators < 0 ? "unverifiable" : indicators} indicator(s) < ${MIN_MACRO_INDICATORS} — failed run, not a real verdict`;
+      else if (!integrity.usable) {
+        reason = `${integrity.reason} — failed run, not a real verdict`;
       }
       if (reason) {
         rejected.push({ week_of: r.week_of, regime: r.regime, reason });
         continue;
       }
-      chosen = { ...r, ageDays, indicators };
+      chosen = {
+        ...r,
+        recordedDangerScore: r.danger_score,
+        recordedRegime: r.regime,
+        danger_score: dangerScore,
+        regime: recomputed.regime,
+        ageDays,
+        indicators,
+        dataConfidence: integrity.dataConfidence,
+      };
       break;
     }
 

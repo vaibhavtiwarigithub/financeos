@@ -29,6 +29,10 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const type = url.searchParams.get("event_type");
+  const market = url.searchParams.get("market");
+  if (market && market !== "us" && market !== "india" && market !== "global") {
+    return NextResponse.json({ error: "market must be us | india | global" }, { status: 400 });
+  }
   const svc = createServiceClient();
 
   let q = svc.from("market_events")
@@ -36,6 +40,7 @@ export async function GET(req: NextRequest) {
     .order("occurred_at", { ascending: false })
     .limit(500);
   if (type) q = q.eq("event_type", type);
+  if (market) q = q.in("market", market === "global" ? ["global"] : [market, "global"]);
   const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

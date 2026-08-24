@@ -1,7 +1,7 @@
 # Exogenous Risk Evidence Layer
 
-> Status: **P0 FOUNDATION BUILT; P1-P3 INGESTION NOT YET ENABLED.**
-> Date: 2026-07-26
+> Status: **P0 FOUNDATION BUILT; LEGACY US INTEGRITY + EXPLAINABILITY REMEDIATED; P1-P3 INGESTION NOT YET ENABLED.**
+> Date: 2026-08-24
 > Owner approval: observation-first build approved 2026-08-01. No scoring, paper,
 > live, exit, sizing, or broker activation is approved.
 
@@ -67,6 +67,10 @@ the earlier India-US macro leakage possible again.
    they do not rewrite historical facts or impact calculations.
 7. **Market-local accounting.** US results remain USD/SPY-or-VOO-relative;
    India results remain INR/NIFTY-relative. They are never cross-summed.
+8. **Structural confidence denominator.** For a fixed applicable indicator set,
+   missing/degraded inputs never disappear through post-fetch renormalization.
+   The numerator contains only valid evidence; the denominator remains the full
+   applicable structural weight, and evidence coverage is displayed separately.
 
 ## 4. Source Policy
 
@@ -320,6 +324,43 @@ monthly/event-driven, so reliable validation cannot be compressed into a week.
 - EIA oil data: https://www.eia.gov/dnav/pet/pet_pri_spt_s1_w.htm
 - PPAC Indian Basket: https://ppac.gov.in/index.php/prices/international-prices-of-crude-oil
 - USTR Section 301 source: https://ustr.gov/issue-areas/enforcement/section-301-investigations
+
+## 13. Implementation checkpoint — 2026-08-24
+
+The August remediation reuses the existing ledgers rather than creating a
+second macro or tariff subsystem:
+
+- `lib/data/macro-regime-integrity.ts` is now the single US legacy integrity
+  contract used by MacroSentinel, the stock scorer, the allocator, and the Agent
+  Mind macro narrative. It recognizes the eight declared dimensions and their
+  fixed weights, rejects unknown/duplicate/forged dimensions, requires at least
+  6/8 dimensions and 75% structural-weight coverage, and uses the fixed
+  structural denominator (48 maximum danger points). A failed provider cannot
+  become a confident regime by renormalizing over the inputs that happened to
+  return.
+- The Markets page shows every available US dimension's description, raw value,
+  reliability weight, exact danger-point contribution, coverage, as-of week,
+  and the formula. This is the legacy `100 - danger_score` overlay currently
+  used by the US scorer; it is not described as symbol-specific tariff exposure.
+- The existing `market_events` ledger is displayed for both US and India with
+  source links, public-known timestamps, market tags, and an explicit stale-ledger
+  warning. It remains owner-reviewed and measurement-only. The official Federal
+  Register API is free and suitable for a future candidate inbox, but a keyword
+  hit must not automatically choose announcement vs reversal, exposure, or a
+  trade effect.
+- India continues to state `unavailable` for macro rather than borrowing the US
+  FRED verdict or treating FII/DII flow as a complete regime. P1 remains the
+  official RBI/MoSPI point-in-time collector and shadow regime described above.
+- No item in this checkpoint changes live/paper eligibility, sizing, exits, or
+  broker behavior beyond rejecting an under-covered legacy US macro verdict.
+
+Operational fixes shipped with this checkpoint: the label-maturation freshness
+monitor now reads the true newest watermark rather than an arbitrary PostgREST
+page; the US price-cache contract monitors active decision/open-position symbols
+instead of retired historical cache members; missing active symbols remain in
+the coverage denominator; legitimate all-skip paper runs are healthy `no_action`
+while deferred/unavailable/failed work remains blocked; monitor query/update
+failures are reported instead of silently swallowed.
 
 
 ---

@@ -1,3 +1,11 @@
+## 2026-08-21 — Local code-intelligence pilot
+
+| Task | Agent | Status | Date | Notes |
+|---|---|---|---|---|
+| Production-health and macro-policy evidence remediation | Codex / GPT-5 | completed | 2026-08-24 | Repaired label watermark pagination, active-universe quote freshness, missing-scope coverage, legitimate paper no-action semantics, and swallowed health-clear errors. Added one shared structural US macro integrity contract across writer/scorer/allocator/narrative plus US/India cited policy-ledger UI. India macro remains explicitly unavailable pending official RBI/MoSPI shadow evidence. Full suite 2023 passed/7 skipped; production build passed. |
+| Performance-truth and governed-evolution remediation | Codex / GPT-5 | completed | 2026-08-21 | Benchmark/session provenance and decision-quality runtime alignment completed; migration 20260821120000 applied and verified on FinanceOS Supabase. Covered by the 2026-08-24 full suite/build gate. Separate US/India evidence remains required for promotion. |
+| Codebase-Memory MCP local-only pilot | Codex / GPT-5 | completed | 2026-08-21 | Release v0.10.8 SHA-256 verified; full local index: 14,332 nodes / 39,664 edges. Project MCP registered for Claude Code and FinanceOS-scoped MCP registered for Codex, with a 1 GB cap, restricted root, no auto-index/watch/UI, and `.cbmignore` secret/operator-context exclusions. Graph navigation verified on autonomous execution and research scoring. Treat graph answers as navigation only; exact code/migrations remain authoritative. No app, trading, broker, or cloud-memory changes. |
+
 ## 2026-08-19 — India benchmark provenance stamped; Yahoo ^NSEI null-close gaps found
 
 **India values were already correct.** Re-fetched every ^NSEI settled close and

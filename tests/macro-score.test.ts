@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { computeScores, MAX_MACRO_AGE_DAYS } from "@/lib/data/scores";
 import { computeWeightedAnalystScore } from "@/lib/scoring/weighted-score";
+import { MACRO_INDICATOR_WEIGHTS } from "@/lib/data/macro-regime-integrity";
 
 // MONEY-PATH TESTS. macro_score is one of the 5 genome dimensions: it feeds the
 // weighted analyst score → the direction gate → paper buys.
@@ -14,8 +15,17 @@ import { computeWeightedAnalystScore } from "@/lib/scoring/weighted-score";
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 /** The exact prod macro_regime table as of 2026-07-16. */
+const REAL_INDICATORS = Object.entries(MACRO_INDICATOR_WEIGHTS).map(([name, weight]) => ({
+  name, weight, value: 1, signal: "yellow", description: name,
+}));
+const withSignal = (signal: "green" | "yellow" | "orange" | "red", count = 8) =>
+  REAL_INDICATORS.slice(0, count).map((row) => ({ ...row, signal }));
+const ORANGE_40 = REAL_INDICATORS.slice(0, 7).map((row, index) => ({
+  ...row,
+  signal: index < 2 ? "orange" : index === 6 ? "green" : "yellow",
+}));
 const PROD_ROWS = [
-  { week_of: "2026-07-13", regime: "orange", danger_score: 40, signals_triggered: 6, raw_indicators: new Array(7).fill({ signal: "yellow" }) },
+  { week_of: "2026-07-13", regime: "orange", danger_score: 40, signals_triggered: 6, raw_indicators: ORANGE_40 },
   { week_of: "2026-07-06", regime: "unknown", danger_score: 0, signals_triggered: 0, raw_indicators: [] },
   { week_of: "2026-06-30", regime: "green", danger_score: 0, signals_triggered: 0, raw_indicators: [] },
 ];
@@ -143,7 +153,7 @@ describe("market=us with a fresh regime — behavior must NOT change", () => {
   });
 
   it("a fresh 'green' row backed by real indicators is still a valid calm verdict", async () => {
-    const rows = [{ week_of: "2026-07-13", regime: "green", danger_score: 0, signals_triggered: 0, raw_indicators: new Array(8).fill({ signal: "green" }) }];
+    const rows = [{ week_of: "2026-07-13", regime: "green", danger_score: 0, signals_triggered: 0, raw_indicators: withSignal("green") }];
     const r = await run({ symbol: "AAPL", rows, now: NOW_0713 });
     // signals_triggered === 0 is NOT itself suspect: a calm week really does
     // trip zero signals. 8 real indicators back this verdict.
@@ -166,7 +176,7 @@ describe("BUG 2 — stale-regime selection is age-bounded and fails SAFE", () =>
     // Only the fossil green remains in range of the reach-back.
     const rows = [
       { week_of: "2026-07-06", regime: "unknown", danger_score: 0, signals_triggered: 0, raw_indicators: [] },
-      { week_of: "2026-06-30", regime: "green", danger_score: 0, signals_triggered: 0, raw_indicators: new Array(8).fill({ signal: "green" }) },
+      { week_of: "2026-06-30", regime: "green", danger_score: 0, signals_triggered: 0, raw_indicators: withSignal("green") },
     ];
     const r = await run({ symbol: "AAPL", rows, now: NOW_0713 }); // 06-30 is 13d old > 10d
     // FAILS on current code: it selects the 06-30 green → macro_score 100.
@@ -176,7 +186,7 @@ describe("BUG 2 — stale-regime selection is age-bounded and fails SAFE", () =>
   });
 
   it("a stale RED row is equally rejected — the bound is not direction-biased", async () => {
-    const rows = [{ week_of: "2026-06-01", regime: "red", danger_score: 100, signals_triggered: 5, raw_indicators: new Array(8).fill({ signal: "red" }) }];
+    const rows = [{ week_of: "2026-06-01", regime: "red", danger_score: 100, signals_triggered: 5, raw_indicators: withSignal("red") }];
     const r = await run({ symbol: "AAPL", rows, now: NOW_0713 });
     expect(r.dataQuality.macroDataAvailable).toBe(false);
   });
@@ -184,7 +194,7 @@ describe("BUG 2 — stale-regime selection is age-bounded and fails SAFE", () =>
   it("a one-week reach-back WITHIN the bound is still allowed (fresh run failed)", async () => {
     const rows = [
       { week_of: "2026-07-13", regime: "unknown", danger_score: 0, signals_triggered: 0, raw_indicators: [] },
-      { week_of: "2026-07-06", regime: "orange", danger_score: 40, signals_triggered: 6, raw_indicators: new Array(7).fill({ signal: "yellow" }) },
+      { week_of: "2026-07-06", regime: "orange", danger_score: 40, signals_triggered: 6, raw_indicators: ORANGE_40 },
     ];
     const r = await run({ symbol: "AAPL", rows, now: NOW_0713 }); // 07-06 is 7d old <= 10d
     expect(r.dataQuality.macroDataAvailable).toBe(true);
@@ -192,7 +202,7 @@ describe("BUG 2 — stale-regime selection is age-bounded and fails SAFE", () =>
   });
 
   it("the bound admits a current row on the Monday BEFORE the next cron fires (age 7d)", async () => {
-    const rows = [{ week_of: "2026-07-13", regime: "orange", danger_score: 40, signals_triggered: 6, raw_indicators: new Array(7).fill({ signal: "y" }) }];
+    const rows = [{ week_of: "2026-07-13", regime: "orange", danger_score: 40, signals_triggered: 6, raw_indicators: ORANGE_40 }];
     // 2026-07-20 09:00Z — cron (Mon 12:30Z) has not run yet; 07-13 is the
     // freshest legitimate verdict at exactly 7 days old.
     const r = await run({ symbol: "AAPL", rows, now: new Date("2026-07-20T09:00:00Z") });
@@ -222,7 +232,7 @@ describe("a 'green' verdict with zero indicators is a failed run, not calm marke
   });
 
   it("rejects the prod 06-29 fossil class (red off a single indicator)", async () => {
-    const rows = [{ week_of: "2026-07-13", regime: "red", danger_score: 100, signals_triggered: 1, raw_indicators: [{ signal: "red" }] }];
+    const rows = [{ week_of: "2026-07-13", regime: "red", danger_score: 100, signals_triggered: 1, raw_indicators: withSignal("red", 1) }];
     const r = await run({ symbol: "AAPL", rows, now: NOW_0713 });
     expect(r.dataQuality.macroDataAvailable).toBe(false);
   });
