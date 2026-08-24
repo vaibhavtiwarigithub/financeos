@@ -5,6 +5,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { evaluateRunAccounting, parseRunAccounting } from "@/lib/monitoring/run-accounting";
 import { checkFreshnessContracts } from "@/lib/monitoring/freshness-contracts";
+import { isTerminalSuccessfulRun, recoveredRunAlert } from "@/lib/monitoring/recovered-run-alerts";
 
 export const dynamic = "force-dynamic";
 
@@ -99,6 +100,34 @@ async function isAuthorized(req: NextRequest): Promise<boolean> {
 async function runCheck() {
   const svc = createServiceClient();
   const now = new Date();
+
+  // Historical missed/failed-run alerts used to stay open forever: the checker
+  // only examined today's schedule and never reconciled a later successful run.
+  // Keep the incident row, but resolve it once the same job + market proves
+  // recovery. Reads are bounded to the open incident set and subsequent runs.
+  const { data: openRunAlerts, error: openAlertsError } = await svc
+    .from("agent_alerts")
+    .select("issue_key, created_at")
+    .eq("resolved", false)
+    .or("issue_key.like.cron-stale:%,issue_key.like.run-failed:%")
+    .order("created_at", { ascending: true })
+    .limit(100);
+  if (!openAlertsError && openRunAlerts?.length) {
+    const earliest = openRunAlerts[0].created_at;
+    const { data: recoveryRuns, error: recoveryError } = await svc
+      .from("agent_runs")
+      .select("agent_type, market, status, started_at")
+      .gt("started_at", earliest)
+      .order("started_at", { ascending: false })
+      .limit(1000);
+    if (!recoveryError) {
+      for (const alert of openRunAlerts) {
+        if (recoveredRunAlert(alert as any, (recoveryRuns ?? []) as any[])) {
+          await resolveIssue(alert.issue_key, svc);
+        }
+      }
+    }
+  }
   // Compare against the actual pg_cron schedule, which is expressed in UTC.
   // This avoids DST approximations and false alerts around transition weeks.
   const hour = now.getUTCHours();
@@ -163,7 +192,7 @@ async function runCheck() {
     // alert so the failure is visible even when a later retry succeeds.
     const marketRuns = (todaysRuns ?? []).filter(matchesMarket);
     const isError = (r: any) => /^(error|failed)$/i.test(String(r?.status ?? ""));
-    const okRuns = marketRuns.filter((r: any) => !isError(r));
+    const okRuns = marketRuns.filter((r: any) => isTerminalSuccessfulRun(r?.status));
     const errorRuns = marketRuns.filter(isError);
     const ran = okRuns.length > 0;
 

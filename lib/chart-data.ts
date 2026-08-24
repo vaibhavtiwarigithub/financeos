@@ -160,19 +160,42 @@ async function writePriceCacheRows(symbol: string, candles: Candle[]): Promise<v
  */
 export async function prewarmPriceCache(
   symbols: string[],
-  _supabase: any,
+  supabase: any,
   opts?: { deadlineAt?: number },
-): Promise<{ ok: number; failed: number; skipped: number }> {
-  let ok = 0;
+): Promise<{ ok: number; failed: number; skipped: number; alreadyFresh: number }> {
+  const normalized = [...new Set(symbols.map((symbol) => symbol.toUpperCase()).filter(Boolean))];
+  if (normalized.length === 0) {
+    return { ok: 0, failed: 0, skipped: 0, alreadyFresh: 0 };
+  }
+  const freshCutoff = new Date(Date.now() - 96 * 3600_000).toISOString().slice(0, 10);
+  let pending = normalized;
+  let alreadyFresh = 0;
+  try {
+    const { data, error } = await supabase
+      .from("price_cache")
+      .select("symbol,date")
+      .in("symbol", normalized)
+      .gte("date", freshCutoff)
+      .limit(5000);
+    if (!error) {
+      const fresh = new Set((data ?? []).map((row: any) => String(row.symbol ?? "").toUpperCase()));
+      pending = normalized.filter((symbol) => !fresh.has(symbol));
+      alreadyFresh = normalized.length - pending.length;
+    }
+  } catch {
+    // Cache-read failure is not proof of freshness; fall back to fetching all.
+  }
+
+  let fetched = 0;
   let skipped = 0;
   // Modest concurrency so a large watchlist doesn't burst provider budgets.
-  for (let i = 0; i < symbols.length; i += 4) {
+  for (let i = 0; i < pending.length; i += 4) {
     if (opts?.deadlineAt != null && Date.now() >= opts.deadlineAt) {
       // Out of budget: count everything not yet attempted and stop cleanly.
-      skipped = symbols.length - i;
+      skipped = pending.length - i;
       break;
     }
-    const batch = symbols.slice(i, i + 4);
+    const batch = pending.slice(i, i + 4);
     await Promise.all(batch.map(async (sym) => {
       try {
         const { candles: resolved } = await fetchUsCandles(
@@ -193,12 +216,17 @@ export async function prewarmPriceCache(
         for (const k of memCache.keys()) {
           if (k.startsWith(sym + ":")) memCache.delete(k);
         }
-        ok++;
+        fetched++;
       } catch { /* non-critical */ }
     }));
   }
 
-  return { ok, failed: symbols.length - ok - skipped, skipped };
+  return {
+    ok: alreadyFresh + fetched,
+    failed: pending.length - fetched - skipped,
+    skipped,
+    alreadyFresh,
+  };
 }
 
 // Normalize candles to % return from first close

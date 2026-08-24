@@ -665,11 +665,11 @@ export async function POST(req: NextRequest) {
   const PREWARM_RESPONSE_RESERVE_MS = 5_000;
   const prewarmDeadline = routeStartedAt + (maxDuration * 1000) - PREWARM_RESPONSE_RESERVE_MS;
 
-  let prewarm = { ok: 0, failed: 0, skipped: prewarmSymbols.length };
+  let prewarm = { ok: 0, failed: 0, skipped: prewarmSymbols.length, alreadyFresh: 0 };
   try {
     prewarm = await prewarmPriceCache(prewarmSymbols, supabase, { deadlineAt: prewarmDeadline });
   } catch (e: any) {
-    prewarm = { ok: 0, failed: prewarmSymbols.length, skipped: 0 };
+    prewarm = { ok: 0, failed: prewarmSymbols.length, skipped: 0, alreadyFresh: 0 };
     console.error(`[research:${runTag}] price_cache prewarm threw:`, e?.message ?? e);
   }
 
@@ -685,7 +685,8 @@ export async function POST(req: NextRequest) {
       category: "data",
       title: `price_cache prewarm incomplete — ${prewarmUnrefreshed}/${prewarmSymbols.length} symbols not refreshed`,
       detail:
-        `${prewarm.ok} refreshed, ${prewarm.failed} failed, ${prewarm.skipped} skipped for time ` +
+        `${prewarm.ok - prewarm.alreadyFresh} fetched, ${prewarm.alreadyFresh} already fresh, ` +
+        `${prewarm.failed} failed, ${prewarm.skipped} skipped for time ` +
         `(deadline ${new Date(prewarmDeadline).toISOString()}). Symbols left unrefreshed keep serving their ` +
         `previous close, and a stale close is what W1's quote gate now REFUSES to fill against — so entries ` +
         `for those names will be declined rather than mispriced. Investigate provider budgets or raise the ` +

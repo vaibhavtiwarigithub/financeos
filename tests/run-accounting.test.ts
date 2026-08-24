@@ -207,8 +207,8 @@ describe("stale-check: status='error' is not 'ran'", () => {
   // Mirrors the route's own predicate. The route counted ANY matching row as
   // proof the job ran; the two failed 2026-08-13/14 PositionMonitor runs
   // therefore read as healthy.
-  const isError = (r: { status: string }) => /^(error|failed)$/i.test(String(r?.status ?? ""));
-  const ranFrom = (rows: Array<{ status: string }>) => rows.filter((r) => !isError(r)).length > 0;
+  const isTerminalSuccess = (r: { status: string }) => /^(done|completed|success|succeeded|skipped)$/i.test(String(r?.status ?? ""));
+  const ranFrom = (rows: Array<{ status: string }>) => rows.some(isTerminalSuccess);
 
   it("an errored run alone does not satisfy the schedule", () => {
     expect(ranFrom([{ status: "error" }])).toBe(false);
@@ -222,5 +222,10 @@ describe("stale-check: status='error' is not 'ran'", () => {
 
   it("no rows at all is still a miss", () => {
     expect(ranFrom([])).toBe(false);
+  });
+
+  it("a running or unknown-status row does not satisfy the schedule", () => {
+    expect(ranFrom([{ status: "running" }])).toBe(false);
+    expect(ranFrom([{ status: "queued" }])).toBe(false);
   });
 });
