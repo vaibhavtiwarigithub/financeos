@@ -972,7 +972,11 @@ adapts existing truth ledgers into a read-only status model; it does not create
 a parallel evidence table. `/dashboard/upgrade-path` refreshes that model every
 minute and reports market scope, schedule state, progress, collection rate,
 provider-call accounting, benefit evidence, blockers, and the separate
-activation gate.
+activation gate. Since 2026-08-24 it also reports, independently, (a) the first
+mainline implementation date/commit/scope and why it was merged, and (b) the
+current production runtime state with evidence proof and “why not next stage.”
+The API includes Vercel environment/build SHA when available so local output is
+not presented as production truth.
 
 The DashboardShell market switch is the only market selector. The API requires
 `market=us|india` and applies it to every market-bearing ledger query before
@@ -982,8 +986,18 @@ visible in the India view as `not_applicable`.
 The registry has no write or activation capability. Estimated days are shown
 only for a declared target with a non-zero observed rate. Uninstrumented calls
 are labelled unmetered rather than zero. Capital rotation is labelled
-`paper_active`, not shadow-only. Any future shadow producer is incomplete until
-its ledger, schedule, safety boundary, and activation gate are registered.
+from its live config: it is `paper_active` only while paper execution is truly
+enabled; after the 2026-08-11 containment it is production shadow measurement
+with paper/live flags false. Any future shadow producer is incomplete until its
+mainline provenance, ledger, schedule, safety boundary, activation gate, and
+runtime-state adapter are registered.
+
+`ready_for_review` means the production measurement floor is reviewable; it is
+never deployment or promotion authority. Router readiness requires ten distinct
+fresh passing market sessions. Event-driven programs use an independent run
+liveness source so a legitimate zero-event window is not mislabeled as dead.
+The 2026-08-24 audit is recorded in
+`features/shadow-registry/PRODUCTION_AUDIT_2026-08-24.md`.
 
 ## Deep-Dive Debate (2026-07-31 correction)
 

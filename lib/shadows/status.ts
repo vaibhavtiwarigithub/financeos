@@ -32,6 +32,22 @@ export interface ShadowProgress {
   estimatedDays: number | null;
 }
 
+export type ProgramRuntimeState =
+  | "production_measurement"
+  | "production_paper"
+  | "production_blocked"
+  | "scheduled_idle"
+  | "deployed_inactive"
+  | "not_applicable"
+  | "status_unavailable";
+
+export interface ProgramRuntimeDeployment {
+  state: ProgramRuntimeState;
+  summary: string;
+  proof: string[];
+  whyNotNextStage: string;
+}
+
 export interface ShadowProgramStatus extends ShadowProgramDefinition {
   lifecycle: ShadowLifecycle;
   benefitVerdict: BenefitVerdict;
@@ -44,6 +60,7 @@ export interface ShadowProgramStatus extends ShadowProgramDefinition {
   nextAction: string;
   details: string[];
   available: boolean;
+  deployment: ProgramRuntimeDeployment;
 }
 
 type QueryResult<T> = { data: T | null; count?: number | null; error: { message?: string } | null };
@@ -91,6 +108,107 @@ function base(program: ShadowProgramDefinition): ShadowProgramStatus {
     nextAction: "Inspect the source ledger and System Health.",
     details: [],
     available: false,
+    deployment: {
+      state: "status_unavailable",
+      summary: "Mainline implementation exists, but production runtime state could not be verified.",
+      proof: [],
+      whyNotNextStage: "Restore the status adapter before making a rollout decision.",
+    },
+  };
+}
+
+function deploymentFor(status: ShadowProgramStatus): ProgramRuntimeDeployment {
+  const activeSchedules = status.schedules.filter((row) => row.active);
+  const proof = [
+    `Mainline ${status.mainline.enteredAt} at ${status.mainline.commit} (${status.mainline.implementationScope}).`,
+    activeSchedules.length
+      ? `Active production schedule(s): ${activeSchedules.map((row) => row.job).join(", ")}.`
+      : "No active dedicated production schedule is registered for this market.",
+    status.latestAt ? `Latest verified runtime evidence: ${status.latestAt}.` : "No runtime evidence timestamp is available.",
+  ];
+
+  if (!status.available) {
+    return {
+      state: "status_unavailable",
+      summary: "The implementation is in mainline, but its production adapter failed; deployment/use must not be inferred.",
+      proof,
+      whyNotNextStage: "Repair the production status read before reviewing activation.",
+    };
+  }
+  if (status.lifecycle === "not_applicable") {
+    return {
+      state: "not_applicable",
+      summary: "The implementation is in the deployed app but intentionally does not apply to this market.",
+      proof,
+      whyNotNextStage: "No promotion is intended for this market.",
+    };
+  }
+  if (status.lifecycle === "paper_active") {
+    return {
+      state: "production_paper",
+      summary: "The implementation is deployed and currently allowed to affect the paper portfolio only.",
+      proof,
+      whyNotNextStage: status.blockers.join(" ") || "A separate live-stage review and owner decision are still required.",
+    };
+  }
+  if (status.lifecycle === "blocked") {
+    return {
+      state: "production_blocked",
+      summary: "The implementation is deployed, but a declared production evidence or correctness gate is currently blocked.",
+      proof,
+      whyNotNextStage: status.blockers.join(" ") || "Resolve the failed gate before any rollout review.",
+    };
+  }
+  if (status.lifecycle === "collecting" || status.lifecycle === "ready_for_review" || status.lifecycle === "armed") {
+    return {
+      state: "production_measurement",
+      summary: status.lifecycle === "ready_for_review"
+        ? "The implementation is deployed for production measurement and its evidence floor is review-ready; it has not been promoted into a stronger influence stage."
+        : status.lifecycle === "armed"
+          ? "The implementation is deployed and armed, but is waiting for an eligible candidate; it has no scoring or money authority from that state alone."
+          : "The implementation is deployed and currently collecting production evidence without exceeding its declared influence boundary.",
+      proof,
+      whyNotNextStage: status.blockers.join(" ") || "Readiness is advisory; promotion requires a separate governed decision.",
+    };
+  }
+  if (status.lifecycle === "idle" && activeSchedules.length) {
+    return {
+      state: "scheduled_idle",
+      summary: "The implementation and schedule are deployed, but the expected production evidence is not arriving.",
+      proof,
+      whyNotNextStage: status.blockers.join(" ") || "Investigate the idle schedule before promotion or removal.",
+    };
+  }
+  return {
+    state: "deployed_inactive",
+    summary: status.mainline.implementationScope === "inert_scaffold"
+      ? "An inert scaffold/catalog is in the deployed codebase; no production decision consumer is enabled."
+      : "The implementation is in the deployed codebase but its runtime campaign or influence flag is off.",
+    proof,
+    whyNotNextStage: status.blockers.join(" ") || "No approved activation campaign exists.",
+  };
+}
+
+async function loadLabelCoverageRows(svc: any, market: ShadowMarket): Promise<QueryResult<any[]>> {
+  const pageSize = 1_000;
+  const maxRows = 20_000;
+  const rows: any[] = [];
+
+  for (let from = 0; from < maxRows; from += pageSize) {
+    const { data, error } = await svc.from("observation_labels")
+      .select("horizon_days,fwd_return,decision_observations!inner(ts,symbol,market,entry_eligible)")
+      .eq("decision_observations.market", market)
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) return { data: null, error };
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < pageSize) return { data: rows, error: null };
+  }
+
+  return {
+    data: null,
+    error: { message: `Label coverage exceeds the bounded ${maxRows}-row read; paginate the aggregate server-side before trusting readiness.` },
   };
 }
 
@@ -175,12 +293,11 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("edge_signals")
       .select("market,edge_id,created_at", { count: "exact" })
       .eq("market", market)
-      .in("edge_id", ["kairos_technical_score_v1", "macd_atr_12_26_9", "signed_adx_14"])
-      .gte("created_at", since7).limit(10000),
+      .gte("created_at", since7).order("created_at", { ascending: false }).limit(1000),
     svc.from("edge_readiness_status")
       .select("market,edge_id,horizon,windows_observed,windows_required,validation_windows_observed,validation_windows_required,stage,next_action,evaluated_at")
       .eq("market", market)
-      .in("edge_id", ["kairos_technical_score_v1", "macd_atr_12_26_9", "signed_adx_14"]).limit(200),
+      .limit(200),
     svc.from("rotation_config")
       .select("market,book_type,rotation_shadow_enabled,rotation_paper_execute_enabled,rotation_live_proposals_enabled").eq("market", market),
     svc.from("rotation_events")
@@ -238,9 +355,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       .eq("market", market).gte("captured_at", since90).limit(10000),
     // Matured decision labels. The join is inner on purpose: an observation with
     // no label has not matured and must not count toward coverage.
-    svc.from("observation_labels")
-      .select("horizon_days,fwd_return,decision_observations!inner(ts,symbol,market,entry_eligible)")
-      .eq("decision_observations.market", market).limit(20000),
+    loadLabelCoverageRows(svc, market),
     svc.from("dimension_diagnostic_runs")
       .select("id,status,horizon_days,input_observation_count,distinct_session_count,created_at")
       .eq("market", market).gte("created_at", since45).order("created_at", { ascending: false }).limit(100),
@@ -288,7 +403,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     .filter((row: LabelRow | null): row is LabelRow => row != null && Number.isFinite(row.horizonDays));
   const labelCoverage = coverageByHorizon(labelRows);
 
-  return SHADOW_PROGRAMS.map((program) => {
+  const statuses = SHADOW_PROGRAMS.map((program) => {
     const status = base(program);
     status.schedules = scheduleFor(program, cronRows, market);
 
@@ -414,19 +529,20 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         row.passed === true && row.safety_pass === true && row.quality_pass === true
         && row.expires_at && new Date(row.expires_at).getTime() > Date.now());
       const latest = evaluations[0];
-      const sessions = new Set(evaluations.map((row: any) => row.market_session_date).filter(Boolean));
+      const passingSessions = new Set(validPasses.map((row: any) => row.market_session_date).filter(Boolean));
       const network = networkCallRes.count ?? 0;
       const cacheHits = cacheHitRes.count ?? 0;
-      status.lifecycle = validPasses.length >= 1 ? "ready_for_review" : "blocked";
+      status.lifecycle = passingSessions.size >= 10 ? "ready_for_review" : "blocked";
       status.benefitVerdict = "operational_only";
       status.benefitEvidence = `${validPasses.length} valid passing ${market.toUpperCase()} evaluation(s); router remains ${active.some((row: any) => row.enabled) ? "enabled" : "disabled"} for this market.`;
-      status.progress = progress(sessions.size, 10, "market-session proofs", 45);
+      status.progress = progress(passingSessions.size, 10, "fresh passing market-session proofs", 45);
       status.calls = calls("tracked", "Exact Router ledger counts over the last 7 days; network attempts are separated from cache-only resolutions.", ledgerCount, network, cacheHits);
       status.latestAt = latestIso(evaluations, "created_at");
       status.blockers = !latest || latest.passed !== true || latest.safety_pass !== true || latest.quality_pass !== true
         ? [`${market.toUpperCase()} latest parity evaluation is not a full safety+quality pass.`]
         : [];
       if (!status.blockers.length && validPasses.length < 1) status.blockers.push(`${market.toUpperCase()} needs a fresh, unexpired passing evaluation.`);
+      if (validPasses.length > 0 && passingSessions.size < 10) status.blockers.push(`${market.toUpperCase()} has ${passingSessions.size}/10 distinct fresh passing market sessions.`);
       status.nextAction = status.lifecycle === "ready_for_review"
         ? "Review flagged divergences and prepare a separate market-local activation decision."
         : "Repair failing coverage/quality dimensions and continue daily cohort proofs.";
@@ -437,16 +553,21 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
 
     if (program.id === "degradation-guard") {
       const wouldAbstain = degradation.filter((row: any) => row.action === "abstain_new_long").length;
-      status.lifecycle = degradation.length ? "collecting" : "idle";
+      const evaluationRuns = evaluations.length;
+      status.lifecycle = degradation.length || evaluationRuns ? "collecting" : "idle";
       status.benefitVerdict = "operational_only";
       status.benefitEvidence = `${wouldAbstain} new-long abstention(s) would have fired in the last 7 days; none changed behavior.`;
       status.progress = progress(degradation.length, null, "counterfactual events", 7);
       status.calls = calls("zero_incremental", "Uses the evidence mask already produced by ResearchAgent; no additional provider fetch.");
-      status.latestAt = latestIso(degradation, "created_at");
+      status.latestAt = latestIso(degradation, "created_at") ?? latestIso(evaluations, "created_at");
       status.blockers = ["False-positive review and a stable market-local baseline are not complete."];
       status.nextAction = "Review the would-abstain sample before considering enforce mode.";
-      status.details = ["Mode remains measure_only.", "Only long-to-neutral could ever be permitted."];
-      status.available = !degradationRes.error;
+      status.details = [
+        "Mode remains measure_only.",
+        "Only long-to-neutral could ever be permitted.",
+        `${evaluationRuns} Router/evidence evaluation run(s) prove liveness even when zero degradation events are expected.`,
+      ];
+      status.available = !degradationRes.error && !evaluationRes.error;
       return status;
     }
 
@@ -496,14 +617,20 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       const wouldEnter = shadowDecisions.filter((row: any) => row.would_enter).length;
       const setups = new Map<string, number>();
       shadowDecisions.forEach((row: any) => setups.set(row.setup_type ?? "strategy_version", (setups.get(row.setup_type ?? "strategy_version") ?? 0) + 1));
-      status.lifecycle = shadowDecisions.length ? "collecting" : "idle";
+      const expectedAlwaysOn = market === "india" ? ["india_quality_momentum", "india_sector_rotation"] : ["quality_momentum"];
+      const missingAlwaysOn = expectedAlwaysOn.filter((setup) => !setups.has(setup));
+      status.lifecycle = missingAlwaysOn.length ? "blocked" : shadowDecisions.length ? "collecting" : "idle";
       status.benefitVerdict = "insufficient";
       status.benefitEvidence = `${shadowDecisions.length} comparable decisions and ${wouldEnter} would-enter decisions in 7 days; forward outcome comparison is not mature.`;
       status.progress = progress(shadowDecisions.length, null, "shadow decisions", 7);
       status.calls = calls("zero_incremental", "Replays formulas from the same ResearchAgent inputs; no second provider call.");
       status.latestAt = latestIso(shadowDecisions, "ts");
-      status.blockers = ["No approved minimum labelled sample or promotion gate exists for setup experts."];
-      status.nextAction = "Accumulate matured labels, then define a predeclared walk-forward comparison.";
+      status.blockers = [
+        ...(missingAlwaysOn.length ? [`Missing always-on setup evidence: ${missingAlwaysOn.join(", ")}.`] : []),
+        "The production idempotency index currently permits only one NULL-policy setup row per observation, so multi-expert batches are not trustworthy.",
+        "No approved minimum labelled sample or promotion gate exists for setup experts.",
+      ];
+      status.nextAction = "Replace the conflicting idempotency contract with separate challenger and (observation, setup_type) uniqueness, verify both markets, then define a predeclared walk-forward comparison.";
       status.details = [...setups.entries()].map(([name, count]) => `${name}: ${count} decisions`);
       status.available = !shadowDecisionRes.error;
       return status;
@@ -517,11 +644,13 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       })[0];
       const completed = Number(best?.windows_observed ?? 0);
       const target = Number(best?.windows_required ?? 6);
-      const ready = readiness.some((row: any) => ["ready_for_shadow_review", "ready_for_validation_build"].includes(row.stage));
-      status.lifecycle = ready ? "ready_for_review" : edgeSignals.length ? "collecting" : "idle";
-      status.benefitVerdict = ready ? "promising" : "insufficient";
-      status.benefitEvidence = ready
-        ? "At least one technical edge reached a review milestone; no scoring change is authorized."
+      const readyForShadowReview = readiness.some((row: any) => row.stage === "ready_for_shadow_review");
+      const readyForValidationBuild = readiness.some((row: any) => row.stage === "ready_for_validation_build");
+      const reviewMilestone = readyForShadowReview || readyForValidationBuild;
+      status.lifecycle = reviewMilestone ? "ready_for_review" : edgeSignals.length ? "collecting" : "idle";
+      status.benefitVerdict = reviewMilestone ? "promising" : "insufficient";
+      status.benefitEvidence = reviewMilestone
+        ? `At least one technical edge reached ${readyForShadowReview ? "shadow review" : "validation-build review"}; no scoring change is authorized.`
         : `${edgeSignalRes.count ?? edgeSignals.length} technical edge observations in 7 days; weekly stability windows remain incomplete.`;
       status.progress = {
         ...progress(completed, target, "weekly stability windows", Math.max(7, completed * 7 || 7)),
@@ -535,9 +664,17 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       };
       status.calls = calls("unmetered", "EdgeScout fetches are not consistently written to provider_call_ledger; the page refuses to report them as zero.");
       status.latestAt = latestIso(edgeSignals, "created_at") ?? latestIso(readiness, "evaluated_at");
-      status.blockers = ready ? ["Owner review and a separate shadow-admission decision remain required."] : ["Stable weekly and point-in-time cost/FDR windows are incomplete."];
-      status.nextAction = ready ? "Review the edge diagnostics; do not edit scoring directly." : "Continue EdgeScout/EdgeIC collection.";
-      status.details = [`${edgeSignalRes.count ?? edgeSignals.length} US/India technical observations in the last 7 days.`, `${readiness.length} readiness cells tracked.`];
+      status.blockers = readyForShadowReview
+        ? ["Owner review and a separate shadow-admission decision remain required."]
+        : readyForValidationBuild
+          ? ["The edge is ready to build/collect validation evidence, but its required cost/FDR validation windows are still incomplete."]
+          : ["Stable weekly and point-in-time cost/FDR windows are incomplete."];
+      status.nextAction = readyForShadowReview
+        ? "Review the edge diagnostics for shadow admission; do not edit scoring directly."
+        : readyForValidationBuild
+          ? "Run the predeclared cost/FDR validation phase; do not admit the edge to scoring or shadow yet."
+          : "Continue EdgeScout/EdgeIC collection.";
+      status.details = [`${edgeSignalRes.count ?? edgeSignals.length} ${market.toUpperCase()} technical observations in the last 7 days.`, `${readiness.length} readiness cells tracked.`];
       status.available = !edgeSignalRes.error && !edgeReadinessRes.error;
       return status;
     }
@@ -611,7 +748,8 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       const events = new Set(entries.filter((row: any) => row.report_date).map((row: any) => `${row.market}:${row.report_date}`));
       const usable = entries.filter((row: any) => row.options_quality === "usable").length;
       const changed = earnings.filter((row: any) => row.behavior_changed).length;
-      status.lifecycle = entries.length ? "collecting" : "idle";
+      const usFloorsMet = entries.length >= 60 && events.size >= 20;
+      status.lifecycle = market === "us" && usFloorsMet ? "ready_for_review" : entries.length ? "collecting" : "idle";
       status.benefitVerdict = "insufficient";
       status.benefitEvidence = market === "us"
         ? `${entries.length}/60 eligible-entry observations, ${events.size}/20 distinct events and ${usable} usable move proxies; ${changed} behavior changes.`
@@ -627,7 +765,11 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.calls = calls("unmetered", "Robinhood/Yahoo earnings-option reads are bounded but not yet written to provider_call_ledger.");
       status.latestAt = latestIso(earnings, "created_at");
       status.blockers = market === "us"
-        ? ["The 60-entry and 20-event evidence floors are not met.", "Quote-quality and calibration review remain pending."]
+        ? [
+          ...(!usFloorsMet ? ["The 60-entry and 20-event evidence floors are not both met."] : []),
+          "A usable quote-coverage criterion is not yet predeclared, and calibration review remains pending.",
+          "A separate owner decision is required before any deterministic entry block or size reduction.",
+        ]
         : ["No India behavior-change target is approved; options-implied movement is not available for India."];
       status.nextAction = market === "us"
         ? "Let US candidate traffic collect observations; do not add options to analyst_score."
@@ -728,4 +870,6 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
 
     return status;
   });
+
+  return statuses.map((status) => ({ ...status, deployment: deploymentFor(status) }));
 }

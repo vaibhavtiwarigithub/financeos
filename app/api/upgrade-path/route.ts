@@ -21,6 +21,10 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
+    build: {
+      environment: process.env.VERCEL_ENV ?? "local",
+      commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 8) ?? null,
+    },
     summary: {
       total: programs.length,
       collecting: programs.filter((program) => program.lifecycle === "collecting" || program.lifecycle === "paper_active").length,

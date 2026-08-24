@@ -22,6 +22,21 @@ export type CallAccountingMode =
   | "unmetered"
   | "not_applicable";
 
+export type MainlineImplementationScope =
+  | "inert_scaffold"
+  | "measure_only"
+  | "paper_capable"
+  | "live_capable";
+
+export interface MainlineRelease {
+  /** First commit that put the program's runnable or owner-visible implementation on main. */
+  commit: string;
+  enteredAt: string;
+  implementationScope: MainlineImplementationScope;
+  /** Why code was merged even when its scoring/trading influence remained disabled. */
+  reason: string;
+}
+
 export interface ShadowProgramDefinition {
   id: string;
   name: string;
@@ -39,6 +54,7 @@ export interface ShadowProgramDefinition {
   callAccounting: CallAccountingMode;
   owner: string;
   architectureRef: string;
+  mainline: MainlineRelease;
 }
 
 export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
@@ -59,6 +75,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "zero_incremental",
     owner: "Learning / Evidence",
     architectureRef: "features/dimension-diagnostics/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "0a48e791", enteredAt: "2026-08-06", implementationScope: "measure_only", reason: "Add governed, append-only diagnostics so weak results are attributed before any score or strategy repair is proposed." },
   },
   {
     // Added 2026-08-06. This program exists because a diagnosis written that
@@ -85,6 +102,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "zero_incremental",
     owner: "Evidence / Learning",
     architectureRef: "features/portfolio-underperformance/DIAGNOSIS.md",
+    mainline: { commit: "1704c18a", enteredAt: "2026-08-06", implementationScope: "measure_only", reason: "Expose independent-date and symbol coverage so thin correlated samples cannot masquerade as learning evidence." },
   },
   {
     // Added 2026-08-06. The owner asked to shorten the exit target; measuring it
@@ -111,6 +129,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "zero_incremental",
     owner: "Trading / Evidence",
     architectureRef: "features/portfolio-underperformance/DIAGNOSIS.md",
+    mainline: { commit: "b2834f48", enteredAt: "2026-08-06", implementationScope: "measure_only", reason: "Measure alternative stop/target geometry from matured labels before changing any exit behavior." },
   },
   {
     id: "evidence-router",
@@ -132,6 +151,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "tracked",
     owner: "Evidence / Research",
     architectureRef: "features/router-cutover/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "fc9bace1", enteredAt: "2026-07-13", implementationScope: "measure_only", reason: "Collect dual-run provider parity evidence before allowing the configurable router to replace canonical research inputs." },
   },
   {
     id: "degradation-guard",
@@ -150,6 +170,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "zero_incremental",
     owner: "Research safety",
     architectureRef: "features/router-cutover/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "eb5bca43", enteredAt: "2026-07-16", implementationScope: "measure_only", reason: "Record whether missing evidence would create false eligibility through weight renormalization before enabling a subtractive guard." },
   },
   {
     id: "india-news-evidence",
@@ -168,6 +189,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "tracked",
     owner: "Evidence / India Research",
     architectureRef: "features/pipeline-data-and-timing/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "dc1e2960", enteredAt: "2026-07-31", implementationScope: "measure_only", reason: "Begin bounded India-specific news and corporate-event collection without borrowing US sentiment semantics or changing scores." },
   },
   {
     id: "setup-experts",
@@ -186,13 +208,14 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "zero_incremental",
     owner: "Scoring / Learner",
     architectureRef: "features/scoring-methodology/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "6dca1f3c", enteredAt: "2026-07-10", implementationScope: "measure_only", reason: "Compare setup-specific scoring experts against the champion on identical evidence while keeping them outside eligibility and trading." },
   },
   {
     id: "technical-calibration",
-    name: "Technical parameter calibration",
+    name: "Technical edge calibration",
     category: "Scoring",
     markets: ["us", "india"],
-    purpose: "Measure the existing technical composite beside MACD/ATR and signed ADX challengers.",
+    purpose: "Measure every registered price/volume technical edge, including the existing composite, MACD/ATR, signed ADX, momentum, breakout and relative-strength challengers.",
     productBenefit: "Prevents indicator changes from being made because they sound plausible rather than because they improve ranking.",
     traderBenefit: "May identify a more robust entry/exit timing feature by market without hand-tuning every sector.",
     evidenceSource: "edge_signals + edge_ic_history + edge_readiness_status",
@@ -207,6 +230,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "unmetered",
     owner: "EdgeScout / EdgeIC",
     architectureRef: "features/technical-factor-calibration/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "a249d50e", enteredAt: "2026-07-21", implementationScope: "measure_only", reason: "Measure parameter stability and cost/FDR robustness before any technical feature may enter a scoring challenger." },
   },
   {
     id: "pit-fundamental-qualification",
@@ -225,6 +249,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "zero_incremental",
     owner: "Research data / PIT",
     architectureRef: "features/feature-pack-validation/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "e2cd9b73", enteredAt: "2026-07-10", implementationScope: "measure_only", reason: "Archive point-in-time fundamental vintages so future qualification cannot use revised or future-known facts." },
   },
   {
     id: "specialist-feature-packs",
@@ -243,6 +268,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "not_applicable",
     owner: "Instrument governance",
     architectureRef: "features/feature-pack-validation/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "4ea20075", enteredAt: "2026-08-02", implementationScope: "inert_scaffold", reason: "Publish an instrument-aware feature applicability catalog before choosing or funding any specialist data contract." },
   },
   {
     id: "capital-rotation",
@@ -261,6 +287,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "zero_incremental",
     owner: "PaperTrader / TraderAgent",
     architectureRef: "features/capital-rotation/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "ac7ffda0", enteredAt: "2026-07-13", implementationScope: "paper_capable", reason: "Measure opportunity-cost replacements in fully invested paper books; execution remains separately gated after unsafe early P1 behavior." },
   },
   {
     id: "earnings-risk",
@@ -279,6 +306,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "unmetered",
     owner: "Risk / Earnings",
     architectureRef: "features/earnings-aware-risk/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "65c1c5be", enteredAt: "2026-07-29", implementationScope: "measure_only", reason: "Capture point-in-time earnings proximity and move-risk evidence before allowing event risk to change entries or sizing." },
   },
   {
     id: "exogenous-risk",
@@ -297,6 +325,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "not_applicable",
     owner: "Macro / Risk",
     architectureRef: "features/exogenous-risk-evidence/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "57c63cf3", enteredAt: "2026-08-01", implementationScope: "inert_scaffold", reason: "Create governed append-only source and regime ledgers before approving official adapters or score consumers." },
   },
   {
     id: "international-allocation",
@@ -315,6 +344,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "zero_incremental",
     owner: "Portfolio construction",
     architectureRef: "features/international-equity-allocation/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "89ca679f", enteredAt: "2026-07-27", implementationScope: "measure_only", reason: "Make international exposure and target/deadband proposals observable before any allocation can alter a portfolio." },
   },
   {
     id: "autonomous-live",
@@ -333,6 +363,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "unmetered",
     owner: "Execution kernel",
     architectureRef: "features/live-auto-trading/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "e45ca642", enteredAt: "2026-07-10", implementationScope: "live_capable", reason: "Land the fail-closed per-market autonomous execution path behind disabled policy, evidence, broker-canary, and kill-switch gates." },
   },
   {
     id: "challenger-validation",
@@ -351,6 +382,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "zero_incremental",
     owner: "Learner / Validation",
     architectureRef: "features/automated-strategy-validation/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "0004eeb8", enteredAt: "2026-07-12", implementationScope: "measure_only", reason: "Automate deterministic challenger validation and bounded shadow-slot routing without granting promotion or money authority." },
   },
   {
     id: "downside-hedge",
@@ -369,6 +401,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "zero_incremental",
     owner: "Portfolio risk",
     architectureRef: "features/downside-hedging/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "38a18f0a", enteredAt: "2026-07-15", implementationScope: "paper_capable", reason: "Ship a governed hedge evaluator and paper-only path behind independent disabled flags so drag and precision can be measured first." },
   },
 ] as const;
 

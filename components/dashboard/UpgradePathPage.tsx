@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, CheckCircle2, Clock3, Database, RefreshCw, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, AlertTriangle, CheckCircle2, Clock3, Database, GitCommitHorizontal, RefreshCw, ShieldCheck } from "lucide-react";
 import type { ShadowProgramStatus } from "@/lib/shadows/status";
 import type { ShadowLifecycle } from "@/lib/shadows/registry";
 import { MARKET_LABEL, useMarket } from "@/lib/market-context";
@@ -14,6 +14,7 @@ const T = {
 
 type ApiResponse = {
   generatedAt: string;
+  build: { environment: string; commit: string | null };
   market: "us" | "india";
   summary: { total: number; collecting: number; readyForReview: number; blockedOrIdle: number; trackedCalls7d: number };
   programs: ShadowProgramStatus[];
@@ -37,6 +38,15 @@ const BENEFIT_META = {
   not_beneficial: { label: "Not beneficial", color: T.red },
   insufficient: { label: "Insufficient evidence", color: T.yellow },
   operational_only: { label: "Operational proof only", color: T.blue },
+};
+const DEPLOYMENT_META = {
+  production_measurement: { label: "Production · measure-only", color: T.blue },
+  production_paper: { label: "Production · paper impact", color: T.green },
+  production_blocked: { label: "Production · blocked", color: T.red },
+  scheduled_idle: { label: "Production schedule · idle", color: T.red },
+  deployed_inactive: { label: "Deployed · inactive", color: T.muted },
+  not_applicable: { label: "Not applicable", color: T.muted },
+  status_unavailable: { label: "Production status unknown", color: T.red },
 };
 
 function useIsMobile(breakpoint = 900) {
@@ -109,6 +119,7 @@ function ProgressBar({ program }: { program: ShadowProgramStatus }) {
 function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatus; mobile: boolean; market: "us" | "india" }) {
   const lifecycle = LIFECYCLE_META[program.lifecycle];
   const benefit = BENEFIT_META[program.benefitVerdict];
+  const deployment = DEPLOYMENT_META[program.deployment.state];
   return <section style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", overflow: "hidden", opacity: program.available ? 1 : 0.72 }}>
     <div style={{
       padding: mobile ? "16px" : "18px 20px", display: "flex", justifyContent: "space-between",
@@ -119,6 +130,7 @@ function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatu
           <h2 style={{ fontSize: "17px", lineHeight: 1.3, margin: 0, color: T.text }}>{program.name}</h2>
           <StatusPill label={lifecycle.label} color={lifecycle.color} />
           <StatusPill label={benefit.label} color={benefit.color} />
+          <StatusPill label={deployment.label} color={deployment.color} />
         </div>
         <div style={{ color: T.muted, fontSize: "12px", marginTop: "7px" }}>
           {program.category} · {market.toUpperCase()} view · Supports: {program.markets.map((supported) => supported.toUpperCase()).join(" + ")} · Owner: {program.owner}
@@ -170,6 +182,15 @@ function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatu
       gap: "16px 24px", borderTop: `1px solid ${T.border}`, background: T.surface,
     }}>
       <div>
+        <SectionLabel icon={<GitCommitHorizontal size={14} />} text="Mainline and production" />
+        <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.55 }}>
+          Entered mainline {program.mainline.enteredAt} at <span style={{ color: T.text }}>{program.mainline.commit}</span> · {program.mainline.implementationScope.replace(/_/g, " ")}.
+        </div>
+        <div style={{ color: T.muted, fontSize: "12px", lineHeight: 1.55, marginTop: "5px" }}>Why: {program.mainline.reason}</div>
+        <div style={{ color: deployment.color, fontSize: "12px", lineHeight: 1.55, marginTop: "7px" }}>{program.deployment.summary}</div>
+        {program.deployment.proof.map((item) => <div key={item} style={{ color: T.muted, fontSize: "11px", lineHeight: 1.45, marginTop: "3px" }}>• {item}</div>)}
+      </div>
+      <div>
         <SectionLabel icon={<ShieldCheck size={14} />} text="Activation gate and safety" />
         <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.55 }}>{program.activationGate}</div>
         <div style={{ color: T.muted, fontSize: "12px", lineHeight: 1.55, marginTop: "5px" }}>{program.safetyBoundary}</div>
@@ -178,6 +199,7 @@ function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatu
         <SectionLabel icon={<AlertTriangle size={14} />} text="What remains" />
         {program.blockers.map((blocker) => <div key={blocker} style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.5, marginBottom: "3px" }}>• {blocker}</div>)}
         <div style={{ color: T.accent, fontSize: "12px", lineHeight: 1.5, marginTop: "7px" }}>Next: {program.nextAction}</div>
+        <div style={{ color: T.yellow, fontSize: "12px", lineHeight: 1.5, marginTop: "7px" }}>Why not next stage: {program.deployment.whyNotNextStage}</div>
       </div>
     </div>
   </section>;
@@ -190,17 +212,22 @@ export default function UpgradePathPage() {
   const [lifecycle, setLifecycle] = useState<LifecycleFilter>("all");
   const { market } = useMarket();
   const mobile = useIsMobile();
+  const requestSequence = useRef(0);
 
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     try {
       const response = await fetch(`/api/upgrade-path?market=${market}`, { cache: "no-store" });
       if (!response.ok) throw new Error(`Status request failed (${response.status})`);
-      setData(await response.json());
+      const next = await response.json() as ApiResponse;
+      if (sequence !== requestSequence.current || next.market !== market) return;
+      setData(next);
       setError("");
     } catch (reason) {
+      if (sequence !== requestSequence.current) return;
       setError(reason instanceof Error ? reason.message : "Status request failed");
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   }, [market]);
   useEffect(() => {
@@ -226,7 +253,7 @@ export default function UpgradePathPage() {
         <div style={{ color: T.accent, fontSize: "11px", fontWeight: 800, textTransform: "uppercase", marginBottom: "7px" }}>Research governance</div>
         <h1 style={{ fontSize: mobile ? "24px" : "28px", lineHeight: 1.2, margin: 0, letterSpacing: 0 }}>Upgrade Path</h1>
         <p style={{ color: T.textSub, fontSize: "13px", lineHeight: 1.55, margin: "8px 0 0", maxWidth: "780px" }}>
-          {MARKET_LABEL[market]} evidence, cost, benefit and activation boundaries for every registered shadow, paper experiment and dormant upgrade path.
+          {MARKET_LABEL[data?.market ?? market]} evidence, cost, benefit and activation boundaries for every registered shadow, paper experiment and dormant upgrade path.
         </p>
       </div>
       <button type="button" onClick={load} title="Refresh status" aria-label="Refresh status" style={{
@@ -262,7 +289,7 @@ export default function UpgradePathPage() {
         padding: "7px 10px", fontSize: "12px", cursor: "pointer",
       }}>{label}</button>)}
       {data && <span style={{ marginLeft: mobile ? 0 : "auto", color: T.muted, fontSize: "11px" }}>
-        {MARKET_LABEL[data.market]} · Updated {fmtDate(data.generatedAt)} · auto-refreshes every minute
+        {MARKET_LABEL[data.market]} · {data.build.environment}{data.build.commit ? ` build ${data.build.commit}` : " build unverified"} · Updated {fmtDate(data.generatedAt)} · auto-refreshes every minute
       </span>}
     </section>
 
@@ -272,7 +299,7 @@ export default function UpgradePathPage() {
     }}>{error}. Existing values remain visible where available.</div>}
 
     {loading && !data ? <div style={{ color: T.textSub, padding: "40px 0" }}>Loading live evidence ledgers...</div> : <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-      {filtered.map((program) => <ProgramPanel key={program.id} program={program} mobile={mobile} market={market} />)}
+      {filtered.map((program) => <ProgramPanel key={program.id} program={program} mobile={mobile} market={data?.market ?? market} />)}
       {!filtered.length && <div style={{ border: `1px solid ${T.border}`, borderRadius: "8px", padding: "30px", textAlign: "center", color: T.muted }}>No programs match these filters.</div>}
     </div>}
 

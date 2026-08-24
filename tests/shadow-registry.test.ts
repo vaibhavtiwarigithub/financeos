@@ -23,6 +23,9 @@ describe("shadow registry governance contract", () => {
       expect(program.activationGate.length).toBeGreaterThan(20);
       expect(program.safetyBoundary.length).toBeGreaterThan(20);
       expect(program.evidenceSource.length).toBeGreaterThan(3);
+      expect(program.mainline.enteredAt).toMatch(/^20\d{2}-\d{2}-\d{2}$/);
+      expect(program.mainline.commit).toMatch(/^[0-9a-f]{8}$/);
+      expect(program.mainline.reason.length).toBeGreaterThan(30);
     }
   });
 
@@ -96,6 +99,37 @@ describe("shadow registry governance contract", () => {
     expect(statusAdapter).toContain('export async function getShadowProgramStatuses(svc: any, market: ShadowMarket)');
     expect(statusAdapter).toContain('.eq("market", market)');
     expect(statusAdapter).toContain('status.lifecycle = "not_applicable"');
-    expect(statusAdapter).toContain('progress(sessions.size, 10, "market-session proofs", 45)');
+    expect(statusAdapter).toContain('progress(passingSessions.size, 10, "fresh passing market-session proofs", 45)');
+  });
+
+  it("separates mainline provenance from live production influence", () => {
+    expect(route).toContain("VERCEL_GIT_COMMIT_SHA");
+    expect(upgradePage).toContain("Mainline and production");
+    expect(upgradePage).toContain("Why not next stage");
+    expect(upgradePage).toContain("program.mainline.enteredAt");
+    expect(upgradePage).toContain("program.deployment.summary");
+    expect(upgradePage).toContain("requestSequence.current");
+    expect(upgradePage).toContain("next.market !== market");
+    expect(upgradePage).toContain("market={data?.market ?? market}");
+    expect(statusAdapter).toContain("production_measurement");
+    expect(statusAdapter).toContain("production_blocked");
+    expect(statusAdapter).toContain("scheduled_idle");
+  });
+
+  it("reports the setup-expert idempotency conflict instead of calling India merely idle", () => {
+    expect(statusAdapter).toContain("Missing always-on setup evidence");
+    expect(statusAdapter).toContain("only one NULL-policy setup row per observation");
+    expect(statusAdapter).toContain("(observation, setup_type) uniqueness");
+  });
+
+  it("does not declare Router readiness from one pass or treat zero degradation events as a dead job", () => {
+    expect(statusAdapter).toContain('passingSessions.size >= 10 ? "ready_for_review" : "blocked"');
+    expect(statusAdapter).toContain('degradation.length || evaluationRuns ? "collecting" : "idle"');
+  });
+
+  it("paginates label coverage instead of trusting PostgREST's per-request row cap", () => {
+    expect(statusAdapter).toContain("loadLabelCoverageRows(svc, market)");
+    expect(statusAdapter).toContain('.range(from, from + pageSize - 1)');
+    expect(statusAdapter).toContain("Label coverage exceeds the bounded");
   });
 });

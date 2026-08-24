@@ -1,6 +1,6 @@
 # Shadow Registry and Upgrade Path - Implementation Result
 
-Date: 2026-07-29
+Date: 2026-07-29; production-provenance upgrade reviewed 2026-08-24
 Status: COMPLETE
 
 ## Shipped
@@ -21,6 +21,10 @@ Status: COMPLETE
 - Owner authentication and symbol validation on `/api/options/signal`.
 - Removal of options-flow content from ResearchAgent prompts. Options remain
   outside `analyst_score`; earnings options remain event-risk shadow evidence.
+- Per-program mainline date, commit, implementation scope and release rationale.
+- Separate production runtime status, proof, and “why not next stage” text;
+  review readiness is no longer visually confusable with activation.
+- Current Vercel environment/build SHA in the read response when available.
 
 ## Production Verification
 
@@ -37,6 +41,14 @@ Status: COMPLETE
 - Vitest: 1,421 passed, 7 skipped.
 - Next.js production build: passed; page and API included.
 - Registry governance tests: 5 passed.
+
+## 2026-08-24 audit correction
+
+The full audit is in `PRODUCTION_AUDIT_2026-08-24.md`. It corrected Router
+readiness to ten distinct fresh passing sessions, made degradation liveness
+independent of whether a rare event fired, made earnings evidence floors
+reviewable without pretending calibration passed, and exposed a real
+setup-expert idempotency conflict. No scoring or money-path behavior changed.
 
 ## Reversal
 

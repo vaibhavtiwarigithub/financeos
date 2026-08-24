@@ -64,6 +64,13 @@ The page contains:
 - exact blockers and next owner/engineering action;
 - estimated days only when a measurable target and non-zero collection rate
   exist. Otherwise the UI says `No defensible ETA`.
+- immutable mainline provenance for every program: first implementation commit,
+  entry date, implementation scope, and why inert/measure-only code was merged;
+- a separately derived production runtime state (`production_measurement`,
+  `production_paper`, `scheduled_idle`, `deployed_inactive`, `not_applicable`,
+  or `status_unavailable`) with concrete proof and `why not next stage` text;
+- the current Vercel environment and build SHA when Vercel exposes it. A local
+  response must say local/unverified rather than claim production deployment.
 
 ## Registry Contract
 
@@ -81,6 +88,12 @@ must include:
 - cron job names, if any;
 - provider-call accounting mode;
 - owner and architecture reference.
+- typed `mainline` provenance (`commit`, `enteredAt`,
+  `implementationScope`, `reason`).
+
+Mainline provenance is version-controlled history, not a runtime flag. Runtime
+deployment is derived from production config, schedules and evidence ledgers.
+Neither is allowed to infer that a review-ready program has been promoted.
 
 `lib/shadows/status.ts` owns aggregation and derives a normalized
 `ShadowProgramStatus`. It may reference existing ledgers but cannot write them.
@@ -156,8 +169,10 @@ Future provider-consuming shadows should write to the existing
 - US and India metrics stay separate; no currency values are summed.
 - A readiness label cannot activate anything.
 - Estimates are observational and suppressed when blocked or underidentified.
-- Capital rotation must be labelled `paper_active` because paper execution is
-  currently enabled; calling it shadow-only would be false.
+- Capital rotation must be derived from live config, never hardcoded. It is
+  `paper_active` only while `rotation_paper_execute_enabled=true`; after the
+  2026-08-11 containment both markets are production shadow measurement with
+  paper/live influence disabled.
 
 ## Acceptance Criteria
 
@@ -177,6 +192,22 @@ Future provider-consuming shadows should write to the existing
     wide detail tables may scroll within their own region.
 11. Typecheck, focused tests, full tests, production build, schema verification,
     browser verification, and production deployment pass.
+12. Every program shows when and why it entered mainline, current runtime use,
+    production proof, and why it has not advanced. `ready_for_review` must never
+    be rendered as synonymous with scoring/trading activation.
+13. Router readiness uses ten distinct fresh passing market sessions, not one
+    passing evaluation or ten arbitrary sessions.
+14. Event-driven programs use an independent liveness source where zero events
+    can be a legitimate result.
+
+## Production audit — 2026-08-24
+
+The program-by-program audit and production facts are recorded in
+`features/shadow-registry/PRODUCTION_AUDIT_2026-08-24.md`. It found one blocked
+implementation defect: the setup-expert batch contract conflicts with migration
+163's NULLS-NOT-DISTINCT idempotency index, leaving India with zero setup rows
+and making multi-expert US observations incomplete. The dashboard exposes the
+blocker; repairing the index remains a separately approved schema change.
 
 ## Reversal
 
