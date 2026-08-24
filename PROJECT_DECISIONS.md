@@ -1339,3 +1339,33 @@ sample floors, and measured calibration exist. Austin has no later AVM phase
 under the current source contract. No LLM performs valuation math.
 
 **Architecture:** `features/property-valuation/FEATURE_ARCHITECTURE.md`.
+
+---
+
+## Decision 67: Exposure-First Instrument Families Before Dynamic Scoring (2026-08-24)
+
+**Status:** Approved; P0/P1 measurement implemented
+
+**Decision.** Replace the assumption that all symbols can be evaluated as the
+same economic object with a deterministic, versioned `market × instrument_family
+× setup × horizon` hierarchy. Model the exposure first and select a tradable
+vehicle later. GLD/IAU are one gold exposure; GDX is a miner fund; operating
+miners and royalty/streaming companies retain applicable company evidence.
+Known India ETFs are not operating companies. New family inputs and uncapped
+comparisons remain measure-only until market-local evidence and owner promotion.
+
+**Reason.** The universal fund cap caused structurally different instruments to
+cluster at 65 and made repeated same-day/substitute rows look like independent
+evidence. A model per ticker would solve that by overfitting. Family-local,
+exposure-deduplicated validation is the smallest defensible learning unit.
+
+**Rejected.** Immediate cap removal, hand-selected family weights, LLM-controlled
+classification, pooling US/India outcomes, treating GLD and IAU as independent
+trials, or activating a metal composite from retrospective stories.
+
+**Reversal cost.** Low while measurement-only: stop new writes and retain the
+immutable audit rows. High only after a later owner promotion, which must carry
+its own rollback champion and acceptance evidence.
+
+**Architecture:** `features/instrument-aware-scoring/FEATURE_ARCHITECTURE.md`.
+**Implementation:** `features/instrument-aware-scoring/IMPLEMENTATION_RESULT.md`.

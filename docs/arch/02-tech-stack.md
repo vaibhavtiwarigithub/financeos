@@ -153,6 +153,7 @@ Design + open decisions: `features/webull-trading-api/FEATURE_ARCHITECTURE.md`.
 | Provider | What it provides | Auth |
 |---|---|---|
 | Alpha Vantage (AV) | Technicals (RSI, EMA, MA), 8 macro indicators; **last-resort** fundamentals/insider fallback (25/day cap, usually exhausted) | `ALPHA_VANTAGE_API_KEY` in vault |
+| FRED | Official/free US macro series. MacroSentinel uses its established series; instrument-family measurement additionally reads `DFII10` (10-year real yield) and `DTWEXBGS` (broad dollar) through the shared day cache. The new values are measure-only and never enter v1 scoring or trading. | `FRED_API_KEY` in server environment |
 | Finnhub | **PRIMARY domestic-US fundamentals** — `/stock/metric` (P/E, net margin, ROE, EPS, revenue growth) + `/stock/profile2` (sector), mapped to AV-OVERVIEW shape in `lib/data/fundamentals.ts:fetchFinnhubOverview`. Metric cache is event-aware (1/7d); profile cache is 30d. Reviewed ADRs bypass Finnhub because it can resolve the foreign underlying. Free 60/min, no daily cap | `FINNHUB_API_KEY` in Vercel env |
 | Massive Market Data | **FALLBACK US candles** (was primary; demoted 2026-07-22), stock screener, options, quotes; **PRIMARY US insider** — `/stocks/filings/vX/form-4` open-market P/S transaction scoring (`lib/data/massive-insider.ts`) | `MASSIVE_API_KEY` in vault |
 | Yahoo Finance (fundamentals) | **SECONDARY domestic US + PRIMARY India + PRIMARY reviewed ADR fundamentals** — `quoteSummary` (crumb handshake) → AV-OVERVIEW shape via `fetchIndiaOverview` (market-agnostic: margin, ROE, revenue growth, P/E, sector). ADRs fail unavailable if Yahoo is thin; Kairos never mixes a foreign-underlying per-share response with a USD ADS price. Unofficial — cached, paced + fail-soft | None (crumb) |
@@ -174,6 +175,12 @@ Design + open decisions: `features/webull-trading-api/FEATURE_ARCHITECTURE.md`.
 | StockTwits | Social sentiment for US tickers | (check vault) |
 | WandB | Experiment tracking (optional) | `WANDB_API_KEY` in `.env.local` |
 | Robinhood MCP | JSON-RPC tool bridge for Robinhood agentic account | OAuth token in vault |
+
+**Instrument-family measurement (2026-08-24):** `lib/scoring/instrument-family-evidence.ts`
+reuses the existing FRED cache and settled `price_cache` rows for GLD, SLV and
+GDX. It makes no Alpha Vantage call and introduces no paid provider. Each value
+stores source, as-of date and freshness status. Provider failure produces missing
+measurement evidence and cannot block the canonical ResearchAgent decision.
 
 ---
 

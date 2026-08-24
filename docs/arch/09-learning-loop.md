@@ -428,6 +428,23 @@ stock with no fills and no cash. This is a free dress rehearsal — the Challeng
 simulated track record before any promotion decision. Off by default. Activated per Challenger
 in the Strategy Registry.
 
+### Instrument-family challengers (2026-08-24)
+
+Family learning is hierarchical, not per ticker: `market × instrument_family ×
+setup × horizon`. ResearchAgent records one uncapped-v1 shadow comparison for
+special fund families and stores raw family drivers separately. Diagnostics first
+collapse repeated symbol/session rows, then collapse substitute vehicles to one
+`exposure_id × market session`; GLD and IAU therefore contribute one gold sample,
+not two. US and India never pool evidence.
+
+The initial readiness floor is 60 independent exposure-sessions, at least 30
+clean out-of-sample forward observations at a declared horizon, and non-degenerate
+prediction variance. Passing these counts only permits IC/cost/calibration review;
+it does not promote a score. Family benchmark alignment, overlapping-horizon
+uncertainty, net-of-cost results, isolated exploratory paper, and explicit owner
+promotion remain mandatory. Current production cohorts are below the floor, so
+the correct state is abstention, not an automatically generated composite.
+
 ---
 
 ## Feature Registry

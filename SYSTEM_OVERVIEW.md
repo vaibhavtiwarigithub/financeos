@@ -34,6 +34,9 @@ Dashboard -> Agents is the single source for agent-to-agent edges and history.
   explicit conditions rather than silently fabricated data.
 - Shadows and historical replay are observation systems until their own evidence and
   approval gates are satisfied.
+- Research first classifies economic exposure and instrument family. Substitute
+  vehicles count as one idea in evaluation, and family-specific evidence remains
+  shadow-only until separate US/India validation and owner promotion.
 - The exogenous-risk foundation records future India domestic and global-spillover
   evidence only. It has no source adapter or decision consumer; missing evidence is
   unavailable rather than neutral.

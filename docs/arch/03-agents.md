@@ -1,4 +1,9 @@
 # Kairos — Agents
+> 2026-08-24 instrument-family measurement: ResearchAgent now stamps a versioned
+> market/family/exposure classification on every decision, records dated metals
+> drivers in a separate append-only measurement ledger, and writes an uncapped
+> family shadow comparison for structurally special funds. None of these fields
+> changes v1 scoring, paper/live eligibility, sizing, exits, or orders.
 > 2026-08-02 earnings-date validation normalized: all earnings collectors (the
 > `earnings_calendar` cache, Finnhub/Yahoo-India base, Webull, Robinhood, and
 > `fetchIndiaEarningsDate`) now route through the one shared parser
@@ -56,6 +61,7 @@ arrows exist.
 | `agent_signals` | ResearchAgent, DeepSeekAgent | PaperTrader, TraderAgent, Dashboard |
 | `signal_score_history` | ResearchAgent | ResearchAgent (trend), Dashboard charts |
 | `decision_observations` | ResearchAgent | LearnerAgent, Validation Engine, PerformanceTruth |
+| `instrument_family_observations` | ResearchAgent | Owner-only family diagnostics; no scoring, paper, live, sizing, exit, learner-promotion, or broker consumer |
 | `edge_signals` | EdgeScout | ResearchAgent (**US candidate admission only**; fresh relative-strength provenance only), EdgeIC, Edge dashboard |
 | `paper_positions` | PaperTrader | PositionMonitor, LearnerAgent, Dashboard |
 | `paper_trades` | PaperTrader, PositionMonitor | LearnerAgent, MentorAgent, PerformanceTruth, **lane-comparison API** (closed trades → strategy lane NAV curves + Monte Carlo) |
@@ -323,6 +329,19 @@ analyst_score = Σ (dimension_score × effective_weight[dimension])
 Missing/inapplicable dimensions are EXCLUDED and the remaining weights renormalized to sum to 1.0 (`lib/scoring/weighted-score.ts`); `< 2` usable dimensions → abstain (thin evidence), never a low score. Weight source: this market's promoted champion `weights_snapshot`; if none exists, the selected risk-profile static weights; if the profile is invalid, balanced F.30/T.25/S.20/M.15/I.10. The mandate's strategy tilt is then applied. The legacy `signal_weights` and `learning_priors` tables are not live-score fallbacks.
 
 **ETF score cap (2026-07-22):** ETFs exclude fundamental + insider dimensions; after renorm, technical carries ~62% weight. Low-volatility ETFs (SGOV, VTV, SCHD) were scoring 77–80 — above single-name equities — and the capital-rotation shadow proposed selling PLTR to buy SGOV. A hard cap of `ETF_SCORE_CAP = 65` is applied post-computation in both `lib/research-agent.ts` (main analystScore + challenger shadowScore) and `lib/scoring/archetypes.ts` (`computeArchetypeScore` for `etf_trend`). ETFs can still surface as SELL targets for held positions and can enter the book up to score 65; they cannot displace an equity candidate scoring ≥ 66.
+
+**Instrument-family measurement (2026-08-24):** the universal cap remains the
+actionable v1 rule, but it is not treated as proven for every fund. The deterministic
+`instrument-taxonomy.v1` separates bullion, silver, miner funds, metal producers,
+royalty/streamers, common fund families, known India ETFs, leveraged/inverse funds,
+and unknowns. GLD/IAU share `gold_spot`; GDX is `gold_miners_fund`; KGC is a
+producer; FNV is a royalty/streamer. ResearchAgent persists this point-in-time
+classification under `decision_observations.features.instrument` and appends a
+measure-only family row. Metals additionally record FRED `DFII10`, FRED
+`DTWEXBGS`, and settled GLD/SLV/GDX relationships with source/as-of/status.
+The dedicated shadow row `family_uncapped_v1:<family>` measures cap information
+loss only. The LLM cannot classify, score, promote, or trade from these fields.
+The Research Journal displays them separately from the v1 quant audit.
 
 **Indicative trade plan (2026-07-20):** ResearchAgent now records the latest
 scoring-candle close in `decision_observations.price_at_decision` and a versioned

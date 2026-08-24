@@ -16,12 +16,12 @@
     },
     "RESEARCH": {
       "label": "ResearchAgent",
-      "description": "Runs per market and is the sole authoritative scorer. Provider-normalized daily candles are filtered to completed regular sessions before scoring/evidence/trade plans. Scores each symbol only across structurally applicable and available evidence using market-local champion weights. Fundamentals use event-aware 1/7-day freshness from one earnings-calendar batch read; profiles use 30 days. Reviewed ADRs such as SKHY persist separately, skip Form 4, and use ADS-compatible Yahoo fundamentals without foreign-underlying fallthrough. FinancialDatasets is supplemental US discovery only: provider failures alert System Health and fall back to holdings/watchlist/carry-forward queues without changing score inputs. Webull research stays in the Evidence Router shadow and is never called inline per symbol. India sentiment is currently excluded after the zero-output GDELT path was retired; NSE/Google replacement evidence is shadow-only. Provider taxonomies are stamped; unknown mappings and invalid P/E values are omitted. Only ATR-scaled or high-volume declines can hard-veto. Holdings are staleness-ordered. LLM narrative cannot alter scores or directions. India never inherits US macro. Writes agent_signals, signal_score_history, and decision observations.",
+      "description": "Runs per market and is the sole authoritative scorer. Provider-normalized daily candles are filtered to completed regular sessions before scoring/evidence/trade plans. Scores each symbol only across structurally applicable and available evidence using market-local champion weights. Fundamentals use event-aware 1/7-day freshness from one earnings-calendar batch read; profiles use 30 days. Reviewed ADRs such as SKHY persist separately, skip Form 4, and use ADS-compatible Yahoo fundamentals without foreign-underlying fallthrough. FinancialDatasets is supplemental US discovery only: provider failures alert System Health and fall back to holdings/watchlist/carry-forward queues without changing score inputs. Webull research stays in the Evidence Router shadow and is never called inline per symbol. India sentiment is currently excluded after the zero-output GDELT path was retired; NSE/Google replacement evidence is shadow-only. Provider taxonomies are stamped; unknown mappings and invalid P/E values are omitted. Only ATR-scaled or high-volume declines can hard-veto. Holdings are staleness-ordered. LLM narrative cannot alter scores or directions. India never inherits US macro. Since 2026-08-24, every decision also carries deterministic family/exposure taxonomy; special metal/fund families append dated measure-only evidence and an uncapped shadow comparison. Those records have no score, paper, live, sizing, exit, promotion, or broker consumer. Writes agent_signals, signal_score_history, decision observations, and instrument_family_observations.",
       "addedAt": "2026-06-25",
       "addReason": "Central scoring engine — everything downstream keys off its analyst_score.",
       "status": "changed",
-      "changedAt": "2026-07-06",
-      "changeReason": "Research Journal — wired signal_id through and added screener/stage instrumentation (Decision 40).",
+      "changedAt": "2026-08-24",
+      "changeReason": "Decision 67: versioned instrument-family/exposure taxonomy plus append-only family evidence and uncapped shadow measurement; no actionable score or money-path change.",
       "removedAt": null,
       "removeReason": null
     },
@@ -1544,6 +1544,13 @@
       "nodeId": "BENCHALPHA",
       "label": "Benchmark observations carry their own market session",
       "reason": "W5. Both writers accepted any positive benchmark quote — ignoring stale, source and true session — and labelled it with the cron run date: bench_nav 708.42 is VOO's 2026-08-11 close and is stored under BOTH 2026-08-12 and 2026-08-13, so every US relative-performance figure joined a portfolio close to a benchmark close from a different day. Levels now come from session-dated daily bars via lib/paper/benchmark-observation.ts, persist the bar's own date and provider, and are written only when the bar's session equals the row's date. The scorecard marks a proven mismatch source_status='session_mismatch' (excluded, since loadBenchmarkLevels reads only 'ok') and clamps displayed coverage to 100%."
+    },
+    {
+      "date": "2026-08-24",
+      "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "Instrument-family evidence becomes an explicit measure-only ResearchAgent output",
+      "reason": "Decision 67 adds deterministic market/family/exposure taxonomy, dated FRED real-yield and dollar measurements plus settled GLD/SLV/GDX relationships for metal families, an immutable instrument_family_observations ledger, and an uncapped family shadow comparison. This is an output-contract change but not a new agent-to-agent topology edge: only the owner diagnostics route and Research Journal read it, and no score, paper, live, sizing, exit, promotion or broker path does. Same-session runs and substitute vehicles collapse before evidence counts; US and India never pool."
     }
   ]
 }

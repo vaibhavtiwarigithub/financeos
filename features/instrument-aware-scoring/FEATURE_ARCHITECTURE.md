@@ -1,6 +1,6 @@
 # Instrument-Aware Research and Scoring
 
-**Status:** Approved; measurement foundation in build
+**Status:** Approved; P0/P1 measurement implemented
 **Owner:** Vaibhav
 **Architect/Builder:** Codex / GPT-5
 **Date:** 2026-08-24
@@ -130,7 +130,8 @@ No performance claim is made until forward evidence exists.
 P0/P1 measurement is shipped: deterministic taxonomy, immutable family evidence,
 an owner-only bounded diagnostics route, uncapped family shadow decisions, and
 Research Journal disclosure. Migrations `20260824183930` and `20260824185010`
-are applied and verified in the FinanceOS project. The second migration backfills
+and hardening migration `20260824190302` are applied and verified in the FinanceOS
+project. The second migration backfills
 only deterministic taxonomy; it deliberately does not reconstruct historical
 feature values.
 
@@ -141,3 +142,6 @@ rates are about 47% for bullion and 61% for miner/silver funds. India has no
 qualifying historical curated-fund cohort in this ledger yet. These are diagnostic
 facts, not evidence of edge; every family remains below the 60-exposure-session
 floor and the new features remain non-actionable.
+
+Delivered behavior and verified deviations are recorded in
+`features/instrument-aware-scoring/IMPLEMENTATION_RESULT.md`.

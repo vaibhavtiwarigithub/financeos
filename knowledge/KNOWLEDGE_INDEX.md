@@ -2,8 +2,8 @@
 
 > **For AI Agents:** This is your long-term memory. Read relevant sections before making any prediction or trade decision. Update confidence scores as predictions resolve. The goal: accumulate genuine market understanding, not just rules.
 
-Last updated: 2026-07-01
-Knowledge entries: 9 files | Predictions resolved: 0 | Avg confidence: â€”
+Last updated: 2026-08-24
+Knowledge entries: 10 files | Predictions resolved: 0 | Avg confidence: â€”
 
 ---
 
@@ -20,6 +20,7 @@ Knowledge entries: 9 files | Predictions resolved: 0 | Avg confidence: â€”
 | [firm-blueprints/what-actually-works.md](firm-blueprints/what-actually-works.md) | Distilled lessons from Renaissance, Two Sigma, D.E. Shaw, Man AHL, LTCM | HIGH â€” sourced from verified research | 2026-06-01 |
 | [market-mechanics/regime-detection.md](market-mechanics/regime-detection.md) | How to detect bull/bear/choppy regimes, D.E. Shaw 3-state model | HIGH | 2026-06-01 |
 | [market-mechanics/risk-management.md](market-mechanics/risk-management.md) | Kelly criterion, volatility targeting, LTCM failure modes to avoid | HIGH | 2026-06-01 |
+| [market-mechanics/instrument-family-scoring.md](market-mechanics/instrument-family-scoring.md) | Exposure-first US/India taxonomy; bullion/miner/producer/streamer evidence and promotion discipline | POLICY — implementation evidence remains measure-only | 2026-08-24 |
 
 ### Signal Library (agent reads before scoring)
 | File | Topic | Confidence | Sample Size |

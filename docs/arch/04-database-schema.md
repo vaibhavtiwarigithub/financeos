@@ -408,6 +408,30 @@ Immutable ledger of EVERY scored candidate (even ones not traded). The learning 
 An update/delete trigger makes the table append-only. Research-time
 `features.trade_plan` is indicative only; PaperTrader re-prices from its fill.
 
+### `instrument_family_observations`
+
+Append-only, measure-only family evidence linked one-to-one to a canonical
+`decision_observations` row (migrations `20260824183930`, `20260824185010`,
+`20260824190302`). It is not an alternative decision ledger.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigserial PK | |
+| `observation_id` | bigint UNIQUE FK | References `decision_observations(id)` without a cascading delete. |
+| `market`, `symbol` | text | US and India remain separate. |
+| `instrument_family` | text | Versioned deterministic family, never an LLM label. |
+| `exposure_id` | text | Economic exposure used to collapse substitutes such as GLD/IAU. |
+| `taxonomy_version`, `feature_version` | text | Reproducible classifier/evidence contract. Historical taxonomy-only rows state that explicitly. |
+| `benchmark_symbol` | text nullable | Family comparison reference; null means unavailable, not cash/zero. |
+| `features` | jsonb object | Source/as-of/status/value fields; empty on taxonomy-only backfill. |
+| `lifecycle` | text | DB-constrained to `measure_only`. |
+| `created_at` | timestamptz | Append timestamp. |
+
+RLS permits authenticated read and no browser write. Service-role retains INSERT
+only; UPDATE, DELETE and TRUNCATE are revoked. Row and statement triggers block
+UPDATE/DELETE and TRUNCATE independently. No paper, live, sizing, exit, policy or
+broker path reads this table.
+
 ### `research_packets`
 Full research context per run (for debug + audit).
 
@@ -1190,6 +1214,7 @@ Append-only per-account roll-up — one row per run (UNIQUE `(run_id)`; FK → `
 | 20260721130000 | **Router evidence hardening** (still shadow-only): `evidence_policy_evaluations` gains immutable `safety_pass`, `quality_pass`, and `market_session_date`; one inactive `router_enabled=true` candidate per market copies the current active rule set so evidence binds the exact future candidate without moving the active pointer; the bound activation RPC requires both verdicts plus ten distinct passing market sessions in the prior 45 days and a still-fresh selected evaluation. Adds daily cache-only cohort crons. Production stays on disabled baselines. |
 | 20260721164500 | Router cohort session-source clarification: `market_session_date` is sourced from executable ResearchAgent rows (`session_validated=true`, `as_of_session`), not candidate candle availability. Missing India bars therefore persist as failed coverage evidence instead of crashing the evaluator; weekend/holiday staged rows cannot count. |
 | 20260731210000 | **Market-local US schedules + India news shadow:** replaces five fixed-UTC US jobs with paired seasonal UTC schedules carrying exact New York `local_slot` contracts; adds daily post-close `kairos-india-news-shadow`. No new table: shadow payloads reuse `evidence_cache_v2` intents `sentiment.news_headlines_shadow` / `event.corporate_announcement_shadow`, and exact call accounting reuses append-only `provider_call_ledger` run IDs prefixed `india-news-shadow:`. No decision consumer. |
+| 20260824183930–20260824190302 | **Instrument-family measurement:** creates `instrument_family_observations`, backfills deterministic curated taxonomy without reconstructed features, then independently blocks TRUNCATE and removes service-role destructive grants. Owner diagnostics only; no decision or money-path consumer. |
 
 ### Capital rotation containment (20260722185000)
 
