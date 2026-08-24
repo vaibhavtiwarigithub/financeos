@@ -178,6 +178,7 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
                     {scope === "all" && <span style={{ color: T.textSub, fontSize: "10px", border: `1px solid ${T.border}`, padding: "3px 7px", borderRadius: "999px" }}>{s.observed_date}</span>}
                     <span style={{ color: T.muted, fontSize: "10px", border: `1px solid ${T.border}`, padding: "3px 7px", borderRadius: "999px" }}>{s.identity.asset_label}</span>
                     {s.identity.instrument_kind && <span title={`Observed classification (${s.identity.classification_source ?? "unknown source"}); it does not change scoring or trading.`} style={{ color: T.blue, fontSize: "10px", border: `1px solid ${T.blue}`, padding: "3px 7px", borderRadius: "999px" }}>{titleCase(s.identity.instrument_kind)} · observe</span>}
+                    {s.identity.instrument_family && <span title={`Versioned family: ${s.identity.taxonomy_version ?? "unknown"}. Exposure: ${s.identity.exposure_id ?? "unknown"}.`} style={{ color: T.amber, fontSize: "10px", border: `1px solid ${T.amber}77`, padding: "3px 7px", borderRadius: "999px" }}>{titleCase(s.identity.instrument_family)} · measure only</span>}
                     <span style={{ color: s.history.state === "new" ? T.blue : s.history.state === "holding" ? T.green : T.muted, fontSize: "10px", border: `1px solid currentColor`, padding: "3px 7px", borderRadius: "999px" }}>{titleCase(s.history.state)}</span>
                   </div>
                   <div style={{ marginTop: "7px", color: ac, fontWeight: 800, fontSize: "13px", letterSpacing: ".04em" }}>{s.novice.action}</div>
@@ -338,6 +339,20 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
                   Inapplicable here: {featureAudit.inapplicable.map(feature => feature.label).join(", ")}.
                 </div>}
               </section>
+
+              {s.instrument_family_evidence && <section style={{ background: T.surface, border: `1px solid ${T.blue}55`, borderRadius: "9px", padding: "12px", marginBottom: "14px" }}>
+                <div style={{ color: T.blue, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: "6px" }}>Family-specific evidence · measurement only</div>
+                <div style={{ color: T.textSub, fontSize: "11px", lineHeight: 1.5, marginBottom: "8px" }}>
+                  Exposure {s.identity.exposure_id ?? "unknown"}{s.identity.benchmark_symbol ? ` · benchmark ${s.identity.benchmark_symbol}` : ""}. These fields earned zero points and could not authorize this decision.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "7px" }}>
+                  {Object.entries(s.instrument_family_evidence.features ?? {}).map(([name, raw]: [string, any]) => <div key={name} style={{ border: `1px solid ${T.border}`, borderRadius: "7px", padding: "8px" }}>
+                    <div style={{ color: T.muted, fontSize: "9px", textTransform: "uppercase" }}>{name.replaceAll("_", " ")}</div>
+                    <div style={{ color: raw?.status === "ok" ? T.text : T.amber, fontSize: "13px", fontWeight: 700, marginTop: "3px" }}>{raw?.value ?? "Unavailable"} · {raw?.status ?? "missing"}</div>
+                    <div style={{ color: T.muted, fontSize: "9px", marginTop: "2px" }}>{raw?.source ?? "source unavailable"} · as of {formatDate(raw?.asOf)}</div>
+                  </div>)}
+                </div>
+              </section>}
 
               <div style={{ color: T.muted, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: "7px" }}>Quant audit · how the available-evidence score was built</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "8px", marginBottom: "14px" }}>

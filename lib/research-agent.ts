@@ -21,6 +21,8 @@ import { readDeferredCandidates, applyCandidateCarryForward } from "@/lib/resear
 import { fetchRelativeStrengthCandidates, type RelativeStrengthDiscoveryContext } from "@/lib/research/relative-strength-discovery";
 import { ETF_SCORE_CAP, routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
 import { classifyInstrument, persistInstrumentClassification } from "@/lib/scoring/instrument-registry";
+import { classifyInstrumentPolicy } from "@/lib/scoring/instrument-taxonomy";
+import { loadInstrumentFamilyEvidence } from "@/lib/scoring/instrument-family-evidence";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
@@ -1751,6 +1753,21 @@ export async function processSymbol(
     market,
     isAdr: isReviewedAdr(symbol),
   });
+  const fundamentalEvidence = (scores.evidence as any)?.fundamental ?? {};
+  const instrumentPolicy = classifyInstrumentPolicy({
+    symbol,
+    market,
+    isAdr: isReviewedAdr(symbol),
+    sector: fundamentalEvidence.sector ?? null,
+    industry: fundamentalEvidence.industry ?? null,
+  });
+  // Starts alongside the configuration reads below. The result is immutable,
+  // measure-only evidence and is never consumed by v1 score/direction/trading.
+  const familyEvidencePromise = loadInstrumentFamilyEvidence(
+    supabase,
+    instrumentPolicy,
+    scores.technical_score,
+  ).catch(() => null);
   const instrumentRegistryWrite = persistInstrumentClassification(supabase, instrument)
     .catch((error) => console.error("[research-agent] instrument registry write failed:", error instanceof Error ? error.message : error));
   const tradingMandate = await loadTradingMandate(supabase, market);
@@ -2437,6 +2454,7 @@ export async function processSymbol(
     const evidenceConfidence = applicableWeight > 0
       ? Number((presentWeight / applicableWeight).toFixed(4))
       : null;
+    const instrumentFamilyEvidence = await familyEvidencePromise;
 
     const { data: obsRow, error: obsErr } = await supabase.from("decision_observations").insert({
       market,
@@ -2454,11 +2472,17 @@ export async function processSymbol(
           confidence: instrument.confidence,
           review_status: "observe",
           new_entry_allowed: false,
+          family: instrumentPolicy.family,
+          exposure_id: instrumentPolicy.exposureId,
+          benchmark_symbol: instrumentPolicy.benchmarkSymbol,
+          taxonomy_version: instrumentPolicy.version,
+          score_mode: instrumentPolicy.scoreMode,
         },
         ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}), ...(discovery ? { discovery } : {}),
         weighting: { renormalized, included_dims: includedDims, base_weights: weightOf, applied_weights: effWeights },
         trading_mandate: tradingMandate,
         trade_plan: tradePlan,
+        ...(instrumentFamilyEvidence ? { instrument_family_evidence: instrumentFamilyEvidence } : {}),
         ...(measuredFeatureValues ? { measured_feature_values: measuredFeatureValues } : {}),
         // Analyst consensus (Finnhub) — LOGGED evidence for the learner to grade,
         // not fed into the live weighted score yet (see fetch site).
@@ -2519,6 +2543,27 @@ export async function processSymbol(
       console.error("[research-agent] decision_observations insert failed:", obsErr.message);
     }
     insertedObsId = obsRow?.id ?? null;
+
+    // Dedicated append-only measurement row for bounded family diagnostics.
+    // This table is not read by paper/live execution and its absence must not
+    // block the canonical decision_observations write during migration rollout.
+    if (insertedObsId && instrumentPolicy.scoreMode === "measure_only") {
+      const { error: familyObsError } = await supabase.from("instrument_family_observations").insert({
+        observation_id: insertedObsId,
+        market,
+        symbol,
+        instrument_family: instrumentPolicy.family,
+        exposure_id: instrumentPolicy.exposureId,
+        taxonomy_version: instrumentPolicy.version,
+        feature_version: instrumentFamilyEvidence?.version ?? "taxonomy-only.v1",
+        benchmark_symbol: instrumentPolicy.benchmarkSymbol,
+        features: instrumentFamilyEvidence?.features ?? {},
+        lifecycle: "measure_only",
+      });
+      if (familyObsError && !/does not exist|could not find/i.test(familyObsError.message ?? "")) {
+        console.error("[research-agent] instrument family observation insert failed:", familyObsError.message);
+      }
+    }
 
     // Research Journal (Phase: pipeline instrumentation) — one stage event per
     // candidate scored. Fail-soft: never blocks the actual research decision.
@@ -2613,6 +2658,22 @@ export async function processSymbol(
         });
         if (archetypeRows.length > 0) {
           await supabase.from("shadow_decisions").insert(archetypeRows);
+        }
+
+        // The universal ETF cap makes the champion score nearly constant for
+        // metal funds. Record the uncapped v1 output as a named challenger so
+        // forward evaluation can measure whether the cap destroys ranking
+        // information. This remains shadow-only and cannot reach execution.
+        if (instrumentPolicy.scoreMode === "measure_only") {
+          await supabase.from("shadow_decisions").insert({
+            market,
+            symbol,
+            observation_id: obsRow.id,
+            policy_version_id: null,
+            would_enter: rawAnalystScore >= (scoreThreshold ?? 60),
+            score: rawAnalystScore,
+            setup_type: `family_uncapped_v1:${instrumentPolicy.family}`,
+          });
         }
       } catch (e) { console.error("[research-agent] archetype shadow write threw:", e); }
     }

@@ -281,7 +281,6 @@ export async function GET(req: NextRequest) {
     const signal = signalById.get(obs.signal_id) as any;
     const packet = packetById.get(signal?.research_packet_id) as any;
     const assetType = classifyJournalAsset(obs.symbol, signal?.asset_class);
-    const isFund = assetType === "etf" || assetType === "metal_fund";
     // Instrument classification is captured at research time. Do not infer it
     // here for historical observations: the journal must show what the run knew.
     const observedInstrument = obs.features?.instrument;
@@ -294,8 +293,15 @@ export async function GET(req: NextRequest) {
         confidence: typeof observedInstrument.confidence === "string" ? observedInstrument.confidence : null,
         reviewStatus: typeof observedInstrument.review_status === "string" ? observedInstrument.review_status : null,
         newEntryAllowed: observedInstrument.new_entry_allowed === true,
+        family: typeof observedInstrument.family === "string" ? observedInstrument.family : null,
+        exposureId: typeof observedInstrument.exposure_id === "string" ? observedInstrument.exposure_id : null,
+        benchmarkSymbol: typeof observedInstrument.benchmark_symbol === "string" ? observedInstrument.benchmark_symbol : null,
+        taxonomyVersion: typeof observedInstrument.taxonomy_version === "string" ? observedInstrument.taxonomy_version : null,
+        scoreMode: typeof observedInstrument.score_mode === "string" ? observedInstrument.score_mode : null,
       }
       : null;
+    const isFund = assetType === "etf" || assetType === "metal_fund"
+      || Boolean(instrument?.family && (instrument.family.endsWith("_etf") || instrument.family.endsWith("_fund")));
     const weighting = obs.features?.weighting ?? {};
     const quality = obs.features?.quality ?? {};
     const rationale = signal?.rationale ?? packet?.summary ?? null;
@@ -452,10 +458,16 @@ export async function GET(req: NextRequest) {
         classification_confidence: instrument?.confidence ?? null,
         review_status: instrument?.reviewStatus ?? null,
         new_entry_allowed: instrument?.newEntryAllowed ?? null,
+        instrument_family: instrument?.family ?? null,
+        exposure_id: instrument?.exposureId ?? null,
+        benchmark_symbol: instrument?.benchmarkSymbol ?? null,
+        taxonomy_version: instrument?.taxonomyVersion ?? null,
+        score_mode: instrument?.scoreMode ?? null,
         description: isFund ? "Fund exposure; issuer profile and holdings were not stored with this historical decision."
           : dimensions.fundamental.evidence?.sector ? `${assetLabel(assetType)} in the ${dimensions.fundamental.evidence.sector} sector.`
           : `${assetLabel(assetType)}; business description was not stored with this historical decision.`,
       },
+      instrument_family_evidence: obs.features?.instrument_family_evidence ?? null,
       history: {
         state: discoveryState, observations_in_window: history.length,
         first_seen: earliest?.ts ?? obs.ts, capped: historyCapped,
