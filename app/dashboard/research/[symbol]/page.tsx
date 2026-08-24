@@ -15,23 +15,20 @@ interface Candle {
   open: number; high: number; low: number; close: number; volume: number;
 }
 
-interface Trade {
+interface DecisionTradeEvent {
   id: string;
-  order_side: string;
-  fill_price: number;
-  entry_price: number | null;
-  exit_price: number | null;
-  executed_at: string;
-  exit_at: string | null;
+  venue: "paper" | "live";
+  stage: "proposal" | "order" | "fill";
+  side: "buy" | "sell";
+  status: string;
+  occurred_at: string;
+  qty: number | null;
+  price: number | null;
+  is_execution: boolean;
   realized_pnl_pct: number | null;
-  fundamental_score: number | null;
-  technical_score: number | null;
-  sentiment_score: number | null;
-  macro_score: number | null;
   analyst_score: number | null;
-  direction: string | null;
-  rationale: string | null;
-  exit_reason: string | null;
+  scores: { fundamental: number | null; technical: number | null; sentiment: number | null; macro: number | null } | null;
+  reason: string | null;
 }
 
 interface Overview {
@@ -141,16 +138,18 @@ export default function DeepDivePage() {
   const params = useParams();
   const router = useRouter();
   const symbol = (typeof params.symbol === "string" ? params.symbol : "").toUpperCase();
+  const market = /\.(NS|BO)$/i.test(symbol) ? "india" : "us";
+  const currency = market === "india" ? "₹" : "$";
 
   const [window, setWindow] = useState<Window>("1Y");
   const [compareSymbols, setCompareSymbols] = useState<string[]>([]);
   const [compareInput, setCompareInput] = useState("");
   const [compareData, setCompareData] = useState<Record<string, Candle[]>>({});
   const [activeTab, setActiveTab] = useState<"price" | "fundamentals" | "scores">("price");
-  const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<DecisionTradeEvent | null>(null);
 
   const [candles, setCandles] = useState<Candle[]>([]);
-  const [trades, setTrades] = useState<Trade[]>([]);
+  const [tradeEvents, setTradeEvents] = useState<DecisionTradeEvent[]>([]);
   const [overview, setOverview] = useState<Overview>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -163,18 +162,19 @@ export default function DeepDivePage() {
     const days = WINDOW_DAYS["All"]; // fetch max, filter client-side
     Promise.all([
       fetch(`/api/research/price?symbol=${symbol}&days=${days}`).then(r => r.json()),
-      fetch(`/api/research/trades?symbol=${symbol}`).then(r => r.json()),
+      fetch(`/api/research/trades?symbol=${symbol}&market=${market}`).then(r => r.json()),
       fetch(`/api/research/fundamentals?symbol=${symbol}`).then(r => r.json()),
     ])
       .then(([priceData, tradeData, fundData]) => {
         if (priceData.error) throw new Error(priceData.error);
         setCandles(priceData.candles ?? []);
-        setTrades(tradeData.trades ?? []);
+        if (tradeData.error) throw new Error(tradeData.error);
+        setTradeEvents(tradeData.events ?? []);
         setOverview(fundData.overview ?? {});
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  }, [symbol]);
+  }, [symbol, market]);
 
   // Fetch compare symbol data
   useEffect(() => {
@@ -251,28 +251,29 @@ export default function DeepDivePage() {
 
   // Trade markers on the price chart
   const tradeMarkers = useMemo(() => {
-    return trades
+    return tradeEvents
+      .filter(t => t.is_execution && t.stage === "fill")
       .filter(t => {
-        const d = t.executed_at?.split("T")[0];
+        const d = t.occurred_at?.split("T")[0];
         return d && windowed.some(c => c.date === d || c.date > d);
       })
       .map(t => ({
-        date: t.executed_at?.split("T")[0],
-        side: t.order_side,
-        price: t.fill_price ?? t.entry_price,
+        date: t.occurred_at?.split("T")[0],
+        side: t.side,
+        price: t.price,
         scores: {
-          fundamental: t.fundamental_score,
-          technical: t.technical_score,
-          sentiment: t.sentiment_score,
-          macro: t.macro_score,
+          fundamental: t.scores?.fundamental ?? null,
+          technical: t.scores?.technical ?? null,
+          sentiment: t.scores?.sentiment ?? null,
+          macro: t.scores?.macro ?? null,
           analyst: t.analyst_score,
         },
         pnl: t.realized_pnl_pct,
-        rationale: t.rationale,
-        exit_reason: t.exit_reason,
+        rationale: t.reason,
+        exit_reason: t.side === "sell" ? t.reason : null,
         trade: t,
       }));
-  }, [trades, windowed]);
+  }, [tradeEvents, windowed]);
 
   if (!symbol) return <div className="p-6 text-muted-foreground">No symbol specified.</div>;
   if (loading) return <div className="p-6 text-muted-foreground">Loading {symbol}…</div>;
@@ -291,7 +292,7 @@ export default function DeepDivePage() {
         {overview.Sector && <span className="text-sm text-muted-foreground bg-muted px-2 py-0.5 rounded">{overview.Sector}</span>}
         {candles.length > 0 && (
           <span className="text-lg font-mono">
-            ${candles[candles.length - 1].close.toFixed(2)}
+            {currency}{candles[candles.length - 1].close.toFixed(2)}
             {candles.length > 1 && (
               <span className={`ml-2 text-sm ${candles[candles.length - 1].close >= candles[candles.length - 2].close ? "text-green-500" : "text-red-500"}`}>
                 {((candles[candles.length - 1].close / candles[candles.length - 2].close - 1) * 100).toFixed(2)}%
@@ -385,13 +386,13 @@ export default function DeepDivePage() {
                       return (
                         <div className="bg-popover border rounded p-2 text-xs shadow-lg">
                           <div className="font-mono font-semibold">{d.date}</div>
-                          <div>Close: <span className="font-mono">${d.close?.toFixed(2)}</span></div>
-                          {d.ema20 && <div>EMA20: <span className="font-mono">${d.ema20}</span></div>}
-                          {d.ema50 && <div>EMA50: <span className="font-mono">${d.ema50}</span></div>}
-                          {d.ema200 && <div>EMA200: <span className="font-mono">${d.ema200}</span></div>}
+                          <div>Close: <span className="font-mono">{currency}{d.close?.toFixed(2)}</span></div>
+                          {d.ema20 && <div>EMA20: <span className="font-mono">{currency}{d.ema20}</span></div>}
+                          {d.ema50 && <div>EMA50: <span className="font-mono">{currency}{d.ema50}</span></div>}
+                          {d.ema200 && <div>EMA200: <span className="font-mono">{currency}{d.ema200}</span></div>}
                           {marker && (
                             <div className={`mt-1 pt-1 border-t font-semibold ${marker.side === "buy" ? "text-green-500" : "text-red-500"}`}>
-                              {marker.side.toUpperCase()} @ ${marker.price?.toFixed(2)}
+                              {marker.side.toUpperCase()} @ {currency}{marker.price?.toFixed(2)}
                               {marker.pnl != null && <span className="ml-1">({marker.pnl > 0 ? "+" : ""}{marker.pnl?.toFixed(1)}%)</span>}
                             </div>
                           )}
@@ -463,32 +464,37 @@ export default function DeepDivePage() {
           </div>
 
           {/* Trade log */}
-          {trades.length > 0 && (
+          {tradeEvents.length > 0 && (
             <div className="rounded-lg border bg-card p-4">
-              <h2 className="text-sm font-semibold mb-3 text-muted-foreground">Trade History</h2>
+              <h2 className="text-sm font-semibold mb-1 text-muted-foreground">Decision &amp; Trade History</h2>
+              <p className="text-xs text-muted-foreground mb-3">A proposal is an app recommendation, not a trade. Only rows marked FILLED changed the paper or live portfolio.</p>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="text-muted-foreground border-b">
                       <th className="text-left py-1 pr-3">Date</th>
+                      <th className="text-left pr-3">Venue / stage</th>
                       <th className="text-left pr-3">Side</th>
+                      <th className="text-left pr-3">Status</th>
                       <th className="text-right pr-3">Price</th>
                       <th className="text-right pr-3">P&L%</th>
                       <th className="text-right pr-3">Score</th>
-                      <th className="text-left">Exit Reason</th>
+                      <th className="text-left">Reason</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {trades.map(t => (
+                    {tradeEvents.map(t => (
                       <tr key={t.id} className="border-b border-border/30 hover:bg-muted/30 cursor-pointer" onClick={() => setSelectedTrade(t === selectedTrade ? null : t)}>
-                        <td className="py-1 pr-3 font-mono">{t.executed_at?.split("T")[0]}</td>
-                        <td className={`pr-3 font-semibold ${t.order_side === "buy" ? "text-green-500" : "text-red-500"}`}>{t.order_side?.toUpperCase()}</td>
-                        <td className="text-right pr-3 font-mono">${(t.fill_price ?? t.entry_price ?? 0).toFixed(2)}</td>
+                        <td className="py-1 pr-3 font-mono">{t.occurred_at?.split("T")[0]}</td>
+                        <td className="pr-3 uppercase text-muted-foreground">{t.venue} · {t.stage}</td>
+                        <td className={`pr-3 font-semibold ${t.side === "buy" ? "text-green-500" : "text-red-500"}`}>{t.side.toUpperCase()}</td>
+                        <td className="pr-3 uppercase text-muted-foreground">{t.status.replaceAll("_", " ")}</td>
+                        <td className="text-right pr-3 font-mono">{t.price == null ? "—" : `${currency}${t.price.toFixed(2)}`}</td>
                         <td className={`text-right pr-3 font-mono ${(t.realized_pnl_pct ?? 0) >= 0 ? "text-green-500" : "text-red-500"}`}>
                           {t.realized_pnl_pct != null ? `${t.realized_pnl_pct > 0 ? "+" : ""}${t.realized_pnl_pct.toFixed(1)}%` : "—"}
                         </td>
                         <td className="text-right pr-3 font-mono">{t.analyst_score ?? "—"}</td>
-                        <td className="text-muted-foreground truncate max-w-[200px]">{t.exit_reason ?? "—"}</td>
+                        <td className="text-muted-foreground truncate max-w-[200px]">{t.reason ?? "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -497,14 +503,14 @@ export default function DeepDivePage() {
               {/* Trade detail expander */}
               {selectedTrade && (
                 <div className="mt-3 p-3 bg-muted rounded text-xs">
-                  <div className="font-semibold mb-2">Score breakdown at entry</div>
-                  <ScoreBar label="Fundamental" value={selectedTrade.fundamental_score} color="#6366f1" />
-                  <ScoreBar label="Technical" value={selectedTrade.technical_score} color="#f59e0b" />
-                  <ScoreBar label="Sentiment" value={selectedTrade.sentiment_score} color="#10b981" />
-                  <ScoreBar label="Macro" value={selectedTrade.macro_score} color="#8b5cf6" />
+                  <div className="font-semibold mb-2">{selectedTrade.stage === "proposal" ? "Proposal evidence" : "Recorded action detail"}</div>
+                  <ScoreBar label="Fundamental" value={selectedTrade.scores?.fundamental ?? null} color="#6366f1" />
+                  <ScoreBar label="Technical" value={selectedTrade.scores?.technical ?? null} color="#f59e0b" />
+                  <ScoreBar label="Sentiment" value={selectedTrade.scores?.sentiment ?? null} color="#10b981" />
+                  <ScoreBar label="Macro" value={selectedTrade.scores?.macro ?? null} color="#8b5cf6" />
                   <ScoreBar label="Analyst (weighted)" value={selectedTrade.analyst_score} color="#ef4444" />
-                  {selectedTrade.rationale && (
-                    <div className="mt-2 text-muted-foreground border-t pt-2">{selectedTrade.rationale}</div>
+                  {selectedTrade.reason && (
+                    <div className="mt-2 text-muted-foreground border-t pt-2">{selectedTrade.reason}</div>
                   )}
                 </div>
               )}
@@ -545,7 +551,7 @@ export default function DeepDivePage() {
       {/* ── Score History Tab ── */}
       {activeTab === "scores" && (
         <div className="flex flex-col gap-4">
-          {trades.length === 0 ? (
+          {tradeEvents.filter(t => t.scores && t.analyst_score != null).length === 0 ? (
             <div className="rounded-lg border bg-card p-8 text-center text-muted-foreground">
               No scored paper trades found for {symbol}.<br />
               <span className="text-xs mt-1 block">Scores are recorded at each research run that triggers a trade signal.</span>
@@ -556,13 +562,13 @@ export default function DeepDivePage() {
               <div className="rounded-lg border bg-card p-4">
                 <h2 className="text-sm font-semibold mb-3 text-muted-foreground">Score at Entry — History</h2>
                 <ResponsiveContainer width="100%" height={260}>
-                  <LineChart data={trades.filter(t => t.analyst_score != null).map(t => ({
-                    date: t.executed_at?.split("T")[0],
+                  <LineChart data={tradeEvents.filter(t => t.scores && t.analyst_score != null).slice().reverse().map(t => ({
+                    date: t.occurred_at?.split("T")[0],
                     "Analyst (weighted)": t.analyst_score,
-                    Fundamental: t.fundamental_score,
-                    Technical: t.technical_score,
-                    Sentiment: t.sentiment_score,
-                    Macro: t.macro_score,
+                    Fundamental: t.scores?.fundamental,
+                    Technical: t.scores?.technical,
+                    Sentiment: t.scores?.sentiment,
+                    Macro: t.scores?.macro,
                   }))}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.4} />
                     <XAxis dataKey="date" tick={{ fontSize: 10 }} />
@@ -581,19 +587,19 @@ export default function DeepDivePage() {
 
               {/* Current score breakdown (from most recent trade) */}
               {(() => {
-                const latest = [...trades].reverse().find(t => t.analyst_score != null);
+                const latest = tradeEvents.find(t => t.scores && t.analyst_score != null);
                 if (!latest) return null;
                 return (
                   <div className="rounded-lg border bg-card p-4">
                     <h2 className="text-sm font-semibold mb-3 text-muted-foreground">
-                      Most Recent Score Breakdown — {latest.executed_at?.split("T")[0]}
+                      Most Recent Score Breakdown — {latest.occurred_at?.split("T")[0]}
                     </h2>
                     <ScoreBar label={`Analyst Score (weighted total)`} value={latest.analyst_score} color="#ef4444" />
                     <div className="mt-3 border-t pt-3 space-y-1">
-                      <ScoreBar label="Fundamental" value={latest.fundamental_score} color="#6366f1" />
-                      <ScoreBar label="Technical" value={latest.technical_score} color="#f59e0b" />
-                      <ScoreBar label="Sentiment" value={latest.sentiment_score} color="#10b981" />
-                      <ScoreBar label="Macro" value={latest.macro_score} color="#8b5cf6" />
+                      <ScoreBar label="Fundamental" value={latest.scores?.fundamental ?? null} color="#6366f1" />
+                      <ScoreBar label="Technical" value={latest.scores?.technical ?? null} color="#f59e0b" />
+                      <ScoreBar label="Sentiment" value={latest.scores?.sentiment ?? null} color="#10b981" />
+                      <ScoreBar label="Macro" value={latest.scores?.macro ?? null} color="#8b5cf6" />
                     </div>
                     <div className="text-xs text-muted-foreground mt-3">
                       Scores are recorded at paper trade entry. Per-indicator breakdown (P/E contribution, RSI contribution, etc.) requires research-agent re-run for live detail.

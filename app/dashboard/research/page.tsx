@@ -272,7 +272,7 @@ const COL_BY_KEY = Object.fromEntries(ALL_COLS.map(c => [c.key, c]));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface LastTrade { side: string; date: string; exit_at: string | null; analyst_score: number | null; venue?: "paper" | "live" }
+interface LastTrade { side: "buy" | "sell"; date: string; analyst_score: number | null; venue?: "paper" | "live"; status?: string }
 
 interface SymbolRow {
   symbol: string; market: string; analyst_score: number | null;
@@ -587,6 +587,7 @@ export default function FundamentalsPage() {
 
   const [rows, setRows]         = useState<SymbolRow[]>([]);
   const [loading, setLoading]   = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"latest" | "all_runs">("latest");
 
   // Table controls
@@ -708,10 +709,15 @@ export default function FundamentalsPage() {
   // Load rows
   useEffect(() => {
     setLoading(true);
+    setLoadError(null);
     fetch(`/api/research/universe?mode=${viewMode}`)
-      .then(r => r.json())
+      .then(async r => {
+        const d = await r.json();
+        if (!r.ok || d.error) throw new Error(d.error ?? `HTTP ${r.status}`);
+        return d;
+      })
       .then(d => { setRows(d.symbols ?? []); setLoading(false); })
-      .catch(() => setLoading(false));
+      .catch(e => { setRows([]); setLoadError(e instanceof Error ? e.message : String(e)); setLoading(false); });
   }, [viewMode]);
 
   // Load chart data
@@ -725,6 +731,7 @@ export default function FundamentalsPage() {
       indicators: chartIndicators.join(","),
       days: String(chartDays),
       include_trades: String(showTradeMarkers),
+      market: activeMarket,
     });
     fetch(`/api/research/chart-data?${params}`)
       .then(r => r.json())
@@ -734,7 +741,7 @@ export default function FundamentalsPage() {
         setChartLoading(false);
       })
       .catch(() => setChartLoading(false));
-  }, [chartSymbols, chartIndicators, chartDays, showTradeMarkers]);
+  }, [chartSymbols, chartIndicators, chartDays, showTradeMarkers, activeMarket]);
 
   // Visible + ordered cols
   const visibleCols = colOrder
@@ -1141,6 +1148,12 @@ export default function FundamentalsPage() {
 
       {/* ══ TABLE ════════════════════════════════════════════════════════════ */}
 
+      {loadError && (
+        <div role="alert" style={{ margin: "12px 20px 0", padding: "10px 12px", border: `1px solid ${T.red}`, borderRadius: 7, color: T.red, background: `${T.red}12`, fontSize: 12 }}>
+          Fundamentals data failed to load: {loadError}
+        </div>
+      )}
+
       {/* Domain tabs */}
       <div style={{ padding: "12px 20px 0", display: "flex", gap: 4, flexWrap: "wrap" }}>
         {([
@@ -1389,7 +1402,7 @@ export default function FundamentalsPage() {
                         const isBuy = lt.side === "buy";
                         const venue = lt.venue ?? "paper";
                         content = (
-                          <span title={`${venue} ${lt.side.toUpperCase()} on ${fmtDate(lt.date)}${lt.analyst_score != null ? ` · score ${lt.analyst_score}` : ""}${lt.exit_at ? ` · exited ${fmtDate(lt.exit_at)}` : " · still open"}`}
+                          <span title={`${venue} ${lt.side.toUpperCase()} ${lt.status ?? "filled"} on ${fmtDate(lt.date)}${lt.analyst_score != null ? ` · score ${lt.analyst_score}` : ""}`}
                             style={{ fontWeight: 700, fontSize: 10, color: isBuy ? T.green : T.red }}>
                             <span style={{ color: T.muted, fontWeight: 400 }}>{venue}.</span>
                             {lt.side.toUpperCase()} {fmtDate(lt.date).slice(5)}

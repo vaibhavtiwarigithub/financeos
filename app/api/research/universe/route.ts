@@ -1,10 +1,11 @@
 // GET /api/research/universe?mode=latest|all_runs
-// latest (default): one row per symbol — latest scores + fundamentals + last paper trade
+// latest (default): one row per symbol — latest scores + fundamentals + last executed BUY/SELL
 // all_runs: every signal_score_history row — full audit log of every research decision
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 import { breakdownWithStatus, finiteNumber } from "@/lib/research/universe-truth";
+import { requireOwner } from "@/lib/auth/require-owner";
+import { latestExecutionEvent, liveDecisionEvents, paperTradeEvents } from "@/lib/research/trade-timeline";
+import { createServiceClient } from "@/lib/supabase/service";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ const PAGE = 1000;
 const MAX_ROWS = 20000; // safety stop; table is ~3.5k rows as of 2026-08
 
 async function pagedSelect(
-  sb: ReturnType<typeof createServerClient>,
+  sb: ReturnType<typeof createServiceClient>,
   select: string,
 ): Promise<{ rows: any[]; error: string | null }> {
   const rows: any[] = [];
@@ -40,7 +41,7 @@ async function pagedSelect(
   return { rows, error: null };
 }
 
-async function queryScoreHistory(sb: ReturnType<typeof createServerClient>): Promise<any[]> {
+async function queryScoreHistory(sb: ReturnType<typeof createServiceClient>): Promise<any[]> {
   // Try full select (breakdown cols); fall back to base if columns missing in DB
   const full = await pagedSelect(sb, SCORE_SELECT_FULL);
   if (!full.error) return full.rows;
@@ -51,13 +52,15 @@ async function queryScoreHistory(sb: ReturnType<typeof createServerClient>): Pro
 }
 
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
+
   const mode = req.nextUrl.searchParams.get("mode") ?? "latest";
-  const cookieStore = await cookies();
-  const sb = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { cookies: { getAll: () => cookieStore.getAll() } },
-  );
+  // requireOwner authenticated the caller above. Use the service client for
+  // the privileged server-side join: broker_orders intentionally grants no
+  // authenticated-role SELECT, and feeding browser cookies to a service-key
+  // client silently replaced its service JWT with the user session.
+  const sb = createServiceClient();
 
   // ── All-runs mode: raw point-in-time audit log ────────────────────────────
   if (mode === "all_runs") {
@@ -99,11 +102,20 @@ export async function GET(req: NextRequest) {
   // .is("tainted", null) therefore matched zero rows and the Trade column was
   // permanently blank. Exclude only genuinely tainted lots, and tolerate null in
   // case older rows predate the column default.
-  const tradesRes = await sb.from("paper_trades")
-    .select("symbol, market, order_side, executed_at, exit_at, analyst_score")
-    .or("tainted.is.null,tainted.is.false")
-    .order("executed_at", { ascending: false })
-    .limit(1000);
+  const [tradesRes, liveOrdersRes] = await Promise.all([
+    sb.from("paper_trades")
+      .select("id,symbol,market,order_side,qty,fill_price,entry_price,exit_price,executed_at,exit_at,closed_at,realized_pnl_pct,pnl_pct,analyst_score,rationale,exit_reason")
+      .or("tainted.is.null,tainted.is.false")
+      .order("executed_at", { ascending: false })
+      .limit(1000),
+    sb.from("broker_orders")
+      .select("id,symbol,market,side,qty,status,created_at,submitted_at,closed_at,avg_fill_price,filled_qty,error")
+      .order("created_at", { ascending: false })
+      .limit(1000),
+  ]);
+  if (tradesRes.error || liveOrdersRes.error) {
+    return NextResponse.json({ error: tradesRes.error?.message ?? liveOrdersRes.error?.message }, { status: 500 });
+  }
 
   if (!scoresData?.length) return NextResponse.json({ symbols: [] });
 
@@ -130,24 +142,33 @@ export async function GET(req: NextRequest) {
     if (!factsMap.has(key)) factsMap.set(key, f.values as Record<string, string>);
   }
 
-  // Last trade per symbol+market. Keyed by market too: the same ticker can exist in
-  // both books, and a symbol-only key let one market's trade label the other's row.
-  // `venue` is "paper" for every row here — there is no live execution table, and
-  // live auto-trading has never filled (trade_proposals holds manual rows only), so
-  // the UI can state the venue instead of implying an unlabelled trade is live.
-  interface TradeInfo { side: string; date: string; exit_at: string | null; analyst_score: number | null; venue: "paper" | "live" }
-  const tradeMap = new Map<string, TradeInfo>();
+  // Expand the lot ledger into actions. Closed long lots remain order_side=buy,
+  // with their SELL recorded in exit_at/exit_price; reading order_side directly
+  // made the Trade column permanently show BUY even after 137 real paper exits.
+  interface TradeInfo { side: "buy" | "sell"; date: string; analyst_score: number | null; venue: "paper" | "live"; status: string }
+  const eventsBySymbol = new Map<string, ReturnType<typeof paperTradeEvents>>();
   for (const t of (tradesRes.data ?? []) as any[]) {
     const key = `${t.symbol}:${t.market ?? "us"}`;
-    if (!tradeMap.has(key)) {
-      tradeMap.set(key, {
-        side: t.order_side,
-        date: t.executed_at,
-        exit_at: t.exit_at,
-        analyst_score: t.analyst_score != null ? Number(t.analyst_score) : null,
-        venue: "paper",
-      });
-    }
+    const events = eventsBySymbol.get(key) ?? [];
+    events.push(...paperTradeEvents([t]));
+    eventsBySymbol.set(key, events);
+  }
+  for (const o of (liveOrdersRes.data ?? []) as any[]) {
+    const key = `${o.symbol}:${o.market ?? "us"}`;
+    const events = eventsBySymbol.get(key) ?? [];
+    events.push(...liveDecisionEvents([], [o]));
+    eventsBySymbol.set(key, events);
+  }
+  const tradeMap = new Map<string, TradeInfo>();
+  for (const [key, events] of eventsBySymbol) {
+    const latest = latestExecutionEvent(events.sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)));
+    if (latest) tradeMap.set(key, {
+      side: latest.side,
+      date: latest.occurred_at,
+      analyst_score: latest.analyst_score,
+      venue: latest.venue,
+      status: latest.status,
+    });
   }
 
   const out = latest.map((r: any) => ({

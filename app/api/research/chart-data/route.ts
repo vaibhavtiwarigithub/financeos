@@ -3,8 +3,8 @@
 // Score indicators → signal_score_history. Fundamental indicators → fundamental_facts.
 // Price → price_cache. Trade markers → paper_trades (buy entries + sell exits).
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
+import { requireOwner } from "@/lib/auth/require-owner";
+import { createServiceClient } from "@/lib/supabase/service";
 
 export const dynamic = "force-dynamic";
 
@@ -13,23 +13,25 @@ const PRICE_INDICATOR = "price";
 const FUNDAMENTAL_KEYS = new Set(["PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield","DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS"]);
 
 export async function GET(req: NextRequest) {
+  const gate = await requireOwner();
+  if (gate) return gate;
+
   const sp = req.nextUrl.searchParams;
   const symbolsRaw    = sp.get("symbols") ?? "";
   const indicatorsRaw = sp.get("indicators") ?? "analyst_score";
   const days          = Math.min(Math.max(parseInt(sp.get("days") ?? "365"), 30), 2000);
   const includeTrades = sp.get("include_trades") === "true";
+  const market = sp.get("market")?.toLowerCase() ?? "us";
+  if (market !== "us" && market !== "india") {
+    return NextResponse.json({ error: "market must be us or india" }, { status: 400 });
+  }
 
   const symbols    = symbolsRaw.split(",").map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 10);
   const indicators = indicatorsRaw.split(",").map(s => s.trim()).filter(Boolean).slice(0, 12);
 
   if (!symbols.length) return NextResponse.json({ series: {}, trade_markers: {} });
 
-  const cookieStore = await cookies();
-  const sb = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { cookies: { getAll: () => cookieStore.getAll() } },
-  );
+  const sb = createServiceClient();
 
   const since = new Date(Date.now() - days * 86400000).toISOString();
 
@@ -49,9 +51,10 @@ export async function GET(req: NextRequest) {
       sb.from("signal_score_history")
         .select(cols)
         .in("symbol", symbols)
+        .eq("market", market)
         .gte("created_at", since)
         .order("created_at", { ascending: true })
-        .then(({ data }) => {
+        .then(({ data }: { data: any[] | null }) => {
           for (const row of (data ?? []) as any[]) {
             const sym = row.symbol as string;
             if (!series[sym]) return;
@@ -71,10 +74,11 @@ export async function GET(req: NextRequest) {
       sb.from("fundamental_facts")
         .select("symbol, report_period, values")
         .in("symbol", symbols)
+        .eq("market", market)
         .eq("metric_set", "ttm_overview")
         .gte("report_period", new Date(Date.now() - days * 86400000).toISOString().slice(0, 10))
         .order("report_period", { ascending: true })
-        .then(({ data }) => {
+        .then(({ data }: { data: any[] | null }) => {
           for (const row of data ?? []) {
             const sym = row.symbol as string;
             if (!series[sym]) return;
@@ -100,7 +104,7 @@ export async function GET(req: NextRequest) {
         .in("symbol", symbols)
         .gte("date", since.slice(0, 10))
         .order("date", { ascending: true })
-        .then(({ data }) => {
+        .then(({ data }: { data: any[] | null }) => {
           for (const row of data ?? []) {
             const sym = row.symbol as string;
             if (!series[sym]) return;
@@ -122,8 +126,9 @@ export async function GET(req: NextRequest) {
       .from("paper_trades")
       .select("symbol, order_side, executed_at, exit_at, analyst_score")
       .in("symbol", symbols)
+      .eq("market", market)
       .gte("executed_at", since)
-      .is("tainted", null)
+      .or("tainted.is.null,tainted.is.false")
       .order("executed_at", { ascending: true });
 
     for (const t of (trades ?? []) as any[]) {

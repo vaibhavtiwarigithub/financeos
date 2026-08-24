@@ -254,3 +254,37 @@ application data or treated as scoring evidence.
 - Current-news enrichment is owner-gated, opt-in per symbol, cache/budget guarded,
   deduplicated and never changes the recorded score/action.
 - TypeScript, unit tests, production build, and US/India browser checks pass.
+
+## V2.3 — symbol decision and execution timeline (built 2026-08-24)
+
+### Correctness defect
+
+`paper_trades` is a lot ledger, not an event ledger. A normal long entry keeps
+`order_side='buy'` after it is sold; the exit action is stored on that same row
+as `exit_at`, `exit_price`, `realized_pnl_pct`, and `exit_reason`. The Fundamentals
+page previously rendered `order_side` literally. In production this presented
+46 closed US lots and 91 closed India lots as BUYs and displayed no SELLs.
+
+### Presentation contract
+
+- Expand each untainted paper BUY lot into a BUY fill at `executed_at` and, when
+  closed, a SELL fill at `exit_at`/`closed_at`. An explicit SELL ledger row is one
+  SELL event and is never inverted into a fictitious BUY.
+- Show live `trade_proposals` as proposals with their status. A proposal is an
+  app decision, not an execution and must never be labelled as a trade/fill.
+- Show `broker_orders` separately as order lifecycle events; only a positive
+  `filled_qty`, `filled`, or `partially_filled` state is an execution.
+- The Fundamentals table's Trade column is the latest actual execution across
+  paper and live venues. The symbol detail timeline may also show non-executed
+  proposals/orders, with venue, stage, status, timestamp, side, quantity, price,
+  reason, and P&L when the ledger contains it.
+- All reads are owner-gated, bounded, symbol-and-market scoped, and exclude only
+  rows explicitly tainted. Missing prices remain `—`; they are never fabricated.
+- BUY/SELL chart markers use normalized paper actions and are market scoped.
+  Recommendation direction remains separate in score history.
+
+### Non-goals
+
+This is a read-model correction only. It does not change research direction,
+eligibility, sizing, paper fills, proposals, broker submission, exits, or any
+append-only ledger.

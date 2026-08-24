@@ -396,6 +396,14 @@ Each dimension outputs 0–100, clamped. Source of truth: `lib/data/scores.ts`, 
 
 The Fundamentals audit page follows the same point-in-time rule. Its all-runs view reads the four stored per-run breakdowns and never joins a historical decision to the latest TTM company facts. Every applicable value that resolved is shown; missing provider evidence is `unavailable`, structurally meaningless evidence is `inapplicable`, and neither state is presented as a measured neutral value. The score summary includes insider because the composite has five dimensions. Active and measure-only technical inputs are labeled separately; displaying MACD, ADX, EMA200 or relative strength does not make them part of `deterministic_v1`.
 
+The Fundamentals action history uses an event read model over the existing
+ledgers. A closed long `paper_trades` lot remains `order_side='buy'`, so the UI
+expands it into a BUY fill at entry and a SELL fill at `exit_at`; it does not
+mistake the storage row for a single perpetual BUY. Live proposals, broker-order
+states, and fills are displayed as distinct stages. Only fills are executions;
+a pending/rejected/expired proposal is a recorded app decision, not a trade.
+The table's latest Trade value is market-scoped across actual paper/live fills.
+
 **Feature-pack catalog (P0, 2026-08-02).** `lib/feature-packs/catalog.ts` is a typed read model that classifies a decision's inputs as active v1, measure-only, observed-only or inapplicable for its instrument family. Research Journal renders this classification from stored evidence only; it never fetches data or changes a decision. Strategy Library uses the same catalog to label manual Scanner support, shadow-only rules and unsupported conditions. The catalog has no score, paper, live, exit, sizing, broker or feature-registry writer.
 
 **Feature registry lifecycle (2026-08-02).** Learner-proposed formulas are `proposed`, `quarantined`, `measure_only`, or `retired`. A deterministic IC screen can only advance a formula to `measure_only`; it is recorded under `decision_observations.features.measured_feature_values` and cannot alter a score, eligibility, size, paper/live proposal, exit, or broker order. Any future score use requires the separate market-local replay, shadow, challenger and owner-promotion path in `docs/arch/09-learning-loop.md`.
