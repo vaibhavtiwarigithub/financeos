@@ -1,4 +1,6 @@
 # Kairos — Crons & Scheduling
+> 2026-08-25: **Archetype IC evaluator scheduled (measure-only).** `kairos-archetype-ic-us` (125) `40 3 * * 0` and `kairos-archetype-ic-india` (126) `50 3 * * 0`. Weekly rather than daily because the input only changes as `observation_labels` mature. Writes `archetype_ic_runs`; nothing in the money path reads it.
+>
 > 2026-08-25: **Horizon-extension shadow scheduled (measure-only).** Two new pg_cron jobs, 10 minutes ahead of each PositionMonitor so the policy records its verdict against the same state the live time stop will see:
 >
 > | job | schedule (UTC) | local |

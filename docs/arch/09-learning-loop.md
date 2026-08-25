@@ -1,4 +1,23 @@
 # Kairos — Learning Loop
+> 2026-08-25: **The weighting arms are now graded, and a `fundamental_only` arm was added.**
+>
+> Seven archetype weight sets record a score for every observation in `shadow_decisions`, and until today nothing evaluated them: the only consumer computed the share of shadow rows that were bullish, and its own comment admits that is not a comparison to the champion. `/api/agents/archetype-ic` (weekly, per market) now grades each `setup_type` by Spearman rank IC against `benchmark_neutral_return`, next to the champion composite measured on the SAME observations - `etf_trend` only ever scores ETFs, so a whole-market champion baseline would compare different universes.
+>
+> Guards carried over from the dimension-diagnostics work, each mutation-verified: dedupe to one row per (market, symbol, date, setup_type) because the research cron writes 2-3x daily; rank IC rather than Pearson; and the overlap-corrected floor `n / horizonDays >= 12` on top of the 20-date floor.
+>
+> **Why the `fundamental_only` arm exists.** Measured h10 rank IC, deduped, single stocks:
+>
+> | market | best single dimension | champion composite |
+> |---|---|---|
+> | us | fundamental **+0.076** (t=2.40) | +0.051 (t=0.93) |
+> | india | technical **+0.173** (t=2.51) | +0.106 (t=2.04) |
+>
+> Both composites rank worse than their own best dimension. `value_inflection` (fundamental 0.45) only half-tests that; the new arm isolates it. It runs in BOTH markets deliberately - India's edge is technical, so the arm is expected to score poorly there, and an arm that only ever runs where it is expected to win proves nothing.
+>
+> **Caller contract, and it is load-bearing:** the arm is skipped unless `included.fundamental === true`. `computeWeightedAnalystScore` equal-splits across included dimensions when every included dimension has weight zero, so scoring a `{fundamental: 1.0}` set on a symbol with no fundamental evidence would silently yield an equal-weight technical/sentiment/macro blend - an arm labelled `fundamental_only` containing no fundamental at all.
+>
+> **Timeline.** Four of the seven arms only began writing on 2026-08-25 (the multi-expert uniqueness index landed 08-24; before it, only the first archetype in each routing array survived, which is why just `etf_trend` and `quality_momentum` existed). Their h10 labels mature ~2026-09-08; >=20 decision dates lands ~late October. Every read before then returns `insufficient_evidence`, by design.
+>
 
 > 2026-08-18: **Promotion gate segments IC evidence by PROVIDER REGIME.** Same-day companion to the Yahoo-first candle move below. `edge_ic_history` now contains rows computed on two different data sources, and `app/api/agents/backtest/promote` reads a 1000-day window — so without segmentation the cross-window stability check would compare a Yahoo latest window against a Massive earliest window and report the difference as "stability". `providerRegimeKey()` derives a regime from each row's `provider_report.providerCounts` using the DOMINANT provider (not the exact count map: `{eodhd:20,massive:6}` and `{eodhd:19,massive:7}` are one regime, and keying on counts would over-segment on run jitter and starve the gate). `evaluateGate` then evaluates ONLY the trailing run of windows sharing the latest regime and drops older ones — never blends them.
 >

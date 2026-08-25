@@ -54,6 +54,23 @@ export const ARCHETYPES: ArchetypeConfig[] = [
     role: "primary",
   },
   {
+    // Deliberate single-dimension arm, added 2026-08-25 to bracket the measured
+    // finding that the US composite scores BELOW its own best dimension:
+    //   us h10 rank IC   fundamental +0.076 (t=2.40)   composite +0.051 (t=0.93)
+    // value_inflection (fundamental 0.45) only half-tests that; this isolates it.
+    //
+    // CALLER CONTRACT: only score this archetype when `included.fundamental` is
+    // true. computeWeightedAnalystScore equal-splits across the included
+    // dimensions when every included dimension has weight 0, so scoring this set
+    // on a symbol with no fundamental evidence would silently produce an
+    // equal-weight technical/sentiment/macro blend -- an arm labelled
+    // "fundamental_only" that contains no fundamental at all.
+    id: "fundamental_only",
+    label: "Fundamental Only (measurement arm)",
+    weights: { fundamental: 1.00, technical: 0.00, sentiment: 0.00, macro: 0.00, insider: 0.00 },
+    role: "shadow",
+  },
+  {
     id: "india_sector_rotation",
     label: "India Sector Rotation",
     weights: { fundamental: 0.00, technical: 0.55, sentiment: 0.20, macro: 0.25, insider: 0.00 },
@@ -68,6 +85,10 @@ export interface ArchetypeRouterInput {
   isIndia: boolean;
   daysToEarnings: number | null;
   fundamentalScore: number;
+  /** Availability-mask value for the fundamental dimension. The fundamental_only
+   *  arm is skipped unless this is explicitly true — a missing flag must not be
+   *  read as present. */
+  fundamentalAvailable?: boolean;
 }
 
 export function routeToArchetypes(input: ArchetypeRouterInput): ArchetypeConfig[] {
@@ -78,14 +99,27 @@ export function routeToArchetypes(input: ArchetypeRouterInput): ArchetypeConfig[
   }
 
   if (isIndia) {
-    return [
+    const indiaActive = [
       ARCHETYPE_BY_ID.get("india_quality_momentum")!,
       ARCHETYPE_BY_ID.get("india_sector_rotation")!,
     ];
+    // Same arm for India. The measured India edge sits in TECHNICAL, not
+    // fundamental (h10 rank IC technical +0.173 t=2.51, fundamental -0.046),
+    // so this arm is expected to score poorly there -- which is the point: an
+    // arm that only ever runs where it is expected to win proves nothing.
+    if (input.fundamentalAvailable === true) {
+      indiaActive.push(ARCHETYPE_BY_ID.get("fundamental_only")!);
+    }
+    return indiaActive;
   }
 
   // US equity: quality_momentum always; conditional additions
   const active: ArchetypeConfig[] = [ARCHETYPE_BY_ID.get("quality_momentum")!];
+  // Single-dimension measurement arm. Gated on fundamental evidence actually
+  // being present -- see the contract note on the archetype itself.
+  if (input.fundamentalAvailable === true) {
+    active.push(ARCHETYPE_BY_ID.get("fundamental_only")!);
+  }
   if (daysToEarnings != null && daysToEarnings <= 10) {
     // Pre-earnings proximity reweight (renamed from the misleading
     // "post_earnings_drift" — see ARCHETYPES comment). Not a PEAD surprise edge.

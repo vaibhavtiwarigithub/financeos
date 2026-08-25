@@ -2649,6 +2649,11 @@ export async function processSymbol(
           isIndia: india,
           daysToEarnings,
           fundamentalScore: scoreOf.fundamental,
+          // Availability, not the score value. The fundamental_only arm must not
+          // run on a symbol with no fundamental evidence — computeWeightedAnalystScore
+          // would equal-split across the remaining dimensions and produce an arm
+          // labelled "fundamental_only" containing no fundamental at all.
+          fundamentalAvailable: included.fundamental === true,
         });
         const archetypeRows = archetypeTargets.map(archetype => {
           const { score: archScore } = computeArchetypeScore(archetype, scoreOf, included);

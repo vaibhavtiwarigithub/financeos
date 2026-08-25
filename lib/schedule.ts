@@ -329,6 +329,30 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: "earnings_risk_monitor",
   },
   {
+    name: "archetype-ic-us",
+    agent: "archetype-ic",
+    time: "Sun 3:40 AM UTC",
+    days: "Weekly",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Measure-only. Grades every archetype weight set recorded in shadow_decisions against realized benchmark-neutral forward returns, alongside the champion composite measured on the SAME observations. Weekly because the input only changes as labels mature. Writes archetype_ic_runs; nothing in the money path reads it.",
+    handoff: "→ archetype_ic_runs (evidence only)",
+    agentRunsType: null,
+  },
+  {
+    name: "archetype-ic-india",
+    agent: "archetype-ic",
+    time: "Sun 3:50 AM UTC",
+    days: "Weekly",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "India leg of the archetype IC evaluator. India's measured edge sits in TECHNICAL rather than fundamental, so the fundamental_only arm is expected to score poorly here - an arm that only runs where it is expected to win proves nothing.",
+    handoff: "→ archetype_ic_runs (evidence only)",
+    agentRunsType: null,
+  },
+  {
     name: "horizon-extension-shadow-us",
     agent: "horizon-extension-shadow",
     time: "4:05 PM ET",
