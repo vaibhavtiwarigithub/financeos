@@ -127,3 +127,59 @@ not by itself authorise re-weighting a live score.
 Record the failure here and stop. Do not widen the window, drop a horizon, or
 change the threshold to rescue it — those are the three standard ways a
 predeclared test becomes a fitted one.
+
+---
+
+## Addendum — 2026-08-24, same day, before any out-of-sample data
+
+The baseline table above was computed with **Pearson** correlation. Two
+corrections, recorded here rather than by rewriting the predeclaration.
+
+### 1. Rank IC (Spearman) is the correct headline
+
+Pearson IC is outlier-sensitive; rank IC is the standard skill measure. The
+gap between them is large enough to change the characterisation:
+
+| market | dim | Pearson IC (h10) | rank IC (h10) | t (rank) |
+|---|---|---|---|---|
+| us | fundamental | +0.114 (t=4.60) | +0.069 | 2.19 |
+| us | technical | -0.003 | +0.012 | 0.19 |
+| us | composite | +0.052 | +0.055 | 1.09 |
+| india | fundamental | -0.147 | -0.022 | -0.39 |
+| india | technical | +0.187 | +0.166 | 2.40 |
+| india | composite | +0.125 | +0.098 | 1.86 |
+
+The directional finding (US fundamental > 0, India technical > 0, both
+composites below their own best dimension) survives. The magnitude of the US
+fundamental edge does not: it halves.
+
+### 2. The US pool was diluted by the ETF fundamental placeholder
+
+381 of 1407 US h10 observations (27%) carry `fundamental_score = 55.0` with
+stddev 0.0 — the ETF/metal placeholder, not a measurement. India's cohort is
+100% single stocks and contains none. The US-vs-India fundamental comparison
+in the predeclaration was therefore not like-for-like.
+
+US h10, single stocks only (19 dates, ETFs and metals excluded):
+
+| dim | rank IC | t |
+|---|---|---|
+| fundamental | +0.090 | 2.86 |
+| technical | -0.010 | — |
+| composite | +0.071 | 1.27 |
+
+### Consequences for H1-H4
+
+- All four hypotheses are to be evaluated on **rank IC**, on the
+  **single-stock cohort**, per market. Blended-cohort numbers are not a valid
+  test of a dimension-weighting hypothesis.
+- The h10 single-stock rank IC values above are the frozen baseline for the
+  US arm. India's baseline is unchanged (its cohort was already clean).
+- Thresholds and kill conditions in the predeclaration are unchanged.
+
+### Still not measured
+
+Quantile (top-vs-bottom quintile) return spread, IC stddev / hit rate across
+dates, IC decay across h5/h10/h20, and Newey-West correction for overlapping
+h20 windows. IC mean alone can be positive while the top bucket earns nothing.
+None of these are worth running at 20 dates; revisit at >=60.
