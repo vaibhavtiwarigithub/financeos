@@ -279,7 +279,13 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     productBenefit: "Makes opportunity cost explicit instead of treating a full book as a permanent no-op.",
     traderBenefit: "Can recycle capital into stronger candidates while respecting holding period, turnover, cost, tax and anti-thrash gates.",
     evidenceSource: "rotation_config + rotation_events + paper_trades",
-    currentInfluence: "Paper execution is enabled; live proposals are disabled.",
+    // Verified against rotation_config on 2026-08-25. This line previously read
+    // "Paper execution is enabled; live proposals are disabled", which was false
+    // and actively misleading: all four rows (us/india x paper/live) carry
+    // rotation_paper_execute_enabled = false. In 98 rotation_events across both
+    // markets and all time, trade_proposal_id and paper_trade_ids are NULL on
+    // every single row — rotation has never moved capital.
+    currentInfluence: "Shadow only. rotation_shadow_enabled=true, but rotation_paper_execute_enabled=false and rotation_live_proposals_enabled=false in ALL rotation_config rows, so nothing executes in either book.",
     maximumInfluence: "Two-leg owner-reviewed live rotation proposal after paper evidence and broker reconciliation proof.",
     activationGate: "Positive net paper outcome after costs, stable churn/turnover, tax/lot correctness, live two-leg approval and reconciliation sign-off.",
     safetyBoundary: "PositionMonitor exits have precedence; live rotation proposals remain disabled.",

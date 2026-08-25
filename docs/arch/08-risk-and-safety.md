@@ -1,4 +1,17 @@
 # Kairos — Risk & Safety
+> 2026-08-25: **CORRECTION — capital rotation does NOT execute, in either book. Two docs claimed it did.**
+>
+> Verified against `rotation_config` on `dionkikgdmlaotvtbnfr`: all four rows (us/india x paper/live) carry `rotation_shadow_enabled=true`, `rotation_paper_execute_enabled=false`, `rotation_live_proposals_enabled=false`. Across **98 `rotation_events`**, both markets, all time, `trade_proposal_id` and `paper_trade_ids` are NULL on every row; every event carries `no_execution: true`. Rotation has never moved capital.
+>
+> | Claimed | Actual |
+> |---|---|
+> | `lib/shadows/registry.ts`: "Paper execution is enabled; live proposals are disabled" | shadow only; paper execution flag is false |
+> | `paper-trade/route.ts`: "Capital-rotation P1 PAPER execution is live (owner-approved 2026-07-23)" | the call is a no-op behind the false flag |
+>
+> Both corrected in place. This is the same hazard class as the 2026-08-24 protective-stop entry above, inverted: there a doc said a gate was shut while it was open; here two docs said a path executes while it cannot.
+>
+> Surfaced by tracing why a name that passed the research gate on 30 consecutive sessions never entered the book. Since 2026-08-18 the portfolio constructor has admitted **zero** candidates in either market, and US rotation stopped emitting events on 2026-08-11 — because the `portfolio_constructor / rejected` branch `continue`s past the rotation evaluation, so a candidate denied for lack of room never reaches the mechanism that makes room. India takes the name-cap path, which was already repaired, which is why only US went silent. Full trace: `docs/audits/2026-08-25-rotation-unreachable-trace.md`. **The code fix is proposed, not applied — it awaits owner approval.**
+>
 > 2026-08-24: **Shadow proposals are evidence, never work items.**
 >
 > `runAutonomousShadow` writes a real `trade_proposals` row per signal so the

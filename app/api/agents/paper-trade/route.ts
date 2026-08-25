@@ -789,10 +789,19 @@ export async function POST(req: NextRequest) {
         } catch (e: any) {
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_shadow_log_failed", detail: { error: e?.message ?? String(e) } });
         }
-        // Capital-rotation P1 PAPER execution is live (owner-approved 2026-07-23).
         // executeCapitalRotationPaper re-runs eligibility + persistence/cooldown/
         // daily-cap gates, then the execute_paper_rotation RPC atomically sells
         // the source and buys the candidate (buy-leg denial rolls back the sell).
+        //
+        // NOTE (verified against rotation_config, 2026-08-25): this call is a
+        // no-op in production today. The comment here used to claim "P1 PAPER
+        // execution is live (owner-approved 2026-07-23)" — it is not. All four
+        // rotation_config rows carry rotation_paper_execute_enabled = false, and
+        // across 98 rotation_events in both markets every trade_proposal_id and
+        // paper_trade_ids is NULL. Rotation has never moved capital. Turning the
+        // flag on is an owner decision, not a code change, and its own gate list
+        // still reports p1_blockers (turnover budget, exact tax lots,
+        // score→return mapping, post-swap gate, candidate correlation).
         let rotReason = "not_attempted";
         try {
           const rot = await executeCapitalRotationPaper(supabase, {
