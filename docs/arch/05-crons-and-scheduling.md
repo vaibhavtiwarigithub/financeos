@@ -1,4 +1,16 @@
-# Kairos — Crons & Scheduling
+# Kairos — Crons & Scheduling
+> 2026-08-25: **Horizon-extension shadow scheduled (measure-only).** Two new pg_cron jobs, 10 minutes ahead of each PositionMonitor so the policy records its verdict against the same state the live time stop will see:
+>
+> | job | schedule (UTC) | local |
+> |---|---|---|
+> | `kairos-horizon-extension-shadow-us` (123) | `5 20,21 * * 1-5` | 4:05 PM ET (DST-safe double-fire, mirrors `kairos-position-monitor`) |
+> | `kairos-horizon-extension-shadow-india` (124) | `5 11 * * 1-5` | 4:35 PM IST |
+>
+> The route and decision core (`lib/trading/horizon-extension.ts`) shipped 2026-08-11 but were never scheduled — `horizon_extension_shadow` held 28 rows, all stamped that single day. Same "route exists, scheduled nowhere" failure as `/api/agents/autonomous-shadow/cron`. Nothing consumes the output; the policy is strictly additive (can only turn "close now" into "hold one more day", bounded by `max_hold_days`), fail-closed on missing evidence, and cannot open, size, re-enter, or suppress a stop/target/exit.
+>
+> Why it matters: ~75% of closed US paper lots (51/68) exit on the unconditional time stop, which fires on `ageDays > horizonDays` with no reference to P&L, trend or score. The four US lots that ran to `partial_target` instead averaged **+20.3%** and won 4/4.
+>
+
 > 2026-08-20: **`kairos-settle-check-us` added — `0 13 * * 1-5` (09:00 ET).** Next-day settlement check for US paper marks. Runs after the Massive grouped daily feed publishes the prior session and before the next US session opens. Timing evidence: 2026-08-17's grouped bars were available ~13:40 UTC on 08-18, while 2026-08-18's were still absent at 00:55 UTC on 08-19 — the feed lands overnight, not the same evening. If it runs before publication it reports `nothing_to_compare`, never a false pass. MEASURE-ONLY: writes no NAV, no position price, no trade.
 
 > Last updated: 2026-08-08 (Property collection runs Sunday at 10:00 UTC, Property forecasts at 10:30 UTC, and Capital Plan area snapshots at 10:45 UTC. The final job reads only already-persisted Property observations, so it makes no provider call and cannot turn unavailable ZIP/PIN/locality data into a local prediction. All three remain outside securities scoring, orders, and money movement.)

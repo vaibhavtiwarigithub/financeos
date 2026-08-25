@@ -1,4 +1,21 @@
 # Kairos — Risk & Safety
+> 2026-08-25: **Capital rotation PAPER execution ENABLED (owner-approved). Live remains closed.**
+>
+> | row | paper_execute | allow_score_only | live_proposals |
+> |---|---|---|---|
+> | us / **paper** | **true** | **true** | false |
+> | india / **paper** | **true** | **true** | false |
+> | us / live | false | false | false |
+> | india / live | false | false | false |
+>
+> The two `book_type='live'` rows were not touched. Execution is additionally gated by the `CAPITAL_ROTATION_PAPER_ENABLED` env var, which is **unset in Vercel**, so rotation remains a no-op until the owner sets it — the DB flip is stage one of two. Blast radius when it does run: `max_rotations_per_run=1`, `max_rotations_per_day=1`, per market.
+>
+> **Accepted risk, stated plainly:** rotation triggers on `score_edge >= 12` against the composite analyst score, whose measured US rank IC is **+0.051 (t=0.93)** at h10 — not distinguishable from luck (see `docs/audits/2026-08-24-dimension-ic-hypothesis.md`). Rotation may therefore sell a holding to fund a candidate on a signal with no demonstrated edge. Taken deliberately: this is a paper book, it admitted **zero** candidates for six consecutive sessions from 2026-08-18, and `score_to_return_mapping_unvalidated` can only ever be validated by running it.
+>
+> Guards verified in `lib/trading/capital-rotation.ts` before flipping: the sell source is refused when `priceFresh === false` (`missing_fresh_price`), inside `min_holding_days`, or `near_stop`; persistence, cooldown and per-run/per-day caps are re-run inside `executeCapitalRotationPaper` rather than trusted from the shadow pass.
+>
+> Reversal: set `rotation_paper_execute_enabled=false` on `book_type='paper'`, or simply leave the env var unset. Journalled as `decision_journal` id 344.
+>
 > 2026-08-25: **CORRECTION — capital rotation does NOT execute, in either book. Two docs claimed it did.**
 >
 > Verified against `rotation_config` on `dionkikgdmlaotvtbnfr`: all four rows (us/india x paper/live) carry `rotation_shadow_enabled=true`, `rotation_paper_execute_enabled=false`, `rotation_live_proposals_enabled=false`. Across **98 `rotation_events`**, both markets, all time, `trade_proposal_id` and `paper_trade_ids` are NULL on every row; every event carries `no_execution: true`. Rotation has never moved capital.

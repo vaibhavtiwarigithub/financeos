@@ -329,6 +329,30 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: "earnings_risk_monitor",
   },
   {
+    name: "horizon-extension-shadow-us",
+    agent: "horizon-extension-shadow",
+    time: "4:05 PM ET",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Measure-only. Records what the conditional horizon-extension policy WOULD have decided for every open US paper position, 10 minutes before PositionMonitor's unconditional time stop fires. Nothing reads its output; it cannot close, hold, size, or suppress an exit. Exists because ~75% of closed US lots exit on the time stop with no reference to P&L, trend or score.",
+    handoff: "→ horizon_extension_shadow (evidence only)",
+    agentRunsType: null,
+  },
+  {
+    name: "horizon-extension-shadow-india",
+    agent: "horizon-extension-shadow",
+    time: "4:35 PM IST",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Measure-only India leg of the horizon-extension shadow, 10 minutes before the India PositionMonitor. India's time stop currently harvests winners (66% win rate) where the US clock mostly clears weak positions, which is why the policy decides per position rather than extending globally.",
+    handoff: "→ horizon_extension_shadow (evidence only)",
+    agentRunsType: null,
+  },
+  {
     name: "label-maturation",
     agent: "label-maturation",
     time: "6:00 PM ET",
@@ -336,7 +360,7 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "Learning-core Phase 1 — matures decision_observations into observation_labels once the forward horizon (2/5/10/20 days) has passed.",
+      "Learning-core Phase 1 — matures decision_observations into observation_labels once the forward horizon (2/5/10/20/60/120 days) has passed. The 60/120 horizons measure exit timing and are decoupled from the 5-15 day holding period.",
     handoff: "→ Validation Engine / calibration fit",
     agentRunsType: null,
   },
