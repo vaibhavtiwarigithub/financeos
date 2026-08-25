@@ -130,8 +130,19 @@ export function evaluateProtectionCoverage(input: {
  * Deliberately false until a broker-specific placement/reconciliation worker is
  * implemented and approved. A DB flag alone can never make autonomous live BUYs
  * eligible. This avoids a configuration-only path into unprotected positions.
+ *
+ * 2026-08-24: found set to `true` in mainline while this docstring still said
+ * "deliberately false", and `strategy_config.protective_orders_enabled` was also
+ * true in production — i.e. BOTH gates on real broker stop placement were open.
+ * `docs/arch/08` described Part E as not yet done. The owner confirmed the
+ * activation was unintentional, so both gates are closed again. No protective
+ * order had been placed (`protective_orders` held 0 rows, 0 events, 0 resting
+ * GTTs), so nothing was orphaned by closing them.
+ *
+ * Opening this is Part E and requires the owner's explicit approval of touch
+ * semantics, floor distance, and post-fill policy — not a code edit.
  */
-export const PROTECTIVE_PLACEMENT_WORKER_AVAILABLE = true;
+export const PROTECTIVE_PLACEMENT_WORKER_AVAILABLE = false;
 
 export function evaluateAutonomousEntryProtection(input: {
   placementEnabled: boolean;

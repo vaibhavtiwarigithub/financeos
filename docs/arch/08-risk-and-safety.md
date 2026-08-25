@@ -1,4 +1,18 @@
 # Kairos — Risk & Safety
+> 2026-08-24: **CORRECTION — both protective-stop gates are OPEN in production. The "Part E (not yet done)" note below is inverted.**
+>
+> Verified against `dionkikgdmlaotvtbnfr` on 2026-08-24:
+>
+> | Gate | This chapter says | Production |
+> |---|---|---|
+> | `strategy_config.protective_orders_enabled` | "false-by-default … STAYS FALSE" | **true** |
+> | `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` (`lib/protective/coverage.ts:134`) | "flip … to true" as a pending Part E step | **already true** |
+>
+> `protective_orders` holds **0 rows**, so no broker stop has been placed. But the placement worker is no longer gated shut. This is the inverse of the usual stale-doc hazard: an agent reading this chapter would conclude placement is impossible when it is enabled, and could ship a change on that false assumption.
+>
+> **RESOLVED same day — owner confirmed the activation was unintentional and directed both gates closed.** `strategy_config.protective_orders_enabled` set to `false`; `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` set back to `false` (its own docstring already said "deliberately false" while the value was `true`). Pre-flip verification showed nothing to orphan: `protective_orders` 0 rows / 0 active, `protective_order_events` 0, `broker_orders` with a `kite_gtt_id` 0. Journaled to `decision_journal` as a risk-reducing `config_change`. Other flags re-verified unchanged and OFF: `live_auto_enabled`, `webull_trade_orders_enabled`, `allocation_enabled`. **Part E is once again closed and reopening it needs explicit owner approval of touch semantics, floor distance, and post-fill policy — not a code edit.**
+>
+> Also corrected: this chapter and `WORK_LOG.md` both described migration `20260718000000_protective_orders_shadow.sql` as "written as a PROPOSAL and NOT applied to prod". The `protective_orders` table exists, so it HAS been applied. See the reconciliation table at the top of `WORK_LOG.md` for the full set of stale migration blockers cleared on 2026-08-24.
 > 2026-08-20: **US benchmark resolves the just-closed session from a guarded QUOTE.** `bench_nav` was NULL for two consecutive US sessions while NAV itself was correct: at 16:15 ET no vendor has published VOO's settled bar (Yahoo's chart endpoint lacks it, Massive grouped publishes next-day, Massive `/range` still ends yesterday). The marks path was fixed to use Yahoo QUOTES; the benchmark path was left on the chart endpoint, so alpha stayed uncomputable.
 >
 > **This does not break the "a benchmark observation is a DAILY BAR, not a quote" rule — it respects why that rule exists.** The original defect was an UNSESSION-IDENTIFIED quote stamped with the cron run date. The quote was never the problem; the missing session identity was. There is also a consistency argument: NAV is now marked from the same 16:15 print, so a 16:15 benchmark is LIKE-FOR-LIKE, and pairing a 16:15 NAV against a settled close is the greater inconsistency.
