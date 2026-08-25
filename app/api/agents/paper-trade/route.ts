@@ -7,6 +7,7 @@ import { assertFreshQuote } from "@/lib/data/quote-freshness";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { constructPortfolio, DEFAULT_LIMITS, type BookPosition } from "@/lib/portfolio/constructor";
+import { computeCorrelationShadow, loadShadowReturns } from "@/lib/portfolio/correlation-shadow";
 import { estimateDailyVolPct } from "@/lib/portfolio/inputs";
 import { predictPWin } from "@/lib/validation/calibration";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
@@ -679,6 +680,33 @@ export async function POST(req: NextRequest) {
       const marketLimits = allocEquityCap != null
         ? { ...portfolioLimits, maxGrossExposurePct: Math.min(portfolioLimits.maxGrossExposurePct, allocEquityCap) }
         : portfolioLimits;
+      // ── Correlation shadow (MEASURE ONLY) ──────────────────────────────
+      // Records the verdict a correlation-aware constructor WOULD reach. It
+      // gates nothing: the real constructor below is untouched and still runs
+      // on its conservative sector-proxy behaviour. Fail-soft throughout — a
+      // shadow measurement must never block or delay a fill.
+      //
+      // Exists because `maxAvgPairwiseCorr` has never operated (every call site
+      // passes beta: null, and strategy_config.max_avg_pairwise_corr is NULL),
+      // so "would a correlation gate have helped?" is unanswered. Logging the
+      // counterfactual makes it answerable later against realised outcomes.
+      try {
+        const bookSymbols = (bookByMarket.get(market) ?? []).map((b) => b.symbol);
+        const shadowReturns = await loadShadowReturns(
+          supabase, market as "us" | "india", [signal.symbol, ...bookSymbols],
+        );
+        const shadow = computeCorrelationShadow({
+          candidate: signal.symbol, book: bookSymbols, returns: shadowReturns,
+        });
+        await logStage(supabase, {
+          signal_id: signal.id, symbol: signal.symbol, market,
+          stage: "correlation_shadow",
+          outcome: shadow.verdict,
+          reason: shadow.reason,
+          detail: { ...shadow, note: "measure-only; no fill was gated on this" },
+        });
+      } catch { /* shadow only — never affects the fill */ }
+
       const constructed = constructPortfolio(
         bookByMarket.get(market) ?? [],
         [{ symbol: signal.symbol, market: market as "us" | "india", proposedSizePct, sector: candSector, beta: null, dailyVol }],
