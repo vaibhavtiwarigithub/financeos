@@ -1,6 +1,10 @@
 const REVIEW_FLOOR = 20;
 const ADJUSTMENT_FLOOR = 60;
-const SUPPORTED_HORIZONS = [2, 5, 10, 20] as const;
+// 60/120 grade the plan well past the mandate's 5-15 session hold. That is the
+// point: they answer whether the 8% objective the plan set was reached AFTER
+// the position was already closed, which is the "are we exiting too early"
+// question the <=20d horizons structurally cannot ask.
+const SUPPORTED_HORIZONS = [2, 5, 10, 20, 60, 120] as const;
 
 export interface PlanCalibrationOutcome {
   horizonDays: number;

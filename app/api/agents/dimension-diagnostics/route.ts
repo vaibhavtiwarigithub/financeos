@@ -80,7 +80,7 @@ async function runMarket(svc: any, market: Market) {
       reports.push({ horizonDays, status: (existing as any).status, skipped: "already_recorded" });
       continue;
     }
-    const findings = [...buildDimensionFindings(observations), ...buildAgentFindings(observations)];
+    const findings = [...buildDimensionFindings(observations, horizonDays), ...buildAgentFindings(observations, horizonDays)];
     const distinctSessions = new Set(observations.map((row) => row.ts.slice(0, 10))).size;
     const status = findings.some((finding) => finding.classification === "insufficient_evidence") ? "insufficient_evidence" : "measured";
     const { data: run, error: runError } = await svc.from("dimension_diagnostic_runs").insert({

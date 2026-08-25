@@ -69,6 +69,10 @@ export type CandleLoaders = {
   provider: (market: string, symbol: string) => Promise<LabelCandle[]>;
 };
 
+/** Horizons at or above this always re-fetch from the provider rather than
+ *  trusting a covered cache slice. See the rationale in `resolveOnce`. */
+export const LONG_HORIZON_REFRESH_DAYS = 60;
+
 export class CandleResolver {
   private series = new Map<string, LabelCandle[]>();
   private cachedSince = new Map<string, string>();
@@ -120,7 +124,22 @@ export class CandleResolver {
       this.cachedSince.set(key, since);
     }
 
-    if (hasForwardCoverage(series, decisionDate, horizonDays)) return series;
+    // A long forward window must not be built from cached bars. `price_cache`
+    // stores closes ADJUSTED AS OF THE MOMENT THEY WERE FETCHED, and providers
+    // restate adjusted history after a split or distribution. Cached-and-covered
+    // therefore short-circuits the refetch and leaves bars that are wrong by the
+    // split factor — a 2:1 split inside the window reads as a -50% return.
+    //
+    // Over 10 sessions the exposure is a few days and splits are rare. Over 60
+    // or 120 it is months of exposure per label, so the longest horizons pay for
+    // one provider fetch and restate the cache for everyone: `mergeCandles` puts
+    // the provider second ("later sources win"), and the label-maturation loader
+    // upserts the fresh bars back into price_cache on (symbol, date).
+    //
+    // Cost is bounded by `providerTried` — still at most one provider fetch per
+    // symbol per run no matter how many horizons ask.
+    const forceProviderRefresh = horizonDays >= LONG_HORIZON_REFRESH_DAYS;
+    if (!forceProviderRefresh && hasForwardCoverage(series, decisionDate, horizonDays)) return series;
 
     // Coverage short — a present-but-stale cache must NOT short-circuit this.
     if (!this.providerTried.has(key)) {

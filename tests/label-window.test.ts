@@ -293,3 +293,55 @@ describe("long-horizon forward coverage", () => {
     expect(hasForwardCoverage(series, DECISION, 120)).toBe(true);
   });
 });
+
+describe("CandleResolver — long horizons refuse to trust a cached window", () => {
+  // price_cache stores closes adjusted AS OF FETCH TIME. Providers restate
+  // adjusted history after a split, so a covered-but-old cache slice silently
+  // yields bars wrong by the split factor. Negligible over 10 sessions,
+  // months of exposure per label at 60/120.
+  it("re-fetches at h60 even when the cache fully covers the window", async () => {
+    let providerCalls = 0;
+    const resolver = new CandleResolver({
+      cache: async () => bars("2026-03-02", 200),
+      provider: async () => { providerCalls++; return bars("2026-03-02", 200); },
+    });
+    await resolver.resolve("us", "AAPL", "2026-03-04", 60, "2026-03-01");
+    expect(providerCalls).toBe(1);
+  });
+
+  it("still trusts a covering cache at the short horizons", async () => {
+    let providerCalls = 0;
+    const resolver = new CandleResolver({
+      cache: async () => bars("2026-03-02", 200),
+      provider: async () => { providerCalls++; return bars("2026-03-02", 200); },
+    });
+    await resolver.resolve("us", "AAPL", "2026-03-04", 20, "2026-03-01");
+    expect(providerCalls).toBe(0);
+  });
+
+  // The refetch is only worth paying for if the fresh bars actually replace the
+  // stale ones. mergeCandles is documented "later sources win"; the resolver
+  // relies on that ordering, so assert it end-to-end rather than trusting it.
+  it("lets the re-fetched bars overwrite the stale cached closes", async () => {
+    const stale = bars("2026-03-02", 200).map(c => ({ ...c, close: c.close * 2 }));
+    const resolver = new CandleResolver({
+      cache: async () => stale,
+      provider: async () => bars("2026-03-02", 200),
+    });
+    const series = await resolver.resolve("us", "AAPL", "2026-03-04", 60, "2026-03-01");
+    const fresh = bars("2026-03-02", 200);
+    const at = (s: LabelCandle[], date: string) => s.find(c => c.date === date)!.close;
+    expect(at(series, fresh[10].date)).toBe(fresh[10].close);
+  });
+
+  it("does not pay for more than one provider fetch per symbol per run", async () => {
+    let providerCalls = 0;
+    const resolver = new CandleResolver({
+      cache: async () => bars("2026-03-02", 200),
+      provider: async () => { providerCalls++; return bars("2026-03-02", 200); },
+    });
+    await resolver.resolve("us", "AAPL", "2026-03-04", 60, "2026-03-01");
+    await resolver.resolve("us", "AAPL", "2026-03-04", 120, "2026-03-01");
+    expect(providerCalls).toBe(1);
+  });
+});

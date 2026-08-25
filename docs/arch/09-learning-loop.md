@@ -82,6 +82,57 @@ empty page. First h60 label ≈ 2026-09-29; roughly 20 independent decision date
 by late October. Starting the clock early is the whole point — no engineering
 compresses forward time.
 
+#### Consumers widened + an overlap-aware floor (2026-08-24)
+
+`DIAGNOSTIC_HORIZONS` (`lib/learning/dimension-diagnostics.ts`) and
+`SUPPORTED_HORIZONS` (`lib/learning/plan-calibration.ts`) were both still
+`[2, 5, 10, 20]`, so the h60/h120 labels would have matured in late September
+into consumers that never read them. Both now match the labeler.
+
+Widening the diagnostics constant required migration
+`20260824220000_diagnostic_horizons_60_120.sql` FIRST: `dimension_diagnostic_runs`
+constrained `horizon_days` to the short set, and because `runMarket()` rethrows
+on insert failure, an h60 insert violating that CHECK would have killed the run
+for every other horizon too. Applied and verified 2026-08-24.
+
+**The date floor is now overlap-aware, and that is the load-bearing part.**
+`MIN_PREDICTIVE_DATES = 20` counts decision dates without regard to horizon, and
+consecutive forward windows of length `horizonDays` overlap almost entirely:
+
+| horizon | 20 dates | independent observations |
+|---|---|---|
+| h10 | 20 | 2.0 |
+| h20 | 20 | 1.0 |
+| h120 | 20 | **0.17** |
+
+Widening the horizons without this correction would have let the 20-date gate
+pass at h120 and emit a `measured_descriptive` predictive finding built on
+roughly ONE non-overlapping window. `MIN_EFFECTIVE_OBSERVATIONS = 12` is applied
+on top of the date floor via `effectiveObservations(n, horizonDays) = n /
+horizonDays`; both must clear. A long horizon needs proportionally MORE dates,
+not the same number. Mutation-verified in
+`lib/learning/dimension-diagnostics.test.ts`.
+
+**Long-horizon labels no longer trust the candle cache.**
+`price_cache` stores closes adjusted AS OF FETCH TIME, and providers restate
+adjusted history after a split or distribution. `CandleResolver` short-circuited
+the provider whenever the cache covered the window, so a covered-but-old slice
+yielded bars wrong by the split factor — a 2:1 split inside the window reads as
+a -50% return. Negligible across 10 sessions; months of exposure per label at
+60/120. `LONG_HORIZON_REFRESH_DAYS = 60` now forces a provider fetch at the long
+horizons regardless of coverage. Cost stays bounded by `providerTried` (one
+fetch per symbol per run), and the fresh bars restate both the in-memory series
+(`mergeCandles`, later sources win) and `price_cache` itself (upsert on
+`symbol,date`).
+
+**Two long-horizon accuracy caveats remain OPEN and must be stated alongside any
+h60/h120 finding:**
+1. `benchmark_neutral_return` subtracts the raw benchmark return with no beta
+   adjustment. Immaterial over 10 days; over 6 months a high-beta name shows
+   systematic phantom alpha.
+2. Survivorship — delisted or acquired names never mature a label and drop out
+   silently, biasing long-horizon results optimistic.
+
 **Read long-horizon results by distinct decision DATES, not label count.**
 Observations scored on one day share that day's market shock and are one draw,
 not N. At h20 the sample was already only ~10 dates per market when the long

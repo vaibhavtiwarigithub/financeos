@@ -4,12 +4,43 @@ import { computeSpearmanIC } from "@/lib/validation/feature-check";
 // v3 adds forward-written decision code versions. v1/v2 remain immutable in
 // production rather than being reinterpreted after the fact.
 export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v3";
-export const DIAGNOSTIC_HORIZONS = [2, 5, 10, 20] as const;
+// 2/5/10/20 rank signal quality at or near the mandate holding period (5-15
+// sessions). 60/120 measure EXIT TIMING — "are we exiting too early" — which
+// the short labels structurally cannot answer, because a 20-day label can never
+// observe what a position would have done after the mandate closed it.
+// label-maturation has written these since 2026-08-17; first h60 rows mature
+// ~2026-09-29.
+export const DIAGNOSTIC_HORIZONS = [2, 5, 10, 20, 60, 120] as const;
 export const DIAGNOSTIC_DIMENSIONS = [
   "fundamental", "technical", "sentiment", "macro", "insider",
 ] as const;
 export const MIN_PREDICTIVE_DATES = 20;
 export const MIN_CROSS_SECTION = 5;
+
+/**
+ * Independent-observation floor, applied ON TOP of MIN_PREDICTIVE_DATES.
+ *
+ * Counting decision dates is horizon-blind, and that blindness is dangerous in
+ * exactly the direction that produces false confidence. Forward windows of
+ * length `horizonDays` starting on consecutive dates overlap almost entirely,
+ * so N dates are nowhere near N independent draws. The standard overlap
+ * correction is nEffective = n / horizonDays:
+ *
+ *   h10,  20 dates -> nEffective 2.0
+ *   h20,  20 dates -> nEffective 1.0
+ *   h120, 20 dates -> nEffective 0.17   (ONE independent observation)
+ *
+ * Without this, widening DIAGNOSTIC_HORIZONS to 60/120 would let the 20-date
+ * gate pass and emit a `measured_descriptive` predictive finding built on
+ * essentially a single non-overlapping window. A long horizon needs
+ * proportionally MORE dates, not the same number.
+ */
+export const MIN_EFFECTIVE_OBSERVATIONS = 12;
+
+export function effectiveObservations(qualifyingSessions: number, horizonDays: number): number {
+  if (!Number.isFinite(horizonDays) || horizonDays <= 0) return 0;
+  return qualifyingSessions / horizonDays;
+}
 
 export type DiagnosticDimension = (typeof DIAGNOSTIC_DIMENSIONS)[number];
 export type DiagnosticFinding = {
@@ -52,7 +83,7 @@ function dateOf(ts: string): string {
   return ts.slice(0, 10);
 }
 
-function predictiveMetrics(rows: Array<{ value: number; outcome: number; ts: string }>) {
+function predictiveMetrics(rows: Array<{ value: number; outcome: number; ts: string }>, horizonDays: number) {
   const byDate = new Map<string, Array<{ value: number; outcome: number }>>();
   for (const row of rows) {
     const date = dateOf(row.ts);
@@ -70,7 +101,13 @@ function predictiveMetrics(rows: Array<{ value: number; outcome: number; ts: str
     sessionIcs.push(result.ic);
   }
   const avgIc = mean(sessionIcs);
-  const classification = qualifyingSessions < MIN_PREDICTIVE_DATES
+  // BOTH floors must clear. Dates alone are horizon-blind; nEffective alone
+  // would admit a horizon so short that overlap is irrelevant but the sample is
+  // still tiny.
+  const nEffective = effectiveObservations(qualifyingSessions, horizonDays);
+  const datesShort = qualifyingSessions < MIN_PREDICTIVE_DATES;
+  const overlapShort = nEffective < MIN_EFFECTIVE_OBSERVATIONS;
+  const classification = datesShort || overlapShort
     ? "insufficient_evidence"
     : "measured_descriptive";
   return {
@@ -81,16 +118,21 @@ function predictiveMetrics(rows: Array<{ value: number; outcome: number; ts: str
       qualifying_sessions: qualifyingSessions,
       min_sessions_required: MIN_PREDICTIVE_DATES,
       min_cross_section_required: MIN_CROSS_SECTION,
+      horizon_days: horizonDays,
+      effective_observations: nEffective,
+      min_effective_observations_required: MIN_EFFECTIVE_OBSERVATIONS,
       mean_session_rank_ic: avgIc,
       positive_session_share: hitRate(sessionIcs),
     },
-    reason: classification === "insufficient_evidence"
+    reason: datesShort
       ? `Only ${qualifyingSessions}/${MIN_PREDICTIVE_DATES} sessions have a cross-section of at least ${MIN_CROSS_SECTION}; no predictive conclusion is permitted.`
-      : "Descriptive session-level rank IC only. This is not validation, a promotion result, or a change recommendation.",
+      : overlapShort
+        ? `${qualifyingSessions} sessions at a ${horizonDays}-day horizon overlap to only ${nEffective.toFixed(2)} independent observations (need ${MIN_EFFECTIVE_OBSERVATIONS}); no predictive conclusion is permitted.`
+        : "Descriptive session-level rank IC only. This is not validation, a promotion result, or a change recommendation.",
   };
 }
 
-export function buildDimensionFindings(observations: DiagnosticObservation[]): DiagnosticFinding[] {
+export function buildDimensionFindings(observations: DiagnosticObservation[], horizonDays: number): DiagnosticFinding[] {
   const findings: DiagnosticFinding[] = [];
   for (const dimension of DIAGNOSTIC_DIMENSIONS) {
     const available = observations.filter((row) => row.availabilityMask?.[dimension] === true);
@@ -118,7 +160,7 @@ export function buildDimensionFindings(observations: DiagnosticObservation[]): D
       const outcome = finite(row.benchmarkNeutralReturn);
       return value == null || outcome == null ? [] : [{ value, outcome, ts: row.ts }];
     });
-    const predictive = predictiveMetrics(predictiveRows);
+    const predictive = predictiveMetrics(predictiveRows, horizonDays);
     findings.push({
       subjectType: "dimension",
       subjectKey: dimension,
@@ -131,7 +173,7 @@ export function buildDimensionFindings(observations: DiagnosticObservation[]): D
   return findings;
 }
 
-export function buildAgentFindings(observations: DiagnosticObservation[]): DiagnosticFinding[] {
+export function buildAgentFindings(observations: DiagnosticObservation[], horizonDays: number): DiagnosticFinding[] {
   const byAgent = new Map<string, DiagnosticObservation[]>();
   for (const observation of observations) {
     const key = `${observation.agentLabel || "research:unlabeled"}@${observation.codeVersion ?? "unknown-code"}`;
@@ -147,7 +189,7 @@ export function buildAgentFindings(observations: DiagnosticObservation[]): Diagn
       const outcome = finite(row.benchmarkNeutralReturn);
       return score == null || outcome == null ? [] : [{ value: score, outcome, ts: row.ts }];
     });
-    const predictive = predictiveMetrics(outcomeRows);
+    const predictive = predictiveMetrics(outcomeRows, horizonDays);
     const eligibleReturns = rows.flatMap((row) => row.entryEligible && finite(row.benchmarkNeutralReturn) != null
       ? [finite(row.benchmarkNeutralReturn)!] : []);
     const availabilityValues = rows.flatMap((row) => DIAGNOSTIC_DIMENSIONS.map((dimension) => row.availabilityMask?.[dimension] === true ? 1 : 0));

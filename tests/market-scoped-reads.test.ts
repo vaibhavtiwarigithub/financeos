@@ -73,7 +73,12 @@ describe("trader proposal listing is market-scoped and null-tolerant", () => {
     const res = await traderGET(req("http://localhost/api/agents/trader?market=india"));
     expect(res.status).toBe(200);
     expect(h.calls[0].eq).toContainEqual(["market", "india"]);
-    expect(h.calls[0].or).toHaveLength(0);
+    // India must not get the us NULL-tolerant market fallback. Asserted against
+    // the market filter specifically, not "no .or() at all" — the query also
+    // carries an unrelated .or() excluding shadow proposals, and a bare length
+    // check would silently conflate the two.
+    expect(h.calls[0].or).not.toContainEqual("market.eq.us,market.is.null");
+    expect(h.calls[0].or.filter((f: string) => f.includes("market."))).toHaveLength(0);
   });
 
   it("matches NULL market rows under us, so pre-backfill proposals stay reviewable", async () => {
