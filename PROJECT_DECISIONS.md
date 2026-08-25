@@ -1369,3 +1369,27 @@ its own rollback champion and acceptance evidence.
 
 **Architecture:** `features/instrument-aware-scoring/FEATURE_ARCHITECTURE.md`.
 **Implementation:** `features/instrument-aware-scoring/IMPLEMENTATION_RESULT.md`.
+
+---
+
+## Decision 68: Portfolio comparison defaults are display-only (2026-08-24)
+
+**Status:** Approved and implemented
+
+**Decision.** Let the owner compare paper Portfolio performance against one
+market-local benchmark at a time and persist that selection as the display
+default. US choices are VOO, QQQ, XLK and XLF. India choices are NIFTY 50 plus
+verified-priceable NIFTY IT (ITBEES), NIFTY Bank (BANKBEES), and NIFTY Next 50
+(JUNIORBEES) proxies. The preference lives in `app_settings`; it never changes
+the governed `benchmarks.is_primary` value.
+
+**Reason.** Different portfolio tilts need different context, but a convenient
+chart choice must not silently rewrite the benchmark used by mandates,
+validation, learning, or promotion. A radio selection is clearer than multiple
+checkbox lines on the compact chart and makes the saved default unambiguous.
+
+**Safety boundary.** Exact-session, same-currency, measurement-only comparison.
+No forward fill, score change, learner mutation, paper fill, sizing effect,
+proposal, or order path.
+
+**Architecture:** `features/benchmark-alpha/FEATURE_ARCHITECTURE.md` P1E.

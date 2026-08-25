@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ReferenceLine,
@@ -18,6 +18,13 @@ type Timeframe = "1W" | "1M" | "YTD" | "1Y" | "All";
 const TIMEFRAMES: Timeframe[] = ["1W", "1M", "YTD", "1Y", "All"];
 
 interface SeriesRow { date: string; nav: number | null; bench_nav: number | null }
+interface BenchmarkOption {
+  id: string;
+  label: string;
+  symbol: string | null;
+  provider_symbol: string | null;
+  is_primary: boolean;
+}
 
 const DAY = 86_400_000;
 
@@ -57,33 +64,71 @@ const CARD: React.CSSProperties = {
   background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px",
 };
 
-// Portfolio cumulative %-return vs its market benchmark (US = VOO, India =
-// NIFTY 50), with a timeframe toggle. Both lines are rebased to % return from
+// Portfolio cumulative %-return vs an owner-selected market-local display
+// benchmark, with a timeframe toggle. Both lines are rebased to % return from
 // the first point inside the selected window, so every timeframe reads "how am I
-// doing vs the index over THIS period". Data is the daily paper_performance
-// series (nav + bench_nav) — no intraday, so the smallest window is 1W.
+// doing vs the comparator over THIS period". Display selection is persisted by
+// the server but never changes the governed primary benchmark used by learning.
 export default function BenchmarkPerformanceChart({ market = "us" }: { market?: Market }) {
-  const benchLabel = market === "india" ? "NIFTY 50" : "VOO";
   const [series, setSeries] = useState<SeriesRow[]>([]);
+  const [benchmarks, setBenchmarks] = useState<BenchmarkOption[]>([]);
+  const [selectedBenchmark, setSelectedBenchmark] = useState<BenchmarkOption | null>(null);
   const [loading, setLoading] = useState(true);
+  const [savingDefault, setSavingDefault] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [tf, setTf] = useState<Timeframe>("1M");
+  const requestSeq = useRef(0);
+  const benchLabel = selectedBenchmark?.label ?? (market === "india" ? "NIFTY 50" : "VOO");
 
-  useEffect(() => {
-    let cancelled = false;
+  async function load(benchmarkId?: string) {
+    const seq = ++requestSeq.current;
     setLoading(true);
     setErr(null);
-    fetch(`/api/portfolio/performance-series?market=${market}`)
-      .then(r => r.json())
-      .then(d => {
-        if (cancelled) return;
-        if (d?.error) { setErr(d.error); setSeries([]); }
-        else setSeries(Array.isArray(d?.series) ? d.series : []);
-      })
-      .catch(() => { if (!cancelled) { setErr("Failed to load performance history."); setSeries([]); } })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    try {
+      const suffix = benchmarkId ? `&benchmarkId=${encodeURIComponent(benchmarkId)}` : "";
+      const response = await fetch(`/api/portfolio/performance-series?market=${market}${suffix}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || data?.error) throw new Error(data?.error ?? "performance_series_failed");
+      if (seq !== requestSeq.current) return;
+      setSeries(Array.isArray(data?.series) ? data.series : []);
+      setBenchmarks(Array.isArray(data?.benchmarks) ? data.benchmarks : []);
+      setSelectedBenchmark(data?.selected_benchmark ?? null);
+    } catch (e: any) {
+      if (seq !== requestSeq.current) return;
+      setErr(e?.message ?? "Failed to load performance history.");
+      setSeries([]);
+    } finally {
+      if (seq === requestSeq.current) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+    return () => { requestSeq.current += 1; };
   }, [market]);
+
+  async function chooseBenchmark(option: BenchmarkOption) {
+    if (option.id === selectedBenchmark?.id || savingDefault) return;
+    const previous = selectedBenchmark;
+    setSelectedBenchmark(option);
+    setSavingDefault(true);
+    setErr(null);
+    try {
+      const response = await fetch("/api/portfolio/performance-series", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ market, benchmarkId: option.id }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.ok) throw new Error(data?.error ?? "benchmark_preference_failed");
+      await load(option.id);
+    } catch (e: any) {
+      setSelectedBenchmark(previous);
+      setErr(`Could not save benchmark default: ${e?.message ?? "unknown error"}`);
+    } finally {
+      setSavingDefault(false);
+    }
+  }
 
   const { chartData, portfolioLast, benchLast, delta } = useMemo(() => {
     const cut = cutoffFor(tf);
@@ -142,12 +187,40 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
   );
 
   const header = (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", marginBottom: "14px" }}>
-      <div>
-        <div style={{ fontSize: "13px", fontWeight: 600, color: T.text }}>Portfolio vs {benchLabel}</div>
-        <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>Cumulative % return, rebased to each window</div>
+    <div style={{ marginBottom: "14px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px" }}>
+        <div>
+          <div style={{ fontSize: "13px", fontWeight: 600, color: T.text }}>Portfolio vs {benchLabel}</div>
+          <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>Cumulative % return, rebased to each window · selection is your saved default</div>
+        </div>
+        {toggle}
       </div>
-      {toggle}
+      {benchmarks.length > 0 && (
+        <div role="radiogroup" aria-label={`${market.toUpperCase()} comparison benchmark`} style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "12px" }}>
+          {benchmarks.map((option) => {
+            const active = option.id === selectedBenchmark?.id;
+            return (
+              <button
+                key={option.id}
+                role="radio"
+                aria-checked={active}
+                disabled={savingDefault}
+                onClick={() => void chooseBenchmark(option)}
+                title={option.is_primary ? "Governed primary benchmark" : "Display comparison only"}
+                style={{
+                  fontSize: "11px", fontWeight: 600, padding: "5px 9px", borderRadius: "999px",
+                  cursor: savingDefault ? "wait" : "pointer", opacity: savingDefault ? 0.7 : 1,
+                  background: active ? T.accent : T.surface,
+                  color: active ? "#fff" : T.textSub,
+                  border: `1px solid ${active ? T.accent : T.border}`,
+                }}
+              >
+                {option.label}{option.is_primary ? " · primary" : ""}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 
@@ -173,7 +246,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
       <div style={CARD}>
         {header}
         <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "48px 0" }}>
-          Not enough history yet — check back after a few daily runs.
+          No matched daily Portfolio/{benchLabel} history yet. Run the benchmark scorecard once or check back after its next daily run.
         </div>
       </div>
     );

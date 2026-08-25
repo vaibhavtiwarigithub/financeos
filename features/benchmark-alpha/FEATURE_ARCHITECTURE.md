@@ -1,6 +1,6 @@
 # Feature Architecture - Benchmark Alpha Scorecard
 
-> Status: **P1 BUILT 2026-07-13.** Phase 1 measurement is implemented; Phase 2 learner/promotion wiring remains unbuilt.
+> Status: **P1 BUILT 2026-07-13; P1E DISPLAY COMPARATORS BUILT 2026-08-24.** Phase 1 measurement is implemented; Phase 2 learner/promotion wiring remains unbuilt.
 > Scope: deterministic measurement first; no order path, no paper fills, no learner mutation in Phase 1.
 > Build gate: Phase 2 learner/promotion wiring requires a separate owner approval after Phase 1 has accumulated evidence.
 > Update when built: `docs/arch/04-database-schema.md`, `docs/arch/05-crons-and-scheduling.md`, `docs/arch/09-learning-loop.md`, and `public/agent-diagrams/system-map.json`.
@@ -256,6 +256,20 @@ Never divide cumulative excess by daily tracking error.
   - Columns: enabled benchmarks.
   - Cell: cumulative excess return, annualized info ratio, confidence/status badge.
   - Missing/unpriceable rows are visible, not omitted.
+- Paper Portfolio comparison chart:
+  - Single-select market-local display benchmark (radio/segmented control).
+  - US: `VOO`, `QQQ`, `XLK`, `XLF`.
+  - India: `NIFTY 50`, `NIFTY IT (ITBEES)`, `NIFTY Bank (BANKBEES)`, and
+    `NIFTY Next 50 (JUNIORBEES)`. The latter three are liquid ETF proxies used
+    because their existing free Yahoo daily-bar source was verified priceable;
+    they are labelled as proxies rather than falsely claiming exact US-index equivalence.
+  - The owner selection is persisted per market in `app_settings` and becomes
+    the next chart default across sessions/devices.
+  - This is a **display preference only**. It never changes
+    `benchmarks.is_primary`, mandate benchmark, scoring, learner evidence,
+    promotion, sizing, paper fills, or orders.
+  - Portfolio and comparator are joined by exact session date and rebased from
+    their first common observation inside the selected window. No forward fill.
 - Agent helper:
   - `getAlpha(svc, {market, book, bookScope, horizon, benchmarkId?})`
   - Returns only the latest scorecard row with status/confidence.
@@ -313,7 +327,16 @@ Blend benchmarks ship after single-symbol benchmarks:
    - Alpha Scorecard UI.
    - `getAlpha` read helper.
    - Docs/system-map updates.
-5. **P2 - gated objective wiring**
+5. **P1E - owner-selected display comparators (2026-08-24)**
+   - Seed only verified-priceable, same-currency single-symbol comparators.
+   - Populate secondary observations through the existing Massive-first US and
+     Yahoo India adapters; the original implementation defined this fetch but
+     failed to call it.
+   - Persist a separate `portfolio_default_benchmark_<market>` preference;
+     never repurpose the governed `is_primary` flag as a UI preference.
+   - Expose exact-session daily comparison series through the owner-gated
+     Portfolio API and verify market-switch/request-race behavior in-browser.
+6. **P2 - gated objective wiring**
    - Only after P1 evidence and owner approval.
    - Add Performance Truth snapshot fields and learner/promotion read-only consumption.
    - Add warn-only posture reporter.
@@ -325,6 +348,11 @@ Blend benchmarks ship after single-symbol benchmarks:
 - `app/api/agents/benchmark-scorecard/route.ts`
 - `components/dashboard/AlphaScorecard.tsx`
 - `tests/benchmark-alpha.test.ts`
+- `lib/analytics/benchmark-display.ts`
+- `app/api/portfolio/performance-series/route.ts`
+- `components/dashboard/BenchmarkPerformanceChart.tsx`
+- `tests/benchmark-display.test.ts`
+- `supabase/migrations/20260824213000_portfolio_benchmark_choices.sql`
 - `docs/arch/04-database-schema.md`
 - `docs/arch/05-crons-and-scheduling.md`
 - `docs/arch/09-learning-loop.md`

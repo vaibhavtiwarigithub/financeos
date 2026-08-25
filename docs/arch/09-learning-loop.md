@@ -141,6 +141,14 @@ they do **not** change LearnerAgent objectives, promotion gates, posture, sizing
 paper fills, or live orders in Phase 1. Phase 2 learner/promotion wiring still
 requires a separate owner-approved implementation.
 
+The Paper Portfolio chart also supports market-local display comparisons. US
+offers VOO/QQQ/XLK/XLF; India offers NIFTY 50 plus priceable NIFTY IT,
+NIFTY Bank, and NIFTY Next 50 ETF proxies. The owner's selection is saved in
+`app_settings`, but is deliberately distinct from `benchmarks.is_primary`:
+changing what the chart displays cannot change a mandate, learner input,
+promotion decision, score, fill, size, or order. Secondary daily observations
+come from existing free providers and are exact-session joined without forward fill.
+
 ---
 
 ## Champion and Challenger

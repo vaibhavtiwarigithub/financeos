@@ -379,12 +379,12 @@
     },
     "BENCHALPHA": {
       "label": "BenchmarkAlpha",
-      "description": "Phase-1 Performance Truth measurement surface. Rolls up benchmark_scorecard rows for paper/live, US/India, and 1W/1M/3M/YTD/1Y horizons using common-window excess return and annualized daily information ratio. No learner mutation, posture change, paper fill, or live order. W5 (2026-08-16): benchmark_price_observations copied from paper_performance now carry the bar's own session date and provider; a level proven to belong to a different session is stored source_status='session_mismatch' and excluded from the series, and displayed coverage is clamped to 100% (US 1M previously reported 104.5%).",
+      "description": "Phase-1 Performance Truth measurement surface. Rolls up benchmark_scorecard rows for paper/live, US/India, and 1W/1M/3M/YTD/1Y horizons using common-window excess return and annualized daily information ratio. No learner mutation, posture change, paper fill, or live order. W5 (2026-08-16): benchmark observations carry their own session date/provider and mismatches are excluded. P1E (2026-08-24): Paper Portfolio can display one persisted market-local comparator (US VOO/QQQ/XLK/XLF; India NIFTY 50/ITBEES/BANKBEES/JUNIORBEES). This display default is separate from the governed primary benchmark and cannot affect learning or trading.",
       "addedAt": "2026-07-13",
       "addReason": "Give Kairos a trustworthy multi-horizon alpha-vs-benchmark scorecard before any learner/promotion use.",
       "status": "changed",
-      "changedAt": "2026-08-16",
-      "changeReason": "W4/W5 evaluation-pipeline-integrity remediation: NAV mark provenance, a falsifiable NAV invariant, one canonical EOD writer, and session-aligned benchmark observations.",
+      "changedAt": "2026-08-24",
+      "changeReason": "P1E added owner-selected, persisted display comparators with exact-session joins and repaired the previously dormant secondary observation collector; governed primary/learning/trading remain unchanged.",
       "removedAt": null,
       "removeReason": null
     },

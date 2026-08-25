@@ -100,7 +100,7 @@ export default function AlphaScorecard({ market }: { market: "us" | "india" }) {
       <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", marginBottom: "12px", flexWrap: "wrap" }}>
         <div>
           <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Benchmark Alpha Scorecard</div>
-          <div style={{ fontSize: "12px", color: T.textSub, marginTop: "4px" }}>{market.toUpperCase()} · {book === "paper" ? "paper book" : "live book"} · primary benchmark rows</div>
+          <div style={{ fontSize: "12px", color: T.textSub, marginTop: "4px" }}>{market.toUpperCase()} · {book === "paper" ? "paper book" : "live book"} · enabled benchmarks</div>
         </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
           {(["paper", "live"] as const).map((b) => (

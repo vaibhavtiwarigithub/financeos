@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { fetchMassiveCandles } from "@/lib/data/candles";
+import { fetchYahooCandles } from "@/lib/data/yahoo-candles";
 import type { Candle } from "@/lib/data/technicals";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import {
@@ -134,7 +135,17 @@ async function upsertProviderObservations(svc: any, benchmark: BenchmarkConfig) 
   if (benchmark.is_primary) return;
   const symbol = benchmark.provider_symbol ?? benchmark.symbol;
   if (!symbol) return;
-  const candles = await fetchMassiveCandles(symbol, 400).catch(() => [] as Candle[]);
+  let provider = benchmark.market === "india" ? "yahoo" : "massive";
+  let candles = benchmark.market === "india"
+    ? await fetchYahooCandles(symbol, "2y").catch(() => [] as Candle[])
+    : await fetchMassiveCandles(symbol, 500).catch(() => [] as Candle[]);
+  // Massive remains preferred for US, but a provider outage or free-tier
+  // entitlement gap must not make a configured display comparator permanently
+  // empty when the existing keyless Yahoo daily-bar adapter can price it.
+  if (!candles.length && benchmark.market === "us") {
+    provider = "yahoo";
+    candles = await fetchYahooCandles(symbol, "2y").catch(() => [] as Candle[]);
+  }
   const rows = candles
     .filter((c) => !!c?.date && Number.isFinite(Number(c.close)) && Number(c.close) > 0)
     .map((c) => ({
@@ -143,7 +154,7 @@ async function upsertProviderObservations(svc: any, benchmark: BenchmarkConfig) 
       date: String(c.date).slice(0, 10),
       close: Number(c.close),
       currency: benchmark.currency,
-      provider: "massive",
+      provider,
       source_status: "ok",
       error: null,
     }));
@@ -207,6 +218,7 @@ async function buildScorecards(svc: any) {
   for (const benchmark of benchmarks) {
     await upsertPaperObservations(svc, benchmark);
     await upsertLiveObservations(svc, benchmark);
+    await upsertProviderObservations(svc, benchmark);
   }
 
   for (const market of MARKETS) {
