@@ -18,6 +18,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadTradingMandate, mandateSnapshot, resolveHorizonDays, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaused, isTradingEnabled } from "@/lib/market-controls";
 import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/trading/capital-rotation";
+import { classifyConstructorSize } from "@/lib/trading/constructor-outcome";
 import { selectBestPaperSignals } from "@/lib/trading/paper-signal-selection";
 import { canOpenPaperName, hasOpenPaperName } from "@/lib/trading/paper-entry-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
@@ -717,17 +718,50 @@ export async function POST(req: NextRequest) {
       // (NaN <= 0 is false), so a NaN from an upstream model coefficient,
       // percentile, or config value would otherwise sail through every guard
       // and reach the RPC fill call with a NaN qty/totalCost.
-      if (!Number.isFinite(rawSizedPct) || rawSizedPct <= 0) {
+      // A NON-FINITE size is a bug (NaN coefficient/percentile/config), not a
+      // portfolio state. It must still fail closed — never hand a NaN to
+      // rotation or to the RPC.
+      const constructorOutcome = classifyConstructorSize(rawSizedPct);
+      if (constructorOutcome === "bug") {
         await revertClaim(signal.id);
-        const reason = Number.isFinite(rawSizedPct)
-          ? `portfolio_constructor_denied: ${constructed.orders[0]?.adjustments.join("; ") ?? "no room"}`
-          : "portfolio_constructor_denied: non-finite sizedPct";
+        const reason = "portfolio_constructor_denied: non-finite sizedPct";
         skipped.push({ symbol: signal.symbol, reason });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason, detail: { proposedSizePct, adjustments: constructed.orders[0]?.adjustments } });
         continue;
       }
-      const sizedPct = rawSizedPct;
-      await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: sizedPct < proposedSizePct ? "shrunk" : "passed", reason: `Sized ${sizedPct.toFixed(1)}% (proposed ${proposedSizePct.toFixed(1)}%)`, detail: { proposedSizePct, sizedPct, adjustments: constructed.orders[0]?.adjustments } });
+
+      // A FINITE size of zero means the constructor had no room — gross cap,
+      // sector cap, or a residual below the minimum viable 0.5%. That is not a
+      // reason to drop the candidate: it is precisely capital rotation's
+      // trigger. This branch used to `continue`, which made rotation
+      // unreachable, exactly as the name-cap `continue` did before it was
+      // removed above (see the comment at the name-cap gate). US is gross-cap
+      // constrained rather than name-slot constrained, so from 2026-08-11 it
+      // took this path and stopped producing rotation_events entirely while
+      // India — which binds on the name cap — kept working.
+      //
+      // Falling through is only safe because the `atNameCap || cashShort ||
+      // noRoom` block below `continue`s on EVERY path. A noRoom candidate can
+      // therefore never reach the ordinary buy underneath it, which would
+      // otherwise lever the book straight past the gross cap that just denied
+      // it — US sits at 12/15 names with cash on hand, so neither `atNameCap`
+      // nor `cashShort` would have caught it.
+      const noRoom = constructorOutcome === "no_room";
+      if (noRoom) {
+        const reason = `portfolio_constructor_denied: ${constructed.orders[0]?.adjustments.join("; ") ?? "no room"}`;
+        skipped.push({ symbol: signal.symbol, reason });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason, detail: { proposedSizePct, adjustments: constructed.orders[0]?.adjustments, rotation_candidate: true } });
+        // NB: the claim is deliberately NOT reverted here. The rotation block
+        // below owns it and reverts on every non-executing path.
+      }
+      // Size the rotation attempt from the INTENDED allocation, not the zeroed
+      // one — `paperEntryQuantity` returns null at zero spend and would `continue`
+      // before rotation is ever consulted. Cash and per-trade caps still apply
+      // inside paperAllocationSpend.
+      const sizedPct = noRoom ? proposedSizePct : rawSizedPct;
+      if (!noRoom) {
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: sizedPct < proposedSizePct ? "shrunk" : "passed", reason: `Sized ${sizedPct.toFixed(1)}% (proposed ${proposedSizePct.toFixed(1)}%)`, detail: { proposedSizePct, sizedPct, adjustments: constructed.orders[0]?.adjustments } });
+      }
 
       // finalSizePct is a percentage of this market-local NAV. Available cash
       // and the per-order limit are hard caps, not allocation denominators.
@@ -751,7 +785,7 @@ export async function POST(req: NextRequest) {
       // either it is out of cash (original trigger) or it is out of name slots
       // (added — this is the trigger that actually binds in practice).
       const cashShort = !Number.isFinite(totalCost) || totalCost > portfolio.cash_balance;
-      if (atNameCap || cashShort) {
+      if (atNameCap || cashShort || noRoom) {
         if (earningsRisk) {
           try {
             await recordEarningsRiskObservation(supabase, {
@@ -820,9 +854,13 @@ export async function POST(req: NextRequest) {
           rotReason = `rotation_execute_error:${e?.message ?? String(e)}`;
         }
         await revertClaim(signal.id);
-        const blockReason = atNameCap ? `max_open_names (${marketNameCap})` : "insufficient_cash";
+        const blockReason = atNameCap
+          ? `max_open_names (${marketNameCap})`
+          : noRoom
+            ? "portfolio_constructor_no_room"
+            : "insufficient_cash";
         skipped.push({ symbol: signal.symbol, reason: blockReason });
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: blockReason, detail: { totalCost, cash: portfolio.cash_balance, atNameCap, cashShort, rotReason } });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: blockReason, detail: { totalCost, cash: portfolio.cash_balance, atNameCap, cashShort, noRoom, rotReason } });
         continue;
       }
 
