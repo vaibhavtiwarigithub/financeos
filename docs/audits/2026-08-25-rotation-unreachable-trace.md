@@ -102,3 +102,77 @@ intended design and is measurement-only while
 `rotation_paper_execute_enabled=false` (it would resume writing rotation_events
 for US). Actually ENABLING rotation to trade the paper book is a separate
 money-path decision with the p1_blockers above still unresolved.
+
+---
+
+# CORRECTION — 2026-08-25, same day
+
+Everything above the line stands EXCEPT the claim that rotation has never moved
+capital. That claim is false, it is mine, and it propagated into
+`lib/shadows/registry.ts`, `docs/arch/08-risk-and-safety.md`, commit
+`4b84cc49`, and `decision_journal` id 344. It was also the main argument used
+to justify enabling paper execution, which has since been reverted.
+
+## What rotation actually did
+
+Two swaps executed. `rotation_events` recorded both with
+`status = 'paper_executed'`:
+
+| date | market | sold | score | bought | score | edge |
+|---|---|---|---|---|---|---|
+| 2026-07-24 | us | **PLTR** | 56 | CB | 74 | 18 |
+| 2026-07-27 | india | ONGC.NS | 53 | TCS.NS | 100 | 47 |
+
+Four sell lots closed with `exit_reason = 'capital_rotation'`:
+
+| market | symbol | opened | closed | realized |
+|---|---|---|---|---|
+| us | PLTR | 2026-07-16 | 2026-07-24 | -0.10% |
+| india | ONGC.NS | 2026-07-14 | 2026-07-27 | -2.50% |
+| india | ONGC.NS | 2026-07-23 | 2026-07-27 | -4.13% |
+| india | ONGC.NS | 2026-07-24 | 2026-07-27 | -3.05% |
+
+## How the error happened, precisely
+
+`rotation_events.trade_proposal_id` and `.paper_trade_ids` are NULL on every
+row including the two executed ones. I read those NULLs as proof of
+non-execution while `status = 'paper_executed'` sat in the same rows, and never
+cross-checked `paper_trades.exit_reason`. The linkage columns were simply never
+populated by the executor.
+
+**Rule this earns:** never infer "did not happen" from an unpopulated foreign
+key. Confirm against the table that records the effect — here `paper_trades` —
+not the table that records the intent.
+
+## Second correction: "all four rotations lost money" is also wrong
+
+That was my next statement and it is the wrong frame. Rotation SELLS THE
+WEAKEST HOLDING by design, so its sell legs are expected to be losses. The
+honest unit of evaluation is the swap:
+
+| swap | sold leg realized | bought leg over its own hold | verdict |
+|---|---|---|---|
+| PLTR -> CB | -0.10% | CB 07-24 -> 08-10: **+0.12%** | ~neutral |
+| ONGC.NS -> TCS.NS | -2.50 / -4.13 / -3.05% | TCS 07-27 -> 08-11: **+6.12%** | clearly positive |
+
+On this evidence rotation's two swaps were neutral and positive respectively.
+That is not a case against rotation.
+
+## Third correction: rotation is NOT why PLTR's run was missed
+
+PLTR opened 2026-07-16 and rotation closed it 2026-07-24 — 8 calendar days,
+about 6 market days, against a 10-market-day horizon. **The unconditional time
+stop would have closed it around 2026-07-30 regardless.** Rotation took it out
+roughly four sessions early; it did not cost the subsequent move.
+
+The mechanism that actually forfeits runs like this is the time stop, which is
+precisely what the horizon-extension shadow (scheduled 2026-08-25, jobs 123/124)
+exists to measure.
+
+## What is still NOT established
+
+Why the paper flags were set false on 2026-08-11 03:33:35. The registry says
+execution is gated "after unsafe early P1 behavior", but I have not identified
+what that behavior was, and the swap P&L above does not obviously explain it.
+**Do not re-enable paper execution until that cause is known.** The flags are
+back to false; live was never touched.

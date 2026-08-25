@@ -1,20 +1,24 @@
 # Kairos — Risk & Safety
-> 2026-08-25: **Capital rotation PAPER execution ENABLED (owner-approved). Live remains closed.**
+> 2026-08-25: **Capital rotation paper execution was enabled and then REVERTED the same hour. Flags are false. Do not re-enable without reading this.**
 >
-> | row | paper_execute | allow_score_only | live_proposals |
-> |---|---|---|---|
-> | us / **paper** | **true** | **true** | false |
-> | india / **paper** | **true** | **true** | false |
-> | us / live | false | false | false |
-> | india / live | false | false | false |
+> The enable was argued for on the claim that rotation "has never moved capital". **That claim was false.** Rotation executed two swaps and four sell lots:
 >
-> The two `book_type='live'` rows were not touched. Execution is additionally gated by the `CAPITAL_ROTATION_PAPER_ENABLED` env var, which is **unset in Vercel**, so rotation remains a no-op until the owner sets it — the DB flip is stage one of two. Blast radius when it does run: `max_rotations_per_run=1`, `max_rotations_per_day=1`, per market.
+> | date | market | sold | score | bought | score | edge |
+> |---|---|---|---|---|---|---|
+> | 2026-07-24 | us | PLTR | 56 | CB | 74 | 18 |
+> | 2026-07-27 | india | ONGC.NS | 53 | TCS.NS | 100 | 47 |
 >
-> **Accepted risk, stated plainly:** rotation triggers on `score_edge >= 12` against the composite analyst score, whose measured US rank IC is **+0.051 (t=0.93)** at h10 — not distinguishable from luck (see `docs/audits/2026-08-24-dimension-ic-hypothesis.md`). Rotation may therefore sell a holding to fund a candidate on a signal with no demonstrated edge. Taken deliberately: this is a paper book, it admitted **zero** candidates for six consecutive sessions from 2026-08-18, and `score_to_return_mapping_unvalidated` can only ever be validated by running it.
+> Sell legs realized -0.10% (PLTR) and -2.50 / -4.13 / -3.05% (ONGC.NS x3).
 >
-> Guards verified in `lib/trading/capital-rotation.ts` before flipping: the sell source is refused when `priceFresh === false` (`missing_fresh_price`), inside `min_holding_days`, or `near_stop`; persistence, cooldown and per-run/per-day caps are re-run inside `executeCapitalRotationPaper` rather than trusted from the shadow pass.
+> **How the claim went wrong:** `rotation_events.trade_proposal_id` and `.paper_trade_ids` are NULL on every row *including the executed ones*, and that was read as proof of non-execution while `status='paper_executed'` sat in the same rows. `paper_trades.exit_reason='capital_rotation'` was never cross-checked. **Never infer "did not happen" from an unpopulated foreign key — confirm against the table that records the effect.**
 >
-> Reversal: set `rotation_paper_execute_enabled=false` on `book_type='paper'`, or simply leave the env var unset. Journalled as `decision_journal` id 344.
+> **Do not over-correct either.** "All four rotations lost money" is also wrong framing: rotation sells the weakest holding by design, so losing sell legs are expected. Evaluated as swaps, both were fine — CB returned +0.12% over its hold against PLTR's -0.10%, and TCS.NS returned +6.12% against ONGC.NS's ~-3.2%. The July record is not itself a case against rotation.
+>
+> **Nor did rotation cost the PLTR run.** PLTR was held 8 calendar days (~6 market days) of a 10-market-day horizon; the unconditional time stop would have closed it around 2026-07-30 anyway. Rotation removed it ~4 sessions early. The mechanism that forfeits moves like that is the time stop — which is what the horizon-extension shadow (jobs 123/124) now measures.
+>
+> **The open question that blocks re-enabling:** the paper flags were set false at 2026-08-11 03:33:35 and the registry gates execution "after unsafe early P1 behavior". That behaviour has NOT been identified, and the swap P&L above does not obviously explain it. Establish the cause first.
+>
+> Current state: `rotation_paper_execute_enabled=false`, `rotation_allow_score_only_paper=false` on both paper rows; both live rows false; `rotation_live_proposals_enabled=false` everywhere. The two `book_type='live'` rows were never modified at any point. `CAPITAL_ROTATION_PAPER_ENABLED` exists in Vercel Production (created ~2026-07-23) with a value that is redacted on pull and therefore unverified — inert while the DB flags are false. Journal: id 344 (the enable, containing the false premise) superseded by the correcting entry.
 >
 > 2026-08-25: **CORRECTION — capital rotation does NOT execute, in either book. Two docs claimed it did.**
 >

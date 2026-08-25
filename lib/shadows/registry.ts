@@ -279,13 +279,18 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     productBenefit: "Makes opportunity cost explicit instead of treating a full book as a permanent no-op.",
     traderBenefit: "Can recycle capital into stronger candidates while respecting holding period, turnover, cost, tax and anti-thrash gates.",
     evidenceSource: "rotation_config + rotation_events + paper_trades",
-    // State as of 2026-08-25, verified against rotation_config. Earlier today
-    // this line read "Paper execution is enabled; live proposals are disabled",
-    // which was false — every row had rotation_paper_execute_enabled = false and
-    // rotation had never moved capital in 98 events. The owner then approved
-    // enabling it on the PAPER books only. Keep this line pinned to the actual
-    // flag values, not to intent.
-    currentInfluence: "PAPER books only, and still deployment-gated. rotation_paper_execute_enabled=true and rotation_allow_score_only_paper=true on both book_type='paper' rows (owner-approved 2026-08-25); both book_type='live' rows remain false and rotation_live_proposals_enabled=false everywhere. Execution additionally requires the CAPITAL_ROTATION_PAPER_ENABLED env var, so it stays a no-op until that is set. Capped at 1 rotation per run and per day, per market.",
+    // State as of 2026-08-25, verified against rotation_config AND paper_trades.
+    //
+    // This line has now been wrong twice, in opposite directions. It read "Paper
+    // execution is enabled" while every flag was false; it was then corrected to
+    // say rotation "has never moved capital", which is ALSO false — rotation
+    // executed two swaps (2026-07-24 PLTR→CB, 2026-07-27 ONGC.NS→TCS.NS) and
+    // four sell lots carry exit_reason='capital_rotation'. The mistake was
+    // reading NULL rotation_events.paper_trade_ids as proof of non-execution
+    // while status='paper_executed' sat in the same rows. Confirm against the
+    // table that records the EFFECT (paper_trades), not the one that records
+    // intent. Keep this pinned to observed state, never to intent.
+    currentInfluence: "Shadow only. rotation_paper_execute_enabled=false and rotation_allow_score_only_paper=false on both book_type='paper' rows; both book_type='live' rows false; rotation_live_proposals_enabled=false everywhere. It HAS executed before: two swaps in July 2026 (4 sell lots, exit_reason='capital_rotation'), after which the paper flags were set false on 2026-08-11 for reasons not yet established — see docs/audits/2026-08-25-rotation-unreachable-trace.md before re-enabling.",
     maximumInfluence: "Two-leg owner-reviewed live rotation proposal after paper evidence and broker reconciliation proof.",
     activationGate: "Positive net paper outcome after costs, stable churn/turnover, tax/lot correctness, live two-leg approval and reconciliation sign-off.",
     safetyBoundary: "PositionMonitor exits have precedence; live rotation proposals remain disabled.",
