@@ -183,3 +183,54 @@ Quantile (top-vs-bottom quintile) return spread, IC stddev / hit rate across
 dates, IC decay across h5/h10/h20, and Newey-West correction for overlapping
 h20 windows. IC mean alone can be positive while the top bucket earns nothing.
 None of these are worth running at 20 dates; revisit at >=60.
+
+### 3. Duplicate observations per symbol-date
+
+The research cron writes an observation on each run (13:00 / 17:00 / 18:00
+UTC). Verified on GLD 2026-08-24: three rows, identical scores. A symbol
+scored three times receives three times the weight in a cross-sectional rank
+correlation, which violates the one-decision-one-draw assumption WITHIN a
+date (the date-clustering in the predeclaration only handles it BETWEEN
+dates).
+
+Baseline must dedup to one observation per (market, symbol, date). Using the
+earliest row of the day.
+
+## Final frozen baseline — rank IC, deduped, single-stock cohort, h10
+
+| market | dates | avg names/date | fundamental | t | technical | t | composite | t |
+|---|---|---|---|---|---|---|---|---|
+| us | 19 | 35.4 | +0.076 | 2.40 | -0.014 | -0.19 | +0.051 | 0.93 |
+| india | 20 | 15.1 | -0.046 | -0.82 | +0.173 | 2.51 | +0.106 | 2.04 |
+
+This supersedes both the original Pearson table and addendum item 1 as the
+baseline H1-H4 are measured against. Thresholds and kill conditions unchanged.
+
+The load-bearing finding is unchanged across all three corrections: in both
+markets the composite scores BELOW that market's own best single dimension
+(us 0.051 < 0.076; india 0.106 < 0.173). The blend is destroying signal.
+
+India averages 15.1 names per date. Cross-sectional rank IC on 15 names is
+noisy; treat the India arm as weaker evidence than its t-stat suggests.
+
+### ETF fundamental placeholder — verified live, working as intended
+
+Checked 2026-08-24 production rows. `scoreFundamentals` still returns 55 for
+ETFs, by design, but `features.weighting` confirms it is excluded from the
+composite:
+
+```
+included_dims:    ["technical","sentiment","macro"]
+applied_weights:  fundamental 0, technical 0.4167, sentiment 0.3333, macro 0.25
+renormalized:     true
+```
+
+GLD 2026-08-24: fundamental 55, technical 100, analyst_score 65 (ETF cap).
+
+The second 55 in `scoreFundamentals` — the missing-provider-data default on a
+REAL stock, which DOES carry full fundamental weight — fired 0 times between
+2026-08-15 and 2026-08-24 in both markets. That path is the one worth
+monitoring; it is currently clean.
+
+The 55s remain in HISTORICAL rows, which is why the cohort filter above is
+required for any measurement spanning that period.
