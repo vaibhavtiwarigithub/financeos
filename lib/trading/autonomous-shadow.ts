@@ -9,6 +9,7 @@ import {
 import { getQuote } from "@/lib/data/quotes";
 import { getKiteMargins, getKiteHoldings } from "@/lib/kite";
 import { fetchIndiaQuote } from "@/lib/india-data";
+import { TRADE_PROPOSAL_STATUS, SHADOW_EXECUTION_MODE } from "@/lib/trading/proposal-status";
 
 const SIGNAL_LOOKBACK_HOURS = 24;
 // Robinhood agentic account — read-only NAV for US shadow.
@@ -220,8 +221,16 @@ export async function runAutonomousShadow(
         signal_id:       signal.id,
         analyst_score:   signal.analyst_score,
         thesis:          signal.rationale ?? null,
-        status:          "pending_review",
-        execution_mode:  "autonomous_shadow",
+        // NOT `pending_review`. This row is shadow evidence, and every consumer
+        // that renders an approve button keys off `pending_review`. Inserting
+        // as pending and updating to `kernel.shadow_status` ~80 lines below
+        // leaves a window — permanent if this run throws in between — where a
+        // synthetic proposal is indistinguishable from a real one and carries a
+        // working approve control. Open in the terminal, non-actionable state
+        // the failure path at line ~241 already uses; the kernel narrows it to
+        // `queued_auto` only once it has actually evaluated.
+        status:          TRADE_PROPOSAL_STATUS.MANUAL_REVIEW_REQUIRED,
+        execution_mode:  SHADOW_EXECUTION_MODE,
         auto_run_id:     runId,
         auto_decided_at: new Date().toISOString(),
         policy_snapshot: { policy, score_threshold: scoreThreshold, run_id: runId, run_start: runStart },

@@ -10,6 +10,7 @@ import { notifyTradeAction } from "@/lib/trade-notify";
 import { sendTradeAlertEmail } from "@/lib/trade-alert";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { EXCLUDE_SHADOW_FILTER } from "@/lib/trading/proposal-status";
 import { isPaused } from "@/lib/market-controls";
 import {
   annotateEarningsRisk,
@@ -47,10 +48,14 @@ export async function GET(req: NextRequest) {
       new URL(req.url).searchParams.get("market") === "india" ? "india" : "us";
 
     const supabase = createServiceClient();
+    // Shadow proposals are evidence, not work items — they must never appear in
+    // the approve queue. Separate .or() calls become separate PostgREST params,
+    // which are ANDed, so this composes with the market filter below.
     let query = supabase
       .from("trade_proposals")
       .select("*")
-      .in("status", ["pending_review", "approved", "submitted"]);
+      .in("status", ["pending_review", "approved", "submitted"])
+      .or(EXCLUDE_SHADOW_FILTER);
     query = market === "india"
       ? query.eq("market", "india")
       : query.or("market.eq.us,market.is.null");
@@ -171,10 +176,14 @@ async function buildProposals(supabase: any, isCron: boolean) {
 
     // Only signals not already proposed in the last 24h
     const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    // Shadow proposals must NOT suppress real ones. runAutonomousShadow writes a
+    // proposal row per qualifying signal; unfiltered, those rows land in this
+    // 24h set and starve the real queue of the exact signals that scored best.
     const { data: existingProposals } = await supabase
       .from("trade_proposals")
       .select("signal_id")
       .eq("market", "us")
+      .or(EXCLUDE_SHADOW_FILTER)
       .gte("created_at", since);
     const alreadyProposed = new Set((existingProposals ?? []).map((p: any) => p.signal_id));
 

@@ -6,6 +6,7 @@ import type { Profile } from "@/types";
 import { getMarketSupport, SUPPORT_META } from "@/lib/market-support";
 import { MarketProvider, MarketSwitcher } from "@/lib/market-context";
 import { ChartNoAxesCombined } from "lucide-react";
+import { EXCLUDE_SHADOW_FILTER } from "@/lib/trading/proposal-status";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -292,6 +293,8 @@ export default function DashboardShell({ profile, children }: { profile: Profile
           .from("trade_proposals")
           .select("id, symbol, side, qty, limit_price, analyst_score, created_at")
           .eq("status", "pending_review")
+          // Never fire a desktop notification for shadow evidence.
+          .or(EXCLUDE_SHADOW_FILTER)
           .order("created_at", { ascending: false })
           .limit(10);
 
