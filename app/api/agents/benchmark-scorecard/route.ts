@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { fetchMassiveCandles } from "@/lib/data/candles";
+import type { Candle } from "@/lib/data/technicals";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import {
   BENCHMARK_HORIZONS,
@@ -36,6 +38,13 @@ async function loadBenchmarks(svc: any): Promise<BenchmarkConfig[]> {
 }
 
 async function upsertPaperObservations(svc: any, benchmark: BenchmarkConfig) {
+  // PRIMARY ONLY. `paper_performance.bench_nav` holds ONE benchmark per market
+  // (VOO for US, ^NSEI for India). Running this for a secondary benchmark would
+  // copy the primary's levels under the secondary's benchmark_id — a mislabelled
+  // series indistinguishable from real data, the same defect class as the
+  // 2026-08-12/13 VOO session mix-up this file already guards against.
+  // Secondary benchmarks get their own provider-backed observations instead.
+  if (!benchmark.is_primary) return;
   // W5: read the benchmark's own session date when the column exists. A level
   // whose session does not match the row it sits on is a mislabelled
   // observation (VOO's 2026-08-11 close was stored under both 2026-08-12 and
@@ -110,6 +119,37 @@ async function upsertLiveObservations(svc: any, benchmark: BenchmarkConfig) {
   }));
   if (rows.length) {
     await svc.from("benchmark_price_observations").upsert(rows, { onConflict: "benchmark_id,component_symbol,date" });
+  }
+}
+
+/**
+ * Daily closes for a SECONDARY benchmark, fetched from its own provider.
+ *
+ * A secondary benchmark has no column in `paper_performance`, so its series is
+ * sourced directly and stored per benchmark_id. Each observation carries the
+ * bar's own date — never a run date — so the session-alignment rule this file
+ * enforces for the primary holds identically here.
+ */
+async function upsertProviderObservations(svc: any, benchmark: BenchmarkConfig) {
+  if (benchmark.is_primary) return;
+  const symbol = benchmark.provider_symbol ?? benchmark.symbol;
+  if (!symbol) return;
+  const candles = await fetchMassiveCandles(symbol, 400).catch(() => [] as Candle[]);
+  const rows = candles
+    .filter((c) => !!c?.date && Number.isFinite(Number(c.close)) && Number(c.close) > 0)
+    .map((c) => ({
+      benchmark_id: benchmark.id,
+      component_symbol: symbol,
+      date: String(c.date).slice(0, 10),
+      close: Number(c.close),
+      currency: benchmark.currency,
+      provider: "massive",
+      source_status: "ok",
+      error: null,
+    }));
+  if (rows.length) {
+    await svc.from("benchmark_price_observations")
+      .upsert(rows, { onConflict: "benchmark_id,component_symbol,date" });
   }
 }
 
