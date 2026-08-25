@@ -1,4 +1,33 @@
 # Kairos — Risk & Safety
+> 2026-08-24: **Shadow proposals are evidence, never work items.**
+>
+> `runAutonomousShadow` writes a real `trade_proposals` row per signal so the
+> kernel/sizing decision has somewhere to live. Two defects made those rows
+> indistinguishable from real proposals. Both fixed before the run is ever
+> scheduled (it has never executed: zero `execution_mode='autonomous_shadow'`
+> rows, and `/api/agents/autonomous-shadow/cron` is scheduled nowhere).
+>
+> 1. The insert used `status='pending_review'` and only narrowed to
+>    `kernel.shadow_status` ~80 lines later. Every surface that renders an
+>    approve control keys off `pending_review`, so that window — permanent if
+>    the run threw in between — put a working approve button on synthetic
+>    evidence. Now inserts as `manual_review_required`.
+> 2. Four consumers read `trade_proposals` without filtering `execution_mode`.
+>    The money-path one is `agents/trader`'s 24h "already proposed" dedup set:
+>    unfiltered, shadow rows would enter it and **starve the real queue of the
+>    exact signals that scored best**. Also `agents/trader` GET (approve
+>    queue), `markets/smart-money` (visible queue), and `DashboardShell`
+>    (desktop notification).
+>
+> Excluded by `execution_mode`, not by status — a shadow row legitimately
+> carries the same terminal statuses a real proposal does.
+> `EXCLUDE_SHADOW_FILTER` (`lib/trading/proposal-status.ts`) keeps an explicit
+> `IS NULL` arm: the column is nullable (default `'manual'`) and a bare
+> `<> 'autonomous_shadow'` evaluates to NULL — excluding the row — for NULL
+> modes, silently hiding legitimate proposals. Mutation-verified.
+>
+> **Scheduling the cron remains a separate, un-taken step.**
+>
 > 2026-08-24: **CORRECTION — both protective-stop gates are OPEN in production. The "Part E (not yet done)" note below is inverted.**
 >
 > Verified against `dionkikgdmlaotvtbnfr` on 2026-08-24:
