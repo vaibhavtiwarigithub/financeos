@@ -2627,10 +2627,16 @@ export async function processSymbol(
           };
           const { score: rawShadow } = computeWeightedAnalystScore(scoreOf, included, challengerWeights);
           const shadowScore = isEtf ? Math.min(rawShadow, ETF_SCORE_CAP) : rawShadow;
-          await supabase.from("shadow_decisions").insert({
+          const { error: challengerError } = await supabase.from("shadow_decisions").insert({
             market, symbol, observation_id: obsRow.id, policy_version_id: sv.id,
             would_enter: shadowScore >= (scoreThreshold ?? 60), score: shadowScore,
           });
+          if (challengerError) {
+            console.error(
+              `[research-agent] challenger shadow insert failed for ${market}:${symbol} ` +
+              `(strategy_version ${sv.id}): ${challengerError.message}`,
+            );
+          }
         }
       } catch (e) { console.error("[research-agent] shadow decision write threw:", e); }
 
@@ -2657,7 +2663,25 @@ export async function processSymbol(
           };
         });
         if (archetypeRows.length > 0) {
-          await supabase.from("shadow_decisions").insert(archetypeRows);
+          // Check the error. A PostgREST insert RESOLVES on failure — it does not
+          // throw — so the surrounding try/catch never saw this, and a six-week
+          // outage was completely silent: migration 163's unique index was
+          // (observation_id, policy_version_id) NULLS NOT DISTINCT, and every
+          // archetype row carries policy_version_id = null, so any batch of two
+          // or more archetypes for one observation collided and the WHOLE batch
+          // was rejected. Batches of one (ETFs, and US below the value_inflection
+          // threshold) were the only rows that ever landed — which is exactly why
+          // the table looked populated while 4 of 6 experts and all of India were
+          // missing. The index was fixed on 2026-08-24; this makes the next such
+          // failure loud instead of invisible.
+          const { error: archetypeError } = await supabase.from("shadow_decisions").insert(archetypeRows);
+          if (archetypeError) {
+            console.error(
+              `[research-agent] archetype shadow insert failed for ${market}:${symbol} ` +
+              `(${archetypeRows.length} experts: ${archetypeRows.map(r => r.setup_type).join(", ")}): ` +
+              `${archetypeError.message}`,
+            );
+          }
         }
 
         // The universal ETF cap makes the champion score nearly constant for
@@ -2665,7 +2689,7 @@ export async function processSymbol(
         // forward evaluation can measure whether the cap destroys ranking
         // information. This remains shadow-only and cannot reach execution.
         if (instrumentPolicy.scoreMode === "measure_only") {
-          await supabase.from("shadow_decisions").insert({
+          const { error: uncappedError } = await supabase.from("shadow_decisions").insert({
             market,
             symbol,
             observation_id: obsRow.id,
@@ -2674,6 +2698,12 @@ export async function processSymbol(
             score: rawAnalystScore,
             setup_type: `family_uncapped_v1:${instrumentPolicy.family}`,
           });
+          if (uncappedError) {
+            console.error(
+              `[research-agent] family_uncapped_v1 shadow insert failed for ${market}:${symbol} ` +
+              `(${instrumentPolicy.family}): ${uncappedError.message}`,
+            );
+          }
         }
       } catch (e) { console.error("[research-agent] archetype shadow write threw:", e); }
     }

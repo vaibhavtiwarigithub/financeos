@@ -82,6 +82,50 @@ empty page. First h60 label ≈ 2026-09-29; roughly 20 independent decision date
 by late October. Starting the clock early is the whole point — no engineering
 compresses forward time.
 
+#### Setup-expert shadow rows were 2/6 for six weeks (2026-08-25)
+
+From 2026-07-13 to 2026-08-24 only `etf_trend` and `quality_momentum` ever
+reached `shadow_decisions`. `value_inflection`,
+`pre_earnings_proximity_reweight_v1`, both India archetypes, and every
+`family_uncapped_v1:*` row wrote NOTHING, on any day, in either market.
+
+Cause: migration `163_shadow_decision_idempotency.sql` created
+
+```sql
+create unique index shadow_decisions_observation_policy_uidx
+on public.shadow_decisions(observation_id, policy_version_id) nulls not distinct
+where observation_id is not null;
+```
+
+Every archetype row carries `policy_version_id = null`, so `NULLS NOT DISTINCT`
+made two experts for ONE observation collide. Postgres rejected the entire
+batch. Only routes of size one ever landed — ETFs always route to exactly one
+expert, and US names below the `value_inflection` threshold route to only
+`quality_momentum`. That is the whole of the surviving data.
+
+It stayed invisible because a PostgREST insert RESOLVES on failure rather than
+throwing, and the call never read `.error`, so the enclosing try/catch saw
+nothing.
+
+Fixed by `20260824170000_shadow_decisions_multi_expert_uniqueness.sql`, which
+re-keys the NULL-policy index to `(observation_id, setup_type)`. Verified on
+2026-08-25: all six archetypes plus `family_uncapped_v1:*` now write in both
+markets. No code change was needed; P0b (India coverage) and P0c (missing
+archetypes) were both this one index.
+
+**Two detectors added, because the outage was silent, not subtle:**
+1. All three `shadow_decisions` inserts in `research-agent.ts` now read and log
+   `.error`.
+2. `/api/admin/shadow-liveness` gained `setup_expert_coverage`. The existing
+   `setup-experts` probe reported "live" every single day of the outage — the
+   table WAS growing, just missing two thirds of its experts. Recency cannot
+   detect a partial outage; the new probe asserts every `market:setup_type` pair
+   the router can emit appeared within 72h.
+
+**Any future uniqueness rule on `shadow_decisions` must treat
+same-observation/different-`setup_type` rows as distinct.** Pinned by
+`lib/scoring/archetype-coverage.test.ts`.
+
 #### Consumers widened + an overlap-aware floor (2026-08-24)
 
 `DIAGNOSTIC_HORIZONS` (`lib/learning/dimension-diagnostics.ts`) and

@@ -17,6 +17,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { SHADOW_PROGRAMS } from "@/lib/shadows/registry";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { ARCHETYPES } from "@/lib/scoring/archetypes";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +51,52 @@ const PROBES: Record<string, { table: string; tsCol: string; expectedIdleHours: 
 function declaredInactive(currentInfluence: string): boolean {
   const s = currentInfluence.toLowerCase();
   return s.startsWith("off") || s.includes("no source adapter") || s.includes("schema foundation only");
+}
+
+// ── Setup-expert COVERAGE, not just liveness ────────────────────────────────
+//
+// Recency alone cannot catch a PARTIAL outage. Between 2026-07-13 and
+// 2026-08-24 the `setup-experts` probe above reported "live" every single day
+// while 4 of the 6 archetypes and the entire India market wrote nothing:
+// migration 163's unique index was (observation_id, policy_version_id) NULLS
+// NOT DISTINCT, and every archetype row carries a NULL policy_version_id, so
+// any batch of two or more experts for one observation collided and Postgres
+// rejected the WHOLE batch. Only single-expert batches (ETFs, and US names
+// below the value_inflection threshold) ever landed — enough to keep the table
+// growing and the liveness check green.
+//
+// So this asks the question recency cannot: is EVERY expert that the router can
+// emit actually present, per market, in the recent window?
+const COVERAGE_WINDOW_HOURS = 72;
+
+async function setupExpertCoverage(sb: any, now: number) {
+  const since = new Date(now - COVERAGE_WINDOW_HOURS * 3_600_000).toISOString();
+  const { data, error } = await sb
+    .from("shadow_decisions")
+    .select("market,setup_type")
+    .gte("ts", since);
+  if (error) return { verdict: "unknown" as Verdict, note: error.message };
+
+  const seen = new Set((data ?? []).map((r: any) => `${r.market}:${r.setup_type}`));
+  // `family_uncapped_v1:*` is emitted per instrument family rather than by the
+  // archetype router, so it is not part of the expected fixed set.
+  const expected: string[] = [];
+  for (const a of ARCHETYPES) {
+    expected.push(`${a.id.startsWith("india") ? "india" : "us"}:${a.id}`);
+  }
+  const missing = expected.filter(k => !seen.has(k));
+
+  return {
+    verdict: (missing.length === 0 ? "live" : "stale") as Verdict,
+    window_hours: COVERAGE_WINDOW_HOURS,
+    expected_experts: expected.length,
+    present_experts: expected.length - missing.length,
+    missing_experts: missing,
+    note: missing.length === 0
+      ? `all ${expected.length} market:expert pairs wrote within ${COVERAGE_WINDOW_HOURS}h`
+      : `PARTIAL: ${missing.length}/${expected.length} market:expert pairs wrote NOTHING in ${COVERAGE_WINDOW_HOURS}h ` +
+        `(${missing.join(", ")}). The table is still growing, so the liveness probe cannot see this.`,
+  };
 }
 
 export async function GET() {
@@ -131,11 +178,20 @@ export async function GET() {
     acc[r.verdict] = (acc[r.verdict] ?? 0) + 1; return acc;
   }, {});
 
+  const setupExperts = await setupExpertCoverage(sb, now);
+
   return NextResponse.json({
     checked_at: new Date().toISOString(),
     tally,
+    // Completeness, which recency structurally cannot answer. See setupExpertCoverage.
+    setup_expert_coverage: setupExperts,
     // The two that matter operationally: something claiming to collect that isn't.
-    attention: rows.filter(r => r.verdict === "frozen" || r.verdict === "empty"),
+    attention: [
+      ...rows.filter(r => r.verdict === "frozen" || r.verdict === "empty"),
+      ...(setupExperts.verdict === "stale"
+        ? [{ id: "setup-experts-coverage", verdict: setupExperts.verdict, note: setupExperts.note }]
+        : []),
+    ],
     programs: rows,
   });
 }
