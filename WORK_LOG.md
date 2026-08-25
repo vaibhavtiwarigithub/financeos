@@ -1,3 +1,50 @@
+# Work Log
+
+## 2026-08-24 — STALE-BLOCKER RECONCILIATION (read this before acting on any "NOT APPLIED" note below)
+
+Older entries in this file carry June/July-era migration blockers that are no
+longer true. They were written when Supabase MCP was permission-denied and the
+migrations genuinely had not run. **Every one of them has since been applied.**
+Verified directly against production `dionkikgdmlaotvtbnfr` on 2026-08-24 by
+object existence, not by reading a migration file:
+
+| Claim in this log | Object checked | Production truth |
+|---|---|---|
+| `035` NOT YET APPLIED | `evidence_records` | **exists** |
+| `036` NOT YET APPLIED | `strategy_versions`, `experiment_runs`, `paper_performance.alpha_pct` | **all exist** |
+| `037` NOT YET APPLIED | `trade_proposals` (49 rows), `decision_journal` | **exist** |
+| `057` apply MANUALLY | `paper_positions.market` | **exists** |
+| `058` apply MANUALLY | `india_screen_cache` | **exists** |
+| `059` / `060` apply MANUALLY | `decision_observations`, `observation_labels` | **exist** |
+| `20260718000000` protective shadow — "PROPOSAL, NOT APPLIED" | `protective_orders` | **exists** |
+| `20260718120000` webull flag — "written but NOT applied" | `strategy_config.webull_trade_orders_enabled` | **exists** |
+
+Do not re-apply these. Do not treat them as blockers. The individual entries are
+left intact below as historical record — they were accurate when written — but
+each is prefixed `[SUPERSEDED 2026-08-24]`.
+
+### Safety finding this reconciliation surfaced — NOT a documentation issue
+
+While verifying the protective-stop migration, both of its gates were found
+**OPEN in production**, which is the opposite of what `docs/arch/08` and the
+2026-07-18 entry below state:
+
+| Gate | Documented | Actual 2026-08-24 |
+|---|---|---|
+| `strategy_config.protective_orders_enabled` | "false by default and STAYS FALSE" | **true** |
+| `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` (`lib/protective/coverage.ts:134`) | false pending Part E | **true** |
+
+`protective_orders` currently holds **0 rows**, so no broker stop has actually
+been placed. But the placement worker is no longer gated shut, and the docs claim
+it is. The hazard is inverted from the usual stale-blocker case: an agent reading
+the documentation would believe placement is impossible when it is enabled.
+
+**Nothing was flipped.** Whether Part E was activated deliberately or drifted is
+an owner question; changing a money-path flag to match a document would be the
+wrong direction of repair. Other flags verified unchanged: `live_auto_enabled`
+false, `webull_trade_orders_enabled` false, `allocation_enabled` false.
+
+---
 ## 2026-08-21 — Local code-intelligence pilot
 
 | Task | Agent | Status | Date | Notes |
@@ -737,7 +784,7 @@ Every dashboard page the switcher touches is now genuinely wired, or explicitly 
 ## ✅ Session 2026-07-06 (Learning-core Phase 1 — decision ledger + matured horizon labels)
 
 > An independent architecture review (Codex) found LearnerAgent's dataset statistically untrustworthy: signal→trade join by symbol (collision-prone), label = policy P&L on filled-longs-only (selection bias, mixes alpha with beta/holding-time/exits), no valid out-of-sample evaluation. This is the keystone fix everything else (validation engine, calibrated sizing, genome, shadow A/B — see `features/learning-core/`) is built on. See **Decision 33**.
-> **⚠️ OPEN ITEM: migrations `059_decision_observations.sql` + `060_observation_labels.sql` must be applied MANUALLY in the Supabase SQL editor** — Supabase MCP permission-denied this session. Everything is guarded/additive: the app behaves byte-for-byte unchanged until they land, then the ledger starts accruing automatically.
+> **⚠️ OPEN ITEM: [SUPERSEDED 2026-08-24 — APPLIED, see top of file] migrations `059_decision_observations.sql` + `060_observation_labels.sql` must be applied MANUALLY in the Supabase SQL editor** — Supabase MCP permission-denied this session. Everything is guarded/additive: the app behaves byte-for-byte unchanged until they land, then the ledger starts accruing automatically.
 
 | Task | Agent | Completed | Notes |
 |---|---|---|---|
@@ -753,7 +800,7 @@ Every dashboard page the switcher touches is now genuinely wired, or explicitly 
 ## ✅ Session 2026-07-05 (Phase 5 — India parity: global switcher + support registry + direct NSE feeds)
 
 > India goes from paper-trading/self-learning (Phase 4) to **first-class across the whole dashboard**, behind a global market switcher, with an honest per-page coverage badge. Direct NSE feeds lift the two remaining free-data ceilings (full-market scan + India insider/options), failing soft to Yahoo/NIFTY-100. See **Decision 32**.
-> **⚠️ OPEN ITEM: migration `058_india_screen_cache.sql` must be applied MANUALLY in the Supabase SQL editor** — Supabase MCP was permission-denied this session (`057` already applied by the user). Guarded code degrades to US-only until 058 lands.
+> **⚠️ OPEN ITEM: [SUPERSEDED 2026-08-24 — APPLIED, see top of file] migration `058_india_screen_cache.sql` must be applied MANUALLY in the Supabase SQL editor** — Supabase MCP was permission-denied this session (`057` already applied by the user). Guarded code degrades to US-only until 058 lands.
 > **⚠️ OPEN ITEM: NSE feeds may be geo-blocked from a US IP** — `lib/nse-data.ts` fails soft, so full-market scan + India insider/options degrade to their Yahoo/NIFTY-100 fallback with an honest note when NSE is unreachable.
 >
 > **Follow-up (2026-07-05):** the four remaining **partial** India panels were brought to **full** parity — Markets (real sector heatmap `fetchIndiaSectors` + NIFTY-50 breadth), Risk Analytics (real beta-vs-NIFTY, 1y daily-candle regression; `computeRiskMetrics` now async), Strategies (real India fit-scores from `signal_score_history` market='india'), Earnings (market-wide NSE results calendar `fetchNseEarnings`, Yahoo per-symbol fallback). New adapters: `fetchIndiaSectors` (`lib/india-data.ts`), `fetchNseEarnings` (`lib/nse-data.ts`); `market-support.ts` flipped all four to `full`. Genuine remaining US-only bits: Markets TradingView/macro-sentinel tiles, Strategies Algo Library; NSE feeds may geo-block from a US IP (graceful fallback). See Decision 32.
@@ -778,7 +825,7 @@ Every dashboard page the switcher touches is now genuinely wired, or explicitly 
 ## ✅ Session 2026-07-05 (Phase 4 — multi-market learning: per-currency pools + per-market champions)
 
 > Market is now a **tag** (us | india), not a fork — one app, panels filter by market, currencies NEVER summed. Supersedes Decision 29 (India was score-only): India now paper-trades in its own ₹ pool, closing the India learning loop. See **Decision 31**.
-> **⚠️ OPEN ITEM: migration `057_multi_market.sql` must be applied MANUALLY in the Supabase SQL editor** — Supabase MCP was permission-denied this session (no psql/DATABASE_URL). Guarded code runs unchanged until 057 lands; India activates automatically once the `market` column + ₹ pool row exist.
+> **⚠️ OPEN ITEM: [SUPERSEDED 2026-08-24 — APPLIED, see top of file] migration `057_multi_market.sql` must be applied MANUALLY in the Supabase SQL editor** — Supabase MCP was permission-denied this session (no psql/DATABASE_URL). Guarded code runs unchanged until 057 lands; India activates automatically once the `market` column + ₹ pool row exist.
 
 | Task | Agent | Completed | Notes |
 |---|---|---|---|
@@ -885,13 +932,13 @@ Every dashboard page the switcher touches is now genuinely wired, or explicitly 
 | Phase 0: Migration 034 — paper_order_events | Claude + Vaibhav | 2026-07-01 | **Applied.** Append-only immutable event log; UPDATE/DELETE blocked by trigger; price provenance columns on paper_trades |
 | Phase 0: `processSymbol` rewrite in research-agent | Claude | 2026-07-01 | LLM no longer generates scores; fetches AV OVERVIEW + candles → computeScores() → LLM writes thesis+direction only (512 tokens, Groq) |
 | Phase 0: paper-trade route price upgrade | Claude | 2026-07-01 | Replaces execClaude/MCP price fetch with `getQuote()` + `computeFillPrice()`; writes immutable fill event to paper_order_events; SPY benchmark alpha tracking; decision journal entries |
-| Phase 1: `lib/data/evidence.ts` + Migration 035 — evidence_records | Claude | 2026-07-01 | Migration **NOT YET APPLIED**. evidence_records table (append-only immutable); corporate_actions table; macro_signals altered (vintage_at, indicators_json) |
+| Phase 1: `lib/data/evidence.ts` + Migration 035 — evidence_records | Claude | 2026-07-01 | [SUPERSEDED 2026-08-24 — APPLIED, see top of file] Migration **NOT YET APPLIED**. evidence_records table (append-only immutable); corporate_actions table; macro_signals altered (vintage_at, indicators_json) |
 | Phase 1: `/api/agents/corporate-actions` — splits/dividends sync | Claude | 2026-07-01 | AV SPLITS + DIVIDENDS for held + watchlist symbols; upserts corporate_actions; GET filters by symbol/type/since |
-| Phase 2: Migration 036 — strategy_registry | Claude | 2026-07-01 | **NOT YET APPLIED.** strategy_versions table; experiment_runs table; agent_signals ← strategy_version_id; paper_performance ← spy_nav/spy_return_pct/alpha_pct; seeds v1.0.0 Phase0-Baseline as champion |
+| Phase 2: Migration 036 — strategy_registry | Claude | 2026-07-01 | [SUPERSEDED 2026-08-24 — APPLIED, see top of file] **NOT YET APPLIED.** strategy_versions table; experiment_runs table; agent_signals ← strategy_version_id; paper_performance ← spy_nav/spy_return_pct/alpha_pct; seeds v1.0.0 Phase0-Baseline as champion |
 | Phase 2: `/api/agents/backtest` — JS backtest engine | Claude | 2026-07-01 | Replays agent_signals vs price_cache candles; eligibility gate (Sharpe≥0.5, win_rate≥40%, drawdown<25%, min 20 trades, expectancy>0); persists to experiment_runs; SPY alpha |
 | Phase 2: `/api/strategies/versions` — champion/challenger governance | Claude | 2026-07-01 | GET: list versions + nested runs; POST: promote_champion, retire, reject, or create new version |
 | Phase 4: `/api/journal` — decision journal CRUD | Claude | 2026-07-01 | GET: filter by symbol/type/resolved; POST: create entry or resolve with outcome; links signal→fill→outcome |
-| Phase 5: Migration 037 — trader_proposals | Claude | 2026-07-01 | **NOT YET APPLIED.** trade_proposals table (30-min expiry); decision_journal table; account_number default 605420650 |
+| Phase 5: Migration 037 — trader_proposals | Claude | 2026-07-01 | [SUPERSEDED 2026-08-24 — APPLIED, see top of file] **NOT YET APPLIED.** trade_proposals table (30-min expiry); decision_journal table; account_number default 605420650 |
 | Phase 5: `/api/agents/trader` — TraderAgent proposals + approval | Claude | 2026-07-01 | HARDCODED AGENTIC_ACCOUNT=605420650; builds proposals from qualifying signals; approve/reject; expiry check; account mismatch safety block; kill-switch re-check at approval |
 | AgentsPage — Experiments tab (🔬) | Claude | 2026-07-01 | Strategy versions list (champion badge, state, experiment metrics); Run Backtest button → /api/agents/backtest; results grid with gate pass/fail and failure reasons |
 | AgentsPage — Proposals tab (⚡) | Claude | 2026-07-01 | Pending proposals list; Approve/Reject buttons; price drift warning (>3%); expiry countdown; risk check badges; "Generate Proposals" trigger |
@@ -952,8 +999,8 @@ Every dashboard page the switcher touches is now genuinely wired, or explicitly 
 | Task | Blocked By | Notes |
 |---|---|---|
 | LearnerAgent weight mutation (Phase 1 gate) | 10+ closed paper trades | Auto-guard + phase gate built; waiting on paper trading data |
-| Experiments tab metrics | Migration 036 not applied | spy_nav/spy_return_pct/alpha_pct columns missing until 036 applied |
-| Proposals tab | Migration 037 not applied | trade_proposals + decision_journal tables missing until 037 applied |
+[SUPERSEDED 2026-08-24 — APPLIED, see top of file] | Experiments tab metrics | Migration 036 not applied | spy_nav/spy_return_pct/alpha_pct columns missing until 036 applied |
+[SUPERSEDED 2026-08-24 — APPLIED, see top of file] | Proposals tab | Migration 037 not applied | trade_proposals + decision_journal tables missing until 037 applied |
 | TraderAgent actual Robinhood order | Proposals tab approved proposal | Route is built; Robinhood MCP call must be triggered from UI after user approves |
 
 ---
