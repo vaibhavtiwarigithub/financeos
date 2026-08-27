@@ -1,0 +1,33 @@
+-- execute_paper_exit destroyed the risk levels it exited on.
+--
+-- The closing UPDATE wrote exit_price/realized_pnl/outcome/exit_reason and
+-- nothing else, then the position row was DELETED. stop_loss and price_target
+-- live only on paper_positions, so after a full close the levels that governed
+-- the exit were gone: paper_trades.stop_loss was NULL on all 171 closed lots
+-- while all 22 open positions carried one.
+--
+-- Consequence: 19 lots are labelled exit_reason='stop_hit' with no recorded
+-- stop, and 4 of those realized a GAIN. Neither can be audited after the fact,
+-- because the number that would settle it was never written down.
+--
+-- Fix: copy the position's levels onto the closing lot(s) at exit time, and
+-- record them in the decision_journal entry too. coalesce so a lot already
+-- carrying its own level is never overwritten. v_pos is read FOR UPDATE at the
+-- top of the function, so it holds pre-exit values even on the partial path
+-- (which nulls price_target on the residual position afterwards).
+--
+-- NOT backfillable: closed positions are deleted and their levels are
+-- unrecoverable. Historical rows stay NULL rather than being reconstructed.
+--
+-- APPLIED + VERIFIED 2026-08-27 against dionkikgdmlaotvtbnfr. Verification was
+-- a full round trip inside a DO block that raised at the end to force rollback:
+-- synthetic position (stop 93.00, target 120.00) -> execute_paper_exit ->
+-- asserted the closed lot carried stop_loss=93.00 and take_profit=120.00 ->
+-- aborted. Confirmed zero residue in paper_trades/paper_positions/
+-- decision_journal afterwards. Every pre-existing guard was re-checked present
+-- after the replace: position_lot_qty_mismatch, allocation-incomplete raise,
+-- cash_balance update, position delete, invalid_exit_qty, invalid_exit_input,
+-- FOR UPDATE row locks, SECURITY DEFINER.
+--
+-- The full function body is applied via the Supabase migration of the same
+-- name; this file documents it. See migration `paper_exit_capture_stop_and_target`.
