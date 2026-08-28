@@ -1,4 +1,6 @@
 # Kairos — Crons & Scheduling
+> 2026-08-28: **Alpha Diagnostic Lab scheduled (read-only).** `kairos-alpha-diagnostics-us` (127) `10 4 * * 0` and `kairos-alpha-diagnostics-india` (128) `20 4 * * 0`. Weekly, after label-maturation and dimension-diagnostics settle — the input only changes as labels mature, so a daily cadence would re-run an identical plan and be refused by the `plan_fingerprint` unique index (the endpoint returns the existing run with `reused: true` rather than failing a cron that fires twice). Writes one `backtest_experiments` row per run and nothing else.
+>
 > 2026-08-25: **Archetype IC evaluator scheduled (measure-only).** `kairos-archetype-ic-us` (125) `40 3 * * 0` and `kairos-archetype-ic-india` (126) `50 3 * * 0`. Weekly rather than daily because the input only changes as `observation_labels` mature. Writes `archetype_ic_runs`; nothing in the money path reads it.
 >
 > 2026-08-25: **Horizon-extension shadow scheduled (measure-only).** Two new pg_cron jobs, 10 minutes ahead of each PositionMonitor so the policy records its verdict against the same state the live time stop will see:

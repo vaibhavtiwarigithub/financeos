@@ -22,6 +22,7 @@ import {
   runA4ExitPaths, runA5Sizing, runA7CostStress,
   type ExitPathLot, type SizedLot,
 } from "@/lib/analytics/alpha-diagnostics-counterfactual";
+import { runA2Selection } from "@/lib/analytics/alpha-diagnostics-selection";
 import {
   fingerprint, resolveVerdict, MIN_REVIEW_DATES,
   type DiagnosticFinding, type DiagnosticMarket,
@@ -90,7 +91,7 @@ export async function POST(req: NextRequest) {
     dataCutoff,
     objective: "net_excess_return_vs_primary_benchmark",
     benchmark: market === "india" ? "^NSEI" : "VOO",
-    tests: ["A0", "A1", "A3", "A4", "A5", "A7"],
+    tests: ["A0", "A1", "A2", "A3", "A4", "A5", "A7"],
     minReviewDates: MIN_REVIEW_DATES,
   };
   const planFingerprint = fingerprint(plan);
@@ -151,16 +152,24 @@ export async function POST(req: NextRequest) {
 
   try {
     // ── Load persisted ledgers only. No provider call anywhere below. ────────
-    const [perfRes, tradesRes] = await Promise.all([
+    const [perfRes, tradesRes, obsRes] = await Promise.all([
       svc.from("paper_performance")
         .select("date, nav, cash_balance, positions_value, bench_nav, bench_session_date, bench_source, tainted")
         .eq("market", market).order("date", { ascending: true }),
       svc.from("paper_trades")
         .select("symbol, market, realized_pnl, pnl_pct, exit_reason, fill_price, qty, tainted, excluded_from_learning, closed_at")
         .eq("market", market).not("closed_at", "is", null),
+      // A2 inputs: scored decisions joined to their matured benchmark-neutral
+      // label. Read-only join over persisted ledgers, no provider call.
+      svc.from("decision_observations")
+        .select("symbol, ts, analyst_score, observation_labels!inner(horizon_days, benchmark_neutral_return)")
+        .eq("market", market)
+        .not("analyst_score", "is", null)
+        .limit(20000),
     ]);
     if (perfRes.error) throw new Error(`paper_performance read failed: ${perfRes.error.message}`);
     if (tradesRes.error) throw new Error(`paper_trades read failed: ${tradesRes.error.message}`);
+    if (obsRes.error) throw new Error(`decision_observations read failed: ${obsRes.error.message}`);
 
     const perfRows = (perfRes.data ?? []) as any[];
     const tradeRows = (tradesRes.data ?? []) as any[];
@@ -196,6 +205,26 @@ export async function POST(req: NextRequest) {
       // A1 needs a funnel projection that P0 does not yet persist; emit an
       // explicit insufficient-evidence finding rather than a fabricated funnel.
       findings.push(runA1Funnel(market, [] as FunnelRow[], 10, MIN_REVIEW_DATES));
+
+      // A2 at h10 -- the horizon the mandate actually holds to (target_hold_days
+      // = 10). Grading a 10-day policy on 2-day moves measures noise; grading it
+      // on 20-day moves measures what happens after the position is already gone.
+      const A2_HORIZON = 10;
+      const selectionRows = (obsRes.data ?? []).flatMap((r: any) => {
+        const labels: any[] = Array.isArray(r.observation_labels) ? r.observation_labels : [r.observation_labels];
+        const label = labels.find((l: any) => l && Number(l.horizon_days) === A2_HORIZON);
+        const fwd = label == null ? null : num(label.benchmark_neutral_return);
+        const score = num(r.analyst_score);
+        if (fwd == null || score == null) return [];
+        return [{
+          date: String(r.ts).slice(0, 10),
+          symbol: String(r.symbol),
+          score,
+          forwardReturn: fwd,
+          ts: String(r.ts),
+        }];
+      });
+      findings.push(runA2Selection(market, selectionRows, A2_HORIZON, MIN_REVIEW_DATES));
       findings.push(runA3Payoff(market, learningLots));
       findings.push(runA4ExitPaths(market, learningLots.map(toExitPathLot)));
       findings.push(runA5Sizing(market, tradeRows

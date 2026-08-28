@@ -1,4 +1,18 @@
 # Kairos — Learning Loop
+> 2026-08-28: **Alpha Diagnostic Lab P0 shipped** (`features/alpha-diagnostic-lab/`). Read-only funnel diagnosis per market, weekly. A0 data truth gates everything; the strongest verdict is `owner_review` and no money path reads it. Full record incl. the seven defects found by running it: `features/alpha-diagnostic-lab/IMPLEMENTATION_RESULT.md`.
+>
+> First production run, both markets `A0 pass`, verdict `collect_more` (nothing clears the 60-date review floor):
+>
+> | | us | india |
+> |---|---|---|
+> | A2 rank IC h10 | **-0.012** (t -0.22, 17 dates) | **+0.105** (t 2.24, 22 dates) |
+> | A2 mean quintile spread | **-0.006** | +0.010 |
+> | A3 percent profit factor | 0.969 | **1.438** |
+> | A3 currency profit factor | 0.735 | **0.906** |
+> | A3 sizing damage | no | **YES** |
+>
+> **India picks winners and the sizing destroys them.** The US book has a different problem: the selection does not rank, and its quintile spread is NEGATIVE — acting on the ordering lost money. Two distinct failures, which is why A3 reports both profit factors and A2 reports IC beside spread. India's +0.105 independently reproduces the +0.106 measured by hand on 2026-08-25 through a different code path and cohort.
+>
 > 2026-08-25: **The weighting arms are now graded, and a `fundamental_only` arm was added.**
 >
 > Seven archetype weight sets record a score for every observation in `shadow_decisions`, and until today nothing evaluated them: the only consumer computed the share of shadow rows that were bullish, and its own comment admits that is not a comparison to the champion. `/api/agents/archetype-ic` (weekly, per market) now grades each `setup_type` by Spearman rank IC against `benchmark_neutral_return`, next to the champion composite measured on the SAME observations - `etf_trend` only ever scores ETFs, so a whole-market champion baseline would compare different universes.

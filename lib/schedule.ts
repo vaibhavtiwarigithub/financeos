@@ -329,6 +329,30 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: "earnings_risk_monitor",
   },
   {
+    name: "alpha-diagnostics-us",
+    agent: "alpha-diagnostics",
+    time: "Sun 4:10 AM UTC",
+    days: "Weekly",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "Alpha Diagnostic Lab. Read-only funnel diagnosis: data truth, selection, payoff geometry, exit paths, sizing and cost. Runs A0 FIRST and refuses to interpret anything downstream if data truth fails. Strongest verdict is owner_review; it has no write path to any money-path table.",
+    handoff: "→ backtest_experiments (evidence only)",
+    agentRunsType: null,
+  },
+  {
+    name: "alpha-diagnostics-india",
+    agent: "alpha-diagnostics",
+    time: "Sun 4:20 AM UTC",
+    days: "Weekly",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "India leg. Separate run, separate evidence, separate verdict — US and India never share capital, benchmark, thresholds or conclusions.",
+    handoff: "→ backtest_experiments (evidence only)",
+    agentRunsType: null,
+  },
+  {
     name: "archetype-ic-us",
     agent: "archetype-ic",
     time: "Sun 3:40 AM UTC",
