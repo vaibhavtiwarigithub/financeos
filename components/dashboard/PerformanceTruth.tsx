@@ -5,6 +5,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, Cell,
 } from "recharts";
 import AlphaScorecard from "@/components/dashboard/AlphaScorecard";
+import AlphaDiagnosticLab from "@/components/dashboard/AlphaDiagnosticLab";
 
 // Build 3 — Performance-truth section. Fetches /api/agents/performance/metrics
 // (owner-gated) and renders risk-adjusted truth: Sharpe/Sortino/max-DD,
@@ -352,6 +353,13 @@ export default function PerformanceTruth() {
           </div>
         </div>
       )}
+
+      {/* Alpha Diagnostic Lab. Shares this component's market toggle so the two
+          surfaces can never disagree about which book is on screen. Read-only:
+          mounting it cannot trigger a diagnostic run. */}
+      <div style={{ marginTop: "18px" }}>
+        <AlphaDiagnosticLab market={market} />
+      </div>
     </>
   );
 }
