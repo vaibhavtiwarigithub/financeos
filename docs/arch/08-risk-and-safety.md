@@ -1,4 +1,10 @@
 # Kairos — Risk & Safety
+> 2026-08-28 (same day): **CORRECTION to the India sizing diagnosis — survivorship materially weakens it.** I published the quartile gradient from CLOSED lots only while listing survivorship as an untested confounder, then tested it. Including the 14 open India positions marked to current price, **8 of them fall in the LARGEST quartile** and are outperforming the closed lots. Q4 mean return moves from -0.55% to **+0.07%**, and the win-rate gradient shallows from 60->38% to **57->43%**.
+>
+> **No longer supported:** that the largest positions lose money. **Still supported:** size is uncorrelated with conviction (corr with analyst_score -0.128, with cash-at-entry +0.344, 57x notional spread) — measured at ENTRY, so unaffected by survivorship — and win rate still declines with size. The honest claim is that allocation WASTES the edge rather than reversing it.
+>
+> The profit-factor pair (percent 1.438 vs currency 0.906) inherits the same bias and should be recomputed on matured outcomes before being leaned on. Method note: the confounder should have been tested before the write-up, not listed inside it as future work.
+>
 > 2026-08-28: **India sizing damage diagnosed — cause is cash-path dependence, not volatility.** Full evidence: `docs/audits/2026-08-28-sizing-damage-diagnosis.md`.
 >
 > A3 reported India percent profit factor 1.438 against currency 0.906. By entry-notional quartile the win rate falls monotonically 60 -> 56 -> 54 -> **38%** as size rises; the smallest quartile earns +5,871 and the largest loses -10,113.

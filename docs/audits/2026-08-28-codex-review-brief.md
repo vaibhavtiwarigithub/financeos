@@ -262,3 +262,170 @@ the architecture gate.
 justified it partly by linking it to the dormant volatility budget. That link
 was wrong — they are independent, and I said so only after measuring. Tell me if
 the US selection problem, or something else, should come first.
+
+---
+
+## PART 6 — The India sizing diagnosis, with everything needed to falsify it
+
+This is the newest and least-tested claim in the brief, and the one I most want
+re-derived. Full write-up: `docs/audits/2026-08-28-sizing-damage-diagnosis.md`.
+
+### 6.1 The claim, in one line
+
+India's score ranks forward returns (h10 rank IC +0.105, t 2.24), but position
+size is set by **cash available at entry** rather than conviction, so the edge
+is not concentrated where it should be: percentage profit factor **1.438** vs
+currency profit factor **0.906** on closed lots.
+
+**Caveat added after a survivorship test — see 6.3(1).** Both profit factors and
+the quartile gradient come from the CLOSED cohort, which is biased: large
+positions are disproportionately still open. The claim survives in weakened
+form.
+
+### 6.2 Exact queries — please re-run these
+
+**(a) The profit-factor split that started it**
+
+```sql
+SELECT market,
+  count(*) lots,
+  round(sum(realized_pnl) FILTER (WHERE realized_pnl > 0)::numeric,2) gross_win,
+  round(abs(sum(realized_pnl) FILTER (WHERE realized_pnl < 0))::numeric,2) gross_loss,
+  round((sum(realized_pnl) FILTER (WHERE realized_pnl > 0)
+        / NULLIF(abs(sum(realized_pnl) FILTER (WHERE realized_pnl < 0)),0))::numeric,3) currency_pf
+FROM paper_trades
+WHERE closed_at IS NOT NULL AND realized_pnl IS NOT NULL
+  AND COALESCE(tainted,false)=false AND COALESCE(excluded_from_learning,false)=false
+GROUP BY market;
+```
+Got: us 48 lots PF **0.735**; india 98 lots PF **0.906**.
+Percent PF (from the Lab A3): us 0.969, india **1.438**.
+
+**(b) The quartile gradient — the strongest part of the evidence**
+
+```sql
+WITH l AS (
+  SELECT symbol, qty*fill_price AS notional, pnl_pct, realized_pnl,
+         ntile(4) OVER (ORDER BY qty*fill_price) q
+  FROM paper_trades
+  WHERE market='india' AND closed_at IS NOT NULL
+    AND qty IS NOT NULL AND fill_price IS NOT NULL AND pnl_pct IS NOT NULL
+    AND COALESCE(tainted,false)=false AND COALESCE(excluded_from_learning,false)=false
+)
+SELECT q quartile, count(*) lots,
+  round(avg(notional)::numeric,0) mean_notional,
+  round(avg(pnl_pct)::numeric,2)  mean_return_pct,
+  round(sum(realized_pnl)::numeric,0) currency_pnl,
+  round((count(*) FILTER (WHERE pnl_pct>0))::numeric*100/count(*),0) win_rate
+FROM l GROUP BY q ORDER BY q;
+```
+Got:
+
+| q | lots | mean notional | mean return | currency P&L | win rate |
+|---|---|---|---|---|---|
+| 1 | 25 | 5,726 | +3.49% | +5,871 | 60% |
+| 2 | 25 | 13,908 | -0.79% | -2,822 | 56% |
+| 3 | 24 | 27,785 | +0.39% | +2,437 | 54% |
+| 4 | 24 | 66,159 | -0.55% | -10,113 | 38% |
+
+**(c) What actually drives notional**
+
+```sql
+WITH l AS (
+  SELECT t.symbol, t.executed_at::date d, t.qty*t.fill_price notional,
+         t.analyst_score, t.pnl_pct,
+         (SELECT p.cash_balance FROM paper_performance p
+           WHERE p.market='india' AND p.date <= t.executed_at::date
+           ORDER BY p.date DESC LIMIT 1) cash_at_entry
+  FROM paper_trades t
+  WHERE t.market='india' AND t.closed_at IS NOT NULL
+    AND t.qty IS NOT NULL AND t.fill_price IS NOT NULL
+    AND COALESCE(t.tainted,false)=false
+)
+SELECT count(*) n,
+  round(corr(notional, cash_at_entry)::numeric,3)          corr_cash,
+  round(corr(notional, analyst_score)::numeric,3)          corr_score,
+  round(corr(notional, extract(epoch from d))::numeric,3)  corr_time
+FROM l WHERE cash_at_entry IS NOT NULL;
+```
+Got: n 98, **corr_cash +0.344**, **corr_score -0.128**, corr_time -0.233.
+Also corr(notional, fill_price) = +0.003; notional spans 2,124 to 120,655 (57x);
+mean score by size quartile is flat: 86.6, 82.6, 88.2, 81.1.
+
+### 6.3 Confounders — number 1 is already CONFIRMED as material
+
+1. **SURVIVORSHIP — TESTED, AND IT BITES. Read this before anything else in
+   Part 6.** I published 6.2(b) from CLOSED lots only, then tested the
+   confounder. Including the 14 open India positions marked to current price:
+
+   | q | lots | of which open | mean notional | mean return | win rate |
+   |---|---|---|---|---|---|
+   | 1 | 28 | 2 | 6,031 | +3.07% | 57% |
+   | 2 | 28 | 1 | 14,629 | -0.92% | 57% |
+   | 3 | 28 | 3 | 30,425 | +0.44% | 50% |
+   | 4 | 28 | **8** | 75,374 | **+0.07%** | 43% |
+
+   Eight of fourteen open positions are in the LARGEST quartile and they are
+   outperforming the closed lots. So: **"the largest positions lose money" is
+   not supported** (Q4 goes -0.55% -> +0.07%), and the win-rate gradient
+   shallows from 60->38% to **57->43%**. The mechanism claim (size tracks cash,
+   not conviction) is measured at ENTRY and is unaffected.
+
+   The honest surviving claim is weaker than my original write-up: allocation is
+   uncorrelated with conviction and larger positions win less often, which
+   WASTES the edge rather than reversing it. Please push on whether even the
+   57->43% gradient is significant at n=112.
+2. **Sector.** Large positions may cluster in a sector that simply fell. I did
+   not condition on sector at all.
+3. **Holding period.** Larger positions may be older, so the return windows are
+   not comparable.
+4. **Entry vintage / regime.** Q4 lots may cluster in one bad week.
+5. **`cash_at_entry` is measured from the daily `paper_performance` row, not the
+   intraday balance at fill time.** For multiple same-day entries it is the same
+   value for all of them, which weakens the +0.344 in an unknown direction.
+6. **n = 98 lots, one market, ~7 weeks.** Correlations of +0.344 and -0.128 have
+   wide intervals I did not compute. No bootstrap, no significance test on the
+   quartile gradient.
+7. **`ntile(4)` splits by notional rank**, so quartile boundaries are
+   sample-dependent; the gradient may not survive different bucketing.
+
+### 6.4 The volatility-budget algebra — separate claim, also verify
+
+Claim: `maxPortfolioVolPct = 2.0` is unreachable at `DEFAULT_DAILY_VOL = 0.02`,
+so Rule 4 in `lib/portfolio/constructor.ts` can never bind. Zero firings across
+1,513 constructor events / 60 days is consistent with this.
+
+Reproduce `estPortfolioVol` (constructor.ts ~line 129) with equal weights:
+
+```python
+import math
+def est(n, W, v, corr):          # n names, W gross fraction, v daily vol, pairwise corr
+    w = W/n
+    ssq = n*w*w
+    var = v*v*(ssq + corr*((W*W) - ssq))
+    return math.sqrt(max(0,var))*100
+# worst case for diversification: few names, fully invested, all same sector
+print(est(5, 1.0, 0.02, 0.6))    # -> 1.649  (cap is 2.0)
+print(est(15, 1.0, 0.035, 0.3))  # -> 2.061  (per-symbol vol needed to breach)
+```
+
+**Check specifically:** did I read the cross term correctly? The code is
+`variance += 2 * corr * wi * voli * wj * volj` summed over `i<j`, which I folded
+to `corr * (W^2 - sum wi^2)`. If that is wrong the conclusion collapses.
+
+**Also worth checking:** how often does `estimateDailyVolPctDetailed` actually
+return `basis: "default"` in production? It only `console.warn`s, so there is no
+queryable record. If real vols are being computed and are simply below 3.5%, the
+framing changes from "the default makes it unreachable" to "the cap is above the
+book's real volatility" — related but not the same defect.
+
+### 6.5 What the diagnosis explicitly does NOT license
+
+- Changing `position_size_pct`, `maxPortfolioVolPct`, or the allocation formula.
+- Concluding conviction-weighted sizing would do better. That is the hypothesis
+  this motivates, not a result it proves. A5's paired counterfactual is the
+  instrument and has not been run over a long enough calendar (A6 currently has
+  only 9 marked sessions).
+- Any inference about the US book. Its percent PF is 0.969 and currency PF
+  0.735 — both below 1 — with rank IC -0.012 and a NEGATIVE quintile spread.
+  Sizing is not its binding constraint; selection is.

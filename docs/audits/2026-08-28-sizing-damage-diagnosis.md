@@ -96,3 +96,56 @@ book — cash-path dependence is.
 - Concluding that conviction-weighted sizing would be better; that is a
   hypothesis this diagnosis motivates, not a result it proves.
 - Any inference about the US book from India's numbers.
+
+---
+
+# CORRECTION 2026-08-28 (same day) — survivorship materially weakens section 1
+
+I published section 1 from CLOSED lots only and listed survivorship as an
+uncontrolled confounder. I then tested it, and it bites.
+
+Re-running the quartile analysis with the 14 open India positions included,
+marked to current price:
+
+| quartile | lots | of which open | mean notional | mean return | win rate |
+|---|---|---|---|---|---|
+| 1 (smallest) | 28 | 2 | 6,031 | +3.07% | 57% |
+| 2 | 28 | 1 | 14,629 | -0.92% | 57% |
+| 3 | 28 | 3 | 30,425 | +0.44% | 50% |
+| 4 (largest) | 28 | **8** | 75,374 | **+0.07%** | 43% |
+
+**Eight of the fourteen open positions fall in the largest quartile**, and they
+are outperforming the closed lots. Consequences:
+
+1. **"The largest positions lose money" is NOT supported.** Q4 mean return moves
+   from -0.55% (closed only) to **+0.07%** (all positions). It is approximately
+   flat, not negative.
+2. **The win-rate gradient survives but is much shallower**: 60 -> 38% becomes
+   **57 -> 43%**. Still monotonically declining with size, but a 14-point spread
+   rather than 22.
+3. The closed-lot cohort was biased: large positions are disproportionately
+   still open, so realized results over-weight the large positions that already
+   closed — and those closed worse.
+
+## What still stands
+
+- **Size is not driven by conviction.** corr(notional, analyst_score) = -0.128,
+  corr(notional, cash_at_entry) = +0.344, 57x notional spread. This is measured
+  at ENTRY and is untouched by survivorship.
+- **Win rate still declines with size** (57 -> 43%), just less dramatically.
+- **India percent PF 1.438 vs currency PF 0.906** on the closed cohort — though
+  that comparison inherits the same survivorship bias and should be recomputed
+  on matured outcomes before being leaned on.
+
+## What no longer stands
+
+- The headline framing that sizing is actively destroying money. On the full
+  position set the largest quartile is roughly break-even. The honest claim is
+  weaker: **allocation is uncorrelated with conviction, and larger positions win
+  less often** — which wastes the edge rather than reversing it.
+
+## Method note
+
+Publishing a diagnosis while naming an untested confounder, then testing it and
+finding it material, is the wrong order. The confounder should have been tested
+before the write-up, not listed as future work in it.
