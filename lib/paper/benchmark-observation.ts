@@ -285,3 +285,132 @@ export function benchmarkReturnPct(close: number, baselineClose: number | null |
   if (!Number.isFinite(base) || base <= 0) return null;
   return ((close - base) / base) * 100;
 }
+
+// ── Deferred confirmation of India benchmark sessions ────────────────────────
+//
+// Upstox's /v3/historical-candle NEVER returns the current session — verified
+// on every cached payload from 2026-08-19 to 2026-08-27, whose newest bar is
+// always the PREVIOUS trading day. So the live cross-check can never resolve
+// today's session from Upstox: `selectBenchmarkObservation` correctly refuses,
+// and the row is written `yahoo(unconfirmed)`.
+//
+// That is why India ran unconfirmed from 2026-08-19 onward while the two
+// `upstox` rows (08-14, 08-18) only exist because they were backfilled a day
+// later. It was never a token, key-mapping or outage problem: the fetch
+// succeeded every single day and simply did not contain the bar being asked for.
+//
+// The fix is not to chase an intraday endpoint — an intraday bar is not a
+// settled close, which is the whole point of using the exchange-backed source.
+// Instead the row is confirmed on a LATER run, once Upstox publishes the
+// settled bar, exactly like the settle-check pass does for marks.
+//
+// Upstox is authoritative (see the live path above), so confirmation REPLACES
+// the provisional Yahoo value with the settled exchange close. These rows are
+// self-labelled provisional; upgrading one is completing a deliberately
+// deferred write, not rewriting a decision. Confirmed rows are never touched.
+
+export type BenchmarkConfirmation = {
+  date: string;
+  storedClose: number;
+  settledClose: number;
+  deltaPct: number;
+  /** New provenance: agreement, or an explicit record that they did not agree. */
+  source: "upstox+yahoo" | "upstox(yahoo_disagreed)";
+};
+
+/** Pure core: decide which provisional rows can now be confirmed. */
+export function planBenchmarkConfirmations(
+  rows: Array<{ date: string; bench_nav: number | null; bench_source: string | null }>,
+  settledByDate: Map<string, number>,
+): BenchmarkConfirmation[] {
+  const out: BenchmarkConfirmation[] = [];
+  for (const row of rows) {
+    const src = row.bench_source ?? "";
+    // Eligible when the stored value came from Yahoo — the only case where
+    // Upstox is a genuine SECOND source. Anything already carrying exchange
+    // provenance ("upstox", "upstox+yahoo", "upstox(...)") is final by
+    // construction, and confirming it would compare Upstox against itself.
+    //
+    // This deliberately covers every provisional Yahoo label, including
+    // `yahoo_quote(provisional)` and not just `yahoo(unconfirmed)`. An earlier
+    // draft also required the string to contain "unconfirmed"; that guard was
+    // both untestable (every non-Yahoo source is already excluded by the check
+    // below, so removing it changed nothing) and wrong, because it would have
+    // permanently stranded a `yahoo_quote(provisional)` row as provisional.
+    if (!src.startsWith("yahoo")) continue;
+    const stored = Number(row.bench_nav);
+    const settled = settledByDate.get(row.date);
+    if (!Number.isFinite(stored) || stored <= 0) continue;
+    if (settled == null || !Number.isFinite(settled) || settled <= 0) continue;
+    const deltaPct = (Math.abs(settled - stored) / settled) * 100;
+    out.push({
+      date: row.date,
+      storedClose: stored,
+      settledClose: settled,
+      deltaPct,
+      source: deltaPct <= BENCHMARK_CROSSCHECK_TOLERANCE_PCT ? "upstox+yahoo" : "upstox(yahoo_disagreed)",
+    });
+  }
+  return out;
+}
+
+/**
+ * Apply deferred confirmations for one market's provisional benchmark rows.
+ *
+ * Runs on a LATER session than the row it confirms, because the exchange bar
+ * for a session is not published until after it. India only: Upstox is the
+ * India cross-source, and the US ladder already resolves same-session bars.
+ *
+ * Writes the settled exchange close over the provisional Yahoo one and clears
+ * `bench_return_pct` / `alpha_pct`, which were derived from the superseded
+ * value. Rows carrying exchange provenance are never revisited.
+ */
+export async function confirmIndiaBenchmarkSessions(
+  svc: any,
+  fetchIndexCandles: (symbol: string) => Promise<Candle[]>,
+  lookbackDays = 21,
+): Promise<{ confirmed: BenchmarkConfirmation[]; scanned: number; reason?: string }> {
+  const symbol = benchmarkSymbol("india");
+  const since = new Date(Date.now() - lookbackDays * 86_400_000).toISOString().slice(0, 10);
+
+  const { data, error } = await svc
+    .from("paper_performance")
+    .select("date, bench_nav, bench_source")
+    .eq("market", "india")
+    .eq("snapshot_type", "eod")
+    .gte("date", since)
+    .order("date", { ascending: true });
+  if (error) return { confirmed: [], scanned: 0, reason: `read_failed: ${error.message}` };
+
+  const rows = (data ?? []) as Array<{ date: string; bench_nav: number | null; bench_source: string | null }>;
+  if (rows.length === 0) return { confirmed: [], scanned: 0 };
+
+  const candles = await fetchIndexCandles(symbol).catch(() => [] as Candle[]);
+  const settled = new Map<string, number>();
+  for (const c of candles ?? []) {
+    const close = Number(c?.close);
+    if (c?.date && Number.isFinite(close) && close > 0) settled.set(String(c.date).slice(0, 10), close);
+  }
+  if (settled.size === 0) return { confirmed: [], scanned: rows.length, reason: "no_settled_bars" };
+
+  const plan = planBenchmarkConfirmations(rows, settled);
+  const applied: BenchmarkConfirmation[] = [];
+  for (const c of plan) {
+    const { error: upErr } = await svc
+      .from("paper_performance")
+      .update({
+        bench_nav: c.settledClose,
+        bench_source: c.source,
+        bench_session_date: c.date,
+        // Derived from the value being replaced — recomputed by the normal path,
+        // never left stale against a number that no longer exists.
+        bench_return_pct: null,
+        alpha_pct: null,
+      })
+      .eq("market", "india")
+      .eq("date", c.date)
+      .eq("snapshot_type", "eod");
+    if (!upErr) applied.push(c);
+  }
+  return { confirmed: applied, scanned: rows.length };
+}

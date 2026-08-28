@@ -22,7 +22,8 @@ import {
   buildPositionMark, MARK_CROSSCHECK_TOLERANCE_PCT, MARK_DISPUTE_REFUSE_PCT, markLedgerRow, navFromMarks, reconcilePersistedNav, summariseMarkCoverage,
   type PositionMark,
 } from "@/lib/paper/marks";
-import { benchmarkReturnPct, fetchBenchmarkObservation, isConfirmedBenchmarkObservation } from "@/lib/paper/benchmark-observation";
+import { benchmarkReturnPct, fetchBenchmarkObservation, isConfirmedBenchmarkObservation, confirmIndiaBenchmarkSessions } from "@/lib/paper/benchmark-observation";
+import { fetchUpstoxIndexCandles } from "@/lib/data/upstox";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -808,6 +809,28 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       // A gap is honest; a benchmark stamped with the wrong session is not.
       benchSkipReason = `${benchResult.reason}: ${benchResult.detail}`;
       console.warn(`[position-monitor] no benchmark observation for ${market} ${today} — ${benchSkipReason}`);
+    }
+
+    // The next-day settle pass the comment above refers to. Upstox's daily-candle
+    // endpoint never carries the CURRENT session, so today's India row can only
+    // ever be written `yahoo(unconfirmed)` — verified against every cached
+    // payload from 2026-08-19 to 08-27, whose newest bar is always the previous
+    // trading day. Earlier sessions ARE now settled, so confirm them here:
+    // the exchange close replaces the provisional Yahoo one and the provenance
+    // records whether the two agreed. Measurement only, and best-effort — a
+    // benchmark backfill must never fail the position monitor.
+    if (market === "india") {
+      try {
+        const conf = await confirmIndiaBenchmarkSessions(svc, (s) => fetchUpstoxIndexCandles(s));
+        if (conf.confirmed.length > 0) {
+          console.log(`[position-monitor] india benchmark confirmed ${conf.confirmed.length} session(s): ` +
+            conf.confirmed.map(c => `${c.date} ${c.storedClose}->${c.settledClose} (${c.source})`).join(", "));
+        } else if (conf.reason) {
+          console.warn(`[position-monitor] india benchmark confirmation skipped — ${conf.reason}`);
+        }
+      } catch (e: any) {
+        console.warn(`[position-monitor] india benchmark confirmation threw: ${e?.message ?? String(e)}`);
+      }
     }
 
     const truth = paperPerformanceTruth({

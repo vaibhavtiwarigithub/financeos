@@ -1,4 +1,24 @@
 # Kairos — Risk & Safety
+> 2026-08-27: **India benchmark cross-check was never failing — it was structurally impossible.**
+>
+> `paper_performance` recorded `yahoo(unconfirmed)` for India every session from 2026-08-19. Root cause: Upstox's `/v3/historical-candle` **never returns the current session**. Verified against every cached payload from 08-19 to 08-27 — the newest bar is always the PREVIOUS trading day. So `selectBenchmarkObservation` was asked for today's session, correctly found no Upstox bar, and fell back to Yahoo alone. The fetch succeeded every day; it simply never contained the bar being requested. The two `upstox` rows (08-14, 08-18) exist only because they were backfilled a day later.
+>
+> Not a token, key-mapping, budget or outage problem — all four were checked and healthy (live API returns HTTP 200; `^NSEI` maps correctly; 83 candles cached daily).
+>
+> Fix is deferred confirmation, the pattern the code comment at the benchmark write already anticipated ("preserve the observed level for the next-day settle pass") but which was never built. `confirmIndiaBenchmarkSessions` runs in the India PositionMonitor and upgrades earlier provisional rows once Upstox publishes their settled bars. Upstox is authoritative, so the settled exchange close REPLACES the provisional Yahoo value and `bench_return_pct`/`alpha_pct` are cleared rather than left stale. Rows already carrying exchange provenance are never revisited.
+>
+> **The disagreement is large and was invisible.** Backfilling 08-19..08-27 changed six of seven sessions to `upstox(yahoo_disagreed)`, with gaps up to **0.67%** in a single day. Corrected daily alpha:
+>
+> | date | old bench chg | new bench chg | alpha (pp) |
+> |---|---|---|---|
+> | 08-25 | -0.46% | **+0.48%** | -0.49 |
+> | 08-26 | +0.77% | **-0.52%** | **+0.21** |
+> | 08-27 | — | -0.48% | **+0.26** |
+>
+> India was reported as underperforming on 08-26; against the settled NIFTY close it OUTPERFORMED. Any India alpha figure quoted from a `yahoo(unconfirmed)` row is unreliable.
+>
+> An earlier draft of the eligibility rule also required the source string to contain "unconfirmed". Mutation testing showed removing that guard changed nothing (every non-Yahoo source is already excluded), and inspection showed it was wrong: it would have permanently stranded a `yahoo_quote(provisional)` row. Rule is now "the stored value came from Yahoo", which is the only case where Upstox is a genuine second source.
+>
 > 2026-08-25: **Capital rotation paper execution was enabled and then REVERTED the same hour. Flags are false. Do not re-enable without reading this.**
 >
 > The enable was argued for on the claim that rotation "has never moved capital". **That claim was false.** Rotation executed two swaps and four sell lots:
