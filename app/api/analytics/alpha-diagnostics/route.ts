@@ -23,6 +23,12 @@ import {
   type ExitPathLot, type SizedLot,
 } from "@/lib/analytics/alpha-diagnostics-counterfactual";
 import { runA2Selection } from "@/lib/analytics/alpha-diagnostics-selection";
+import { runA8Robustness } from "@/lib/analytics/alpha-diagnostics-counterfactual";
+import {
+  runPortfolioCalendar, runA6Portfolio, runA9RiskGeometry,
+  type CalendarEvent, type DailyMark, type GeometryLot,
+} from "@/lib/analytics/alpha-diagnostics-portfolio";
+import { spearman } from "@/lib/learning/archetype-ic";
 import {
   fingerprint, resolveVerdict, MIN_REVIEW_DATES,
   type DiagnosticFinding, type DiagnosticMarket,
@@ -91,8 +97,14 @@ export async function POST(req: NextRequest) {
     dataCutoff,
     objective: "net_excess_return_vs_primary_benchmark",
     benchmark: market === "india" ? "^NSEI" : "VOO",
-    tests: ["A0", "A1", "A2", "A3", "A4", "A5", "A7"],
+    tests: ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"],
     minReviewDates: MIN_REVIEW_DATES,
+    // The code that computes the result is PART OF the plan. Without this a
+    // change to any test silently replays the previous run through the
+    // plan_fingerprint idempotency path -- identical plan, different code,
+    // stale answer. In production this is the deploy SHA; locally it is null,
+    // so a local re-run of unchanged code is still correctly idempotent.
+    codeVersion,
   };
   const planFingerprint = fingerprint(plan);
 
@@ -152,13 +164,16 @@ export async function POST(req: NextRequest) {
 
   try {
     // ── Load persisted ledgers only. No provider call anywhere below. ────────
-    const [perfRes, tradesRes, obsRes] = await Promise.all([
+    const [perfRes, tradesRes, obsRes, marksRes, posRes] = await Promise.all([
       svc.from("paper_performance")
         .select("date, nav, cash_balance, positions_value, bench_nav, bench_session_date, bench_source, tainted")
         .eq("market", market).order("date", { ascending: true }),
+      // ALL lots, not just closed. The closed-lot cohorts are derived below;
+      // A6 additionally needs OPEN lots, because a calendar replay treats an
+      // open position as an entry with no exit yet.
       svc.from("paper_trades")
-        .select("symbol, market, realized_pnl, pnl_pct, exit_reason, fill_price, qty, tainted, excluded_from_learning, closed_at")
-        .eq("market", market).not("closed_at", "is", null),
+        .select("symbol, market, realized_pnl, pnl_pct, exit_reason, fill_price, qty, executed_at, exit_price, tainted, excluded_from_learning, closed_at")
+        .eq("market", market).not("fill_price", "is", null),
       // A2 inputs: scored decisions joined to their matured benchmark-neutral
       // label. Read-only join over persisted ledgers, no provider call.
       svc.from("decision_observations")
@@ -166,13 +181,30 @@ export async function POST(req: NextRequest) {
         .eq("market", market)
         .not("analyst_score", "is", null)
         .limit(20000),
+      // A6 inputs. The mark ledger is the AUTHORITATIVE record of what the book
+      // was actually marked at, so the replay uses it rather than reconstructing
+      // prices from a provider series. It only begins 2026-08-17 (when the W4
+      // ledger was created), which bounds the A6 window -- reported honestly in
+      // its date count rather than backfilled from a different source.
+      svc.from("paper_position_marks")
+        .select("session_date, symbol, mark_price")
+        .eq("market", market).order("session_date", { ascending: true }).limit(20000),
+      // A9 inputs: geometry currently carried by open positions.
+      svc.from("paper_positions")
+        .select("symbol, opened_at, avg_cost, stop_loss, price_target")
+        .eq("market", market),
     ]);
     if (perfRes.error) throw new Error(`paper_performance read failed: ${perfRes.error.message}`);
     if (tradesRes.error) throw new Error(`paper_trades read failed: ${tradesRes.error.message}`);
     if (obsRes.error) throw new Error(`decision_observations read failed: ${obsRes.error.message}`);
+    if (marksRes.error) throw new Error(`paper_position_marks read failed: ${marksRes.error.message}`);
+    if (posRes.error) throw new Error(`paper_positions read failed: ${posRes.error.message}`);
 
     const perfRows = (perfRes.data ?? []) as any[];
-    const tradeRows = (tradesRes.data ?? []) as any[];
+    const allLotRows = (tradesRes.data ?? []) as any[];
+    // Closed-lot cohorts. A3/A4/A5/A7 are all realized-outcome metrics and must
+    // not see an open position, whose P&L has not happened yet.
+    const tradeRows = allLotRows.filter((r: any) => r.closed_at != null);
 
     // Rows already labelled `tainted` are excluded from the data-truth check.
     // Taint is the recorded acknowledgement that a row is known-bad; re-failing
@@ -210,7 +242,8 @@ export async function POST(req: NextRequest) {
       // = 10). Grading a 10-day policy on 2-day moves measures noise; grading it
       // on 20-day moves measures what happens after the position is already gone.
       const A2_HORIZON = 10;
-      const selectionRows = (obsRes.data ?? []).flatMap((r: any) => {
+      const selectionRows: Array<{ date: string; symbol: string; score: number; forwardReturn: number; ts: string }> =
+        (obsRes.data ?? []).flatMap((r: any) => {
         const labels: any[] = Array.isArray(r.observation_labels) ? r.observation_labels : [r.observation_labels];
         const label = labels.find((l: any) => l && Number(l.horizon_days) === A2_HORIZON);
         const fwd = label == null ? null : num(label.benchmark_neutral_return);
@@ -232,6 +265,105 @@ export async function POST(req: NextRequest) {
         .map(toSizedLot)
         .filter(l => Number.isFinite(l.entryNotional))));
       findings.push(runA7CostStress(market, learningLots));
+
+      // -- A6: paired calendar replay with finite capital --------------------
+      const markRows = (marksRes.data ?? []) as any[];
+      const bySession = new Map<string, Record<string, number>>();
+      for (const mk of markRows) {
+        const px = num(mk.mark_price);
+        if (px == null) continue;
+        const day = bySession.get(mk.session_date) ?? {};
+        day[String(mk.symbol)] = px;
+        bySession.set(mk.session_date, day);
+      }
+      const benchByDate = new Map<string, number | null>(
+        perfRows.map(r => [String(r.date), num(r.bench_nav)] as [string, number | null]));
+      const marks: DailyMark[] = [...bySession.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([session, prices]) => ({ session, prices, benchClose: benchByDate.get(session) ?? null }));
+
+      // Events come ONLY from lots whose entry falls inside the marked window.
+      // A lot opened before the ledger existed has no starting mark, and
+      // replaying it would fabricate the position history.
+      const firstMarked = marks[0]?.session ?? null;
+      const lastMarked = marks[marks.length - 1]?.session ?? null;
+      const events: CalendarEvent[] = [];
+      for (const r of allLotRows) {
+        const qty = num(r.qty);
+        const fill = num(r.fill_price);
+        const opened = r.executed_at ? String(r.executed_at).slice(0, 10) : null;
+        if (qty == null || fill == null || opened == null) continue;
+        if (firstMarked == null || opened < firstMarked) continue;
+        if (lastMarked != null && opened > lastMarked) continue;
+        events.push({ session: opened, symbol: String(r.symbol), kind: "entry", price: fill, quantity: qty });
+        const exitPx = num(r.exit_price);
+        const closed = r.closed_at ? String(r.closed_at).slice(0, 10) : null;
+        if (exitPx != null && closed != null && closed >= opened && (lastMarked == null || closed <= lastMarked)) {
+          events.push({ session: closed, symbol: String(r.symbol), kind: "exit", price: exitPx, quantity: qty });
+        }
+      }
+
+      if (marks.length > 0 && events.length > 0) {
+        const initialCash = num(perfRows[0]?.nav) ?? (market === "india" ? 1000000 : 10000);
+        const simPolicy = {
+          market,
+          currency: (market === "india" ? "INR" : "USD") as "USD" | "INR",
+          initialCash,
+          maxOpenNames: 15,
+          allowFractionalShares: true,
+        };
+        // Equal-size arm: same names, same timing, capital spread evenly. Total
+        // deployed is held constant so any difference is allocation alone.
+        const entries = events.filter(e => e.kind === "entry");
+        const totalNotional = entries.reduce((a, e) => a + e.price * (e.quantity ?? 0), 0);
+        const perName = entries.length > 0 ? totalNotional / entries.length : 0;
+        const equalEvents: CalendarEvent[] = events.map(e =>
+          e.kind === "entry"
+            ? { session: e.session, symbol: e.symbol, kind: "entry" as const, price: e.price, cashAllocation: perName }
+            : e);
+        findings.push(runA6Portfolio(market, [
+          { name: "actual", result: runPortfolioCalendar(simPolicy, events, marks) },
+          { name: "equal_size", result: runPortfolioCalendar(simPolicy, equalEvents, marks) },
+        ]));
+      } else {
+        findings.push(runA6Portfolio(market, []));
+      }
+
+      // -- A9: risk geometry currently carried by the book -------------------
+      const geometryLots: GeometryLot[] = (posRes.data ?? []).flatMap((r: any) => {
+        const cost = num(r.avg_cost);
+        const stop = num(r.stop_loss);
+        const target = num(r.price_target);
+        if (cost == null || cost <= 0 || stop == null || target == null) return [];
+        return [{
+          symbol: String(r.symbol),
+          openedAt: String(r.opened_at ?? "").slice(0, 10),
+          stopPct: (1 - stop / cost) * 100,
+          targetPct: (target / cost - 1) * 100,
+        }];
+      });
+      findings.push(runA9RiskGeometry(market, geometryLots));
+
+      // -- A8: falsify the INCUMBENT selection signal ------------------------
+      // P0 has no challenger, so the subject is the incumbent score itself. The
+      // question is narrow and answerable: is its apparent ranking
+      // distinguishable from noise once every trial is charged for? A `fail`
+      // means the INCUMBENT signal did not survive -- NOT that a proposed
+      // candidate was rejected, which is why the subject is named in metrics.
+      const a8Scores = selectionRows.map(r => r.score);
+      const a8Outcomes = selectionRows.map(r => r.forwardReturn);
+      const a8Real = a8Scores.length >= 3 ? spearman(a8Scores, a8Outcomes) : null;
+      const a8 = runA8Robustness(market, {
+        realStatistic: a8Real,
+        scores: a8Scores,
+        outcomes: a8Outcomes,
+        statistic: (sc, ou) => spearman(sc, ou),
+        trialsConsidered: plan.tests.length,
+        nDates: new Set(selectionRows.map(r => r.date)).size,
+        minDates: MIN_REVIEW_DATES,
+      });
+      a8.metrics = { ...a8.metrics, subject: "incumbent_selection_signal", statistic: "spearman_rank_ic_h10" };
+      findings.push(a8);
     }
 
     const datasetFingerprint = fingerprint({
@@ -246,7 +378,7 @@ export async function POST(req: NextRequest) {
       benchmark: plan.benchmark,
       accountingCohort: { closedLots: accountingLots.length },
       learningCohort: { closedLots: learningLots.length, excluded: accountingLots.length - learningLots.length },
-      coverage: { navRows: navRows.length, taintedNavRowsExcludedFromA0: taintedNavRows },
+      coverage: { navRows: navRows.length, taintedNavRowsExcludedFromA0: taintedNavRows, markRows: (marksRes.data ?? []).length, lotRows: allLotRows.length, openLots: allLotRows.length - tradeRows.length },
       tests: Object.fromEntries(findings.map(f => [f.testId, f])),
       verdict,
       influence: "none",

@@ -20,7 +20,7 @@ function observation(id: number, date: string, available = true): DiagnosticObse
 describe("dimension diagnostics P0", () => {
   it("keeps availability and predictive findings separate", () => {
     const rows = [observation(1, "2026-08-01"), observation(2, "2026-08-01")];
-    const findings = buildDimensionFindings(rows);
+    const findings = buildDimensionFindings(rows, 2);
     expect(findings.find((finding) => finding.subjectKey === "sentiment" && finding.findingType === "availability")?.classification).toBe("data_degraded");
     expect(findings.find((finding) => finding.subjectKey === "fundamental" && finding.findingType === "predictive")?.classification).toBe("insufficient_evidence");
   });
@@ -33,20 +33,20 @@ describe("dimension diagnostics P0", () => {
       observation(index * 10 + 4, `2026-07-${String(index + 1).padStart(2, "0")}`),
       observation(index * 10 + 5, `2026-07-${String(index + 1).padStart(2, "0")}`),
     ]).flat();
-    const finding = buildDimensionFindings(rows).find((item) => item.subjectKey === "technical" && item.findingType === "predictive");
+    const finding = buildDimensionFindings(rows, 2).find((item) => item.subjectKey === "technical" && item.findingType === "predictive");
     expect(finding?.classification).toBe("insufficient_evidence");
   });
 
   it("records collaboration as unattributable and fingerprints deterministic input", () => {
     const rows = [observation(1, "2026-08-01")];
-    expect(buildAgentFindings(rows).find((finding) => finding.subjectType === "collaboration")?.classification).toBe("unattributable_no_paired_shadow");
+    expect(buildAgentFindings(rows, 2).find((finding) => finding.subjectType === "collaboration")?.classification).toBe("unattributable_no_paired_shadow");
     expect(diagnosticFingerprint("us", 5, rows)).toBe(diagnosticFingerprint("us", 5, [...rows]));
   });
 
   it("refuses an agent contribution verdict when code-version provenance is missing", () => {
     const row = observation(1, "2026-08-01");
     row.codeVersion = null;
-    const finding = buildAgentFindings([row]).find((item) => item.subjectType === "agent");
+    const finding = buildAgentFindings([row], 2).find((item) => item.subjectType === "agent");
     expect(finding?.classification).toBe("data_degraded");
     expect(finding?.metrics.code_version_coverage).toBe(0);
   });
