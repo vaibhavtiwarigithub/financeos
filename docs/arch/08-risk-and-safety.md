@@ -1,4 +1,24 @@
 # Kairos — Risk & Safety
+> 2026-08-27: **The 8 NULL benchmark rows: 7 filled, 1 correctly refused.**
+>
+> I had left these alone on the grounds that filling India from a single source would manufacture provenance. Checking rather than assuming resolved it: **Upstox and Yahoo agree to the paisa on all four India sessions**, so `upstox+yahoo` is earned two-source provenance, not a label applied to one opinion.
+>
+> | market | date | value | source |
+> |---|---|---|---|
+> | india | 07-06 | 24430.35 | `upstox+yahoo` (exact agreement) |
+> | india | 07-07 | 24398.70 | `upstox+yahoo` (exact agreement) |
+> | india | 07-08 | 23882.05 | `upstox+yahoo` (exact agreement) |
+> | india | 08-17 | 24287.65 | `upstox+yahoo` (exact agreement) |
+> | us | 07-06 | 690.62 | `yahoo(settled)` |
+> | us | 07-07 | 687.08 | `yahoo(settled)` |
+> | us | 07-09 | 690.69 | `yahoo(settled)` |
+>
+> **US 2026-06-28 stays NULL. It is a SUNDAY** — the paper book's inception row. No session, no bar, and filling it would invent a price for a closed market. Yahoo returns nothing for that date, which is the correct answer rather than a gap to paper over.
+>
+> India now has ZERO null benchmark rows; US has one, and it is the Sunday. Consequence worth noting: `benchmarkReturnPct` baselines off the FIRST non-null `bench_nav`, which is now 2026-07-06 for both markets — India's benchmark series is exactly aligned with its NAV series, and the US benchmark starts one session after its Sunday inception row.
+>
+> **Open design question, deliberately not changed here.** The seven India `upstox(yahoo_disagreed)` rows carry the AUTHORITATIVE exchange close, but `CONFIRMED_BENCHMARK_SOURCES.india` admits only `upstox+yahoo`, so they cannot publish alpha. That rule was written when neither source was trusted over the other; now that Upstox is declared authoritative, withholding alpha because YAHOO was wrong may be stricter than intended. Changing it is an owner decision, not a cleanup.
+>
 > 2026-08-27: **PaperTrader write path audited after the benchmark work. One latent W4 regression closed.**
 >
 > Checked because `confirmBenchmarkSessions` was wired into PositionMonitor only, and PaperTrader is the OTHER `paper_performance` writer. Findings:
