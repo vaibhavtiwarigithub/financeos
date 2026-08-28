@@ -34,7 +34,7 @@ async function agentLabels(svc: any, ids: string[]): Promise<Map<string, string>
 async function loadObservations(svc: any, market: Market, horizonDays: number): Promise<DiagnosticObservation[]> {
   const { data, error } = await svc
     .from("observation_labels")
-    .select("id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,action,signal_id)")
+    .select("id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,direction,action,signal_id)")
     .eq("horizon_days", horizonDays)
     .eq("decision_observations.market", market)
     .not("benchmark_neutral_return", "is", null)
@@ -60,6 +60,7 @@ async function loadObservations(svc: any, market: Market, horizonDays: number): 
       },
       availabilityMask: decision.availability_mask ?? null,
       benchmarkNeutralReturn: Number(row.benchmark_neutral_return), entryEligible: decision.entry_eligible === true,
+      direction: decision.direction == null ? null : String(decision.direction),
       action: String(decision.action ?? "scored"), agentLabel: decision.signal_id ? labels.get(String(decision.signal_id)) ?? "research" : "research",
     }];
   });

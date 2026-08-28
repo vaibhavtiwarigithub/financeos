@@ -14,6 +14,7 @@
 // second implementation of rank correlation.
 
 import { spearman } from "@/lib/learning/archetype-ic";
+import { isEligibleLong } from "@/lib/learning/entry-cohort";
 import { quintileSpread, type SelectionRow } from "./alpha-diagnostics";
 import {
   ALPHA_DIAGNOSTIC_METRIC_VERSION,
@@ -52,7 +53,7 @@ export function selectionRowsFromObservations(
   cohort: "eligible_long" | "all_scored",
 ): Array<SelectionRow & { ts: string }> {
   return rows
-    .filter(r => cohort === "all_scored" || (r.entry_eligible === true && r.direction === "long"))
+    .filter(r => cohort === "all_scored" || isEligibleLong(r.entry_eligible, r.direction))
     .flatMap(r => {
       const labels: any[] = Array.isArray(r.observation_labels) ? r.observation_labels : [r.observation_labels];
       const label = labels.find(l => l && Number(l.horizon_days) === horizonDays);

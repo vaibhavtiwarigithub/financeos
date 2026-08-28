@@ -1,9 +1,16 @@
 import crypto from "node:crypto";
 import { computeSpearmanIC } from "@/lib/validation/feature-check";
+import { ALL_SCORED_COHORT_KEY, ENTRY_COHORT_KEY, isEligibleLong } from "./entry-cohort";
 
 // v3 adds forward-written decision code versions. v1/v2 remain immutable in
 // production rather than being reinterpreted after the fact.
-export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v3";
+//
+// v4 moves every predictive headline onto the eligible-long cohort (see
+// ./entry-cohort.ts). This CHANGES WHAT THE NUMBER MEANS, so it gets a new plan
+// version rather than silently redefining v3's series: a v3 mean_session_rank_ic
+// and a v4 one are not comparable, and the frozen-history rule forbids
+// reinterpreting the recorded v3 rows after the fact.
+export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v4";
 // 2/5/10/20 rank signal quality at or near the mandate holding period (5-15
 // sessions). 60/120 measure EXIT TIMING — "are we exiting too early" — which
 // the short labels structurally cannot answer, because a 20-day label can never
@@ -62,6 +69,8 @@ export type DiagnosticObservation = {
   availabilityMask: Partial<Record<DiagnosticDimension, boolean>> | null;
   benchmarkNeutralReturn: number | null;
   entryEligible: boolean;
+  /** Decision direction. Required for the cohort predicate; see ./entry-cohort.ts. */
+  direction: string | null;
   action: string;
   agentLabel: string;
 };
@@ -155,18 +164,31 @@ export function buildDimensionFindings(observations: DiagnosticObservation[], ho
         : "Availability is measured from the immutable decision-time mask; it is not re-fetched from current providers.",
     });
 
-    const predictiveRows = available.flatMap((row) => {
+    const toRows = (source: DiagnosticObservation[]) => source.flatMap((row) => {
       const value = finite(row.scores[dimension]);
       const outcome = finite(row.benchmarkNeutralReturn);
       return value == null || outcome == null ? [] : [{ value, outcome, ts: row.ts }];
     });
-    const predictive = predictiveMetrics(predictiveRows, horizonDays);
+    // HEADLINE = the cohort that can actually be entered. The all-scored number
+    // ranks names the system would never buy, which is how a +0.105 "edge" was
+    // published and retracted; it survives only as labelled context.
+    const eligible = available.filter((row) => isEligibleLong(row.entryEligible, row.direction));
+    const predictive = predictiveMetrics(toRows(eligible), horizonDays);
+    const context = predictiveMetrics(toRows(available), horizonDays);
     findings.push({
       subjectType: "dimension",
       subjectKey: dimension,
       findingType: "predictive",
       classification: predictive.classification,
-      metrics: predictive.metrics,
+      metrics: {
+        cohort: ENTRY_COHORT_KEY,
+        ...predictive.metrics,
+        [`${ALL_SCORED_COHORT_KEY}_context`]: {
+          cohort: ALL_SCORED_COHORT_KEY,
+          ...context.metrics,
+          interpretation: "Context only. Includes observations that were never entry eligible and could not have been bought; never cite this as the score's predictive power.",
+        },
+      },
       reason: predictive.reason,
     });
   }
@@ -184,13 +206,15 @@ export function buildAgentFindings(observations: DiagnosticObservation[], horizo
 
   const findings: DiagnosticFinding[] = [];
   for (const [agent, rows] of byAgent) {
-    const outcomeRows = rows.flatMap((row) => {
+    const toRows = (source: DiagnosticObservation[]) => source.flatMap((row) => {
       const score = finite(row.analystScore);
       const outcome = finite(row.benchmarkNeutralReturn);
       return score == null || outcome == null ? [] : [{ value: score, outcome, ts: row.ts }];
     });
-    const predictive = predictiveMetrics(outcomeRows, horizonDays);
-    const eligibleReturns = rows.flatMap((row) => row.entryEligible && finite(row.benchmarkNeutralReturn) != null
+    const eligibleRows = rows.filter((row) => isEligibleLong(row.entryEligible, row.direction));
+    const predictive = predictiveMetrics(toRows(eligibleRows), horizonDays);
+    const context = predictiveMetrics(toRows(rows), horizonDays);
+    const eligibleReturns = eligibleRows.flatMap((row) => finite(row.benchmarkNeutralReturn) != null
       ? [finite(row.benchmarkNeutralReturn)!] : []);
     const availabilityValues = rows.flatMap((row) => DIAGNOSTIC_DIMENSIONS.map((dimension) => row.availabilityMask?.[dimension] === true ? 1 : 0));
     const versionedObservations = rows.filter((row) => row.codeVersion != null).length;
@@ -204,11 +228,18 @@ export function buildAgentFindings(observations: DiagnosticObservation[], horizo
       findingType: "contribution",
       classification,
       metrics: {
+        cohort: ENTRY_COHORT_KEY,
         ...predictive.metrics,
+        [`${ALL_SCORED_COHORT_KEY}_context`]: {
+          cohort: ALL_SCORED_COHORT_KEY,
+          ...context.metrics,
+          interpretation: "Context only. Includes observations that were never entry eligible and could not have been bought.",
+        },
         observations: rows.length,
+        eligible_observations: eligibleRows.length,
         code_versioned_observations: versionedObservations,
         code_version_coverage: rows.length ? versionedObservations / rows.length : null,
-        eligible_decisions: rows.filter((row) => row.entryEligible).length,
+        eligible_decisions: eligibleRows.length,
         signal_written: rows.filter((row) => row.action === "signal_written").length,
         eligible_mean_benchmark_neutral_return: mean(eligibleReturns),
         eligible_positive_return_share: hitRate(eligibleReturns),
@@ -234,7 +265,7 @@ export function buildAgentFindings(observations: DiagnosticObservation[], horizo
 
 export function diagnosticFingerprint(market: string, horizonDays: number, observations: DiagnosticObservation[]): string {
   const material = observations
-    .map((row) => `${row.id}:${row.ts}:${row.symbol}:${row.agentLabel}:${row.codeVersion}:${row.benchmarkNeutralReturn}`)
+    .map((row) => `${row.id}:${row.ts}:${row.symbol}:${row.agentLabel}:${row.codeVersion}:${row.benchmarkNeutralReturn}:${isEligibleLong(row.entryEligible, row.direction) ? 1 : 0}`)
     .sort()
     .join("|");
   return crypto.createHash("sha256").update(`${DIMENSION_DIAGNOSTIC_PLAN_VERSION}|${market}|${horizonDays}|${material}`).digest("hex");

@@ -1,4 +1,24 @@
 # Kairos — Learning Loop
+> 2026-08-28: **Every predictive headline now measures the eligible-long cohort.** `lib/learning/entry-cohort.ts` is the single definition (`entry_eligible = true AND direction = 'long'`), shared by the Alpha Diagnostic Lab's A2, the dimension diagnostics, and the archetype grader so the three cannot drift apart.
+>
+> The bug: dimension IC (`lib/learning/dimension-diagnostics.ts`) and archetype IC (`app/api/agents/archetype-ic/route.ts`) both computed rank IC over ALL scored observations, including `neutral` and `short` rows the book could never buy. `entryEligible` was loaded but only fed a mean-return summary field, never the IC itself; the archetype select carried no cohort filter at all. Production: 4,075 of 6,592 observations are eligible-long, so roughly 38% of every IC ever reported came from names that were not purchasable.
+>
+> | h10 rank IC | all-scored | eligible-long |
+> |---|---|---|
+> | us | -0.0101 | **-0.0768** (21 dates) |
+> | india | **+0.1046** | **-0.0083** (17 dates) |
+>
+> Both are `insufficient_evidence` against the 60-date floor. **The India "+0.105 selection edge" cited throughout this chapter was the all-scored number.** Two published diagnoses were retracted for it on the same day (`docs/audits/2026-08-28-sizing-damage-diagnosis.md`, both CORRECTION sections).
+>
+> What changed, all measure-only — no score, weight, threshold, sizing, stop, target, eligibility or trading behaviour was touched:
+> - Dimension `predictive` and agent `contribution` findings compute the headline on the eligible cohort and nest the all-scored figures under `all_scored_context` with an explicit "never cite this" interpretation string. No migration: `finding_type` stays inside its existing CHECK constraint.
+> - Plan version `dimension_diagnostics_p0_v3` → `**_v4**`. The metric changed meaning, so v3 rows are not reinterpreted or compared against v4 ones (frozen-history rule).
+> - `diagnosticFingerprint` now includes the cohort flag, so an eligibility-rule correction cannot reuse a recorded run.
+> - The archetype grader filters before grading. An arm with no eligible rows (`etf_trend` scores only ETFs) records `emptyArchetypeResult` — an explicit refusal — rather than vanishing from the ledger and reading as "not run yet". `archetype_ic_runs` has no cohort column, so it stores the eligible-long grade only and says so in `reason`.
+> - Four mutation-verified detectors: replacing the predicate with `return true` fails all four.
+>
+> **Still unverified:** the per-dimension figures that motivated the archetype instrument (`us fundamental +0.076 t=2.40`, `india technical +0.173 t=2.51`) are all-scored and have NOT been re-derived. The header comment in `lib/learning/archetype-ic.ts` now says so. `lib/edges/*` also computes IC and was not audited here.
+>
 > 2026-08-28: **Alpha Diagnostic Lab P0 shipped** (`features/alpha-diagnostic-lab/`). Read-only funnel diagnosis per market, weekly. A0 data truth gates everything; the strongest verdict is `owner_review` and no money path reads it. Full record incl. the seven defects found by running it: `features/alpha-diagnostic-lab/IMPLEMENTATION_RESULT.md`.
 >
 > First production run, both markets `A0 pass`, verdict `collect_more` (nothing clears the 60-date review floor):
@@ -11,7 +31,7 @@
 > | A3 currency profit factor | 0.735 | **0.906** |
 > | A3 sizing damage | no | **YES** |
 >
-> **India picks winners and the sizing destroys them.** The US book has a different problem: the selection does not rank, and its quintile spread is NEGATIVE — acting on the ordering lost money. Two distinct failures, which is why A3 reports both profit factors and A2 reports IC beside spread. India's +0.105 independently reproduces the +0.106 measured by hand on 2026-08-25 through a different code path and cohort.
+> **SUPERSEDED 2026-08-28 (see the entry at the top of this chapter).** The A2 figures in the table above are the ALL-SCORED cohort. On the eligible-long cohort India is -0.0083 and the US -0.0768, so "India picks winners and the sizing destroys them" is not supported — there is no demonstrated selection edge in either entry cohort. The original claim, left here as the record: India picks winners and the sizing destroys them; the US selection does not rank and its quintile spread is negative. The "independent reproduction" of +0.105 against the +0.106 measured on 2026-08-25 was two runs of the same cohort error, not a confirmation.
 >
 > 2026-08-25: **The weighting arms are now graded, and a `fundamental_only` arm was added.**
 >

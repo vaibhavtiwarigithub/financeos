@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { computeArchetypeIc, dedupeRows, spearman, type ArchetypeScoreRow } from "./archetype-ic";
+import { computeArchetypeIc, dedupeRows, emptyArchetypeResult, spearman, type ArchetypeScoreRow } from "./archetype-ic";
 import { MIN_PREDICTIVE_DATES } from "./dimension-diagnostics";
 
 function row(over: Partial<ArchetypeScoreRow> = {}): ArchetypeScoreRow {
   return {
     market: "us", setupType: "value_inflection", symbol: "AAA",
     date: "2026-01-05", ts: "2026-01-05T13:00:00Z",
-    score: 70, championScore: 60, forwardReturn: 0.01,
+    score: 70, championScore: 60, forwardReturn: 0.01, entryEligible: true,
     ...over,
   };
 }
@@ -111,5 +111,20 @@ describe("computeArchetypeIc", () => {
 
   it("returns null for an empty arm rather than a zeroed row", () => {
     expect(computeArchetypeIc([], 10)).toBeNull();
+  });
+});
+
+// An arm whose names were never entry eligible must stay in the ledger as an
+// explicit refusal. Dropping the row makes "cannot be graded" look like "not
+// run yet", which is how a missing arm goes unnoticed for weeks.
+describe("emptyArchetypeResult", () => {
+  it("refuses rather than reporting a zero IC", () => {
+    const r = emptyArchetypeResult("india", "etf_trend", 10);
+    expect(r.status).toBe("insufficient_evidence");
+    expect(r.rankIc).toBeNull();
+    expect(r.championRankIc).toBeNull();
+    expect(r.icDeltaVsChampion).toBeNull();
+    expect(r.observations).toBe(0);
+    expect(r.reason).toContain("entry-eligible");
   });
 });

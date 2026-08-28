@@ -29,6 +29,7 @@ function observations(dates: number, perDate = 6): DiagnosticObservation[] {
         availabilityMask: { fundamental: true },
         benchmarkNeutralReturn: i * 0.01,
         entryEligible: true,
+        direction: "long",
         action: "scored",
         agentLabel: "research",
       });

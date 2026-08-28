@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Allow a build to target a scratch directory while `next dev` is watching
+  // .next. Building into the watched directory has corrupted it twice.
+  ...(process.env.NEXT_BUILD_DIST_DIR ? { distDir: process.env.NEXT_BUILD_DIST_DIR } : {}),
   // The owner-only System Reference route reads a fixed allowlist of repository
   // Markdown files at runtime. Include those files in the Vercel function bundle;
   // without this, local development succeeds while the deployed function returns 503.

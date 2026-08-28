@@ -4,14 +4,24 @@
 // WHY THIS EXISTS
 // Six weight sets have been scoring every observation in shadow, and nothing
 // has ever graded them — the only consumer computed the share of shadow rows
-// that were bullish, which compares nothing to anything. Meanwhile the measured
-// champion composite scores BELOW its own best single dimension:
+// that were bullish, which compares nothing to anything. The hypothesis is that
+// a differently-weighted blend ranks forward returns better than the live
+// composite does.
+//
+// CORRECTED 2026-08-28. This header previously motivated the instrument with
+// these figures:
 //
 //   us    h10 rank IC   fundamental +0.076 (t=2.40)   composite +0.051 (t=0.93)
 //   india h10 rank IC   technical   +0.173 (t=2.51)   composite +0.106 (t=2.04)
 //
-// That is the hypothesis this instrument tests: a differently-weighted blend
-// should rank forward returns better than the live composite does.
+// Every one of those was computed on ALL SCORED observations, including
+// `neutral` and `short` rows the system could never buy. On the eligible-long
+// cohort the composite measures -0.0768 (us, 21 dates) and -0.0083 (india, 17
+// dates), both below the evidence floor. The premise "the composite scores
+// below its own best single dimension" is therefore UNVERIFIED, not established:
+// the per-dimension figures need re-deriving on the eligible cohort before any
+// of them can be cited. The instrument is still worth running; its motivating
+// claim is not yet evidence. See ./entry-cohort.ts.
 //
 // MEASURE-ONLY. Nothing here reaches scoring, sizing, entry or exit.
 
@@ -31,6 +41,8 @@ export interface ArchetypeScoreRow {
   championScore: number;
   /** Realized benchmark-neutral forward return at the horizon. */
   forwardReturn: number;
+  /** True when this observation was entry eligible AND long; see ./entry-cohort.ts. */
+  entryEligible: boolean;
 }
 
 export interface ArchetypeIcResult {
@@ -120,6 +132,27 @@ function tStat(values: number[]): number | null {
  * whole-market champion figure would compare different universes. That exact
  * cohort mismatch inflated an earlier US-vs-India read by roughly 2x.
  */
+/**
+ * The result for an arm with no gradable rows in the cohort.
+ *
+ * An arm whose names were never entry eligible (`etf_trend` scores only ETFs)
+ * disappears entirely once the cohort filter is applied, and a silently absent
+ * row reads as "not run yet" rather than "cannot be graded". This makes the
+ * refusal explicit and keeps the arm in the ledger.
+ */
+export function emptyArchetypeResult(
+  market: "us" | "india",
+  setupType: string,
+  horizonDays: number,
+): ArchetypeIcResult {
+  return {
+    market, setupType, qualifyingSessions: 0, observations: 0,
+    rankIc: null, rankIcT: null, championRankIc: null, icDeltaVsChampion: null,
+    effectiveObs: 0, status: "insufficient_evidence",
+    reason: `No entry-eligible long observations for this archetype at h${horizonDays}; it cannot be graded on the cohort the book can actually enter.`,
+  };
+}
+
 export function computeArchetypeIc(
   rows: ArchetypeScoreRow[],
   horizonDays: number,
