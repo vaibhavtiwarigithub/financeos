@@ -5,12 +5,40 @@ wrong**; several claims I made with confidence during this stretch turned out to
 be false, and two of the most useful corrections came from your last two
 reviews. Please verify against production rather than trusting the prose.
 
-Scope: 37 commits, `1a97ae51` → `e27aa811`. Nothing live-money was touched. All
-autonomy flags remain false.
+Scope: **83 commits, 2026-08-17 → 2026-08-28** (`b096912c` → `e27aa811`).
+Nothing live-money was touched. All autonomy flags remain false.
+
+Two phases: **08-17..08-23** was evaluation-pipeline integrity (W1-W9) and the
+US pricing outage; **08-24..08-28** was measurement instrumentation and the
+Alpha Diagnostic Lab.
 
 ---
 
 ## PART 1 — What was built
+
+### 1.0 Phase 1 (08-17..08-23) — evaluation-pipeline integrity
+
+- **W4/W5**: `paper_position_marks` append-only ledger; `bench_session_date` /
+  `bench_source` / `snapshot_type` on `paper_performance`. Migration
+  `20260816180000`.
+- **W2-full**: partial exits restored (`partial_exit_lot`).
+- **W6**: run-accounting envelope wired to all four producers.
+- **W7/W8/W9**: label-maturation coverage and starvation; `expectedNewestSession`
+  added because the existing freshness rule accepted Friday's bar on Monday.
+- **US pricing outage**: Massive key not entitled to `/v2/snapshot` — US had no
+  working live price source. Yahoo promoted to primary for settled marks.
+- **Mark corroboration**: independent-vendor cross-check;
+  `MARK_CROSSCHECK_TOLERANCE_PCT` (advisory) split from
+  `MARK_DISPUTE_REFUSE_PCT` (blocks marking AND exits).
+- **Settle-check pass** (`/api/agents/settle-check`, cron 122) — next-day
+  independent second opinion on marks.
+- **PositionMonitor**: per-position try/catch isolation; market-scope guard.
+- **Exit policy**: `swing` `target_pct` 20% → 8% on structural reachability.
+- **h60/h120** evaluation horizons added to label maturation.
+- **Promotion gate** segmented by provider regime; US edge/IC candles routed
+  Yahoo-first to end EODHD exhaustion.
+- Reconstructions: MSFT residual lot (cash drift -$185.20 → $0.0005), VOO
+  benchmark series rebuilt on true closes, Aug 12/13 duplicate `bench_nav`.
 
 ### 1.1 Alpha Diagnostic Lab (new feature, P0 shipped)
 
@@ -85,6 +113,25 @@ Migration: `backtest_experiments.experiment_type += 'alpha_diagnostic'`.
 
 ---
 
+### 2.1 Phase 1 (08-17..08-23) findings in existing code
+
+8. **US had no live price source** — Massive key not entitled to `/v2/snapshot`
+   or `/v2/last/trade` (403). Quantified NAV error at $57.79, which flipped a
+   reported +0.239% to -0.339%.
+9. **PositionMonitor blanked the whole book** when a single position's exit
+   threw.
+10. **A market-scoped run wrote the other market's book** (US EOD rows from an
+    India-scoped run).
+11. **`bench_nav` duplicated across sessions** — VOO's 08-11 close stored under
+    both 08-12 and 08-13; series rebuilt.
+12. **MSFT residual lot lost from the ledger** — `exit_reason='partial_target'`
+    proved it a real position, not the phantom I first called it.
+13. **The live `+20%` swing target was structurally unreachable** against an
+    observed h10 p75 MFE of ~7.75%/8.93%.
+14. **Yahoo `^NSEI` serves NULL closes and briefly a PROVISIONAL value** — on
+    2026-08-18 that put 24245.699 into `paper_performance` when the settled
+    NIFTY close was 24154.9 (0.375% wrong), undetectable from Yahoo alone.
+
 ## PART 3 — Defects I introduced, and corrections you should re-check
 
 I got these wrong in ways that shipped or nearly shipped:
@@ -112,6 +159,34 @@ I got these wrong in ways that shipped or nearly shipped:
    defeating any trial adjustment. Now `(b+1)/(m+1)`.
 10. **Corrupted `.next` twice** by running `npm run build` while the dev server
     watched the same directory.
+
+### 3.1 Phase 1 (08-17..08-23) — the serious one first
+
+11. **MONEY-PATH HARM. I over-claimed a guard's placement.** I wrote that
+    disputed quotes were "refused for marking and for stop/target evaluation".
+    The guard actually ran AFTER the exit loop. **Four positions closed on stale
+    prices** (LULU at an Aug-14 price, MSFT at a carried Aug-17 mark), tainting
+    8 lots. Fixed in `b5139775`, but the trades had already happened. Please
+    verify the current ordering really does gate exits.
+12. **My 0.1% dispute gate left India unmonitored for a session** — it compared
+    a live quote against a settled close and unpriced all 13 India holdings.
+    Fixed by splitting advisory from refuse (`46af1e5b`).
+13. **Repeated a mislabel**: reported "US: all 13 marks from live quotes,
+    stale=0" while `age_days=3.01` sat in the same row. You caught this.
+14. **Circular verification**: "verified" the India benchmark against Yahoo —
+    the same source that produced the value. Only Upstox settled it.
+15. **A fix that changed nothing**: theme-scout model corrected in the code
+    fallback while the `agent_config` DB row still held the old model.
+16. **Two false nightly criticals from my own W6 wiring** (`eligible:
+    result.scanned`, and `quote_stale` classified as `failed`).
+17. **Wrong freshness rule reused**: claimed `isFreshSessionDate` "already
+    answers correctly"; it accepted Friday's bar at Monday 16:15 ET.
+18. **`.catch` on a PostgREST builder** — it is a thenable, not a Promise; the
+    same pattern in the catch block masked the original error.
+19. **Re-stamped 2026-08-18 India as `upstox+yahoo`** when no agreement had
+    occurred — I had overwritten Yahoo's value with Upstox's. Reverted.
+20. **A false migration-tracking finding**, and my "fix" inserted a duplicate
+    row which I then deleted.
 
 ---
 
@@ -160,6 +235,11 @@ measurement instrument that can manufacture false confidence. Look for: metrics
 that read as a pass when the underlying evidence is absent; cohort leakage
 between accounting and learning; any path where `descriptive_only` could be
 mistaken for a result; the `sampleStatus` floors.
+
+**5.2b Re-check the Phase-1 exit-ordering fix specifically.** Item 11 above is
+the only defect in this whole stretch that caused real (paper) harm rather than
+bad reporting. Confirm the dispute guard now precedes the exit loop and that
+`MARK_DISPUTE_REFUSE_PCT` blocks exits, not just marks.
 
 **5.3 Verify the money-path guards are actually closed.** `execute_paper_exit`
 (both migrations replay to the production function), the shadow-proposal
