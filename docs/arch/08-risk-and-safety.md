@@ -1,4 +1,14 @@
 # Kairos — Risk & Safety
+> 2026-08-28: **India sizing damage diagnosed — cause is cash-path dependence, not volatility.** Full evidence: `docs/audits/2026-08-28-sizing-damage-diagnosis.md`.
+>
+> A3 reported India percent profit factor 1.438 against currency 0.906. By entry-notional quartile the win rate falls monotonically 60 -> 56 -> 54 -> **38%** as size rises; the smallest quartile earns +5,871 and the largest loses -10,113.
+>
+> **Position size tracks cash available at entry (corr +0.344), not conviction (corr with analyst_score -0.128).** Notional spans 57x on a nominally uniform book. India score DOES rank returns (h10 rank IC +0.105, t 2.24), so allocation that is uncorrelated with the score systematically throws the edge away: good picks get small allocations by accident of timing.
+>
+> **The volatility budget is a separate, real defect and NOT the cause.** Rule 4 has fired zero times in 1,513 constructor events because `maxPortfolioVolPct = 2.0` is unreachable at `DEFAULT_DAILY_VOL = 0.02` — reproducing estPortfolioVol, the worst case across every configuration (5 names, 100% gross, all same sector) is **1.649%**. Breaching 2.0% needs per-symbol vol >= 3.5% daily. The threshold is set above what the model can produce. Fixing it would not fix the sizing damage.
+>
+> **No sizing behaviour changed.** This is a diagnosis; changing position_size_pct, maxPortfolioVolPct or the allocation formula is a separate money-path decision. US is a different problem entirely — both its profit factors are below 1 and its rank IC is -0.012 with a negative quintile spread, so sizing is not its binding constraint.
+>
 > 2026-08-28: **RESOLVED — why capital rotation was disabled on 2026-08-11.** It was never unexplained; the reason was recorded contemporaneously and I had been reading a later, vaguer label.
 >
 > The disable is migration `20260811033335_disable_unqualified_paper_rotation.sql`, shipped in commit `ba20f4ff`. The filename timestamp is exactly the `rotation_config.updated_at` I had been treating as a mystery. Its own comment:
