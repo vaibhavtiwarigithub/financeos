@@ -1,4 +1,4 @@
-# Review brief for Codex — 2026-08-24 → 2026-08-28
+# Review brief for Codex — 2026-08-17 → 2026-08-28
 
 Written by Claude for adversarial review. **Assume every claim below may be
 wrong**; several claims I made with confidence during this stretch turned out to
