@@ -149,3 +149,64 @@ are outperforming the closed lots. Consequences:
 Publishing a diagnosis while naming an untested confounder, then testing it and
 finding it material, is the wrong order. The confounder should have been tested
 before the write-up, not listed as future work in it.
+
+---
+
+# CORRECTION 2 — 2026-08-28 (same day) — the edge was measured on the wrong cohort
+
+The Alpha Diagnostic Lab's measurement-integrity repair (commit `f95c3951`)
+separated the **eligible-long** cohort (names that could actually be entered:
+`entry_eligible = true AND direction = 'long'`) from the **all-scored** context
+cohort. Production runs under that repair:
+
+| market | eligible-long h10 rank IC | dates | all-scored h10 rank IC | status |
+|---|---:|---:|---:|---|
+| India | **-0.0083** | 17 | +0.1046 | `insufficient_evidence` |
+| US | -0.0768 | 21 | -0.0101 | `insufficient_evidence` |
+
+Verified directly against `backtest_experiments` (runs `a0056552…` / `08b22b2a…`,
+`code_version = f95c3951`).
+
+**Section 3's premise is void.** The `+0.105` I cited as "India's selection edge"
+is the all-scored number — it includes observations that were never entry
+eligible and could not have been bought. The cohort that actually enters the
+book ranks at approximately **zero** (-0.0083, and below the evidence floor at
+that: 17 of 60 dates).
+
+Consequences:
+
+1. **"Allocation throws away a real edge" is not supported.** There is no
+   demonstrated edge in the entry cohort to throw away. The honest statement is
+   that we cannot yet show the selection ranks at all where it matters.
+2. **The percent-vs-currency profit-factor gap (1.438 / 0.906) stands as an
+   observation but loses its explanation.** With a flat eligible-long IC, the
+   favourable percent PF is more likely small-sample noise on the closed cohort
+   (already shown biased in CORRECTION 1) than a real per-name edge that sizing
+   diluted.
+3. **Section 5's "US is NOT the same problem" is wrong in direction.** Both
+   markets are the same problem: neither eligible cohort clears the floor, and
+   US is more negative than India.
+
+## What survives both corrections
+
+Only the mechanism, which is measured at entry and depends on no outcome:
+
+- `corr(entry_notional, cash_at_entry) = +0.344`
+- `corr(entry_notional, analyst_score) = -0.128`
+- notional spans 57x on a nominally uniform book
+
+That is a real sizing defect on its own terms — allocation is decided by
+timing, not by the model — but it is now a **process** finding, not a
+quantified P&L loss.
+
+The volatility-budget finding in section 4 is independent of all of this and
+still stands: Rule 4 has fired zero times in 1,513 events because 2.0% is above
+the 1.649% worst case the model can produce.
+
+## Method note (second one today)
+
+Two corrections in one day to the same write-up, both in the direction of a
+weaker claim: first survivorship, then cohort. The common cause is publishing a
+directional conclusion from a convenience sample — closed lots, all-scored
+observations — instead of from the population the decision actually operates on.
+The eligible-entry cohort was the correct denominator from the start.

@@ -272,15 +272,30 @@ re-derived. Full write-up: `docs/audits/2026-08-28-sizing-damage-diagnosis.md`.
 
 ### 6.1 The claim, in one line
 
-India's score ranks forward returns (h10 rank IC +0.105, t 2.24), but position
-size is set by **cash available at entry** rather than conviction, so the edge
-is not concentrated where it should be: percentage profit factor **1.438** vs
-currency profit factor **0.906** on closed lots.
+**RETRACTED IN PART — twice, on 2026-08-28.** The claim as originally written
+was: India's score ranks forward returns (h10 rank IC +0.105, t 2.24), but
+position size is set by **cash available at entry** rather than conviction, so
+the edge is not concentrated where it should be — percentage profit factor
+**1.438** vs currency profit factor **0.906** on closed lots.
 
-**Caveat added after a survivorship test — see 6.3(1).** Both profit factors and
-the quartile gradient come from the CLOSED cohort, which is biased: large
-positions are disproportionately still open. The claim survives in weakened
-form.
+Two corrections, both weakening it (full text in the audit doc):
+
+1. **Survivorship (see 6.3(1)).** Both profit factors and the quartile gradient
+   come from the CLOSED cohort. 8 of 14 open India positions sit in the largest
+   quartile; including them moves Q4 mean return from -0.55% to **+0.07%** and
+   shallows the win-rate gradient from 60->38% to 57->43%.
+2. **Wrong cohort (commit `f95c3951`).** The `+0.105` is the **all-scored**
+   context cohort, not the entry cohort. The eligible-long cohort
+   (`entry_eligible AND direction='long'`) measures **-0.0083** over 17 dates in
+   India and **-0.0768** over 21 in the US — both `insufficient_evidence`.
+   Verified in `backtest_experiments` runs `a0056552…` / `08b22b2a…`.
+
+**What is left of the claim:** the sizing MECHANISM only —
+`corr(notional, cash_at_entry) = +0.344`, `corr(notional, analyst_score) =
+-0.128`, 57x notional spread — which is measured at entry and survives both
+corrections. There is no longer a demonstrated selection edge for allocation to
+be throwing away. Please attack the mechanism claim as well; it is the only part
+still standing.
 
 ### 6.2 Exact queries — please re-run these
 

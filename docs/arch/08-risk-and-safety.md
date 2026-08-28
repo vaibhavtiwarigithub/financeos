@@ -9,7 +9,9 @@
 >
 > A3 reported India percent profit factor 1.438 against currency 0.906. By entry-notional quartile the win rate falls monotonically 60 -> 56 -> 54 -> **38%** as size rises; the smallest quartile earns +5,871 and the largest loses -10,113.
 >
-> **Position size tracks cash available at entry (corr +0.344), not conviction (corr with analyst_score -0.128).** Notional spans 57x on a nominally uniform book. India score DOES rank returns (h10 rank IC +0.105, t 2.24), so allocation that is uncorrelated with the score systematically throws the edge away: good picks get small allocations by accident of timing.
+> **Position size tracks cash available at entry (corr +0.344), not conviction (corr with analyst_score -0.128).** Notional spans 57x on a nominally uniform book: allocation is decided by timing, not by the model.
+>
+> **CORRECTED 2026-08-28 (same day):** the `h10 rank IC +0.105` originally cited here as India's selection edge is the **all-scored** context cohort. Under the measurement-integrity repair (`f95c3951`) the **eligible-long** cohort — the names that could actually be entered — measures **-0.0083** over 17 dates in India and **-0.0768** over 21 in the US, both below the evidence floor. There is no demonstrated selection edge in the entry cohort, so "allocation throws the edge away" is unsupported; only the sizing mechanism above survives. The US/India split asserted below is also wrong in direction: neither market's eligible cohort ranks.
 >
 > **The volatility budget is a separate, real defect and NOT the cause.** Rule 4 has fired zero times in 1,513 constructor events because `maxPortfolioVolPct = 2.0` is unreachable at `DEFAULT_DAILY_VOL = 0.02` — reproducing estPortfolioVol, the worst case across every configuration (5 names, 100% gross, all same sector) is **1.649%**. Breaching 2.0% needs per-symbol vol >= 3.5% daily. The threshold is set above what the model can produce. Fixing it would not fix the sizing damage.
 >
