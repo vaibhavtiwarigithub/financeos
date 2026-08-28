@@ -103,12 +103,48 @@ export async function POST(req: NextRequest) {
       data_cutoff: dataCutoff,
       code_version: codeVersion,
       plan_fingerprint: planFingerprint,
+      // The registry requires these NOT NULL, and they are the lineage that
+      // makes a run auditable rather than boilerplate: what was asked, who
+      // asked it, and how many variants were budgeted BEFORE any data was read.
+      hypothesis:
+        `Locate which stage of the ${market.toUpperCase()} funnel (data truth, selection, payoff geometry, ` +
+        `exit paths, sizing, cost) accounts for benchmark-relative performance vs ${plan.benchmark}. ` +
+        `Diagnostic only: no promotion, no policy change, strongest verdict is owner_review.`,
+      // Constrained to 'llm' | 'human' by backtest_experiments_author_check.
+      author: "llm",
+      // Declared up front. Every test counts as a trial for the multiple-testing
+      // adjustment, so this cannot be revised after seeing results.
+      variant_budget: plan.tests.length,
       trials_considered: plan.tests.length,
       started_at: startedAt,
     })
     .select("id")
     .single();
   if (planErr || !planRow) {
+    // The registry enforces ONE experiment per distinct plan
+    // (backtest_experiments_plan_fingerprint_uidx). The plan is deterministic
+    // over (planVersion, market, dataCutoff, tests), so re-running the same
+    // plan on the same day is not a new experiment -- it is the same one. Return
+    // it instead of failing, which keeps the endpoint idempotent for a cron that
+    // fires twice and preserves the rerun-identity property: identical plan,
+    // identical result.
+    if (planErr && (planErr as any).code === "23505") {
+      const { data: existing } = await svc
+        .from("backtest_experiments")
+        .select("id, market, result_summary, run_fingerprint, completed_at")
+        .eq("plan_fingerprint", planFingerprint)
+        .maybeSingle();
+      if (existing) {
+        return NextResponse.json({
+          runId: (existing as any).id,
+          market,
+          reused: true,
+          verdict: (existing as any).result_summary?.verdict ?? null,
+          summary: (existing as any).result_summary ?? null,
+          influence: "none",
+        });
+      }
+    }
     return NextResponse.json({ error: `plan insert failed: ${planErr?.message ?? "no row"}` }, { status: 500 });
   }
   const runId = (planRow as any).id;
@@ -129,7 +165,13 @@ export async function POST(req: NextRequest) {
     const perfRows = (perfRes.data ?? []) as any[];
     const tradeRows = (tradesRes.data ?? []) as any[];
 
-    const navRows: NavRow[] = perfRows.map(r => ({
+    // Rows already labelled `tainted` are excluded from the data-truth check.
+    // Taint is the recorded acknowledgement that a row is known-bad; re-failing
+    // it every run would make the label meaningless and pin the market at
+    // data_invalid forever, which is exactly what happened to India on the
+    // first run. They remain in the ACCOUNTING totals below.
+    const taintedNavRows = perfRows.filter(r => r.tainted === true).length;
+    const navRows: NavRow[] = perfRows.filter(r => r.tainted !== true).map(r => ({
       date: r.date,
       nav: num(r.nav), cashBalance: num(r.cash_balance), positionsValue: num(r.positions_value),
       benchNav: num(r.bench_nav), benchSessionDate: r.bench_session_date ?? null,
@@ -175,7 +217,7 @@ export async function POST(req: NextRequest) {
       benchmark: plan.benchmark,
       accountingCohort: { closedLots: accountingLots.length },
       learningCohort: { closedLots: learningLots.length, excluded: accountingLots.length - learningLots.length },
-      coverage: { navRows: navRows.length },
+      coverage: { navRows: navRows.length, taintedNavRowsExcludedFromA0: taintedNavRows },
       tests: Object.fromEntries(findings.map(f => [f.testId, f])),
       verdict,
       influence: "none",
@@ -206,6 +248,12 @@ export async function POST(req: NextRequest) {
 }
 
 function num(v: unknown): number | null {
+  // Reject absence BEFORE coercion. Number(null) === 0 and Number("") === 0, so
+  // a NULL bench_nav would arrive as a real zero -- which made A0 treat the
+  // Sunday inception row (no session, no benchmark) as a row that HAD a
+  // benchmark and then fail it for missing provenance. Same trap as
+  // classifyConstructorSize; absence is not a value.
+  if (v == null || v === "") return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }

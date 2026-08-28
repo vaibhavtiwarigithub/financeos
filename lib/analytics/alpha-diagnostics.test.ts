@@ -210,17 +210,22 @@ describe("resolveVerdict", () => {
   });
 });
 
-describe("fingerprint is a real 64-bit digest, not a truncated one", () => {
-  it("produces 16 hex characters", () => {
-    expect(fingerprint({ a: 1 })).toMatch(/^[0-9a-f]{16}$/);
+describe("fingerprint", () => {
+  // backtest_experiments constrains every fingerprint column to
+  // ^[0-9a-f]{64}$. A shorter digest is rejected at INSERT, which is exactly
+  // how the first production run of this feature failed.
+  it("matches the registry's required 64-hex shape", () => {
+    expect(fingerprint({ a: 1 })).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  // A single FNV-1a pass duplicated would make both halves identical, silently
-  // halving the digest space. The two passes must use different offset bases.
-  it("does not emit two identical 32-bit halves", () => {
+  // Duplicating one pass would make chunks identical and silently collapse the
+  // digest space while still satisfying the regex.
+  it("emits eight DISTINCT 32-bit chunks", () => {
     for (const v of [{ a: 1 }, { b: "x" }, [1, 2, 3], { nested: { k: 9 } }]) {
       const fp = fingerprint(v);
-      expect(fp.slice(0, 8)).not.toBe(fp.slice(8));
+      const chunks = fp.match(/.{8}/g)!;
+      expect(chunks).toHaveLength(8);
+      expect(new Set(chunks).size).toBe(8);
     }
   });
 
@@ -231,5 +236,31 @@ describe("fingerprint is a real 64-bit digest, not a truncated one", () => {
   it("is stable across repeated calls", () => {
     const v = { z: 1, a: [3, 2, 1], n: { q: 0.1 + 0.2 } };
     expect(fingerprint(v)).toBe(fingerprint(v));
+  });
+});
+
+describe("resolveVerdict — A0 is a gate, not evidence", () => {
+  const f = (testId: string, status: DiagnosticFinding["status"]): DiagnosticFinding => ({
+    market: "us", testId, cohort: "learning",
+    window: { from: "", to: "" }, sample: { nRows: 0, nDates: 0, nSymbols: 0 },
+    coverage: 1, metricVersion: "v", status, reason: "", metrics: {},
+  });
+
+  // The first production run reported owner_review because A0 passed. "The
+  // ledger reconciles" is not "a candidate is reviewable".
+  it("does not promote a run whose only pass is A0", () => {
+    expect(resolveVerdict([
+      f("A0", "pass"),
+      f("A3", "descriptive_only"),
+      f("A7", "descriptive_only"),
+    ])).toBe("collect_more");
+  });
+
+  it("promotes only on a candidate-establishing test", () => {
+    expect(resolveVerdict([f("A0", "pass"), f("A8", "pass")])).toBe("owner_review");
+  });
+
+  it("still refuses when a candidate-establishing test failed", () => {
+    expect(resolveVerdict([f("A0", "pass"), f("A8", "fail")])).toBe("reject_candidate");
   });
 });

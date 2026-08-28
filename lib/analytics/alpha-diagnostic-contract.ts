@@ -145,11 +145,28 @@ function fnv1a32(text: string, offsetBasis: number): number {
   return h >>> 0;
 }
 
+/**
+ * 64 hex characters, because `backtest_experiments` constrains every
+ * fingerprint column to `^[0-9a-f]{64}$` — the SHA-256 shape the rest of the
+ * experiment registry uses. Eight FNV-1a passes with distinct offset bases,
+ * each contributing 8 hex characters.
+ *
+ * This is a CHANGE-DETECTION digest, not a cryptographic hash: it satisfies the
+ * registry's shape and reliably differs when content differs, but it has
+ * nowhere near 256 bits of real entropy and must never be relied on to resist
+ * a deliberate collision. SHA-256 via node:crypto was rejected so this module
+ * stays safe to import from a client bundle.
+ */
+const FINGERPRINT_BASES = [
+  0x811c9dc5, 0x9dc5811c, 0x1c9dc581, 0xc5811c9d,
+  0x01000193, 0x93010001, 0x00019301, 0x19300100,
+];
+
 export function fingerprint(value: unknown): string {
   const text = canonicalize(value);
-  const a = fnv1a32(text, 0x811c9dc5);
-  const b = fnv1a32(text, 0x9dc5811c);
-  return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
+  return FINGERPRINT_BASES
+    .map(base => fnv1a32(text, base).toString(16).padStart(8, "0"))
+    .join("");
 }
 
 /**
@@ -163,9 +180,15 @@ export function resolveVerdict(findings: DiagnosticFinding[]): DiagnosticVerdict
   if (findings.some(f => f.status === "data_invalid")) return "data_invalid";
   if (findings.some(f => f.testId === "A0" && f.status === "fail")) return "data_invalid";
   if (findings.some(f => f.status === "fail")) return "reject_candidate";
-  const interpretable = findings.filter(f => f.status === "pass");
   // owner_review requires an actual passing paired comparison, not merely the
-  // absence of failure. Descriptive findings never reach the owner as a
-  // recommendation.
-  return interpretable.length > 0 ? "owner_review" : "collect_more";
+  // absence of failure -- AND not a passing A0.
+  //
+  // A0 is a data-truth GATE, not evidence about a candidate. Counting its pass
+  // toward the verdict made a first production run report `owner_review` on a
+  // book whose only passing test was "the ledger reconciles", which is the
+  // absence-of-failure fallacy arriving through a different door. Only tests
+  // that can establish a candidate may promote.
+  const CANDIDATE_ESTABLISHING = new Set(["A2", "A6", "A8"]);
+  const passing = findings.filter(f => f.status === "pass" && CANDIDATE_ESTABLISHING.has(f.testId));
+  return passing.length > 0 ? "owner_review" : "collect_more";
 }
