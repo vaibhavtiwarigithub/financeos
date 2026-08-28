@@ -1393,3 +1393,42 @@ No forward fill, score change, learner mutation, paper fill, sizing effect,
 proposal, or order path.
 
 **Architecture:** `features/benchmark-alpha/FEATURE_ARCHITECTURE.md` P1E.
+
+---
+
+## Decision 69: Diagnose Alpha As A Portfolio Funnel Before Changing Policy (2026-08-27)
+
+**Status:** Direction approved; architecture drafted; implementation not yet approved
+
+**Decision.** Build one read-only Alpha Diagnostic Lab for the owner. Its primary
+objective is market-local net excess return against the governed primary
+benchmark, subject to drawdown non-inferiority. Portfolio counterfactuals redeploy
+cash into the next eligible candidate under deterministic exit-first ordering.
+Accounting includes every real trade; learning comparisons separately exclude
+tainted and `excluded_from_learning` rows, with both cohorts displayed.
+
+**Reason.** A benchmark gap alone cannot identify whether Kairos loses alpha in
+data, discovery, selection, fills, sizing, exits, cash deployment, or costs.
+Changing another score, stop, target, or horizon before isolating that stage would
+fit policy to a short, overlapping sample and contaminate future evidence.
+
+**User.** The single Kairos owner/operator reviewing the US and India paper books.
+
+**Expected return on build.** Replace repeated one-off production queries and
+intuition-led strategy edits with one reproducible diagnosis and a governed path
+from hypothesis to sealed replay and forward shadow. The feature should reduce
+wasted implementation cycles; it does not promise positive investment returns.
+
+**Safety boundary.** Read-only diagnostics. No diagnostic result is consumed by
+scoring, entry eligibility, sizing, exits, paper/live portfolio state, promotion,
+proposals, orders, or brokers. US and India remain separate. Secondary benchmark
+selection remains display-only.
+
+**Persistence choice.** Reuse immutable `backtest_experiments` lineage by adding
+an `alpha_diagnostic` experiment type and a versioned structured result. Do not
+create a second experiment registry. The schema migration and implementation
+remain gated on owner approval of the architecture.
+
+**Architecture:** `features/alpha-diagnostic-lab/FEATURE_ARCHITECTURE.md`.
+
+**Shipped at:** not shipped.

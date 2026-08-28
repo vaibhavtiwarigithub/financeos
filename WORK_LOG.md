@@ -1,5 +1,7 @@
 # Work Log
 
+| Alpha Diagnostic Lab architecture and decision record | Codex / GPT-5 | completed | 2026-08-27 | Architect-only scope approved by Vaibhav. Added Decision 69 and `features/alpha-diagnostic-lab/FEATURE_ARCHITECTURE.md`: nine repeatable market-local tests, approved objective/cohort/redeployment defaults, reuse of immutable experiment lineage, API/UI contracts, cadence, validation, and promotion gates. No implementation, migration, score, paper/live, sizing, exit, or broker change. Awaiting owner architecture approval before Builder work. |
+
 | Portfolio multi-benchmark comparison and persisted display default | Codex / GPT-5 | completed | 2026-08-24 | Extended the approved benchmark-alpha measurement surface: US VOO/QQQ/XLK/XLF; India NIFTY 50 plus verified-priceable ITBEES/BANKBEES/JUNIORBEES proxies. Fixed the dormant secondary-observation collector, added an owner-only persisted market-local display preference distinct from the governed primary, and exact-session chart joins. Production rows/backfill verified (31–501 observations/benchmark); 2,063 tests and production build pass; local browser proved India persistence and both market control sets. No learner, score, fill, sizing, or order effect. |
 
 ## 2026-08-24 — STALE-BLOCKER RECONCILIATION (read this before acting on any "NOT APPLIED" note below)

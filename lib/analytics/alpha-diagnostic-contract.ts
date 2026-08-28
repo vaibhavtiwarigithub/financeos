@@ -1,0 +1,171 @@
+// Alpha Diagnostic Lab — shared contract.
+//
+// READ-ONLY DIAGNOSTICS. Nothing in this feature may be imported by a scorer,
+// PaperTrader, PositionMonitor, strategy promotion, proposal, order or broker
+// path. Its strongest verdict is `owner_review`; it cannot promote anything.
+//
+// See features/alpha-diagnostic-lab/FEATURE_ARCHITECTURE.md.
+
+import { MIN_EFFECTIVE_OBSERVATIONS, effectiveObservations } from "@/lib/learning/dimension-diagnostics";
+
+export type DiagnosticMarket = "us" | "india";
+
+/**
+ * `descriptive_only` is NOT a weak pass. It means the number is reportable but
+ * carries no pass/fail interpretation, which is the honest state for most of
+ * this suite until the evidence floors are met.
+ */
+export type DiagnosticStatus =
+  | "pass"
+  | "fail"
+  | "insufficient_evidence"
+  | "data_invalid"
+  | "descriptive_only";
+
+export type DiagnosticVerdict =
+  | "data_invalid"
+  | "collect_more"
+  | "reject_candidate"
+  | "owner_review";
+
+/** Accounting answers "what happened to the book"; learning answers "what may
+ *  be used to compare policies". Neither may silently substitute for the other. */
+export type DiagnosticCohort = "accounting" | "learning";
+
+export interface DiagnosticSample {
+  nRows: number;
+  /** Independent decision dates. Raw row count is NEVER the sample size. */
+  nDates: number;
+  nSymbols: number;
+  /** Horizon the metric was measured at, when the metric has one. */
+  horizonDays?: number;
+}
+
+export interface DiagnosticFinding {
+  market: DiagnosticMarket;
+  testId: string;
+  cohort: DiagnosticCohort;
+  window: { from: string; to: string };
+  sample: DiagnosticSample;
+  /** Fraction of the attempted population the metric could actually be computed on. */
+  coverage: number;
+  metricVersion: string;
+  status: DiagnosticStatus;
+  reason: string;
+  metrics: Record<string, unknown>;
+}
+
+/**
+ * Owner-review floor. Deliberately far above the descriptive floor: a finding
+ * may be SHOWN with fewer dates, but a candidate cannot be put in front of the
+ * owner on them.
+ */
+export const MIN_REVIEW_DATES = 60;
+
+/**
+ * Decide a status from sample size alone, before any metric is interpreted.
+ *
+ * Applies BOTH floors, because they fail in different directions:
+ *  - `minDates` catches a small sample outright;
+ *  - the overlap correction catches a sample that looks large only because
+ *    consecutive forward windows of `horizonDays` overlap almost entirely.
+ * At h120, 20 dates is 0.17 independent observations. Counting dates alone
+ * would call that a finding.
+ */
+export function sampleStatus(
+  sample: DiagnosticSample,
+  minDates: number,
+): { ok: boolean; status: DiagnosticStatus; reason: string } {
+  if (sample.nDates < minDates) {
+    return {
+      ok: false,
+      status: "insufficient_evidence",
+      reason: `${sample.nDates}/${minDates} independent decision dates; no interpretation permitted.`,
+    };
+  }
+  if (sample.horizonDays != null) {
+    const nEff = effectiveObservations(sample.nDates, sample.horizonDays);
+    if (nEff < MIN_EFFECTIVE_OBSERVATIONS) {
+      return {
+        ok: false,
+        status: "insufficient_evidence",
+        reason: `${sample.nDates} dates at a ${sample.horizonDays}-day horizon overlap to ${nEff.toFixed(2)} independent observations (need ${MIN_EFFECTIVE_OBSERVATIONS}).`,
+      };
+    }
+  }
+  return { ok: true, status: "descriptive_only", reason: "Sample floors met; descriptive only until a paired comparison and the robustness gates run." };
+}
+
+/**
+ * Canonical JSON: sorted keys, fixed numeric precision.
+ *
+ * Required by the re-run identity gate. `JSON.stringify` preserves insertion
+ * order and emits shortest-roundtrip floats, so two runs computing identical
+ * values can still produce different bytes — which would make the fingerprint
+ * report a difference that does not exist.
+ */
+export function canonicalize(value: unknown, floatDigits = 10): string {
+  const walk = (v: unknown): unknown => {
+    if (v === null) return null;
+    if (typeof v === "number") {
+      if (!Number.isFinite(v)) return null; // NaN/Infinity are not JSON; never emit a bare token
+      // -0 and 0 must serialize identically or the fingerprint splits on sign.
+      const fixed = Number(v.toFixed(floatDigits));
+      return Object.is(fixed, -0) ? 0 : fixed;
+    }
+    if (Array.isArray(v)) return v.map(walk);
+    if (typeof v === "object") {
+      const src = v as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(src).sort()) out[k] = walk(src[k]);
+      return out;
+    }
+    return v;
+  };
+  return JSON.stringify(walk(value));
+}
+
+/**
+ * Deterministic, dependency-free digest over the canonical form.
+ *
+ * Two FNV-1a 32-bit passes with different offset bases, concatenated to 64 bits.
+ * Deliberately NOT BigInt (tsconfig targets ES2017, where BigInt literals are
+ * unavailable) and deliberately NOT node:crypto, so this module stays safe to
+ * import from the client bundle alongside the UI. `Math.imul` gives the exact
+ * 32-bit wraparound multiply the algorithm requires.
+ *
+ * Not a security hash. It only has to change when the content changes.
+ */
+function fnv1a32(text: string, offsetBasis: number): number {
+  let h = offsetBasis;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+export function fingerprint(value: unknown): string {
+  const text = canonicalize(value);
+  const a = fnv1a32(text, 0x811c9dc5);
+  const b = fnv1a32(text, 0x9dc5811c);
+  return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
+}
+
+/**
+ * The run's overall verdict.
+ *
+ * A0 is a hard gate: if data truth failed, every downstream number is
+ * uninterpretable regardless of how good it looks, so the run cannot report
+ * anything except `data_invalid`.
+ */
+export function resolveVerdict(findings: DiagnosticFinding[]): DiagnosticVerdict {
+  if (findings.some(f => f.status === "data_invalid")) return "data_invalid";
+  if (findings.some(f => f.testId === "A0" && f.status === "fail")) return "data_invalid";
+  if (findings.some(f => f.status === "fail")) return "reject_candidate";
+  const interpretable = findings.filter(f => f.status === "pass");
+  // owner_review requires an actual passing paired comparison, not merely the
+  // absence of failure. Descriptive findings never reach the owner as a
+  // recommendation.
+  return interpretable.length > 0 ? "owner_review" : "collect_more";
+}
