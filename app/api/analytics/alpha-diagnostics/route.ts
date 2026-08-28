@@ -22,23 +22,34 @@ import {
   runA4ExitPaths, runA5Sizing, runA7CostStress,
   type ExitPathLot, type SizedLot,
 } from "@/lib/analytics/alpha-diagnostics-counterfactual";
-import { runA2Selection } from "@/lib/analytics/alpha-diagnostics-selection";
+import { dedupeSelectionRows, runA2Selection, selectionRowsFromObservations } from "@/lib/analytics/alpha-diagnostics-selection";
 import { runA8Robustness } from "@/lib/analytics/alpha-diagnostics-counterfactual";
 import {
-  runPortfolioCalendar, runA6Portfolio, runA9RiskGeometry,
+  buildEqualSizeReplay, coalesceCalendarEvents, runPortfolioCalendar, runA6Portfolio, runA9RiskGeometry,
   type CalendarEvent, type DailyMark, type GeometryLot,
 } from "@/lib/analytics/alpha-diagnostics-portfolio";
-import { spearman } from "@/lib/learning/archetype-ic";
 import {
-  fingerprint, resolveVerdict, MIN_REVIEW_DATES,
+  ALPHA_DIAGNOSTIC_METRIC_VERSION, fingerprint, fingerprintDataset, resolveVerdict, MIN_REVIEW_DATES,
   type DiagnosticFinding, type DiagnosticMarket,
 } from "@/lib/analytics/alpha-diagnostic-contract";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-const PLAN_VERSION = "alpha_diagnostic_lab_p0_v1";
+const PLAN_VERSION = "alpha_diagnostic_lab_v2_measurement_integrity";
 const HISTORY_LIMIT = 20;
+const PAGE_SIZE = 1000;
+
+async function loadAllRows<T>(fetchPage: (from: number, to: number) => Promise<{ data: T[] | null; error: any }>): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await fetchPage(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message ?? "diagnostic ledger query failed");
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) return rows;
+  }
+}
 
 function marketFrom(req: NextRequest): DiagnosticMarket | null {
   const m = req.nextUrl.searchParams.get("market");
@@ -86,7 +97,7 @@ export async function POST(req: NextRequest) {
   const svc = createServiceClient();
   const startedAt = new Date().toISOString();
   const dataCutoff = new Date().toISOString().slice(0, 10);
-  const codeVersion = process.env.VERCEL_GIT_COMMIT_SHA ?? null;
+  const codeVersion = process.env.VERCEL_GIT_COMMIT_SHA ?? ALPHA_DIAGNOSTIC_METRIC_VERSION;
 
   // The plan is frozen and written BEFORE any evaluation data is read, so the
   // hypothesis cannot be edited after seeing the result. Trials are declared up
@@ -97,13 +108,13 @@ export async function POST(req: NextRequest) {
     dataCutoff,
     objective: "net_excess_return_vs_primary_benchmark",
     benchmark: market === "india" ? "^NSEI" : "VOO",
-    tests: ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"],
+    tests: ["A0", "A1", "A2", "A2_ALL_SCORED", "A3", "A4", "A5", "A6", "A7", "A8", "A9"],
     minReviewDates: MIN_REVIEW_DATES,
     // The code that computes the result is PART OF the plan. Without this a
     // change to any test silently replays the previous run through the
     // plan_fingerprint idempotency path -- identical plan, different code,
-    // stale answer. In production this is the deploy SHA; locally it is null,
-    // so a local re-run of unchanged code is still correctly idempotent.
+    // stale answer. In production this is the deploy SHA; elsewhere the
+    // explicit metric version is the stable, non-null fallback.
     codeVersion,
   };
   const planFingerprint = fingerprint(plan);
@@ -164,7 +175,7 @@ export async function POST(req: NextRequest) {
 
   try {
     // ── Load persisted ledgers only. No provider call anywhere below. ────────
-    const [perfRes, tradesRes, obsRes, marksRes, posRes] = await Promise.all([
+    const [perfRes, tradesRes, observationRows, marksRes, posRes] = await Promise.all([
       svc.from("paper_performance")
         .select("date, nav, cash_balance, positions_value, bench_nav, bench_session_date, bench_source, tainted")
         .eq("market", market).order("date", { ascending: true }),
@@ -176,27 +187,28 @@ export async function POST(req: NextRequest) {
         .eq("market", market).not("fill_price", "is", null),
       // A2 inputs: scored decisions joined to their matured benchmark-neutral
       // label. Read-only join over persisted ledgers, no provider call.
-      svc.from("decision_observations")
-        .select("symbol, ts, analyst_score, observation_labels!inner(horizon_days, benchmark_neutral_return)")
+      loadAllRows<any>((from, to) => svc.from("decision_observations")
+        .select("id, symbol, ts, analyst_score, entry_eligible, direction, observation_labels!inner(horizon_days, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion)")
         .eq("market", market)
         .not("analyst_score", "is", null)
-        .limit(20000),
+        .order("ts", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to)),
       // A6 inputs. The mark ledger is the AUTHORITATIVE record of what the book
       // was actually marked at, so the replay uses it rather than reconstructing
       // prices from a provider series. It only begins 2026-08-17 (when the W4
       // ledger was created), which bounds the A6 window -- reported honestly in
       // its date count rather than backfilled from a different source.
       svc.from("paper_position_marks")
-        .select("session_date, symbol, mark_price")
+        .select("session_date, symbol, qty, mark_price")
         .eq("market", market).order("session_date", { ascending: true }).limit(20000),
       // A9 inputs: geometry currently carried by open positions.
       svc.from("paper_positions")
-        .select("symbol, opened_at, avg_cost, stop_loss, price_target")
+        .select("symbol, opened_at, avg_cost, initial_stop_loss, stop_loss, price_target")
         .eq("market", market),
     ]);
     if (perfRes.error) throw new Error(`paper_performance read failed: ${perfRes.error.message}`);
     if (tradesRes.error) throw new Error(`paper_trades read failed: ${tradesRes.error.message}`);
-    if (obsRes.error) throw new Error(`decision_observations read failed: ${obsRes.error.message}`);
     if (marksRes.error) throw new Error(`paper_position_marks read failed: ${marksRes.error.message}`);
     if (posRes.error) throw new Error(`paper_positions read failed: ${posRes.error.message}`);
 
@@ -222,7 +234,11 @@ export async function POST(req: NextRequest) {
     // Cohort split. Accounting keeps everything; learning drops tainted and
     // explicitly excluded rows. Neither may silently substitute for the other,
     // so both counts are reported.
-    const accountingLots: ClosedLot[] = tradeRows.map(toClosedLot);
+    const excursionByEntry = buildExcursionLookup(observationRows, 10);
+    const accountingLots: ClosedLot[] = tradeRows.map(r => toClosedLot(
+      r,
+      excursionByEntry.get(`${String(r.symbol)}|${String(r.executed_at ?? "").slice(0, 10)}`) ?? null,
+    ));
     const learningLots = accountingLots.filter((_, i) =>
       tradeRows[i].tainted !== true && tradeRows[i].excluded_from_learning !== true);
 
@@ -242,22 +258,14 @@ export async function POST(req: NextRequest) {
       // = 10). Grading a 10-day policy on 2-day moves measures noise; grading it
       // on 20-day moves measures what happens after the position is already gone.
       const A2_HORIZON = 10;
-      const selectionRows: Array<{ date: string; symbol: string; score: number; forwardReturn: number; ts: string }> =
-        (obsRes.data ?? []).flatMap((r: any) => {
-        const labels: any[] = Array.isArray(r.observation_labels) ? r.observation_labels : [r.observation_labels];
-        const label = labels.find((l: any) => l && Number(l.horizon_days) === A2_HORIZON);
-        const fwd = label == null ? null : num(label.benchmark_neutral_return);
-        const score = num(r.analyst_score);
-        if (fwd == null || score == null) return [];
-        return [{
-          date: String(r.ts).slice(0, 10),
-          symbol: String(r.symbol),
-          score,
-          forwardReturn: fwd,
-          ts: String(r.ts),
-        }];
-      });
-      findings.push(runA2Selection(market, selectionRows, A2_HORIZON, MIN_REVIEW_DATES));
+      const allScoredSelectionRows = selectionRowsFromObservations(observationRows, A2_HORIZON, "all_scored");
+      const eligibleSelectionRows = selectionRowsFromObservations(observationRows, A2_HORIZON, "eligible_long");
+      findings.push(runA2Selection(market, eligibleSelectionRows, A2_HORIZON, MIN_REVIEW_DATES));
+      const allScored = runA2Selection(market, allScoredSelectionRows, A2_HORIZON, MIN_REVIEW_DATES);
+      allScored.testId = "A2_ALL_SCORED";
+      allScored.reason = `Context only — all scored observations, not the eligible entry cohort. ${allScored.reason}`;
+      allScored.metrics = { ...allScored.metrics, cohortDefinition: "all_scored_context" };
+      findings.push(allScored);
       findings.push(runA3Payoff(market, learningLots));
       findings.push(runA4ExitPaths(market, learningLots.map(toExitPathLot)));
       findings.push(runA5Sizing(market, tradeRows
@@ -278,67 +286,112 @@ export async function POST(req: NextRequest) {
       }
       const benchByDate = new Map<string, number | null>(
         perfRows.map(r => [String(r.date), num(r.bench_nav)] as [string, number | null]));
-      const marks: DailyMark[] = [...bySession.entries()]
+      const allMarks: DailyMark[] = [...bySession.entries()]
         .sort((a, b) => a[0].localeCompare(b[0]))
         .map(([session, prices]) => ({ session, prices, benchClose: benchByDate.get(session) ?? null }));
 
-      // Events come ONLY from lots whose entry falls inside the marked window.
-      // A lot opened before the ledger existed has no starting mark, and
-      // replaying it would fabricate the position history.
-      const firstMarked = marks[0]?.session ?? null;
+      // The first canonical mark with an untainted EOD performance row is the
+      // replay boundary. A known-bad NAV row cannot become a clean simulator
+      // seed merely because its arithmetic happens to reconcile.
+      const cleanPerformanceDates = new Set(perfRows
+        .filter(r => r.tainted !== true && num(r.cash_balance) != null && num(r.nav) != null)
+        .map(r => String(r.date)));
+      const firstMarked = allMarks.find(mark => cleanPerformanceDates.has(mark.session))?.session ?? null;
+      const marks = firstMarked == null ? [] : allMarks.filter(mark => mark.session >= firstMarked);
       const lastMarked = marks[marks.length - 1]?.session ?? null;
+      const openingQty = new Map<string, number>();
+      if (firstMarked != null) {
+        // The mark ledger is the persisted EOD book and carries quantity as well
+        // as price. Reconstructing the opening book from today's mutable lot
+        // state would introduce survivorship whenever an old position has since
+        // closed, so seed directly from the first canonical mark session.
+        for (const r of markRows.filter(row => String(row.session_date) === firstMarked)) {
+          const qty = num(r.qty);
+          if (qty == null || qty <= 0) continue;
+          const symbol = String(r.symbol);
+          openingQty.set(symbol, (openingQty.get(symbol) ?? 0) + qty);
+        }
+      }
+      const openingPrices = marks[0]?.prices ?? {};
+      const missingOpeningMarks = [...openingQty.keys()].filter(symbol => !(num(openingPrices[symbol])! > 0));
+      const openingPositions = [...openingQty.entries()].flatMap(([symbol, quantity]) => {
+        const price = num(openingPrices[symbol]);
+        return price != null && price > 0 ? [{ symbol, quantity, costBasis: price }] : [];
+      });
+      const openingPerf = firstMarked == null ? null : perfRows.find(r => String(r.date) === firstMarked) ?? null;
+      const openingCash = num(openingPerf?.cash_balance);
+      const openingNav = num(openingPerf?.nav);
+      const openingPositionValue = openingPositions.reduce((s, p) => s + p.quantity * p.costBasis, 0);
+      const openingReconciliationDelta = openingCash == null || openingNav == null
+        ? null : openingCash + openingPositionValue - openingNav;
       const events: CalendarEvent[] = [];
       for (const r of allLotRows) {
         const qty = num(r.qty);
         const fill = num(r.fill_price);
         const opened = r.executed_at ? String(r.executed_at).slice(0, 10) : null;
         if (qty == null || fill == null || opened == null) continue;
-        if (firstMarked == null || opened < firstMarked) continue;
-        if (lastMarked != null && opened > lastMarked) continue;
-        events.push({ session: opened, symbol: String(r.symbol), kind: "entry", price: fill, quantity: qty });
+        if (firstMarked == null) continue;
+        if (opened > firstMarked && (lastMarked == null || opened <= lastMarked)) {
+          events.push({ session: opened, symbol: String(r.symbol), kind: "entry", price: fill, quantity: qty });
+        }
         const exitPx = num(r.exit_price);
         const closed = r.closed_at ? String(r.closed_at).slice(0, 10) : null;
-        if (exitPx != null && closed != null && closed >= opened && (lastMarked == null || closed <= lastMarked)) {
-          events.push({ session: closed, symbol: String(r.symbol), kind: "exit", price: exitPx, quantity: qty });
+        if (exitPx != null && closed != null && closed > firstMarked && closed >= opened && (lastMarked == null || closed <= lastMarked)) {
+          events.push({
+            session: closed, symbol: String(r.symbol), kind: "exit", price: exitPx, quantity: qty,
+            afterEntry: closed === opened,
+          });
         }
       }
 
-      if (marks.length > 0 && events.length > 0) {
-        const initialCash = num(perfRows[0]?.nav) ?? (market === "india" ? 1000000 : 10000);
+      if (marks.length > 0 && openingCash != null && openingNav != null && missingOpeningMarks.length === 0) {
+        const actualEvents = coalesceCalendarEvents(events);
         const simPolicy = {
           market,
           currency: (market === "india" ? "INR" : "USD") as "USD" | "INR",
-          initialCash,
-          maxOpenNames: 15,
+          initialCash: openingCash,
+          initialPositions: openingPositions,
+          maxOpenNames: Math.max(15, openingPositions.length),
           allowFractionalShares: true,
         };
-        // Equal-size arm: same names, same timing, capital spread evenly. Total
-        // deployed is held constant so any difference is allocation alone.
-        const entries = events.filter(e => e.kind === "entry");
-        const totalNotional = entries.reduce((a, e) => a + e.price * (e.quantity ?? 0), 0);
-        const perName = entries.length > 0 ? totalNotional / entries.length : 0;
-        const equalEvents: CalendarEvent[] = events.map(e =>
-          e.kind === "entry"
-            ? { session: e.session, symbol: e.symbol, kind: "entry" as const, price: e.price, cashAllocation: perName }
-            : e);
-        findings.push(runA6Portfolio(market, [
-          { name: "actual", result: runPortfolioCalendar(simPolicy, events, marks) },
-          { name: "equal_size", result: runPortfolioCalendar(simPolicy, equalEvents, marks) },
-        ]));
+        const equal = buildEqualSizeReplay(openingPositions, actualEvents);
+        const a6 = runA6Portfolio(market, [
+          { name: "actual", result: runPortfolioCalendar(simPolicy, actualEvents, marks) },
+          { name: "equal_size", result: runPortfolioCalendar({ ...simPolicy, initialPositions: equal.initialPositions }, equal.events, marks) },
+        ]);
+        a6.metrics = {
+          ...a6.metrics,
+          openingCash,
+          openingPositionValue,
+          openingNav,
+          openingReconciliationDelta,
+          openingPositions: openingPositions.length,
+        };
+        if (openingReconciliationDelta == null || Math.abs(openingReconciliationDelta) > 0.01) {
+          a6.status = "data_invalid";
+          a6.reason = `Opening cash plus seeded positions does not reconcile to persisted NAV (delta ${openingReconciliationDelta ?? "missing"}).`;
+        }
+        findings.push(a6);
       } else {
-        findings.push(runA6Portfolio(market, []));
+        const a6 = runA6Portfolio(market, []);
+        a6.reason = missingOpeningMarks.length > 0
+          ? `Opening book is missing canonical marks for: ${missingOpeningMarks.join(", ")}.`
+          : "Opening cash/NAV or canonical mark sessions are unavailable.";
+        findings.push(a6);
       }
 
       // -- A9: risk geometry currently carried by the book -------------------
       const geometryLots: GeometryLot[] = (posRes.data ?? []).flatMap((r: any) => {
         const cost = num(r.avg_cost);
-        const stop = num(r.stop_loss);
+        const initialStop = num(r.initial_stop_loss);
+        const currentStop = num(r.stop_loss);
         const target = num(r.price_target);
-        if (cost == null || cost <= 0 || stop == null || target == null) return [];
+        if (cost == null || cost <= 0 || target == null) return [];
         return [{
           symbol: String(r.symbol),
           openedAt: String(r.opened_at ?? "").slice(0, 10),
-          stopPct: (1 - stop / cost) * 100,
+          initialStopPct: initialStop == null ? null : (1 - initialStop / cost) * 100,
+          currentStopPct: currentStop == null ? null : (1 - currentStop / cost) * 100,
           targetPct: (target / cost - 1) * 100,
         }];
       });
@@ -350,25 +403,24 @@ export async function POST(req: NextRequest) {
       // distinguishable from noise once every trial is charged for? A `fail`
       // means the INCUMBENT signal did not survive -- NOT that a proposed
       // candidate was rejected, which is why the subject is named in metrics.
-      const a8Scores = selectionRows.map(r => r.score);
-      const a8Outcomes = selectionRows.map(r => r.forwardReturn);
-      const a8Real = a8Scores.length >= 3 ? spearman(a8Scores, a8Outcomes) : null;
       const a8 = runA8Robustness(market, {
-        realStatistic: a8Real,
-        scores: a8Scores,
-        outcomes: a8Outcomes,
-        statistic: (sc, ou) => spearman(sc, ou),
+        rows: dedupeSelectionRows(eligibleSelectionRows),
         trialsConsidered: plan.tests.length,
-        nDates: new Set(selectionRows.map(r => r.date)).size,
         minDates: MIN_REVIEW_DATES,
+        horizonDays: A2_HORIZON,
+        minCrossSection: 5,
+        iterations: 2000,
       });
-      a8.metrics = { ...a8.metrics, subject: "incumbent_selection_signal", statistic: "spearman_rank_ic_h10" };
+      a8.metrics = { ...a8.metrics, subject: "eligible_long_incumbent_selection_signal", statistic: "mean_daily_spearman_rank_ic_h10" };
       findings.push(a8);
     }
 
-    const datasetFingerprint = fingerprint({
-      perf: perfRows.length, trades: tradeRows.length,
-      firstDate: perfRows[0]?.date ?? null, lastDate: perfRows[perfRows.length - 1]?.date ?? null,
+    const datasetFingerprint = fingerprintDataset({
+      performance: perfRows,
+      trades: allLotRows,
+      observations: observationRows.map(normalizeObservationForFingerprint),
+      marks: (marksRes.data ?? []) as any[],
+      positions: (posRes.data ?? []) as any[],
     });
     const verdict = resolveVerdict(findings);
     const summary = {
@@ -419,23 +471,52 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function toClosedLot(r: any): ClosedLot {
+type Excursion = { mfe: number | null; mae: number | null };
+
+function buildExcursionLookup(rows: any[], horizonDays: number): Map<string, Excursion> {
+  const out = new Map<string, Excursion>();
+  const eligible = [...rows]
+    .filter(r => r.entry_eligible === true && r.direction === "long")
+    .sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+  for (const r of eligible) {
+    const key = `${String(r.symbol)}|${String(r.ts).slice(0, 10)}`;
+    if (out.has(key)) continue;
+    const labels: any[] = Array.isArray(r.observation_labels) ? r.observation_labels : [r.observation_labels];
+    const label = labels.find(l => l && Number(l.horizon_days) === horizonDays);
+    if (!label) continue;
+    out.set(key, {
+      mfe: num(label.max_favorable_excursion),
+      mae: num(label.max_adverse_excursion),
+    });
+  }
+  return out;
+}
+
+function normalizeObservationForFingerprint(r: any): Record<string, unknown> {
+  const labels = (Array.isArray(r.observation_labels) ? r.observation_labels : [r.observation_labels])
+    .filter(Boolean)
+    .sort((a: any, b: any) => Number(a.horizon_days) - Number(b.horizon_days));
+  return { ...r, observation_labels: labels };
+}
+
+function toClosedLot(r: any, excursion: Excursion | null): ClosedLot {
   return {
     symbol: String(r.symbol),
     market: r.market === "india" ? "india" : "us",
-    realizedPnl: Number(r.realized_pnl) || 0,
-    pnlPct: Number(r.pnl_pct) || 0,
-    // MAE/MFE live on observation_labels, joined in a later pass; null here is
-    // honest missing data, and every consumer treats it as untouched rather
-    // than as a barrier hit.
-    mfe: null, mae: null,
+    // Missing outcomes are not zero outcomes. Downstream diagnostics report
+    // their coverage explicitly and exclude them from payoff arithmetic.
+    realizedPnl: num(r.realized_pnl) ?? Number.NaN,
+    pnlPct: num(r.pnl_pct) ?? Number.NaN,
+    mfe: excursion?.mfe ?? null,
+    mae: excursion?.mae ?? null,
     exitReason: r.exit_reason ?? null,
+    entryDate: r.executed_at ? String(r.executed_at).slice(0, 10) : null,
+    exitDate: r.closed_at ? String(r.closed_at).slice(0, 10) : null,
   };
 }
 
 function toExitPathLot(l: ClosedLot): ExitPathLot {
-  // Mandate levels for the window; A4 reports `neither_touched` while MAE/MFE
-  // are unavailable rather than inventing a resolution.
+  // Mandate levels for the window; A4 reports missing excursions as unavailable.
   return { ...l, targetPct: 8, stopPct: 7 };
 }
 
@@ -445,7 +526,9 @@ function toSizedLot(r: any): SizedLot {
   return {
     symbol: String(r.symbol),
     entryNotional: Number.isFinite(qty) && Number.isFinite(fill) ? qty * fill : Number.NaN,
-    pnlPct: Number(r.pnl_pct) || 0,
-    realizedPnl: Number(r.realized_pnl) || 0,
+    pnlPct: num(r.pnl_pct) ?? Number.NaN,
+    realizedPnl: num(r.realized_pnl) ?? Number.NaN,
+    entryDate: r.executed_at ? String(r.executed_at).slice(0, 10) : null,
+    exitDate: r.closed_at ? String(r.closed_at).slice(0, 10) : null,
   };
 }

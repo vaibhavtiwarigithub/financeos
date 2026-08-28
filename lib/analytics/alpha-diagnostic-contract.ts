@@ -9,6 +9,7 @@
 import { MIN_EFFECTIVE_OBSERVATIONS, effectiveObservations } from "@/lib/learning/dimension-diagnostics";
 
 export type DiagnosticMarket = "us" | "india";
+export const ALPHA_DIAGNOSTIC_METRIC_VERSION = "alpha_diagnostics_v2_2";
 
 /**
  * `descriptive_only` is NOT a weak pass. It means the number is reportable but
@@ -39,6 +40,8 @@ export interface DiagnosticSample {
   nSymbols: number;
   /** Horizon the metric was measured at, when the metric has one. */
   horizonDays?: number;
+  /** Human-readable independence unit. Defaults to decision_date. */
+  dateUnit?: "decision_date" | "entry_date" | "session" | "entry_vintage";
 }
 
 export interface DiagnosticFinding {
@@ -167,6 +170,16 @@ export function fingerprint(value: unknown): string {
   return FINGERPRINT_BASES
     .map(base => fnv1a32(text, base).toString(16).padStart(8, "0"))
     .join("");
+}
+
+/** Content identity for unordered database result sets. Row counts and date
+ * endpoints are insufficient: corrected values must produce a new run. */
+export function fingerprintDataset(parts: Record<string, unknown[]>): string {
+  const normalized: Record<string, unknown[]> = {};
+  for (const key of Object.keys(parts).sort()) {
+    normalized[key] = [...parts[key]].sort((a, b) => canonicalize(a).localeCompare(canonicalize(b)));
+  }
+  return fingerprint(normalized);
 }
 
 /**

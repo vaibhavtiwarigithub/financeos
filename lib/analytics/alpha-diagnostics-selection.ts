@@ -16,13 +16,12 @@
 import { spearman } from "@/lib/learning/archetype-ic";
 import { quintileSpread, type SelectionRow } from "./alpha-diagnostics";
 import {
+  ALPHA_DIAGNOSTIC_METRIC_VERSION,
   type DiagnosticFinding,
   type DiagnosticMarket,
   type DiagnosticSample,
   sampleStatus,
 } from "./alpha-diagnostic-contract";
-
-const METRIC_VERSION = "alpha_diagnostics_v1";
 
 /**
  * One row per (symbol, date) — earliest of the day.
@@ -44,6 +43,34 @@ export function dedupeSelectionRows(
   return [...best.values()].map(({ ts, ...rest }) => rest);
 }
 
+/** Build a named selection cohort from persisted observation rows. Filtering
+ * happens before symbol/date deduplication, so an earlier ineligible score can
+ * never displace the first eligible-long decision. */
+export function selectionRowsFromObservations(
+  rows: any[],
+  horizonDays: number,
+  cohort: "eligible_long" | "all_scored",
+): Array<SelectionRow & { ts: string }> {
+  return rows
+    .filter(r => cohort === "all_scored" || (r.entry_eligible === true && r.direction === "long"))
+    .flatMap(r => {
+      const labels: any[] = Array.isArray(r.observation_labels) ? r.observation_labels : [r.observation_labels];
+      const label = labels.find(l => l && Number(l.horizon_days) === horizonDays);
+      if (!label || r.analyst_score == null || r.analyst_score === ""
+        || label.benchmark_neutral_return == null || label.benchmark_neutral_return === "") return [];
+      const score = Number(r.analyst_score);
+      const forwardReturn = Number(label.benchmark_neutral_return);
+      if (!Number.isFinite(score) || !Number.isFinite(forwardReturn)) return [];
+      return [{
+        date: String(r.ts).slice(0, 10),
+        symbol: String(r.symbol),
+        score,
+        forwardReturn,
+        ts: String(r.ts),
+      }];
+    });
+}
+
 /** Mean of per-date statistics, with the date-clustered t. */
 function clustered(values: number[]): { mean: number | null; t: number | null; n: number } {
   const n = values.length;
@@ -53,6 +80,31 @@ function clustered(values: number[]): { mean: number | null; t: number | null; n
   const varc = values.reduce((a, v) => a + (v - mean) ** 2, 0) / (n - 1);
   const se = Math.sqrt(varc / n);
   return { mean, t: se === 0 ? null : mean / se, n };
+}
+
+export interface DailySelectionStatistic {
+  mean: number | null;
+  t: number | null;
+  nDates: number;
+  values: Array<{ date: string; value: number }>;
+}
+
+/** The exact A2 estimand, reusable by A8 so robustness cannot drift to a
+ * different pooled statistic. Input must already be symbol/date deduplicated. */
+export function dailyRankIcStatistic(
+  rows: SelectionRow[],
+  minCrossSection = 5,
+): DailySelectionStatistic {
+  const byDate = new Map<string, SelectionRow[]>();
+  for (const r of rows) byDate.set(r.date, [...(byDate.get(r.date) ?? []), r]);
+  const values: Array<{ date: string; value: number }> = [];
+  for (const [date, dayRows] of byDate) {
+    if (dayRows.length < minCrossSection) continue;
+    const ic = spearman(dayRows.map(r => r.score), dayRows.map(r => r.forwardReturn));
+    if (ic != null && Number.isFinite(ic)) values.push({ date, value: ic });
+  }
+  const stat = clustered(values.map(v => v.value));
+  return { mean: stat.mean, t: stat.t, nDates: stat.n, values };
 }
 
 export function runA2Selection(
@@ -69,19 +121,17 @@ export function runA2Selection(
     byDate.set(r.date, [...(byDate.get(r.date) ?? []), r]);
   }
 
-  const sessionIcs: number[] = [];
   const sessionSpreads: number[] = [];
   for (const dayRows of byDate.values()) {
     // A cross-section too thin to rank tells us nothing; skipping is honest,
     // scoring it would inject noise dressed as a measurement.
     if (dayRows.length < minCrossSection) continue;
-    const ic = spearman(dayRows.map(r => r.score), dayRows.map(r => r.forwardReturn));
-    if (ic != null && Number.isFinite(ic)) sessionIcs.push(ic);
     const q = quintileSpread(dayRows);
     if (q.spread != null && Number.isFinite(q.spread)) sessionSpreads.push(q.spread);
   }
 
-  const icStat = clustered(sessionIcs);
+  const exactIc = dailyRankIcStatistic(deduped, minCrossSection);
+  const icStat = { mean: exactIc.mean, t: exactIc.t, n: exactIc.nDates };
   const spreadStat = clustered(sessionSpreads);
 
   const sample: DiagnosticSample = {
@@ -89,6 +139,7 @@ export function runA2Selection(
     nDates: icStat.n,
     nSymbols: new Set(deduped.map(r => r.symbol)).size,
     horizonDays,
+    dateUnit: "decision_date",
   };
   const gate = sampleStatus(sample, minDates);
 
@@ -105,7 +156,7 @@ export function runA2Selection(
     },
     sample,
     coverage: rows.length === 0 ? 0 : deduped.length / rows.length,
-    metricVersion: METRIC_VERSION,
+    metricVersion: ALPHA_DIAGNOSTIC_METRIC_VERSION,
     status: gate.status,
     reason: gate.ok
       ? "Date-clustered rank IC and top-minus-bottom quintile spread. Rank IC says the ordering correlates; the spread says whether acting on it would have paid. A positive IC with a flat spread is not tradeable."

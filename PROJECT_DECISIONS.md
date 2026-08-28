@@ -1398,7 +1398,7 @@ proposal, or order path.
 
 ## Decision 69: Diagnose Alpha As A Portfolio Funnel Before Changing Policy (2026-08-27)
 
-**Status:** Direction approved; architecture drafted; implementation not yet approved
+**Status:** Implemented; original P0 measurements superseded by Decision 70 repair
 
 **Decision.** Build one read-only Alpha Diagnostic Lab for the owner. Its primary
 objective is market-local net excess return against the governed primary
@@ -1431,4 +1431,40 @@ remain gated on owner approval of the architecture.
 
 **Architecture:** `features/alpha-diagnostic-lab/FEATURE_ARCHITECTURE.md`.
 
-**Shipped at:** not shipped.
+**Shipped at:** 2026-08-28. Measurement implementation only; its initial
+production interpretation is superseded by the v2.2 integrity repair below.
+
+---
+
+## Decision 70: Repair the Alpha Diagnostic Instrument Before Changing Trading Policy (2026-08-28)
+
+**Status:** Implemented and production-flow verified
+
+**Decision.** Correct the shipped Alpha Diagnostic Lab so its declared cohort,
+sampling unit, calendar state, counterfactual quantities, placebo statistic,
+risk geometry, missing-data semantics, and immutable run identity match what it
+actually computes. Supersede the P0 results; do not use them to change policy.
+
+**Why.** Independent production re-derivation showed the stored positive India
+A2 result came from all scored observations: the architecture's eligible-long
+cohort was approximately flat/slightly negative. A6 and A8 also measured
+different portfolios/statistics than their labels. A misleading read-only
+instrument can cause later money-path damage even when it cannot trade directly.
+
+**Who.** The single Kairos owner/operator diagnosing the US and India books.
+
+**Expected return.** Restore trustworthy, repeatable attribution and prevent
+strategy work from being prioritized from stale or mislabelled evidence. This
+does not promise benchmark outperformance or authorize a candidate.
+
+**Safety boundary.** Measurement-only. No score, eligibility, sizing,
+volatility limit, stop, target, horizon, exit, paper/live state, proposal, order,
+or broker behavior changes. No schema change.
+
+**Architecture:**
+`features/alpha-diagnostic-lab/MEASUREMENT_INTEGRITY_REPAIR_ARCHITECTURE.md`.
+
+**Shipped at:** 2026-08-28. v2.2 production-flow rows:
+US `624b3c85-965d-4e89-8bee-b06729a89160`; India
+`d9de3886-b4f8-4ecc-a54c-c9333dc83144`. Both are `collect_more`, with
+`influence=none` and no money-path change.

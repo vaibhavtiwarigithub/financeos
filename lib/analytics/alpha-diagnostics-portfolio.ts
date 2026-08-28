@@ -14,13 +14,13 @@ import {
   simulatePortfolio,
   type SimulationEvent,
   type SimulationPolicy,
+  type SimulatedPosition,
 } from "@/lib/simulation/portfolio-simulator";
 import {
+  ALPHA_DIAGNOSTIC_METRIC_VERSION,
   type DiagnosticFinding,
   type DiagnosticMarket,
 } from "./alpha-diagnostic-contract";
-
-const METRIC_VERSION = "alpha_diagnostics_v1";
 
 export interface CalendarEvent {
   session: string;
@@ -31,6 +31,8 @@ export interface CalendarEvent {
   rank?: number;
   quantity?: number;
   cashAllocation?: number;
+  /** True only when the underlying lot opened and closed in this session. */
+  afterEntry?: boolean;
 }
 
 /**
@@ -46,12 +48,75 @@ export interface CalendarEvent {
 export function orderSessionEvents(events: CalendarEvent[]): CalendarEvent[] {
   return [...events].sort((a, b) => {
     if (a.session !== b.session) return a.session.localeCompare(b.session);
-    if (a.kind !== b.kind) return a.kind === "exit" ? -1 : 1;
+    const phase = (e: CalendarEvent) => e.kind === "entry" ? 1 : e.afterEntry ? 2 : 0;
+    const phaseOrder = phase(a) - phase(b);
+    if (phaseOrder !== 0) return phaseOrder;
     const ra = a.rank ?? Number.POSITIVE_INFINITY;
     const rb = b.rank ?? Number.POSITIVE_INFINITY;
     if (ra !== rb) return ra - rb;
     return a.symbol.localeCompare(b.symbol);
   });
+}
+
+/** Coalesce split-lot ledger rows into one deterministic event per
+ * session/symbol/type before deriving a counterfactual. */
+export function coalesceCalendarEvents(events: CalendarEvent[]): CalendarEvent[] {
+  const grouped = new Map<string, CalendarEvent>();
+  for (const e of events) {
+    const key = `${e.session}|${e.kind}|${e.afterEntry === true ? "after_entry" : "normal"}|${e.symbol}`;
+    const prior = grouped.get(key);
+    if (!prior) grouped.set(key, { ...e });
+    else grouped.set(key, {
+      ...prior,
+      quantity: (prior.quantity ?? 0) + (e.quantity ?? 0),
+      rank: Math.min(prior.rank ?? Number.POSITIVE_INFINITY, e.rank ?? Number.POSITIVE_INFINITY),
+    });
+  }
+  return orderSessionEvents([...grouped.values()]);
+}
+
+/** Equalize the opening book and each later entry batch without looking ahead.
+ * Exits apply the actual fraction sold to the counterfactual remaining holding. */
+export function buildEqualSizeReplay(
+  openingPositions: SimulatedPosition[],
+  events: CalendarEvent[],
+): { initialPositions: SimulatedPosition[]; events: CalendarEvent[] } {
+  const openingNotional = openingPositions.reduce((s, p) => s + p.quantity * p.costBasis, 0);
+  const perOpeningName = openingPositions.length ? openingNotional / openingPositions.length : 0;
+  const equalOpening = openingPositions.map(p => ({
+    ...p,
+    quantity: perOpeningName / p.costBasis,
+  }));
+  const actualQty = new Map(openingPositions.map(p => [p.symbol, p.quantity]));
+  const equalQty = new Map(equalOpening.map(p => [p.symbol, p.quantity]));
+  const ordered = coalesceCalendarEvents(events);
+  const entryBudget = new Map<string, { total: number; count: number }>();
+  for (const e of ordered.filter(e => e.kind === "entry")) {
+    const b = entryBudget.get(e.session) ?? { total: 0, count: 0 };
+    b.total += e.price * (e.quantity ?? 0);
+    b.count++;
+    entryBudget.set(e.session, b);
+  }
+  const equalEvents: CalendarEvent[] = [];
+  for (const e of ordered) {
+    const qty = e.quantity ?? 0;
+    if (e.kind === "entry") {
+      const b = entryBudget.get(e.session)!;
+      const equalEntryQty = b.count > 0 ? (b.total / b.count) / e.price : 0;
+      actualQty.set(e.symbol, (actualQty.get(e.symbol) ?? 0) + qty);
+      equalQty.set(e.symbol, (equalQty.get(e.symbol) ?? 0) + equalEntryQty);
+      equalEvents.push({ ...e, quantity: equalEntryQty, cashAllocation: undefined });
+      continue;
+    }
+    const actualBefore = actualQty.get(e.symbol) ?? 0;
+    const equalBefore = equalQty.get(e.symbol) ?? 0;
+    const fraction = actualBefore > 0 ? Math.min(1, qty / actualBefore) : Number.NaN;
+    const counterfactualQty = equalBefore * fraction;
+    equalEvents.push({ ...e, quantity: counterfactualQty, cashAllocation: undefined });
+    actualQty.set(e.symbol, Math.max(0, actualBefore - qty));
+    equalQty.set(e.symbol, Math.max(0, equalBefore - counterfactualQty));
+  }
+  return { initialPositions: equalOpening, events: equalEvents };
 }
 
 export interface DailyMark {
@@ -117,6 +182,7 @@ export function runPortfolioCalendar(
       price: e.price,
       quantity: e.quantity,
       cashAllocation: e.cashAllocation,
+      afterEntry: e.afterEntry,
     }));
     const sim = simulatePortfolio(policy, simEvents);
 
@@ -187,17 +253,28 @@ export function runA6Portfolio(
   const actual = arms.find(a => a.name === "actual") ?? arms[0];
   const sessions = actual?.result.points.length ?? 0;
 
-  const comparisons = arms.map(a => ({
+  const comparisons = arms.map(a => {
+    const rejectionReasons = a.result.rejections.reduce<Record<string, number>>((acc, r) => {
+      acc[r.reason] = (acc[r.reason] ?? 0) + 1;
+      return acc;
+    }, {});
+    return ({
     arm: a.name,
     totalReturnPct: a.result.totalReturnPct,
     netExcessReturnPp: a.result.netExcessReturnPp,
     maxDrawdownPct: a.result.maxDrawdownPct,
     meanCashUtilization: a.result.meanCashUtilization,
     rejections: a.result.rejections.length,
+    rejectionReasons,
     // Paired against `actual` on the same sessions.
     excessVsActualPp: actual ? a.result.totalReturnPct - actual.result.totalReturnPct : null,
     drawdownVsActualPp: actual ? a.result.maxDrawdownPct - actual.result.maxDrawdownPct : null,
-  }));
+    });
+  });
+  const invalidReplay = comparisons.some(c =>
+    (c.rejectionReasons.invalid_exit ?? 0) > 0
+    || (c.rejectionReasons.invalid_event ?? 0) > 0
+    || (c.rejectionReasons.duplicate_event_id ?? 0) > 0);
 
   // Cash drag: the return the uninvested share did not earn. Reported, never
   // assumed -- an idle sleeve is only a cost when the benchmark actually rose.
@@ -211,14 +288,16 @@ export function runA6Portfolio(
       from: actual?.result.points[0]?.session ?? "",
       to: actual?.result.points[sessions - 1]?.session ?? "",
     },
-    sample: { nRows: sessions, nDates: sessions, nSymbols: 0 },
+    sample: { nRows: sessions, nDates: sessions, nSymbols: 0, dateUnit: "session" },
     coverage: sessions === 0 ? 0 : 1,
-    metricVersion: METRIC_VERSION,
-    status: sessions === 0 ? "insufficient_evidence" : "descriptive_only",
+    metricVersion: ALPHA_DIAGNOSTIC_METRIC_VERSION,
+    status: sessions === 0 ? "insufficient_evidence" : invalidReplay ? "data_invalid" : "descriptive_only",
     reason: sessions === 0
       ? "No marked sessions to replay."
-      : "Paired calendar replay with finite capital. Descriptive: a winning arm still needs drawdown non-inferiority and the robustness gates before it is reviewable.",
-    metrics: { sessions, comparisons, cashDragPp },
+      : invalidReplay
+        ? "Replay contains invalid, duplicate, or unmatched events; portfolio comparison is not interpretable."
+        : "Paired calendar replay with finite capital. Descriptive: a winning arm still needs drawdown non-inferiority and the robustness gates before it is reviewable.",
+    metrics: { sessions, comparisons, cashDragPp, dateUnit: "session" },
   };
 }
 
@@ -227,33 +306,17 @@ export function runA6Portfolio(
 export interface GeometryLot {
   symbol: string;
   openedAt: string;
-  stopPct: number;
+  initialStopPct: number | null;
+  currentStopPct: number | null;
   targetPct: number;
 }
 
-/**
- * Reward:risk actually carried by open positions, grouped by entry vintage.
- *
- * Exists because the two books currently carry very different geometry and
- * NOTHING IN THE DECLARED POLICY EXPLAINS IT. Measured 2026-08-28 on open
- * positions, both entirely 2026-08 vintage:
- *
- *   india  14 lots  stop 3.82%  target 14.52%  R:R 6.12
- *   us      8 lots  stop 5.75%  target  7.50%  R:R 1.37
- *
- * India is shaped for "lose small, win big"; the US book is not. Two candidate
- * explanations were tested against production and BOTH FAILED:
- *   - mandate vintage drift: rejected, every open lot is August vintage;
- *   - the n>=60 learned-percentile unlock in resolveExecutionRiskReward:
- *     rejected, both markets clear it (india 98 closed lots, us 73).
- * Meanwhile the indicative trade plans are uniformly 7%/8% in BOTH markets.
- *
- * The cause is therefore UNEXPLAINED and this test exists to keep measuring it
- * rather than to assert a third guess. Grouping by vintage stays because it is
- * the cheapest way to see drift appear if a mandate does change.
- */
+/** Entry geometry and the currently trailed geometry are separate measures.
+ * Grouping initial levels by entry vintage can reveal mandate drift; current
+ * levels are path-dependent and must never be described as entry policy. */
 export function runA9RiskGeometry(market: DiagnosticMarket, lots: GeometryLot[]): DiagnosticFinding {
-  const usable = lots.filter(l => Number.isFinite(l.stopPct) && l.stopPct > 0 && Number.isFinite(l.targetPct));
+  const usable = lots.filter(l => Number.isFinite(l.initialStopPct) && (l.initialStopPct as number) > 0 && Number.isFinite(l.targetPct));
+  const currentUsable = lots.filter(l => Number.isFinite(l.currentStopPct) && (l.currentStopPct as number) > 0 && Number.isFinite(l.targetPct));
   const byVintage = new Map<string, GeometryLot[]>();
   for (const l of usable) {
     const key = l.openedAt.slice(0, 7); // YYYY-MM
@@ -264,24 +327,35 @@ export function runA9RiskGeometry(market: DiagnosticMarket, lots: GeometryLot[])
   const vintages = [...byVintage.entries()].sort().map(([vintage, ls]) => ({
     vintage,
     lots: ls.length,
-    meanStopPct: mean(ls.map(l => l.stopPct)),
+    meanInitialStopPct: mean(ls.map(l => l.initialStopPct as number)),
     meanTargetPct: mean(ls.map(l => l.targetPct)),
-    meanRewardRisk: mean(ls.map(l => l.targetPct / l.stopPct)),
+    meanInitialRewardRisk: mean(ls.map(l => l.targetPct / (l.initialStopPct as number))),
   }));
 
-  const overall = mean(usable.map(l => l.targetPct / l.stopPct));
+  const initialOverall = mean(usable.map(l => l.targetPct / (l.initialStopPct as number)));
+  const currentOverall = mean(currentUsable.map(l => l.targetPct / (l.currentStopPct as number)));
+  const lockedProfitStops = lots.filter(l => l.currentStopPct != null && Number.isFinite(l.currentStopPct) && l.currentStopPct <= 0).length;
   const distinctTargets = new Set(usable.map(l => Math.round(l.targetPct * 100))).size;
 
   return {
     market, testId: "A9", cohort: "accounting",
     window: { from: "", to: "" },
-    sample: { nRows: usable.length, nDates: byVintage.size, nSymbols: new Set(usable.map(l => l.symbol)).size },
+    sample: { nRows: lots.length, nDates: byVintage.size, nSymbols: new Set(lots.map(l => l.symbol)).size, dateUnit: "entry_vintage" },
     coverage: lots.length === 0 ? 0 : usable.length / lots.length,
-    metricVersion: METRIC_VERSION,
+    metricVersion: ALPHA_DIAGNOSTIC_METRIC_VERSION,
     status: usable.length === 0 ? "insufficient_evidence" : "descriptive_only",
     reason: usable.length === 0
       ? "No positions carrying both a stop and a target."
-      : `Reward:risk by entry vintage. ${distinctTargets} distinct target level(s) in the book: a spread here means the average R:R reflects mandate vintage, not current policy.`,
-    metrics: { overallRewardRisk: overall, distinctTargetLevels: distinctTargets, vintages },
+      : `Initial reward:risk by entry vintage, shown separately from path-dependent current/trailing stops. ${distinctTargets} distinct target level(s) are present.`,
+    metrics: {
+      initialOverallRewardRisk: initialOverall,
+      currentOverallRewardRisk: currentOverall,
+      initialCoverage: lots.length ? usable.length / lots.length : 0,
+      currentRiskCoverage: lots.length ? currentUsable.length / lots.length : 0,
+      lockedProfitStops,
+      distinctTargetLevels: distinctTargets,
+      vintages,
+      dateUnit: "entry_vintage",
+    },
   };
 }

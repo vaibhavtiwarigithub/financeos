@@ -7,14 +7,14 @@
 // READ-ONLY. No provider call, no money-path import, no mutation.
 
 import {
+  ALPHA_DIAGNOSTIC_METRIC_VERSION,
   type DiagnosticFinding,
   type DiagnosticMarket,
   type DiagnosticSample,
   sampleStatus,
 } from "./alpha-diagnostic-contract";
 import type { ClosedLot } from "./alpha-diagnostics";
-
-const METRIC_VERSION = "alpha_diagnostics_v1";
+import { dailyRankIcStatistic } from "./alpha-diagnostics-selection";
 
 // ── A4: exit precedence and counterfactual paths ─────────────────────────────
 
@@ -24,6 +24,8 @@ export type ExitResolution =
   /** BOTH barriers were touched inside the window, and daily MFE/MAE cannot say
    *  which came first. Never resolved in favour of either side. */
   | "ambiguous"
+  /** One or both excursion values are absent, so no path claim is possible. */
+  | "unavailable"
   | "neither_touched";
 
 /**
@@ -40,6 +42,7 @@ export function resolveExitPath(args: {
   mfe: number | null; mae: number | null; targetPct: number; stopPct: number;
 }): ExitResolution {
   const { mfe, mae, targetPct, stopPct } = args;
+  if (mfe == null || mae == null || !Number.isFinite(mfe) || !Number.isFinite(mae)) return "unavailable";
   const hitTarget = mfe != null && Number.isFinite(mfe) && mfe * 100 >= targetPct;
   const hitStop = mae != null && Number.isFinite(mae) && mae * 100 <= -Math.abs(stopPct);
   if (hitTarget && hitStop) return "ambiguous";
@@ -55,7 +58,7 @@ export interface ExitPathLot extends ClosedLot {
 
 export function runA4ExitPaths(market: DiagnosticMarket, lots: ExitPathLot[]): DiagnosticFinding {
   const tally: Record<ExitResolution, number> = {
-    target_first: 0, stop_first: 0, ambiguous: 0, neither_touched: 0,
+    target_first: 0, stop_first: 0, ambiguous: 0, unavailable: 0, neither_touched: 0,
   };
   for (const l of lots) tally[resolveExitPath(l)]++;
 
@@ -65,20 +68,26 @@ export function runA4ExitPaths(market: DiagnosticMarket, lots: ExitPathLot[]): D
     byExitReason[k] = (byExitReason[k] ?? 0) + 1;
   }
 
-  const resolvable = lots.length - tally.ambiguous;
+  const resolvable = lots.length - tally.ambiguous - tally.unavailable;
+  const entryDates = lots.map(l => l.entryDate).filter((d): d is string => !!d).sort();
   return {
     market, testId: "A4", cohort: "learning",
-    window: { from: "", to: "" },
-    sample: { nRows: lots.length, nDates: lots.length, nSymbols: new Set(lots.map(l => l.symbol)).size },
+    window: { from: entryDates[0] ?? "", to: entryDates[entryDates.length - 1] ?? "" },
+    sample: { nRows: lots.length, nDates: new Set(entryDates).size, nSymbols: new Set(lots.map(l => l.symbol)).size, dateUnit: "entry_date" },
     // Coverage is the RESOLVABLE share, so an ambiguous-heavy cohort reports low
     // coverage rather than a confident-looking split.
     coverage: lots.length === 0 ? 0 : resolvable / lots.length,
-    metricVersion: METRIC_VERSION,
+    metricVersion: ALPHA_DIAGNOSTIC_METRIC_VERSION,
     status: lots.length === 0 ? "insufficient_evidence" : "descriptive_only",
     reason: lots.length === 0
       ? "No lots with excursion data."
-      : `${tally.ambiguous}/${lots.length} lot(s) touched both barriers and are ambiguous by construction; they receive no favourable assignment.`,
-    metrics: { resolutions: tally, byExitReason, ambiguousShare: lots.length ? tally.ambiguous / lots.length : null },
+      : `${tally.unavailable}/${lots.length} lot(s) lack matched excursion data and ${tally.ambiguous}/${lots.length} touched both barriers; neither group receives path attribution.`,
+    metrics: {
+      resolutions: tally, byExitReason,
+      ambiguousShare: lots.length ? tally.ambiguous / lots.length : null,
+      unavailableShare: lots.length ? tally.unavailable / lots.length : null,
+      dateUnit: "entry_date",
+    },
   };
 }
 
@@ -89,6 +98,8 @@ export interface SizedLot {
   entryNotional: number;
   pnlPct: number;
   realizedPnl: number;
+  entryDate: string | null;
+  exitDate: string | null;
 }
 
 /** Average-rank Spearman between entry notional and later return. */
@@ -131,7 +142,9 @@ export function notionalReturnRankCorrelation(lots: SizedLot[]): number | null {
  * alone. It diagnoses sizing; it deliberately returns no recommended size.
  */
 export function runA5Sizing(market: DiagnosticMarket, lots: SizedLot[]): DiagnosticFinding {
-  const usable = lots.filter(l => Number.isFinite(l.entryNotional) && l.entryNotional > 0);
+  const usable = lots.filter(l =>
+    Number.isFinite(l.entryNotional) && l.entryNotional > 0 &&
+    Number.isFinite(l.pnlPct) && Number.isFinite(l.realizedPnl));
   const sorted = [...usable].sort((a, b) => a.entryNotional - b.entryNotional);
   const n = sorted.length;
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -151,13 +164,14 @@ export function runA5Sizing(market: DiagnosticMarket, lots: SizedLot[]): Diagnos
   const equalNotional = n > 0 ? totalNotional / n : 0;
   const actualPnl = sum(usable.map(l => l.realizedPnl));
   const equalWeightPnl = sum(usable.map(l => equalNotional * (l.pnlPct / 100)));
+  const entryDates = usable.map(l => l.entryDate).filter((d): d is string => !!d).sort();
 
   return {
     market, testId: "A5", cohort: "learning",
-    window: { from: "", to: "" },
-    sample: { nRows: n, nDates: n, nSymbols: new Set(usable.map(l => l.symbol)).size },
+    window: { from: entryDates[0] ?? "", to: entryDates[entryDates.length - 1] ?? "" },
+    sample: { nRows: n, nDates: new Set(entryDates).size, nSymbols: new Set(usable.map(l => l.symbol)).size, dateUnit: "entry_date" },
     coverage: lots.length === 0 ? 0 : n / lots.length,
-    metricVersion: METRIC_VERSION,
+    metricVersion: ALPHA_DIAGNOSTIC_METRIC_VERSION,
     status: n === 0 ? "insufficient_evidence" : "descriptive_only",
     reason: n === 0
       ? "No lots with a positive entry notional."
@@ -169,6 +183,7 @@ export function runA5Sizing(market: DiagnosticMarket, lots: SizedLot[]): Diagnos
       equalNotionalCurrencyPnl: equalWeightPnl,
       /** Positive => flat sizing would have done better on the same picks. */
       sizingCostCurrency: equalWeightPnl - actualPnl,
+      dateUnit: "entry_date",
     },
   };
 }
@@ -200,17 +215,18 @@ export function runA7CostStress(market: DiagnosticMarket, lots: ClosedLot[]): Di
     };
   });
 
+  const entryDates = lots.map(l => l.entryDate).filter((d): d is string => !!d).sort();
   return {
     market, testId: "A7", cohort: "learning",
-    window: { from: "", to: "" },
-    sample: { nRows: lots.length, nDates: lots.length, nSymbols: new Set(lots.map(l => l.symbol)).size },
+    window: { from: entryDates[0] ?? "", to: entryDates[entryDates.length - 1] ?? "" },
+    sample: { nRows: lots.length, nDates: new Set(entryDates).size, nSymbols: new Set(lots.map(l => l.symbol)).size, dateUnit: "entry_date" },
     coverage: lots.length === 0 ? 0 : rets.length / lots.length,
-    metricVersion: METRIC_VERSION,
+    metricVersion: ALPHA_DIAGNOSTIC_METRIC_VERSION,
     status: rets.length === 0 ? "insufficient_evidence" : "descriptive_only",
     reason: rets.length === 0
       ? "No lots with a usable return."
       : "Cost stress. An edge that disappears by 25bps round trip is not an edge that survives execution.",
-    metrics: { grossMeanReturnPct: grossMean, levels },
+    metrics: { grossMeanReturnPct: grossMean, levels, dateUnit: "entry_date" },
   };
 }
 
@@ -298,35 +314,98 @@ export function adjustedAlpha(baseAlpha: number, trials: number): number {
   return 1 - Math.pow(1 - baseAlpha, 1 / t);
 }
 
+export interface RobustnessSelectionRow {
+  date: string;
+  symbol: string;
+  score: number;
+  forwardReturn: number;
+}
+
+/** Shuffle labels only inside their original decision-date cross-section. */
+export function permuteOutcomesWithinDate(
+  rows: RobustnessSelectionRow[],
+  seed: number,
+): RobustnessSelectionRow[] {
+  const out = rows.map(r => ({ ...r }));
+  const indices = new Map<string, number[]>();
+  for (let i = 0; i < rows.length; i++) indices.set(rows[i].date, [...(indices.get(rows[i].date) ?? []), i]);
+  let group = 0;
+  for (const date of [...indices.keys()].sort()) {
+    const idx = indices.get(date)!;
+    const shuffled = seededShuffle(idx.map(i => rows[i].forwardReturn), seed + group * 104729);
+    idx.forEach((rowIndex, j) => { out[rowIndex].forwardReturn = shuffled[j]; });
+    group++;
+  }
+  return out;
+}
+
+export function datedRankIc(
+  rows: RobustnessSelectionRow[],
+  minCrossSection = 5,
+): number | null {
+  return dailyRankIcStatistic(rows, minCrossSection).mean;
+}
+
+export function datedPlaceboPValue(
+  realStatistic: number,
+  rows: RobustnessSelectionRow[],
+  minCrossSection = 5,
+  iterations = 2000,
+  seed = 12345,
+): { pValue: number; iterations: number; placeboMean: number | null } {
+  if (rows.length < 3) return { pValue: 1, iterations: 0, placeboMean: null };
+  let atLeastAsExtreme = 0;
+  let total = 0;
+  let sum = 0;
+  for (let i = 0; i < iterations; i++) {
+    const stat = datedRankIc(permuteOutcomesWithinDate(rows, seed + i), minCrossSection);
+    if (stat == null || !Number.isFinite(stat)) continue;
+    total++;
+    sum += stat;
+    if (Math.abs(stat) >= Math.abs(realStatistic)) atLeastAsExtreme++;
+  }
+  if (total === 0) return { pValue: 1, iterations: 0, placeboMean: null };
+  return { pValue: (atLeastAsExtreme + 1) / (total + 1), iterations: total, placeboMean: sum / total };
+}
+
 export function runA8Robustness(
   market: DiagnosticMarket,
   args: {
-    realStatistic: number | null;
-    scores: number[];
-    outcomes: number[];
-    statistic: (s: number[], o: number[]) => number | null;
+    rows: RobustnessSelectionRow[];
     trialsConsidered: number;
     baseAlpha?: number;
-    nDates: number;
     minDates: number;
+    horizonDays: number;
+    minCrossSection?: number;
+    iterations?: number;
+    seed?: number;
   },
 ): DiagnosticFinding {
   const baseAlpha = args.baseAlpha ?? 0.05;
   const alpha = adjustedAlpha(baseAlpha, args.trialsConsidered);
-  const placebo = args.realStatistic == null
+  const minCrossSection = args.minCrossSection ?? 5;
+  const realStatistic = datedRankIc(args.rows, minCrossSection);
+  const placebo = realStatistic == null
     ? { pValue: 1, iterations: 0, placeboMean: null }
-    : placeboPValue(args.realStatistic, args.scores, args.outcomes, args.statistic);
+    : datedPlaceboPValue(realStatistic, args.rows, minCrossSection, args.iterations ?? 2000, args.seed ?? 12345);
 
-  const sample: DiagnosticSample = { nRows: args.scores.length, nDates: args.nDates, nSymbols: 0 };
+  const dates = [...new Set(args.rows.map(r => r.date))].sort();
+  const sample: DiagnosticSample = {
+    nRows: args.rows.length,
+    nDates: dailyRankIcStatistic(args.rows, minCrossSection).nDates,
+    nSymbols: new Set(args.rows.map(r => r.symbol)).size,
+    horizonDays: args.horizonDays,
+    dateUnit: "decision_date",
+  };
   const gate = sampleStatus(sample, args.minDates);
-  const survives = gate.ok && args.realStatistic != null && placebo.pValue <= alpha;
+  const survives = gate.ok && realStatistic != null && placebo.pValue <= alpha;
 
   return {
     market, testId: "A8", cohort: "learning",
-    window: { from: "", to: "" },
+    window: { from: dates[0] ?? "", to: dates[dates.length - 1] ?? "" },
     sample,
     coverage: 1,
-    metricVersion: METRIC_VERSION,
+    metricVersion: ALPHA_DIAGNOSTIC_METRIC_VERSION,
     // `pass` here is the ONLY route to owner_review, and it requires clearing
     // the sample floor AND the trial-adjusted placebo hurdle.
     status: !gate.ok ? gate.status : survives ? "pass" : "fail",
@@ -336,13 +415,17 @@ export function runA8Robustness(
         ? `Survives the label-permutation placebo at the trial-adjusted alpha (p=${placebo.pValue.toFixed(4)} <= ${alpha.toFixed(4)} over ${args.trialsConsidered} trial(s)).`
         : `Does NOT survive: placebo p=${placebo.pValue.toFixed(4)} against a trial-adjusted alpha of ${alpha.toFixed(4)} over ${args.trialsConsidered} trial(s).`,
     metrics: {
-      realStatistic: args.realStatistic,
+      realStatistic,
       placeboPValue: placebo.pValue,
       placeboIterations: placebo.iterations,
       placeboMean: placebo.placeboMean,
       trialsConsidered: args.trialsConsidered,
       baseAlpha,
       adjustedAlpha: alpha,
+      horizonDays: args.horizonDays,
+      minCrossSection,
+      seed: args.seed ?? 12345,
+      dateUnit: "decision_date",
     },
   };
 }

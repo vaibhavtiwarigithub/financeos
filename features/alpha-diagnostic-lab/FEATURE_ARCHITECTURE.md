@@ -1,5 +1,12 @@
 # Alpha Diagnostic Lab
 
+> **2026-08-28 v2 amendment:** P0 implementation defects found by the independent
+> review are governed by
+> `MEASUREMENT_INTEGRITY_REPAIR_ARCHITECTURE.md`. That approved amendment
+> supersedes conflicting cohort, replay, robustness, fingerprint, sample-unit,
+> path-availability, and UI details below. The read-only safety boundary remains
+> unchanged.
+
 > Status: **APPROVED 2026-08-27 — IMPLEMENTATION IN PROGRESS**
 >
 > Reviewed and corrected before build: four factual claims re-verified against
@@ -531,4 +538,3 @@ No new package is approved or expected.
 5. Add the Portfolio UI and browser verification.
 6. Add weekly scheduling only after an unscheduled production run is proven.
 7. Complete ship guardrails and implementation record.
-

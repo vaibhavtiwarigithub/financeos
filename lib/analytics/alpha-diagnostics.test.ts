@@ -4,7 +4,7 @@ import {
   type NavRow, type FunnelRow, type ClosedLot,
 } from "./alpha-diagnostics";
 import {
-  canonicalize, fingerprint, resolveVerdict, sampleStatus, MIN_REVIEW_DATES,
+  canonicalize, fingerprint, fingerprintDataset, resolveVerdict, sampleStatus, MIN_REVIEW_DATES,
   type DiagnosticFinding,
 } from "./alpha-diagnostic-contract";
 
@@ -41,10 +41,27 @@ describe("A0 data truth", () => {
     expect(finding.status).toBe("fail");
   });
 
-  it("does not demand provenance for a row that stored no benchmark", () => {
-    // A gap is honest. Only a PRESENT benchmark must name its source.
-    const { finding } = runA0DataTruth("us", [navRow({ benchNav: null, benchSource: null, benchSessionDate: null })]);
+  it("allows an explicit leading cash-only inception row", () => {
+    const inception = navRow({ nav: 100, cashBalance: 100, positionsValue: 0, benchNav: null, benchSource: null, benchSessionDate: null });
+    const { finding } = runA0DataTruth("us", [inception, navRow({ date: "2026-08-20", benchSessionDate: "2026-08-20" })]);
     expect(finding.status).toBe("pass");
+    expect(finding.metrics.leadingInceptionRows).toBe(1);
+  });
+
+  it("fails a missing benchmark after coverage has begun", () => {
+    const { finding } = runA0DataTruth("us", [
+      navRow(),
+      navRow({ date: "2026-08-20", benchNav: null, benchSource: null, benchSessionDate: null }),
+    ]);
+    expect(finding.status).toBe("fail");
+    expect(finding.coverage).toBeLessThan(1);
+  });
+
+  it("fails duplicate dates and missing NAV components", () => {
+    const { finding, invariants } = runA0DataTruth("us", [navRow(), navRow({ cashBalance: null })]);
+    expect(finding.status).toBe("fail");
+    expect(invariants.find(i => i.id === "unique_session_date")?.ok).toBe(false);
+    expect(invariants.find(i => i.id === "nav_components_present")?.ok).toBe(false);
   });
 
   it("reports insufficient_evidence rather than passing an empty window", () => {
@@ -119,24 +136,24 @@ describe("quintileSpread", () => {
 
 describe("A3 payoff geometry", () => {
   function lot(over: Partial<ClosedLot> = {}): ClosedLot {
-    return { symbol: "AAA", market: "us", realizedPnl: 10, pnlPct: 5, mfe: 0.08, mae: -0.02, exitReason: "time_stop", ...over };
+    return { symbol: "AAA", market: "us", realizedPnl: 10, pnlPct: 5, mfe: 0.08, mae: -0.02, exitReason: "time_stop", entryDate: "2026-08-01", exitDate: "2026-08-12", ...over };
   }
 
   // The failure mode both profit factors exist to separate: the POLICY picked
   // winners (percent PF >= 1) but the ALLOCATION lost money (currency PF < 1).
-  it("flags sizing damage when percent PF is healthy but currency PF is not", () => {
+  it("reports an allocation divergence without assigning sizing causality", () => {
     const f = runA3Payoff("us", [
       lot({ realizedPnl: 5,    pnlPct: 10 }),   // small winner, big %
       lot({ realizedPnl: -50,  pnlPct: -9 }),   // large loser, smaller %
     ]);
     expect(f.metrics.percentProfitFactor as number).toBeGreaterThanOrEqual(1);
     expect(f.metrics.currencyProfitFactor as number).toBeLessThan(1);
-    expect(f.metrics.sizingDamageSuspected).toBe(true);
+    expect(f.metrics.allocationDivergenceObserved).toBe(true);
   });
 
   it("does not flag sizing damage when both profit factors agree", () => {
     const f = runA3Payoff("us", [lot({ realizedPnl: 50, pnlPct: 10 }), lot({ realizedPnl: -5, pnlPct: -1 })]);
-    expect(f.metrics.sizingDamageSuspected).toBe(false);
+    expect(f.metrics.allocationDivergenceObserved).toBe(false);
   });
 
   it("counts losers that were previously in profit", () => {
@@ -150,6 +167,16 @@ describe("A3 payoff geometry", () => {
 
   it("returns insufficient_evidence on an empty cohort instead of zeros", () => {
     expect(runA3Payoff("us", []).status).toBe("insufficient_evidence");
+  });
+
+  it("does not convert a missing realized outcome into a flat trade", () => {
+    const f = runA3Payoff("us", [
+      lot({ realizedPnl: Number.NaN, pnlPct: Number.NaN }),
+      lot({ realizedPnl: 10, pnlPct: 5 }),
+    ]);
+    expect(f.metrics.outcomeLots).toBe(1);
+    expect(f.metrics.outcomeCoverage).toBe(0.5);
+    expect(f.metrics.winRate).toBe(1);
   });
 });
 
@@ -236,6 +263,13 @@ describe("fingerprint", () => {
   it("is stable across repeated calls", () => {
     const v = { z: 1, a: [3, 2, 1], n: { q: 0.1 + 0.2 } };
     expect(fingerprint(v)).toBe(fingerprint(v));
+  });
+
+  it("changes when data changes even if counts and date endpoints do not", () => {
+    const before = { performance: [{ date: "d1", nav: 100 }, { date: "d2", nav: 101 }] };
+    const after = { performance: [{ date: "d1", nav: 100 }, { date: "d2", nav: 99 }] };
+    expect(fingerprintDataset(before)).not.toBe(fingerprintDataset(after));
+    expect(fingerprintDataset(before)).toBe(fingerprintDataset({ performance: [...before.performance].reverse() }));
   });
 });
 

@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { simulatePortfolio } from "./portfolio-simulator";
 
 describe("simulatePortfolio", () => {
+  it("seeds carried positions without consuming boundary cash", () => {
+    const result = simulatePortfolio({
+      market: "us", currency: "USD", initialCash: 50, maxOpenNames: 2,
+      allowFractionalShares: true,
+      initialPositions: [{ symbol: "AAA", quantity: 5, costBasis: 10 }],
+    }, [{ id: "sell", session: "d2", symbol: "AAA", kind: "exit", price: 12, quantity: 5 }]);
+    expect(result.rejections).toEqual([]);
+    expect(result.endingCash).toBe(110);
+    expect(result.realizedPnl).toBe(10);
+  });
   it("processes same-session exits before entries so released cash redeploys once", () => {
     const result = simulatePortfolio(
       { market: "us", currency: "USD", initialCash: 100, maxOpenNames: 1, allowFractionalShares: true },
@@ -16,6 +26,20 @@ describe("simulatePortfolio", () => {
     expect(result.endingCash).toBe(10);
     expect(result.realizedPnl).toBe(10);
     expect(result.positions).toEqual([{ symbol: "BBB", quantity: 1, costBasis: 100 }]);
+  });
+
+  it("supports a causally marked same-session round trip after normal exits and entries", () => {
+    const result = simulatePortfolio(
+      { market: "us", currency: "USD", initialCash: 100, maxOpenNames: 1, allowFractionalShares: true },
+      [
+        { id: "sell", session: "d1", symbol: "AAA", kind: "exit", price: 10, quantity: 1, afterEntry: true },
+        { id: "buy", session: "d1", symbol: "AAA", kind: "entry", price: 10, quantity: 1 },
+      ],
+    );
+    expect(result.rejections).toEqual([]);
+    expect(result.fills.map(f => f.eventId)).toEqual(["buy", "sell"]);
+    expect(result.endingCash).toBe(100);
+    expect(result.positions).toEqual([]);
   });
 
   it("rejects cross-currency policy and whole-share violations", () => {

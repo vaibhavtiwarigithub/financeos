@@ -66,7 +66,8 @@ describe("the settle pass writes no money state", () => {
   const route = readFileSync("app/api/agents/settle-check/route.ts", "utf8");
 
   it("never updates nav, positions, or trades", () => {
-    expect(route).not.toMatch(/update\(\{[^}]*\bnav\b/s);
+    const updateBodies = route.split('.update({').slice(1).map((chunk) => chunk.split('}).eq')[0]);
+    for (const body of updateBodies) expect(body).not.toMatch(/\bnav\s*:/);
     expect(route).not.toContain('from("paper_positions")');
     expect(route).not.toContain('from("paper_trades")');
   });

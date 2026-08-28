@@ -1,0 +1,12 @@
+# Local agent/plugin installations are tooling, not Kairos architecture.
+.agents/
+.codex/
+.claude/skills/
+
+# Generated and transient artifacts.
+graphify-out/
+output/
+tmp/
+.next/
+node_modules/
+scripts/python/__pycache__/

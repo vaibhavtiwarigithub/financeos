@@ -7,6 +7,9 @@ export interface SimulationPolicy {
   initialCash: number;
   maxOpenNames: number;
   allowFractionalShares: boolean;
+  /** Positions already held at the replay boundary. Seeded without consuming
+   * initialCash; costBasis is the boundary mark per share. */
+  initialPositions?: SimulatedPosition[];
 }
 
 export interface SimulationEvent {
@@ -18,6 +21,10 @@ export interface SimulationEvent {
   quantity?: number;
   cashAllocation?: number;
   costPct?: number;
+  /** An exit for a lot opened in the same session. Normal exits still execute
+   * first; this one executes after entries so the ledger's causal order is
+   * representable without weakening exit-first capital redeployment. */
+  afterEntry?: boolean;
 }
 
 export interface SimulatedFill {
@@ -66,7 +73,8 @@ function validMoney(value: number | undefined): value is number {
 
 function sameSessionOrder(a: SimulationEvent, b: SimulationEvent): number {
   if (a.session !== b.session) return a.session.localeCompare(b.session);
-  const typeOrder = a.kind === b.kind ? 0 : a.kind === "exit" ? -1 : 1;
+  const phase = (e: SimulationEvent) => e.kind === "entry" ? 1 : e.afterEntry ? 2 : 0;
+  const typeOrder = phase(a) - phase(b);
   if (typeOrder !== 0) return typeOrder;
   const symbolOrder = a.symbol.localeCompare(b.symbol);
   return symbolOrder || a.id.localeCompare(b.id);
@@ -94,6 +102,18 @@ export function simulatePortfolio(
   let cash = policy.initialCash;
   let realizedPnl = 0;
   const positions = new Map<string, SimulatedPosition>();
+  for (const pos of policy.initialPositions ?? []) {
+    if (!pos.symbol || !Number.isFinite(pos.quantity) || pos.quantity <= 0
+      || !Number.isFinite(pos.costBasis) || pos.costBasis <= 0
+      || positions.has(pos.symbol)) {
+      throw new Error("initialPositions must contain unique symbols with positive quantity and costBasis");
+    }
+    if (!policy.allowFractionalShares && !Number.isInteger(pos.quantity)) {
+      throw new Error("initialPositions violate whole-share policy");
+    }
+    positions.set(pos.symbol, { ...pos });
+  }
+  if (positions.size > policy.maxOpenNames) throw new Error("initialPositions exceed maxOpenNames");
   const fills: SimulatedFill[] = [];
   const rejections: SimulationRejection[] = [];
   const seen = new Set<string>();

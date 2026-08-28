@@ -5,13 +5,12 @@
 // without a database and cannot reach production state by accident.
 
 import {
+  ALPHA_DIAGNOSTIC_METRIC_VERSION,
   type DiagnosticFinding,
   type DiagnosticMarket,
   type DiagnosticSample,
   sampleStatus,
 } from "./alpha-diagnostic-contract";
-
-const METRIC_VERSION = "alpha_diagnostics_v1";
 
 // ── A0: data truth ───────────────────────────────────────────────────────────
 
@@ -52,21 +51,45 @@ export function runA0DataTruth(
   const benchSessionMismatch: string[] = [];
   const benchWithoutProvenance: string[] = [];
   const nonPositiveNav: string[] = [];
+  const missingComponents: string[] = [];
+  const duplicateDates: string[] = [];
+  const missingBenchmark: string[] = [];
+  const seenDates = new Set<string>();
+  const firstBenchmarkIndex = sorted.findIndex(r => r.benchNav != null);
+  let leadingInceptionRows = 0;
+  let benchmarkExpectedRows = 0;
+  let benchmarkPresentRows = 0;
 
-  for (const r of sorted) {
-    const nav = Number(r.nav);
-    const cash = Number(r.cashBalance);
-    const pos = Number(r.positionsValue);
-    if (Number.isFinite(nav) && Number.isFinite(cash) && Number.isFinite(pos)) {
+  for (let index = 0; index < sorted.length; index++) {
+    const r = sorted[index];
+    if (seenDates.has(r.date)) duplicateDates.push(r.date);
+    seenDates.add(r.date);
+    const nav = r.nav == null ? Number.NaN : Number(r.nav);
+    const cash = r.cashBalance == null ? Number.NaN : Number(r.cashBalance);
+    const pos = r.positionsValue == null ? Number.NaN : Number(r.positionsValue);
+    const componentsPresent = Number.isFinite(nav) && Number.isFinite(cash) && Number.isFinite(pos);
+    if (!componentsPresent) missingComponents.push(r.date);
+    if (componentsPresent) {
       if (Math.abs(cash + pos - nav) > tol) navMismatch.push(r.date);
     }
     if (Number.isFinite(nav) && nav <= 0) nonPositiveNav.push(r.date);
     if (r.benchNav != null) {
+      benchmarkPresentRows++;
+      benchmarkExpectedRows++;
       // A benchmark level may only be joined to a NAV row for the SAME session.
       if (r.benchSessionDate !== r.date) benchSessionMismatch.push(r.date);
       // An unattributed benchmark cannot be audited later, which is exactly how
       // a provisional Yahoo value passed as settled for nine sessions.
       if (!r.benchSource || r.benchSource.trim() === "") benchWithoutProvenance.push(r.date);
+    } else {
+      const leadingCashOnlyInception = index < firstBenchmarkIndex
+        && componentsPresent && pos === 0 && cash === nav
+        && r.benchSessionDate == null && !r.benchSource;
+      if (leadingCashOnlyInception) leadingInceptionRows++;
+      else {
+        benchmarkExpectedRows++;
+        missingBenchmark.push(r.date);
+      }
     }
   }
 
@@ -75,6 +98,12 @@ export function runA0DataTruth(
       detail: `cash + positions must equal nav within ${tol}`, offendingDates: navMismatch },
     { id: "nav_positive", ok: nonPositiveNav.length === 0,
       detail: "nav must be positive", offendingDates: nonPositiveNav },
+    { id: "nav_components_present", ok: missingComponents.length === 0,
+      detail: "nav, cash and positions must all be present", offendingDates: missingComponents },
+    { id: "unique_session_date", ok: duplicateDates.length === 0,
+      detail: "a market may have only one performance row per date", offendingDates: duplicateDates },
+    { id: "benchmark_coverage", ok: missingBenchmark.length === 0,
+      detail: "benchmark is required after the leading cash-only inception rows", offendingDates: missingBenchmark },
     { id: "bench_session_matches_row", ok: benchSessionMismatch.length === 0,
       detail: "bench_session_date must equal the row's date", offendingDates: benchSessionMismatch },
     { id: "bench_has_provenance", ok: benchWithoutProvenance.length === 0,
@@ -92,8 +121,11 @@ export function runA0DataTruth(
       cohort: "accounting",
       window: { from: sorted[0]?.date ?? "", to: sorted[sorted.length - 1]?.date ?? "" },
       sample,
-      coverage: sorted.length === 0 ? 0 : 1,
-      metricVersion: METRIC_VERSION,
+      coverage: sorted.length === 0 ? 0 : Math.min(
+        (sorted.length - missingComponents.length) / sorted.length,
+        benchmarkExpectedRows === 0 ? 1 : benchmarkPresentRows / benchmarkExpectedRows,
+      ),
+      metricVersion: ALPHA_DIAGNOSTIC_METRIC_VERSION,
       // A0 is the one test that reports `fail`, not `data_invalid`: it IS the
       // data-truth check, and resolveVerdict turns an A0 failure into a
       // run-level data_invalid.
@@ -106,6 +138,8 @@ export function runA0DataTruth(
       metrics: {
         invariants: invariants.map(i => ({ id: i.id, ok: i.ok, offending: i.offendingDates.length })),
         firstOffendingDates: failed.flatMap(f => f.offendingDates.slice(0, 5)),
+        benchmarkCoverage: benchmarkExpectedRows === 0 ? 1 : benchmarkPresentRows / benchmarkExpectedRows,
+        leadingInceptionRows,
       },
     },
   };
@@ -183,7 +217,7 @@ export function runA1Funnel(
     window: { from: minOf(rows.map(r => r.date)), to: maxOf(rows.map(r => r.date)) },
     sample,
     coverage: scored.coverage,
-    metricVersion: METRIC_VERSION,
+    metricVersion: ALPHA_DIAGNOSTIC_METRIC_VERSION,
     status: gate.status,
     reason: gate.ok
       ? "Stage-by-stage benchmark-neutral return. Descriptive: it locates attrition, it does not license a policy change."
@@ -241,22 +275,24 @@ export interface ClosedLot {
   mfe: number | null;
   mae: number | null;
   exitReason: string | null;
+  entryDate: string | null;
+  exitDate: string | null;
 }
 
 /**
  * Both profit factors are required and they answer different questions.
  *
  * `percentProfitFactor` measures POLICY quality independent of position size.
- * `currencyProfitFactor` measures the real capital outcome. A positive average
- * trade with a currency profit factor below 1 is direct evidence that SIZING
- * damaged the book — the policy picked winners and the allocation lost money on
- * them. Reporting only one of these hides that entire failure mode.
+ * `currencyProfitFactor` measures the real capital outcome. A gap between the
+ * two localises an allocation/outcome divergence, but closed lots alone cannot
+ * identify sizing as its cause because survivorship and capital timing remain.
  */
 export function runA3Payoff(market: DiagnosticMarket, lots: ClosedLot[]): DiagnosticFinding {
-  const wins = lots.filter(l => l.realizedPnl > 0);
-  const losses = lots.filter(l => l.realizedPnl < 0);
-  const pctWins = lots.filter(l => l.pnlPct > 0);
-  const pctLosses = lots.filter(l => l.pnlPct < 0);
+  const usable = lots.filter(l => Number.isFinite(l.realizedPnl) && Number.isFinite(l.pnlPct));
+  const wins = usable.filter(l => l.realizedPnl > 0);
+  const losses = usable.filter(l => l.realizedPnl < 0);
+  const pctWins = usable.filter(l => l.pnlPct > 0);
+  const pctLosses = usable.filter(l => l.pnlPct < 0);
 
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
   const ratio = (num: number, den: number) => (den > 0 ? num / den : null);
@@ -265,39 +301,47 @@ export function runA3Payoff(market: DiagnosticMarket, lots: ClosedLot[]): Diagno
   const percentProfitFactor = ratio(sum(pctWins.map(l => l.pnlPct)), Math.abs(sum(pctLosses.map(l => l.pnlPct))));
 
   // Capture and giveback are only defined where the lot actually went favourable.
-  const withMfe = lots.filter(l => l.mfe != null && (l.mfe as number) > 0);
+  const withMfe = usable.filter(l => l.mfe != null && (l.mfe as number) > 0);
   const captureRatios = withMfe.map(l => (l.pnlPct / 100) / (l.mfe as number));
   const givebacks = withMfe.map(l => (l.mfe as number) - l.pnlPct / 100);
-  const priorPositiveLosers = lots.filter(l => l.pnlPct < 0 && l.mfe != null && (l.mfe as number) > 0).length;
+  const priorPositiveLosers = usable.filter(l => l.pnlPct < 0 && l.mfe != null && (l.mfe as number) > 0).length;
 
   const mean = (xs: number[]) => (xs.length ? sum(xs) / xs.length : null);
   const sample: DiagnosticSample = {
-    nRows: lots.length, nDates: lots.length, nSymbols: new Set(lots.map(l => l.symbol)).size,
+    nRows: lots.length,
+    nDates: new Set(lots.map(l => l.entryDate).filter((d): d is string => !!d)).size,
+    nSymbols: new Set(lots.map(l => l.symbol)).size,
+    dateUnit: "entry_date",
   };
+  const entryDates = lots.map(l => l.entryDate).filter((d): d is string => !!d).sort();
 
   return {
     market, testId: "A3", cohort: "learning",
-    window: { from: "", to: "" },
+    window: { from: entryDates[0] ?? "", to: entryDates[entryDates.length - 1] ?? "" },
     sample,
-    coverage: lots.length === 0 ? 0 : withMfe.length / lots.length,
-    metricVersion: METRIC_VERSION,
-    status: lots.length === 0 ? "insufficient_evidence" : "descriptive_only",
-    reason: lots.length === 0
-      ? "No closed lots in cohort."
+    coverage: lots.length === 0 ? 0 : usable.length / lots.length,
+    metricVersion: ALPHA_DIAGNOSTIC_METRIC_VERSION,
+    status: usable.length === 0 ? "insufficient_evidence" : "descriptive_only",
+    reason: usable.length === 0
+      ? "No closed lots with complete realized P&L in cohort."
       : "Payoff geometry. Descriptive: a profit-factor gap localises damage, it does not authorise a stop/target change.",
     metrics: {
       lots: lots.length,
-      winRate: lots.length ? wins.length / lots.length : null,
+      outcomeLots: usable.length,
+      outcomeCoverage: lots.length ? usable.length / lots.length : 0,
+      excursionCoverage: usable.length ? withMfe.length / usable.length : 0,
+      winRate: usable.length ? wins.length / usable.length : null,
       currencyProfitFactor,
       percentProfitFactor,
       // The headline diagnostic: policy looks fine, capital does not.
-      sizingDamageSuspected:
+      allocationDivergenceObserved:
         percentProfitFactor != null && currencyProfitFactor != null &&
         percentProfitFactor >= 1 && currencyProfitFactor < 1,
       meanCaptureRatio: mean(captureRatios),
       meanGiveback: mean(givebacks),
       priorPositiveLosers,
       priorPositiveLoserShare: losses.length ? priorPositiveLosers / losses.length : null,
+      dateUnit: "entry_date",
     },
   };
 }

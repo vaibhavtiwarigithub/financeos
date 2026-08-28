@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runA2Selection, dedupeSelectionRows } from "./alpha-diagnostics-selection";
+import { runA2Selection, dedupeSelectionRows, selectionRowsFromObservations } from "./alpha-diagnostics-selection";
 import type { SelectionRow } from "./alpha-diagnostics";
 
 type Row = SelectionRow & { ts?: string };
@@ -44,6 +44,26 @@ describe("dedupeSelectionRows", () => {
 });
 
 describe("runA2Selection", () => {
+  it("uses eligible-long rows even when the all-scored headline has the opposite sign", () => {
+    const observations: any[] = [];
+    for (let d = 0; d < 30; d++) {
+      const date = `2026-07-${String(d + 1).padStart(2, "0")}`;
+      for (let i = 0; i < 5; i++) observations.push({
+        symbol: `E${i}`, ts: `${date}T10:00:00Z`, analyst_score: i,
+        entry_eligible: true, direction: "long",
+        observation_labels: [{ horizon_days: 2, benchmark_neutral_return: -i }],
+      });
+      for (let i = 0; i < 20; i++) observations.push({
+        symbol: `C${i}`, ts: `${date}T09:00:00Z`, analyst_score: 10 + i,
+        entry_eligible: false, direction: "neutral",
+        observation_labels: [{ horizon_days: 2, benchmark_neutral_return: 10 + i }],
+      });
+    }
+    const eligible = selectionRowsFromObservations(observations, 2, "eligible_long");
+    const all = selectionRowsFromObservations(observations, 2, "all_scored");
+    expect(runA2Selection("us", eligible, 2, 20).metrics.rankIc as number).toBeCloseTo(-1, 8);
+    expect(runA2Selection("us", all, 2, 20).metrics.rankIc as number).toBeGreaterThan(0);
+  });
   it("reports a positive IC and spread when the score ranks returns", () => {
     const f = runA2Selection("us", series(30, 8, i => i * 0.01), 2, 20);
     expect(f.status).toBe("descriptive_only");

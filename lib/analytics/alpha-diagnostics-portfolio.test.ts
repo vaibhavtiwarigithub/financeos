@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  orderSessionEvents, runPortfolioCalendar, runA6Portfolio, runA9RiskGeometry,
+  buildEqualSizeReplay, orderSessionEvents, runPortfolioCalendar, runA6Portfolio, runA9RiskGeometry,
   type CalendarEvent, type DailyMark, type GeometryLot,
 } from "./alpha-diagnostics-portfolio";
 import type { SimulationPolicy } from "@/lib/simulation/portfolio-simulator";
@@ -19,6 +19,15 @@ describe("orderSessionEvents", () => {
       { session: "2026-08-19", symbol: "AAA", kind: "exit", price: 20, quantity: 1 },
     ]);
     expect(out.map(e => e.kind)).toEqual(["exit", "entry"]);
+  });
+
+  it("puts explicitly same-day exits after their entry without moving normal exits", () => {
+    const out = orderSessionEvents([
+      { session: "d", symbol: "NEW", kind: "exit", price: 11, quantity: 1, afterEntry: true },
+      { session: "d", symbol: "NEW", kind: "entry", price: 10, quantity: 1 },
+      { session: "d", symbol: "OLD", kind: "exit", price: 20, quantity: 1 },
+    ]);
+    expect(out.map(e => `${e.kind}:${e.symbol}`)).toEqual(["exit:OLD", "entry:NEW", "exit:NEW"]);
   });
 
   it("orders entries by rank, best first", () => {
@@ -133,6 +142,49 @@ describe("runPortfolioCalendar", () => {
   });
 });
 
+describe("buildEqualSizeReplay", () => {
+  it("keeps counterfactual quantities paired through partial and full exits", () => {
+    const equal = buildEqualSizeReplay([], [
+      { session: "d1", symbol: "AAA", kind: "entry", price: 10, quantity: 10 },
+      { session: "d1", symbol: "BBB", kind: "entry", price: 20, quantity: 10 },
+      { session: "d2", symbol: "AAA", kind: "exit", price: 11, quantity: 4 },
+      { session: "d3", symbol: "AAA", kind: "exit", price: 12, quantity: 6 },
+    ]);
+    const exits = equal.events.filter(e => e.kind === "exit" && e.symbol === "AAA");
+    // d1 actual budget is 300, so each name gets 150: AAA starts with 15.
+    expect(exits[0].quantity).toBeCloseTo(6, 10);
+    expect(exits[1].quantity).toBeCloseTo(9, 10);
+    const result = runPortfolioCalendar(
+      { ...policy, initialCash: 300 },
+      equal.events,
+      [{ session: "d1", prices: { AAA: 10, BBB: 20 } }, { session: "d2", prices: { AAA: 11, BBB: 20 } }, { session: "d3", prices: { BBB: 20 } }],
+    );
+    expect(result.rejections.find(r => r.reason === "invalid_exit")).toBeUndefined();
+    expect(result.points[result.points.length - 1]?.positionsValue).toBeCloseTo(150, 6);
+  });
+
+  it("equalizes a carried opening book while preserving total notional", () => {
+    const equal = buildEqualSizeReplay([
+      { symbol: "A", quantity: 10, costBasis: 10 },
+      { symbol: "B", quantity: 20, costBasis: 20 },
+    ], []);
+    expect(equal.initialPositions[0].quantity * 10).toBeCloseTo(250, 8);
+    expect(equal.initialPositions[1].quantity * 20).toBeCloseTo(250, 8);
+  });
+
+  it("preserves same-session entry-to-exit causality in the equal-size arm", () => {
+    const equal = buildEqualSizeReplay([], [
+      { session: "d1", symbol: "A", kind: "entry", price: 10, quantity: 10 },
+      { session: "d1", symbol: "A", kind: "exit", price: 11, quantity: 10, afterEntry: true },
+    ]);
+    const result = runPortfolioCalendar({ ...policy, initialCash: 100 }, equal.events, [
+      { session: "d1", prices: {} },
+    ]);
+    expect(result.rejections).toEqual([]);
+    expect(result.endingNav).toBeCloseTo(110, 6);
+  });
+});
+
 describe("runA6Portfolio", () => {
   const arm = (name: string, totalReturnPct: number, maxDrawdownPct: number, util = 0.8) => ({
     name,
@@ -164,8 +216,8 @@ describe("runA6Portfolio", () => {
 });
 
 describe("A9 risk geometry", () => {
-  const lot = (openedAt: string, stopPct: number, targetPct: number): GeometryLot => ({
-    symbol: `S${openedAt}${targetPct}`, openedAt, stopPct, targetPct,
+  const lot = (openedAt: string, initialStopPct: number | null, targetPct: number, currentStopPct = initialStopPct): GeometryLot => ({
+    symbol: `S${openedAt}${targetPct}`, openedAt, initialStopPct, currentStopPct, targetPct,
   });
 
   // The real production shape: legacy 20% targets alongside current 8% ones.
@@ -176,21 +228,22 @@ describe("A9 risk geometry", () => {
     ]);
     const v = f.metrics.vintages as any[];
     expect(v).toHaveLength(2);
-    expect(v[0].meanRewardRisk).toBeCloseTo(20 / 7, 6);
-    expect(v[1].meanRewardRisk).toBeCloseTo(8 / 7, 6);
+    expect(v[0].meanInitialRewardRisk).toBeCloseTo(20 / 7, 6);
+    expect(v[1].meanInitialRewardRisk).toBeCloseTo(8 / 7, 6);
     expect(f.metrics.distinctTargetLevels).toBe(2);
-    expect(f.reason).toContain("mandate vintage");
+    expect(f.reason).toContain("entry vintage");
   });
 
   it("reports a single vintage cleanly when policy has not drifted", () => {
     const f = runA9RiskGeometry("us", [lot("2026-08-20", 7, 8), lot("2026-08-21", 7, 8)]);
     expect(f.metrics.distinctTargetLevels).toBe(1);
-    expect(f.metrics.overallRewardRisk as number).toBeCloseTo(8 / 7, 6);
+    expect(f.metrics.initialOverallRewardRisk as number).toBeCloseTo(8 / 7, 6);
   });
 
-  it("skips lots with a non-positive stop rather than dividing by zero", () => {
-    const f = runA9RiskGeometry("us", [lot("2026-08-20", 0, 8), lot("2026-08-20", 7, 8)]);
-    expect(f.sample.nRows).toBe(1);
-    expect(f.coverage).toBeCloseTo(0.5, 6);
+  it("keeps a current stop above cost and reports it as locked profit", () => {
+    const f = runA9RiskGeometry("us", [lot("2026-08-20", 7, 8, -1), lot("2026-08-20", 7, 8)]);
+    expect(f.sample.nRows).toBe(2);
+    expect(f.metrics.lockedProfitStops).toBe(1);
+    expect(f.metrics.currentRiskCoverage).toBeCloseTo(0.5, 6);
   });
 });

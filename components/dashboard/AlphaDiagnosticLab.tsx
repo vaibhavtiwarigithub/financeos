@@ -25,7 +25,7 @@ interface Finding {
   status: Status;
   reason: string;
   coverage: number;
-  sample: { nRows: number; nDates: number; nSymbols: number; horizonDays?: number };
+  sample: { nRows: number; nDates: number; nSymbols: number; horizonDays?: number; dateUnit?: string };
   metrics: Record<string, any>;
 }
 
@@ -59,7 +59,7 @@ const STATUS_STYLE: Record<Status, { color: string; label: string }> = {
 };
 
 const TEST_TITLES: Record<string, string> = {
-  A0: "Data truth", A1: "Alpha funnel", A2: "Entry selection",
+  A0: "Data truth", A1: "Alpha funnel", A2: "Eligible-long selection", A2_ALL_SCORED: "All-scored context",
   A3: "Payoff geometry", A4: "Exit paths", A5: "Sizing",
   A6: "Portfolio & cash", A7: "Cost stress", A8: "Robustness", A9: "Risk geometry",
 };
@@ -145,7 +145,7 @@ export default function AlphaDiagnosticLab({ market }: { market: "us" | "india" 
         {run.run_fingerprint ? ` · fingerprint ${run.run_fingerprint}` : ""}
         {run.code_version ? ` · code ${run.code_version.slice(0, 7)}` : ""}
         <br />
-        A finding marked <em>descriptive only</em> locates where damage occurs. It is not
+        A finding marked <em>descriptive only</em> identifies where to investigate. It is not
         a recommendation, and the strongest verdict this feature can reach is
         owner review — activation stays outside it.
       </div>
@@ -164,6 +164,10 @@ function Pill({ label, value, color }: { label: string; value: string; color: st
 
 function TestCard({ f, dimmed }: { f: Finding; dimmed: boolean }) {
   const st = STATUS_STYLE[f.status] ?? STATUS_STYLE.descriptive_only;
+  const unit = f.sample.dateUnit === "entry_date" ? "entry date"
+    : f.sample.dateUnit === "session" ? "session"
+      : f.sample.dateUnit === "entry_vintage" ? "entry vintage"
+        : "decision date";
   return (
     <div style={{
       background: T.card, border: `1px solid ${T.border}`, borderRadius: 8,
@@ -176,10 +180,8 @@ function TestCard({ f, dimmed }: { f: Finding; dimmed: boolean }) {
         <span style={{ color: st.color, fontSize: 11, fontWeight: 600 }}>{st.label}</span>
       </div>
 
-      {/* Independent DATES, never the row count — the distinction this whole
-          feature exists to preserve. */}
       <div style={{ color: T.muted, fontSize: 11, margin: "6px 0 8px" }}>
-        {f.sample.nDates} independent date{f.sample.nDates === 1 ? "" : "s"} ·{" "}
+        {f.sample.nDates} distinct {unit}{f.sample.nDates === 1 ? "" : "s"} ·{" "}
         {f.sample.nRows} row{f.sample.nRows === 1 ? "" : "s"} ·{" "}
         {f.sample.nSymbols} symbol{f.sample.nSymbols === 1 ? "" : "s"} ·{" "}
         coverage {(f.coverage * 100).toFixed(0)}% · {f.cohort}
@@ -200,12 +202,17 @@ function TestMetrics({ f }: { f: Finding }) {
     for (const inv of (m.invariants ?? []) as any[]) {
       rows.push([inv.id, inv.ok ? "ok" : `${inv.offending} session(s) failing`]);
     }
+  } else if (f.testId === "A2" || f.testId === "A2_ALL_SCORED") {
+    rows.push(["mean daily rank IC", num(m.rankIc)]);
+    rows.push(["IC t-stat", num(m.rankIcT)]);
+    rows.push(["mean quintile spread", pct(typeof m.meanQuintileSpread === "number" ? m.meanQuintileSpread * 100 : null)]);
+    rows.push(["spread t-stat", num(m.quintileSpreadT)]);
+    rows.push(["qualifying sessions", String(m.qualifyingSessions ?? 0)]);
   } else if (f.testId === "A3") {
-    rows.push(["win rate", pct((m.winRate ?? 0) * 100)]);
+    rows.push(["win rate", pct(typeof m.winRate === "number" ? m.winRate * 100 : null)]);
     rows.push(["profit factor (currency)", num(m.currencyProfitFactor)]);
     rows.push(["profit factor (%)", num(m.percentProfitFactor)]);
-    // The headline: policy looked fine, capital did not.
-    if (m.sizingDamageSuspected) rows.push(["⚠ sizing damage", "percent PF ≥ 1 but currency PF < 1"]);
+    if (m.allocationDivergenceObserved) rows.push(["allocation divergence", "percent PF ≥ 1; currency PF < 1"]);
     rows.push(["MFE capture", num(m.meanCaptureRatio)]);
     rows.push(["losers previously in profit", `${m.priorPositiveLosers ?? 0}`]);
   } else if (f.testId === "A4") {
@@ -213,6 +220,7 @@ function TestMetrics({ f }: { f: Finding }) {
     rows.push(["target first", String(r.target_first ?? 0)]);
     rows.push(["stop first", String(r.stop_first ?? 0)]);
     rows.push(["ambiguous (both touched)", String(r.ambiguous ?? 0)]);
+    rows.push(["unavailable", String(r.unavailable ?? 0)]);
     rows.push(["neither touched", String(r.neither_touched ?? 0)]);
   } else if (f.testId === "A5") {
     rows.push(["notional↔return rank corr", num(m.notionalReturnRankCorrelation)]);
@@ -224,6 +232,7 @@ function TestMetrics({ f }: { f: Finding }) {
     rows.push(["cash drag", pct(m.cashDragPp)]);
     for (const c of (m.comparisons ?? []) as any[]) {
       rows.push([`arm ${c.arm}`, `${pct(c.totalReturnPct)} · DD ${pct(c.maxDrawdownPct)}`]);
+      if (c.rejections) rows.push([`${c.arm} rejections`, `${c.rejections} · ${JSON.stringify(c.rejectionReasons ?? {})}`]);
     }
   } else if (f.testId === "A7") {
     rows.push(["gross mean return", pct(m.grossMeanReturnPct)]);
@@ -236,14 +245,16 @@ function TestMetrics({ f }: { f: Finding }) {
     rows.push(["trials", String(m.trialsConsidered ?? 0)]);
     rows.push(["adjusted alpha", num(m.adjustedAlpha, 4)]);
   } else if (f.testId === "A9") {
-    rows.push(["overall reward:risk", num(m.overallRewardRisk)]);
+    rows.push(["initial reward:risk", num(m.initialOverallRewardRisk)]);
+    rows.push(["current reward:risk", num(m.currentOverallRewardRisk)]);
+    rows.push(["stops at/above cost", String(m.lockedProfitStops ?? 0)]);
     rows.push(["distinct target levels", String(m.distinctTargetLevels ?? 0)]);
     for (const v of (m.vintages ?? []) as any[]) {
-      rows.push([`vintage ${v.vintage}`, `R:R ${num(v.meanRewardRisk)} · ${v.lots} lot(s)`]);
+      rows.push([`vintage ${v.vintage}`, `initial R:R ${num(v.meanInitialRewardRisk)} · ${v.lots} lot(s)`]);
     }
   } else if (f.testId === "A1") {
     for (const st of (m.stages ?? []) as any[]) {
-      rows.push([st.stage, `${st.count} · mean ${pct((st.meanBenchmarkNeutralReturn ?? 0) * 100)}`]);
+      rows.push([st.stage, `${st.count} · mean ${pct(typeof st.meanBenchmarkNeutralReturn === "number" ? st.meanBenchmarkNeutralReturn * 100 : null)}`]);
     }
   }
 
