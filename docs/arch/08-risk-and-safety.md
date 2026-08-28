@@ -1,4 +1,14 @@
 # Kairos — Risk & Safety
+> 2026-08-27: **PaperTrader write path audited after the benchmark work. One latent W4 regression closed.**
+>
+> Checked because `confirmBenchmarkSessions` was wired into PositionMonitor only, and PaperTrader is the OTHER `paper_performance` writer. Findings:
+>
+> - **The two-writer split is sound.** PaperTrader inserts `snapshot_type='intraday'` and ONLY when no row exists for `(date, market)`; PositionMonitor upserts on `(date, market)` and promotes the row to `eod`, but only once `expectedNewestSession(market) === today`. That is why production holds zero surviving `intraday` rows -- not because the path is dead.
+> - **LATENT REGRESSION, now fixed.** PaperTrader's insert ladder strips `bench_session_date`, `bench_source` and `snapshot_type` *together* on any undefined-column error. But `paper_performance.snapshot_type` is `NOT NULL DEFAULT 'eod'`. So if the missing column was one of the bench ones while `snapshot_type` existed, the stripped insert would stamp a PREMARKET row as the canonical close -- exactly the W4 defect the one-EOD-writer rule exists to prevent, reintroduced through the fallback. Dormant while all three columns exist. PaperTrader now corrects the label after any legacy-ladder insert.
+> - **Confirmation pass no longer filters `snapshot_type='eod'`.** A past session's benchmark is settled regardless of how the NAV row was labelled, and the filter would have permanently stranded any row left `intraday` because PositionMonitor did not run that day.
+>
+> Not changed: 8 old rows (US 06-28, 07-06/07/09; India 07-06/07/08, 08-17) carry NULL `bench_nav`. They predate the provenance work and India's policy deliberately requires a stored Yahoo value before claiming `upstox+yahoo` — filling them from a single source would manufacture provenance rather than recover it.
+>
 > 2026-08-27: **US benchmark — the CONFIRMED rows were the wrong ones.** Same deferred-confirmation fix as India, plus a provenance correction.
 >
 > Measured against settled VOO closes:

@@ -432,7 +432,12 @@ export async function confirmBenchmarkSessions(
     .from("paper_performance")
     .select("date, bench_nav, bench_source")
     .eq("market", market)
-    .eq("snapshot_type", "eod")
+    // Deliberately NOT filtered to snapshot_type='eod'. A past session's
+    // benchmark is settled regardless of how the NAV row was labelled, and
+    // filtering here would permanently strand any row left `intraday` because
+    // PositionMonitor did not run that day (PaperTrader inserts intraday, and
+    // only PositionMonitor's upsert promotes it). Today's row is unaffected
+    // either way: no settled bar exists for it, so it is never eligible.
     .gte("date", since)
     .order("date", { ascending: true });
   if (error) return { confirmed: [], scanned: 0, reason: `read_failed: ${error.message}` };

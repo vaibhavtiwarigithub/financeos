@@ -1183,12 +1183,32 @@ export async function POST(req: NextRequest) {
         // race, which is the outcome we want anyway.
         const attempt = async (row: Record<string, any>) => supabase.from("paper_performance").insert(row);
         let perfWrite = await attempt(perfRow);
+        let usedLegacyLadder = false;
         if (perfWrite.error && isUndefinedColumn(perfWrite.error)) {
+          usedLegacyLadder = true;
           const { bench_session_date, bench_source, snapshot_type, ...legacy } = perfRow;
           perfWrite = await attempt(legacy);
           if (perfWrite.error && isUndefinedColumn(perfWrite.error)) {
             const { market: _m, ...noMarket } = legacy;
             perfWrite = await attempt(noMarket);
+          }
+        }
+        // The ladder strips all three provenance columns together, but
+        // `paper_performance.snapshot_type` is NOT NULL DEFAULT 'eod'. So if the
+        // undefined column was `bench_source` or `bench_session_date` while
+        // snapshot_type EXISTED, the stripped insert would silently stamp this
+        // premarket row as the canonical close — precisely the W4 defect the
+        // one-EOD-writer rule exists to prevent, reintroduced through the
+        // fallback path. Dormant while all three columns exist; corrected here
+        // so it cannot revive. Best-effort: on a schema where snapshot_type is
+        // genuinely absent this update simply fails, which is the case where the
+        // label does not exist to be wrong.
+        if (usedLegacyLadder && !perfWrite.error) {
+          const { error: labelErr } = await supabase.from("paper_performance")
+            .update({ snapshot_type: "intraday" })
+            .eq("market", market).eq("date", today);
+          if (labelErr && !isUndefinedColumn(labelErr)) {
+            console.warn(`[paper-trade] could not correct snapshot_type for ${market} ${today}: ${labelErr.message}`);
           }
         }
         // 23505 = the EOD/other writer inserted first. Never clobber it.
