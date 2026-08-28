@@ -3,6 +3,16 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // Allow a build to target a scratch directory while `next dev` is watching
   // .next. Building into the watched directory has corrupted it twice.
+  //
+  // THIS IS NOT FREE, and the first version of this comment overstated it as
+  // "cannot corrupt". `next build` also REWRITES two tracked files to point at
+  // whatever distDir is active — `next-env.d.ts` and the `include` array in
+  // `tsconfig.json` — so a scratch build leaves the working tree dirty. It
+  // protects .next; it does not leave the repo untouched. Always finish with:
+  //
+  //   git checkout -- next-env.d.ts tsconfig.json
+  //
+  // and never commit a tsconfig that references the scratch directory.
   ...(process.env.NEXT_BUILD_DIST_DIR ? { distDir: process.env.NEXT_BUILD_DIST_DIR } : {}),
   // The owner-only System Reference route reads a fixed allowlist of repository
   // Markdown files at runtime. Include those files in the Vercel function bundle;

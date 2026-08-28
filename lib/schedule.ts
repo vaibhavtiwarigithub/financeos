@@ -372,7 +372,7 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "India leg of the archetype IC evaluator. India's measured edge sits in TECHNICAL rather than fundamental, so the fundamental_only arm is expected to score poorly here - an arm that only runs where it is expected to win proves nothing.",
+      "India leg of the archetype IC evaluator. It grades each weighting arm on the entry-eligible long cohort only. The fundamental_only arm runs in BOTH markets deliberately - an arm that only runs where it is expected to win proves nothing. (Corrected 2026-08-28: this previously stated India's measured edge sits in technical rather than fundamental. That came from the all-scored cohort; on the eligible-entry cohort India measures -0.0083 and no dimension ranking has been established.)",
     handoff: "→ archetype_ic_runs (evidence only)",
     agentRunsType: null,
   },

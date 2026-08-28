@@ -110,6 +110,7 @@ async function run(svc: any, market: "us" | "india", horizons: readonly number[]
         market,
         setup_type: setupType,
         horizon_days: horizonDays,
+        cohort: result.cohort,
         qualifying_sessions: result.qualifyingSessions,
         observations: result.observations,
         rank_ic: result.rankIc,

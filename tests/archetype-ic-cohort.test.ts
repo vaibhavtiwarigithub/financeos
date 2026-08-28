@@ -76,5 +76,9 @@ describe("archetype IC cohort", () => {
     // 25 dates x 5 eligible names. The ineligible half must not be graded.
     expect(report.observations).toBe(125);
     expect(report.rankIc).toBeCloseTo(-1, 6);
+    // The persisted row must SAY which population it measured; archetype_ic_runs
+    // cannot otherwise distinguish a corrected grade from a contaminated one.
+    expect(report.cohort).toBe("eligible_long");
+    expect(report.reason).toContain("[eligible_long]");
   });
 });

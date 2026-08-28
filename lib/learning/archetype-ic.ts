@@ -26,6 +26,7 @@
 // MEASURE-ONLY. Nothing here reaches scoring, sizing, entry or exit.
 
 import { MIN_PREDICTIVE_DATES, MIN_CROSS_SECTION, MIN_EFFECTIVE_OBSERVATIONS, effectiveObservations } from "./dimension-diagnostics";
+import { ENTRY_COHORT_KEY } from "./entry-cohort";
 
 export interface ArchetypeScoreRow {
   market: "us" | "india";
@@ -48,6 +49,8 @@ export interface ArchetypeScoreRow {
 export interface ArchetypeIcResult {
   market: "us" | "india";
   setupType: string;
+  /** Population this grade was measured on; persisted to archetype_ic_runs.cohort. */
+  cohort: typeof ENTRY_COHORT_KEY;
   qualifyingSessions: number;
   observations: number;
   rankIc: number | null;
@@ -146,10 +149,10 @@ export function emptyArchetypeResult(
   horizonDays: number,
 ): ArchetypeIcResult {
   return {
-    market, setupType, qualifyingSessions: 0, observations: 0,
+    market, setupType, cohort: ENTRY_COHORT_KEY, qualifyingSessions: 0, observations: 0,
     rankIc: null, rankIcT: null, championRankIc: null, icDeltaVsChampion: null,
     effectiveObs: 0, status: "insufficient_evidence",
-    reason: `No entry-eligible long observations for this archetype at h${horizonDays}; it cannot be graded on the cohort the book can actually enter.`,
+    reason: `[${ENTRY_COHORT_KEY}] No entry-eligible long observations for this archetype at h${horizonDays}; it cannot be graded on the cohort the book can actually enter.`,
   };
 }
 
@@ -193,15 +196,18 @@ export function computeArchetypeIc(
   const overlapShort = nEff < MIN_EFFECTIVE_OBSERVATIONS;
   const status: ArchetypeIcResult["status"] = datesShort || overlapShort ? "insufficient_evidence" : "measured";
 
+  // Every reason names the cohort. A grade read without knowing its population
+  // is the exact failure this instrument was corrected for on 2026-08-28.
   const reason = datesShort
-    ? `Only ${qualifyingSessions}/${MIN_PREDICTIVE_DATES} sessions have a cross-section of at least ${MIN_CROSS_SECTION}; no weighting conclusion is permitted.`
+    ? `[${ENTRY_COHORT_KEY}] Only ${qualifyingSessions}/${MIN_PREDICTIVE_DATES} sessions have a cross-section of at least ${MIN_CROSS_SECTION}; no weighting conclusion is permitted.`
     : overlapShort
-      ? `${qualifyingSessions} sessions at a ${horizonDays}-day horizon overlap to only ${nEff.toFixed(2)} independent observations (need ${MIN_EFFECTIVE_OBSERVATIONS}); no weighting conclusion is permitted.`
-      : "Descriptive session-level rank IC vs the champion composite on the same observations. Not a promotion result and not a recommendation to change live weights.";
+      ? `[${ENTRY_COHORT_KEY}] ${qualifyingSessions} sessions at a ${horizonDays}-day horizon overlap to only ${nEff.toFixed(2)} independent observations (need ${MIN_EFFECTIVE_OBSERVATIONS}); no weighting conclusion is permitted.`
+      : `[${ENTRY_COHORT_KEY}] Descriptive session-level rank IC vs the champion composite on the same observations. Not a promotion result and not a recommendation to change live weights.`;
 
   return {
     market,
     setupType,
+    cohort: ENTRY_COHORT_KEY,
     qualifyingSessions,
     observations: deduped.length,
     rankIc,

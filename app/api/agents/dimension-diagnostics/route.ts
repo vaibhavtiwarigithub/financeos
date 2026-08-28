@@ -109,7 +109,15 @@ export async function GET(request: NextRequest) {
   const svc = createServiceClient();
   const { data, error } = await svc.from("dimension_diagnostic_runs")
     .select("id,market,analysis_plan_version,as_of_date,horizon_days,status,input_observation_count,mature_label_count,distinct_session_count,created_at,dimension_diagnostic_findings(subject_type,subject_key,finding_type,classification,metrics,reason)")
-    .eq("market", market).order("created_at", { ascending: false }).limit(4);
+    // Pin the plan version: a v3 mean_session_rank_ic is the ALL-SCORED metric
+    // and a v4 one is eligible-long. Returning both interleaved would put two
+    // incomparable numbers under one label. Limit covers every horizon in one
+    // run (DIAGNOSTIC_HORIZONS) plus a prior run for comparison; the old
+    // limit(4) silently dropped horizons once 60/120 were added.
+    .eq("market", market)
+    .eq("analysis_plan_version", DIMENSION_DIAGNOSTIC_PLAN_VERSION)
+    .order("created_at", { ascending: false })
+    .limit(DIAGNOSTIC_HORIZONS.length * 2);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ market, planVersion: DIMENSION_DIAGNOSTIC_PLAN_VERSION, runs: data ?? [], influence: "None. Read-only diagnostics; no score, agent, strategy, paper, live, exit, sizing or broker path reads these records." });
 }
