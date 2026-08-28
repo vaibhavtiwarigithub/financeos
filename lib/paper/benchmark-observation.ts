@@ -58,10 +58,20 @@ export function benchmarkSymbol(market: BenchmarkMarket): string {
  * writers cannot silently disagree.
  */
 export const CONFIRMED_BENCHMARK_SOURCES: Record<BenchmarkMarket, readonly string[]> = {
-  // US: any provider that supplied a settled DAILY BAR for the exact session.
-  // `yahoo_quote(provisional)` is deliberately absent — a 16:15 print is not a
-  // settled close.
-  us: ["yahoo", "massive", "eodhd", "twelvedata", "alpha_vantage"],
+  // US: any provider that supplied a SETTLED daily bar for the exact session.
+  //
+  // Bare `yahoo` was removed on 2026-08-27. It was listed as confirmed, but a
+  // Yahoo daily bar read at 16:15 ET is an IN-PROGRESS bar for the session that
+  // has only just closed — it carries the right date and an unsettled value, so
+  // the exact-session rule cannot catch it. Measured against settled closes:
+  // 08-25 stored 702.74 vs 704.02 (0.18% wrong) and 08-27 stored 708.56 vs
+  // 708.75, while the three rows humbly labelled `yahoo_quote(provisional)` were
+  // EXACT. The confirmed label was on the wrong rows.
+  //
+  // `yahoo(settled)` is written only by the next-session confirmation pass, so
+  // it means the bar was read after the session finished settling.
+  // `yahoo_quote(provisional)` remains deliberately absent.
+  us: ["yahoo(settled)", "massive", "eodhd", "twelvedata", "alpha_vantage"],
   // India: only genuine two-vendor agreement. `upstox(yahoo_disagreed)`,
   // `upstox(unconfirmed)` and `yahoo(unconfirmed)` are each a single opinion.
   india: ["upstox+yahoo"],
@@ -311,44 +321,88 @@ export function benchmarkReturnPct(close: number, baselineClose: number | null |
 
 export type BenchmarkConfirmation = {
   date: string;
-  storedClose: number;
+  /** Null when the row never resolved — this is a FILL, not a correction. */
+  storedClose: number | null;
   settledClose: number;
-  deltaPct: number;
+  /** Null for a fill: there was no prior value to disagree with. */
+  deltaPct: number | null;
   /** New provenance: agreement, or an explicit record that they did not agree. */
-  source: "upstox+yahoo" | "upstox(yahoo_disagreed)";
+  source: string;
 };
 
 /** Pure core: decide which provisional rows can now be confirmed. */
+/**
+ * Per-market rules for what counts as still-provisional, and what provenance to
+ * stamp once the settled bar arrives.
+ *
+ * INDIA — eligible when the stored value came from Yahoo, the only case where
+ * Upstox is a genuine SECOND source. Anything already carrying exchange
+ * provenance ("upstox", "upstox+yahoo", "upstox(...)") is final by construction;
+ * confirming it would compare Upstox against itself. This deliberately covers
+ * every provisional Yahoo label, not just `yahoo(unconfirmed)`. An earlier draft
+ * also required the string to contain "unconfirmed"; that guard was untestable
+ * (every non-Yahoo source is already excluded) and wrong, because it would have
+ * stranded a `yahoo_quote(provisional)` row forever.
+ *
+ * US — eligible when the row was captured DURING the session it describes, or
+ * never resolved at all. Measured 2026-08-27 against settled VOO closes: the
+ * three `yahoo_quote(provisional)` rows were exact, while the two rows labelled
+ * plain `yahoo` — which CONFIRMED_BENCHMARK_SOURCES treats as confirmed — were
+ * both WRONG (08-25 off 1.28 = 0.18%, 08-27 off 0.19). A same-session Yahoo
+ * DAILY BAR read at 16:15 ET is an in-progress bar, not a settled close, and it
+ * was being stamped with confirmed provenance. `massive` rows are genuinely
+ * settled (its grouped endpoint publishes next-day) and are left alone.
+ */
+export const CONFIRMATION_POLICY: Record<BenchmarkMarket, {
+  isProvisional: (source: string | null) => boolean;
+  label: (deltaPct: number | null) => string;
+}> = {
+  india: {
+    isProvisional: (source) => (source ?? "").startsWith("yahoo"),
+    label: (deltaPct) =>
+      deltaPct != null && deltaPct <= BENCHMARK_CROSSCHECK_TOLERANCE_PCT
+        ? "upstox+yahoo"
+        : "upstox(yahoo_disagreed)",
+  },
+  us: {
+    isProvisional: (source) => {
+      const src = (source ?? "").trim();
+      if (src === "") return true;                 // never resolved — fill it
+      if (src.includes("provisional")) return true; // 16:15 ET quote
+      if (src === "yahoo") return true;             // 16:15 ET in-progress daily bar
+      return false;                                 // massive/eodhd/... are settled
+    },
+    // One unambiguous terminal label, so a confirmed row is never revisited.
+    label: () => "yahoo(settled)",
+  },
+} as const;
+
 export function planBenchmarkConfirmations(
   rows: Array<{ date: string; bench_nav: number | null; bench_source: string | null }>,
   settledByDate: Map<string, number>,
+  market: BenchmarkMarket = "india",
 ): BenchmarkConfirmation[] {
+  const policy = CONFIRMATION_POLICY[market];
   const out: BenchmarkConfirmation[] = [];
   for (const row of rows) {
-    const src = row.bench_source ?? "";
-    // Eligible when the stored value came from Yahoo — the only case where
-    // Upstox is a genuine SECOND source. Anything already carrying exchange
-    // provenance ("upstox", "upstox+yahoo", "upstox(...)") is final by
-    // construction, and confirming it would compare Upstox against itself.
-    //
-    // This deliberately covers every provisional Yahoo label, including
-    // `yahoo_quote(provisional)` and not just `yahoo(unconfirmed)`. An earlier
-    // draft also required the string to contain "unconfirmed"; that guard was
-    // both untestable (every non-Yahoo source is already excluded by the check
-    // below, so removing it changed nothing) and wrong, because it would have
-    // permanently stranded a `yahoo_quote(provisional)` row as provisional.
-    if (!src.startsWith("yahoo")) continue;
-    const stored = Number(row.bench_nav);
+    if (!policy.isProvisional(row.bench_source)) continue;
     const settled = settledByDate.get(row.date);
-    if (!Number.isFinite(stored) || stored <= 0) continue;
     if (settled == null || !Number.isFinite(settled) || settled <= 0) continue;
-    const deltaPct = (Math.abs(settled - stored) / settled) * 100;
+    const storedRaw = Number(row.bench_nav);
+    const hasStored = Number.isFinite(storedRaw) && storedRaw > 0;
+    // A row that never resolved has nothing to compare against — it is a FILL,
+    // not a disagreement. Reporting a fabricated 0% delta would read as
+    // agreement between two sources when only one ever existed.
+    const deltaPct = hasStored ? (Math.abs(settled - storedRaw) / settled) * 100 : null;
+    // India requires a stored Yahoo value: without one there is no second
+    // opinion, so "upstox+yahoo" would be a false provenance claim.
+    if (!hasStored && market === "india") continue;
     out.push({
       date: row.date,
-      storedClose: stored,
+      storedClose: hasStored ? storedRaw : null,
       settledClose: settled,
       deltaPct,
-      source: deltaPct <= BENCHMARK_CROSSCHECK_TOLERANCE_PCT ? "upstox+yahoo" : "upstox(yahoo_disagreed)",
+      source: policy.label(deltaPct),
     });
   }
   return out;
@@ -365,18 +419,19 @@ export function planBenchmarkConfirmations(
  * `bench_return_pct` / `alpha_pct`, which were derived from the superseded
  * value. Rows carrying exchange provenance are never revisited.
  */
-export async function confirmIndiaBenchmarkSessions(
+export async function confirmBenchmarkSessions(
   svc: any,
-  fetchIndexCandles: (symbol: string) => Promise<Candle[]>,
+  market: BenchmarkMarket,
+  fetchSettledCandles: (symbol: string) => Promise<Candle[]>,
   lookbackDays = 21,
 ): Promise<{ confirmed: BenchmarkConfirmation[]; scanned: number; reason?: string }> {
-  const symbol = benchmarkSymbol("india");
+  const symbol = benchmarkSymbol(market);
   const since = new Date(Date.now() - lookbackDays * 86_400_000).toISOString().slice(0, 10);
 
   const { data, error } = await svc
     .from("paper_performance")
     .select("date, bench_nav, bench_source")
-    .eq("market", "india")
+    .eq("market", market)
     .eq("snapshot_type", "eod")
     .gte("date", since)
     .order("date", { ascending: true });
@@ -385,7 +440,7 @@ export async function confirmIndiaBenchmarkSessions(
   const rows = (data ?? []) as Array<{ date: string; bench_nav: number | null; bench_source: string | null }>;
   if (rows.length === 0) return { confirmed: [], scanned: 0 };
 
-  const candles = await fetchIndexCandles(symbol).catch(() => [] as Candle[]);
+  const candles = await fetchSettledCandles(symbol).catch(() => [] as Candle[]);
   const settled = new Map<string, number>();
   for (const c of candles ?? []) {
     const close = Number(c?.close);
@@ -393,7 +448,7 @@ export async function confirmIndiaBenchmarkSessions(
   }
   if (settled.size === 0) return { confirmed: [], scanned: rows.length, reason: "no_settled_bars" };
 
-  const plan = planBenchmarkConfirmations(rows, settled);
+  const plan = planBenchmarkConfirmations(rows, settled, market);
   const applied: BenchmarkConfirmation[] = [];
   for (const c of plan) {
     const { error: upErr } = await svc
@@ -407,7 +462,7 @@ export async function confirmIndiaBenchmarkSessions(
         bench_return_pct: null,
         alpha_pct: null,
       })
-      .eq("market", "india")
+      .eq("market", market)
       .eq("date", c.date)
       .eq("snapshot_type", "eod");
     if (!upErr) applied.push(c);

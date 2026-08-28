@@ -22,8 +22,9 @@ import {
   buildPositionMark, MARK_CROSSCHECK_TOLERANCE_PCT, MARK_DISPUTE_REFUSE_PCT, markLedgerRow, navFromMarks, reconcilePersistedNav, summariseMarkCoverage,
   type PositionMark,
 } from "@/lib/paper/marks";
-import { benchmarkReturnPct, fetchBenchmarkObservation, isConfirmedBenchmarkObservation, confirmIndiaBenchmarkSessions } from "@/lib/paper/benchmark-observation";
+import { benchmarkReturnPct, fetchBenchmarkObservation, isConfirmedBenchmarkObservation, confirmBenchmarkSessions } from "@/lib/paper/benchmark-observation";
 import { fetchUpstoxIndexCandles } from "@/lib/data/upstox";
+import { fetchUsCandles } from "@/lib/data/candles";
 
 // PositionMonitor: daily after-market check for stop-loss hits and price-target hits.
 // Uses trailing-stop logic: stop rises with highest_price but never falls below original stop.
@@ -811,26 +812,38 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       console.warn(`[position-monitor] no benchmark observation for ${market} ${today} — ${benchSkipReason}`);
     }
 
-    // The next-day settle pass the comment above refers to. Upstox's daily-candle
-    // endpoint never carries the CURRENT session, so today's India row can only
-    // ever be written `yahoo(unconfirmed)` — verified against every cached
-    // payload from 2026-08-19 to 08-27, whose newest bar is always the previous
-    // trading day. Earlier sessions ARE now settled, so confirm them here:
-    // the exchange close replaces the provisional Yahoo one and the provenance
-    // records whether the two agreed. Measurement only, and best-effort — a
-    // benchmark backfill must never fail the position monitor.
-    if (market === "india") {
-      try {
-        const conf = await confirmIndiaBenchmarkSessions(svc, (s) => fetchUpstoxIndexCandles(s));
-        if (conf.confirmed.length > 0) {
-          console.log(`[position-monitor] india benchmark confirmed ${conf.confirmed.length} session(s): ` +
-            conf.confirmed.map(c => `${c.date} ${c.storedClose}->${c.settledClose} (${c.source})`).join(", "));
-        } else if (conf.reason) {
-          console.warn(`[position-monitor] india benchmark confirmation skipped — ${conf.reason}`);
-        }
-      } catch (e: any) {
-        console.warn(`[position-monitor] india benchmark confirmation threw: ${e?.message ?? String(e)}`);
+    // The next-day settle pass the comment above refers to. Both markets write
+    // a provisional benchmark during the session and can only be confirmed
+    // afterwards, for DIFFERENT reasons:
+    //
+    //   INDIA  Upstox's daily-candle endpoint never carries the CURRENT session
+    //          (verified against every cached payload 2026-08-19..08-27, whose
+    //          newest bar is always the previous trading day), so today's row
+    //          can only ever be `yahoo(unconfirmed)`.
+    //
+    //   US     At 16:15 ET no vendor has VOO's settled bar. The quote fallback
+    //          is labelled provisional, but a same-session Yahoo DAILY BAR is
+    //          equally unsettled and was being stamped plain `yahoo` — which
+    //          CONFIRMED_BENCHMARK_SOURCES treats as confirmed. Measured
+    //          2026-08-27: the three provisional rows were EXACT while both
+    //          `yahoo` rows were wrong (08-25 by 0.18%). Rows that never
+    //          resolved at all (08-19, 08-20) are filled by the same pass.
+    //
+    // Earlier sessions are settled by now, so confirm them here. Measurement
+    // only, and best-effort — a benchmark backfill must never fail the monitor.
+    try {
+      const settledFetch = market === "india"
+        ? (s: string) => fetchUpstoxIndexCandles(s)
+        : async (s: string) => (await fetchUsCandles(s, async () => [])).candles;
+      const conf = await confirmBenchmarkSessions(svc, market as "us" | "india", settledFetch);
+      if (conf.confirmed.length > 0) {
+        console.log(`[position-monitor] ${market} benchmark confirmed ${conf.confirmed.length} session(s): ` +
+          conf.confirmed.map(c => `${c.date} ${c.storedClose ?? "(none)"}->${c.settledClose} (${c.source})`).join(", "));
+      } else if (conf.reason) {
+        console.warn(`[position-monitor] ${market} benchmark confirmation skipped — ${conf.reason}`);
       }
+    } catch (e: any) {
+      console.warn(`[position-monitor] ${market} benchmark confirmation threw: ${e?.message ?? String(e)}`);
     }
 
     const truth = paperPerformanceTruth({

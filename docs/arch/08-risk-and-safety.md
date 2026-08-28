@@ -1,4 +1,25 @@
 # Kairos — Risk & Safety
+> 2026-08-27: **US benchmark — the CONFIRMED rows were the wrong ones.** Same deferred-confirmation fix as India, plus a provenance correction.
+>
+> Measured against settled VOO closes:
+>
+> | date | stored | source | settled | verdict |
+> |---|---|---|---|---|
+> | 08-19 | NULL | - | 706.91 | never resolved |
+> | 08-20 | NULL | - | 701.01 | never resolved |
+> | 08-21 | 703.71 | `yahoo_quote(provisional)` | 703.71 | **exact** |
+> | 08-24 | 701.83 | `yahoo_quote(provisional)` | 701.83 | **exact** |
+> | 08-25 | 702.74 | **`yahoo`** | 704.02 | **0.18% WRONG** |
+> | 08-26 | 704.20 | `yahoo_quote(provisional)` | 704.20 | **exact** |
+>
+> The rows humbly labelled provisional were exact; the rows labelled plain `yahoo` — which `CONFIRMED_BENCHMARK_SOURCES` listed as confirmed, authorising an alpha claim — were the inaccurate ones. A Yahoo DAILY BAR read at 16:15 ET is an IN-PROGRESS bar for the session that has just closed: it carries the correct date and an unsettled value, so the exact-session rule cannot catch it. The W5 guard validates the DATE; nothing validated that the value had finished settling.
+>
+> Two changes. Bare `yahoo` is removed from `CONFIRMED_BENCHMARK_SOURCES.us` and replaced by `yahoo(settled)`, which only the confirmation pass writes. `confirmBenchmarkSessions` is now market-aware and runs for BOTH markets in PositionMonitor: it upgrades provisional rows and FILLS rows that never resolved. A fill reports `storedClose: null` and `deltaPct: null` rather than a fabricated 0%, which would read as two sources agreeing when only one ever existed.
+>
+> Backfilled 08-19..08-26. The two missing sessions now carry alpha of +0.33pp and +1.11pp, previously absent entirely. The US three-session underperformance figure quoted earlier (-1.90pp over 08-21..08-26) is unchanged, because those two endpoints happened to be exact.
+>
+> All three US guards mutation-verified: treating plain `yahoo` as settled, fabricating a zero delta for an unresolved row, and letting the US fill rule leak into India each fail a test.
+>
 > 2026-08-27: **India benchmark cross-check was never failing — it was structurally impossible.**
 >
 > `paper_performance` recorded `yahoo(unconfirmed)` for India every session from 2026-08-19. Root cause: Upstox's `/v3/historical-candle` **never returns the current session**. Verified against every cached payload from 08-19 to 08-27 — the newest bar is always the PREVIOUS trading day. So `selectBenchmarkObservation` was asked for today's session, correctly found no Upstox bar, and fell back to Yahoo alone. The fetch succeeded every day; it simply never contained the bar being requested. The two `upstox` rows (08-14, 08-18) exist only because they were backfilled a day later.

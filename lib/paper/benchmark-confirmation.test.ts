@@ -78,3 +78,50 @@ describe("planBenchmarkConfirmations", () => {
     expect(out.map(c => c.date)).toEqual(["2026-08-19", "2026-08-25"]);
   });
 });
+
+describe("planBenchmarkConfirmations — US policy", () => {
+  const usSettled = new Map<string, number>([
+    ["2026-08-19", 706.91], ["2026-08-20", 701.01], ["2026-08-21", 703.71],
+    ["2026-08-25", 704.02], ["2026-08-26", 704.20],
+  ]);
+
+  // The finding that motivated the US arm: a same-session Yahoo DAILY BAR read
+  // at 16:15 ET is an in-progress bar, yet CONFIRMED_BENCHMARK_SOURCES lists
+  // "yahoo" as confirmed. Production 08-25 stored 702.74 against a settled
+  // 704.02 — 0.18% wrong while labelled confirmed.
+  it("treats a plain `yahoo` row as still provisional", () => {
+    const [c] = planBenchmarkConfirmations([row("2026-08-25", 702.74, "yahoo")], usSettled, "us");
+    expect(c).toBeDefined();
+    expect(c.settledClose).toBe(704.02);
+    expect(c.source).toBe("yahoo(settled)");
+  });
+
+  it("fills a row that never resolved, and reports it as a fill not a disagreement", () => {
+    const [c] = planBenchmarkConfirmations([row("2026-08-19", null, null)], usSettled, "us");
+    expect(c.storedClose).toBeNull();
+    // A fabricated 0% delta would read as two sources agreeing when only one existed.
+    expect(c.deltaPct).toBeNull();
+    expect(c.settledClose).toBe(706.91);
+  });
+
+  it("upgrades a provisional quote row", () => {
+    const [c] = planBenchmarkConfirmations([row("2026-08-21", 703.71, "yahoo_quote(provisional)")], usSettled, "us");
+    expect(c.source).toBe("yahoo(settled)");
+    expect(c.deltaPct).toBeCloseTo(0, 6);
+  });
+
+  it("leaves genuinely settled providers alone", () => {
+    // Massive's grouped endpoint publishes next-day, so those rows are settled.
+    expect(planBenchmarkConfirmations([
+      row("2026-08-19", 706.91, "massive"),
+      row("2026-08-20", 701.01, "eodhd"),
+      row("2026-08-21", 703.71, "yahoo(settled)"),
+    ], usSettled, "us")).toEqual([]);
+  });
+
+  it("does not let the US fill rule leak into India", () => {
+    // India needs a stored Yahoo value: without one there is no second opinion,
+    // so "upstox+yahoo" would be a false provenance claim.
+    expect(planBenchmarkConfirmations([row("2026-08-19", null, null)], usSettled, "india")).toEqual([]);
+  });
+});
