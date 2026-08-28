@@ -108,7 +108,10 @@ describe("benchmark alpha provenance", () => {
     expect(isConfirmedBenchmarkObservation("us", "yahoo_quote(provisional)")).toBe(false);
     expect(isConfirmedBenchmarkObservation("india", "upstox+yahoo")).toBe(true);
     expect(isConfirmedBenchmarkObservation("india", "upstox(unconfirmed)")).toBe(false);
-    expect(isConfirmedBenchmarkObservation("india", "upstox(yahoo_disagreed)")).toBe(false);
+    // Admitted 2026-08-27: the stored value IS the authoritative exchange close;
+    // the disagreement was Yahoo's error, and suppressing alpha for that
+    // punished the correct number.
+    expect(isConfirmedBenchmarkObservation("india", "upstox(yahoo_disagreed)")).toBe(true);
   });
 });
 
@@ -386,9 +389,16 @@ describe("benchmark confirmation is an allowlist", () => {
     expect(isConfirmedBenchmarkObservation("us", "yahoo_quote(provisional)")).toBe(false);
   });
 
-  it("requires genuine two-vendor agreement for India", () => {
+  it("requires an EXCHANGE-backed value for India", () => {
     expect(isConfirmedBenchmarkObservation("india", "upstox+yahoo")).toBe(true);
-    for (const s of ["upstox", "yahoo", "upstox(unconfirmed)", "yahoo(unconfirmed)", "upstox(yahoo_disagreed)"]) {
+    // Upstox is authoritative, so a Yahoo disagreement does not disqualify the
+    // exchange close it contradicts.
+    expect(isConfirmedBenchmarkObservation("india", "upstox(yahoo_disagreed)")).toBe(true);
+    // Still refused. `upstox(unconfirmed)` means the second source never
+    // resolved the session, so nothing corroborates that Upstox returned the
+    // right BAR for the right DAY -- a different claim from "they disagreed and
+    // we kept the authoritative value". The rest are not exchange-backed.
+    for (const s of ["upstox", "yahoo", "upstox(unconfirmed)", "yahoo(unconfirmed)", "yahoo(settled)"]) {
       expect(isConfirmedBenchmarkObservation("india", s)).toBe(false);
     }
   });

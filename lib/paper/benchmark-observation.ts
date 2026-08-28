@@ -72,9 +72,23 @@ export const CONFIRMED_BENCHMARK_SOURCES: Record<BenchmarkMarket, readonly strin
   // it means the bar was read after the session finished settling.
   // `yahoo_quote(provisional)` remains deliberately absent.
   us: ["yahoo(settled)", "massive", "eodhd", "twelvedata", "alpha_vantage"],
-  // India: only genuine two-vendor agreement. `upstox(yahoo_disagreed)`,
-  // `upstox(unconfirmed)` and `yahoo(unconfirmed)` are each a single opinion.
-  india: ["upstox+yahoo"],
+  // India: the value must come from the EXCHANGE-backed source.
+  //
+  // Loosened 2026-08-27 to admit `upstox(yahoo_disagreed)`. The original rule
+  // demanded two-vendor agreement, written when neither source was trusted over
+  // the other. Upstox is now declared authoritative (it is a broker API carrying
+  // official exchange data, and on a disagreement its value is the one stored),
+  // so refusing to publish alpha on those rows suppressed a CORRECT exchange
+  // close because the SECONDARY source was wrong. Measured on the 2026-08-19..27
+  // backfill: Yahoo disagreed on six of seven sessions by up to 0.67%, and Yahoo
+  // was the one in error every time.
+  //
+  // `upstox(unconfirmed)` stays OUT: there the second source never resolved the
+  // session at all, so nothing corroborates that Upstox returned the right bar
+  // for the right day — which is a different claim from "the two disagreed and
+  // we kept the authoritative one". `yahoo(unconfirmed)` stays out because the
+  // value is not exchange-backed at all.
+  india: ["upstox+yahoo", "upstox(yahoo_disagreed)"],
 } as const;
 
 export function isConfirmedBenchmarkObservation(market: BenchmarkMarket, source: string | null | undefined): boolean {

@@ -1,4 +1,21 @@
 # Kairos — Risk & Safety
+> 2026-08-27: **India alpha provenance loosened to admit `upstox(yahoo_disagreed)` (owner decision).**
+>
+> `CONFIRMED_BENCHMARK_SOURCES.india` was `["upstox+yahoo"]` — genuine two-vendor agreement only. That rule was written when neither source was trusted over the other. Upstox is now declared authoritative (broker API carrying official exchange data; on a disagreement ITS value is the one stored), so the rule was suppressing alpha on a CORRECT exchange close because the SECONDARY source was wrong. On the 08-19..27 backfill Yahoo disagreed on six of seven sessions by up to 0.67% — and Yahoo was in error every time.
+>
+> Now `["upstox+yahoo", "upstox(yahoo_disagreed)"]`.
+>
+> **`upstox(unconfirmed)` deliberately stays OUT**, and the distinction is not pedantry: there the second source never resolved the session at all, so nothing corroborates that Upstox returned the right BAR for the right DAY. "The two disagreed and we kept the authoritative one" is a different and stronger claim than "only one source answered". Both directions are mutation-pinned — reverting the loosening fails, and over-loosening to admit `upstox(unconfirmed)` also fails.
+>
+> Backfilled `bench_return_pct` across 38 India rows that now qualify. First measurable since-inception alpha for both books, on settled exchange data:
+>
+> | market | sessions | NAV | benchmark | alpha |
+> |---|---|---|---|---|
+> | india | 39 | -0.79% | -1.39% (NIFTY 50) | **+0.60pp** |
+> | us | 38 | +1.85% | +2.60% (VOO) | **-0.74pp** |
+>
+> India has been BEATING its benchmark since inception and this was invisible until now — the alpha was withheld by provenance rules, not absent from the book. Both figures start 2026-07-06, the first session with a benchmark on both sides.
+>
 > 2026-08-27: **The 8 NULL benchmark rows: 7 filled, 1 correctly refused.**
 >
 > I had left these alone on the grounds that filling India from a single source would manufacture provenance. Checking rather than assuming resolved it: **Upstox and Yahoo agree to the paisa on all four India sessions**, so `upstox+yahoo` is earned two-source provenance, not a label applied to one opinion.
