@@ -10,7 +10,12 @@ import { ALL_SCORED_COHORT_KEY, ENTRY_COHORT_KEY, isEligibleLong } from "./entry
 // version rather than silently redefining v3's series: a v3 mean_session_rank_ic
 // and a v4 one are not comparable, and the frozen-history rule forbids
 // reinterpreting the recorded v3 rows after the fact.
-export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v4";
+// v5 (2026-08-28, hours after v4): the loader was silently truncated to
+// PostgREST's 1,000-row server maximum, so v4's US runs saw ~40% of the rows and
+// half the dates. That is a different dataset, not a refinement of the same one,
+// so v4 rows are kept as recorded and superseded rather than deleted or rerun in
+// place. India was under the cap and its v4 numbers are unaffected.
+export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v5";
 // 2/5/10/20 rank signal quality at or near the mandate holding period (5-15
 // sessions). 60/120 measure EXIT TIMING — "are we exiting too early" — which
 // the short labels structurally cannot answer, because a 20-day label can never

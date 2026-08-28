@@ -32,15 +32,34 @@ async function agentLabels(svc: any, ids: string[]): Promise<Map<string, string>
 }
 
 async function loadObservations(svc: any, market: Market, horizonDays: number): Promise<DiagnosticObservation[]> {
-  const { data, error } = await svc
-    .from("observation_labels")
-    .select("id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,direction,action,signal_id)")
-    .eq("horizon_days", horizonDays)
-    .eq("decision_observations.market", market)
-    .not("benchmark_neutral_return", "is", null)
-    .limit(20000);
-  if (error) throw new Error(`label query failed: ${error.message}`);
-  const sourceRows = (data ?? []) as any[];
+  // PAGINATED, NOT `.limit(20000)`.
+  //
+  // PostgREST caps a response at its server maximum (1,000 rows here) and
+  // returns that silently — a larger `.limit()` is not an error, it is ignored.
+  // Measured 2026-08-28: US h5 had 2,445 qualifying rows across 30 dates and
+  // this function returned 1,000 rows across 16 dates, so every US dimension IC
+  // ever recorded was computed on an arbitrary ~40% slice of the evidence and
+  // half the calendar. India sat under the cap and was unaffected, which is
+  // exactly why the truncation was invisible in a cross-market read.
+  //
+  // Ordering by `id` is what makes the pages stable; without a total order the
+  // same row can appear on two pages or none.
+  const PAGE = 1000;
+  const sourceRows: any[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await svc
+      .from("observation_labels")
+      .select("id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,direction,action,signal_id)")
+      .eq("horizon_days", horizonDays)
+      .eq("decision_observations.market", market)
+      .not("benchmark_neutral_return", "is", null)
+      .order("id", { ascending: true })
+      .range(offset, offset + PAGE - 1);
+    if (error) throw new Error(`label query failed: ${error.message}`);
+    const page = (data ?? []) as any[];
+    sourceRows.push(...page);
+    if (page.length < PAGE) break;
+  }
   const signalIds: string[] = sourceRows.map((row) => {
     const decision = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
     return decision?.signal_id;
