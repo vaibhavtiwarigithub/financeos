@@ -176,3 +176,36 @@ execution is gated "after unsafe early P1 behavior", but I have not identified
 what that behavior was, and the swap P&L above does not obviously explain it.
 **Do not re-enable paper execution until that cause is known.** The flags are
 back to false; live was never touched.
+
+
+---
+
+# RESOLVED 2026-08-28 — the open question is closed
+
+The trace above ended with "why the paper flags were set false on 2026-08-11 ...
+has NOT been identified". It is identified now, and it was never actually
+missing.
+
+**Migration `20260811033335_disable_unqualified_paper_rotation.sql`** (commit
+`ba20f4ff`). The filename timestamp IS the `rotation_config.updated_at` that
+looked like an unexplained event.
+
+Cause, from `features/capital-rotation/FEATURE_ARCHITECTURE.md` in that commit:
+migration `20260723120000` enabled both paper rows, but the executor only
+rechecked score spread, persistence, cooldown and count caps. **It never
+enforced the P1 readiness result and never read
+`rotation_allow_score_only_paper`.** Four rotations executed through that gap.
+The same commit added the missing gate.
+
+A MISSING GATE, not bad P&L. The doc is explicit that this "is containment, not
+a claim that the four-trade result proves rotation lacks edge" — consistent with
+the swap-level finding here that the two rotations were neutral and positive.
+
+**Why it looked unexplained:** I searched on the phrase "unsafe early P1
+behavior" from `lib/shadows/registry.ts`, which was written 2026-08-24
+(`26216cb3`) — two weeks AFTER the event. A retrospective label was mistaken for
+the contemporaneous record. The lesson is to date the evidence before trusting
+its wording: the migration filename carried the precise answer all along.
+
+**Reopening criteria** are the five `p1_blockers` already emitted on every
+rotation_event, which map one-to-one onto the migration's stated conditions.

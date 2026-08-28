@@ -1,4 +1,20 @@
 # Kairos — Risk & Safety
+> 2026-08-28: **RESOLVED — why capital rotation was disabled on 2026-08-11.** It was never unexplained; the reason was recorded contemporaneously and I had been reading a later, vaguer label.
+>
+> The disable is migration `20260811033335_disable_unqualified_paper_rotation.sql`, shipped in commit `ba20f4ff`. The filename timestamp is exactly the `rotation_config.updated_at` I had been treating as a mystery. Its own comment:
+>
+> > "Capital rotation may keep measuring, but paper execution must remain off until benchmark-alpha, friction, turnover, correlation and tax readiness are enforced by the execution path."
+>
+> `features/capital-rotation/FEATURE_ARCHITECTURE.md`, updated in the same commit, gives the mechanism: migration `20260723120000` had enabled both paper rows, **but the executor only rechecked score spread, persistence, cooldown and count caps — it never enforced the P1 readiness result and never read `rotation_allow_score_only_paper`.** Four paper rotations executed through that hole. The same commit added the missing gate to `executeCapitalRotationPaper`.
+>
+> **It was a MISSING GATE, not bad P&L.** The four negative rotations were the symptom; the doc says explicitly this "is containment, not a claim that the four-trade result proves rotation lacks edge" — which matches the swap-level analysis on 2026-08-25 that found those rotations neutral-to-positive.
+>
+> **The "unsafe early P1 behavior" phrase in `lib/shadows/registry.ts` was written 2026-08-24 (`26216cb3`), two weeks after the fact.** It is a retrospective summary, not the contemporaneous record, and searching for it is what made this look unexplained. The precise cause was in the migration filename the whole time.
+>
+> **Directly relevant to 2026-08-25.** The flag I flipped that day, `rotation_allow_score_only_paper`, IS the gate this commit added to stop score-only execution. My argument was that `score_to_return_mapping_unvalidated` "can only be validated by running it" — the same reasoning that produced the original incident. The flip was reverted for a different reason (a false claim that rotation had never executed); this is the reason it should have been refused on the merits.
+>
+> **The five `p1_blockers` are the reopening criteria**, not incidental noise: `turnover_budget_not_configured`, `exact_tax_lots_unavailable`, `score_to_return_mapping_unvalidated`, `post_swap_gate_unavailable`, `candidate_correlation_unavailable`. They map one-to-one onto the migration's "benchmark-alpha, friction, turnover, correlation and tax readiness". Rotation is re-enableable when those are enforced in the execution path — not before.
+>
 > 2026-08-27: **India alpha provenance loosened to admit `upstox(yahoo_disagreed)` (owner decision).**
 >
 > `CONFIRMED_BENCHMARK_SOURCES.india` was `["upstox+yahoo"]` — genuine two-vendor agreement only. That rule was written when neither source was trusted over the other. Upstox is now declared authoritative (broker API carrying official exchange data; on a disagreement ITS value is the one stored), so the rule was suppressing alpha on a CORRECT exchange close because the SECONDARY source was wrong. On the 08-19..27 backfill Yahoo disagreed on six of seven sessions by up to 0.67% — and Yahoo was in error every time.
