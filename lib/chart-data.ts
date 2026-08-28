@@ -176,6 +176,10 @@ export async function prewarmPriceCache(
       .select("symbol,date")
       .in("symbol", normalized)
       .gte("date", freshCutoff)
+      // Deliberately NOT paginated. This is a cache-freshness probe bounded by
+      // `normalized`, and truncation fails SAFE: an unseen symbol is treated as
+      // stale and re-fetched. Every other `.limit()` that feeds an analysis was
+      // paginated on 2026-08-28; this one is the documented exception.
       .limit(5000);
     if (!error) {
       const fresh = new Set((data ?? []).map((row: any) => String(row.symbol ?? "").toUpperCase()));

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   ATR_EXIT_POLICY_VERSION,
   aggregateAtrExitEvidence,
@@ -22,19 +23,22 @@ export async function GET(req: NextRequest) {
   const horizonDays = ALLOWED_HORIZONS.has(requestedHorizon) ? requestedHorizon : 10;
   const svc = createServiceClient();
 
-  const { data: observations, error: observationError } = await svc
-    .from("decision_observations")
-    .select("id")
-    .eq("market", market)
-    .eq("entry_eligible", true)
-    .eq("direction", "long")
-    .order("ts", { ascending: true })
-    .limit(5000);
-  if (observationError) {
+  // Paginated: 2,976 eligible-long US observations, of which this read 1,000.
+  let observations: Array<{ id: number }>;
+  try {
+    observations = await fetchAllRows<{ id: number }>((from, to) => svc
+      .from("decision_observations")
+      .select("id")
+      .eq("market", market)
+      .eq("entry_eligible", true)
+      .eq("direction", "long")
+      .order("id", { ascending: true })
+      .range(from, to), "ATR evidence cohort");
+  } catch {
     return NextResponse.json({ error: "Unable to load ATR evidence cohort" }, { status: 500 });
   }
 
-  const ids = (observations ?? []).map((row: { id: number }) => row.id);
+  const ids = observations.map((row: { id: number }) => row.id);
   const labels: Array<{ fwd_return: number | null; atr_exit_outcomes: unknown }> = [];
   for (let offset = 0; offset < ids.length; offset += 500) {
     const { data, error } = await svc

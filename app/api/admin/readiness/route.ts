@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
@@ -48,9 +49,11 @@ async function runReadiness() {
     checks.push({ key: `${market}_confidence_coverage`, pass: confidenceCoverage >= 0.8, requiredFor: "engineering",
       detail: `${Math.round(confidenceCoverage * 100)}% of latest ${observations?.length ?? 0}` });
 
-    const { data: allObservationIds } = await svc.from("decision_observations")
-      .select("id").eq("market", market).limit(5000);
-    const ids = (allObservationIds ?? []).map((o: any) => o.id);
+    // Paginated: this understated the label count by reading 1,000 of 5,223 US
+    // observations, and it gates the `autonomous` readiness tier.
+    const allObservationIds = await fetchAllRows((from, to) => svc.from("decision_observations")
+      .select("id").eq("market", market).order("id", { ascending: true }).range(from, to), "observation ids");
+    const ids = allObservationIds.map((o: any) => o.id);
     const { count: labelCount } = ids.length
       ? await svc.from("observation_labels").select("id", { count: "exact", head: true }).in("observation_id", ids)
       : { count: 0 };

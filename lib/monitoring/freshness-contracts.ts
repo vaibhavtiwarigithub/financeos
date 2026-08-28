@@ -22,6 +22,7 @@
 // registry is versioned so a contract loosening is a reviewable diff.
 
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /** Bump when a contract is added, removed, or its thresholds change. */
 export const FRESHNESS_REGISTRY_VERSION = 1;
@@ -258,11 +259,17 @@ export async function checkFreshnessContracts(
       if (contract.scopeUniverse === "active_us_price_symbols") {
         const decisionSince = new Date(now.getTime() - 7 * 86400_000).toISOString();
         const [decisions, positions] = await Promise.all([
-          svc.from("decision_observations")
-            .select("symbol")
+          // Paginated: this builds the REQUIRED-SCOPE set, so a truncated read
+          // silently shrinks what the monitor considers in scope and turns a
+          // stale symbol into a passing contract. 888 rows today, under the cap.
+          fetchAllRows((from, to) => svc.from("decision_observations")
+            .select("id,symbol")
             .eq("market", "us")
             .gte("ts", decisionSince)
-            .limit(5000),
+            .order("id", { ascending: true })
+            .range(from, to), "active price scope decisions")
+            .then((rows) => ({ data: rows as any[], error: null as any }))
+            .catch((e: any) => ({ data: null as any, error: { message: String(e?.message ?? e) } })),
           svc.from("paper_positions")
             .select("symbol")
             .eq("market", "us")

@@ -66,14 +66,24 @@ class QueryBuilder {
   order(col: string, opts?: { ascending?: boolean }): this {
     const asc = opts?.ascending !== false;
     this.rows = [...this.rows].sort((a, b) => {
-      const av = String(a[col]);
-      const bv = String(b[col]);
-      return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+      const av = a[col];
+      const bv = b[col];
+      // Numeric columns must compare numerically: as strings, "10" sorts before
+      // "2", which silently scrambles an `order("id")` paged read.
+      const cmp = typeof av === "number" && typeof bv === "number"
+        ? av - bv
+        : String(av).localeCompare(String(bv));
+      return asc ? cmp : -cmp;
     });
     return this;
   }
   limit(n: number): this {
     this.rows = this.rows.slice(0, n);
+    return this;
+  }
+  /** Inclusive both ends, matching PostgREST. Required by fetchAllRows. */
+  range(from: number, to: number): this {
+    this.rows = this.rows.slice(from, to + 1);
     return this;
   }
   maybeSingle(): Promise<{ data: Row | null; error: null }> {

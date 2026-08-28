@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import {
@@ -45,15 +46,21 @@ export async function GET(req: NextRequest) {
   const HORIZON_DAYS = ALLOWED_HORIZONS.includes(requested) ? requested : DEFAULT_HORIZON_DAYS;
   const svc = createServiceClient();
 
-  const { data, error } = await svc
-    .from("observation_labels")
-    .select("horizon_days,max_favorable_excursion,max_adverse_excursion,fwd_return,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible)")
-    .eq("horizon_days", HORIZON_DAYS)
-    .limit(20000);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  // Paginated: 2,412 labels at h10, of which this read 1,000.
+  let data: any[];
+  try {
+    data = await fetchAllRows((from, to) => svc
+      .from("observation_labels")
+      .select("horizon_days,max_favorable_excursion,max_adverse_excursion,fwd_return,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible)")
+      .eq("horizon_days", HORIZON_DAYS)
+      .order("id", { ascending: true })
+      .range(from, to), "exit geometry labels");
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "label read failed" }, { status: 500 });
+  }
 
   const byMarket = new Map<string, { points: LabelPoint[]; rows: LabelRow[] }>();
-  for (const row of (data ?? []) as any[]) {
+  for (const row of data) {
     const decision = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
     if (!decision) continue;
     // Only decisions that were actually eligible to become positions. A cohort

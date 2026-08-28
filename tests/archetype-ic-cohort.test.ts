@@ -63,6 +63,11 @@ function builder(data: any[]) {
   return b;
 }
 
+// A shadow row for an arm whose observations have NOT matured — no label join.
+function unmaturedArm(setupType: string) {
+  return { setup_type: setupType, symbol: "X", ts: "2026-07-01T13:00:00Z", score: 60, observation_id: `u-${setupType}`, decision_observations: null };
+}
+
 describe("archetype IC cohort", () => {
   it("grades only entry-eligible long observations", async () => {
     h.from.mockImplementation(() => builder(rows()));
@@ -80,5 +85,29 @@ describe("archetype IC cohort", () => {
     // cannot otherwise distinguish a corrected grade from a contaminated one.
     expect(report.cohort).toBe("eligible_long");
     expect(report.reason).toContain("[eligible_long]");
+  });
+});
+
+describe("arms that cannot be graded", () => {
+  // THE GAP THIS CLOSES: loadRows inner-joins matured labels, so an arm whose
+  // observations have not matured is dropped BEFORE grouping and never reaches
+  // the eligible-rows check. In production that silently erased 6 of 8 US arms
+  // and all 3 India arms — indistinguishable in the ledger from "never ran".
+  it("records an explicit refusal for an arm with no matured labels", async () => {
+    const data = [...rows(), unmaturedArm("fundamental_only")];
+    h.from.mockImplementation(() => builder(data));
+    const { GET } = await import("@/app/api/agents/archetype-ic/route");
+    const res = await GET(new NextRequest("http://localhost/api/agents/archetype-ic?market=us&horizon=10"));
+    const body = await res.json();
+
+    const missing = body.reports.find((r: any) => r.setupType === "fundamental_only");
+    expect(missing).toBeTruthy();
+    expect(missing.status).toBe("insufficient_evidence");
+    expect(missing.rankIc).toBeNull();
+    expect(missing.observations).toBe(0);
+    expect(missing.cohort).toBe("eligible_long");
+    // Must say WHY, and must not read as a negative result.
+    expect(missing.reason).toContain("matured");
+    expect(missing.reason).toContain("Not a negative result");
   });
 });

@@ -199,9 +199,13 @@ export async function POST(req: NextRequest) {
       // prices from a provider series. It only begins 2026-08-17 (when the W4
       // ledger was created), which bounds the A6 window -- reported honestly in
       // its date count rather than backfilled from a different source.
+      // Bounded read, kept explicit: 106-121 rows per market today. The mark
+      // ledger grows one row per open position per session, so it will cross
+      // PostgREST's 1,000-row cap; A6 already reports its own session count, and
+      // a truncated ledger would silently shorten the replay window instead.
       svc.from("paper_position_marks")
         .select("session_date, symbol, qty, mark_price")
-        .eq("market", market).order("session_date", { ascending: true }).limit(20000),
+        .eq("market", market).order("session_date", { ascending: true }).range(0, 999),
       // A9 inputs: geometry currently carried by open positions.
       svc.from("paper_positions")
         .select("symbol, opened_at, avg_cost, initial_stop_loss, stop_loss, price_target")

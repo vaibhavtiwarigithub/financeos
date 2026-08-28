@@ -15,6 +15,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { computeArchetypeIc, emptyArchetypeResult, type ArchetypeScoreRow } from "@/lib/learning/archetype-ic";
 import { isEligibleLong } from "@/lib/learning/entry-cohort";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -81,6 +82,25 @@ async function loadRows(svc: any, market: "us" | "india", horizonDays: number): 
   return rows;
 }
 
+/**
+ * Every archetype that has recorded a shadow score in this market.
+ *
+ * Deliberately independent of the label join: this is the list of arms that
+ * EXIST, so an arm with no matured outcomes still gets a row explaining why it
+ * could not be graded instead of silently disappearing.
+ */
+async function knownSetupTypes(svc: any, market: "us" | "india"): Promise<string[]> {
+  const rows = await fetchAllRows<{ setup_type: string }>((from, to) => svc
+    .from("shadow_decisions")
+    .select("id, setup_type")
+    .eq("market", market)
+    .not("setup_type", "is", null)
+    .not("score", "is", null)
+    .order("id", { ascending: true })
+    .range(from, to), "shadow setup types");
+  return [...new Set(rows.map((r) => String(r.setup_type)))].sort();
+}
+
 async function run(svc: any, market: "us" | "india", horizons: readonly number[], persist: boolean) {
   const asOfDate = new Date().toISOString().slice(0, 10);
   const reports: any[] = [];
@@ -94,14 +114,26 @@ async function run(svc: any, market: "us" | "india", horizons: readonly number[]
       bySetup.set(r.setupType, list);
     }
 
+    // An arm can fail to appear in `bySetup` for a reason that has nothing to do
+    // with its quality: `loadRows` inner-joins matured labels, so an arm whose
+    // observations have not matured yet is dropped before grouping. Measured
+    // 2026-08-28: 6 of 8 US arms and ALL 3 India arms wrote nothing, which reads
+    // in the ledger as "never run" rather than "not yet gradable". Enumerate the
+    // arms that exist and record an explicit refusal for the missing ones.
+    for (const setupType of await knownSetupTypes(svc, market)) {
+      if (!bySetup.has(setupType)) bySetup.set(setupType, []);
+    }
+
     for (const [setupType, rows] of bySetup) {
       // Grade ONLY on names the book could actually enter. Scoring an archetype
       // against `neutral`/`short` observations measures a ranking nobody acts
       // on, which is the error that invalidated this instrument's own premise.
       const eligible = rows.filter((r) => r.entryEligible);
-      const result = eligible.length === 0
-        ? emptyArchetypeResult(market, setupType, horizonDays)
-        : computeArchetypeIc(eligible, horizonDays);
+      const result = rows.length === 0
+        ? emptyArchetypeResult(market, setupType, horizonDays, "no_matured_labels")
+        : eligible.length === 0
+          ? emptyArchetypeResult(market, setupType, horizonDays, "no_eligible_rows")
+          : computeArchetypeIc(eligible, horizonDays);
       if (!result) continue;
       reports.push({ horizonDays, ...result });
       if (!persist) continue;

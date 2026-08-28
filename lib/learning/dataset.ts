@@ -1,6 +1,8 @@
 // Phase 1 learning-core: read-only walk-forward dataset builder over the
 // decision_observations x observation_labels ledger. No writes here.
 
+import { fetchAllRows } from "@/lib/supabase/paginate";
+
 export interface LabeledObservation {
   id: number;
   ts: string; // decision timestamp
@@ -43,13 +45,20 @@ export async function loadLabeledDataset(
   market: "us" | "india",
   horizonDays: 2 | 5 | 10 | 20
 ): Promise<LabeledObservation[]> {
-  const { data: obsRows, error: obsErr } = await supabase
+  // Paginated: `.limit(5000)` returned PostgREST's 1,000-row maximum, so the
+  // learner was training on 19% of the US cohort (5,223 rows) chosen by ts
+  // order — the OLDEST fifth. Ordered by id, not ts, because ts is not unique
+  // and a non-unique sort key makes page boundaries unstable.
+  // Errors PROPAGATE. The previous `if (obsErr || !obsRows?.length) return []`
+  // collapsed a failed read and a genuinely empty cohort into the same answer,
+  // so a broken query trained the learner on nothing and looked like a quiet day.
+  const obsRows = await fetchAllRows((from, to) => supabase
     .from("decision_observations")
     .select("id, ts, market, symbol, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, direction, entry_eligible, score_threshold, availability_mask")
     .eq("market", market)
-    .order("ts", { ascending: true })
-    .limit(5000);
-  if (obsErr || !obsRows?.length) return [];
+    .order("id", { ascending: true })
+    .range(from, to), "decision_observations");
+  if (!obsRows.length) return [];
 
   const ids = obsRows.map((r: any) => r.id);
   const { data: labelRows, error: labErr } = await supabase

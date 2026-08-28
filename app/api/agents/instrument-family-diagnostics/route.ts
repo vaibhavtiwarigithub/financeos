@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { buildInstrumentFamilyDiagnostics, INSTRUMENT_DIAGNOSTIC_VERSION, type FamilyDiagnosticRow } from "@/lib/scoring/instrument-family-diagnostics";
 
 export const dynamic = "force-dynamic";
@@ -35,12 +36,21 @@ export async function GET(request: NextRequest) {
   }
   const market = requested as Market | null;
   const svc = createServiceClient();
-  let query = svc.from("instrument_family_observations")
-    .select("observation_id,market,symbol,instrument_family,exposure_id,decision_observations!inner(id,ts,analyst_score)")
-    .order("created_at", { ascending: false }).limit(10000);
-  if (market) query = query.eq("market", market);
-  const { data, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  // Paginated. 329 rows today, under PostgREST's 1,000-row cap, so this is not
+  // currently truncating — but `.limit(10000)` would silently start dropping
+  // rows the moment it crosses the cap, with no error and no signal.
+  let data: any[];
+  try {
+    data = await fetchAllRows((from, to) => {
+      let q = svc.from("instrument_family_observations")
+        .select("observation_id,market,symbol,instrument_family,exposure_id,decision_observations!inner(id,ts,analyst_score)")
+        .order("observation_id", { ascending: true }).range(from, to);
+      if (market) q = q.eq("market", market);
+      return q;
+    }, "instrument family observations");
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "read failed" }, { status: 500 });
+  }
   const ids = (data ?? []).map((row: any) => Number(row.observation_id)).filter(Number.isFinite);
   const labels = await labelsByObservation(svc, ids);
   const rows: FamilyDiagnosticRow[] = (data ?? []).flatMap((row: any) => {

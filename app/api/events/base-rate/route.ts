@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { EVENT_TYPES } from "@/lib/events/vocabulary";
 import { cohortValue, MIN_INSTANCES, summarizeBaseRate, type BaseRateSummary } from "@/lib/events/outcomes";
@@ -38,11 +39,17 @@ export async function GET(req: NextRequest) {
   const marketFilter = url.searchParams.get("market");
   const svc = createServiceClient();
 
-  const { data, error } = await svc
-    .from("market_event_outcomes")
-    .select("horizon_days, benchmark_neutral_return, fwd_return, subject_symbol, benchmark_symbol, market_events!inner(event_type, market)")
-    .limit(5000);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  // Paginated. 57 rows today; this is base-rate evidence, so a silent cap would
+  // bias every rate it reports once the table grows past 1,000.
+  let data: any[];
+  try {
+    data = await fetchAllRows((from, to) => svc
+      .from("market_event_outcomes")
+      .select("id, horizon_days, benchmark_neutral_return, fwd_return, subject_symbol, benchmark_symbol, market_events!inner(event_type, market)")
+      .order("id", { ascending: true }).range(from, to), "market event outcomes");
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "read failed" }, { status: 500 });
+  }
 
   // Group by (event_type, market, horizon). The market is part of the key, not
   // a filter applied afterwards, so a pooled row cannot be produced by accident.

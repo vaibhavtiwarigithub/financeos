@@ -143,16 +143,24 @@ function tStat(values: number[]): number | null {
  * row reads as "not run yet" rather than "cannot be graded". This makes the
  * refusal explicit and keeps the arm in the ledger.
  */
+export type UngradableCause = "no_eligible_rows" | "no_matured_labels";
+
 export function emptyArchetypeResult(
   market: "us" | "india",
   setupType: string,
   horizonDays: number,
+  cause: UngradableCause = "no_eligible_rows",
 ): ArchetypeIcResult {
   return {
     market, setupType, cohort: ENTRY_COHORT_KEY, qualifyingSessions: 0, observations: 0,
     rankIc: null, rankIcT: null, championRankIc: null, icDeltaVsChampion: null,
     effectiveObs: 0, status: "insufficient_evidence",
-    reason: `[${ENTRY_COHORT_KEY}] No entry-eligible long observations for this archetype at h${horizonDays}; it cannot be graded on the cohort the book can actually enter.`,
+    reason: cause === "no_matured_labels"
+      // Not the same as "this arm is bad". The arm recorded shadow scores, but
+      // none of the observations it scored have a matured h{n} label yet, so
+      // there is no outcome to correlate against. It becomes gradable with time.
+      ? `[${ENTRY_COHORT_KEY}] This archetype has recorded shadow scores, but none of the observations it scored carry a matured h${horizonDays} label yet; there is no outcome to grade against. Not a negative result.`
+      : `[${ENTRY_COHORT_KEY}] No entry-eligible long observations for this archetype at h${horizonDays}; it cannot be graded on the cohort the book can actually enter.`,
   };
 }
 
