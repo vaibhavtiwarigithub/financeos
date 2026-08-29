@@ -207,6 +207,21 @@ export default function PerformanceTruth() {
         </div>
       )}
       {children}
+
+      {/* Alpha Diagnostic Lab. Mounted INSIDE wrap() so it survives every state
+          of this component. It used to sit in the success branch only, behind
+          `if (!data) return "Loading performance metrics…"` — so a slow or
+          failed /api/agents/performance/metrics call made the entire Lab vanish
+          with no error of its own, which is indistinguishable from "the feature
+          isn't there". The Lab fetches its own data and renders its own
+          loading/error states; it has no dependency on `data`.
+
+          Shares this component's market toggle so the two surfaces can never
+          disagree about which book is on screen. Read-only: mounting it cannot
+          trigger a diagnostic run. */}
+      <div style={{ marginTop: "18px" }}>
+        <AlphaDiagnosticLab market={market} />
+      </div>
     </div>
   );
 
@@ -354,12 +369,6 @@ export default function PerformanceTruth() {
         </div>
       )}
 
-      {/* Alpha Diagnostic Lab. Shares this component's market toggle so the two
-          surfaces can never disagree about which book is on screen. Read-only:
-          mounting it cannot trigger a diagnostic run. */}
-      <div style={{ marginTop: "18px" }}>
-        <AlphaDiagnosticLab market={market} />
-      </div>
     </>
   );
 }
