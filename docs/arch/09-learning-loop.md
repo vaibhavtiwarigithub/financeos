@@ -1,4 +1,32 @@
 # Kairos — Learning Loop
+> 2026-08-28/29: **Silent PostgREST truncation swept, and archetype arms now refuse instead of vanishing.** Commits `3aa3753f`, `ae17fad2`.
+>
+> `.limit(n)` above PostgREST's server maximum is IGNORED, not an error — the response is capped at 1,000 rows and returns success. Four call sites were actively truncating:
+>
+> | site | rows | actually read |
+> |---|---:|---:|
+> | `lib/learning/dataset.ts` | 5,223 | 1,000 — **the learner, oldest fifth of the US cohort** |
+> | `app/api/admin/readiness` | 5,223 | 1,000 — gates the `autonomous` tier |
+> | `app/api/analytics/atr-exit-evidence` | 2,976 | 1,000 |
+> | `app/api/agents/exit-geometry-shadow` | 2,412 | 1,000 |
+>
+> The dimension loader was the same defect, found first: US h5 had 2,445 rows across 30 dates and read 1,000 across 16, so **every US dimension IC recorded before `3aa3753f` used ~40% of the evidence and half the calendar**. India sat under the cap, which is why a cross-market read never exposed it. Dimension plan version `v4` → `v5`; the truncated v4 rows are kept as recorded and superseded.
+>
+> `lib/supabase/paginate.ts` (`fetchAllRows`) is now the single reader: orders by a unique column, treats a short page as the last page, requests one more page when the total is an exact multiple, and refuses past 200 pages rather than return a partial result. Four latent sites were converted too. `lib/chart-data.ts` is the documented exception — a cache-freshness probe where truncation fails safe by re-fetching.
+>
+> `lib/learning/dataset.ts` also stopped swallowing read failures into an empty dataset. The old `if (obsErr || !rows?.length) return []` made a broken query indistinguishable from a quiet day.
+>
+> **Archetype arms no longer disappear.** `loadRows` inner-joins matured labels, so an arm whose observations have not matured was dropped before grouping and never reached the eligible-rows check — in production that erased 6 of 8 US arms and all 3 India arms, reading in the ledger as "never ran". The route now enumerates every arm that has recorded a shadow score and emits an explicit refusal, distinguishing `no_matured_labels` ("Not a negative result") from `no_eligible_rows`. `archetype_ic_runs.cohort` records the population (migration `20260828163000`, applied and verified).
+>
+> Post-fix state, `as_of_date` 2026-08-29, all rows `cohort = eligible_long`:
+>
+> | market | arms | rows | refusals (no matured labels) | rows with an IC |
+> |---|---:|---:|---:|---:|
+> | us | 8/8 | 16 | 12 | 2 |
+> | india | 3/3 | 6 | 6 | 0 |
+>
+> The only graded arm is `etf_trend`: h10 +0.024 vs champion +0.056, h20 +0.048 vs champion +0.109, on 8-10 sessions against a 20-session floor. `insufficient_evidence`, not a result. **18 of 22 rows are refusals for want of matured labels** — that is the honest state of the learning loop, and it is strictly better than the silence it replaced.
+>
 > 2026-08-28: **Every predictive headline now measures the eligible-long cohort.** `lib/learning/entry-cohort.ts` is the single definition (`entry_eligible = true AND direction = 'long'`), shared by the Alpha Diagnostic Lab's A2, the dimension diagnostics, and the archetype grader so the three cannot drift apart.
 >
 > The bug: dimension IC (`lib/learning/dimension-diagnostics.ts`) and archetype IC (`app/api/agents/archetype-ic/route.ts`) both computed rank IC over ALL scored observations, including `neutral` and `short` rows the book could never buy. `entryEligible` was loaded but only fed a mean-return summary field, never the IC itself; the archetype select carried no cohort filter at all. Production: 4,075 of 6,592 observations are eligible-long, so roughly 38% of every IC ever reported came from names that were not purchasable.
