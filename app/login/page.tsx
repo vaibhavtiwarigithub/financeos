@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { OWNER_EMAIL } from "@/lib/auth/owner";
 
 // Google sign-in is disabled for now (no email gate on that path) — flip
 // this back to true to re-enable once it's wired to the same restriction
@@ -49,7 +50,9 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     setSuccess("");
-    if (email !== "vterminater@gmail.com") {
+    // Kept: this endpoint SENDS EMAIL, so it must not be usable to mail an
+    // arbitrary address (or to probe which addresses exist).
+    if (email !== OWNER_EMAIL) {
       setError("Access restricted.");
       setLoading(false);
       return;
@@ -71,7 +74,21 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     setSuccess("");
-    if (email !== "vterminater@gmail.com") {
+    // NOTE: sign-IN deliberately does NOT pre-check the address here.
+    //
+    // It used to `return` before any network call when the email did not match,
+    // which meant a typo or a second address produced NO request, no spinner and
+    // no server response — visually identical to the button doing nothing. The
+    // real gate is server-side and unchanged: middleware.ts signs out any session
+    // whose email is not OWNER_EMAIL and bounces it to /login?error=restricted,
+    // which this page already renders as "This account isn't authorized for this
+    // app."; every /api route calls requireOwner() independently. Letting the
+    // request through means Supabase returns the actual reason ("Invalid login
+    // credentials") instead of silence.
+    //
+    // SIGNUP keeps the check: without it anyone could create an auth.users row
+    // that middleware would then have to sign out on every request.
+    if (mode === "signup" && email !== OWNER_EMAIL) {
       setError("Access restricted.");
       setLoading(false);
       return;

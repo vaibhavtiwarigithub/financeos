@@ -2,8 +2,36 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { OWNER_EMAIL } from "@/lib/auth/owner";
 
+/** Paths that require a signed-in owner to VIEW. */
+function isProtectedPage(pathname: string): boolean {
+  return pathname.startsWith("/dashboard")
+    || pathname.startsWith("/property")
+    || pathname.startsWith("/admin");
+}
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
+
+  // FAST PATH — no session cookie means no session.
+  //
+  // `supabase.auth.getUser()` below is a NETWORK round-trip to the Supabase Auth
+  // server, and it ran on EVERY matched request: every page, every /api/* call,
+  // every pg_cron agent invocation carrying only a CRON_SECRET header. On a cold
+  // start that round-trip can exceed Vercel's middleware budget and 504 the whole
+  // request — observed in production 2026-08-29 as MIDDLEWARE_INVOCATION_TIMEOUT
+  // on the LOGIN page, which by definition has no session to look up.
+  //
+  // A request with no Supabase auth cookie cannot resolve to a user, so the call
+  // can only ever return null. Short-circuiting preserves the exact behaviour of
+  // the code below for that case (unauthenticated -> redirect protected pages to
+  // /login, pass everything else through) while removing the round-trip.
+  const hasAuthCookie = request.cookies.getAll()
+    .some((c) => c.name.startsWith("sb-") && c.name.includes("auth-token"));
+  if (!hasAuthCookie) {
+    return isProtectedPage(request.nextUrl.pathname)
+      ? NextResponse.redirect(new URL("/login", request.url))
+      : NextResponse.next({ request });
+  }
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -38,7 +66,7 @@ export async function middleware(request: NextRequest) {
 
   // Protect both authenticated workspaces. Property has its own shell and
   // data boundary, but it shares the same single-owner authentication gate.
-  if (!user && (request.nextUrl.pathname.startsWith("/dashboard") || request.nextUrl.pathname.startsWith("/property"))) {
+  if (!user && isProtectedPage(request.nextUrl.pathname)) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
