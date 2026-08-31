@@ -402,8 +402,8 @@ async function screenBucket(
   // one already returned by the fundamentals screener (e.g. revenue_growth,
   // pe_ratio) — no extra API call. LIMITATION: this is a fundamentals-only
   // screener, so momentum here is a fundamental momentum proxy (revenue
-  // acceleration), not price/RSI momentum; the per-symbol scorer downstream
-  // still applies true price-based momentum via buildStockPrompt.
+  // acceleration), not price/RSI momentum; true price-based momentum is applied
+  // downstream by the deterministic scorer (lib/data/scores.ts scoreTechnicals).
   sortBy?: { field: string; desc: boolean }
 ): Promise<{ symbols: string[]; failure: FinancialDatasetsFailure | null }> {
   try {
@@ -1049,99 +1049,6 @@ const DOCTRINE_PREAMBLE = `## Reasoning doctrine (non-negotiable)
 
 Scope: long-only US equities/ETFs, 2–20 market-day swing. Never propose options, crypto, shorting, leverage, or intraday.`;
 
-function buildStockPrompt(symbol: string, isHeld: boolean, social: SocialSentiment | null, insider: { score: number; summary: string } | null = null): string {
-  const heldNote = isHeld
-    ? `\nIMPORTANT: This is a CURRENTLY HELD position. If analysis is bearish, set direction to "short" as an exit signal. Do NOT override to neutral.`
-    : `\nNew candidate position. Only output direction "long" or "neutral" — never "short".`;
-
-  const socialBlock = social
-    ? `
-## Pre-fetched social sentiment (already gathered — do NOT call NEWS_SENTIMENT again for this data)
-- StockTwits: ${social.overall_sentiment} · ${social.stocktwits_bullish_pct ?? "n/a"}% bullish, ${social.stocktwits_bearish_pct ?? "n/a"}% bearish (${social.stocktwits_message_count ?? 0} messages)
-- Alpha Vantage news sentiment score: ${social.av_news_sentiment !== null ? social.av_news_sentiment.toFixed(3) : "n/a"} (${social.av_news_articles ?? 0} articles, scale -1 to +1)
-- Combined signal: ${social.overall_sentiment}
-Use this to inform sentiment_score (scale 0–100: Bullish≈70+, Neutral≈50, Bearish≈30-).
-`
-    : "";
-
-  const insiderBlock = insider
-    ? `
-## Pre-fetched insider transactions (past 90 days — do NOT call INSIDER_TRANSACTIONS again)
-- Pre-computed insider_score: ${insider.score}/100
-- Summary: ${insider.summary}
-Use this score directly as insider_score in your output. Do not override it unless you have strong contradictory evidence from another sourced tool call.
-`
-    : "";
-
-  return `${DOCTRINE_PREAMBLE}
-${socialBlock}${insiderBlock}
-You are a professional equity analyst. Research ${symbol} using these tools in order:
-
-1. Call get_financial_metrics_snapshot (FinancialDatasets) for fundamentals: P/E, revenue growth, margins, FCF yield, ROE
-2. Call RSI (Alpha Vantage) with symbol=${symbol}, interval=daily — check if RSI > 60 (momentum) or < 40 (oversold)
-3. Call EMA (Alpha Vantage) with symbol=${symbol}, interval=daily, time_period=50 — compare to current price for trend direction
-4. Call NEWS_SENTIMENT (Alpha Vantage) with tickers=${symbol} — get top 3 headlines (sentiment score already provided above)
-5. ${insider ? `SKIP INSIDER_TRANSACTIONS — already pre-fetched above (insider_score: ${insider.score})` : `Call INSIDER_TRANSACTIONS (Alpha Vantage) with symbol=${symbol} — note recent insider buying or selling`}
-6. Call get_earnings (FinancialDatasets) — last 2 quarters: beat or miss vs estimates?
-
-After gathering data, synthesize all signals. Output ONLY a JSON object (no markdown, no prose):
-
-{"symbol":"${symbol}","fundamental_score":75,"technical_score":70,"sentiment_score":72,"macro_score":65,"insider_score":60,"direction":"long","conviction":70,"summary":"2-3 sentence thesis citing actual numbers","key_risks":["specific risk 1","specific risk 2"],"catalysts":["specific catalyst 1","specific catalyst 2"]}
-
-Scoring guide:
-- fundamental_score: based on P/E vs sector, revenue growth, margins, FCF yield
-- technical_score: based on RSI + price vs 50-day EMA
-- sentiment_score: blend of pre-fetched social sentiment + NEWS_SENTIMENT headlines (scale 0–100)
-- macro_score: sector tailwinds, interest rate sensitivity, geopolitical exposure
-- insider_score: 80+ if net buying, 20- if heavy selling, 50 if neutral
-- conviction: your overall confidence 0-100
-- direction must cite which signals drove it${heldNote}`;
-}
-
-function buildEtfPrompt(symbol: string, isHeld: boolean, social: SocialSentiment | null): string {
-  const sym = symbol.toUpperCase();
-  const isBear = LEVERAGED_BEAR_ETFS.has(sym);
-
-  const directionNote = isBear
-    ? `This is an INVERSE/BEAR ETF. direction="long" means underlying is BEARISH (bear ETF profits). direction="short" means underlying is BULLISH (bear ETF loses — exit signal if held).`
-    : `direction="long" means underlying sector/index is bullish (hold/buy). direction="short" means bearish on underlying.`;
-
-  const heldNote = isHeld
-    ? `This is a CURRENTLY HELD position. If conclusion is bearish for this ETF (accounting for bear/bull direction above), set direction="short" as an exit signal.`
-    : `Not currently held. Use direction "long" or "neutral" only.`;
-
-  const socialBlock = social
-    ? `
-## Pre-fetched social sentiment
-- StockTwits: ${social.overall_sentiment} · ${social.stocktwits_bullish_pct ?? "n/a"}% bullish (${social.stocktwits_message_count ?? 0} messages)
-- News sentiment score: ${social.av_news_sentiment !== null ? social.av_news_sentiment.toFixed(3) : "n/a"} (${social.av_news_articles ?? 0} articles)
-- Combined: ${social.overall_sentiment}
-Use to inform sentiment_score (Bullish≈70+, Neutral≈50, Bearish≈30-).
-`
-    : "";
-
-  return `${DOCTRINE_PREAMBLE}
-${socialBlock}
-Analyze the ETF/fund ${symbol}.
-
-First identify what it tracks:
-SOXL/SOXS=3x semiconductors, TQQQ/SQQQ=3x Nasdaq, SPXL/SPXS=3x S&P500, SMH=VanEck semis, BOTZ=robotics/AI, ICLN=clean energy, NLR=nuclear/uranium, XLK/XLF/XLE/XLI/XLV/XLU/XLRE/XLB/XLC/XLP/XLY=SPDR sectors, GLD=gold, USO=oil, TLT=20yr treasuries
-
-Use these tools:
-1. NEWS_SENTIMENT (Alpha Vantage) — search for relevant sector/theme keywords
-2. RSI (Alpha Vantage) with symbol=${symbol} — technical momentum of the ETF itself
-3. EMA (Alpha Vantage) with symbol=${symbol}, interval=daily, time_period=50 — above or below 50-day MA?
-
-Assess: sector fundamentals, policy/regulatory environment, macro context, relevant earnings from top holdings.
-
-${directionNote}
-
-Output ONLY this JSON (no markdown):
-{"symbol":"${symbol}","fundamental_score":50,"technical_score":65,"sentiment_score":60,"macro_score":55,"insider_score":50,"direction":"long","conviction":60,"summary":"2-3 sentence sector/ETF analysis with specific reasoning","key_risks":["risk1","risk2"],"catalysts":["catalyst1","catalyst2"]}
-
-${heldNote}`;
-}
-
 // Fetch company overview from Alpha Vantage (fundamentals for scoring)
 async function fetchAVOverview(symbol: string, avKey: string, maxAgeDays = 7): Promise<Record<string, string>> {
   if (!avKey) return {};
@@ -1180,83 +1087,6 @@ async function fetchAVCandles(symbol: string, avKey: string): Promise<Candle[]> 
         volume: parseFloat(d["6. volume"]        ?? d["5. volume"] ?? "0"),
       }));
   } catch { return []; }
-}
-
-// Deprecated — kept for buildSynthesisPrompt compatibility (not called by processSymbol)
-async function fetchAVSymbolData(symbol: string, avKey: string): Promise<{
-  rsi: number | null;
-  overview: Record<string, string>;
-}> {
-  const [rsiJson, overviewJson] = await Promise.all([
-    fetch(`https://www.alphavantage.co/query?function=RSI&symbol=${symbol}&interval=daily&time_period=14&series_type=close&apikey=${avKey}`)
-      .then(r => r.json()).catch(() => ({})),
-    fetch(`https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${avKey}`)
-      .then(r => r.json()).catch(() => ({})),
-  ]);
-  const rsiSeries = rsiJson?.["Technical Analysis: RSI"];
-  const rsiLatestVal = rsiSeries ? (Object.values(rsiSeries)[0] as any)?.RSI : null;
-  const rsi = rsiLatestVal != null ? parseFloat(rsiLatestVal) : null;
-  const overview: Record<string, string> = overviewJson?.Symbol ? (overviewJson as Record<string, string>) : {};
-  return { rsi: rsi != null && !isNaN(rsi) ? rsi : null, overview };
-}
-
-function buildSynthesisPrompt(
-  symbol: string,
-  isHeld: boolean,
-  isEtf: boolean,
-  rsi: number | null,
-  overview: Record<string, string>,
-  social: SocialSentiment | null,
-  insider: { score: number; summary: string } | null,
-): string {
-  const heldNote = isHeld
-    ? `IMPORTANT: currently held position. If bearish, set direction "short" as exit signal.`
-    : `New candidate. direction must be "long" or "neutral" only — never "short".`;
-
-  const techBlock = rsi != null
-    ? `RSI-14 (daily): ${rsi.toFixed(1)} — ${rsi > 60 ? "OVERBOUGHT/momentum" : rsi < 40 ? "OVERSOLD/potential reversal" : "neutral range"}`
-    : `RSI-14: not available`;
-
-  const fundBlock = isEtf ? "" : overview?.Symbol ? `
-Fundamentals (Alpha Vantage Overview):
-- P/E: ${overview.PERatio ?? "n/a"} | EPS: ${overview.EPS ?? "n/a"}
-- Market cap: ${overview.MarketCapitalization ?? "n/a"}
-- Revenue growth YoY: ${overview.QuarterlyRevenueGrowthYOY ?? "n/a"}
-- Profit margin: ${overview.ProfitMargin ?? "n/a"} | ROE: ${overview.ReturnOnEquityTTM ?? "n/a"}
-- 52w range: ${overview["52WeekLow"] ?? "n/a"} – ${overview["52WeekHigh"] ?? "n/a"}
-- Sector: ${overview.Sector ?? "n/a"} | Industry: ${overview.Industry ?? "n/a"}
-- Analyst target: ${overview.AnalystTargetPrice ?? "n/a"} | Rating: ${overview.AnalystRatingStrongBuy ?? "?"} strong buy, ${overview.AnalystRatingBuy ?? "?"} buy, ${overview.AnalystRatingHold ?? "?"} hold` : "Fundamentals: not available (rate limit)";
-
-  const socialBlock = social
-    ? `Social: ${social.overall_sentiment} — StockTwits ${social.stocktwits_bullish_pct ?? "n/a"}% bullish/${social.stocktwits_bearish_pct ?? "n/a"}% bearish (${social.stocktwits_message_count ?? 0} msgs). AV news sentiment: ${social.av_news_sentiment?.toFixed(3) ?? "n/a"} (${social.av_news_articles ?? 0} articles).`
-    : "Social sentiment: not available";
-
-  const insiderBlock = insider
-    ? `Insider (90 days): score ${insider.score}/100. ${insider.summary}`
-    : "";
-
-  return `${DOCTRINE_PREAMBLE}
-
-You are a professional equity analyst synthesizing pre-fetched data for ${symbol}. You CANNOT call any tools — all data is provided below. Derive scores ONLY from the provided data; if a score cannot be grounded, default to 50.
-
-## Pre-fetched data for ${symbol}
-Technical:
-${techBlock}
-${fundBlock}
-${socialBlock}
-${insiderBlock}
-
-## Scoring rubric
-- fundamental_score (0-100): based on P/E vs typical sector, revenue growth, margins, ROE. Default 50 if data missing.
-- technical_score (0-100): RSI>60 → 70+, RSI<40 → 30-, RSI 40-60 → 45-55.
-- sentiment_score (0-100): Bullish social/news → 70+, Bearish → 30-, Neutral → 50.
-- macro_score (0-100): sector tailwinds/headwinds; use Sector field and general macro knowledge.
-- insider_score: use provided insider score directly (${insider?.score ?? 50}).
-- conviction: your overall confidence 0-100.
-- direction: "long" if analystScore likely ≥ 60 and bullish signals dominate, "neutral" otherwise. ${heldNote}
-
-Return ONLY valid JSON (no markdown, no prose):
-{"symbol":"${symbol}","fundamental_score":50,"technical_score":50,"sentiment_score":50,"macro_score":50,"insider_score":${insider?.score ?? 50},"direction":"neutral","conviction":50,"summary":"2-3 sentence thesis citing actual provided numbers","key_risks":["risk1","risk2"],"catalysts":["catalyst1","catalyst2"]}`;
 }
 
 // Phase 0: thesis-only LLM prompt. LLM receives pre-computed scores, outputs direction+narrative only.
