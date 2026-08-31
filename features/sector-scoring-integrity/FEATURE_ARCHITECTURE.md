@@ -59,15 +59,44 @@ exists. Removing the term simply deletes its adjustment — which for an expensi
 a conservative de-risking move; it is in fact a large score change in a direction nobody
 measured, and it would have made expensive semiconductors score *better*.
 
-Measured production reach (from the independent review; not independently re-verified here
-because the Supabase MCP connection is down — flagged as a dependency, see Open items):
+Measured production reach. **Re-verified independently 2026-08-31** once the Supabase
+connection returned; figures below are mine, with the review's in brackets where they
+differ. The filter is `features->'fundamental'->>'sector' ILIKE '%semiconduct%'` on US rows.
 
-- 342 semiconductor observations, 15 symbols, 21 dates
-- 209 eligible-long observations
-- **148** observations landed in the harshest tier (-22)
-- **39** received the strongest reward (+18)
+| metric | verified | review |
+|---|---:|---:|
+| semiconductor observations | 594 | 342 |
+| distinct symbols | 16 | 15 |
+| distinct dates | 41 | 21 |
+| eligible-long observations | 205 | 209 |
+| harshest tier (ratio >= 2.0, **-22**) | **150** | 148 |
+| strongest reward (ratio < 0.7, **+18**) | 26 | 39 |
 
-So a blanket removal would have lifted 148 observations by 22 points each.
+The base counts differ (the review ran two days earlier against a smaller table, and may
+have scoped to rows where P/E was applied), but the two load-bearing numbers agree closely:
+**~150 observations sit in the -22 tier** and ~205 are eligible-long. The conclusion is
+unchanged and confirmed: a blanket removal would have lifted roughly 150 observations by
+22 points each.
+
+Full tier distribution (US, semiconductors):
+
+| tier | ratio | adjustment | rows |
+|---|---|---:|---:|
+| harshest | >= 2.0 | -22 | 150 |
+| | 1.4-2.0 | -12 | 47 |
+| | 1.0-1.4 | -3 | 35 |
+| | 0.7-1.0 | +8 | 35 |
+| best | < 0.7 | +18 | 26 |
+| **not applied** | — | 0 | **301** |
+
+**New finding not in the review:** 301 of 594 semiconductor observations (51%) got NO P/E
+adjustment at all — `pe_scoring_status <> 'applied'`, i.e. non-positive or beyond
+`MAX_SCORABLE_PE = 200`. Half the sector already receives no P/E signal, which weakens the
+case that the term is doing meaningful work here and should be measured before any change.
+
+Worked example (AMD, most recent row): `pe_ratio` 123.28 against
+`pe_sector_norm` 30 via `pe_sector_mapping_status: "crosswalk"` gives
+`pe_vs_sector_ratio` 4.11 -> the -22 tier.
 
 **Also withdrawn: the blanket `CYCLICAL_SECTORS` set.** Revision 1 proposed covering
 energy, materials, autos and shipping. None of those were measured. Energy in particular is
@@ -107,9 +136,33 @@ cross-sectional rank information. That is wrong, and the reason is the availabil
 
 `computeWeightedAnalystScore` renormalises weights **per row** across whichever dimensions
 are available for that row. Rows differ in which dimensions are missing, so the *effective*
-macro weight differs between symbols on the same date — observed between **15% and 37.5%**,
-varying within 45 of the 48 dates inspected. A constant value multiplied by a varying weight
-is not a constant contribution, so macro **can and does** move cross-sectional rank.
+macro weight differs between symbols on the same date. A constant value multiplied by a
+varying weight is not a constant contribution, so macro **can and does** move
+cross-sectional rank.
+
+**Re-verified independently 2026-08-31**, and the effect is WIDER than the review reported:
+
+| check | verified | review |
+|---|---|---|
+| dates where macro VALUE is constant | **49 of 49** | 48 of 48 |
+| dates where macro WEIGHT varies | **46 of 49** | 45 of 48 |
+| effective weight range | **0.0% - 42.86%** | 15% - 37.5% |
+
+The review's 15%-37.5% understated it. Actual production distribution of the macro weight:
+
+| weight | rows | share |
+|---:|---:|---:|
+| 0.150 | 2,153 | 40.4% |
+| 0.1667 | 1,500 | 28.1% |
+| 0.250 | 1,379 | 25.9% |
+| 0.000 | 99 | 1.9% |
+| 0.375 | 66 | 1.2% |
+| 0.4286 | 33 | 0.6% |
+
+This confirms the review's correction on the live baseline too: the modal US macro weight is
+**15%**, not the 10% revision 1 quoted from `archetypes.ts`. Note the 99 rows at weight
+**zero** — macro unavailable and excluded — sitting alongside rows at 42.86% on the same
+dates. That spread is precisely the mechanism revision 1 missed.
 
 Preliminary exclusion counterfactual over 5,143 rows (independent review):
 
@@ -195,8 +248,13 @@ forward-shadow gates.
 
 ## Open items
 
-- The production figures in F1 and F2 come from the independent review and have **not**
-  been re-verified here: the Supabase MCP connection is currently failing
-  (`CONNECT_TIMEOUT`). Re-verify before acting on them.
+- ~~Production figures unverified pending Supabase~~ **RESOLVED 2026-08-31.** F1 and F2
+  figures re-verified independently against production; both conclusions hold. Base counts
+  differ from the review's in F1 (594 vs 342 observations) and the F2 weight range is wider
+  than reported (0-42.86% vs 15-37.5%). Neither difference changes a recommendation.
+- The F2 exclusion counterfactual (5,143 rows; mean absolute change 4.83 points, 146 down /
+  32 up threshold crossings) is still the review's and has NOT been reproduced here. It is
+  the single most decision-relevant number in this document and should be reproduced before
+  F2-i is approved.
 - Confirm `buildSynthesisPrompt` is genuinely unreachable before deleting it.
 - A normalised-earnings arm for cyclicals is recorded as future work, not proposed.
