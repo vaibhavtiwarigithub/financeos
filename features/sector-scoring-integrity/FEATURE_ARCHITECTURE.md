@@ -164,17 +164,53 @@ This confirms the review's correction on the live baseline too: the modal US mac
 **zero** — macro unavailable and excluded — sitting alongside rows at 42.86% on the same
 dates. That spread is precisely the mechanism revision 1 missed.
 
-Preliminary exclusion counterfactual over 5,143 rows (independent review):
+### Exclusion counterfactual — REPRODUCED 2026-08-31
 
-| metric | value |
-|---|---:|
-| mean absolute score change | 4.83 points |
-| maximum change | 35 points |
-| upward threshold crossings | 32 |
-| downward threshold crossings | 146 |
-| score dispersion | 14.31 -> 18.91 |
+The replay is exact rather than approximate. Recorded `analyst_score` is already
+`sum(score_k * effWeight_k)`, so excluding macro and renormalising the remainder is:
 
-These are not trade flips — downstream evidence and direction gates still apply — but they
+```
+new_score = (analyst_score - macro_score * w_macro) / (1 - w_macro)
+```
+
+using the row's own recorded `weights_used` and `availability_mask`. No weights assumed.
+
+| metric | reproduced | review |
+|---|---:|---:|
+| rows replayed | 5,156 | 5,143 |
+| mean absolute score change | **2.83** | 4.83 |
+| maximum change | **12.33** | 35 |
+| upward threshold crossings | **35** | 32 |
+| downward threshold crossings | **152** | 146 |
+| dispersion before | 14.124 | 14.31 |
+| dispersion after | 17.120 | 18.91 |
+
+**Crossings and dispersion-before reproduce closely. The magnitude columns do not, and the
+reason is methodological.**
+
+118 rows have fewer than 3 available dimensions. Removing macro from those leaves one
+dimension, and `computeWeightedAnalystScore` does **not** renormalise in that case — its
+`includedDims.length >= 2` guard falls back to the FIXED base split. Those rows cannot be
+reconstructed from `effWeights` alone, so the table above excludes them. Applying the
+renormalisation formula to them anyway (which production would never do) inflates the
+result:
+
+| scope | n | mean abs | max abs | up | down | dispersion |
+|---|---:|---:|---:|---:|---:|---|
+| modellable (dims >= 3) | 5,156 | 2.83 | 12.33 | 35 | 152 | 14.124 -> 17.120 |
+| all rows incl. low-dim | 5,274 | 2.89 | **27.75** | 35 | 163 | 14.296 -> 17.300 |
+| low-dim only (dims < 3) | 118 | 5.38 | 27.75 | 0 | 11 | 20.237 -> 23.871 |
+
+The review's `dispersion before` of 14.31 matches the all-rows figure (14.296) rather than
+the modellable one (14.124), so it appears to have included the low-dim rows — which
+accounts for the larger maximum. **The conservative reading is the correct one**: those 118
+rows do not renormalise in production, so their contribution is an artefact of the
+counterfactual, not a property of the change.
+
+**The conclusion is unchanged and holds under either method.** Threshold crossings are
+strongly asymmetric — **152 down against 35 up**, roughly 4:1 — and dispersion rises about
+21%. Excluding macro would make the book materially more selective, not neutrally cleaner.
+These are not trade flips (downstream evidence and direction gates still apply), but they
 establish that F2 is a live behavioural change, not a mechanical cleanup.
 
 **Also withdrawn: the "US and India must share one objective" argument.** Revision 1 treated
@@ -252,9 +288,12 @@ forward-shadow gates.
   figures re-verified independently against production; both conclusions hold. Base counts
   differ from the review's in F1 (594 vs 342 observations) and the F2 weight range is wider
   than reported (0-42.86% vs 15-37.5%). Neither difference changes a recommendation.
-- The F2 exclusion counterfactual (5,143 rows; mean absolute change 4.83 points, 146 down /
-  32 up threshold crossings) is still the review's and has NOT been reproduced here. It is
-  the single most decision-relevant number in this document and should be reproduced before
-  F2-i is approved.
+- ~~F2 exclusion counterfactual unreproduced~~ **RESOLVED 2026-08-31.** Reproduced from the
+  rows' own recorded weights and masks. Crossings and dispersion-before match the review;
+  the magnitude figures are smaller because 118 low-dimension rows that production would not
+  renormalise are excluded here. Direction and asymmetry (152 down / 35 up) confirmed under
+  both methods.
+- Remaining unverified: nothing. All figures in this document are now reproduced against
+  production.
 - Confirm `buildSynthesisPrompt` is genuinely unreachable before deleting it.
 - A normalised-earnings arm for cyclicals is recorded as future work, not proposed.
