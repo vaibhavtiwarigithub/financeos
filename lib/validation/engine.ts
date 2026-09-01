@@ -156,7 +156,7 @@ export async function validateChallenger(supabase: any, opts: {
     return result;
   }
 
-  const folds = walkForwardFolds(rows, { folds: 5, testDays: 30, horizonDays });
+  const folds = walkForwardFolds(rows, { folds: 5, testSessions: 30, horizonSessions: horizonDays });
   if (folds.length === 0) {
     const result: ValidationResult = { passed: false, failReason: "no_valid_folds", challengerScore: 0, championScore: 0, pImprovement: 0, nEffective: nObservations / horizonDays };
     result.experimentId = await recordExperiment(result, { folds: [] });

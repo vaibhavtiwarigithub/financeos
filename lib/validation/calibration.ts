@@ -195,7 +195,7 @@ export async function fitCalibration(supabase: any, market: "us" | "india", hori
   // partition and predict ONLY that fold's TEST partition. Previously the
   // full-data `coefficients` predicted every fold — leakage, because the test
   // rows had influenced the coefficients and the standardization.
-  const folds = walkForwardFolds(rows, { folds: 5, testDays: 30, horizonDays });
+  const folds = walkForwardFolds(rows, { folds: 5, testSessions: 30, horizonSessions: horizonDays });
   const predictions: { predicted: number; realized: number }[] = [];
   for (const fold of folds) {
     if (fold.train.length < 30) continue; // too few to fit a trustworthy fold model

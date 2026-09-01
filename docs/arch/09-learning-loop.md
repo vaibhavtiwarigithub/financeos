@@ -1,4 +1,12 @@
 # Kairos — Learning Loop
+> 2026-09-01: **`walkForwardFolds` purged in CALENDAR days while claiming market-horizon purge — labels leaked.** `lib/learning/dataset.ts` computed `purgeCutoffMs = testStart - horizonDays * 86400_000`. The horizon is a MARKET-session count (h2/h5/h10/h20/h60/h120), so a nominal 10-day purge spanned only ~6-7 trading sessions and training rows whose label windows still reached into the test window survived it. Every walk-forward result computed with it was optimistically biased.
+>
+> Now indexed by SESSION, using the observed trading calendar derived from the distinct decision dates in the data — holidays handled without a separate calendar source. Legacy `testDays`/`horizonDays`/`embargoDays` option names are kept as aliases because they always MEANT sessions; only the arithmetic was wrong. Callers updated to the explicit `*Sessions` names.
+>
+> **The old test could not have caught it:** its fixture emitted one row per consecutive CALENDAR day, weekends included, so sessions and calendar days were identical by construction — the fixture encoded the same assumption as the bug. New tests use a weekday-only calendar plus a simulated holiday gap; restoring the calendar-day arithmetic fails 4 of them.
+>
+> **Blast radius: none recorded.** `validation_experiments` and `strategy_evaluations` are both empty, and the 5 `backtest_experiments` rows come from `lib/edges/oos-runner`, which does not call this function. No stored result needs annotating.
+>
 > 2026-08-28/29: **Silent PostgREST truncation swept, and archetype arms now refuse instead of vanishing.** Commits `3aa3753f`, `ae17fad2`.
 >
 > `.limit(n)` above PostgREST's server maximum is IGNORED, not an error — the response is capped at 1,000 rows and returns success. Four call sites were actively truncating:

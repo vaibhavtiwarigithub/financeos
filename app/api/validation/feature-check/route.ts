@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const folds = walkForwardFolds(rows as any, { folds: 3, testDays: 30, horizonDays: spec.horizon ?? 10 });
+    const folds = walkForwardFolds(rows as any, { folds: 3, testSessions: 30, horizonSessions: spec.horizon ?? 10 });
     const foldICs: ICResult[] = [];
     for (const fold of folds) {
       const pairs = fold.test
