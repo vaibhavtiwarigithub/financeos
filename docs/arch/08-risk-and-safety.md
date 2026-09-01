@@ -1,4 +1,17 @@
 # Kairos — Risk & Safety
+> 2026-09-01: **Exit-geometry counterfactual run on all four cohorts. The intuitive fix is refuted; the defect is the STOP, not the target.** Evidence frozen in `docs/audits/2026-09-01-exit-geometry-diagnosis.md`. Nothing changed — the route writes nothing.
+>
+> The configured +19.2% target fires **zero times across 965 India observations** and 28 times in 900 US h10 observations. Timeouts run 76-97%. The time stop is not competing with the target; it IS the exit policy, which reproduces the live ledger (132 of 179 closed lots, 73.7%, exit on the clock).
+>
+> **Tightening the target lowers mean return in every cohort.** US h10: baseline 0.616% -> 0.398% at a 4% target, while win rate RISES 52.0% -> 61.4%. More frequent small wins, worse expectancy. The widest target ranks first and the tightest last in all four cohorts, so "make the target reachable" is measured and wrong.
+>
+> **What beats baseline is a volatility-scaled stop.** `stop 2.8ATR / target 7.3ATR` ranks first in 3 of 4 cohorts, and on US h10 its whole advantage is stop-outs 131 vs 185 (-29%) with timeouts UNCHANGED (706 vs 683). It barely exits on target either.
+>
+> Margins are thin outside US h10 (+0.295pp): India h10 +0.073pp, India h5 +0.051pp, and the candidate **loses** US h5 by 0.041pp. With 14 configs x 4 cohorts this is a ranking from a search, not a significance test — no CIs, no t-stats, overlapping windows.
+>
+> Proposed follow-up, awaiting approval: `features/atr-exit-stop/FEATURE_ARCHITECTURE.md` — a single-arm shadow testing one predeclared hypothesis (ATR stop reduces premature stop-outs), Sidak-adjusted for the 14-arm search it came from, with the time stop and target held fixed. Expected verdict for months: `insufficient_evidence` (26 dates at h10 = 2.6 effective observations against a floor of 12).
+>
+
 > 2026-08-28 (same day): **CORRECTION to the India sizing diagnosis — survivorship materially weakens it.** I published the quartile gradient from CLOSED lots only while listing survivorship as an untested confounder, then tested it. Including the 14 open India positions marked to current price, **8 of them fall in the LARGEST quartile** and are outperforming the closed lots. Q4 mean return moves from -0.55% to **+0.07%**, and the win-rate gradient shallows from 60->38% to **57->43%**.
 >
 > **No longer supported:** that the largest positions lose money. **Still supported:** size is uncorrelated with conviction (corr with analyst_score -0.128, with cash-at-entry +0.344, 57x notional spread) — measured at ENTRY, so unaffected by survivorship — and win rate still declines with size. The honest claim is that allocation WASTES the edge rather than reversing it.
