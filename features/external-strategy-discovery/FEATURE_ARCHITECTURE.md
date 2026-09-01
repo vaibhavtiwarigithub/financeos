@@ -278,6 +278,82 @@ observations.
 
 ---
 
+## 8b. Per-symbol strategy SWITCHING over time — test the premise first
+
+The owner's follow-up: *"each symbol can move around from one strategy to
+another... symbols behave differently and follow a strategy certain times. Can we
+monitor that and switch strategy to trade based on this?"*
+
+### The intuition is real
+
+A name genuinely can trend for months, then chop for months. Momentum and
+mean-reversion regimes are a documented feature of equity returns, and a symbol's
+character does change with its business, its volatility and its ownership.
+
+### Why this is nonetheless the most dangerous request in this document
+
+1. **It is the largest search space here by far.** Section 8's per-symbol slice is
+   already ~20,000 arms. Adding "and it changes over time" multiplies that by the
+   number of candidate switch points. Every additional degree of freedom makes a
+   flattering history easier to find and a real effect harder to distinguish.
+2. **Retrospective switch detection is trivially easy and almost always noise.**
+   Given any price series and any two strategies, one can always find the split
+   dates that make the combination look excellent. That procedure has no
+   out-of-sample content.
+3. **It runs into a locked project decision.** `CLAUDE.md` states: *"Push back if
+   user asks for explicit 'bull/bear mode' switching. The scoring naturally
+   adapts — explicit regime detection is fragile and adds moving parts,"* and
+   lists "explicit market regime detection logic" under the push-back mandate.
+   Per-symbol switching is that same machinery at finer granularity, so it is
+   more fragile, not less.
+
+### The premise is cheap to falsify — do that before building anything
+
+A switcher can only work if **strategy affinity persists**. If the strategy that
+suited a symbol last quarter tells you nothing about which suits it next quarter,
+no switching rule can work, however well engineered.
+
+That is directly measurable, and it costs one replay rather than a subsystem:
+
+1. For each symbol with sufficient history, rank the six trial-family strategies
+   by performance in period *t*.
+2. Rank them again in period *t+1*, out of sample.
+3. Compute the **rank correlation of strategy affinity between consecutive
+   periods**, pooled across symbols, date-clustered.
+4. Compare against a **label-permuted null** — shuffle the period-*t+1* rankings
+   across symbols and re-measure. The Alpha Lab already has this placebo
+   machinery (`alpha-diagnostics-counterfactual.ts`, seeded permutation with a
+   `(b+1)/(m+1)` estimator).
+
+**Decision rule, predeclared:**
+
+- **Persistence indistinguishable from the permuted null → stop.** Do not build a
+  switcher. Report the finding and close the question. This is the likely outcome
+  and it is a genuinely valuable answer, because it retires a plausible idea
+  cheaply.
+- **Persistence materially above the null → proceed**, but only to a *static*
+  per-class assignment first (section 8's shrinkage approach), and only then to a
+  switcher with predeclared, economically-motivated switch triggers — realised
+  volatility regime, trend/chop classification — never dates chosen by looking at
+  the outcome.
+
+### If it ever does get built
+
+- Switch triggers frozen before replay, expressed as observable state, never as
+  dates.
+- A minimum dwell time per assignment, so the system cannot thrash.
+- Switching counted in the trial family: *k* strategies × *r* regimes is *k×r*
+  arms, not *k*.
+- Compared against the honest baselines — best single static strategy for that
+  symbol, and the champion — not against the worst constituent.
+- Transaction costs of switching charged in full; a switcher that changes stance
+  often can lose to a static rule purely on turnover.
+
+**Recommendation: run the persistence test in stage 3, decide from its result,
+and build nothing before it reports.**
+
+---
+
 ## 9. Promotion policy
 
 A candidate advances only when **all** hold:
