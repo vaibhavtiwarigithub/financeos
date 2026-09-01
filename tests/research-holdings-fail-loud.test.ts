@@ -91,3 +91,53 @@ describe("fetchHoldings fails loud (never silently empty)", () => {
     expect(reportIssue).not.toHaveBeenCalled();
   });
 });
+
+describe("fetchHoldings clears its own critical on success", () => {
+  beforeEach(() => { reportIssue.mockClear(); resolveIssue.mockClear(); });
+
+  // THE DEFECT THIS PINS (found 2026-09-01). fetchHoldings raised a CRITICAL on
+  // failure and never resolved it on success, so one transient error left the
+  // alert open forever. Observed in production: a `JWT issued at future`
+  // clock-skew error on 2026-08-26 kept a critical open for six days while
+  // research ran normally throughout — 843 US observations were recorded in
+  // that window. A critical that cannot self-clear makes every other alert
+  // untrustworthy, because a reader cannot tell live from stale.
+  //
+  // The India Kite path already resolved its own alert; this one did not, and
+  // that asymmetry was the whole bug.
+  it("resolves research-holdings-fetch:us when the reads succeed", async () => {
+    const svc = supabaseStub({
+      live_account_snapshots: async () => ({ data: [], error: null }),
+      paper_positions: async () => ({ data: [{ symbol: "AAPL", qty: 10 }], error: null }),
+    });
+
+    const symbols = await fetchHoldings(svc);
+
+    expect(symbols).toContain("AAPL");
+    expect(reportIssue).not.toHaveBeenCalled();
+    expect(resolveIssue).toHaveBeenCalledWith("research-holdings-fetch:us", svc);
+  });
+
+  it("does NOT resolve when the read fails", async () => {
+    const svc = supabaseStub({
+      live_account_snapshots: async () => ({ data: null, error: { message: "JWT issued at future" } }),
+      paper_positions: async () => ({ data: [], error: null }),
+    });
+
+    await expect(fetchHoldings(svc)).rejects.toThrow(/JWT issued at future/);
+    expect(reportIssue).toHaveBeenCalled();
+    expect(resolveIssue).not.toHaveBeenCalledWith("research-holdings-fetch:us", svc);
+  });
+
+  it("resolves even when the owner holds nothing — empty is a valid answer", async () => {
+    // An empty book is not a failure. If this did not resolve, a book that went
+    // flat would keep a stale critical open indefinitely.
+    const svc = supabaseStub({
+      live_account_snapshots: async () => ({ data: [], error: null }),
+      paper_positions: async () => ({ data: [], error: null }),
+    });
+
+    await expect(fetchHoldings(svc)).resolves.toEqual([]);
+    expect(resolveIssue).toHaveBeenCalledWith("research-holdings-fetch:us", svc);
+  });
+});

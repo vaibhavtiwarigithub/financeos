@@ -302,10 +302,22 @@ export async function fetchHoldings(supabase: any): Promise<string[]> {
     // `.data ?? []` here was itself a silent path to "no holdings".
     if (live.error) throw new Error(`live_account_snapshots read failed: ${live.error.message ?? live.error}`);
     if (paper.error) throw new Error(`paper_positions (us) read failed: ${paper.error.message ?? paper.error}`);
-    return unionHoldingSymbols(
+    const symbols = unionHoldingSymbols(
       symbolsFromLatestLiveSnapshots(live.data ?? []),
       symbolsFromPaperPositions(paper.data ?? [], "us"),
     );
+    // CLEAR THE ALERT ON SUCCESS. Without this the critical raised below is
+    // permanent: a single transient failure leaves it open forever while the
+    // pipeline recovers on the next run, and a critical that cannot self-clear
+    // makes the whole alert surface untrustworthy.
+    //
+    // Observed 2026-09-01: a `JWT issued at future` clock-skew error on
+    // 2026-08-26 left this critical open for six days while research kept
+    // running normally — 843 US observations were recorded in that window. The
+    // India Kite path already resolves its own alert (see below); this one did
+    // not, which is the entire difference.
+    await resolveIssue("research-holdings-fetch:us", supabase).catch(() => {});
+    return symbols;
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     await reportIssue({
