@@ -243,25 +243,40 @@ async function run(req: NextRequest, persist: boolean) {
   };
 
   if (persist) {
-    const { error } = await svc.from("backtest_experiments").insert({
-      hypothesis: `Seam proof: ${real.label} vs negative controls`,
-      author: "strategy-replay-route",
-      variant_budget: specs.length,
-      variants_run: specs.length,
-      experiment_type: "historical_replay",
-      market: "us",
-      started_at: new Date().toISOString(),
-      completed_at: new Date().toISOString(),
-      result_summary: payload,
-      trial_family_id: TRIAL_FAMILY,
-      trials_considered: trialsConsidered,
-      code_version: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
-      data_cutoff: new Date().toISOString().slice(0, 10),
-      plan_fingerprint: fingerprint(specs.map(specFingerprint)),
-      dataset_fingerprint: fingerprint(barCount),
-      run_fingerprint: fingerprint(payload.results),
-    });
-    if (error) return NextResponse.json({ error: `seal failed: ${error.message}` }, { status: 500 });
+    // SEALING IS REFUSED, DELIBERATELY.
+    //
+    // `backtest_experiments` enforces a full manifest for experiment_type
+    // 'historical_replay' (backtest_experiments_historical_replay_manifest_required),
+    // and one of its requirements is:
+    //
+    //     validation_mode = 'purged_temporal_oos'
+    //
+    // This seam performs a FULL-SAMPLE replay with no out-of-sample split, no
+    // purge and no embargo. Writing 'purged_temporal_oos' would be a false
+    // claim about how the number was produced, and the whole point of a sealed
+    // ledger is that its provenance fields are true.
+    //
+    // The contract also requires edge_id, formula_version, universe_policy_version,
+    // a validation_spec at schemaVersion 'kairos.historical-replay.v1' with
+    // evidenceClass 'diagnostic', and variants_proposed = trials_considered <=
+    // variant_budget. Note that `trials_considered` there means variants in THIS
+    // experiment, which is NOT the same quantity as the trial family's running
+    // total in `trial_family_ledger` -- the multiple-testing denominator. Those
+    // two must not be conflated when sealing is eventually implemented.
+    //
+    // Step 7 of features/external-strategy-discovery is where walk-forward OOS
+    // arrives. Until then this route is a dry-run instrument and says so rather
+    // than forcing a full-sample result into a slot reserved for purged ones.
+    return NextResponse.json({
+      ok: false,
+      persisted: false,
+      refusal: "sealing_requires_purged_oos",
+      detail:
+        "backtest_experiments requires validation_mode='purged_temporal_oos' for historical_replay. " +
+        "This seam runs a full-sample replay with no OOS split, so sealing it would misstate its provenance. " +
+        "Walk-forward OOS is step 7; until then use GET for the dry run.",
+      ...payload,
+    }, { status: 409 });
   }
 
   return NextResponse.json({ ok: true, persisted: persist, ...payload });

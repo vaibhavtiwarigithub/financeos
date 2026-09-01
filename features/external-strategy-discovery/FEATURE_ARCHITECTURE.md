@@ -484,6 +484,63 @@ or the current shadow migration.
 
 Approval sought for **steps 1-3 only.**
 
+## 11b. Stage 0R steps 1-3: what shipped, and what the seam found
+
+Completed 2026-09-01. Every defect below was invisible to unit tests and was
+found only by running on 1,280 real VOO bars — which is the entire argument for
+step 3 existing before any strategy is judged.
+
+| # | defect | fix |
+|---|---|---|
+| 1 | exits carried no `quantity`; `portfolio-simulator.ts:136` rejects those as `invalid_exit`. **1 fill, 96 rejections** | compiler tracks entry quantity and carries it |
+| 2 | `seamVerdict` returned `pass: true` on that run — it inspected only the controls, never the rejection rate | fails above a 10% rejection rate |
+| 3 | `cashAllocation` pinned to INITIAL cash while real cash drifted; at 100% allocation one losing round trip made every later entry unaffordable. **93 of 97 rejected** | compiler tracks its own cash as the simulator does |
+| 4 | `alwaysInControl` used `positionSizePct: 0.1` regardless of universe size, so on one symbol it ran at **8.7% utilisation** and showed -81.58pp against the benchmark it exists to track | sized `1 / universe.length` |
+
+Defect 4 was surfaced by the gate added for defect 2 — the tightened verdict
+immediately failed a run the lenient one had passed.
+
+Final verified run: `pass: true`, **zero rejections** across all three specs
+(97/97 and 233/233 fills). Controls behave: never-trades returns exactly 0.00%
+with 0.00% drawdown; always-in reaches 91% utilisation and lands -18.39pp against
+the index it holds, which is the drag of exiting every 10 sessions and re-entering
+next open.
+
+The rule itself: 200-session VOO trend returns **+46.73% against buy-and-hold's
++87.26%** over ~5 years — it underperforms by 40pp while cutting drawdown from
+25.50% to 13.27%. Believable for a trend filter in a rising market. It is a
+full-sample replay with no costs, no walk-forward and no multiple-testing
+adjustment, so under the promotion policy it cannot advance past `replay only`.
+
+### Sealing is REFUSED, and that is the schema working
+
+`backtest_experiments` already enforces a full manifest for `historical_replay`
+(`backtest_experiments_historical_replay_manifest_required`), including
+**`validation_mode = 'purged_temporal_oos'`**. This seam runs a full-sample
+replay with no OOS split, so writing that value would misstate how the number
+was produced. `POST` therefore returns `409 sealing_requires_purged_oos` rather
+than forcing a full-sample result into a slot reserved for purged ones.
+
+Two things this exposed for later:
+
+- The contract also requires `edge_id`, `formula_version`,
+  `universe_policy_version`, and a `validation_spec` at schemaVersion
+  `kairos.historical-replay.v1`. Sealing is a real piece of work, not a field map.
+- `backtest_experiments.trials_considered` means *variants in this experiment*
+  and is capped at `variant_budget` (max 20). That is **not** the same quantity as
+  the trial family's running total in `trial_family_ledger`, which is the
+  multiple-testing denominator and grows without bound. The two must not be
+  conflated when sealing is implemented.
+
+### The trial ledger earned its place immediately
+
+Changing `alwaysInControl` from `positionSizePct 0.1` to `1 / universe.length`
+produced a NEW fingerprint and registered as **trial 4**, alongside the original
+at trial 3. A fix to a control is itself a new specification. Without the ledger
+that change would have been invisible and the denominator would have stayed at 3.
+
+---
+
 ## 12. Honest assessment
 
 **Recommendation: go, at Stage 0R.** The concept is worth pursuing; the
