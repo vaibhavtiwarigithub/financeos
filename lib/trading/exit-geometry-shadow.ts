@@ -35,41 +35,63 @@ export interface LabelPoint {
 }
 
 /**
- * Candidate geometry, in EITHER ATR multiples or fixed percentages.
+ * Candidate geometry. Each SIDE (stop, target) is expressed in either ATR
+ * multiples or a fixed percentage, and the two sides are independent.
  *
  * Both modes exist for a measured reason. ATR multiples are the better contract
- * — they are comparable across markets and adapt to each name's volatility — but
- * `entry_atr_pct` coverage collapses with horizon (US 10-day: 3 of 74 labels,
- * 4.1%), because 10-day labels mature from the OLDEST decisions, which predate
- * the column being populated. Evaluating ATR-only left the US arm with n=1.
+ * — comparable across markets, adapting to each name's volatility — while fixed
+ * percentages are what the system ACTUALLY runs today (-7.5% stop, +19.2%
+ * target), so a percentage arm tests the live configuration directly rather than
+ * an ATR approximation of it.
  *
- * Fixed percentages are also what the system ACTUALLY runs today (-7.5% stop,
- * +19.2% target), so a percentage grid tests the live configuration directly
- * rather than an ATR approximation of it. Coverage will shift toward ATR as
- * newer decisions mature.
+ * COVERAGE NOTE, corrected 2026-09-01. This comment previously stated that
+ * `entry_atr_pct` coverage "collapses with horizon (US 10-day: 3 of 74 labels,
+ * 4.1%)". That was true when written and is now stale — the column has since
+ * been backfilled. Measured 2026-09-01 on entry-eligible labelled rows:
+ *
+ *   us h10    847/900   94.1%        india h10   414/424   97.6%
+ *   us h5    1272/1333  95.4%        india h5    531/541   98.2%
+ *
+ * ATR geometries are therefore evaluable across the whole cohort now, not a
+ * sliver of it. Leaving the old figure in place would misrepresent an arm as
+ * unmeasurable when it is not.
+ *
+ * MIXED SIDES are permitted and are the point of `features/atr-exit-stop`: an
+ * ATR stop against the LIVE fixed target isolates the stop as the only varying term.
+ * Exactly one of `stopPct`/`stopAtr` and one of `targetPct`/`targetAtr` must be
+ * set; anything else resolves to null and classifies as ambiguous.
  */
-export type Geometry =
-  | { stopAtr: number; targetAtr: number; stopPct?: undefined; targetPct?: undefined }
-  | { stopPct: number; targetPct: number; stopAtr?: undefined; targetAtr?: undefined };
+export interface Geometry {
+  stopPct?: number;
+  targetPct?: number;
+  stopAtr?: number;
+  targetAtr?: number;
+}
 
 /** Resolve a geometry to concrete stop/target fractions for one decision. */
 export function resolveLevels(point: LabelPoint, geometry: Geometry): { stopPct: number; targetPct: number } | null {
-  if (geometry.stopPct != null && geometry.targetPct != null) {
-    return { stopPct: geometry.stopPct, targetPct: geometry.targetPct };
-  }
-  if (geometry.stopAtr != null && geometry.targetAtr != null) {
-    // ATR mode needs a per-decision ATR. Without one the geometry is undefined
-    // for this decision — it must not silently fall back to a percentage.
-    if (!(point.atrPct > 0)) return null;
-    return { stopPct: geometry.stopAtr * point.atrPct, targetPct: geometry.targetAtr * point.atrPct };
-  }
-  return null;
+  // Each side resolves independently, so an ATR stop can be paired with a fixed
+  // target. A side given BOTH units is ambiguous configuration, not a fallback.
+  const side = (pct: number | undefined, atr: number | undefined): number | null => {
+    if (pct != null && atr != null) return null;
+    if (pct != null) return pct;
+    if (atr != null) {
+      // ATR mode needs a per-decision ATR. Without one the geometry is undefined
+      // for this decision — it must not silently fall back to a percentage.
+      return point.atrPct > 0 ? atr * point.atrPct : null;
+    }
+    return null;
+  };
+  const stopPct = side(geometry.stopPct, geometry.stopAtr);
+  const targetPct = side(geometry.targetPct, geometry.targetAtr);
+  if (stopPct == null || targetPct == null) return null;
+  return { stopPct, targetPct };
 }
 
 export function geometryLabel(geometry: Geometry): string {
-  return geometry.stopPct != null
-    ? `stop ${(geometry.stopPct * 100).toFixed(1)}% / target ${(geometry.targetPct! * 100).toFixed(1)}%`
-    : `stop ${geometry.stopAtr}ATR / target ${geometry.targetAtr}ATR`;
+  const side = (pct: number | undefined, atr: number | undefined): string =>
+    pct != null ? `${(pct * 100).toFixed(1)}%` : atr != null ? `${atr}ATR` : "undefined";
+  return `stop ${side(geometry.stopPct, geometry.stopAtr)} / target ${side(geometry.targetPct, geometry.targetAtr)}`;
 }
 
 export type ShadowOutcome = "target" | "stop" | "timeout" | "ambiguous";

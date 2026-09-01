@@ -1,4 +1,6 @@
 # Kairos — Crons & Scheduling
+> 2026-09-01: **`exit-stop-shadow` added** — jobs 129 (US, Sun 04:20 UTC) and 130 (India, Sun 04:30 UTC), both `POST /api/agents/exit-stop-shadow?market=<m>&horizon=10`. Measure-only; writes `exit_stop_shadow_runs` and nothing else. India runs separately because it recorded zero target hits across 965 observations and is a different exit regime.
+>
 > 2026-08-28: **Alpha Diagnostic Lab scheduled (read-only).** `kairos-alpha-diagnostics-us` (127) `10 4 * * 0` and `kairos-alpha-diagnostics-india` (128) `20 4 * * 0`. Weekly, after label-maturation and dimension-diagnostics settle — the input only changes as labels mature, so a daily cadence would re-run an identical plan and be refused by the `plan_fingerprint` unique index (the endpoint returns the existing run with `reused: true` rather than failing a cron that fires twice). Writes one `backtest_experiments` row per run and nothing else.
 >
 > 2026-08-25: **Archetype IC evaluator scheduled (measure-only).** `kairos-archetype-ic-us` (125) `40 3 * * 0` and `kairos-archetype-ic-india` (126) `50 3 * * 0`. Weekly rather than daily because the input only changes as `observation_labels` mature. Writes `archetype_ic_runs`; nothing in the money path reads it.

@@ -377,6 +377,30 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: null,
   },
   {
+    name: "exit-stop-shadow-us",
+    agent: "exit-stop-shadow",
+    time: "Sun 4:20 AM UTC",
+    days: "Weekly",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "US leg of the ATR exit-stop shadow. Tests ONE predeclared hypothesis: a 2.8 ATR stop reduces premature stop-outs versus the live fixed 7.5% stop, with the target and time stop held IDENTICAL so the stop is the only varying term. Measure-only - it changes no stop, target, exit or order. Expect insufficient_evidence for months: 26 h10 dates is 2.6 independent observations against a floor of 12.",
+    handoff: "→ exit_stop_shadow_runs (evidence only)",
+    agentRunsType: null,
+  },
+  {
+    name: "exit-stop-shadow-india",
+    agent: "exit-stop-shadow",
+    time: "Sun 4:30 AM UTC",
+    days: "Weekly",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "India leg of the ATR exit-stop shadow. Proved separately from the US: India recorded ZERO target hits across 965 observations, so its exit geometry is a different regime and a US result does not transfer. Measure-only.",
+    handoff: "→ exit_stop_shadow_runs (evidence only)",
+    agentRunsType: null,
+  },
+  {
     name: "horizon-extension-shadow-us",
     agent: "horizon-extension-shadow",
     time: "4:05 PM ET",

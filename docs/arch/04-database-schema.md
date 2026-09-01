@@ -1,4 +1,6 @@
 # Kairos — Database Schema
+> 2026-09-01: **`exit_stop_shadow_runs` added** (migration `exit_stop_shadow_runs`, applied and verified via `information_schema`). One paired comparison per `(as_of_date, market, horizon_days)`: live 7.5% stop versus a 2.8 ATR stop, target and time stop identical. Carries `effective_observations`, `trials_considered` and `sidak_alpha` on every row so a reader cannot mistake a nominal p-value for the adjusted threshold, plus `candidate_worst_return` / `baseline_worst_return` because a wider stop can raise the mean while worsening the tail. Measure-only — no money path reads it.
+>
 > 2026-08-27 (`execute_paper_exit`, **applied + verified**, migrations `20260827225710` + `20260827231500`): the exit RPC now captures the risk levels it exited on. The closing UPDATE wrote `exit_price/realized_pnl/outcome/exit_reason` and nothing else, then DELETED the position row - and `stop_loss`/`price_target` live only on `paper_positions`. Result: `paper_trades.stop_loss` was NULL on all 171 closed lots while all 22 open positions carried one, so **19 lots labelled `exit_reason='stop_hit'` have no recorded stop and 4 of those realized a GAIN**. NOT backfillable - closed positions are deleted and their levels unrecoverable.
 >
 > A follow-up review caught two defects in the first attempt, both now fixed:
