@@ -1,8 +1,13 @@
 # External strategy discovery
 
-> Status: **DRAFT — for owner approval. No code written. Nothing activated.**
+> Status: **REVISION 2 — DRAFT, not implementation-ready. No code written.**
 > Date: 2026-09-01. Influence if approved: **none.** Every stage is measure-only;
 > paper activation and live activation are separate, later owner decisions.
+>
+> Independent review ruled **(c): a corrected Stage 0**, and found several claims
+> in revision 1 wrong. All corrections below were verified against the code and
+> production before being accepted. Review brief:
+> `docs/audits/2026-09-01-external-strategy-discovery-codex-brief.md`.
 >
 > Supersedes `features/strategy-library-shadow/FEATURE_ARCHITECTURE.md` (2026-09-01),
 > which proposed the same idea without the legal boundary, without the
@@ -54,22 +59,40 @@ were checked against production on 2026-09-01:
 
 | component | state | evidence |
 |---|---|---|
-| `lib/simulation/portfolio-simulator.ts` | **real, tested** | used by Alpha Lab A6 |
-| `lib/validation/` (engine, genome, calibration, feature-compiler) | **real** | 8 modules |
-| `strategy_templates` | **real** | 7 rows |
-| `strategy_sleeves` | **real** | 7 rows |
-| `backtest_experiments` | **real** | 18 rows |
-| `strategy_evaluations` | **EMPTY** | **0 rows — the validation pipeline has never written an evaluation** |
-| `strategy_template_shadow_configs` | **NOT DEPLOYED** | `to_regclass` returns null; the migration file is untracked and was never applied |
-| `features/strategy-portfolio-lab` | **untracked draft** | not in git |
-| `features/portfolio-simulation` | **untracked draft** | not in git |
+| `lib/simulation/portfolio-simulator.ts` | **exists, but produces NO NAV path** | returns `endingCash`, `positions`, `fills`, `rejections`, `realizedPnl` only (`:59`). Sharpe, Sortino, drawdown, benchmark alpha and stress-day correlation all require a separate deterministic marking layer |
+| `lib/validation/` (8 modules) | **real, but answers a different question** | validates alternative SCORING WEIGHTS against decision observations; it cannot evaluate an SPY moving average, RSI(2), NR7 or a rotation rule |
+| `strategy_templates` / `strategy_sleeves` | real | 7 rows each |
+| `backtest_experiments` | **real and exercised** | 18 rows: 13 alpha diagnostic, 3 OOS IC, 2 historical replay. The immutable experiment ledger works |
+| `strategy_evaluations` | 0 rows — **but this is NOT the relevant gap** | written by `lib/evaluation/run-evaluation.ts:121`; it is the mandate-level whole-book Performance Truth ledger |
+| **`validation_experiments`** | **0 rows — THIS is the proof gap** | written by `lib/validation/engine.ts:140`, the actual validation-engine output |
+| `strategy_template_shadow_configs` | **not deployed** | `to_regclass` NULL; migration untracked |
+| `features/strategy-portfolio-lab`, `features/portfolio-simulation` | untracked drafts | not in git |
 
-**Consequence for sequencing.** Extending these is still the right call — we must
-not build a second backtester or a second shadow engine. But two of them are
-drafts, one table was never deployed, and the validation pipeline has never
-produced a single evaluation. **Stage 0 below exists to close that gap first.**
-Building discovery on top of an unproven pipeline would mean debugging two new
-things at once.
+**CORRECTION accepted.** Revision 1 claimed the empty `strategy_evaluations`
+proved the validation pipeline had never run. Wrong — that table belongs to a
+different subsystem. Producing a row in it would not prove external-strategy
+validation. The relevant empty ledger is `validation_experiments`.
+
+**Also corrected:** revision 1 cited the portfolio simulator as able to produce
+the promised metrics. It cannot. Alpha Lab A6 gets its NAV path from its own
+`runPortfolioCalendar` in `lib/analytics/alpha-diagnostics-portfolio.ts`, not
+from the simulator. Any replay needs that marking layer built explicitly.
+
+**Consequence for sequencing.** The problem is not merely that the pipeline is
+unproven — it is that the cited components **answer different questions and are
+not connected into an external-strategy evaluation path**. The validation engine
+grades scoring weights, not price rules. The simulator produces fills, not a NAV
+path. Neither gap is closed by "exercising" them.
+
+Still: do not build a second backtester. Build the **missing seam** — a rule
+compiler, a deterministic NAV/benchmark marker, and a sealed result written to
+the experiment ledger that already works.
+
+**The shadow migration must NOT be applied unchanged.** Its fingerprint covers
+only market, kind and template IDs, omitting operator, weights, rule version and
+trial family, so two different combinations can collide or be silently
+rewritten. It also has no immutable-config trigger and no append-only lifecycle
+ledger.
 
 ---
 
@@ -119,27 +142,40 @@ Also classified separately, not excluded:
 
 ---
 
-## 5. First trial family — six US strategies
+## 5. First trial family — ROLE SLOTS FIRST, names after a data audit
 
-Frozen before replay. US only; India does not begin until the US
-ingestion/replay contract is proven.
+**CORRECTED.** Revision 1 named six strategies. Review found the family poorly
+balanced: roughly **five of six are index / exposure / rotation rules**, with
+only NR7 potentially supplying instrument selection. It also barely touches the
+known "win big, lose small" exit gap — the one place this book has measured
+evidence of a problem (73.7% of exits are the clock; `partial_target` returns a
+mean +20.20% on 5 lots).
 
-| candidate | family | treatment |
-|---|---|---|
-| SPY 200-day MA | trend | replay unchanged |
-| RSI(2) on SPY | mean reversion | replay with a frozen RSI definition |
-| Turnaround Tuesday | calendar / reversal | **rewrite execution as next-open** |
-| NR7 | volatility contraction | daily replay |
-| Turn of the month | seasonality | calendar-safe replay |
-| Monthly asset rotation | rotation | portfolio simulation |
+**Freeze ROLE SLOTS before naming anything:**
 
-Six, not two hundred, because selecting the best historical curve from hundreds
-is severe selection bias. See
+| slot | count | purpose |
+|---|---:|---|
+| entry rule | 2 | instrument selection |
+| exit / holding rule | 2 | winner capture, loss limitation |
+| exposure overlay | 1 | market timing, evaluated separately from selection |
+| defensive allocator | 1 | drawdown reduction |
+
+Names are chosen **after** the data audit below, not before.
+
+### Data sufficiency must be proven first
+
+Review measured the cached history: SPY / QQQ / IWM / GLD hold only ~280
+sessions, so after a 200-day warm-up **SPY MA yields roughly 80 decision
+sessions**. TLT and IEF hold ~35 sessions — unusable.
+
+A replay that silently runs on 35 sessions produces a number, and that number is
+worthless. **Stage: acquire and seal sufficient licensed OHLCV and
+corporate-action history before any strategy is named.**
+
+Six, not two hundred, remains right: selecting the best historical curve from
+hundreds is severe selection bias. See
 [Deflated Sharpe Ratio](https://doi.org/10.2139/ssrn.2460551) and
-[Harvey, Liu & Zhu](https://www.nber.org/papers/w20592) — significance
-requirements must rise with the number of attempted specifications.
-
----
+[Harvey, Liu & Zhu](https://www.nber.org/papers/w20592).
 
 ## 6. What every replay must measure
 
@@ -174,15 +210,23 @@ Extends the predeclared-combination design already sketched in
 
 For strategies A and B, simulate four portfolios:
 
+**CORRECTED.** Revision 1 proposed `A`, `B`, `A+B`, `champion+A+B` and omitted
+the two most important marginal comparisons. The required set is:
+
 ```
-A alone
-B alone
-A + B
-current champion + A + B     <- the real decision
+champion                     <- baseline
+champion + A                 <- marginal value of A
+champion + B                 <- marginal value of B
+champion + A + B             <- the joint decision
 ```
 
-The fourth is what matters. A combination that looks excellent standalone may add
-nothing because it duplicates exposure the champion already has.
+Standalone `A`, `B` and `A+B` remain useful diagnostics but cannot answer
+"does adding this help the book we already hold".
+
+**Shapley caveat.** Exact attribution requires resimulating every necessary
+subset. Path dependence does not invalidate Shapley, but capital reuse and fill
+ordering make the characteristic function path-dependent, so **event ordering and
+simultaneous-entry allocation must be frozen** before any subset is run.
 
 ### Three permitted forms
 
@@ -245,7 +289,8 @@ picking the best nearly guarantees a lucky winner. See
 [Harvey & Liu, *Evaluating Trading Strategies*](https://people.duke.edu/~charvey/Research/Published_Papers/P116_Evaluating_trading_strategies.pdf)
 and [Bailey, Borwein & López de Prado](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2739335).
 
-- at most **one active combination challenger per market**
+- at most **one active FORWARD-SHADOW combination per market** — this must not
+  prevent multiple immutable OFFLINE experiments, which are cheap and sealed
 - at most **three** constituents
 - combination, operator and weights **declared before replay**
 - **every attempted combination increments the trial-family count**
@@ -264,15 +309,22 @@ implemented naively. An independent test per (strategy, instrument) over ~113 US
 symbols is a 20,000-arm search on per-symbol samples mostly under 40
 observations.
 
+**CORRECTED — revision 1 was wrong as an implementation proposal.** Hierarchical
+partial pooling is directionally right *eventually*, but it cannot be built on
+the taxonomy as it stands. Start with **predeclared class-level estimates**; add
+empirical-Bayes per-symbol deviations only after the classes and sample floors
+exist.
+
 **Required treatment:**
 
 1. Estimate one **global** effect per strategy.
 2. Estimate per-instrument deviations and **shrink toward the global estimate**
    in proportion to each instrument's sample size (James-Stein / empirical Bayes).
-3. Prefer **instrument-CLASS** grouping — sector, liquidity bucket, realised-vol
-   bucket, ETF vs single name — using the existing
-   `lib/scoring/instrument-taxonomy.ts`. A class effect has an order of magnitude
-   more data behind it.
+3. Prefer **instrument-CLASS** grouping — but **the existing taxonomy is not
+   adequate for this**. `lib/scoring/instrument-taxonomy.ts:36` identifies ETFs,
+   metals, banks, REITs and broad operating companies; it has **no liquidity
+   bucket, no realised-volatility bucket, and no meaningful sector for most
+   operating companies**. Those buckets must be built and predeclared first.
 4. Report the shrunken estimate as the headline; raw per-symbol only alongside its
    sample size and marked unstable.
 
@@ -300,42 +352,49 @@ character does change with its business, its volatility and its ownership.
    Given any price series and any two strategies, one can always find the split
    dates that make the combination look excellent. That procedure has no
    out-of-sample content.
-3. **It runs into a locked project decision.** `CLAUDE.md` states: *"Push back if
-   user asks for explicit 'bull/bear mode' switching. The scoring naturally
-   adapts — explicit regime detection is fragile and adds moving parts,"* and
-   lists "explicit market regime detection logic" under the push-back mandate.
-   Per-symbol switching is that same machinery at finer granularity, so it is
-   more fragile, not less.
+3. **It brushes a locked project decision.** `CLAUDE.md` pushes back on explicit
+   "bull/bear mode" switching as "fragile and adds moving parts". Review's
+   refinement, accepted: that prohibition is **relevant but not dispositive** —
+   per-symbol state adaptation is materially different from one global market
+   regime switch. It earns a measure-only premise test; it does not earn a
+   switcher now.
 
-### The premise is cheap to falsify — do that before building anything
+### The premise test — CORRECTED
 
-A switcher can only work if **strategy affinity persists**. If the strategy that
-suited a symbol last quarter tells you nothing about which suits it next quarter,
-no switching rule can work, however well engineered.
+Revision 1 proposed a rank correlation of strategy affinity between adjacent
+periods. Review found that **wrong as a primary test and currently
+unanswerable**, and the author agrees on both counts:
 
-That is directly measurable, and it costs one replay rather than a subsystem:
+- Rank persistence is at best a *diagnostic*. It does not test whether switching
+  **makes money after costs**, which is the only question that matters.
+- The data cannot support it. 26 distinct eligible-long h10 dates per market is
+  ~**2.6 effective observations** under the system's own overlap heuristic.
 
-1. For each symbol with sufficient history, rank the six trial-family strategies
-   by performance in period *t*.
-2. Rank them again in period *t+1*, out of sample.
-3. Compute the **rank correlation of strategy affinity between consecutive
-   periods**, pooled across symbols, date-clustered.
-4. Compare against a **label-permuted null** — shuffle the period-*t+1* rankings
-   across symbols and re-measure. The Alpha Lab already has this placebo
-   machinery (`alpha-diagnostics-counterfactual.ts`, seeded permutation with a
-   `(b+1)/(m+1)` estimator).
+**Primary test instead — nested walk-forward policy:**
 
-**Decision rule, predeclared:**
+1. In a training window, estimate the preferred strategy per symbol.
+2. **Freeze the assignment.**
+3. Trade it in the next window, out of sample.
+4. Compare net-of-cost results against three honest baselines: the **champion**,
+   the **best static strategy** for that symbol, and an **equal-weight ensemble**.
 
-- **Persistence indistinguishable from the permuted null → stop.** Do not build a
-  switcher. Report the finding and close the question. This is the likely outcome
-  and it is a genuinely valuable answer, because it retires a plausible idea
-  cheaply.
-- **Persistence materially above the null → proceed**, but only to a *static*
-  per-class assignment first (section 8's shrinkage approach), and only then to a
-  switcher with predeclared, economically-motivated switch triggers — realised
-  volatility regime, trend/chop classification — never dates chosen by looking at
-  the outcome.
+Transition persistence and top-two retention become secondary diagnostics, not
+the verdict.
+
+**Purge and embargo, specified:** purge every observation whose realized outcome
+interval crosses the train/test boundary; embargo by the longest permitted
+holding/outcome horizon — currently **20 market sessions**.
+
+> **Do NOT reuse `walkForwardFolds`.** `lib/learning/dataset.ts:107` documents
+> itself as market-horizon purged but computes `purgeCutoffMs = testStart -
+> horizonDays * DAY` with `DAY = 86400_000` (`:120`) — **calendar milliseconds**.
+> A nominal "10-day" purge is therefore about 6-7 trading sessions, so labels
+> leak across the boundary. This is a live defect in existing learning code, not
+> just a constraint on this feature, and is flagged separately for repair.
+
+**Timing:** this test is **not answerable today**. It needs its own accrual
+period. Proposing a test that cannot report is its own failure mode, so it is
+scheduled last and gated on independent history existing.
 
 ### If it ever does get built
 
@@ -373,54 +432,107 @@ be quietly graded against easier return-strategy criteria.
 
 ---
 
-## 10. Sequencing
+## 10. Blocking gaps found by review (C7)
 
-**Stage 0 — prove the existing pipeline first.** Land the two untracked feature
-drafts, apply and verify `strategy_template_shadow_configs`, and get
-`strategy_evaluations` to produce its first non-zero row. Discovery built on an
-unproven pipeline means debugging two new things at once.
+Each must be closed or explicitly accepted before the stage that depends on it:
 
-**Stage 1 — metadata-only catalogue.** `external_strategy_catalog`: title, URL,
-category, dates, `applies_to`, `eligible`, `exclusion_reason`, `predeclared_at`.
-Hand-reviewed; no article content stored.
+- **PIT universe excludes ETFs and refuses India.** `lib/edges/pit-universe.ts:259`.
+  Every fixed-ETF strategy therefore needs a **separate point-in-time
+  instrument/data contract**.
+- **`price_cache` has no immutable provider/basis/version provenance**, so
+  adjusted history can be restated after splits or dividends and a "sealed"
+  replay silently changes. Sealed replay needs versioned price provenance.
+- **No NAV path** from the simulator (section 2). Sharpe, Sortino, drawdown,
+  benchmark alpha and stress-day correlation need a deterministic marking layer.
+- **Same-session fill ordering is lexical**, which privileges one strategy when
+  capital is scarce. Parallel sleeves need **reserved budgets or pro-rata
+  arbitration**, frozen before any subset runs.
+- **Trial-family counting can reset.** Verified in production:
+  `trial_family_id = 'local-nse-technical-v1'` has 2 experiments each recording
+  `trials_considered = 1`, and **13 of 18 rows carry no `trial_family_id` at
+  all**. An immutable, atomically-incremented trial ledger is required before any
+  multiple-testing claim means anything.
+- **Retirement is mutable state** in the proposed shadow table. It needs an
+  **append-only event history** with reason, evidence snapshot and actor.
+- **Source adaptations are new specifications.** "Turnaround Tuesday, adapted to
+  next-open" is a tested variant and **must increment the trial count**.
+- **India stays blocked** until its PIT membership, corporate-action and
+  benchmark contracts are independently complete.
+- **The first family must test exits**, not only entries and exposure.
 
-**Stage 2 — frozen rule specs** for the six-strategy family, written
-independently, with attribution.
+## 11. Sequencing — Stage 0R (review ruling: option (c))
 
-**Stage 3 — point-in-time replay** through the existing simulator, with the full
-integrity checklist.
+1. **Stage 0R — reconcile the foundation.** Track the approved documents, map each
+   ledger to its real purpose, and **revise, not deploy**, the shadow migration.
+2. **Immutable trial-family ledger.** Atomically count every rule, parameter
+   variant, adaptation, combination and rerun, across sessions.
+3. **Prove the orchestration seam.** Compile ONE frozen rule into events, run the
+   existing simulator plus a new deterministic NAV/benchmark marker, and persist
+   a sealed result in `backtest_experiments`. **Include a negative-control
+   strategy** — if a deliberately worthless rule scores well, the seam is wrong.
+4. **Prove data sufficiency.** Acquire and seal enough licensed OHLCV and
+   corporate-action history **before** naming candidates.
+5. **Metadata-only catalogue**, preferably after written crawling permission.
+6. **Freeze the role-balanced family**, including exit/holding strategies.
+7. **Historical replay + the full champion-relative combination matrix.**
+8. **One forward-shadow combination per market.**
+9. **Revisit switching** only after enough independent history exists.
 
-**Stage 4 — combination discovery**, one challenger per market.
+**Explicitly NOT to be built yet:** the per-symbol switcher, the per-symbol
+empirical-Bayes model, any arbitrary combination optimiser, a production crawler,
+or the current shadow migration.
 
-**Stage 5 — forward shadow.** Default verdict `insufficient_evidence`.
+Approval sought for **steps 1-3 only.**
 
-**Stage 6 — owner-approved paper sleeve.** Separate decision.
+## 12. Honest assessment
 
-**Stage 7 — capped live trial.** Separate decision, existing risk and broker gates.
+**Recommendation: go, at Stage 0R.** The concept is worth pursuing; the
+architecture was not implementation-ready, and revision 1 got four things wrong
+that mattered:
 
-Stages 0-2 are what this document asks approval for. Nothing beyond stage 2
-should be built until stage 0 has produced evidence the pipeline works.
+1. Pointed Stage 0 at `strategy_evaluations`, which belongs to a different
+   subsystem — the real gap is `validation_experiments`.
+2. Treated the portfolio simulator as able to produce Sharpe/drawdown/alpha. It
+   returns fills and realized P&L; there is no NAV path.
+3. Proposed four combination portfolios that omitted `champion+A` and
+   `champion+B`, the two most informative marginals.
+4. Proposed a per-symbol shrinkage model on a taxonomy that has no liquidity,
+   volatility or sector buckets to shrink toward.
 
----
+A fifth correction is a live defect in existing code, not this feature:
+`walkForwardFolds` purges in calendar milliseconds while documenting itself as
+market-horizon purged, so a "10-day" purge is 6-7 sessions and labels leak.
 
-## 11. Honest assessment
+Three cautions stand:
 
-**Recommendation: go, starting at stage 0.**
+- **The foundation is not just unproven, it is unconnected.** The validation
+  engine grades scoring weights; nothing in the repo can currently replay a price
+  rule end to end.
+- **Data may be the binding constraint before statistics are.** ~80 usable SPY
+  decision sessions after warm-up, ~35 for TLT/IEF.
+- **The risk is a good-looking result, not a bad strategy.** Five claims from this
+  book were retracted in the past week, every one from reading a number drawn
+  from the wrong population or an unrun path. A negative control in step 3 is
+  cheap insurance against the seam itself being wrong.
 
-The reshaping from "test 200 strategies" to "run a controlled funnel that asks a
-portfolio question" is the right correction, and the combination design is the
-part most likely to produce something genuinely useful — because *does this add
-to what we already hold* is a question the current system cannot answer at all.
+## 13. Follow-up: Strategy Evidence Scorecard (separate architecture)
 
-Three cautions, stated plainly:
+Review also proposed a **Strategy Evidence Scorecard** — a third tab on the
+Strategies page (`Fit Scores · Algo Library · Live Evidence`) showing, per
+strategy and per combination: benchmark-relative alpha, **payoff ratio**, profit
+factor, winning weeks (not streaks), evidence count and stage (replay / shadow /
+paper / live), and a governed status from
+`insufficient_evidence | collecting | promising | working | degrading | failed | retired`.
 
-- **The foundation is thinner than it looks.** `strategy_evaluations` has never
-  produced a row. That is stage 0's entire justification.
-- **Timelines are long.** The book currently has 26 independent h10 dates
-  against a floor of 12 effective observations; one predeclared hypothesis needs
-  roughly 120 dates. Historical replay is not subject to that limit, but the
-  forward-shadow confirmation in stage 5 is.
-- **The risk is not a bad strategy; it is a good-looking one.** Four claims from
-  this book were retracted in the past week, each from reading a number drawn
-  from the wrong population or an unrun code path. A funnel whose default answer
-  is "not yet" is the point, not a limitation of it.
+Deliberately **not** a win-rate leaderboard, which would reward exactly the
+pathology this book already shows: many small wins and one large loss.
+
+`StrategyGovernancePanel.tsx:33` already surfaces signal count, win rate, average
+return, Sharpe, drawdown and alpha, and `lib/analytics/performance-metrics.ts:105`
+already computes expectancy and profit factor. Missing: strategy-level weekly
+return history, payoff ratio per run, benchmark-relative weekly consistency,
+evidence-stage separation, governed status, and combination rows.
+
+Status thresholds are financially load-bearing and **must be frozen in
+architecture before any strategy is graded against them**. This needs its own
+approved document; it is not covered by this one.
