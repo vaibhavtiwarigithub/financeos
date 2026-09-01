@@ -5,6 +5,8 @@ import { fetchMassiveCandles } from "@/lib/data/candles";
 import { fetchYahooCandles } from "@/lib/data/yahoo-candles";
 import type { Candle } from "@/lib/data/technicals";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { reportIssue } from "@/lib/system-health";
+import { pickFreshestProvider, newestBarDate } from "@/lib/data/benchmark-ingest";
 import {
   BENCHMARK_HORIZONS,
   computeBenchmarkScorecardRow,
@@ -131,22 +133,52 @@ async function upsertLiveObservations(svc: any, benchmark: BenchmarkConfig) {
  * bar's own date — never a run date — so the session-alignment rule this file
  * enforces for the primary holds identically here.
  */
-async function upsertProviderObservations(svc: any, benchmark: BenchmarkConfig) {
+async function upsertProviderObservations(
+  svc: any,
+  benchmark: BenchmarkConfig,
+  expectedSession: string | null,
+) {
   if (benchmark.is_primary) return;
   const symbol = benchmark.provider_symbol ?? benchmark.symbol;
   if (!symbol) return;
-  let provider = benchmark.market === "india" ? "yahoo" : "massive";
-  let candles = benchmark.market === "india"
-    ? await fetchYahooCandles(symbol, "2y").catch(() => [] as Candle[])
-    : await fetchMassiveCandles(symbol, 500).catch(() => [] as Candle[]);
-  // Massive remains preferred for US, but a provider outage or free-tier
-  // entitlement gap must not make a configured display comparator permanently
-  // empty when the existing keyless Yahoo daily-bar adapter can price it.
-  if (!candles.length && benchmark.market === "us") {
-    provider = "yahoo";
-    candles = await fetchYahooCandles(symbol, "2y").catch(() => [] as Candle[]);
+
+  // FALL BACK ON STALENESS, NOT JUST EMPTINESS.
+  //
+  // This previously fell back only when the preferred provider returned NOTHING
+  // (`if (!candles.length)`). A provider that returns 500 bars but none recent
+  // passes that check, so the benchmark goes stale silently and forever.
+  // Measured 2026-09-01: XLF had fallen back to Yahoo (empty from Massive) and
+  // was current at 08-31, while XLK stayed on Massive with 500 bars ending
+  // 08-24 — eight days stale — and QQQ ended 08-28. The chart then truncated the
+  // PORTFOLIO series to the stale benchmark's coverage, reporting +0.010%
+  // instead of +1.345% for an identical window.
+  //
+  // Both providers are cheap here (Yahoo is keyless and unpaced; at most two US
+  // secondaries), so fetch both and keep whichever reaches further forward.
+  const attempts: Array<{ provider: string; candles: Candle[] }> = [];
+  if (benchmark.market === "india") {
+    attempts.push({ provider: "yahoo", candles: await fetchYahooCandles(symbol, "2y").catch(() => [] as Candle[]) });
+  } else {
+    attempts.push({ provider: "massive", candles: await fetchMassiveCandles(symbol, 500).catch(() => [] as Candle[]) });
+    attempts.push({ provider: "yahoo", candles: await fetchYahooCandles(symbol, "2y").catch(() => [] as Candle[]) });
   }
-  const rows = candles
+
+  const usable = attempts.filter((a) => a.candles.length > 0);
+  if (!usable.length) {
+    await reportIssue({
+      issueKey: `benchmark-ingest-empty:${benchmark.id}`,
+      severity: "warn",
+      category: "data",
+      title: `${benchmark.label}: no benchmark bars from any provider`,
+      detail: `Tried ${attempts.map((a) => a.provider).join(", ")} for ${symbol}. The comparison chart will show no benchmark line for this selection.`,
+    }, svc).catch(() => {});
+    return;
+  }
+
+  // Freshest wins; ties keep the preferred provider (first attempt).
+  const best = pickFreshestProvider(attempts)!;
+
+  const rows = best.candles
     .filter((c) => !!c?.date && Number.isFinite(Number(c.close)) && Number(c.close) > 0)
     .map((c) => ({
       benchmark_id: benchmark.id,
@@ -154,13 +186,38 @@ async function upsertProviderObservations(svc: any, benchmark: BenchmarkConfig) 
       date: String(c.date).slice(0, 10),
       close: Number(c.close),
       currency: benchmark.currency,
-      provider,
+      provider: best.provider,
       source_status: "ok",
       error: null,
     }));
   if (rows.length) {
-    await svc.from("benchmark_price_observations")
+    // A failed write was previously discarded, so an ingestion outage looked
+    // identical to a quiet day.
+    const { error } = await svc.from("benchmark_price_observations")
       .upsert(rows, { onConflict: "benchmark_id,component_symbol,date" });
+    if (error) {
+      await reportIssue({
+        issueKey: `benchmark-ingest-write:${benchmark.id}`,
+        severity: "warn",
+        category: "data",
+        title: `${benchmark.label}: benchmark observation write failed`,
+        detail: error.message,
+      }, svc).catch(() => {});
+      return;
+    }
+  }
+
+  // Still behind the book after taking the freshest provider: say so, because
+  // the chart now truncates its comparison window to this benchmark.
+  const newest = newestBarDate(best.candles);
+  if (expectedSession && newest && newest < expectedSession) {
+    await reportIssue({
+      issueKey: `benchmark-stale:${benchmark.id}`,
+      severity: "warn",
+      category: "data",
+      title: `${benchmark.label} benchmark is stale (${newest} vs book ${expectedSession})`,
+      detail: `Freshest of ${usable.map((a) => `${a.provider}=${newestBarDate(a.candles) ?? "none"}`).join(", ")} for ${symbol}. Comparisons against this benchmark are truncated to ${newest}; the portfolio's own return is unaffected.`,
+    }, svc).catch(() => {});
   }
 }
 
@@ -215,10 +272,22 @@ async function buildScorecards(svc: any) {
   const rows: any[] = [];
   const asOf = new Date().toISOString().slice(0, 10);
 
+  // The session the BOOK has reached, per market. A secondary benchmark that
+  // cannot reach this date truncates every comparison drawn against it, so it
+  // is the right yardstick for "stale" — not a fixed number of days, which would
+  // fire on weekends and holidays.
+  const latestBookSession = new Map<string, string | null>();
+  for (const market of MARKETS) {
+    const { data } = await svc.from("paper_performance")
+      .select("date").eq("market", market).eq("snapshot_type", "eod")
+      .order("date", { ascending: false }).limit(1).maybeSingle();
+    latestBookSession.set(market, data?.date ? String(data.date).slice(0, 10) : null);
+  }
+
   for (const benchmark of benchmarks) {
     await upsertPaperObservations(svc, benchmark);
     await upsertLiveObservations(svc, benchmark);
-    await upsertProviderObservations(svc, benchmark);
+    await upsertProviderObservations(svc, benchmark, latestBookSession.get(benchmark.market) ?? null);
   }
 
   for (const market of MARKETS) {

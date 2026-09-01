@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo, useRef } from "react";
+import { buildBenchmarkWindow } from "@/lib/analytics/benchmark-window";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ReferenceLine,
@@ -41,11 +42,6 @@ function cutoffFor(tf: Timeframe): number | null {
 }
 
 // Rebase to % return from the FIRST point in the window: pct = (v/base - 1)*100.
-function pct(v: number, base: number): number {
-  if (!base) return 0;
-  return parseFloat((((v - base) / base) * 100).toFixed(3));
-}
-
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
@@ -130,34 +126,17 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
     }
   }
 
-  const { chartData, portfolioLast, benchLast, delta } = useMemo(() => {
-    const cut = cutoffFor(tf);
-    // Use a common starting observation. Rebasing portfolio from Monday while
-    // rebasing the benchmark from Wednesday produces a fake relative return.
-    const windowed = series.filter(r =>
-      r.nav != null && r.bench_nav != null &&
-      (cut == null || new Date(r.date).getTime() >= cut));
-
-    if (windowed.length < 2) {
-      return { chartData: [] as any[], portfolioLast: null, benchLast: null, delta: null };
-    }
-
-    const navBase = Number(windowed[0].nav);
-    const benchBase = Number(windowed[0].bench_nav);
-
-    const data = windowed.map(r => ({
-      date: r.date,
-      portfolio: pct(Number(r.nav), navBase),
-      bench: pct(Number(r.bench_nav), benchBase),
-    }));
-
-    const pLast = data[data.length - 1].portfolio;
-    const bLast = [...data].reverse().find(d => d.bench != null)?.bench ?? null;
+  const { chartData, portfolioLast, benchLast, delta, truncation } = useMemo(() => {
+    // Arithmetic lives in lib/analytics/benchmark-window.ts so the
+    // benchmark-independence rule is unit-testable. See that file for the
+    // measured bug it prevents.
+    const w = buildBenchmarkWindow(series, cutoffFor(tf));
     return {
-      chartData: data,
-      portfolioLast: pLast,
-      benchLast: bLast,
-      delta: bLast != null ? parseFloat((pLast - bLast).toFixed(2)) : null,
+      chartData: w.points,
+      portfolioLast: w.portfolioReturnPct,
+      benchLast: w.benchReturnPct,
+      delta: w.deltaPct,
+      truncation: w.truncation,
     };
   }, [series, tf]);
 
@@ -271,6 +250,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
           <div style={{ fontSize: "12px", color: T.muted }}>{benchLabel} benchmark not recorded for this window yet.</div>
         )}
         <div style={{ fontSize: "12px", color: T.textSub }}>
+          {/* Full-window portfolio return. Does not move when the benchmark changes. */}
           Portfolio <span style={{ color: (portfolioLast ?? 0) >= 0 ? T.green : T.red, fontWeight: 600 }}>
             {(portfolioLast ?? 0) >= 0 ? "+" : ""}{(portfolioLast ?? 0).toFixed(2)}%
           </span>
@@ -283,6 +263,14 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
           )}
         </div>
       </div>
+
+      {truncation && (
+        <div style={{ fontSize: "11px", color: T.muted, marginTop: "-6px", marginBottom: "10px" }}>
+          {truncation.until
+            ? `${benchLabel} covers only ${truncation.sessionsLost} session(s) fewer than the window — the delta is measured to ${truncation.until}. Portfolio % above is the full window.`
+            : `${benchLabel} has no data in this window — no delta is shown. Portfolio % above is the full window.`}
+        </div>
+      )}
 
       <ResponsiveContainer width="100%" height={240}>
         <LineChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
