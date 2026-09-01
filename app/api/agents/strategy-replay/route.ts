@@ -279,6 +279,24 @@ function seamVerdict(results: any[]) {
   const always = results.find((r) => r.spec === "control_always_in");
   const failures: string[] = [];
 
+  // REJECTION RATE IS A SEAM FAILURE, NOT A RESULT.
+  //
+  // The first real run reported pass:true while the rule produced 1 fill and 96
+  // rejections, because the compiler emitted exits with no `quantity` and the
+  // simulator refused every one. A verdict that tolerates a 99% rejection rate
+  // is not checking anything. Any spec whose events are mostly refused has not
+  // been measured, whatever its return column says.
+  for (const r of results) {
+    const attempted = (r.fills ?? 0) + (r.rejections ?? 0);
+    if (attempted === 0) continue;
+    const rejectRate = (r.rejections ?? 0) / attempted;
+    if (rejectRate > 0.1) {
+      failures.push(
+        `${r.spec}: ${r.rejections}/${attempted} events rejected (${(rejectRate * 100).toFixed(1)}%) — the events are not executable, so its metrics are not measurements`,
+      );
+    }
+  }
+
   if (!never) failures.push("never-trades control missing");
   else {
     if (never.fills !== 0) failures.push(`never-trades control produced ${never.fills} fills`);

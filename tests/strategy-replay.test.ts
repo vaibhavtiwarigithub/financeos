@@ -3,6 +3,7 @@ import { specFingerprint, validateSpec, type RuleSpec } from "@/lib/strategy-rep
 import { compileSpec, evaluate, type Bar } from "@/lib/strategy-replay/compile";
 import { markNavSeries, type DailyMark, type HoldingsAt } from "@/lib/strategy-replay/nav-marker";
 import { neverTradesControl, alwaysInControl, deterministicCoin } from "@/lib/strategy-replay/negative-control";
+import { simulatePortfolio, type SimulationPolicy } from "@/lib/simulation/portfolio-simulator";
 
 const SESSIONS = ["2026-01-05","2026-01-06","2026-01-07","2026-01-08","2026-01-09",
                   "2026-01-12","2026-01-13","2026-01-14","2026-01-15","2026-01-16"];
@@ -209,5 +210,57 @@ describe("negative controls", () => {
     expect(a).toEqual(b);
     // A different salt must give a different sequence, or it is not a coin.
     expect(SESSIONS.map((s) => deterministicCoin(s, "other"))).not.toEqual(a);
+  });
+});
+
+describe("compiled events survive the SIMULATOR, not just the compiler", () => {
+  // THE GAP THIS CLOSES (found 2026-09-01 by running on real VOO bars).
+  // Every test above counted EVENTS. None put them through the simulator, so
+  // nobody noticed the compiler emitted exits with no `quantity` — which
+  // portfolio-simulator.ts:136 rejects as `invalid_exit`. Positions never
+  // closed, and on 1,280 real bars the rule produced 1 fill and 96 rejections.
+  // Counting events is not evidence that the events are executable.
+  const policy: SimulationPolicy = {
+    market: "us", currency: "USD", initialCash: 100_000,
+    maxOpenNames: 1, allowFractionalShares: true,
+  };
+
+  it("produces fills, not rejections, for a rule that round-trips", () => {
+    const r = compileSpec({
+      spec: baseSpec({ horizonSessions: 2, exit: { op: "never" } }),
+      bars: { AAA: bars() }, initialCash: 100_000,
+    });
+    const sim = simulatePortfolio(policy, r.events);
+    expect(r.events.length).toBeGreaterThan(2);
+    expect(sim.rejections).toHaveLength(0);
+    expect(sim.fills.length).toBe(r.events.length);
+  });
+
+  it("emits an explicit exit quantity matching the entry fill", () => {
+    const r = compileSpec({
+      spec: baseSpec({ horizonSessions: 2, exit: { op: "never" } }),
+      bars: { AAA: bars() }, initialCash: 100_000,
+    });
+    const exits = r.events.filter((e) => e.kind === "exit");
+    expect(exits.length).toBeGreaterThan(0);
+    for (const e of exits) {
+      expect(e.quantity).toBeDefined();
+      expect(e.quantity!).toBeGreaterThan(0);
+    }
+    const sim = simulatePortfolio(policy, r.events);
+    expect(sim.rejections.filter((x) => x.reason === "invalid_exit")).toHaveLength(0);
+  });
+
+  it("closes every position it opens, leaving no dangling lot", () => {
+    const r = compileSpec({
+      spec: baseSpec({ horizonSessions: 2, exit: { op: "never" } }),
+      bars: { AAA: bars() }, initialCash: 100_000,
+    });
+    const sim = simulatePortfolio(policy, r.events);
+    const entries = sim.fills.filter((f) => f.kind === "entry").length;
+    const exits = sim.fills.filter((f) => f.kind === "exit").length;
+    // Either fully paired, or one lot still open at the end of the series.
+    expect(entries - exits).toBeLessThanOrEqual(1);
+    expect(sim.positions.length).toBeLessThanOrEqual(1);
   });
 });

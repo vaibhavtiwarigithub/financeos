@@ -177,7 +177,13 @@ export function compileSpec(input: CompileInput): CompileResult {
     const series = bars[symbol];
     if (!series || series.length < 2) continue;
 
-    let open: { entryIdx: number; entryPrice: number } | null = null;
+    // The exit MUST carry an explicit quantity. portfolio-simulator.ts:136
+    // rejects a quantity-less exit as `invalid_exit` rather than assuming the
+    // whole lot — found by running this compiler against real VOO bars, where
+    // every exit was refused, positions never closed, and 96 of 97 subsequent
+    // events were rejected for cash. Unit tests missed it because they counted
+    // EVENTS and never put them through the simulator.
+    let open: { entryIdx: number; entryPrice: number; quantity: number } | null = null;
 
     for (let i = 0; i < series.length; i++) {
       // `next_open` acts on the FOLLOWING bar, so the last bar can never trade.
@@ -199,6 +205,7 @@ export function compileSpec(input: CompileInput): CompileResult {
             id: `${spec.id}:${symbol}:exit:${series[fillIdx].session}`,
             session: series[fillIdx].session,
             symbol, kind: "exit", price: fillPrice,
+            quantity: open.quantity,
           });
           open = null;
         }
@@ -210,13 +217,17 @@ export function compileSpec(input: CompileInput): CompileResult {
       if (wantEntry === null) { warmupSkipped++; continue; }
       decisionSet.add(series[i].session);
       if (wantEntry === true) {
+        const cashAllocation = input.initialCash * spec.positionSizePct;
         events.push({
           id: `${spec.id}:${symbol}:entry:${series[fillIdx].session}`,
           session: series[fillIdx].session,
           symbol, kind: "entry", price: fillPrice,
-          cashAllocation: input.initialCash * spec.positionSizePct,
+          cashAllocation,
         });
-        open = { entryIdx: i, entryPrice: fillPrice };
+        // Mirrors the simulator's own sizing (portfolio-simulator.ts:158) so the
+        // exit quantity matches the fill exactly. costPct is unset here, so the
+        // multiplier is 1.
+        open = { entryIdx: i, entryPrice: fillPrice, quantity: cashAllocation / fillPrice };
       }
     }
   }
