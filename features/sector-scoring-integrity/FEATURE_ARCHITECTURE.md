@@ -1,7 +1,7 @@
 # Sector scoring integrity — cyclicals, macro weighting, and dead scoring code
 
-> Status: **REVISION 2 — DRAFT. F1 and F2 returned for revision by independent review.
-> F3 approved in principle, awaiting owner go-ahead to implement. No code written.**
+> Status: **REVISION 3 — DRAFT. F1 and F2 NOT approved and NOT enabled.
+> F3 IMPLEMENTED AND SHIPPED (commit `07d142ab`, on `origin/main`).**
 > Date: 2026-08-29. Influence if approved: money path (`analyst_score` → direction gate → paper buys).
 >
 > Review record: `docs/audits/2026-08-29-sector-scoring-codex-brief.md` (request) and the
@@ -164,36 +164,63 @@ This confirms the review's correction on the live baseline too: the modal US mac
 **zero** — macro unavailable and excluded — sitting alongside rows at 42.86% on the same
 dates. That spread is precisely the mechanism revision 1 missed.
 
-### Exclusion counterfactual — REPRODUCED 2026-08-31
+### Exclusion counterfactual — APPROXIMATE ONLY, NOT EXACT
 
-The replay is exact rather than approximate. Recorded `analyst_score` is already
-`sum(score_k * effWeight_k)`, so excluding macro and renormalising the remainder is:
+**RETRACTED 2026-08-31 (same day): this replay was described as "exact". It is not.**
+Three defects, all confirmed in code:
+
+1. **Stored `analyst_score` is ROUNDED.** `computeWeightedAnalystScore` returns
+   `Math.round(score)` (`lib/scoring/weighted-score.ts:61`). The shortcut below inverts a
+   weighted sum that no longer exists at full precision.
+2. **ETF scores are CAPPED after weighting.** `research-agent.ts:1702` applies
+   `Math.min(rawAnalystScore, ETF_SCORE_CAP)` with `ETF_SCORE_CAP = 65`. For a capped ETF
+   the stored score is not the weighted sum at all, so subtracting a macro contribution
+   from it is meaningless.
+3. **The 118 "not modellable" rows ARE reconstructible**, and excluding them hid real
+   behaviour. Base weights are stored in `features.weighting.base_weights`
+   (`research-agent.ts:2312`). More importantly, removing macro can drop a row to one
+   dimension and trip the thin-evidence abstention gate (`isThinEvidence`,
+   `research-agent.ts:1703`) — a live behavioural consequence, not an artefact.
+
+The shortcut used was:
 
 ```
-new_score = (analyst_score - macro_score * w_macro) / (1 - w_macro)
+new_score = (analyst_score - macro_score * w_macro) / (1 - w_macro)     # APPROXIMATION
 ```
 
-using the row's own recorded `weights_used` and `availability_mask`. No weights assumed.
+An independent current-code replay over deterministic US observations reports:
 
-| metric | reproduced | review |
+| metric | code replay | this shortcut |
+|---|---:|---:|
+| applicable rows | 5,242 | 5,156 |
+| rows where the shortcut disagrees numerically | **4,573** | — |
+| rows where threshold classification differs | **98** | — |
+| crossings up | **53** | 35 |
+| crossings down | **149** | 152 |
+| rows becoming thin-evidence | **86** (39 currently eligible) | not modelled |
+| dispersion | 14.12 -> **17.82** | 14.12 -> 17.12 |
+
+The shortcut disagrees numerically on 87% of rows. Its crossing counts landing near the
+correct ones is luck, not accuracy. **The `35 up / 152 down` figure must not be cited.**
+
+Superseded figures, retained only as the record of what was claimed:
+
+| metric | shortcut (WRONG) | earlier review |
 |---|---:|---:|
 | rows replayed | 5,156 | 5,143 |
-| mean absolute score change | **2.83** | 4.83 |
-| maximum change | **12.33** | 35 |
-| upward threshold crossings | **35** | 32 |
-| downward threshold crossings | **152** | 146 |
-| dispersion before | 14.124 | 14.31 |
-| dispersion after | 17.120 | 18.91 |
+| mean absolute score change | 2.83 | 4.83 |
+| maximum change | 12.33 | 35 |
+| upward threshold crossings | 35 | 32 |
+| downward threshold crossings | 152 | 146 |
+| dispersion | 14.124 -> 17.120 | 14.31 -> 18.91 |
 
-**Crossings and dispersion-before reproduce closely. The magnitude columns do not, and the
-reason is methodological.**
+Neither column is decision-grade. Use the code replay above.
 
-118 rows have fewer than 3 available dimensions. Removing macro from those leaves one
-dimension, and `computeWeightedAnalystScore` does **not** renormalise in that case — its
-`includedDims.length >= 2` guard falls back to the FIXED base split. Those rows cannot be
-reconstructed from `effWeights` alone, so the table above excludes them. Applying the
-renormalisation formula to them anyway (which production would never do) inflates the
-result:
+On the thin rows: 118 rows have fewer than 3 available dimensions, and removing macro
+leaves one, where `computeWeightedAnalystScore` falls back to the FIXED base split rather
+than renormalising. Revision 2 called these "not modellable" and dropped them. Wrong on both
+counts — `base_weights` is stored, and the abstention they trigger is exactly the behaviour
+worth measuring. Retained below only to show the sensitivity:
 
 | scope | n | mean abs | max abs | up | down | dispersion |
 |---|---:|---:|---:|---:|---:|---|
@@ -207,11 +234,26 @@ accounts for the larger maximum. **The conservative reading is the correct one**
 rows do not renormalise in production, so their contribution is an artefact of the
 counterfactual, not a property of the change.
 
-**The conclusion is unchanged and holds under either method.** Threshold crossings are
-strongly asymmetric — **152 down against 35 up**, roughly 4:1 — and dispersion rises about
-21%. Excluding macro would make the book materially more selective, not neutrally cleaner.
-These are not trade flips (downstream evidence and direction gates still apply), but they
-establish that F2 is a live behavioural change, not a mechanical cleanup.
+**The DIRECTION survives every method; the magnitudes do not.** Under the code replay,
+crossings are asymmetric (**149 down against 53 up**, ~3:1), dispersion rises ~26%, and 86
+rows fall into thin-evidence abstention, 39 of them currently eligible. Excluding macro
+makes the book materially more selective. That conclusion has now held under three
+successive methods and is the one durable finding here.
+
+These are not trade flips — downstream evidence and direction gates still apply — but they
+establish that F2 is a live behavioural change and not a mechanical cleanup.
+
+### Required method for the decision-grade replay (nothing above qualifies)
+
+1. Call the **shared scoring implementation** (`computeWeightedAnalystScore`) with stored
+   component scores, `availability_mask`, and `features.weighting.base_weights`. Do not
+   invert the stored score.
+2. Apply the ETF cap (`Math.min(raw, ETF_SCORE_CAP)`) exactly where the live path does.
+3. Include thin-evidence rows, and report **score crossings separately from
+   direction/eligibility changes** — different consequences.
+4. Restrict the decision-grade cohort to `score_source = 'deterministic_v1'`.
+5. **Freeze an observation cutoff** so counts cannot drift between runs. Figures here have
+   already shifted once because the table grew mid-analysis.
 
 **Also withdrawn: the "US and India must share one objective" argument.** Revision 1 treated
 the divergence (India excludes macro entirely) as a defect. It is not inherently one.
@@ -273,7 +315,7 @@ No behaviour change by construction. Ship separately from F1/F2.
 
 ## Sequencing
 
-1. **F3** — behaviour-neutral cleanup, on owner approval.
+1. ~~**F3**~~ — DONE, shipped as `07d142ab`.
 2. **F1 ablation** — semiconductor-only, measure-only, exact additive replay.
 3. **F2-i** — selection-score exclusion replay on recorded masks and weights.
 4. **F2-ii** — book-level risk simulation, only with a separately approved regime-to-exposure
@@ -293,7 +335,13 @@ forward-shadow gates.
   the magnitude figures are smaller because 118 low-dimension rows that production would not
   renormalise are excluded here. Direction and asymmetry (152 down / 35 up) confirmed under
   both methods.
-- Remaining unverified: nothing. All figures in this document are now reproduced against
-  production.
+- **"Every figure verified" was premature and is retracted.** The F2 counterfactual was
+  approximate, and disagrees numerically with a real code replay on 4,573 of 5,242 rows. No
+  F2 magnitude here is decision-grade until the replay follows the method above.
+- F1's semiconductor counts (594 observations, 150 in the -22 tier) are simple aggregations,
+  unaffected by the rounding, ETF-cap and thin-evidence defects. They stand.
+- F3 status: **shipped**, commit `07d142ab`, verified on `origin/main` (dead function count
+  0 there, 3 at the preceding commit `08e92acc`). An external review reported it unshipped;
+  that review read a stale checkout.
 - Confirm `buildSynthesisPrompt` is genuinely unreachable before deleting it.
 - A normalised-earnings arm for cyclicals is recorded as future work, not proposed.
