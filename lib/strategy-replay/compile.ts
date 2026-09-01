@@ -30,6 +30,21 @@ export interface CompileInput {
   initialCash: number;
 }
 
+/**
+ * ALLOCATION IS A FRACTION OF AVAILABLE CAPITAL, NOT OF INITIAL CAPITAL.
+ *
+ * The first version allocated `initialCash * positionSizePct` on every entry.
+ * That works only while the book never loses: `cashAllocation` stayed pinned to
+ * the starting balance while real cash drifted, so at `positionSizePct = 1.0` a
+ * single losing round trip made every later entry unaffordable and the simulator
+ * rejected it (`total > cash`, portfolio-simulator.ts:176). Measured on real VOO
+ * bars: 93 of 97 events rejected, 95.9%.
+ *
+ * The compiler therefore tracks its own cash exactly as the simulator does, so a
+ * "fully invested" rule stays fully invested instead of decaying into silence.
+ */
+
+
 export interface CompileResult {
   events: SimulationEvent[];
   /** Sessions skipped because an indicator had insufficient warm-up. */
@@ -173,6 +188,9 @@ export function compileSpec(input: CompileInput): CompileResult {
   let warmupSkipped = 0;
   const decisionSet = new Set<string>();
 
+  // Mirrors the simulator's ledger so allocations track real capital.
+  let cash = input.initialCash;
+
   for (const symbol of spec.universe) {
     const series = bars[symbol];
     if (!series || series.length < 2) continue;
@@ -207,6 +225,7 @@ export function compileSpec(input: CompileInput): CompileResult {
             symbol, kind: "exit", price: fillPrice,
             quantity: open.quantity,
           });
+          cash += open.quantity * fillPrice;
           open = null;
         }
         continue;
@@ -217,7 +236,11 @@ export function compileSpec(input: CompileInput): CompileResult {
       if (wantEntry === null) { warmupSkipped++; continue; }
       decisionSet.add(series[i].session);
       if (wantEntry === true) {
-        const cashAllocation = input.initialCash * spec.positionSizePct;
+        // Fraction of AVAILABLE cash. The 1e-9 shave keeps a 100% allocation
+        // clear of the simulator's `total > cash + 1e-9` boundary rather than
+        // landing exactly on it.
+        const cashAllocation = cash * spec.positionSizePct * (1 - 1e-9);
+        if (!(cashAllocation > 0)) continue;
         events.push({
           id: `${spec.id}:${symbol}:entry:${series[fillIdx].session}`,
           session: series[fillIdx].session,
@@ -227,7 +250,9 @@ export function compileSpec(input: CompileInput): CompileResult {
         // Mirrors the simulator's own sizing (portfolio-simulator.ts:158) so the
         // exit quantity matches the fill exactly. costPct is unset here, so the
         // multiplier is 1.
-        open = { entryIdx: i, entryPrice: fillPrice, quantity: cashAllocation / fillPrice };
+        const quantity = cashAllocation / fillPrice;
+        cash -= quantity * fillPrice;
+        open = { entryIdx: i, entryPrice: fillPrice, quantity };
       }
     }
   }

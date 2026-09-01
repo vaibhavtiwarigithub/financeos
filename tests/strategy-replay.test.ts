@@ -264,3 +264,56 @@ describe("compiled events survive the SIMULATOR, not just the compiler", () => {
     expect(sim.positions.length).toBeLessThanOrEqual(1);
   });
 });
+
+describe("allocation tracks available cash, not initial cash", () => {
+  // THE DEFECT (found on real VOO bars, 2026-09-01): cashAllocation was pinned
+  // to INITIAL cash while real cash drifted, so at positionSizePct = 1.0 a
+  // single losing round trip made every later entry unaffordable. 93 of 97
+  // events were rejected as insufficient_cash.
+  const policy: SimulationPolicy = {
+    market: "us", currency: "USD", initialCash: 100_000,
+    maxOpenNames: 1, allowFractionalShares: true,
+  };
+
+  /** Falling series, so every round trip realises a loss and cash shrinks. */
+  const falling = (): Bar[] =>
+    SESSIONS.map((session, i) => ({
+      session, open: 100 - i, high: 100 - i + 0.2, low: 100 - i - 0.2, close: 100 - i,
+    }));
+
+  it("stays fully invested at positionSizePct 1.0 even after losses", () => {
+    const r = compileSpec({
+      spec: baseSpec({ positionSizePct: 1.0, horizonSessions: 2, exit: { op: "never" } }),
+      bars: { AAA: falling() }, initialCash: 100_000,
+    });
+    const sim = simulatePortfolio(policy, r.events);
+    expect(r.events.length).toBeGreaterThan(2);
+    // The whole point: no insufficient_cash rejections despite realised losses.
+    expect(sim.rejections.filter(x => x.reason === "insufficient_cash")).toHaveLength(0);
+    expect(sim.rejections).toHaveLength(0);
+  });
+
+  it("shrinks the allocation as capital shrinks", () => {
+    const r = compileSpec({
+      spec: baseSpec({ positionSizePct: 1.0, horizonSessions: 2, exit: { op: "never" } }),
+      bars: { AAA: falling() }, initialCash: 100_000,
+    });
+    const allocations = r.events
+      .filter(e => e.kind === "entry")
+      .map(e => e.cashAllocation!);
+    expect(allocations.length).toBeGreaterThan(1);
+    // Each successive entry commits less than the last, because the book lost.
+    for (let i = 1; i < allocations.length; i++) {
+      expect(allocations[i]).toBeLessThan(allocations[0]);
+    }
+  });
+
+  it("the always-in control is actually fully invested", () => {
+    const spec = alwaysInControl("us", ["AAA"]);
+    expect(spec.positionSizePct).toBe(1);
+    const r = compileSpec({ spec, bars: { AAA: bars() }, initialCash: 100_000 });
+    const sim = simulatePortfolio(policy, r.events);
+    expect(sim.rejections).toHaveLength(0);
+    expect(r.events.filter(e => e.kind === "entry").length).toBeGreaterThan(0);
+  });
+});

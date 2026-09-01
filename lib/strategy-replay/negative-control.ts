@@ -69,10 +69,15 @@ export function alwaysInControl(market: "us" | "india", universe: string[]): Rul
     universe,
     horizonSessions: 10,
     execution: "next_open",
-    positionSizePct: 0.1,
+    // FULLY invested, split across the universe. The first version used 0.1
+    // regardless of universe size, so on a single-symbol universe the "always
+    // in" control ran at 8.7% utilisation and showed -81.58pp against a
+    // benchmark it is supposed to track. A control that is not actually always
+    // in cannot test whether the benchmark comparison works.
+    positionSizePct: 1 / Math.max(1, universe.length),
     entry: { op: "always" },
     exit: { op: "never" },
-    ruleVersion: "control_v1",
+    ruleVersion: "control_v2",
   };
 }
 

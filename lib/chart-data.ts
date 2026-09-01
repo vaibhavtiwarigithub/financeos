@@ -73,7 +73,7 @@ export async function fetchPriceHistory(symbol: string, days = 90): Promise<Cand
   // 3. Deterministic REST fallback (no subprocess). Massive → EODHD → Twelve
   // Data → Alpha Vantage TIME_SERIES_DAILY, via the shared candle resolver.
   try {
-    const { candles: resolved } = await fetchUsCandles(
+    const { candles: resolved, source } = await fetchUsCandles(
       symbol,
       () => fetchAvDailyCandles(symbol),
       1, // accept any usable bars; charts render whatever the sources return
@@ -90,7 +90,7 @@ export async function fetchPriceHistory(symbol: string, days = 90): Promise<Cand
 
     // Write to DB so next request is fast
     if (candles.length > 0) {
-      writePriceCacheRows(symbol, candles).catch(() => {});
+      writePriceCacheRows(symbol, candles, source).catch(() => {});
     }
 
     memCache.set(key, { data: candles, ts: Date.now() });
@@ -122,9 +122,43 @@ async function fetchAvDailyCandles(symbol: string): Promise<Candle[]> {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+/**
+ * Adjustment basis per provider, read from the actual request each adapter makes.
+ *
+ * A sealed replay must know whether its closes can be RESTATED. Adjusted series
+ * are rewritten by every split and dividend; raw ones are not.
+ *
+ *   yahoo       lib/data/candles.ts:44  `close: adjClose[i] ?? quote.close[i]`
+ *   massive     lib/data/candles.ts:57  URL carries `?adjusted=true`
+ *   eodhd       lib/data/candles.ts:83  `close: r.adjusted_close ?? r.close`
+ *   twelvedata  no adjustment parameter is sent -> NOT assumed adjusted
+ *
+ * CAVEAT WORTH KNOWING. Yahoo and EODHD both fall back to the RAW close when the
+ * adjusted one is missing (`?? `), so a single stored series can silently mix
+ * bases bar by bar. `adjusted` here means "adjusted where the provider supplied
+ * it", not a guarantee for every bar. That is a real limitation of the upstream
+ * adapters, recorded rather than papered over.
+ */
+const PROVIDER_PRICE_BASIS: Record<string, "adjusted" | "raw" | "unknown"> = {
+  yahoo: "adjusted",
+  massive: "adjusted",
+  eodhd: "adjusted",
+  // No adjustment parameter is sent, and it has not been verified against the
+  // provider's docs. `unknown` disqualifies it from a sealed replay, which is
+  // the correct default for something unverified.
+  twelvedata: "unknown",
+};
+
+const PROVENANCE_VERSION = "v1_provider_basis";
+
 // Write candles to Supabase price_cache (upsert)
-async function writePriceCacheRows(symbol: string, candles: Candle[]): Promise<void> {
+async function writePriceCacheRows(
+  symbol: string,
+  candles: Candle[],
+  provider = "unknown",
+): Promise<void> {
   const supabase = createServiceClient();
+  const priceBasis = PROVIDER_PRICE_BASIS[provider] ?? "unknown";
   const rows = candles.map(c => ({
     symbol,
     date: c.date,
@@ -134,6 +168,9 @@ async function writePriceCacheRows(symbol: string, candles: Candle[]): Promise<v
     close: c.close,
     volume: c.volume,
     cached_at: new Date().toISOString(),
+    provider,
+    price_basis: priceBasis,
+    provenance_version: PROVENANCE_VERSION,
   }));
   for (let i = 0; i < rows.length; i += 200) {
     await supabase.from("price_cache").upsert(rows.slice(i, i + 200), { onConflict: "symbol,date" });
@@ -202,7 +239,7 @@ export async function prewarmPriceCache(
     const batch = pending.slice(i, i + 4);
     await Promise.all(batch.map(async (sym) => {
       try {
-        const { candles: resolved } = await fetchUsCandles(
+        const { candles: resolved, source: warmSource } = await fetchUsCandles(
           sym,
           () => fetchAvDailyCandles(sym),
           1,
@@ -215,7 +252,7 @@ export async function prewarmPriceCache(
           low: Number(c.low) || 0,
           close: Number(c.close) || 0,
           volume: Number(c.volume) || 0,
-        })));
+        })), warmSource);
         // Clear mem cache so next request picks up fresh DB rows
         for (const k of memCache.keys()) {
           if (k.startsWith(sym + ":")) memCache.delete(k);
