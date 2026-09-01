@@ -1,4 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/service";
+import { expectedNewestSession } from "@/lib/data/completed-candles";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { avCachedFetch } from "@/lib/av-cache";
 import { spansRequestedWindow } from "@/lib/data/history-span";
@@ -204,7 +205,25 @@ export async function prewarmPriceCache(
   if (normalized.length === 0) {
     return { ok: 0, failed: 0, skipped: 0, alreadyFresh: 0 };
   }
-  const freshCutoff = new Date(Date.now() - 96 * 3600_000).toISOString().slice(0, 10);
+  // FRESHNESS IS A MARKET SESSION, NOT A CALENDAR WINDOW.
+  //
+  // This was `Date.now() - 96 * 3600_000` — a 4-CALENDAR-DAY grace. A symbol
+  // holding ANY bar newer than that counted as fresh and was skipped, which made
+  // the staleness SELF-PERPETUATING across a weekend: measured 2026-09-01
+  // (Tuesday), the 96h cutoff landed exactly on Friday 2026-08-28, so 106 of 113
+  // traded symbols stuck on Friday's bar all passed the test and were never
+  // re-fetched. The freshness monitor flagged them at the same moment the
+  // prewarm was skipping them, because both used 96h but only one acted on it.
+  //
+  // The right question is the one `getQuote` already asks when it decides
+  // `stale` (lib/data/quotes.ts): is this the session that SHOULD exist by now?
+  // Using the same rule here means a bar the quote gate would reject is a bar
+  // the prewarm refetches — the two can no longer disagree.
+  //
+  // Downstream cost of the old rule, from the monitor's own detail: "In Aug 2026
+  // this produced 15 fills off quotes as-of Jul 22, up to 19.6% off the real
+  // price."
+  const freshCutoff = expectedNewestSession("us", new Date());
   let pending = normalized;
   let alreadyFresh = 0;
   try {
