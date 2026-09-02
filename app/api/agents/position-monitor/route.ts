@@ -3,6 +3,9 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchIndiaQuotes, fetchYahooQuotes } from "@/lib/india-data";
 import { fetchUpstoxCandles } from "@/lib/data/upstox";
+import {
+  classifyCrossCheck, exchangeSessionDate, disputeAgeDays, DISPUTE_ESCALATION_RUNS,
+} from "@/lib/paper/quote-crosscheck";
 import { classifyOutcome } from "@/lib/trade-outcome";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -194,6 +197,14 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   // means the mark is recorded as uncorroborated, never as disputed.
   const crossPrice: Record<string, number> = {};
   const crossSource: Record<string, string> = {};
+  // The SESSION each cross price belongs to. Previously discarded, which is the
+  // whole defect: a cross one session behind was compared against the primary
+  // and reported as a vendor dispute.
+  const crossSession: Record<string, string> = {};
+  // Verdict per symbol, reused by the mark builder so the mark ledger and the
+  // exit decision cannot disagree about whether a quote was corroborated.
+  const crossCheck: Record<string, ReturnType<typeof classifyCrossCheck>> = {};
+  const indiaSymbolSet = new Set(indiaSymbols);
   try {
     // NEVER cross-check a vendor against itself. Since 2026-08-20 Yahoo is the
     // PRIMARY for US settled marks, so a Yahoo "cross" would be the same feed
@@ -208,7 +219,14 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       const yq = await fetchYahooQuotes(usToCheck, "us");
       for (const sym of usToCheck) {
         const q = yq[sym.toUpperCase()];
-        if (q && !q.stale && q.price > 0) { crossPrice[sym] = q.price; crossSource[sym] = "yahoo_us"; }
+        if (q && !q.stale && q.price > 0) {
+          crossPrice[sym] = q.price;
+          crossSource[sym] = "yahoo_us";
+          // retrievedAt is Yahoo's regularMarketTime (the exchange timestamp),
+          // not our fetch time — see lib/india-data.ts.
+          const session = exchangeSessionDate(q.retrievedAt, "us");
+          if (session) crossSession[sym] = session;
+        }
       }
     }
   } catch { /* corroboration is best-effort — never break the run */ }
@@ -217,7 +235,11 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       const bars = await fetchUpstoxCandles(sym, 5);
       const newest = bars.length ? bars[bars.length - 1] : null;
       if (newest && Number.isFinite(newest.close) && newest.close > 0) {
-        crossPrice[sym] = newest.close; crossSource[sym] = "upstox";
+        crossPrice[sym] = newest.close;
+        crossSource[sym] = "upstox";
+        // The candle carries its own session date; it was parsed and thrown
+        // away before this change.
+        if (newest.date) crossSession[sym] = String(newest.date).slice(0, 10);
       }
     } catch { /* best-effort */ }
   }));
@@ -231,20 +253,78 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   // carried 08-17 value; the 08-18 close was 481.63). A price too doubtful to
   // record is far too doubtful to sell on, so a disputed symbol is removed from
   // priceMap and reported UNPRICED — no stop, no target, no time-stop fill.
+  //
+  // SESSION-ALIGNED (2026-09-02). The comparison below used to run on two prices
+  // whose sessions were never checked, so a cross feed one session behind was
+  // refused as a vendor dispute — and stayed refused, run after run, leaving the
+  // position with no exit evaluation at all. INDUSTOWER.NS was reported
+  // "yahoo_india 375 vs upstox 388.8 (3.549%)" every run from 2026-08-26 to
+  // 2026-09-01, while 388.8 was Yahoo's OWN 2026-08-31 close against its 09-01
+  // close of 375. A cross from another day is an unusable cross, not a dispute.
   const disputedSymbols: string[] = [];
+  const sessionMismatched: string[] = [];
   for (const sym of Object.keys(priceMap)) {
-    const live = priceMap[sym];
-    const cross = crossPrice[sym];
-    if (live == null || cross == null || !(cross > 0)) continue;
-    const deltaPct = (Math.abs(live - cross) / cross) * 100;
-    if (deltaPct > MARK_DISPUTE_REFUSE_PCT) {
-      disputedSymbols.push(`${sym} (${quoteMeta[sym]?.source ?? "primary"} ${live} vs ${crossSource[sym]} ${cross}, ${deltaPct.toFixed(3)}%)`);
+    // Use the route's OWN market classification (marketOf on the position row),
+    // not a second symbol-shape rule that could disagree with it.
+    const market: "us" | "india" = indiaSymbolSet.has(sym) ? "india" : "us";
+    const check = classifyCrossCheck({
+      live: priceMap[sym],
+      cross: crossPrice[sym],
+      liveSession: exchangeSessionDate(quoteMeta[sym]?.observedAt ?? null, market),
+      crossSession: crossSession[sym] ?? null,
+      refusePct: MARK_DISPUTE_REFUSE_PCT,
+      tolerancePct: MARK_CROSSCHECK_TOLERANCE_PCT,
+    });
+    crossCheck[sym] = check;
+    if (check.verdict === "session_mismatch") {
+      sessionMismatched.push(
+        `${sym} (${quoteMeta[sym]?.source ?? "primary"} @ ${check.liveSession ?? "unknown session"} vs ` +
+        `${crossSource[sym]} @ ${check.crossSession ?? "unknown session"}, ${check.deltaPct?.toFixed(3) ?? "?"}% apart)`);
+      continue; // uncorroborated: still priced, exits still evaluated
+    }
+    if (check.refuse) {
+      disputedSymbols.push(`${sym} (${quoteMeta[sym]?.source ?? "primary"} ${priceMap[sym]} vs ${crossSource[sym]} ${crossPrice[sym]}, ${check.deltaPct!.toFixed(3)}%)`);
       delete priceMap[sym];
     }
   }
+
+  // A cross that cannot corroborate because it is from another session is a
+  // DATA-FRESHNESS problem, not a price disagreement. It is a warn, never a
+  // critical, and it must never remove a position from exit evaluation.
+  const mismatchIssueKey = `position-monitor-cross-session-mismatch:${marketScope ?? "all"}`;
+  if (sessionMismatched.length > 0) {
+    await reportIssue({
+      issueKey: mismatchIssueKey,
+      severity: "warn", category: "data",
+      title: `${sessionMismatched.length} quote(s) uncorroborated — cross source is from another session`,
+      detail:
+        `The second vendor returned a price from a DIFFERENT market session, so it cannot corroborate or contradict ` +
+        `the primary. These marks are recorded as uncorroborated and their positions WERE still evaluated for stop, ` +
+        `target and time-stop — a cross from another day is an unusable cross, not a vendor dispute: ` +
+        `${sessionMismatched.join("; ")}.`,
+      autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+    }, svc);
+  } else {
+    await resolveIssue(mismatchIssueKey, svc);
+  }
+  const disputeIssueKey = `position-monitor-quote-disputed:${marketScope ?? "all"}`;
+  // ESCALATION. Refusing a doubtful price is right for one run; it is not right
+  // forever. Nothing previously distinguished "refused once" from "refused every
+  // run for a week", and the second is strictly worse than either vendor being
+  // wrong, because the position has no stop, target or time-stop at all. Read
+  // the OPEN alert's first-seen time before re-reporting overwrites it.
+  let disputeFirstSeen: string | null = null;
+  if (disputedSymbols.length > 0) {
+    try {
+      const { data: openRow } = await svc.from("agent_alerts")
+        .select("created_at").eq("issue_key", disputeIssueKey).eq("resolved", false)
+        .order("created_at", { ascending: true }).limit(1).maybeSingle();
+      disputeFirstSeen = (openRow as any)?.created_at ?? null;
+    } catch { /* best-effort: escalation must never break the monitor run */ }
+  }
   if (disputedSymbols.length > 0) {
     await reportIssue({
-      issueKey: `position-monitor-quote-disputed:${marketScope ?? "all"}`,
+      issueKey: disputeIssueKey,
       severity: "critical", category: "paper-truth",
       title: `${disputedSymbols.length} quote(s) refused — providers disagree`,
       detail:
@@ -254,7 +334,24 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
         `Those positions are reported unpriced and were not exited. A price too doubtful to record is too doubtful to sell on.`,
     }, svc);
   } else {
-    await resolveIssue(`position-monitor-quote-disputed:${marketScope ?? "all"}`, svc);
+    await resolveIssue(disputeIssueKey, svc);
+  }
+
+  const escalationIssueKey = `position-monitor-quote-dispute-persists:${marketScope ?? "all"}`;
+  const disputeRuns = disputeAgeDays(disputeFirstSeen, new Date());
+  if (disputedSymbols.length > 0 && disputeRuns >= DISPUTE_ESCALATION_RUNS) {
+    await reportIssue({
+      issueKey: escalationIssueKey,
+      severity: "critical", category: "paper-truth",
+      title: `Quote dispute unresolved for ${disputeRuns} run(s) — position(s) unguarded`,
+      detail:
+        `${disputedSymbols.length} position(s) have been refused a price on every run for ${disputeRuns} day(s), so NO ` +
+        `stop, target or time-stop has been evaluated for them in that time. Refusing a doubtful price is correct for a ` +
+        `single run; persisting means one of the two feeds needs fixing or the position needs a decision. ` +
+        `Unresolved since ${disputeFirstSeen ?? "unknown"}: ${disputedSymbols.join("; ")}.`,
+    }, svc);
+  } else if (disputedSymbols.length === 0) {
+    await resolveIssue(escalationIssueKey, svc);
   }
 
   const unpricedByMarket: Record<"us" | "india", string[]> = {
@@ -688,8 +785,16 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       livePrice: priceMap[String(p.symbol)] ?? null,
       liveSource: quoteMeta[String(p.symbol)]?.source ?? null,
       liveObservedAt: quoteMeta[String(p.symbol)]?.observedAt ?? null,
-      crossPrice: crossPrice[String(p.symbol)] ?? null,
-      crossSource: crossSource[String(p.symbol)] ?? null,
+      // A cross from another session is withheld rather than compared: the mark
+      // ledger must not label a date mismatch a dispute any more than the exit
+      // gate does. Both now read the same verdict.
+      crossPrice: crossCheck[String(p.symbol)]?.verdict === "session_mismatch"
+        ? null : (crossPrice[String(p.symbol)] ?? null),
+      crossSource: crossCheck[String(p.symbol)]?.verdict === "session_mismatch"
+        ? null : (crossSource[String(p.symbol)] ?? null),
+      crossUnusableReason: crossCheck[String(p.symbol)]?.verdict === "session_mismatch"
+        ? `${crossSource[String(p.symbol)] ?? "second source"} returned a ${crossCheck[String(p.symbol)]?.crossSession ?? "different"} session price, not this one`
+        : null,
     }));
     const newNav = navFromMarks(cashByMarket[market], marks);
     const positionsValue = newNav - cashByMarket[market];

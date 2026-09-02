@@ -201,9 +201,40 @@ describe("disputed quotes are refused BEFORE exits are evaluated", () => {
     expect(markAt).toBeGreaterThan(gateAt);
   });
 
-  it("raises a critical naming the refused symbols", () => {
-    const hits = monitor.split("position-monitor-quote-disputed:").length - 1;
-    expect(hits).toBeGreaterThanOrEqual(2); // report AND resolve paths
+  it("raises a critical naming the refused symbols, and can clear it", () => {
+    // Counts the REPORT and RESOLVE paths. This used to count occurrences of the
+    // raw "position-monitor-quote-disputed:" literal, which broke on 2026-09-02
+    // when the key was hoisted into `disputeIssueKey` and used once — the
+    // invariant (both paths exist) held, only the string count changed. Asserting
+    // on the binding is what the test always meant.
+    expect(monitor).toContain('const disputeIssueKey = `position-monitor-quote-disputed:');
+    expect(monitor).toContain("issueKey: disputeIssueKey");     // report path
+    expect(monitor).toContain("resolveIssue(disputeIssueKey");  // self-clear path
     expect(monitor).toContain("too doubtful to sell on");
+  });
+
+  // ── 2026-09-02: a cross from ANOTHER SESSION is not a dispute ──────────────
+  //
+  // The comparison ran on two prices whose sessions were never checked, so a
+  // cross feed one session behind was refused as a vendor dispute — permanently,
+  // since the lag recurred every run. INDUSTOWER.NS was refused every run from
+  // 2026-08-26 to 2026-09-01 on "yahoo_india 375 vs upstox 388.8", while 388.8
+  // was Yahoo's OWN 08-31 close against its 09-01 close of 375. Two open
+  // positions went seven days with no stop, target or time-stop evaluation.
+  it("gates on session alignment before comparing prices", () => {
+    expect(monitor).toContain("classifyCrossCheck({");
+    expect(monitor).toContain("liveSession: exchangeSessionDate(");
+    // A mismatch must CONTINUE (stay priced), never delete from priceMap.
+    const mismatchAt = monitor.indexOf('check.verdict === "session_mismatch"');
+    const deleteAt = monitor.indexOf("delete priceMap[sym];");
+    expect(mismatchAt).toBeGreaterThan(-1);
+    expect(mismatchAt).toBeLessThan(deleteAt); // handled and skipped first
+  });
+
+  it("escalates a dispute that persists across runs", () => {
+    // Refusing a doubtful price is right for one run and wrong forever: nothing
+    // previously distinguished "refused once" from "refused for a week".
+    expect(monitor).toContain("position-monitor-quote-dispute-persists:");
+    expect(monitor).toContain("DISPUTE_ESCALATION_RUNS");
   });
 });

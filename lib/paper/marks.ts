@@ -85,6 +85,17 @@ export interface PositionMarkInput {
    */
   crossPrice?: number | null;
   crossSource?: string | null;
+  /**
+   * Why a second source existed but could not be used, when it could not.
+   *
+   * The `crossPrice` contract above has always said "for the SAME session"; it
+   * was never enforced, so a cross from another session was compared anyway and
+   * a one-session lag was recorded as a vendor DISPUTE. Callers now withhold a
+   * mismatched cross and say so here, keeping the mark's reason honest: "a
+   * second source existed but described another session" is a different fact
+   * from "no second source this run".
+   */
+  crossUnusableReason?: string | null;
   /** Price accepted from a fresh quote this run, if any. */
   livePrice?: number | null;
   /** Provider that produced the live quote (`massive`, `yahoo`, ...). */
@@ -174,7 +185,7 @@ export function buildPositionMark(input: PositionMarkInput, now = new Date()): P
           `A live quote and a settled daily close are different measurements and need not match exactly.`
         : cross != null && cross > 0
         ? `fresh quote from ${input.liveSource || "unknown"}, corroborated by ${input.crossSource || "second source"}`
-        : `fresh quote from ${input.liveSource || "unknown"} (uncorroborated — no second source this run)`,
+        : `fresh quote from ${input.liveSource || "unknown"} (uncorroborated — ${input.crossUnusableReason || "no second source this run"})`,
     };
   }
 
