@@ -10,7 +10,7 @@
 >
 > 2026-07-31: **Reported fundamentals are event-aware and ADR-safe.** ResearchAgent batch-reads `earnings_calendar` before provider work: a report in the prior 3 or next 14 days uses a 1-day cache; otherwise or when unknown it uses 7 days. Finnhub issuer profiles use 30 days. Theme Scout validates candidates with a quote, never a full fundamentals fetch. Reviewed exchange-listed ADRs use Yahoo ADS-basis fundamentals only; an unavailable ADR response cannot fall through to a provider that resolves the foreign ordinary share.
 > 2026-07-28: Yahoo daily candles became market-agnostic in `lib/data/yahoo-candles.ts` (`fetchYahooCandles` + `yahooRange`). Measured five-year depth: AAPL 1254 bars and RELIANCE.NS 1239 bars. This is the free keyless deep-history fallback when Massive's entitlement rejects older US history. Range boundaries guarantee the returned window is not shorter than requested.
-> Last updated: 2026-07-22 (Yahoo Finance v8 chart promoted to **primary US candle** source; recency guard added to `fetchUsCandles`; `minCandles` default raised 15→60; Massive/EODHD/TwelveData demoted to fallback)
+> Last updated: 2026-09-02 (**reasoning-model budget floor** — every LLM failure in 14 days was truncated reasoning; see "Reasoning models need a budget floor"); 2026-07-22 (Yahoo Finance v8 chart promoted to **primary US candle** source; recency guard added to `fetchUsCandles`; `minCandles` default raised 15→60; Massive/EODHD/TwelveData demoted to fallback)
 > Prior: 2026-07-19 (`webull_trade` signed sender restored behind database-backed preflight and nine-gate one-shot permits; adapter and activation remain DISABLED; read-only Cloud MCP remains query-only)
 > Prior: 2026-07-16 (House Stock Watcher congressional feed retired — upstream bucket went private; no licence-clean free replacement qualified)
 > Update this file when: a new library is added, a provider changes, a new adapter is added, the framework is upgraded, or any layer in the table below changes.
@@ -80,6 +80,51 @@ anymore** — `lib/claude-exec.ts` was deleted 2026-07-12; all LLM + data fetche
 To register a new model: call `registerLLMProvider()` in `lib/llm-router.ts` and update the
 relevant tier alias. A System Health alert fires automatically when any model is
 deprecated/renamed.
+
+### Reasoning models need a budget floor (2026-09-02)
+
+A reasoning model (`deepseek-v4-pro`, the `reasoning` tier) emits chain-of-thought into
+`reasoning_content` **before a single token of answer**. Give it less than its thinking
+needs and it returns an *empty* answer with `finish_reason=length` — having billed the whole
+budget. A call that cannot succeed is worse than an expensive one: same tokens, no output.
+
+**Audit, 14 days of `llm_call_log`.** Every failed LLM call in the system — **213 of them —
+was this one error**, and every one was on the reasoning tier while every flash flow sat at
+zero failures:
+
+| flow | model | calls | failures | budget |
+|---|---|---|---|---|
+| `research` | pro | 561 | **197 (35%)** | 1500 |
+| `macro-read` | pro | 11 | **11 (100%)** | 1500 |
+| `mentor-evaluate` | pro | 3 | 3 (100%) | 2000 |
+| `chat` | flash | 82 | 0 | 2000 |
+| `holding-risk` | flash | 60 | 0 | 1200 |
+
+`research` had been failing a third of its thesis calls for two weeks while logging
+`claude_calls: 0`, which reads as "no LLM used" rather than "the call failed".
+
+**Why a floor and not another number.** The same bug had already been found and fixed
+three times by raising one flow's constant — `research-agent` 512→1500, `macro-read`
+600→1500 (its source comment records both, and notes it "silently killed this agent for 4
+days"), then `mentor-evaluate` 2000→16000. `macro-read` was failing 100% *at the bumped
+value*. A fifth constant would leave a sixth flow to discover it in production.
+
+`REASONING_MIN_TOKENS` (16000) is enforced in `callLLM` **before dispatch**, and applies to
+every downstream path including the same-tier and auth fallbacks — a fallback that re-sent
+the original small budget would truncate identically. `isReasoningModel()` derives from
+`TIER_MODELS["reasoning"]` so a renamed tier carries automatically. Flooring raises a warn
+naming the flow, and that alert states the cheaper alternative rather than only raising
+cost: a flow wanting three sentences belongs on the **non-thinking tier**, not paying for
+16k of reasoning it discards. `markets-synthesis` (350 tokens) and `markets-thesis` (400)
+were reassigned to `deepseek-v4-flash` on exactly that basis — a 350-token budget can never
+be honoured by a model that thinks first.
+
+Separately, `isTruncatedReasoning()` retries a truncated call once with headroom. That
+predicate is deliberately distinct from `isModelUnavailable()`: the truncation error is
+worded to avoid the deprecated-model vocabulary so it does not spam the health funnel, and
+because the only retry path used to be gated on `isModelUnavailable`, the error matched
+nothing and propagated — while both the error text and the comment beside it promised a
+retry the control flow prevented.
 
 ---
 

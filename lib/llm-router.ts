@@ -64,6 +64,44 @@ function isModelUnavailable(err: unknown): boolean {
   return /model.*(not exist|not found|does not exist|deprecat|invalid)|invalid_model|not_found_error|unknown model|\b404\b|\b400\b/.test(s)
 }
 
+/** Floor for the truncation retry — enough for reasoning PLUS a full answer. */
+export const TRUNCATION_RETRY_MIN_TOKENS = 16000
+
+/**
+ * Minimum budget a REASONING model may be called with.
+ *
+ * A reasoning model emits chain-of-thought into `reasoning_content` BEFORE a
+ * single token of answer. Give it less than its thinking needs and it returns
+ * an empty answer with finish_reason=length — having billed the whole budget.
+ * A call that cannot possibly succeed is worse than an expensive one: it costs
+ * the same tokens and produces nothing.
+ *
+ * WHY A FLOOR AND NOT ANOTHER NUMBER BUMP. This exact failure has now been
+ * found and "fixed" four times, each time by raising one flow's constant:
+ * research-agent 512 -> 1500, macro-read 600 -> 1500 (its own comment records
+ * both, and says it "silently killed this agent for 4 days"), then
+ * mentor-evaluate 2000 -> 16000. Measured 2026-09-02 over 14 days of
+ * llm_call_log, EVERY failed LLM call in the system — 213 of them — was this
+ * one error, and every one was on the reasoning tier while every flash flow sat
+ * at zero failures: research 197/561 (35%) at 1500, macro-read 11/11 (100%) at
+ * 1500. Raising a fifth constant would leave the sixth flow to discover it in
+ * production.
+ *
+ * 16000 is not arbitrary: the observed reasoning lengths run to ~8.8k tokens,
+ * and mentor-evaluate needed ~3.9k of answer on top. Matches
+ * TRUNCATION_RETRY_MIN_TOKENS so the floor and the retry agree.
+ */
+export const REASONING_MIN_TOKENS = 16000
+
+/**
+ * Models that think before they answer, and therefore cannot honour a small
+ * budget. Derived from TIER_MODELS so retiring or renaming the reasoning tier
+ * carries here automatically instead of leaving a stale hardcoded id.
+ */
+export function isReasoningModel(model: string): boolean {
+  return model === TIER_MODELS["reasoning"] || model === "deepseek-reasoner"
+}
+
 /**
  * Did the model run out of budget MID-REASONING and return an empty answer?
  *
@@ -89,9 +127,6 @@ function isModelUnavailable(err: unknown): boolean {
  * exactly ONE successful evaluation ever, on 2026-07-12, and failures wrote no
  * agent_runs row, so nothing surfaced it.
  */
-/** Floor for the truncation retry — enough for reasoning PLUS a full answer. */
-export const TRUNCATION_RETRY_MIN_TOKENS = 16000
-
 function isTruncatedReasoning(err: unknown): boolean {
   const s = String((err as any)?.message ?? err).toLowerCase()
   return s.includes("no answer content") && s.includes("finish_reason=length")
@@ -291,10 +326,30 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
       : [{ role: "user", content: opts.prompt }],
   })
 
+  // FLOOR THE BUDGET BEFORE THE CALL, not after it fails.
+  //
+  // The truncation RETRY below rescues a call that has already burned a full
+  // budget producing nothing; this stops the doomed call being made at all.
+  // Flows that genuinely want a short answer (a 2-3 sentence market thesis)
+  // belong on the non-thinking tier instead — raising them to this floor to
+  // obtain 400 tokens of prose is the wrong trade, and the alert says so.
+  let effectiveOpts = opts
+  if (isReasoningModel(model) && (opts.maxTokens ?? 4096) < REASONING_MIN_TOKENS) {
+    const requested = opts.maxTokens ?? 4096
+    effectiveOpts = { ...opts, maxTokens: REASONING_MIN_TOKENS }
+    await reportIssue({
+      issueKey: `reasoning-budget-floored:${opts.agentLabel ?? opts.task}`,
+      severity: "warn", category: "models",
+      title: `${opts.agentLabel ?? opts.task} asked ${model} for ${requested} tokens — raised to ${REASONING_MIN_TOKENS}`,
+      detail: `${model} is a reasoning model: it emits chain-of-thought before any answer, so a ${requested}-token budget returns an empty answer while billing the full amount. The budget was raised to ${REASONING_MIN_TOKENS} for this call. Either set this flow's maxTokens deliberately, or — if it only needs a short answer — assign a non-reasoning model in Agents -> Model Config, which is cheaper than paying for reasoning you discard.`,
+      autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+    })
+  }
+
   try {
     let result
     try {
-      result = await dispatchProvider(model, opts)
+      result = await dispatchProvider(model, effectiveOpts)
     } catch (err) {
       // Graceful, LOUD fallback: a deprecated/unknown model swaps to its
       // same-tier sibling and raises a persistent System Health issue — the run
@@ -304,7 +359,7 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
         // A BUDGET problem, not a model problem — so retry the SAME model with
         // headroom rather than swapping to a sibling that would truncate too.
         // Bounded to one retry: if it truncates again the error propagates.
-        const requested = opts.maxTokens ?? 4096
+        const requested = effectiveOpts.maxTokens ?? 4096
         const retryMax = Math.max(requested * 3, TRUNCATION_RETRY_MIN_TOKENS)
         await reportIssue({
           issueKey: `model-truncation-retry:${opts.agentLabel ?? opts.task}`,
@@ -313,7 +368,7 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
           detail: `${model} is a reasoning model and spent its ${requested}-token budget on reasoning, returning an empty answer (finish_reason=length). Retried once at ${retryMax}. Raise this flow's maxTokens or assign a non-reasoning model in Agents -> Model Config; the retry costs a full extra call every time.`,
           autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
         })
-        result = await dispatchProvider(model, { ...opts, maxTokens: retryMax })
+        result = await dispatchProvider(model, { ...effectiveOpts, maxTokens: retryMax })
       } else if (isModelUnavailable(err) && fb && fb !== model) {
         await reportIssue({
           issueKey: `model-fallback:${model}`,
@@ -322,7 +377,7 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
           detail: `${model} failed as unavailable/deprecated (${String(err).slice(0, 160)}). Fell back to the same-tier model ${fb}. Update the model assignment (Agents → Model Config) or the TIER_MODELS map in lib/llm-router.ts.`,
         })
         model = fb
-        result = await dispatchProvider(fb, opts)
+        result = await dispatchProvider(fb, effectiveOpts)
       } else if (isAuthMissing(err) && !model.startsWith("deepseek")) {
         // Anthropic API key missing from env — fall back to DeepSeek so the run
         // doesn't hard-fail. Raises a persistent alert so the key gets re-added.
@@ -334,7 +389,7 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
           detail: `${model} auth failed: ${String(err).slice(0, 200)}. Add ANTHROPIC_API_KEY to Vercel environment variables and redeploy.`,
         })
         model = deepseekFb
-        result = await dispatchProvider(deepseekFb, opts)
+        result = await dispatchProvider(deepseekFb, effectiveOpts)
       } else {
         throw err
       }
