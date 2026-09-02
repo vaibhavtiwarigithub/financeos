@@ -12,6 +12,8 @@
 // inventing a percentile from a handful of names ("three finalists are not a
 // universe"). See features/cross-sectional-rank/FEATURE_ARCHITECTURE.md §4.
 
+import { canonicalSectorKey } from "./sector-taxonomy";
+
 export type RankAssetType = "equity" | "etf";
 
 export interface RankCandidate {
@@ -68,10 +70,25 @@ function clamp01(x: number): number {
   return x < 0 ? 0 : x > 1 ? 1 : x;
 }
 
+/**
+ * Canonical GICS sector, not the raw provider string.
+ *
+ * This used to lowercase and trim only, so `Semiconductors` and `Technology`
+ * were different groups, as were `Banking` and `Financial Services`, and
+ * `Media` / `Communications` / `Telecommunication`. Measured 2026-09-02: 41
+ * distinct labels with a MEDIAN OF ~2 SYMBOLS EACH, against a
+ * RANK_MIN_GROUP_EQUITY_US floor of 20 — so essentially every sector group fell
+ * under the floor and collapsed into the market-wide fallback. The gate would
+ * have ranked against the whole market while presenting a sector-partitioned
+ * design.
+ *
+ * Unmapped labels return null and take the existing fallback path, which is the
+ * honest place for a symbol whose sector we cannot name: a WRONG sector is worse
+ * than a missing one, because it puts the symbol in a peer group it does not
+ * belong to and every comparison inside that group is then quietly wrong.
+ */
 function normalizeSector(sector: string | null): string | null {
-  if (!sector) return null;
-  const s = sector.trim().toLowerCase();
-  return s.length ? s : null;
+  return canonicalSectorKey(sector);
 }
 
 function minSampleFor(market: string, assetType: RankAssetType): number {

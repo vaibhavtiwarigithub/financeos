@@ -8,6 +8,16 @@ import { isIndia } from "@/lib/india-data";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
+/**
+ * How far back a scored symbol still counts as needing a profile.
+ *
+ * Matches the freshness contract's `active_us_price_symbols` window so the
+ * profile backfill covers the same population the rest of the system treats as
+ * live. If this is shorter than the consumer's window, the coverage gap silently
+ * reopens for the symbols in between.
+ */
+const PROFILE_DECISION_LOOKBACK_DAYS = 7;
+
 // POST /api/agents/symbol-profiles/backfill?market=us|india&limit=<n>
 //
 // Fills symbol_profiles for watchlist symbols that lack a FRESH (<30d) profile,
@@ -52,6 +62,25 @@ export async function POST(req: NextRequest) {
   const { data: wlRows, error: wlErr } = await wq;
   if (wlErr) return NextResponse.json({ error: wlErr.message }, { status: 500 });
 
+  // ALSO cover recently SCORED symbols, not only the watchlist.
+  //
+  // The watchlist is a narrower set than the universe that actually gets scored:
+  // measured 2026-09-02, only 68 of 162 US symbols carrying a decision
+  // observation had a sector at all (42%). A sector-grouped comparison over a
+  // 42%-covered cross-section is not a sector comparison. This is the same shape
+  // as the price prewarm defect fixed earlier today — a producer covering a
+  // narrower scope than its consumer requires — so the fix is the same: source
+  // the candidate set from what is actually used.
+  const decisionSince = new Date(Date.now() - PROFILE_DECISION_LOOKBACK_DAYS * 86400000).toISOString();
+  let dq = svc.from("decision_observations").select("symbol, market").gte("ts", decisionSince).limit(5000);
+  if (marketScope) dq = dq.eq("market", marketScope);
+  const { data: decisionRows, error: decisionErr } = await dq;
+  if (decisionErr) {
+    // Fail SOFT to the watchlist-only set: a wider backfill is an improvement,
+    // never a precondition for the existing job.
+    console.error("[symbol-profiles] decision-symbol widening failed:", decisionErr.message);
+  }
+
   // Dedupe by (symbol, resolved market).
   const seen = new Set<string>();
   const candidates: { symbol: string; market: ProfileMarket; companyNameNull: boolean }[] = [];
@@ -66,6 +95,18 @@ export async function POST(req: NextRequest) {
     if (seen.has(key)) continue;
     seen.add(key);
     candidates.push({ symbol, market, companyNameNull: (row as any).company_name == null });
+  }
+
+  for (const row of (decisionRows ?? []) as any[]) {
+    const symbol = String(row.symbol ?? "").toUpperCase();
+    if (!symbol) continue;
+    const rowMarket = String(row.market ?? "").toLowerCase();
+    const market: ProfileMarket = rowMarket === "india" || isIndia(symbol) ? "india" : "us";
+    const key = `${symbol}::${market}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // Watchlist rows carry a company_name to backfill; decision rows do not.
+    candidates.push({ symbol, market, companyNameNull: false });
   }
 
   // Which of these already have a FRESH profile? One batched read, then skip them.

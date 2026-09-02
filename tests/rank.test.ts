@@ -11,6 +11,14 @@ import {
 } from "@/lib/scoring/rank";
 
 // Helper: a plain eligible US-equity long candidate.
+// GROUP KEYS ARE CANONICAL GICS SECTORS (2026-09-02). normalizeSector used to
+// lowercase the raw provider label, so `Semiconductors` and `Technology` were
+// different groups; with a median of ~2 symbols per raw label essentially every
+// sector group fell under RANK_MIN_GROUP_EQUITY_US and collapsed into the
+// market-wide fallback. Raw labels now resolve through
+// lib/scoring/sector-taxonomy.ts, so a group key reads "us:equity:Information
+// Technology". Only the NAME changed here — grouping, percentile and quality
+// behaviour are unchanged.
 function usEquity(symbol: string, score: number, sector: string | null = "technology"): RankCandidate {
   return {
     symbol,
@@ -37,7 +45,7 @@ describe("computeComparableRank — grouped percentile correctness", () => {
     // Lowest scorer → 0, highest → 1, all 'ok', group_n = 25.
     expect(res.get("T0")!.rank_pct).toBe(0);
     expect(res.get("T0")!.rank_quality).toBe("ok");
-    expect(res.get("T0")!.comparable_group_key).toBe("us:equity:technology");
+    expect(res.get("T0")!.comparable_group_key).toBe("us:equity:Information Technology");
     expect(res.get("T0")!.group_n).toBe(25);
     expect(res.get("T24")!.rank_pct).toBe(1);
     // A middle name: 12 of 24 peers score strictly below T12 → 12/24 = 0.5.
@@ -96,7 +104,7 @@ describe("computeComparableRank — ETFs never mix with equities", () => {
     // The 2-name ETF group is below its min sample → degraded, not a fabricated percentile.
     expect(res.get("GLD")!.rank_quality).toBe("degraded");
     // Equities remain their own 'ok' group.
-    expect(res.get("T0")!.comparable_group_key).toBe("us:equity:technology");
+    expect(res.get("T0")!.comparable_group_key).toBe("us:equity:Information Technology");
     expect(res.get("T0")!.rank_quality).toBe("ok");
   });
 });
@@ -124,7 +132,7 @@ describe("computeComparableRank — small-group degraded path ('three finalists 
     // 15 names hits the India threshold exactly → 'ok'; 14 would be degraded.
     const ok15 = computeComparableRank(Array.from({ length: RANK_MIN_GROUP_EQUITY_INDIA }, (_, i) => mk(`I${i}`, 50 + i)));
     expect(ok15.every(r => r.rank_quality === "ok")).toBe(true);
-    expect(ok15[0].comparable_group_key).toBe("india:equity:financials");
+    expect(ok15[0].comparable_group_key).toBe("india:equity:Financials");
     const deg14 = computeComparableRank(Array.from({ length: RANK_MIN_GROUP_EQUITY_INDIA - 1 }, (_, i) => mk(`I${i}`, 50 + i)));
     expect(deg14.every(r => r.rank_quality === "degraded")).toBe(true);
     expect(deg14.every(r => r.comparable_group_key === "india:equity:all")).toBe(true);
@@ -174,7 +182,7 @@ describe("computeComparableRank — data-quality exclusions (rank composites aft
 
 describe("isRankRejected — the hybrid gate's rank half", () => {
   const eligibleMid: RankResult = {
-    symbol: "M", rank_pct: 0.4, rank_quality: "ok", comparable_group_key: "us:equity:technology", group_n: 25, rank_eligible: true,
+    symbol: "M", rank_pct: 0.4, rank_quality: "ok", comparable_group_key: "us:equity:Information Technology", group_n: 25, rank_eligible: true,
   };
   const eligibleHigh: RankResult = { ...eligibleMid, symbol: "H", rank_pct: 0.9 };
   const excluded: RankResult = {
