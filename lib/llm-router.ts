@@ -64,6 +64,39 @@ function isModelUnavailable(err: unknown): boolean {
   return /model.*(not exist|not found|does not exist|deprecat|invalid)|invalid_model|not_found_error|unknown model|\b404\b|\b400\b/.test(s)
 }
 
+/**
+ * Did the model run out of budget MID-REASONING and return an empty answer?
+ *
+ * A reasoning model streams chain-of-thought into `reasoning_content` and the
+ * answer into `content`. If max_tokens is reached while it is still thinking,
+ * `content` comes back empty with finish_reason "length" — the model worked
+ * fine, the BUDGET was too small. That is not a dead model and must not be
+ * treated as one (it would raise the deprecated-model health alert), but it is
+ * also not fatal: the same call retried with headroom usually succeeds.
+ *
+ * THE DEFECT THIS FIXES. callDeepSeek's truncation error is deliberately worded
+ * to avoid the "invalid/not found" vocabulary that `isModelUnavailable` keys on
+ * — correctly, so it does not spam the health funnel. But the ONLY retry path in
+ * callLLM was gated on `isModelUnavailable`, so the truncation error matched
+ * nothing and propagated. Both the error text ("retrying via same-tier
+ * fallback") and the code comment beside it ("same-tier fallback fires for that
+ * one call") promised a retry the control flow prevented.
+ *
+ * Measured: Judgment Coach (`mentor-evaluate`) was configured to the reasoning
+ * model deepseek-v4-pro and the route passed maxTokens 2000 — under half the
+ * 4096 default — against a prompt demanding a large JSON object. Every
+ * submission 500'd with reasoning_len 8764 and empty content. It had produced
+ * exactly ONE successful evaluation ever, on 2026-07-12, and failures wrote no
+ * agent_runs row, so nothing surfaced it.
+ */
+/** Floor for the truncation retry — enough for reasoning PLUS a full answer. */
+export const TRUNCATION_RETRY_MIN_TOKENS = 16000
+
+function isTruncatedReasoning(err: unknown): boolean {
+  const s = String((err as any)?.message ?? err).toLowerCase()
+  return s.includes("no answer content") && s.includes("finish_reason=length")
+}
+
 // Is this a missing-API-key error (SDK throws before any HTTP call)?
 function isAuthMissing(err: unknown): boolean {
   const s = String((err as any)?.message ?? err).toLowerCase()
@@ -267,7 +300,21 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
       // same-tier sibling and raises a persistent System Health issue — the run
       // completes instead of hard-failing, and the swap is flagged for review.
       const fb = SAME_TIER_FALLBACK[model]
-      if (isModelUnavailable(err) && fb && fb !== model) {
+      if (isTruncatedReasoning(err)) {
+        // A BUDGET problem, not a model problem — so retry the SAME model with
+        // headroom rather than swapping to a sibling that would truncate too.
+        // Bounded to one retry: if it truncates again the error propagates.
+        const requested = opts.maxTokens ?? 4096
+        const retryMax = Math.max(requested * 3, TRUNCATION_RETRY_MIN_TOKENS)
+        await reportIssue({
+          issueKey: `model-truncation-retry:${opts.agentLabel ?? opts.task}`,
+          severity: "warn", category: "models",
+          title: `${model} ran out of tokens mid-reasoning on ${opts.agentLabel ?? opts.task}`,
+          detail: `${model} is a reasoning model and spent its ${requested}-token budget on reasoning, returning an empty answer (finish_reason=length). Retried once at ${retryMax}. Raise this flow's maxTokens or assign a non-reasoning model in Agents -> Model Config; the retry costs a full extra call every time.`,
+          autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+        })
+        result = await dispatchProvider(model, { ...opts, maxTokens: retryMax })
+      } else if (isModelUnavailable(err) && fb && fb !== model) {
         await reportIssue({
           issueKey: `model-fallback:${model}`,
           severity: "warn", category: "models",
@@ -434,8 +481,16 @@ async function callDeepSeek(
     // Only word the error with "invalid/not found" when the response is genuinely
     // empty — because callLLM's isModelUnavailable() keys on those words to raise
     // the persistent "model deprecated/unavailable" System Health alert. A truncated
-    // reasoner reply still throws (so same-tier fallback fires for that one call) but
-    // must NOT masquerade as a dead model and spam the health funnel.
+    // reasoner reply still throws, and callLLM's isTruncatedReasoning() catches it
+    // and retries the SAME model with headroom. It must NOT masquerade as a dead
+    // model and spam the health funnel.
+    //
+    // This comment previously claimed the same-tier FALLBACK fired here. It did
+    // not: the only retry path was gated on isModelUnavailable(), which this
+    // message is deliberately worded NOT to match, so the error propagated
+    // untouched and every caller saw a hard failure. The message text below is
+    // load-bearing — isTruncatedReasoning keys on "no answer content" and
+    // "finish_reason=length", so do not reword those two fragments.
     const reasoning = choice?.message?.reasoning_content ?? ""
     const finish = choice?.finish_reason ?? ""
     if (reasoning || finish === "length") {

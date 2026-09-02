@@ -7,6 +7,22 @@ import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Budget for one evaluation.
+ *
+ * Was 2000 — under half the router's 4096 default — while `mentor-evaluate` is
+ * assigned a REASONING model and this prompt demands a large JSON object (score,
+ * verdict, biases, six dimensions, six observations, bear case, suggestions).
+ * The model spent the entire budget on reasoning and returned empty content with
+ * finish_reason=length, so every submission 500'd. One successful evaluation was
+ * ever recorded, on 2026-07-12.
+ *
+ * Sized for reasoning PLUS the answer. The router also retries a truncated
+ * reasoner once with headroom (isTruncatedReasoning), but relying on that would
+ * pay for two calls on every single evaluation.
+ */
+const MENTOR_EVALUATE_MAX_TOKENS = 16000;
+
 const EVAL_PROMPT = (symbol: string, action: string, entryType: string, reasoning: string) => `
 You are a professional investment analyst and trading coach. Evaluate this trade thesis rigorously.
 
@@ -151,11 +167,27 @@ export async function POST(req: NextRequest) {
   let usedModel = "deepseek-reasoner";
   try {
     // Production LLM path (was execClaude → PowerShell, which ENOENTs on Vercel).
-    const res = await callLLM({ task: "evaluate", prompt, agentLabel: "mentor-evaluate", model: await getConfiguredModel(cfgSvc, "mentor-evaluate", "deepseek-reasoner"), symbol, maxTokens: 2000 });
+    const res = await callLLM({ task: "evaluate", prompt, agentLabel: "mentor-evaluate", model: await getConfiguredModel(cfgSvc, "mentor-evaluate", "deepseek-reasoner"), symbol, maxTokens: MENTOR_EVALUATE_MAX_TOKENS });
     raw = res.text;
     usedModel = res.model;
     tokenUsage = { input: res.tokensIn, output: res.tokensOut };
   } catch (e) {
+    // Record the FAILURE too. Previously only successes wrote an agent_runs row,
+    // so a flow that had been broken since 2026-07-12 looked simply unused —
+    // there was nothing to distinguish "nobody submitted" from "every submission
+    // 500'd". Best-effort: never let logging mask the original error.
+    try {
+      await cfgSvc.from("agent_runs").insert({
+        agent_type: "mentor_evaluate",
+        status: "failed",
+        trigger_source: "manual",
+        symbols: [symbol],
+        result_summary: `Evaluation FAILED for ${symbol} ${action}`,
+        error: String(e).slice(0, 500),
+        started_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+      } as any);
+    } catch { /* logging must not mask the real failure */ }
     return NextResponse.json({ error: "AI evaluation failed", detail: String(e) }, { status: 500 });
   }
 
