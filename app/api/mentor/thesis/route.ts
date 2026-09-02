@@ -7,6 +7,14 @@ import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
+// This route declared NO maxDuration and inherited the platform default, which a
+// reasoning call cannot finish inside. Measured 2026-09-02, a floored
+// mentor-evaluate call took 94.8s end to end (deepseek-v4-pro, 16k budget,
+// 3,913 output tokens). That run was verified on a LOCAL dev server, which has
+// no function timeout — in production it would have been killed, so "verified
+// working" locally proved the model, not the deployment.
+export const maxDuration = 150;
+
 // Cache thesis for 24h — regenerate once per day after morning cron.
 // Keyed BY MARKET: the thesis is built from that market's signals, so a single
 // time-keyed singleton would hand the US thesis to India (and vice versa) for up

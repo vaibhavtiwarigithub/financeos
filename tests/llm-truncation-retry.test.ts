@@ -167,3 +167,32 @@ describe("reasoning models get a budget they can actually use", () => {
     expect(branch).toContain("assign a non-reasoning model");
   });
 });
+
+// ── Function timeout must fit the floored budget ─────────────────────────────
+//
+// The budget floor was necessary and NOT sufficient. A reasoning model given
+// room to think also takes longer to answer, and a route whose function is
+// killed first turns a truncation failure into a FUNCTION_INVOCATION_TIMEOUT —
+// which is worse, because it writes no llm_call_log row at all and so looks like
+// "never ran" rather than "ran out of wall clock".
+//
+// Measured 2026-09-02: macro-read (maxDuration 60) returned 504 on its first
+// floored call. mentor/evaluate and mentor/thesis declared NO maxDuration and
+// inherited the platform default; the 94.8s local success that "verified" the
+// mentor fix ran on a dev server with no function timeout, so it proved the
+// model and not the deployment.
+describe("routes that call a reasoning model allow time to collect the answer", () => {
+  const reasoningRoutes = [
+    "app/api/agent-mind/macro-read/route.ts",
+    "app/api/mentor/evaluate/route.ts",
+    "app/api/mentor/thesis/route.ts",
+  ];
+
+  it.each(reasoningRoutes)("%s declares a maxDuration that fits a reasoning call", (path) => {
+    const src = readFileSync(join(process.cwd(), path), "utf8");
+    const match = src.match(/export const maxDuration = (\d+)/);
+    expect(match, `${path} declares no maxDuration and would inherit the platform default`).not.toBeNull();
+    // 94.8s observed end-to-end for one floored call; 60 is demonstrably too low.
+    expect(Number(match![1])).toBeGreaterThanOrEqual(120);
+  });
+});

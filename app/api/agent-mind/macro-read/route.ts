@@ -13,7 +13,16 @@ import {
 } from "@/lib/macro-read";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// 150s, not 60. A REASONING model must finish thinking before it emits a single
+// token of answer, and REASONING_MIN_TOKENS gives it room to. Measured
+// 2026-09-02: with the budget floored this route exceeded 60s and Vercel killed
+// it — FUNCTION_INVOCATION_TIMEOUT, with no llm_call_log row written at all,
+// which looks like "never ran" rather than "ran out of wall clock".
+//
+// The budget floor was necessary and not sufficient: a model given enough tokens
+// to answer also needs enough seconds to be waited for. Cron-driven, so latency
+// costs nothing here. 150 matches the research cron's ceiling.
+export const maxDuration = 150;
 
 // NARRATIVE ONLY. `macro_interpretations` is written here and read back by this
 // route's own GET alone (rendered in MacroReadCard on Markets). Nothing in any
