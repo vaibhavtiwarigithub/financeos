@@ -66,7 +66,12 @@ export default function DimensionIcPanel() {
   const [error, setError] = useState("");
   const [horizon, setHorizon] = useState(5);
   const [focus, setFocus] = useState<string>("all");
-  const [showDefs, setShowDefs] = useState(false);
+  // Open by default. Every column here is a statistical term with a specific
+  // meaning, and a reader who does not know what nEff is cannot tell a real
+  // result from an overlapped one — the exact mistake the floors exist to
+  // prevent. Hiding the definitions behind a click optimises for the reader who
+  // already knows; the toggle is there to collapse them once you do.
+  const [showDefs, setShowDefs] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -147,6 +152,32 @@ export default function DimensionIcPanel() {
           observations. These numbers describe what happened; they are not evidence that a dimension works or fails, and they
           must not be used to justify a weight change.
         </div>}
+
+        {/* IC and t explained inline and ALWAYS visible. The full nine-column
+            reference lives behind the toggle, but a reader looking at a number
+            like -0.1325 or a t of 1.16 should never have to hunt for what it
+            means before deciding whether it matters. */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "10px", marginTop: "14px" }}>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", padding: "10px 12px" }}>
+            <div style={{ color: T.text, fontSize: "11.5px", fontWeight: 700, marginBottom: "3px" }}>Mean IC — does it rank?</div>
+            <div style={{ color: T.sub, fontSize: "11px", lineHeight: 1.5 }}>
+              Averaged over sessions: on a day, did the dimension&apos;s higher-scored names actually out-return its
+              lower-scored ones? <strong style={{ color: T.green }}>+1</strong> ranked the day perfectly,
+              <strong> 0</strong> no ordering, <strong style={{ color: T.red }}>−1</strong> exactly backwards.
+              About <strong>0.05</strong> sustained is a normal-to-good equity factor. A negative mean means the
+              dimension ranked the wrong way round.
+            </div>
+          </div>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", padding: "10px 12px" }}>
+            <div style={{ color: T.text, fontSize: "11.5px", fontWeight: 700, marginBottom: "3px" }}>t — is it distinguishable from luck?</div>
+            <div style={{ color: T.sub, fontSize: "11px", lineHeight: 1.5 }}>
+              Mean ÷ (SD ÷ √nEff) — how many standard errors the mean sits from zero. It divides by
+              <strong> nEff</strong>, not the session count, because overlapping forward windows are not independent
+              draws. Across 5 dimensions the Šidák bar is about <strong>|t| 2.57</strong>. Everything below that is
+              noise, <em>whatever the IC column says</em>.
+            </div>
+          </div>
+        </div>
 
         <div style={{ overflowX: "auto", marginTop: "14px" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", minWidth: "760px" }}>
@@ -231,9 +262,10 @@ export default function DimensionIcPanel() {
         </div>
 
         {showDefs && <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", padding: "14px 16px", marginTop: "14px" }}>
-          <div style={{ color: T.text, fontSize: "12px", fontWeight: 700, marginBottom: "10px" }}>What each column means</div>
+          <div style={{ color: T.text, fontSize: "12px", fontWeight: 700, marginBottom: "10px" }}>Every column in this table, explained</div>
           <dl style={{ margin: 0, display: "grid", gap: "9px" }}>
             {[
+              ["Dimension", "One of the five inputs to analyst_score: fundamental (0.30), technical (0.25), sentiment (0.20), macro (0.15), insider (0.10). Rows are sorted by mean IC, best first. Note macro is a single market-wide value each day, so it has no cross-sectional variance and its IC is 0 BY CONSTRUCTION — that zero is not a measurement of its worth."],
               ["Session IC (chart point)", "One trading day's Spearman rank correlation between the dimension's scores across that day's candidates and their benchmark-neutral forward returns. +1 = ranked the day perfectly, 0 = no ordering, −1 = exactly backwards. Individually noisy; a single day means nothing."],
               ["Mean IC (table)", "Those session ICs averaged over every qualifying session to date. Averaged per DAY, not pooled per observation, so a day with 80 names does not outweigh a day with 8. Roughly 0.05 sustained is a normal-to-good equity factor; a persistent 0.15+ is more likely a bug than an edge."],
               ["SD", "Spread of the session ICs around that mean. Large SD with a small mean means the dimension is inconsistent day to day, not that it is wrong."],
