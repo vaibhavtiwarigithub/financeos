@@ -22,8 +22,21 @@ import { buildChartRows, type SessionPoint } from "@/lib/learning/dimension-ic-c
 // 2026-08-28. This panel charts the PER-SESSION series instead: one point per
 // trading day, which is the only object here that genuinely varies.
 
+type QuantileDiag = {
+  quantiles: number;
+  qualifying_sessions: number;
+  excluded_sessions: number;
+  mean_return_by_quantile: Array<number | null>;
+  monotonicity: number | null;
+  spread_top_minus_bottom: number | null;
+  spread_std_error: number | null;
+  spread_t: number | null;
+  rank_autocorrelation: number | null;
+  autocorrelation_pairs: number;
+};
 type Metrics = {
   cohort?: string;
+  quantile_diagnostics?: QuantileDiag;
   mean_session_rank_ic: number | null;
   sd_session_rank_ic?: number | null;
   t_stat?: number | null;
@@ -260,6 +273,67 @@ export default function DimensionIcPanel() {
           horizon any {horizon} consecutive points share market data, so points must sit {horizon} sessions apart to be
           independent. Plan version {run.analysis_plan_version}; series before a plan change are not continuous with this one.
         </div>
+
+        {/* Quantile + stability. Rank IC says the ordering correlates; these say
+            whether it is MONOTONIC, what the spread is worth in return units, and
+            whether the ranking is stable enough to be a signal at all. */}
+        {dimensions.some((f) => f.metrics.quantile_diagnostics?.qualifying_sessions) ? <div style={{ marginTop: "18px", paddingTop: "14px", borderTop: `1px solid ${T.border}` }}>
+          <div style={{ color: T.text, fontSize: "13px", fontWeight: 700 }}>Quantile gradient and stability</div>
+          <div style={{ color: T.sub, fontSize: "11.5px", lineHeight: 1.55, marginTop: "5px", maxWidth: "820px" }}>
+            A small IC is equally consistent with a clean gradient (tradeable) and a flat middle with one extreme
+            tail dragging the correlation (an artifact). These separate the two. Buckets are quintiles of the
+            dimension&apos;s score, lowest first, showing each bucket&apos;s mean benchmark-neutral forward return.
+          </div>
+          <div style={{ overflowX: "auto", marginTop: "12px" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", minWidth: "720px" }}>
+              <thead>
+                <tr style={{ color: T.muted, fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                  {["Dimension", "Q1", "Q2", "Q3", "Q4", "Q5", "Monotonicity", "Q5−Q1", "t", "Rank autocorr", "Sessions"].map((head) => (
+                    <th key={head} style={{ textAlign: head === "Dimension" ? "left" : "right", padding: "7px 9px", borderBottom: `1px solid ${T.border}`, fontWeight: 700 }}>{head}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {dimensions.map((finding) => {
+                  const q = finding.metrics.quantile_diagnostics;
+                  if (!q) return null;
+                  const cellStyle = (value: number | null | undefined) => ({
+                    padding: "8px 9px", textAlign: "right" as const,
+                    color: value == null ? T.muted : value > 0 ? T.green : value < 0 ? T.red : T.sub,
+                    fontVariantNumeric: "tabular-nums" as const,
+                  });
+                  const cell = (key: string, value: number | null | undefined, digits = 4) => (
+                    <td key={key} style={cellStyle(value)}>{fmt(value, digits)}</td>
+                  );
+                  return <tr key={finding.subject_key} style={{ borderBottom: `1px solid ${T.border}` }}>
+                    <td style={{ padding: "8px 9px", color: T.text, fontWeight: 600 }}>
+                      <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "2px", background: DIMENSION_COLOR[finding.subject_key] ?? T.accent, marginRight: "7px" }} />
+                      {finding.subject_key}
+                    </td>
+                    {q.mean_return_by_quantile.slice(0, 5).map((value, i) => cell(`q${i}`, value))}
+                    {cell("mono", q.monotonicity, 2)}
+                    {cell("spread", q.spread_top_minus_bottom)}
+                    {cell("t", q.spread_t, 2)}
+                    {cell("autocorr", q.rank_autocorrelation, 2)}
+                    <td style={{ padding: "8px 9px", textAlign: "right", color: T.muted, fontVariantNumeric: "tabular-nums" }}>
+                      {q.qualifying_sessions}{q.excluded_sessions > 0 ? <span style={{ color: T.amber }}> (−{q.excluded_sessions})</span> : null}
+                    </td>
+                  </tr>;
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ color: T.muted, fontSize: "10.5px", lineHeight: 1.5, marginTop: "6px" }}>
+            <strong>Monotonicity</strong> is the rank correlation between bucket number and bucket return: +1 a clean
+            gradient, 0 no gradient, −1 inverted. <strong>Q5−Q1</strong> is the only figure here in RETURN units —
+            what the dimension is worth — and its <strong>t</strong> uses nEff, not the session count.
+            <strong> Rank autocorr</strong> separates a stable-but-inverted signal (high, actionable) from a ranking
+            that is day-to-day noise (near zero, a data problem). A number in amber is sessions EXCLUDED for having
+            no usable cross-section — macro is excluded entirely, because one market-wide value per day has no
+            quantiles. These buckets sit on a distribution already truncated at the entry threshold, so Q1 is the
+            bottom of the survivors, not the factor&apos;s true bottom quintile.
+          </div>
+        </div> : null}
 
         {showDefs && <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", padding: "14px 16px", marginTop: "14px" }}>
           <div style={{ color: T.text, fontSize: "12px", fontWeight: 700, marginBottom: "10px" }}>Every column in this table, explained</div>

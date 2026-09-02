@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { computeSpearmanIC } from "@/lib/validation/feature-check";
 import { ALL_SCORED_COHORT_KEY, ENTRY_COHORT_KEY, isEligibleLong } from "./entry-cohort";
+import { quantileDiagnostics, type FactorRow } from "./factor-quantiles";
 
 // v3 adds forward-written decision code versions. v1/v2 remain immutable in
 // production rather than being reinterpreted after the fact.
@@ -208,10 +209,14 @@ export function buildDimensionFindings(observations: DiagnosticObservation[], ho
         : "Availability is measured from the immutable decision-time mask; it is not re-fetched from current providers.",
     });
 
-    const toRows = (source: DiagnosticObservation[]) => source.flatMap((row) => {
+    // `symbol` is carried so rank AUTOCORRELATION can compare the same names
+    // across consecutive sessions. Without identity you can only compare
+    // distributions, which cannot distinguish a stable ranking from a reshuffled
+    // one that happens to have the same shape.
+    const toRows = (source: DiagnosticObservation[]): FactorRow[] => source.flatMap((row) => {
       const value = finite(row.scores[dimension]);
       const outcome = finite(row.benchmarkNeutralReturn);
-      return value == null || outcome == null ? [] : [{ value, outcome, ts: row.ts }];
+      return value == null || outcome == null ? [] : [{ symbol: row.symbol, value, outcome, ts: row.ts }];
     });
     // HEADLINE = the cohort that can actually be entered. The all-scored number
     // ranks names the system would never buy, which is how a +0.105 "edge" was
@@ -231,9 +236,25 @@ export function buildDimensionFindings(observations: DiagnosticObservation[], ho
         // no series: carrying both would double the stored payload to plot a
         // line nobody may cite as predictive power.
         session_ic_series: predictive.sessions,
+        // Quantile + stability diagnostics (alphalens method port). Rank IC says
+        // the ordering correlates; these say whether it is MONOTONIC, what the
+        // top-minus-bottom spread is worth in return units, and whether the
+        // ranking is stable enough to be a signal at all.
+        //
+        // Computed on the SAME eligible-long cohort as the headline, which means
+        // the buckets sit on a distribution already truncated at the entry
+        // threshold: "Q1" here is the bottom of the SURVIVORS, not the factor's
+        // true bottom quintile. The all-scored context below carries the
+        // untruncated version, and the two are not comparable.
+        quantile_diagnostics: quantileDiagnostics(toRows(eligible), {
+          nEffective: predictive.metrics.effective_observations,
+        }),
         [`${ALL_SCORED_COHORT_KEY}_context`]: {
           cohort: ALL_SCORED_COHORT_KEY,
           ...context.metrics,
+          quantile_diagnostics: quantileDiagnostics(toRows(available), {
+            nEffective: context.metrics.effective_observations,
+          }),
           interpretation: "Context only. Includes observations that were never entry eligible and could not have been bought; never cite this as the score's predictive power.",
         },
       },
