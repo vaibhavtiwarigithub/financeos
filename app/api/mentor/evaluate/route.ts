@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { callLLM } from "@/lib/llm-router";
 import { getConfiguredModel } from "@/lib/agent-model-config";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { normaliseRubric } from "@/lib/mentor/rubric";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +47,9 @@ YOUR TASKS:
 
 2. Judge the internal logic, specificity, and falsifiability of each claim. Use your general knowledge of the company/sector only where it is reliable and not time-sensitive; flag anything time-sensitive as unverified.
 
-3. Score overall reasoning quality 0-100 using this rubric:
+3. Score overall reasoning quality 0-100 using this rubric. Return the per-category
+   breakdown in "rubric" AND make "score" the exact sum of the "points_awarded"
+   values — the breakdown is where the score comes from, not a decoration beside it:
    - Clarity & specificity (20pts): Specific, falsifiable claim with concrete triggers?
    - Plausibility & internal consistency (30pts): Are the claims coherent and consistent with well-known facts about the company/sector? Flag unverifiable time-sensitive claims but do NOT heavily penalize claims you simply cannot check.
    - Risk awareness (20pts): Bear case acknowledged?
@@ -70,13 +73,20 @@ YOUR TASKS:
 IMPORTANT: Return ONLY valid JSON, no markdown fences, no text before or after:
 {
   "score": <integer 0-100>,
+  "rubric": [
+    {"category": "clarity_specificity",   "points_available": 20, "points_awarded": <0-20>, "finding": "<one sentence: what cost or earned the points>"},
+    {"category": "plausibility",          "points_available": 30, "points_awarded": <0-30>, "finding": "<one sentence>"},
+    {"category": "risk_awareness",        "points_available": 20, "points_awarded": <0-20>, "finding": "<one sentence>"},
+    {"category": "contrarian_thinking",   "points_available": 15, "points_awarded": <0-15>, "finding": "<one sentence>"},
+    {"category": "exit_strategy",         "points_available": 15, "points_awarded": <0-15>, "finding": "<one sentence>"}
+  ],
   "verdict": <"strong" | "sound" | "mixed" | "flawed" | "emotional">,
   "bias_flags": [<bias names>],
   "what_is_right": "<specific things right, cite data>",
   "what_is_wrong": "<specific errors/gaps, cite data>",
   "bear_case": "<steelmanned bear thesis>",
   "suggestions": "<3 actionable improvements>",
-  "data_used": "<key metrics pulled>",
+  "data_used": "<what you could NOT verify without market data — name the unverified claims, do not invent figures>",
   "dimensions": {
     "sector_awareness": <0-100>,
     "emotional_discipline": <0-100>,
@@ -105,8 +115,17 @@ interface DimensionScores {
   big_picture: number;
 }
 
+export interface RubricLine {
+  category: string;
+  points_available: number;
+  points_awarded: number;
+  finding: string;
+}
+
 interface EvalResult {
   score: number;
+  rubric?: RubricLine[];
+  rubric_normalised?: ReturnType<typeof normaliseRubric>;
   verdict: string;
   bias_flags: string[];
   what_is_right: string;
@@ -205,8 +224,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Could not parse AI response", raw: raw.slice(0, 500) }, { status: 500 });
   }
 
-  // Clamp score
-  evaluation.score = Math.max(0, Math.min(100, Math.round(evaluation.score)));
+  // The rubric breakdown IS the score. A model asked for both a total and its
+  // parts can return parts that do not add up, and showing the total beside a
+  // contradicting breakdown puts an unauditable number next to its own
+  // refutation — so the sum wins and the gap is reported.
+  const rubric = normaliseRubric(evaluation.rubric, evaluation.score);
+  evaluation.score = Math.max(0, Math.min(100, rubric.total));
+  evaluation.rubric_normalised = rubric;
 
   // Save to trade_journal
   const svc = createServiceClient();
@@ -225,7 +249,12 @@ export async function POST(req: NextRequest) {
     verdict: evaluation.verdict,
     bias_flags: evaluation.bias_flags ?? [],
     suggestions: evaluation.suggestions,
-    data_verified: { data_used: evaluation.data_used, tokens: tokenUsage },
+    data_verified: {
+      data_used: evaluation.data_used,
+      tokens: tokenUsage,
+      rubric: rubric.lines,
+      score_discrepancy: rubric.discrepancy,
+    },
     evaluated_at: new Date().toISOString(),
   } as any).select().single();
 

@@ -1060,7 +1060,7 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
           {/* Explainer */}
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "18px 20px" }}>
             <div style={{ fontSize: "13px", color: T.textSub, lineHeight: "1.7" }}>
-              <strong style={{ color: T.text }}>Test your thesis</strong> — write out why you want to buy, sell, or watch a stock. AI pulls real market data to verify your claims and scores your reasoning 0–100. Use it before or after a trade to improve judgment over time.
+              <strong style={{ color: T.text }}>Test your thesis</strong> — write out why you want to buy, sell, or watch a stock. It scores your REASONING 0–100 against five weighted criteria and shows what each one cost you. It does <strong style={{ color: T.text }}>not</strong> fetch live market data: any claim that depends on current prices or multiples is marked unverified rather than checked, so a confident wrong number can still score well on structure. Takes ~60–90s — a reasoning model thinks before it answers.
             </div>
           </div>
 
@@ -1180,11 +1180,47 @@ export default function MentorPage({ packets, trades, fullLog, signals, performa
                   </div>
                   {jResult.data_used && (
                     <div style={{ marginLeft: "auto", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", fontSize: "11px", color: T.muted, maxWidth: "260px" }}>
-                      <div style={{ fontWeight: 600, color: T.textSub, marginBottom: "4px" }}>Data verified</div>
+                      <div style={{ fontWeight: 600, color: T.textSub, marginBottom: "4px" }}>Could not verify</div>
                       {jResult.data_used}
                     </div>
                   )}
                 </div>
+
+                {/* Rubric breakdown: priority-ordered, with the points each criterion
+                    cost. A bare "68/100" is unactionable — you cannot fix a thesis
+                    whose marking you cannot see. Ordered by points LOST, so the first
+                    bullet is always the one worth the most to fix next. */}
+                {jResult.rubric_normalised?.lines?.length > 0 && (
+                  <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "14px 16px", marginBottom: "16px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "8px", marginBottom: "10px" }}>
+                      <div style={{ fontSize: "11px", fontWeight: 700, color: T.textSub, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                        Where the points went — biggest fix first
+                      </div>
+                      <div style={{ fontSize: "11px", color: T.muted }}>
+                        {jResult.rubric_normalised.total}/100 from the breakdown
+                        {jResult.rubric_normalised.discrepancy ? (
+                          <span style={{ color: T.amber }}> · model claimed {jResult.rubric_normalised.reportedScore}, parts sum to {jResult.rubric_normalised.total}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <ol style={{ margin: 0, paddingLeft: "18px", display: "flex", flexDirection: "column", gap: "9px" }}>
+                      {jResult.rubric_normalised.lines.map((line: any) => (
+                        <li key={line.key} style={{ color: T.textSub, fontSize: "12.5px", lineHeight: 1.55 }}>
+                          <span style={{ color: T.text, fontWeight: 650 }}>{line.label}</span>
+                          <span style={{
+                            marginLeft: "8px", fontSize: "11px", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+                            color: line.pointsLost === 0 ? T.green : line.pointsLost >= line.pointsAvailable / 2 ? T.red : T.amber,
+                          }}>
+                            {line.pointsAwarded}/{line.pointsAvailable}
+                            {line.pointsLost > 0 ? ` · −${line.pointsLost}` : " · full marks"}
+                          </span>
+                          <div style={{ marginTop: "2px" }}>{line.finding}</div>
+                          <div style={{ color: T.muted, fontSize: "11px", marginTop: "2px" }}>{line.asks}</div>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
 
                 {/* Three-panel breakdown */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "16px", marginBottom: "16px" }}>
