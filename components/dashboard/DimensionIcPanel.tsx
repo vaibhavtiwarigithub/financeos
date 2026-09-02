@@ -7,6 +7,7 @@ import {
   CartesianGrid, Tooltip, ReferenceLine, Legend,
 } from "recharts";
 import { useMarket } from "@/lib/market-context";
+import { buildChartRows, type SessionPoint } from "@/lib/learning/dimension-ic-chart";
 
 // Per-dimension rank IC: current state (table) and how each trading session's
 // IC has actually moved (chart).
@@ -21,7 +22,6 @@ import { useMarket } from "@/lib/market-context";
 // 2026-08-28. This panel charts the PER-SESSION series instead: one point per
 // trading day, which is the only object here that genuinely varies.
 
-type SessionPoint = { date: string; ic: number; cross_section: number };
 type Metrics = {
   cohort?: string;
   mean_session_rank_ic: number | null;
@@ -58,15 +58,6 @@ function fmt(value: number | null | undefined, digits = 4): string {
 }
 function pct(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value) ? "—" : `${(value * 100).toFixed(0)}%`;
-}
-
-/** Trailing mean over the last `window` sessions — the line to read for direction. */
-function rollingMean(series: SessionPoint[], window: number): Array<number | null> {
-  return series.map((_, index) => {
-    if (index + 1 < window) return null;
-    const slice = series.slice(index + 1 - window, index + 1);
-    return slice.reduce((sum, point) => sum + point.ic, 0) / slice.length;
-  });
 }
 
 export default function DimensionIcPanel() {
@@ -107,23 +98,12 @@ export default function DimensionIcPanel() {
   // Union every dimension's sessions onto one date axis. Dimensions qualify on
   // different days (availability differs), so gaps are real and left null
   // rather than interpolated — a drawn-through gap would invent an observation.
-  const chart = useMemo(() => {
-    const shown = dimensions.filter((f) => focus === "all" || f.subject_key === focus);
-    const dates = new Set<string>();
-    for (const finding of shown) for (const point of finding.metrics.session_ic_series ?? []) dates.add(point.date);
-    const axis = [...dates].sort();
-    const rows = axis.map((date) => ({ date } as Record<string, string | number | null>));
-    const index = new Map(axis.map((date, i) => [date, i]));
-    for (const finding of shown) {
-      const series = finding.metrics.session_ic_series ?? [];
-      for (const point of series) rows[index.get(point.date)!][finding.subject_key] = point.ic;
-      if (focus !== "all") {
-        const rolling = rollingMean(series, Math.min(10, Math.max(2, Math.floor(series.length / 3))));
-        series.forEach((point, i) => { rows[index.get(point.date)!].rolling = rolling[i]; });
-      }
-    }
-    return rows;
-  }, [dimensions, focus]);
+  const chart = useMemo(() => buildChartRows(
+    dimensions
+      .filter((f) => focus === "all" || f.subject_key === focus)
+      .map((f) => ({ key: f.subject_key, points: f.metrics.session_ic_series ?? [] })),
+    focus === "all" ? undefined : focus,
+  ), [dimensions, focus]);
 
   const insufficient = dimensions.every((f) => f.classification === "insufficient_evidence");
 
