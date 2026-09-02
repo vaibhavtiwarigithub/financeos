@@ -118,7 +118,7 @@ describe("coverage is measured, not assumed", () => {
 });
 
 describe("every label observed in production on 2026-09-02 resolves", () => {
-  it("maps or explicitly classifies all 41 stored labels", () => {
+  it("maps or explicitly classifies all 45 stored labels", () => {
     // The full observed label set. A new provider label appearing here as
     // unmapped is a one-line map entry, not another investigation — which is the
     // point of keeping this list explicit.
@@ -133,11 +133,15 @@ describe("every label observed in production on 2026-09-02 resolves", () => {
       "Biotechnology", "Automobiles", "Communication Services", "Chemicals",
       "Commercial Services & Supplies", "Beverages", "Life Sciences Tools & Services",
       "Logistics & Transportation", "Machinery", "Basic Materials",
+      // Appeared 2026-09-02 from the widened backfill's provider, AFTER the map
+      // was first written — the designed-for case: a one-line map entry rather
+      // than another investigation.
+      "Pharmaceuticals", "Insurance", "Textiles, Apparel & Luxury Goods", "Food Products",
     ];
-    expect(observed).toHaveLength(41);
+    expect(observed).toHaveLength(45);
     const coverage = sectorCoverage(observed);
     // "Other" is the ONLY label that legitimately resolves to nothing.
     expect(coverage.unmappedLabels).toEqual([{ label: "Other", count: 1 }]);
-    expect(coverage.mapped).toBe(40);
+    expect(coverage.mapped).toBe(44);
   });
 });

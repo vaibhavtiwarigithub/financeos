@@ -92,6 +92,7 @@ const GICS_MAP: Record<string, GicsSector> = {
   "retail": "Consumer Discretionary",
   "hotels, restaurants & leisure": "Consumer Discretionary",
   "automobiles": "Consumer Discretionary",
+  "textiles, apparel & luxury goods": "Consumer Discretionary",
 
   // Consumer Staples — "consumer defensive" is the Yahoo name.
   "consumer staples": "Consumer Staples",
@@ -99,6 +100,7 @@ const GICS_MAP: Record<string, GicsSector> = {
   "consumer products": "Consumer Staples",
   "beverages": "Consumer Staples",
   "food & beverage": "Consumer Staples",
+  "food products": "Consumer Staples",
 
   // Communication Services — three observed names for one sector.
   "communication services": "Communication Services",
