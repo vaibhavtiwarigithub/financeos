@@ -267,6 +267,10 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     fundamentalFactsRes,
     labelCoverageRes,
     dimensionDiagnosticRunRes,
+    horizonExtensionRes,
+    exitStopRunRes,
+    archetypeIcRes,
+    alphaDiagnosticRes,
   ] = await Promise.all([
     svc.rpc("get_shadow_cron_status"),
     svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
@@ -289,7 +293,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("evidence_degradation_events")
       .select("market,action,created_at").eq("market", market).gte("created_at", since7).limit(2000),
     svc.from("shadow_decisions")
-      .select("market,setup_type,would_enter,ts").eq("market", market).gte("ts", since7).limit(5000),
+      .select("market,setup_type,would_enter,ts,observation_id").eq("market", market).gte("ts", since7).limit(5000),
     svc.from("edge_signals")
       .select("market,edge_id,created_at", { count: "exact" })
       .eq("market", market)
@@ -359,6 +363,18 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("dimension_diagnostic_runs")
       .select("id,status,horizon_days,input_observation_count,distinct_session_count,created_at")
       .eq("market", market).gte("created_at", since45).order("created_at", { ascending: false }).limit(100),
+    svc.from("horizon_extension_shadow")
+      .select("market,evaluated_at,run_id,would_extend,reason")
+      .eq("market", market).gte("evaluated_at", since90).order("evaluated_at", { ascending: false }).limit(10000),
+    svc.from("exit_stop_shadow_runs")
+      .select("market,as_of_date,horizon_days,status,created_at,n_rows,n_dates,effective_observations,mean_paired_diff,paired_diff_t")
+      .eq("market", market).gte("created_at", since90).order("created_at", { ascending: false }).limit(500),
+    svc.from("archetype_ic_runs")
+      .select("market,created_at,as_of_date,horizon_days,cohort,setup_type")
+      .eq("market", market).gte("created_at", since90).order("created_at", { ascending: false }).limit(1000),
+    svc.from("backtest_experiments")
+      .select("market,started_at,completed_at,created_at,experiment_type,result_summary")
+      .eq("market", market).eq("experiment_type", "alpha_diagnostic").gte("created_at", since90).order("created_at", { ascending: false }).limit(100),
   ]) as Array<QueryResult<any>>;
 
   const cronRows = cronRes.data ?? [];
@@ -388,6 +404,10 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const marketRegimeRuns = marketRegimeRunRes.data ?? [];
   const fundamentalFacts = fundamentalFactsRes.data ?? [];
   const diagnosticRuns = dimensionDiagnosticRunRes.data ?? [];
+  const horizonExtensions = horizonExtensionRes.data ?? [];
+  const exitStopRuns = exitStopRunRes.data ?? [];
+  const archetypeRuns = archetypeIcRes.data ?? [];
+  const alphaDiagnosticRuns = alphaDiagnosticRes.data ?? [];
 
   const labelRows: LabelRow[] = (labelCoverageRes.data ?? [])
     .map((row: any) => {
@@ -454,6 +474,73 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         "A window that touched both candidate levels is ambiguous: max-excursion data cannot order them.",
       ];
       status.available = !labelCoverageRes.error;
+      return status;
+    }
+
+    if (program.id === "horizon-extension") {
+      const dates = new Set(horizonExtensions.map((row: any) => String(row.evaluated_at).slice(0, 10))).size;
+      const latest = horizonExtensions[0]?.evaluated_at ?? null;
+      status.lifecycle = horizonExtensions.length ? (dates >= 20 ? "ready_for_review" : "collecting") : "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${horizonExtensions.length} position evaluation(s) across ${dates} evaluation date(s); ${horizonExtensions.filter((row: any) => row.would_extend).length} would extend.`;
+      status.progress = progress(dates, 20, "independent evaluation dates", 90);
+      status.calls = calls("zero_incremental", "Reuses prices, scores and risk inputs already fetched by the position-monitor flow.");
+      status.latestAt = latest;
+      status.blockers = dates >= 20 ? ["Matched forward outcomes and owner review are still required before any exit-policy change."] : [`${dates}/20 independent evaluation dates collected.`];
+      status.nextAction = dates >= 20 ? "Review matched outcomes; do not change the time stop from the counterfactual alone." : "Continue daily market-local collection.";
+      status.details = ["This is a counterfactual only; its output cannot hold or close a position."];
+      status.available = !horizonExtensionRes.error;
+      return status;
+    }
+
+    if (program.id === "exit-stop-shadow") {
+      const dates = new Set(exitStopRuns.map((row: any) => String(row.as_of_date))).size;
+      const latest = exitStopRuns[0]?.created_at ?? null;
+      const measured = exitStopRuns.filter((row: any) => row.status === "measured").length;
+      status.lifecycle = exitStopRuns.length ? (measured ? "ready_for_review" : "collecting") : "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${exitStopRuns.length} paired run row(s) across ${dates} as-of date(s); ${measured} meet the row-level measured status.`;
+      status.progress = progress(dates, 12, "independent as-of dates", 90);
+      status.calls = calls("zero_incremental", "Uses matured observation labels; no provider request is made by the shadow.");
+      status.latestAt = latest;
+      status.blockers = measured && dates >= 12 ? ["Cost/FDR, worst-case and owner review remain required; measured is not promotion."] : ["The ATR-stop evidence floor is not met; the first scheduled weekly run may not have written a row yet."];
+      status.nextAction = "Keep the ATR stop measure-only until paired evidence and the owner gate are complete.";
+      status.details = ["Target and time stop are held identical so the paired difference attributes only the stop change."];
+      status.available = !exitStopRunRes.error;
+      return status;
+    }
+
+    if (program.id === "archetype-ic") {
+      const eligible = archetypeRuns.filter((row: any) => row.cohort === "eligible_long");
+      const dates = new Set(eligible.map((row: any) => String(row.as_of_date ?? row.created_at).slice(0, 10))).size;
+      const latest = archetypeRuns[0]?.created_at ?? null;
+      status.lifecycle = eligible.length ? (dates >= 20 ? "ready_for_review" : "collecting") : "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${eligible.length} eligible-long archetype grade(s) across ${dates} independent date(s); all-scored context is excluded from the grade.`;
+      status.progress = progress(dates, 20, "independent eligible-long dates", 90);
+      status.calls = calls("zero_incremental", "Grades persisted shadow decisions and labels; no provider request is made.");
+      status.latestAt = latest;
+      status.blockers = dates >= 20 ? ["Sealed validation and owner promotion are still required."] : [`${dates}/20 independent eligible-long dates collected.`];
+      status.nextAction = "Continue both-market collection and compare arms only on the declared eligible-long cohort.";
+      status.details = ["The all-scored cohort is retained only as context and cannot authorize a weighting change."];
+      status.available = !archetypeIcRes.error;
+      return status;
+    }
+
+    if (program.id === "alpha-diagnostics") {
+      const completed = alphaDiagnosticRuns.filter((row: any) => row.completed_at != null);
+      const latest = alphaDiagnosticRuns[0]?.created_at ?? null;
+      const dates = new Set(completed.map((row: any) => String(row.created_at).slice(0, 10))).size;
+      status.lifecycle = completed.length ? "collecting" : alphaDiagnosticRuns.length ? "blocked" : "idle";
+      status.benefitVerdict = "operational_only";
+      status.benefitEvidence = `${completed.length} completed diagnostic run(s) in the last 90 days across ${dates} run date(s); no run can promote a strategy.`;
+      status.progress = progress(completed.length, 20, "completed diagnostic runs", 90);
+      status.calls = calls("zero_incremental", "Reads existing portfolio and evidence ledgers; the Lab makes no provider request.");
+      status.latestAt = latest;
+      status.blockers = completed.length ? ["Diagnostics are evidence only; any repair requires a separate predeclared replay/shadow and owner decision."] : ["No completed diagnostic run is available yet."];
+      status.nextAction = "Review the latest A0-to-A9 funnel result and create a separately governed experiment only if warranted.";
+      status.details = ["A0 data truth gates interpretation of downstream tests; incomplete runs are not treated as evidence."];
+      status.available = !alphaDiagnosticRes.error;
       return status;
     }
 
@@ -625,13 +712,50 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.progress = progress(shadowDecisions.length, null, "shadow decisions", 7);
       status.calls = calls("zero_incremental", "Replays formulas from the same ResearchAgent inputs; no second provider call.");
       status.latestAt = latestIso(shadowDecisions, "ts");
+      // MEASURE the multi-expert contract; do not assert it.
+      //
+      // This blocker used to read, unconditionally: "The production idempotency
+      // index currently permits only one NULL-policy setup row per observation,
+      // so multi-expert batches are not trustworthy." It was hardcoded, so it
+      // was emitted on every run whether or not it was true — and it was not
+      // true. The nextAction beside it prescribed "separate challenger and
+      // (observation, setup_type) uniqueness", which is exactly what production
+      // already has:
+      //
+      //   shadow_decisions_observation_policy_uidx
+      //     UNIQUE (observation_id, policy_version_id) WHERE both NOT NULL
+      //   shadow_decisions_observation_setup_uidx
+      //     UNIQUE (observation_id, setup_type) NULLS NOT DISTINCT
+      //     WHERE policy_version_id IS NULL
+      //
+      // Measured 2026-09-02: 5,455 policy-less rows, ZERO with a null
+      // setup_type, and 1,279 observations carrying 2-4 distinct experts (48
+      // with four, 890 with three, 341 with two). The prescribed fix had already
+      // shipped; only the prose still claimed otherwise, and it kept the program
+      // marked blocked on a defect that no longer existed.
+      status.details = [...setups.entries()].map(([name, count]) => `${name}: ${count} decisions`);
+      const expertsPerObservation = new Map<string, Set<string>>();
+      for (const row of shadowDecisions as any[]) {
+        const observationId = row.observation_id == null ? null : String(row.observation_id);
+        if (!observationId || !row.setup_type) continue;
+        const set = expertsPerObservation.get(observationId) ?? new Set<string>();
+        set.add(String(row.setup_type));
+        expertsPerObservation.set(observationId, set);
+      }
+      const multiExpertObservations = [...expertsPerObservation.values()].filter((set) => set.size > 1).length;
+
       status.blockers = [
         ...(missingAlwaysOn.length ? [`Missing always-on setup evidence: ${missingAlwaysOn.join(", ")}.`] : []),
-        "The production idempotency index currently permits only one NULL-policy setup row per observation, so multi-expert batches are not trustworthy.",
+        // Absence of evidence, stated as absence — not as a claim about the schema.
+        ...(multiExpertObservations === 0 && shadowDecisions.length > 0
+          ? ["No observation in the last 7 days carries more than one setup expert, so the multi-expert path is unproven in this window."]
+          : []),
         "No approved minimum labelled sample or promotion gate exists for setup experts.",
       ];
-      status.nextAction = "Replace the conflicting idempotency contract with separate challenger and (observation, setup_type) uniqueness, verify both markets, then define a predeclared walk-forward comparison.";
-      status.details = [...setups.entries()].map(([name, count]) => `${name}: ${count} decisions`);
+      status.nextAction = multiExpertObservations > 0
+        ? "Define a predeclared walk-forward comparison and a minimum labelled sample before any setup expert may influence scoring."
+        : "Confirm a multi-expert batch actually lands for one observation, then define a predeclared walk-forward comparison and minimum labelled sample.";
+      status.details.push(`${multiExpertObservations} observation(s) carry more than one setup expert in the last 7 days.`);
       status.available = !shadowDecisionRes.error;
       return status;
     }
