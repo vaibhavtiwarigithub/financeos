@@ -804,6 +804,38 @@ whole table look alive. Contracts with a natural scope are evaluated per scope v
 against a declared `minCoverage`. Grace defaults to 96h (weekend + a one-day exchange
 holiday), matching the off-hours EOD allowance in `lib/data/quotes.ts`.
 
+**Session-aware, and scoped to what is actually refreshed (2026-09-02).** Two halves of
+this contract disagreed with the rest of the system.
+
+*The measure.* `price-cache-us-symbols` judged a DAILY bar against a rolling 96-hour
+calendar window. A calendar grace cannot express "the newest session that should exist":
+measured Tuesday 12:00Z, the window reaches back to Friday 12:00Z and a Friday bar
+timestamps at 20:00Z — inside it — so a book stuck on Friday passed. `sessionAware: true`
+now evaluates daily contracts against `expectedNewestSession`, the same rule
+`lib/data/quotes.ts` uses to decide `stale` and the same one the prewarm adopted after the
+identical bug was found there. Timestamp contracts (label maturation) keep the rolling
+window, which is the right shape for them. This is STRICTER and will report staleness the
+lenient window hid — the 85% coverage that breached the contract was measured with the
+generous rule.
+
+*The scope.* The contract required freshness for `active_us_price_symbols` — every US
+symbol scored in the last 7 days plus every open position — while the research cron
+prewarmed only THAT RUN'S batch plus the benchmark ETFs. A symbol scored five days ago and
+absent from today's batch was required fresh and refreshed by nothing. That is not a
+monitoring nit: it is still scored, still becomes entry-eligible, and is then refused at
+fill time by the quote gate. Measured 2026-09-01, `quote_stale=7` blocked 7 of 10 eligible
+US candidates; the monitor reported 17/113 scopes past grace. `lib/data/prewarm-scope.ts`
+now builds the prewarm list from the SAME definition the contract demands, and
+`PREWARM_RECENT_DECISION_DAYS` is pinned to the contract's 7-day window by test, so the two
+cannot drift apart again.
+
+Widening costs almost nothing: `prewarmPriceCache` resolves freshness for the whole set in
+one bulk query and fetches only what is genuinely stale, under the existing deadline.
+Ordering carries the budget policy — open positions, then today's candidates, then
+benchmarks, then the recent-decision tail — so whatever the deadline cuts is the least
+costly to leave stale. The scope query fails SOFT to the old batch: a wider prewarm is an
+improvement, never a precondition for the research run.
+
 An **empty read is UNKNOWN and alerts** — "no rows" and "the query is wrong" are
 indistinguishable, so it is never treated as proof of health. Likewise a job that writes
 no run-accounting envelope is UNKNOWN, never assumed healthy.

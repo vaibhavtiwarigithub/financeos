@@ -6,6 +6,7 @@ import { computeComparableRank, isRankRejected, type RankCandidate } from "@/lib
 import { isIndia } from "@/lib/india-data";
 import { completeDeferred, enqueueDeferred, readDeferredCandidates } from "@/lib/research-queue";
 import { prewarmPriceCache } from "@/lib/chart-data";
+import { resolvePrewarmScope, PREWARM_RECENT_DECISION_DAYS } from "@/lib/data/prewarm-scope";
 import { RISK_PROFILES } from "@/lib/risk-profiles";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { emitAlert } from "@/lib/alerts/emit";
@@ -661,7 +662,45 @@ export async function POST(req: NextRequest) {
   // out of time is reported rather than hidden — a silent partial refresh is
   // exactly how the original freeze escaped notice for 25 days.
   const BENCHMARK_SYMBOLS = ["VOO", "QQQ", "SPY", "IWM", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLC", "XLP", "XLU", "XLRE", "XLB"];
-  const prewarmSymbols = [...new Set([...batch, ...BENCHMARK_SYMBOLS])];
+
+  // SCOPE MUST MATCH WHAT THE FRESHNESS CONTRACT DEMANDS.
+  //
+  // This used to be `batch + BENCHMARK_SYMBOLS` — only the symbols THIS run
+  // scored. But `price-cache-us-symbols` requires freshness for every symbol
+  // scored in the last 7 days plus every open position, so a name scored five
+  // days ago and absent from today's batch was required fresh and refreshed by
+  // nothing. Measured 2026-09-02: 17/113 scopes past grace, 85% coverage against
+  // a 90% floor, and `quote_stale=7` blocked 7 of 10 eligible US candidates the
+  // day before. The monitor and the refresher have to agree on scope or the gap
+  // reopens every time the universe rotates.
+  //
+  // Widening is nearly free: prewarmPriceCache resolves freshness for the whole
+  // set in one bulk query and only fetches what is genuinely stale, under the
+  // same deadline. Ordering carries the budget policy (see resolvePrewarmScope).
+  const prewarmMarket = marketScope ?? "us";
+  let openPositionSymbols: string[] = [];
+  let recentlyScoredSymbols: string[] = [];
+  try {
+    const decisionSince = new Date(Date.now() - PREWARM_RECENT_DECISION_DAYS * 86400_000).toISOString();
+    const [positionRows, decisionRows] = await Promise.all([
+      supabase.from("paper_positions").select("symbol")
+        .eq("market", prewarmMarket).is("exit_reason", null).gt("qty", 0).limit(500),
+      supabase.from("decision_observations").select("symbol")
+        .eq("market", prewarmMarket).gte("ts", decisionSince).limit(5000),
+    ]);
+    openPositionSymbols = (positionRows.data ?? []).map((r: any) => String(r.symbol ?? ""));
+    recentlyScoredSymbols = (decisionRows.data ?? []).map((r: any) => String(r.symbol ?? ""));
+  } catch (e) {
+    // Fail SOFT to the old scope: a wider prewarm is an improvement, not a
+    // precondition. Losing it must never abort the research run.
+    console.error(`[research:${runTag}] prewarm scope widening failed, falling back to batch:`, e instanceof Error ? e.message : e);
+  }
+  const prewarmSymbols = resolvePrewarmScope({
+    batch,
+    benchmarks: prewarmMarket === "us" ? BENCHMARK_SYMBOLS : [],
+    openPositions: openPositionSymbols,
+    recentlyScored: recentlyScoredSymbols,
+  });
   const PREWARM_RESPONSE_RESERVE_MS = 5_000;
   const prewarmDeadline = routeStartedAt + (maxDuration * 1000) - PREWARM_RESPONSE_RESERVE_MS;
 

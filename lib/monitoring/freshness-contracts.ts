@@ -21,6 +21,7 @@
 // mark) and a mutable config row moves that judgement outside code review. The
 // registry is versioned so a contract loosening is a reviewable diff.
 
+import { expectedNewestSession } from "@/lib/data/completed-candles";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 
@@ -47,6 +48,23 @@ export interface FreshnessContract {
   marketColumn?: string;
   /** How long the watermark may sit still before it is a defect. */
   graceHours: number;
+  /**
+   * Judge a DAILY-bar contract against the market session that should exist by
+   * now, instead of a rolling calendar window.
+   *
+   * A calendar grace cannot express "the newest session that should exist".
+   * Measured on the prewarm, which used the same 96h rule: on a Tuesday the
+   * window landed exactly on Friday, so every symbol stuck on Friday's bar
+   * passed as fresh — and the condition regenerated every weekend. The same
+   * arithmetic is in this contract. `expectedNewestSession` is what
+   * lib/data/quotes.ts already uses to decide `stale`, so this makes the
+   * monitor, the quote gate and the prewarm answer one question the same way.
+   *
+   * This is STRICTER than a 96h grace and will report staleness a lenient
+   * window hid. That is the point: the 85% coverage that breached this contract
+   * was measured with the generous rule.
+   */
+  sessionAware?: boolean;
   /** Fraction of scopes that must be within grace. 1 = every scope. */
   minCoverage: number;
   /** How far back to read rows when deriving the per-scope watermark. */
@@ -73,6 +91,7 @@ export const FRESHNESS_CONTRACTS: FreshnessContract[] = [
     scopeColumn: "symbol",
     scopeUniverse: "active_us_price_symbols",
     graceHours: WEEKEND_SAFE_HOURS,
+    sessionAware: true,
     // 101/140 symbols were frozen while the table max looked current. At 0.9 the
     // real event trips at 28% coverage and a handful of delisted/retired tickers
     // lagging behind does not.
@@ -162,7 +181,12 @@ export function evaluateFreshness(
   rows: WatermarkRow[],
   now: Date = new Date(),
 ): FreshnessResult {
-  const cutoff = now.getTime() - contract.graceHours * 3600_000;
+  // A daily-bar contract asks "is this the session that should exist by now?".
+  // Everything else keeps the rolling calendar grace, which is the right shape
+  // for a timestamp watermark like label maturation.
+  const cutoff = contract.sessionAware && contract.watermarkType === "date" && contract.market !== "global"
+    ? toMs(expectedNewestSession(contract.market, now), "date")
+    : now.getTime() - contract.graceHours * 3600_000;
   const newestByScope = new Map<string, number>();
   const allScopes = new Set<string>();
   for (const row of rows) {
