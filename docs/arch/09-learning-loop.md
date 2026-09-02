@@ -109,7 +109,7 @@
 > **2026-07-28 correction — PROMOTION REMAINS DORMANT, NOT PERMANENTLY CLOSED.** The h5 study measured pooled IC sigma ~0.27 and found no useful `mom_12_1` signal at h5 (mean IC 0.0089, t_HAC 0.32). It did **not** identify an effective breadth of 17: observed IC variance mixes sampling noise, changing point-in-time membership/coverage, and genuine time variation in factor returns. Inverting it with `1/sqrt(n-3)` cannot separate those causes, and an h5 estimate cannot set h20 requirements. The n=400 and sector-neutral tests therefore remain legitimate measure-only experiments rather than rejected escape routes. `POST /api/agents/backtest/promote` still fails closed; no policy can consume these diagnostics.
 > **2026-07-28 US PIT step-4 hardening:** `us_pit_adv20_top400_v2` ranks membership on a complete 20-session trailing dollar-volume window, shares cached session reads across overlapping as-of dates, excludes partial-window names, and persists one top-400 superset so matched n=200/n=400 tests use the same ranking. Report schema v2 retains successful-date cross-section and complete universe provenance. `persist_edge_pit_snapshot()` atomically writes exact snapshots to append-only `edge_universe_members`; it is service-role-only and conflicts fail closed. India PIT membership remains unavailable. These changes improve measure-only evidence and do not enable promotion.
 > **PROMOTION IS DORMANT (2026-07-27).** `POST /api/agents/backtest/promote` fails closed with `promotion_evidence_not_oos` (503) before any write. Adversarial review found one P0 and three P1 issues that each independently disqualify the current path: promotion is non-atomic (supersede-then-insert can leave a segment with no active policy); the evidence is not out-of-sample (~98.4% window overlap AND a current-liquid universe replayed through past dates — survivorship bias that more weekly runs cannot fix); `dsr_z` was not a Deflated Sharpe Ratio and is renamed `t_margin_vs_trials`, with the `dsr` column now written NULL; and experiment lineage is optional and unbound to the edge/market/horizon/segment it justifies. Re-enable only after `features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` is approved and shipped: frozen experiment lineage → PIT universe/inputs → purged market-session OOS folds → aggregate HAC IC → multiple-testing + cost-adjusted validation → atomic promotion RPC.
-> Last updated: 2026-08-17 (h60/h120 evaluation horizons — see "Evaluation
+> Last updated: 2026-09-02 (per-session IC series + t-stat + Learning-page panel; h60/h120 evaluation horizons — see "Evaluation
 > horizons are decoupled from holding period"; 2026-08-16 label-maturation
 > coverage + starvation W7/W8 — see
 > "Label maturation: coverage, budgets and skip accounting"). Prior note
@@ -295,6 +295,45 @@ ledgers plus signal labels. It reports availability and descriptive
 session-level rank IC by dimension, and records an agent/version's evidence and
 decision record. Results below the predeclared 20 qualifying-session floor are
 `insufficient_evidence`, not a conclusion.
+
+#### Per-session IC series, t-statistic, and the Learning-page panel (2026-09-02)
+
+`predictiveMetrics` now also emits `sd_session_rank_ic`, `t_stat`, and
+`session_ic_series` (one `{date, ic, cross_section}` per qualifying session,
+sorted chronologically). `t_stat = mean / (sd / sqrt(nEffective))` — **nEffective,
+never the session count**: dividing by `sqrt(sessions)` overstates |t| by
+`sqrt(horizonDays)` (~4.5x at h20) and manufactures significance out of overlap.
+It is null rather than Infinity when spread is undefined (<2 sessions) or zero.
+
+No plan-version bump: `mean_session_rank_ic` is unchanged, these are additive
+fields. No migration either — the series lives in the existing `metrics` jsonb,
+so it is immutable with its finding, which is what the frozen-history rule wants.
+The series is attached to the eligible-long headline ONLY; the all-scored context
+keeps summary stats but gets no line, since it may never be cited as predictive
+power.
+
+**Why a per-session series had to exist before anything could be charted.**
+`mean_session_rank_ic` is an EXPANDING-window average over every session to date,
+so consecutive daily runs share ~93% of their input. Plotting the stored run
+history draws a cumulative mean converging, not a signal changing. Measured on
+the real US h5 rows, technical read `+0.1394` frozen for nine consecutive days
+(`qualifying_sessions` stuck at 6), then oscillated **non-monotonically**
+(17 → 15 → 17 → 14 → 13) while the truncated loader reshuffled its sample, then
+settled near `-0.13`. An expanding window over an append-only label store can
+only grow; that oscillation is the 1,000-row cap's fingerprint. Drawn as one line
+it reads "technical decayed through August" — it is `82be100a` (cohort) and
+`3aa3753f` (pagination) landing hours apart on 2026-08-28. Usable history is
+therefore **three run-days**, and the honest chart is the per-session series from
+the newest run, which already contains every session.
+
+`components/dashboard/DimensionIcPanel.tsx` renders it on `/dashboard/learning`:
+horizon selector, a table (mean IC, SD, t, sessions, nEff vs floor, positive-day
+share, all-scored context, verdict), the per-session chart with a zero reference
+and an optional rolling mean, and a definitions panel for every column. Session
+gaps are left open rather than joined — `connectNulls={false}` — because a
+connected gap invents an observation on a day the dimension did not qualify. The
+`insufficient_evidence` verdict is rendered prominently and is NOT softened by
+the presence of a chart.
 
 ResearchAgent writes the deployed commit SHA into each new decision observation.
 Agent contribution findings require that provenance; legacy unversioned rows are

@@ -93,6 +93,32 @@ function hitRate(values: number[]): number | null {
   return values.length ? values.filter((value) => value > 0).length / values.length : null;
 }
 
+/** Sample standard deviation (n-1). Null below two sessions, where spread is undefined. */
+function sampleStdDev(values: number[]): number | null {
+  if (values.length < 2) return null;
+  const average = mean(values)!;
+  const variance = values.reduce((sum, value) => sum + (value - average) ** 2, 0) / (values.length - 1);
+  return Math.sqrt(variance);
+}
+
+/**
+ * How many standard errors the mean session IC sits from zero.
+ *
+ * The standard error uses nEFFECTIVE, not the session count. Sessions overlap:
+ * `horizonDays` consecutive sessions measure almost the same market move, so
+ * dividing by sqrt(sessions) would understate the error by a factor of
+ * sqrt(horizonDays) — at h20 that inflates |t| by ~4.5x and manufactures
+ * significance out of overlap. See MIN_EFFECTIVE_OBSERVATIONS.
+ *
+ * Null when spread is undefined (<2 sessions) or degenerate (sd 0), rather than
+ * returning Infinity, which would render as a spuriously decisive result.
+ */
+export function tStatistic(meanIc: number | null, sd: number | null, nEffective: number): number | null {
+  if (meanIc == null || sd == null || !Number.isFinite(sd) || sd <= 0) return null;
+  if (!Number.isFinite(nEffective) || nEffective <= 0) return null;
+  return meanIc / (sd / Math.sqrt(nEffective));
+}
+
 function dateOf(ts: string): string {
   return ts.slice(0, 10);
 }
@@ -105,16 +131,26 @@ function predictiveMetrics(rows: Array<{ value: number; outcome: number; ts: str
     values.push({ value: row.value, outcome: row.outcome });
     byDate.set(date, values);
   }
-  const sessionIcs: number[] = [];
-  let qualifyingSessions = 0;
-  for (const values of byDate.values()) {
+  // The per-session series is the ONLY object here that is a genuine time
+  // series. `mean_session_rank_ic` is an EXPANDING-window average over every
+  // session to date, so plotting it across daily runs charts a cumulative mean
+  // converging, not a signal changing — consecutive runs share ~93% of their
+  // input. These per-session points are one trading day each and are what a
+  // "how has IC moved" chart must be drawn from.
+  const sessions: Array<{ date: string; ic: number; cross_section: number }> = [];
+  for (const [date, values] of byDate) {
     if (values.length < MIN_CROSS_SECTION) continue;
     const result = computeSpearmanIC(values.map((value) => value.value), values.map((value) => value.outcome));
     if (!result || !Number.isFinite(result.ic)) continue;
-    qualifyingSessions++;
-    sessionIcs.push(result.ic);
+    sessions.push({ date, ic: result.ic, cross_section: values.length });
   }
+  // Row order follows the paginated id order, not the calendar. Sort so the
+  // series is chronological for any consumer that plots it as-is.
+  sessions.sort((left, right) => left.date.localeCompare(right.date));
+  const sessionIcs = sessions.map((session) => session.ic);
+  const qualifyingSessions = sessions.length;
   const avgIc = mean(sessionIcs);
+  const sdIc = sampleStdDev(sessionIcs);
   // BOTH floors must clear. Dates alone are horizon-blind; nEffective alone
   // would admit a horizon so short that overlap is irrelevant but the sample is
   // still tiny.
@@ -136,8 +172,11 @@ function predictiveMetrics(rows: Array<{ value: number; outcome: number; ts: str
       effective_observations: nEffective,
       min_effective_observations_required: MIN_EFFECTIVE_OBSERVATIONS,
       mean_session_rank_ic: avgIc,
+      sd_session_rank_ic: sdIc,
+      t_stat: tStatistic(avgIc, sdIc, nEffective),
       positive_session_share: hitRate(sessionIcs),
     },
+    sessions,
     reason: datesShort
       ? `Only ${qualifyingSessions}/${MIN_PREDICTIVE_DATES} sessions have a cross-section of at least ${MIN_CROSS_SECTION}; no predictive conclusion is permitted.`
       : overlapShort
@@ -188,6 +227,10 @@ export function buildDimensionFindings(observations: DiagnosticObservation[], ho
       metrics: {
         cohort: ENTRY_COHORT_KEY,
         ...predictive.metrics,
+        // Headline cohort ONLY. The context cohort keeps its summary stats but
+        // no series: carrying both would double the stored payload to plot a
+        // line nobody may cite as predictive power.
+        session_ic_series: predictive.sessions,
         [`${ALL_SCORED_COHORT_KEY}_context`]: {
           cohort: ALL_SCORED_COHORT_KEY,
           ...context.metrics,
