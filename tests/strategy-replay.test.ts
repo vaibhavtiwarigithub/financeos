@@ -4,6 +4,7 @@ import { compileSpec, evaluate, type Bar } from "@/lib/strategy-replay/compile";
 import { markNavSeries, type DailyMark, type HoldingsAt } from "@/lib/strategy-replay/nav-marker";
 import { neverTradesControl, alwaysInControl, deterministicCoin } from "@/lib/strategy-replay/negative-control";
 import { simulatePortfolio, type SimulationPolicy } from "@/lib/simulation/portfolio-simulator";
+import { MODELED_SLIP_FRACTION } from "@/lib/analytics/performance-metrics";
 
 const SESSIONS = ["2026-01-05","2026-01-06","2026-01-07","2026-01-08","2026-01-09",
                   "2026-01-12","2026-01-13","2026-01-14","2026-01-15","2026-01-16"];
@@ -315,5 +316,49 @@ describe("allocation tracks available cash, not initial cash", () => {
     const sim = simulatePortfolio(policy, r.events);
     expect(sim.rejections).toHaveLength(0);
     expect(r.events.filter(e => e.kind === "entry").length).toBeGreaterThan(0);
+  });
+});
+
+describe("the replay pays the same friction as the paper book", () => {
+  // THE GAP THIS CLOSES (found 2026-09-02). compileSpec left `costPct` unset on
+  // both entry and exit events, so the simulator's cost multiplier was 1 and
+  // every replay returned a FRICTIONLESS gross number. The paper book pays
+  // MODELED_SLIP_FRACTION on every fill, so the replay was structurally
+  // optimistic against the very book it exists to be a counterfactual for.
+  //
+  // Charging zero is the flattering direction, which is exactly the direction a
+  // trial ledger is supposed to make impossible.
+  const policy: SimulationPolicy = {
+    market: "us", currency: "USD", initialCash: 100_000,
+    maxOpenNames: 1, allowFractionalShares: true,
+  };
+  const compiled = () => compileSpec({
+    spec: baseSpec({ horizonSessions: 2, exit: { op: "never" } }),
+    bars: { AAA: bars() }, initialCash: 100_000,
+  });
+
+  it("charges the cost on BOTH sides of the round trip", () => {
+    const events = compiled().events;
+    const entries = events.filter((e) => e.kind === "entry");
+    const exits = events.filter((e) => e.kind === "exit");
+    expect(entries.length).toBeGreaterThan(0);
+    expect(exits.length).toBeGreaterThan(0);
+    // A cost on entry only would still let the exit book the full gross.
+    for (const e of [...entries, ...exits]) {
+      expect(e.costPct).toBe(MODELED_SLIP_FRACTION);
+    }
+  });
+
+  it("ends with LESS cash than the same replay run frictionless", () => {
+    // The direction is the whole point: friction can only subtract. Comparing
+    // against a zeroed-cost copy of the SAME events isolates cost from the rule.
+    const events = compiled().events;
+    const free = events.map((e) => ({ ...e, costPct: 0 }));
+    const paid = simulatePortfolio(policy, events);
+    const unpaid = simulatePortfolio(policy, free);
+    expect(paid.rejections).toHaveLength(0);
+    expect(unpaid.rejections).toHaveLength(0);
+    expect(paid.endingCash).toBeLessThan(unpaid.endingCash);
+    expect(paid.realizedPnl).toBeLessThan(unpaid.realizedPnl);
   });
 });

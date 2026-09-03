@@ -98,6 +98,14 @@ Neither is allowed to infer that a review-ready program has been promoted.
 `lib/shadows/status.ts` owns aggregation and derives a normalized
 `ShadowProgramStatus`. It may reference existing ledgers but cannot write them.
 
+The registry also covers the scheduled producer families whose ledgers were
+added after the original inventory: `horizon-extension` (the
+`horizon_extension_shadow` ledger), `exit-stop-shadow` (`exit_stop_shadow_runs`),
+`archetype-ic` (`archetype_ic_runs`), and `alpha-diagnostics`
+(`backtest_experiments` rows with `experiment_type='alpha_diagnostic'`). Each
+adapter reports market-local row/date progress and latest write time. A scheduled
+program with no rows is `scheduled_idle`, not `collecting`.
+
 A coverage test pins the known producers/cron names to registry entries. Future
 shadow work is incomplete until this registry is extended.
 
@@ -179,7 +187,8 @@ Future provider-consuming shadows should write to the existing
 1. Unauthorized requests receive 401/403.
 2. Every registry entry has purpose, benefit, evidence source, safety boundary,
    gate, owner, and architecture reference.
-3. The API reports live production counts without storing duplicate evidence.
+3. The API reports live production counts without storing duplicate evidence,
+   including every scheduled shadow producer in the registry.
 4. Provider calls distinguish tracked network attempts, cache hits, zero
    incremental calls, and unmetered calls.
 5. Router remains disabled in both markets.

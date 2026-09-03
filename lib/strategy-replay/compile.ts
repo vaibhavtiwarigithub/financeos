@@ -1,3 +1,4 @@
+import { MODELED_SLIP_FRACTION } from "@/lib/analytics/performance-metrics";
 // Compile a frozen RuleSpec into simulator events.
 //
 // The rule is DATA (a predicate tree), not code, so it can be fingerprinted,
@@ -224,8 +225,9 @@ export function compileSpec(input: CompileInput): CompileResult {
             session: series[fillIdx].session,
             symbol, kind: "exit", price: fillPrice,
             quantity: open.quantity,
+            costPct: MODELED_SLIP_FRACTION,
           });
-          cash += open.quantity * fillPrice;
+          cash += open.quantity * fillPrice * (1 - MODELED_SLIP_FRACTION);
           open = null;
         }
         continue;
@@ -246,12 +248,23 @@ export function compileSpec(input: CompileInput): CompileResult {
           session: series[fillIdx].session,
           symbol, kind: "entry", price: fillPrice,
           cashAllocation,
+          costPct: MODELED_SLIP_FRACTION,
         });
         // Mirrors the simulator's own sizing (portfolio-simulator.ts:158) so the
-        // exit quantity matches the fill exactly. costPct is unset here, so the
-        // multiplier is 1.
-        const quantity = cashAllocation / fillPrice;
-        cash -= quantity * fillPrice;
+        // exit quantity matches the fill exactly — INCLUDING the cost multiplier.
+        //
+        // The replay used to leave costPct unset, so it charged nothing on
+        // either side and every result was a frictionless gross number that the
+        // paper book (which pays MODELED_SLIP_FRACTION per fill) could never
+        // reproduce. A replay that undercharges the thing it is a counterfactual
+        // for is not a counterfactual. Both sides now pay the same constant, so
+        // replay and paper book are comparable.
+        const quantity = cashAllocation / (fillPrice * (1 + MODELED_SLIP_FRACTION));
+        // Charge the full allocation, not quantity*price. With cost applied the
+        // two differ by exactly the fee, and spending less here than the
+        // simulator does would drift this ledger richer every entry -- the same
+        // cash-drift shape fixed in 3629cd7e.
+        cash -= cashAllocation;
         open = { entryIdx: i, entryPrice: fillPrice, quantity };
       }
     }

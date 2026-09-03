@@ -58,3 +58,11 @@ export function paperPartialTargetQuantity(market: PaperQuantityMarket, heldQty:
   const half = Math.floor((qty / 2) * US_FRACTIONAL_SCALE) / US_FRACTIONAL_SCALE;
   return half > 0 && qty - half > 0 ? half : null;
 }
+
+/** A partial-target exit may tighten runner protection, but must never loosen it. */
+export function paperRunnerStopPrice(entryPrice: unknown, currentTrailingStop: unknown): number | null {
+  const entry = finitePositive(entryPrice);
+  const trailing = finitePositive(currentTrailingStop);
+  if (entry == null || trailing == null) return null;
+  return Math.max(entry, trailing);
+}

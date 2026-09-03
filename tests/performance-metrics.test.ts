@@ -111,15 +111,43 @@ describe("expectancy", () => {
 });
 
 describe("costNet", () => {
-  it("expresses spread as % of fill and reconstructs gross = net + cost", () => {
-    // 20 identical rows: net 1%, spread 0.05 on fill 100 => cost 0.05%.
+  it("reads spread_applied as a FRACTION and reconstructs gross = net + cost", () => {
+    // PRODUCTION SHAPE. paper-trade/route.ts fills with a hardcoded
+    // `spread: 0.0005` and stores exactly that; every US row in paper_trades
+    // carries spread_applied = 0.00050 regardless of price. That is 5bps.
     const rows = Array.from({ length: 20 }, () => ({
-      pnl_pct: 1, spread_applied: 0.05, fill_price: 100,
+      pnl_pct: 1, spread_applied: 0.0005, fill_price: 100,
     }));
     const c = costNet(rows);
     expect(c.netReturnPct.value!).toBeCloseTo(1, 6);
     expect(c.costPct.value!).toBeCloseTo(0.05, 6);
     expect(c.grossReturnPct.value!).toBeCloseTo(1.05, 6);
+  });
+
+  it("does NOT scale with fill price — the bug this replaces did", () => {
+    // THE REGRESSION GUARD. The old code returned |spread|/fill*100, so the
+    // SAME 5bps cost read 0.0009% on a $57 stock and 0.0001% on a $417 one:
+    // understated by a factor equal to the price, and worse the more expensive
+    // the name. A cost that moves when only the price moves is not a cost.
+    const cheap = costNet(Array.from({ length: 20 }, () => ({
+      pnl_pct: 1, spread_applied: 0.0005, fill_price: 56.92,   // EXEL
+    })));
+    const dear = costNet(Array.from({ length: 20 }, () => ({
+      pnl_pct: 1, spread_applied: 0.0005, fill_price: 417.73,  // TSM
+    })));
+    expect(cheap.costPct.value!).toBeCloseTo(dear.costPct.value!, 12);
+    expect(cheap.costPct.value!).toBeCloseTo(0.05, 6);
+  });
+
+  it("agrees with MODELED_SLIP_PCT, since one constant produces both", () => {
+    // spread_applied and realized_slip_pct are the SAME 0.0005 in every US row,
+    // and slip() already multiplied by 100 with the comment "fraction -> %".
+    // costNet contradicted its own file; this pins the two together so they
+    // cannot drift apart again.
+    const rows = Array.from({ length: 20 }, () => ({
+      pnl_pct: 1, spread_applied: 0.0005, fill_price: 217.66,
+    }));
+    expect(costNet(rows).costPct.value!).toBeCloseTo(MODELED_SLIP_PCT, 6);
   });
   it("treats missing/invalid spread as zero cost", () => {
     const rows = Array.from({ length: 20 }, () => ({

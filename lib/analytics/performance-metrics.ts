@@ -153,12 +153,26 @@ export function costNet(
   );
   const n = rows.length;
   const nets = rows.map((t) => t.pnl_pct as number);
-  // spread_applied is an absolute price offset; express as % of fill price.
+  // spread_applied is a FRACTION of price, not an absolute price offset.
+  //
+  // THE BUG THIS REPLACES. The old line divided it by fill_price as though it
+  // were an offset in currency, which understated the cost by a factor equal to
+  // the fill price itself. paper-trade/route.ts fills with a hardcoded
+  // `spread: 0.0005` and stores exactly that in spread_applied; every US fill
+  // carries 0.00050. So the applied cost is 0.05% (5bps) while costNet reported
+  // 0.0005/56.92*100 = 0.0009% for a $57 stock and 0.0001% for a $417 one --
+  // understated 57x and 417x respectively, and MORE understated the more
+  // expensive the stock.
+  //
+  // The same file already had it right one function down: `slip()` multiplies
+  // realized_slip_pct by 100 with the comment "fraction -> %", and
+  // MODELED_SLIP_PCT is declared as 0.05 meaning 5bps. costNet contradicted
+  // both. A cost-realism programme that starts from a cost read 57-417x too
+  // small starts from the wrong number.
   const costs = rows.map((t) => {
     const s = t.spread_applied;
-    const f = t.fill_price;
-    if (s == null || f == null || !Number.isFinite(s) || !Number.isFinite(f) || f <= 0) return 0;
-    return (Math.abs(s) / f) * 100;
+    if (s == null || !Number.isFinite(s)) return 0;
+    return Math.abs(s) * 100;
   });
   const net = n ? mean(nets) : null;
   const cost = n ? mean(costs) : null;
@@ -176,6 +190,26 @@ export function costNet(
 // tile confirms the assumption; once partial/next-bar fills land (4b/4c) the two
 // diverge and this becomes the execution-quality truth signal.
 export const MODELED_SLIP_PCT = 0.05; // flat 5bps slippage the fill model applies
+
+/**
+ * The SAME constant as a fraction — the form the fill path and the simulator want.
+ *
+ * ONE NUMBER, ONE DEFINITION. It used to exist twice in two units: a bare
+ * `spread: 0.0005` literal in app/api/agents/paper-trade/route.ts and
+ * MODELED_SLIP_PCT = 0.05 here. Two components holding the same quantity in
+ * different units is how costNet came to divide a fraction by a price. Anything
+ * that charges or reports this friction imports it from here.
+ *
+ * WHAT IT ASSUMES, AND WHERE IT BREAKS. 5bps per side is a modelling
+ * assumption, not a measurement — no bid/ask is captured at fill, so the
+ * "realized" cost in paper_trades is this constant read back. For the current
+ * universe (US mega/large caps) at the current size (~$1k orders on a $10k NAV)
+ * it is CONSERVATIVE: a $1k order sits inside top-of-book, so the true cost is
+ * about a half-spread — under 1bp on AAPL — with no commission at the broker.
+ * It stops being conservative for thin names, for India, or if NAV scales to
+ * where orders move the book. Report a sensitivity band, never a point estimate.
+ */
+export const MODELED_SLIP_FRACTION = MODELED_SLIP_PCT / 100;
 
 export function slip(rows: { realized_slip_pct: number | null }[]): Metric {
   const vals = rows

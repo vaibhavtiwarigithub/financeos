@@ -1,3 +1,4 @@
+import { MODELED_SLIP_FRACTION } from "@/lib/analytics/performance-metrics";
 /**
  * Deterministic Quote Adapter — Phase 0
  * All prices come from real market APIs with timestamp + source provenance.
@@ -445,12 +446,11 @@ export async function getBatchQuotes(
  */
 export function computeFillPrice(quote: DeterministicQuote): number {
   const base = quote.ask ?? quote.price;
-  const slippage = 0.0005; // 0.05%
-  return parseFloat((base * (1 + slippage)).toFixed(4));
+  return parseFloat((base * (1 + MODELED_SLIP_FRACTION)).toFixed(4));
 }
 
 /** Conservative paper SELL fill when no executable bid is available. */
 export function computeExitFillPrice(price: number, bid?: number | null): number {
   const base = bid != null && Number.isFinite(bid) && bid > 0 ? bid : price;
-  return parseFloat((base * (1 - 0.0005)).toFixed(4));
+  return parseFloat((base * (1 - MODELED_SLIP_FRACTION)).toFixed(4));
 }

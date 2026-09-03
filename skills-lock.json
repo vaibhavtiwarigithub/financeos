@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "knowledge-ops": {
+      "source": "affaan-m/ECC",
+      "sourceType": "github",
+      "skillPath": "skills/knowledge-ops/SKILL.md",
+      "computedHash": "079208df75a63108c94791c2e90baa2fa937a1333fe165447af12c8cabad60ad"
+    },
+    "youtube-advisor": {
+      "source": "AlexanderAbramovPav/youtube-advisor",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "2c919107bc2f7b8bc5a392eb0e2a413cde4db7457d154c1b32eb2a0b61def0b7"
+    },
+    "youtube-full": {
+      "source": "ZeroPointRepo/youtube-skills",
+      "sourceType": "github",
+      "skillPath": "skills/youtube-full/SKILL.md",
+      "computedHash": "e9f6d84af24e275c8eb452113a795cbd0b53607c648ad716dcdbd218e5832e19"
+    }
+  }
+}

@@ -15,7 +15,7 @@ describe("shadow registry governance contract", () => {
   it("uses stable unique IDs and complete descriptive boundaries", () => {
     const ids = SHADOW_PROGRAMS.map((program) => program.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(SHADOW_PROGRAMS.length).toBeGreaterThanOrEqual(10);
+    expect(SHADOW_PROGRAMS.length).toBeGreaterThanOrEqual(21);
     for (const program of SHADOW_PROGRAMS) {
       expect(program.purpose.length).toBeGreaterThan(20);
       expect(program.productBenefit.length).toBeGreaterThan(20);
@@ -35,6 +35,10 @@ describe("shadow registry governance contract", () => {
     expect(ids.has("dimension-diagnostics")).toBe(true);
     expect(ids.has("pit-fundamental-qualification")).toBe(true);
     expect(ids.has("specialist-feature-packs")).toBe(true);
+    expect(ids.has("horizon-extension")).toBe(true);
+    expect(ids.has("exit-stop-shadow")).toBe(true);
+    expect(ids.has("archetype-ic")).toBe(true);
+    expect(ids.has("alpha-diagnostics")).toBe(true);
   });
 
   it("maps every known shadow and evidence cron to a registry program", () => {
@@ -56,6 +60,14 @@ describe("shadow registry governance contract", () => {
       "kairos-downside-hedge-us",
       "kairos-dimension-diagnostics-us",
       "kairos-dimension-diagnostics-india",
+      "kairos-horizon-extension-shadow-us",
+      "kairos-horizon-extension-shadow-india",
+      "kairos-exit-stop-shadow-us",
+      "kairos-exit-stop-shadow-india",
+      "kairos-archetype-ic-us",
+      "kairos-archetype-ic-india",
+      "kairos-alpha-diagnostics-us",
+      "kairos-alpha-diagnostics-india",
     ].forEach((job) => expect(jobs.has(job), `${job} is not registered`).toBe(true));
   });
 

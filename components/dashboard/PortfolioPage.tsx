@@ -6,6 +6,7 @@ import { SymbolLink } from "@/components/ui/SymbolLink";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { fmtMoney } from "@/lib/format-money";
 import { paperExitPlanForTrade, type PaperExitPlan } from "@/lib/trading/paper-exit-plan";
+import { paperExitEconomics } from "@/lib/trading/paper-exit-economics";
 import InternationalExposurePanel from "@/components/dashboard/InternationalExposurePanel";
 import type { InternationalAllocationPolicyRead } from "@/lib/allocation/international-policy";
 const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
@@ -591,7 +592,7 @@ function LiveHoldingsTab({ market = "us" }: { market?: string }) {
   );
 }
 
-function ExitPlanColumn({ plan, market }: { plan: PaperExitPlan | null; market: "us" | "india" }) {
+function ExitPlanColumn({ plan, market, entryPrice, heldQty }: { plan: PaperExitPlan | null; market: "us" | "india"; entryPrice?: unknown; heldQty?: unknown }) {
   if (!plan) {
     return (
       <div style={{ minWidth: 0 }}>
@@ -623,6 +624,18 @@ function ExitPlanColumn({ plan, market }: { plan: PaperExitPlan | null; market: 
       : plan.horizonSource === "user"
         ? "settings"
         : "hedge policy";
+  const economics = paperExitEconomics({
+    market,
+    heldQty,
+    entryPrice,
+    stopPrice: plan.stopPrice,
+    targetPrice: plan.targetPrice,
+  });
+  const targetAction = economics.targetExitQty != null && economics.runnerQty != null
+    ? economics.runnerQty > 0
+      ? `Sell ${economics.targetExitQty} · run ${economics.runnerQty}`
+      : `Sell all ${economics.targetExitQty}`
+    : null;
 
   return (
     <div style={{ minWidth: 0, borderLeft: `1px solid ${T.border}`, paddingLeft: "16px" }}>
@@ -633,12 +646,25 @@ function ExitPlanColumn({ plan, market }: { plan: PaperExitPlan | null; market: 
       <div style={{ display: "grid", gap: "3px", fontSize: "12px", color: T.textSub, lineHeight: 1.35 }}>
         <div>
           Stop {plan.stopPrice == null ? "unavailable" : `≤ ${fmtMoney(plan.stopPrice, market)}`}
-          <span style={{ color: T.muted }}> · current trailing protection</span>
+          <span style={{ color: T.muted }}>
+            {economics.stopReturnPct == null ? " · current trailing protection" : ` · ${fmtPct(economics.stopReturnPct)} from entry`}
+          </span>
         </div>
         <div>
           Target {plan.targetPrice == null ? "none remaining" : `≥ ${fmtMoney(plan.targetPrice, market)}`}
-          <span style={{ color: T.muted }}>{plan.targetPrice == null ? " · stop/score/time still active" : " · partial profit when possible"}</span>
+          <span style={{ color: T.muted }}>
+            {plan.targetPrice == null
+              ? " · stop/score/time still active"
+              : economics.targetReturnPct == null ? " · partial profit when possible" : ` · ${fmtPct(economics.targetReturnPct)} from entry`}
+          </span>
         </div>
+        {targetAction && economics.minimumGrossGainIfTargetHitsPct != null && (
+          <div>
+            {targetAction}
+            <span style={{ color: T.muted }}> · minimum gross plan gain {fmtPct(economics.minimumGrossGainIfTargetHitsPct)} if target fills and runner exits at entry</span>
+          </div>
+        )}
+        {economics.rewardRiskRatio != null && <div>Current reward/risk {economics.rewardRiskRatio.toFixed(2)}×</div>}
         <div style={{ color: plan.score != null && !plan.scoreFresh ? T.amber : T.textSub }}>{scoreLine}</div>
         <div>
           Time {plan.ageWeekdays == null ? "age unavailable" : `${plan.ageWeekdays}/${plan.horizonDays} weekdays`}
@@ -656,11 +682,19 @@ function TradeExitPlanCell({ trade, plan, market }: { trade: any; plan: PaperExi
       <div style={{ color: T.muted, fontSize: "11px", lineHeight: 1.35 }}>
         <div style={{ color: T.textSub, fontWeight: 600 }}>Completed</div>
         {reason && <div style={{ textTransform: "capitalize" }}>{reason}</div>}
+        {trade.pnl_pct != null && <div style={{ color: pnlColor(Number(trade.pnl_pct)), fontWeight: 600 }}>Actual {fmtPct(Number(trade.pnl_pct))}</div>}
+        {(trade.stop_loss != null || trade.take_profit != null) && (
+          <div>
+            {trade.stop_loss != null ? `Stop ${fmtMoney(Number(trade.stop_loss), market)}` : "Stop unavailable"}
+            {" · "}
+            {trade.take_profit != null ? `Target ${fmtMoney(Number(trade.take_profit), market)}` : "Target unavailable"}
+          </div>
+        )}
       </div>
     );
   }
   // Open trade — render full expanded plan (same as PositionCard, both markets)
-  return <ExitPlanColumn plan={plan} market={market} />;
+  return <ExitPlanColumn plan={plan} market={market} entryPrice={trade.fill_price} heldQty={trade.qty} />;
 }
 
 /** Rich position card — replaces plain table row */
@@ -719,7 +753,7 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; 
         </div>
       </div>
 
-      <ExitPlanColumn plan={plan} market={market} />
+      <ExitPlanColumn plan={plan} market={market} entryPrice={p.avg_cost} heldQty={p.qty} />
 
       {/* Right: P&L + value */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
@@ -811,6 +845,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
         whatToLookFor={[
           "NAV = uninvested cash + current market value of all holdings. Paper pools start at $10,000 (US) and ₹10,00,000 (India); P&L and % are measured against that starting amount. US is always shown in $ and India in ₹ — the two currencies are never mixed.",
           "Positions tab: each Exit plan shows the current trailing stop, remaining profit target, fresh-score threshold, and time horizon. PositionMonitor applies the first due rule automatically; stale research cannot force a score exit.",
+          "Target upside is the payoff if price reaches the target — not a probability-weighted expected return. Minimum gross plan gain reflects the target slice only and assumes the runner later exits at entry; completed trades show the actual realized percentage.",
           "Trade Queue tab: signals the agent wants to act on — approve or reject before next cron run.",
           "Win rate should trend above 50% after 20+ trades. Below = prompt/screener adjustment needed.",
           "Compare NAV vs VOO benchmark — are you beating the index?",
@@ -901,16 +936,18 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
 
       {/* Trades tab */}
       {tab === "trades" && (
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px" }}>
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", minWidth: 0, overflow: "hidden" }}>
           {trades.length === 0 ? (
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>No paper trades yet.</div>
           ) : (
-            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-            <table style={{ width: "100%", minWidth: "1100px", borderCollapse: "collapse", fontSize: "13px" }}>
+            <>
+            <div style={{ color: T.muted, fontSize: "10px", marginBottom: "8px", textAlign: "right" }}>Swipe or scroll for more →</div>
+            <div data-testid="paper-trades-scroll" style={{ width: "100%", maxWidth: "100%", minWidth: 0, overflowX: "auto", overscrollBehaviorX: "contain", WebkitOverflowScrolling: "touch" }}>
+            <table style={{ display: "table", width: "100%", minWidth: "1100px", maxWidth: "none", overflow: "visible", borderCollapse: "collapse", fontSize: "13px", whiteSpace: "nowrap" }}>
               <thead>
                 <tr style={{ color: T.muted }}>
-                  {["Symbol", "Side", "Qty", "Fill Price", "Exit / Mkt", "Total", "Score", "Exit Plan", "Realized P&L", "Current P&L", "Outcome", "Date"].map(h => (
-                    <th key={h} style={{ padding: "5px 12px 10px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left" }}>{h}</th>
+                  {["Symbol", "Side", "Qty", "Fill Price", "Exit / Mkt", "Total", "Score", "Exit Plan", "Realized P&L", "Current P&L", "Outcome", "Date"].map((h, index) => (
+                    <th key={h} style={{ padding: "5px 12px 10px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left", ...(index === 0 ? { position: "sticky", left: 0, zIndex: 2, background: T.card } : {}) }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -919,7 +956,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
                   const currentPnl = currentPaperTradePnl(t, positions, activeMarket);
                   const tradeExitPlan = paperExitPlanForTrade(t, exitPlans ?? {});
                   return <tr key={t.id} style={{ borderTop: `1px solid ${T.border}` }}>
-                    <td style={{ padding: "10px 12px 10px 0", fontWeight: 700 }}>
+                    <td style={{ padding: "10px 12px 10px 0", fontWeight: 700, position: "sticky", left: 0, zIndex: 1, background: T.card }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                         <SymbolLink symbol={t.symbol} market={activeMarket} style={{ fontWeight: 800, color: T.accent }} />
                         <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#2D1B00", color: "#FBBF24", letterSpacing: "0.04em" }}>PAPER</span>
@@ -942,7 +979,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
                     </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{fmtMoney(t.qty * t.fill_price, activeMarket, 0)}</td>
                     <td style={{ padding: "10px 12px 10px 0", color: T.accent }}>{t.analyst_score ?? "—"}</td>
-                    <td style={{ padding: "10px 18px 10px 0", verticalAlign: "top" }}>
+                    <td style={{ padding: "10px 18px 10px 0", verticalAlign: "top", whiteSpace: "normal", minWidth: "340px", maxWidth: "420px" }}>
                       <TradeExitPlanCell trade={t} plan={tradeExitPlan} market={activeMarket} />
                     </td>
                     <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: t.realized_pnl != null ? pnlColor(t.realized_pnl) : T.muted }}>
@@ -965,6 +1002,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
               </tbody>
             </table>
             </div>
+            </>
           )}
         </div>
       )}

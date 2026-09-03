@@ -1,0 +1,17 @@
+# Local Codebase-Memory MCP exclusion policy. Keep credentials and private
+# operator context out of the persistent code graph even if ignore handling changes.
+.env
+.env.*
+.mcp.json
+.claude/
+.codex/
+.agents/
+.ecc/
+backups/
+graphify-out/
+node_modules/
+.next/
+scripts/robin.env
+scripts/logs/
+supabase/.temp/
+knowledge/CONNECTIONS.md

@@ -19,7 +19,7 @@ import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type Tr
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
-import { paperPartialTargetQuantity } from "@/lib/trading/paper-quantity";
+import { paperPartialTargetQuantity, paperRunnerStopPrice } from "@/lib/trading/paper-quantity";
 import { admitMarketLocalSlot } from "@/lib/trading/market-calendar";
 import {
   buildPositionMark, MARK_CROSSCHECK_TOLERANCE_PCT, MARK_DISPUTE_REFUSE_PCT, markLedgerRow, navFromMarks, reconcilePersistedNav, summariseMarkCoverage,
@@ -490,7 +490,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
 
     cashByMarket[market] = (cashByMarket[market] ?? 0) + Number(result.proceeds ?? 0);
     if (Number(result.remaining_qty ?? 0) > 0) {
-      updated.push(`${pos.symbol} (partial_target: ${requestedQty}/${pos.qty} closed, stop→breakeven)`);
+      updated.push(`${pos.symbol} (partial_target: ${requestedQty}/${pos.qty} closed, runner stop protected)`);
     } else {
       closed.push(`${pos.symbol} (${exitReason}: ${cur}${exitFillPrice.toFixed(2)}, P&L: ${cur}${Number(result.realized_pnl ?? 0).toFixed(2)})`);
     }
@@ -677,11 +677,12 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       // exempt flagged rows, so the residual INSERT no longer aborts the run.
       const partialQty = paperPartialTargetQuantity(market, pos.qty);
       if (partialQty !== null && partialQty < Number(pos.qty)) {
-        // Partial: close half at target, let the runner run with stop→breakeven.
+        // Partial: close half at target and protect the runner at least at
+        // breakeven. Never lower a trailing stop that already locks profit.
         exitReason = "partial_target";
         outcome = "win";
         exitQtyOverride = partialQty;
-        partialStopOverride = Number(pos.avg_cost); // breakeven stop on remainder
+        partialStopOverride = paperRunnerStopPrice(pos.avg_cost, trailingStop) ?? Number(pos.avg_cost);
       } else {
         // Position too small to split or helper returned null → full exit.
         exitReason = "target_hit";

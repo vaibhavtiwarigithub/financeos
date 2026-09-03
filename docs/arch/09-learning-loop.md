@@ -780,7 +780,39 @@ continues to own the stored position's exits.
 | Expectancy | Average expected profit per trade |
 | Profit factor | Gross profit / gross loss |
 | Alpha | vs benchmark (VOO/^NSEI) |
-| Execution slip | Mean realized vs 0.05% modeled slippage |
+| Execution slip | Mean realized vs 0.05% modeled slippage (both are the SAME constant — see below) |
+
+### Execution cost is an ASSUMPTION, not a measurement (2026-09-02)
+
+`spread_applied` is a **fraction of price**, and every fill in both markets
+carries exactly `0.00050` — 205/205 rows, zero variance. The fill path applies a
+hardcoded 5bps and stores that same constant back, so the "realized" cost is the
+assumption read back to itself. **Cost cannot be calibrated from our own fills**;
+doing so would validate the assumption with itself.
+
+Three defects were fixed together:
+
+- **`costNet` misread the units.** It computed `|spread_applied| / fill_price * 100`
+  as though the column were an absolute price offset, understating cost by a
+  factor equal to the fill price — 0.0009% on a $57 name, 0.0001% on a $417 one,
+  against a true 0.05%. `slip()` in the same file already had it right
+  (`fraction -> %`), so the file contradicted itself. Reported cost drag went
+  from ~0.001% to 0.05% per trade.
+- **The strategy replay charged nothing.** `compileSpec` left `costPct` unset on
+  entry and exit, so the simulator's multiplier was 1 and every replay result was
+  frictionless — structurally optimistic against the paper book it is meant to be
+  a counterfactual for. Both sides now pay the same constant.
+- **One number, five encodings.** `1.0005`, `0.0005` (x3) and `MODELED_SLIP_PCT = 0.05`
+  expressed the same quantity in two units across three files. All now derive
+  from `MODELED_SLIP_FRACTION` in `lib/analytics/performance-metrics.ts`.
+
+**What 5bps/side is worth.** Conservative for the current universe and size (US
+mega/large caps, ~$1k orders on a $10k NAV sit inside top-of-book; the true cost
+is about a half-spread, under 1bp on AAPL, with no broker commission). It stops
+being conservative for thin names, for India, or once NAV grows enough to move
+the book. `computeFillPrice` has a real bid/ask path, but `ask` is null in
+production, so it never engages. Treat cost as a sensitivity band, never a point
+estimate.
 
 ### Honesty rules
 

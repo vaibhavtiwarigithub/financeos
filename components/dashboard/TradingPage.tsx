@@ -256,7 +256,7 @@ function PaperPerformancePanel({ strategy, market }: { strategy: any; market: Mk
             color: avgReturn >= 0 ? T.green : T.red,
           },
           {
-            label: "Total P&L",
+            label: "Total P&L (R+U)",
             value: (totalPnl >= 0 ? "+" : "-") + fmtMoney(Math.abs(totalPnl), market, 0),
             color: totalPnl >= 0 ? T.green : T.red,
           },

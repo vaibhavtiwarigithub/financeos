@@ -1,6 +1,6 @@
 # External Research Shadow Runtime
 
-> Status: **REVIEWED DESIGN DRAFT. NOT APPROVED FOR IMPLEMENTATION.**
+> Status: **APPROVED FOR P0/P1 ISOLATED FOUNDATION ONLY (2026-08-10).**
 > Last reviewed: 2026-07-15 by Codex.
 > Authority: subordinate to `features/external-research-integrations/FEATURE_ARCHITECTURE.md`.
 > Scope: optional, record-only research compute. No money-path authority.
@@ -25,7 +25,7 @@ motivate a separately specified, clean-room, Kairos-owned deterministic feature.
 
 ## 2. Preconditions
 
-Do not build this runtime until all are true:
+The production third-party runtime must not be built until all are true:
 
 - Router cutover and eligibility guard are complete for the target market;
 - experiment lineage can reference Router policy/evidence fingerprints without a
@@ -37,7 +37,11 @@ Do not build this runtime until all are true:
   exist; and
 - a synthetic fixture run passes before any real snapshot is exported.
 
-This makes the feature optional and later than native experiment lineage.
+P0/P1 may build only Kairos-owned contracts, synthetic fixtures, source-release
+metadata, validation, and an owner-disabled registry. It may not clone, execute,
+or package an upstream repository; export provider data; issue worker credentials;
+dispatch GitHub Actions; or accept a third-party artifact. This makes the feature
+optional and later than native experiment lineage.
 
 ## 3. Trust Boundaries
 

@@ -1,3 +1,4 @@
+import { MODELED_SLIP_FRACTION } from "@/lib/analytics/performance-metrics";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -385,8 +386,8 @@ export async function POST(req: NextRequest) {
           signal.symbol,
         );
         if (!verdict.ok) return { ok: false, reason: verdict.reason };
-        const fillPrice = parseFloat((verdict.price * 1.0005).toFixed(2)); // +0.05% slippage
-        return { ok: true, price: verdict.price, fillPrice, source: verdict.source, retrievedAt: verdict.retrievedAt, bid: null, ask: null, spread: 0.0005 };
+        const fillPrice = parseFloat((verdict.price * (1 + MODELED_SLIP_FRACTION)).toFixed(2));
+        return { ok: true, price: verdict.price, fillPrice, source: verdict.source, retrievedAt: verdict.retrievedAt, bid: null, ask: null, spread: MODELED_SLIP_FRACTION };
       }
       const quote = await getQuote(signal.symbol, supabase);
       const verdict = assertFreshQuote(quote, signal.symbol);

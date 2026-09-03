@@ -202,4 +202,3 @@ Claude MUST push back on:
 - Running real TraderAgent orders without approval_required mode
 - Any feature that adds agent complexity before the weekly learning loop has run at least once
 
-

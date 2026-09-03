@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paperEntryQuantity, paperPartialTargetQuantity } from "@/lib/trading/paper-quantity";
+import { paperEntryQuantity, paperPartialTargetQuantity, paperRunnerStopPrice } from "@/lib/trading/paper-quantity";
 
 describe("paperEntryQuantity", () => {
   it("uses six-decimal US fractions without exceeding the allocation", () => {
@@ -27,5 +27,15 @@ describe("paperPartialTargetQuantity", () => {
   it("preserves India's whole-share partial rule", () => {
     expect(paperPartialTargetQuantity("india", 1)).toBeNull();
     expect(paperPartialTargetQuantity("india", 3)).toBe(1);
+  });
+});
+
+describe("paperRunnerStopPrice", () => {
+  it("raises a below-entry trailing stop to breakeven", () => {
+    expect(paperRunnerStopPrice(100, 96)).toBe(100);
+  });
+
+  it("preserves a trailing stop that already protects profit", () => {
+    expect(paperRunnerStopPrice(100, 103.25)).toBe(103.25);
   });
 });
