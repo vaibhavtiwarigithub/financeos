@@ -52,3 +52,8 @@ lib/edges/__oos-measure.test.ts
 oos-sigma-*.json
 
 .env*
+
+# scratch / generated (untracked 2026-09-02 after an accidental `git add -A` sweep)
+tmp/
+output/
+__pycache__/
