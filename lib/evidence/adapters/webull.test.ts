@@ -21,11 +21,13 @@ import type { ProviderCallContext, ProviderRequest } from "@/lib/evidence/contra
 const h = vi.hoisted(() => ({
   analyst: vi.fn(),
   financials: vi.fn(),
+  session: vi.fn(),
 }));
 
 vi.mock("@/lib/data/webull-data", () => ({
   fetchWebullAnalyst: (...a: any[]) => h.analyst(...a),
   fetchWebullFinancials: (...a: any[]) => h.financials(...a),
+  webullSessionAvailable: (...a: any[]) => h.session(...a),
   // webullAnalystLine is exported by the real module but unused by the adapters.
   webullAnalystLine: () => null,
 }));
@@ -79,6 +81,8 @@ const AAPL_FINANCIALS: Record<string, number> = {
 beforeEach(() => {
   h.analyst.mockReset();
   h.financials.mockReset();
+  h.session.mockReset();
+  h.session.mockResolvedValue(true); // healthy Webull session unless a test overrides
 });
 
 describe("webullAnalystAdapter", () => {
@@ -128,6 +132,15 @@ describe("webullAnalystAdapter", () => {
     expect(res.unavailableReason).toBe("genuine_no_data");
   });
 
+  it("dead Webull session → auth_missing, not genuine_no_data (fetcher not consulted)", async () => {
+    h.session.mockResolvedValue(false);
+    h.analyst.mockResolvedValue(null);
+    const res = await webullAnalystAdapter.fetch(req("AAPL"), CTX);
+    expect(res.ok).toBe(false);
+    expect(res.unavailableReason).toBe("auth_missing");
+    expect(h.analyst).not.toHaveBeenCalled();
+  });
+
   it("validate() rejects a __proto__ pollution key → schema_invalid", () => {
     // JSON.parse creates a real OWN enumerable "__proto__" property (a literal
     // would not) — the exact prototype-pollution vector the guard must catch.
@@ -170,6 +183,15 @@ describe("webullFundamentalsAdapter", () => {
     const res = await webullFundamentalsAdapter.fetch(fundReq("SPY"), CTX);
     expect(res.ok).toBe(false);
     expect(res.unavailableReason).toBe("genuine_no_data");
+  });
+
+  it("dead Webull session → auth_missing (fetcher not consulted)", async () => {
+    h.session.mockResolvedValue(false);
+    h.financials.mockResolvedValue(null);
+    const res = await webullFundamentalsAdapter.fetch(fundReq("AAPL"), CTX);
+    expect(res.ok).toBe(false);
+    expect(res.unavailableReason).toBe("auth_missing");
+    expect(h.financials).not.toHaveBeenCalled();
   });
 
   it("validate() rejects a __proto__ pollution key → schema_invalid", () => {

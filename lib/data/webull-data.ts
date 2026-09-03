@@ -129,6 +129,22 @@ async function openWebull(): Promise<WebullSession | null> {
   }
 }
 
+// True when a Webull MCP session can be opened right now (OAuth token valid +
+// initialize succeeds). The data fetchers below are fail-soft and return `null`
+// for BOTH "Webull not connected / token expired" and "symbol genuinely has no
+// data" — indistinguishable to a caller. The evidence-router adapter uses this
+// to report an expired session as `auth_missing` instead of misfiling a
+// provider outage as `genuine_no_data`. Reuses openWebull()'s 5-min session
+// cache, so on a healthy path this is the same single initialize the fetch
+// would do anyway. Fail-soft: false on any error.
+export async function webullSessionAvailable(): Promise<boolean> {
+  try {
+    return (await openWebull()) !== null;
+  } catch {
+    return false;
+  }
+}
+
 // Call a tool and return the first object-shaped record (analyst rating / target
 // return a single object). Always injects the required US_STOCK category.
 async function callTool(

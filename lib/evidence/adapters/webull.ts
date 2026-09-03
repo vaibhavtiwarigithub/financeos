@@ -17,7 +17,10 @@
 //     ratios already FRACTIONS (net_margin 0.266) — NEVER rescaled, NEVER labeled
 //     annual/ttm. basis "quarterly" is the key correctness invariant.
 // Two live no-data modes (empty-ok ETF like SPY → all null; error unknown symbol
-// → null) both surface here as unavailableReason "genuine_no_data".
+// → null) both surface here as unavailableReason "genuine_no_data". A dead
+// Webull session (OAuth expired / not connected) is checked FIRST and surfaces
+// as "auth_missing" — never genuine_no_data — so a token outage can't poison
+// the shadow-parity evidence or the router's negative signal.
 
 import type {
   ProviderAdapter,
@@ -32,6 +35,7 @@ import type {
 import {
   fetchWebullAnalyst,
   fetchWebullFinancials,
+  webullSessionAvailable,
   type WebullAnalyst,
 } from "@/lib/data/webull-data";
 
@@ -109,6 +113,14 @@ export const webullAnalystAdapter: ProviderAdapter = {
   ): Promise<ProviderResult> {
     const symbol = String(request.symbol ?? "").trim();
     if (!symbol) return { ok: false, unavailableReason: "genuine_no_data" };
+
+    // An expired / missing Webull OAuth session makes the fetcher return null
+    // for EVERY symbol, indistinguishable from a real empty result. Report that
+    // as auth_missing so the router ledger + shadow-parity evidence don't record
+    // a provider outage as "this symbol genuinely has no analyst consensus".
+    if (!(await webullSessionAvailable())) {
+      return { ok: false, unavailableReason: "auth_missing" };
+    }
 
     const a: WebullAnalyst | null = await fetchWebullAnalyst(symbol);
     // null (not connected / no data) OR all three signal fields null → no data.
@@ -226,6 +238,12 @@ export const webullFundamentalsAdapter: ProviderAdapter = {
   ): Promise<ProviderResult> {
     const symbol = String(request.symbol ?? "").trim();
     if (!symbol) return { ok: false, unavailableReason: "genuine_no_data" };
+
+    // See the analyst adapter: a dead Webull session must surface as auth_missing,
+    // not genuine_no_data, or every symbol looks like it has no reported fundamentals.
+    if (!(await webullSessionAvailable())) {
+      return { ok: false, unavailableReason: "auth_missing" };
+    }
 
     const raw = await fetchWebullFinancials(symbol);
     // null (not connected / error symbol) OR empty record (empty-ok ETF) → no data.
