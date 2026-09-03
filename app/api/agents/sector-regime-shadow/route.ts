@@ -186,3 +186,11 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+// kairos_call_agent (the pg_cron -> Vercel bridge) issues net.http_post for
+// every call regardless of the `method` argument it is given, so a GET-only
+// route answers 405 to scheduled and service invocations. Same work, same
+// read-only guarantees.
+export async function POST(request: NextRequest) {
+  return GET(request);
+}
