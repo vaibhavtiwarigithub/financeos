@@ -1,11 +1,23 @@
 import type { Market } from "@/lib/edges/types";
 
-export const EDGE_READINESS_POLICY_VERSION = "edge-readiness.v1";
+export const EDGE_READINESS_POLICY_VERSION = "edge-readiness.v2-horizon-spaced";
 export const HISTORICAL_WINDOWS_REQUIRED = 6;
 export const VALIDATION_WINDOWS_REQUIRED = 4;
-export const INDEPENDENT_WINDOW_DAYS = 5;
 export const MIN_OBSERVATIONS_PER_WINDOW = 72;
 export const VALIDATION_EVIDENCE_QUALITY = "pit_walk_forward_cost_adjusted_fdr";
+
+/**
+ * Approximate a forward-return horizon in trading sessions with a conservative
+ * calendar-day spacing. This is the readiness-ledger counterpart to
+ * folds.ts refusing stepSessions < horizonSessions: two windows whose labels
+ * overlap are not independent evidence merely because their runs were weekly.
+ */
+export function independentWindowDays(horizonSessions: number): number {
+  if (!Number.isFinite(horizonSessions) || horizonSessions < 1) {
+    throw new Error("edge readiness horizon must be a positive session count");
+  }
+  return Math.ceil(horizonSessions * 7 / 5);
+}
 
 export type EdgeReadinessStage =
   | "collecting"
@@ -81,7 +93,7 @@ export function selectIndependentWindows(rows: EdgeReadinessInput[], limit: numb
   let lastDay: number | null = null;
   for (const row of candidates) {
     const day = dayNumber(row.windowEnd)!;
-    if (lastDay != null && lastDay - day < INDEPENDENT_WINDOW_DAYS) continue;
+    if (lastDay != null && lastDay - day < independentWindowDays(row.horizon)) continue;
     selected.push(row);
     lastDay = day;
     if (selected.length >= limit) break;

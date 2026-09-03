@@ -121,3 +121,13 @@ Only the mark cross-check. No change to scoring, sizing, entry, order routing,
 or the exit RULES themselves — the change is about which prices are allowed to
 reach the existing exit evaluation. Affects US and India, since the cross-check
 is shared.
+
+## 6. Same-session coverage follow-up (2026-09-03)
+
+The session gate fixed the safety defect but exposed a coverage defect: the monitor
+still asked Upstox's historical daily-candle endpoint for the second opinion. That
+settled series can legitimately remain on the prior session after the close. The
+monitor now batches the same symbols through Upstox's exchange market-quote endpoint,
+using `last_price` and `last_trade_time`; an unknown timestamp remains explicitly
+uncorroborated. This is the existing second provider on the existing read-only
+analytics token, not a new vendor or money-path authority.

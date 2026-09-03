@@ -72,6 +72,22 @@ describe("run accounting — within-run reconciliation", () => {
     expect(v.findings).toEqual([]);
   });
 
+  it("does not call a mixed expected-skip and unavailable run fully blocked", () => {
+    const v = evaluateRunAccounting(acct({
+      job: "paper_trader",
+      eligible: 16,
+      expectedSkip: 13,
+      unavailable: 3,
+      skipReasons: { no_eligible_signal: 13, stale_quote: 3 },
+      blockers: ["three symbols had no same-session quote"],
+    }));
+    expect(v.state).toBe("partial");
+    expect(v.healthy).toBe(false);
+    expect(v.findings.map((f) => f.code)).toEqual(["partial_unavailable"]);
+    expect(v.findings[0].title).not.toContain("0 succeeded");
+    expect(v.findings[0].detail).toContain("13 unit(s) were legitimate no-action decisions");
+  });
+
   it("any failed unit alerts, even when most units succeeded", () => {
     const v = evaluateRunAccounting(acct({
       job: "position_monitor", eligible: 11, succeeded: 10, failed: 1,

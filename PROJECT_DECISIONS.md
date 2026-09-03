@@ -1145,6 +1145,47 @@ historical decision or trade is rewritten.
 
 ---
 
+### Decision 71: Earnings Expectations & Peer Delta — bounded capability probe
+
+Date: 2026-09-03
+Status: **Stage 0 approved by Vaibhav and implemented locally; Stage 1+ remain unapproved.**
+Category: Data capability measurement
+
+Decision: Begin with a manual, owner-only, maximum-six-symbol US capability
+probe for Alpha Vantage `EARNINGS_ESTIMATES`. GET is planning-only and makes no
+provider calls. POST requires an explicit confirmation token, respects the
+shared Alpha Vantage budget/cache, and writes only sanitized operational audit
+rows. It does not persist estimates or register a shadow. Recurring expectation
+capture, peer baskets, eta, guidance, India, and every money-path use require a
+later owner-approved decision.
+
+Reason: The core hypothesis — peer-relative
+estimate-revision momentum — has primary-source support (Hameed, Morck, Shen &
+Yeung, NBER w15833) and does not require guidance extraction to get a first
+honest measurement. Production has no `AV_DAILY_BUDGET` override, so the code's
+25-call ceiling is enforced. The observed 35–71 `provider_budget` values are
+reservation attempts, including attempts rejected after 25, not successful
+provider calls. Existing workloads therefore have priority and no unused quota
+is assumed. Finnhub's own documentation
+confirms its earnings-calendar EPS/revenue are non-GAAP, which can resolve the
+basis contract prospectively (never retroactively — frozen history).
+
+Non-goals: No scoring/eligibility/sizing/stop/target/exit/order
+change at any stage without a separate governed decision. No economic
+supplier/customer/partner relationship claims (the killed relationship-graph's
+domain — see Decision on `features/relationship-graph/` P0). No LLM call in
+Stage 0/1. No India activation.
+
+Files/features affected in Stage 0:
+`lib/data/earnings-expectations-capability.ts`,
+`app/api/calendar/earnings/expectations/capability/route.ts`, and focused tests.
+No table, cron, shadow registry, scorer, portfolio, or order path changed.
+
+Reversal cost: Low. Remove the manual route, pure analyzer, and tests. The probe
+has no schema or downstream consumer.
+
+---
+
 ## Decision: US candidate discovery moves to the keyless Yahoo screener (2026-08-02)
 
 **Context.** The FinancialDatasets balance reached $0.00 on 2026-07-29.

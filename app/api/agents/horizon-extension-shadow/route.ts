@@ -12,9 +12,10 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { runHorizonExtensionShadow } from "@/lib/trading/horizon-extension-shadow";
+import { matureTimeReviewOutcomes } from "@/lib/trading/time-review-shadow";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 function marketParam(req: NextRequest): "us" | "india" | undefined {
   const m = req.nextUrl.searchParams.get("market");
@@ -59,13 +60,18 @@ export async function POST(req: NextRequest) {
   const denied = await authorize(req);
   if (denied) return denied;
   const svc = createServiceClient();
-  const result = await runHorizonExtensionShadow(svc, { market: marketParam(req) });
+  const market = marketParam(req);
+  // Preserve the v0 daily counterfactual as frozen historical context while
+  // the same scheduled job matures the approved exact-review v1 outcomes.
+  const result = await runHorizonExtensionShadow(svc, { market });
+  const maturation = await matureTimeReviewOutcomes(svc, market ?? null);
   return NextResponse.json({
     dry_run: false,
     run_id: result.runId,
     // false means the ledger table is not there yet (migration
     // 20260811150000_horizon_extension_shadow.sql), not that the run failed.
     persisted: result.persisted,
+    time_review_maturation: maturation,
     ...summarize(result.rows),
   });
 }

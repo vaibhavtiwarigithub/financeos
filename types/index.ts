@@ -106,6 +106,30 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
   },
 };
 
+export interface TimeReviewExitObservation {
+  id: string;
+  policy_version: string;
+  review_session: string;
+  market: "us" | "india";
+  symbol: string;
+  position_id: string;
+  candidate_eligible: boolean;
+  classification: "eligible" | "not_eligible";
+  failed_conditions: string[];
+  observed_at: string;
+}
+
+export interface TimeReviewExitOutcome {
+  id: string;
+  review_id: string;
+  policy_version: string;
+  extension_days: 5 | 10;
+  incremental_vs_baseline_pct: number;
+  benchmark_relative_return_pct: number | null;
+  mechanical_stop_hit: boolean;
+  matured_at: string;
+}
+
 export const SUBSCRIPTION_PLANS = [
   {
     tier: "free" as SubscriptionTier,

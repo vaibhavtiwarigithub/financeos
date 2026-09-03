@@ -1,4 +1,4 @@
-import { callLLM } from "@/lib/llm-router";
+import { callLLM, REASONING_MIN_TOKENS } from "@/lib/llm-router";
 import { getConfiguredModel } from "@/lib/agent-model-config";
 import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 import { retrieveSimilarTrades, summarizeMemories } from "@/lib/rag/trade-memory";
@@ -1818,7 +1818,9 @@ export async function processSymbol(
           prompt: thesisPrompt,
           symbol,
           agentLabel: "research",
-          maxTokens: 1500,
+          // The configured production model is a reasoner. Declare its real
+          // budget here so the router floor is a safety net, not normal control flow.
+          maxTokens: REASONING_MIN_TOKENS,
         }))
         // A provider error is not a timeout. Labelling both "narrative-timeout"
         // would make an outage read as latency in the LLM cost/why ledger.

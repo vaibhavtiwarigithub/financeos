@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchIndiaQuotes, fetchYahooQuotes } from "@/lib/india-data";
-import { fetchUpstoxCandles } from "@/lib/data/upstox";
+import { fetchUpstoxBulkQuotes } from "@/lib/data/upstox-bulk";
 import {
   classifyCrossCheck, exchangeSessionDate, disputeAgeDays, DISPUTE_ESCALATION_RUNS,
 } from "@/lib/paper/quote-crosscheck";
@@ -17,6 +17,7 @@ import { computeExitFillPrice, getSettledDailyQuotes } from "@/lib/data/quotes";
 import { expectedNewestSession } from "@/lib/data/completed-candles";
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
+import { loadTimeReviewReplacements, recordTimeReviewObservation } from "@/lib/trading/time-review-shadow";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
 import { paperPartialTargetQuantity, paperRunnerStopPrice } from "@/lib/trading/paper-quantity";
@@ -193,7 +194,8 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   // confirm must not silently move money. Different vendor per market:
   //   US    -> Yahoo per-symbol (the primary chain is Massive-based)
   //   India -> Upstox, the exchange-backed broker API (primary is Yahoo)
-  // Both are keyless/unbudgeted. Best-effort throughout: no cross price simply
+  // Yahoo is keyless; Upstox uses the existing long-lived read-only analytics
+  // token. Best-effort throughout: no cross price simply
   // means the mark is recorded as uncorroborated, never as disputed.
   const crossPrice: Record<string, number> = {};
   const crossSource: Record<string, string> = {};
@@ -230,19 +232,23 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       }
     }
   } catch { /* corroboration is best-effort — never break the run */ }
-  await Promise.all(indiaSymbols.filter((s) => priceMap[s] != null).map(async (sym) => {
-    try {
-      const bars = await fetchUpstoxCandles(sym, 5);
-      const newest = bars.length ? bars[bars.length - 1] : null;
-      if (newest && Number.isFinite(newest.close) && newest.close > 0) {
-        crossPrice[sym] = newest.close;
-        crossSource[sym] = "upstox";
-        // The candle carries its own session date; it was parsed and thrown
-        // away before this change.
-        if (newest.date) crossSession[sym] = String(newest.date).slice(0, 10);
-      }
-    } catch { /* best-effort */ }
-  }));
+  try {
+    // Use Upstox's exchange snapshot, not its settled historical-candle route.
+    // The latter legitimately lagged one session after the close and made every
+    // India mark look uncorroborated even though Upstox already exposes the
+    // current last trade plus its exchange timestamp in one bounded batch call.
+    const indiaCrossQuotes = await fetchUpstoxBulkQuotes(
+      indiaSymbols.filter((s) => priceMap[s] != null),
+    );
+    for (const sym of indiaSymbols) {
+      const quote = indiaCrossQuotes.get(sym.toUpperCase());
+      if (!quote || quote.lastPrice == null || !(quote.lastPrice > 0)) continue;
+      crossPrice[sym] = quote.lastPrice;
+      crossSource[sym] = "upstox_live";
+      const session = exchangeSessionDate(quote.retrievedAt, "india");
+      if (session) crossSession[sym] = session;
+    }
+  } catch { /* corroboration is best-effort — never break the run */ }
 
   // GATE priceMap ITSELF, before any exit is evaluated.
   //
@@ -436,6 +442,16 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     };
   }
 
+  // Exact-horizon time-review evidence uses only facts available before the
+  // incumbent time stop. Loading replacements is a DB-only attribution read;
+  // it cannot authorize rotation or any other portfolio action.
+  const heldSymbols = new Set<string>((positions as any[]).map((p: any) =>
+    `${marketOf(p, hasMarketCol) as "us" | "india"}:${String(p.symbol).toUpperCase()}`));
+  const timeReviewReplacements = await loadTimeReviewReplacements(
+    svc, activeMarkets, heldSymbols, mandateByMarket, new Date(),
+  );
+  const timeReviewShadow = { inserted: 0, duplicate: 0, skipped: 0, failed: 0 };
+
   const closed: string[] = [];
   const updated: string[] = [];
   const staleScoresHeld: string[] = [];
@@ -559,6 +575,28 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       const horizonDays = pos.position_role === "hedge"
         ? (Number.isFinite(storedHorizon) && storedHorizon >= 1 ? storedHorizon : 5)
         : grandfathered ? storedHorizon : (horizonDaysByMarket.get(market) ?? 10);
+      if (pos.position_role !== "hedge" && mandate) {
+        const reviewSession = exchangeSessionDate(new Date().toISOString(), market);
+        if (reviewSession) {
+          const reviewResult = await recordTimeReviewObservation(svc, {
+            runId: `position-monitor:${startedAt}`,
+            now: new Date(),
+            reviewSession,
+            market,
+            position: { ...pos, opened_at: openedAt },
+            ageDays,
+            horizonDays,
+            currentPrice,
+            score: { score: sc?.score ?? null, direction: sc?.direction ?? null, createdAt: sc?.createdAt ?? null },
+            scoreFresh,
+            holdThreshold: entryThreshold,
+            exitThreshold,
+            mandate,
+            replacement: timeReviewReplacements.get(market),
+          });
+          timeReviewShadow[reviewResult]++;
+        }
+      }
       if (ageDays > horizonDays) {
         const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
         await closePosition(pos, currentPrice, `time_stop (${ageDays} market days > ${horizonDays}d${grandfathered ? ", grandfathered" : ""})`, outcome);
@@ -1118,6 +1156,9 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
           stops_updated: updated.length,
           stale_held: staleScoresHeld.length,
           exit_failures: exitFailures.length,
+          time_review_inserted: timeReviewShadow.inserted,
+          time_review_duplicate: timeReviewShadow.duplicate,
+          time_review_failed: timeReviewShadow.failed,
         },
       }),
     } as any);
@@ -1152,6 +1193,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     mark_coverage: markCoverageByMarket,
     nav_reconciliation: navChecksByMarket,
     mark_ledger: { status: markLedgerStatus, detail: markLedgerDetail },
+    time_review_shadow: timeReviewShadow,
   };
 }
 

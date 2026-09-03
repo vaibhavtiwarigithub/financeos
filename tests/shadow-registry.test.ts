@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { SHADOW_PROGRAMS } from "@/lib/shadows/registry";
+import { routerReadiness, type RouterEvaluationRow } from "@/lib/shadows/status";
 
 describe("shadow registry governance contract", () => {
   const migration = readFileSync("supabase/migrations/20260729210000_shadow_registry_cron_status.sql", "utf8");
@@ -111,7 +112,7 @@ describe("shadow registry governance contract", () => {
     expect(statusAdapter).toContain('export async function getShadowProgramStatuses(svc: any, market: ShadowMarket)');
     expect(statusAdapter).toContain('.eq("market", market)');
     expect(statusAdapter).toContain('status.lifecycle = "not_applicable"');
-    expect(statusAdapter).toContain('progress(passingSessions.size, 10, "fresh passing market-session proofs", 45)');
+    expect(statusAdapter).toContain('progress(passingSessions.size, 10, "passing market-session proofs for one exact tuple", 45)');
   });
 
   it("separates mainline provenance from live production influence", () => {
@@ -135,8 +136,29 @@ describe("shadow registry governance contract", () => {
   });
 
   it("does not declare Router readiness from one pass or treat zero degradation events as a dead job", () => {
-    expect(statusAdapter).toContain('passingSessions.size >= 10 ? "ready_for_review" : "blocked"');
+    expect(statusAdapter).toContain("routerGate.selectedFresh && routerGate.selectedPasses && passingSessions.size >= 10");
     expect(statusAdapter).toContain('degradation.length || evaluationRuns ? "collecting" : "idle"');
+  });
+
+  it("mirrors the Router activation tuple and historical-proof TTL semantics", () => {
+    const base: RouterEvaluationRow = {
+      market: "india", passed: true, safety_pass: true, quality_pass: true,
+      created_at: "2026-09-03T05:00:00Z", expires_at: "2026-09-06T05:00:00Z",
+      market_session_date: "2026-09-03", candidate_version_id: "candidate-a",
+      baseline_version_id: "baseline-a", evaluation_code_version: "eval-v2", strategy_version: "v1.0",
+    };
+    const historical = Array.from({ length: 9 }, (_, index) => ({
+      ...base,
+      created_at: `2026-08-${String(25 - index).padStart(2, "0")}T05:00:00Z`,
+      expires_at: "2026-08-28T05:00:00Z", // expired now, but valid rolling proof
+      market_session_date: `2026-08-${String(25 - index).padStart(2, "0")}`,
+    }));
+    const wrongTuple = { ...base, candidate_version_id: "candidate-b", created_at: "2026-08-10T05:00:00Z", market_session_date: "2026-08-10" };
+    const result = routerReadiness([wrongTuple, ...historical, base], new Date("2026-09-03T12:00:00Z"));
+    expect(result.selectedFresh).toBe(true);
+    expect(result.selectedPasses).toBe(true);
+    expect(result.passingSessions.size).toBe(10);
+    expect(result.passingSessions.has("2026-08-10")).toBe(false);
   });
 
   it("paginates label coverage instead of trusting PostgREST's per-request row cap", () => {

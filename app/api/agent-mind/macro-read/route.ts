@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
-import { callLLM } from "@/lib/llm-router";
+import { callLLM, REASONING_MIN_TOKENS } from "@/lib/llm-router";
 import { getConfiguredModel, isAgentEnabled } from "@/lib/agent-model-config";
 import {
   INDIA_NO_MACRO_READ_REASON,
@@ -157,8 +157,8 @@ export async function POST(req: NextRequest) {
       // 13:30 onward failed with `finish_reason=length, reasoning_len≈2500` and
       // empty content, so llm-router threw, the catch below returned a 200
       // `ok:false`, and NOTHING was written while the cron reported success.
-      // Same failure and same fix as research-agent.ts (512 → 1500 there).
-      maxTokens: 1500,
+      // Keep the shared floor as a safety net, not this route's normal behavior.
+      maxTokens: REASONING_MIN_TOKENS,
       agentLabel: "macro-read",
     });
     content = res.text?.trim() ?? "";

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServiceClient } from "@/lib/supabase/service";
-import { callLLM } from "@/lib/llm-router";
+import { callLLM, REASONING_MIN_TOKENS } from "@/lib/llm-router";
 import { getConfiguredModel } from "@/lib/agent-model-config";
 import { requireOwner } from "@/lib/auth/require-owner";
 
@@ -98,7 +98,11 @@ Keep it under 300 words. Plain English, no bullet points.`;
 
   try {
     // Production LLM path (was execClaude → PowerShell, which ENOENTs on Vercel).
-    const res = await callLLM({ task: "thesis", prompt, agentLabel: "mentor-thesis", model: await getConfiguredModel(supabase, "mentor-thesis", "deepseek-reasoner") });
+    const res = await callLLM({
+      task: "thesis", prompt, agentLabel: "mentor-thesis",
+      model: await getConfiguredModel(supabase, "mentor-thesis", "deepseek-reasoner"),
+      maxTokens: REASONING_MIN_TOKENS,
+    });
     const thesis = res.text;
     const now = new Date().toISOString();
 

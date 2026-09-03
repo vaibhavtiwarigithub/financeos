@@ -1044,6 +1044,15 @@ No edge promotes. Production has zero `strategy_policies` and zero
 best latest observation is 1.57 in a Financials sector slice with only two
 distinct windows, so it fails the evidence-count gate.
 
+**Readiness policy correction (2026-09-03).** The separate Edge readiness
+projection previously called windows independent at a flat five-calendar-day
+gap for every h5/h10/h20 label. That contradicted the fold builder's refusal of
+`stepSessions < horizonSessions` and counted overlapping forward returns as new
+evidence. Policy `edge-readiness.v2-horizon-spaced` now requires
+`ceil(horizon_sessions × 7 / 5)` calendar days (7/14/28 respectively). Existing
+IC rows stay immutable; only the mutable readiness projection is reevaluated,
+so demotion to `collecting` is expected and truthful.
+
 ### Blocking governance defects
 
 The current route is scaffolding, not a production-grade promotion boundary:
@@ -1063,3 +1072,16 @@ That design requires a frozen experiment, PIT universe and inputs, purged
 market-session OOS folds, aggregate OOS IC evidence, proper multiple-testing
 control, and one atomic service-role promotion RPC. Waiting for more overlapping
 weekly windows does not cure these defects.
+
+## Time-review outcome maturation (2026-09-03)
+
+The time-review learner is descriptive and measure-only. For each exact-horizon
+observation it records matched outcomes for the incumbent next-session exit and
+the predeclared +5/+10-session candidates, including same-window benchmark
+return, MFE/MAE, retained-stop hits, replacement-candidate availability, and the
+incremental return versus baseline. Upgrade Path counts only market sessions
+with an exact review and both outcomes matured; legacy daily evaluations do not
+advance the gate. Twenty such sessions permits a review, not activation. A
+sealed market-local portfolio simulation with redeployment, costs, drawdown,
+turnover, multiple-trial correction, adverse-case review, and owner approval is
+still required before any time-stop policy change.

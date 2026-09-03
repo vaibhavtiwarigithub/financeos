@@ -6,6 +6,8 @@ import {
   DISPUTE_ESCALATION_RUNS,
 } from "@/lib/paper/quote-crosscheck";
 import { MARK_DISPUTE_REFUSE_PCT, MARK_CROSSCHECK_TOLERANCE_PCT } from "@/lib/paper/marks";
+import fs from "node:fs";
+import path from "node:path";
 
 // features/quote-dispute-session-alignment
 //
@@ -53,6 +55,12 @@ describe("the production case that caused this change", () => {
 });
 
 describe("session gate runs before any price comparison", () => {
+  it("the monitor uses the Upstox exchange quote, not a lagging daily candle", () => {
+    const route = fs.readFileSync(path.join(process.cwd(), "app/api/agents/position-monitor/route.ts"), "utf8");
+    expect(route).toContain("fetchUpstoxBulkQuotes");
+    expect(route).toContain('crossSource[sym] = "upstox_live"');
+    expect(route).not.toContain("fetchUpstoxCandles");
+  });
   it("treats an unknown session on either side as a mismatch, not a pass", () => {
     // Failing OPEN here would restore the original bug for exactly the rows
     // whose provenance cannot be established.

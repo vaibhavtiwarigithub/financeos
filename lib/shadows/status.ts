@@ -66,6 +66,60 @@ export interface ShadowProgramStatus extends ShadowProgramDefinition {
 type QueryResult<T> = { data: T | null; count?: number | null; error: { message?: string } | null };
 export type ShadowMarket = "us" | "india";
 
+export interface RouterEvaluationRow {
+  market: string;
+  passed: boolean;
+  safety_pass: boolean;
+  quality_pass: boolean;
+  created_at: string;
+  expires_at: string | null;
+  market_session_date: string | null;
+  candidate_version_id: string | null;
+  baseline_version_id: string | null;
+  evaluation_code_version: string | null;
+  strategy_version: string | null;
+  requires_owner_review?: unknown;
+}
+
+function sameRouterTuple(a: RouterEvaluationRow, b: RouterEvaluationRow): boolean {
+  return a.market === b.market
+    && a.candidate_version_id === b.candidate_version_id
+    && a.baseline_version_id === b.baseline_version_id
+    && a.evaluation_code_version === b.evaluation_code_version
+    && a.strategy_version === b.strategy_version;
+}
+
+/** Mirrors activate_evidence_policy_bound(): one fresh selected row, ten historical
+ * passing sessions for that exact tuple in its trailing 45-day window. Historical
+ * proofs need not each remain inside the selected row's 72-hour TTL. */
+export function routerReadiness(rows: RouterEvaluationRow[], now = new Date()): {
+  latest: RouterEvaluationRow | null;
+  passingSessions: Set<string>;
+  selectedFresh: boolean;
+  selectedPasses: boolean;
+} {
+  const ordered = [...rows].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const latest = ordered[0] ?? null;
+  if (!latest) return { latest: null, passingSessions: new Set(), selectedFresh: false, selectedPasses: false };
+
+  const selectedFresh = latest.expires_at != null && Date.parse(latest.expires_at) > now.getTime();
+  const selectedPasses = latest.passed === true && latest.safety_pass === true && latest.quality_pass === true;
+  const latestSessionMs = latest.market_session_date ? Date.parse(`${latest.market_session_date}T00:00:00Z`) : NaN;
+  const earliestSessionMs = latestSessionMs - 45 * 86_400_000;
+  const passingSessions = new Set<string>();
+  if (Number.isFinite(latestSessionMs)) {
+    for (const row of ordered) {
+      if (!sameRouterTuple(row, latest) || !row.market_session_date) continue;
+      const sessionMs = Date.parse(`${row.market_session_date}T00:00:00Z`);
+      if (sessionMs < earliestSessionMs || sessionMs > latestSessionMs) continue;
+      if (row.passed === true && row.safety_pass === true && row.quality_pass === true) {
+        passingSessions.add(row.market_session_date);
+      }
+    }
+  }
+  return { latest, passingSessions, selectedFresh, selectedPasses };
+}
+
 function daysEstimate(completed: number, target: number | null, ratePerDay: number | null): number | null {
   if (target == null || completed >= target || ratePerDay == null || ratePerDay <= 0) return null;
   return Math.ceil((target - completed) / ratePerDay);
@@ -268,6 +322,8 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     labelCoverageRes,
     dimensionDiagnosticRunRes,
     horizonExtensionRes,
+    timeReviewObservationRes,
+    timeReviewOutcomeRes,
     exitStopRunRes,
     archetypeIcRes,
     alphaDiagnosticRes,
@@ -276,7 +332,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
     svc.from("evidence_policy_versions").select("id,market,version,router_enabled,change_note").eq("market", market),
     svc.from("evidence_policy_evaluations")
-      .select("market,passed,safety_pass,quality_pass,eligibility_flips,requires_owner_review,created_at,expires_at,market_session_date")
+      .select("market,passed,safety_pass,quality_pass,eligibility_flips,requires_owner_review,created_at,expires_at,market_session_date,candidate_version_id,baseline_version_id,evaluation_code_version,strategy_version")
       .eq("market", market).gte("created_at", since45).order("created_at", { ascending: false }).limit(300),
     svc.from("provider_call_ledger")
       .select("id", { count: "exact", head: true })
@@ -366,6 +422,12 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("horizon_extension_shadow")
       .select("market,evaluated_at,run_id,would_extend,reason")
       .eq("market", market).gte("evaluated_at", since90).order("evaluated_at", { ascending: false }).limit(10000),
+    svc.from("time_review_exit_observations")
+      .select("id,market,review_session,observed_at,candidate_eligible,classification")
+      .eq("market", market).gte("observed_at", since90).order("observed_at", { ascending: false }).limit(10000),
+    svc.from("time_review_exit_outcomes")
+      .select("review_id,extension_days,incremental_vs_baseline_pct,benchmark_relative_return_pct,max_adverse_excursion_pct,mechanical_stop_hit,matured_at,time_review_exit_observations!inner(market,candidate_eligible,review_session)")
+      .eq("time_review_exit_observations.market", market).gte("matured_at", since90).order("matured_at", { ascending: false }).limit(10000),
     svc.from("exit_stop_shadow_runs")
       .select("market,as_of_date,horizon_days,status,created_at,n_rows,n_dates,effective_observations,mean_paired_diff,paired_diff_t")
       .eq("market", market).gte("created_at", since90).order("created_at", { ascending: false }).limit(500),
@@ -405,6 +467,8 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const fundamentalFacts = fundamentalFactsRes.data ?? [];
   const diagnosticRuns = dimensionDiagnosticRunRes.data ?? [];
   const horizonExtensions = horizonExtensionRes.data ?? [];
+  const timeReviewObservations = timeReviewObservationRes.data ?? [];
+  const timeReviewOutcomes = timeReviewOutcomeRes.data ?? [];
   const exitStopRuns = exitStopRunRes.data ?? [];
   const archetypeRuns = archetypeIcRes.data ?? [];
   const alphaDiagnosticRuns = alphaDiagnosticRes.data ?? [];
@@ -478,18 +542,41 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     }
 
     if (program.id === "horizon-extension") {
-      const dates = new Set(horizonExtensions.map((row: any) => String(row.evaluated_at).slice(0, 10))).size;
-      const latest = horizonExtensions[0]?.evaluated_at ?? null;
-      status.lifecycle = horizonExtensions.length ? (dates >= 20 ? "ready_for_review" : "collecting") : "idle";
+      const reviewDates = new Set(timeReviewObservations.map((row: any) => String(row.review_session))).size;
+      const eligible = timeReviewObservations.filter((row: any) => row.candidate_eligible === true);
+      const outcomeByReview = new Map<string, Set<number>>();
+      for (const row of timeReviewOutcomes) {
+        const set = outcomeByReview.get(String(row.review_id)) ?? new Set<number>();
+        set.add(Number(row.extension_days));
+        outcomeByReview.set(String(row.review_id), set);
+      }
+      const fullyMatured = timeReviewObservations.filter((row: any) => {
+        const horizons = outcomeByReview.get(String(row.id));
+        return horizons?.has(5) && horizons.has(10);
+      });
+      const maturedDates = new Set(fullyMatured.map((row: any) => String(row.review_session))).size;
+      const usableDates = Math.min(reviewDates, maturedDates);
+      const latest = timeReviewObservations[0]?.observed_at ?? horizonExtensions[0]?.evaluated_at ?? null;
+      const ready = usableDates >= 20;
+      status.lifecycle = timeReviewObservations.length ? (ready ? "ready_for_review" : "collecting") : "idle";
       status.benefitVerdict = "insufficient";
-      status.benefitEvidence = `${horizonExtensions.length} position evaluation(s) across ${dates} evaluation date(s); ${horizonExtensions.filter((row: any) => row.would_extend).length} would extend.`;
-      status.progress = progress(dates, 20, "independent evaluation dates", 90);
+      status.benefitEvidence = `${timeReviewObservations.length} exact-horizon review(s) across ${reviewDates} market session(s); ${eligible.length} qualified. ${fullyMatured.length} review(s) have matched +5 and +10 outcomes across ${maturedDates} session(s).`;
+      status.progress = progress(usableDates, 20, "market sessions with exact reviews and both matured outcomes", 90);
       status.calls = calls("zero_incremental", "Reuses prices, scores and risk inputs already fetched by the position-monitor flow.");
       status.latestAt = latest;
-      status.blockers = dates >= 20 ? ["Matched forward outcomes and owner review are still required before any exit-policy change."] : [`${dates}/20 independent evaluation dates collected.`];
-      status.nextAction = dates >= 20 ? "Review matched outcomes; do not change the time stop from the counterfactual alone." : "Continue daily market-local collection.";
-      status.details = ["This is a counterfactual only; its output cannot hold or close a position."];
-      status.available = !horizonExtensionRes.error;
+      status.blockers = [];
+      if (reviewDates < 20) status.blockers.push(`${reviewDates}/20 exact horizon-review market sessions collected.`);
+      if (maturedDates < 20) status.blockers.push(`${maturedDates}/20 market sessions have both +5 and +10 outcomes matured.`);
+      if (ready) status.blockers.push("Execution-faithful portfolio replay, multiple-trial correction, adverse-case review and owner approval remain required.");
+      status.nextAction = ready
+        ? "Build the sealed market-local redeployment simulation; do not change the time stop from per-position averages."
+        : "Continue exact-horizon collection and daily outcome maturation.";
+      status.details = [
+        "Version 1 compares the incumbent next-session exit with predeclared +5/+10-session candidates.",
+        "This is a counterfactual only; its output cannot hold or close a position.",
+        `${horizonExtensions.length} legacy daily one-day-extension rows are retained as historical context but excluded from readiness.`,
+      ];
+      status.available = !timeReviewObservationRes.error && !timeReviewOutcomeRes.error;
       return status;
     }
 
@@ -612,24 +699,22 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         const version = policyVersions.find((row: any) => row.id === pointer.policy_version_id);
         return { market: pointer.market, enabled: version?.router_enabled === true };
       });
-      const validPasses = evaluations.filter((row: any) =>
-        row.passed === true && row.safety_pass === true && row.quality_pass === true
-        && row.expires_at && new Date(row.expires_at).getTime() > Date.now());
-      const latest = evaluations[0];
-      const passingSessions = new Set(validPasses.map((row: any) => row.market_session_date).filter(Boolean));
+      const routerGate = routerReadiness(evaluations, new Date());
+      const { latest, passingSessions } = routerGate;
       const network = networkCallRes.count ?? 0;
       const cacheHits = cacheHitRes.count ?? 0;
-      status.lifecycle = passingSessions.size >= 10 ? "ready_for_review" : "blocked";
+      status.lifecycle = routerGate.selectedFresh && routerGate.selectedPasses && passingSessions.size >= 10
+        ? "ready_for_review" : "blocked";
       status.benefitVerdict = "operational_only";
-      status.benefitEvidence = `${validPasses.length} valid passing ${market.toUpperCase()} evaluation(s); router remains ${active.some((row: any) => row.enabled) ? "enabled" : "disabled"} for this market.`;
-      status.progress = progress(passingSessions.size, 10, "fresh passing market-session proofs", 45);
+      status.benefitEvidence = `${passingSessions.size} passing ${market.toUpperCase()} market-session proof(s) for the latest exact policy/code/strategy tuple; router remains ${active.some((row: any) => row.enabled) ? "enabled" : "disabled"} for this market.`;
+      status.progress = progress(passingSessions.size, 10, "passing market-session proofs for one exact tuple", 45);
       status.calls = calls("tracked", "Exact Router ledger counts over the last 7 days; network attempts are separated from cache-only resolutions.", ledgerCount, network, cacheHits);
       status.latestAt = latestIso(evaluations, "created_at");
-      status.blockers = !latest || latest.passed !== true || latest.safety_pass !== true || latest.quality_pass !== true
+      status.blockers = !latest || !routerGate.selectedPasses
         ? [`${market.toUpperCase()} latest parity evaluation is not a full safety+quality pass.`]
         : [];
-      if (!status.blockers.length && validPasses.length < 1) status.blockers.push(`${market.toUpperCase()} needs a fresh, unexpired passing evaluation.`);
-      if (validPasses.length > 0 && passingSessions.size < 10) status.blockers.push(`${market.toUpperCase()} has ${passingSessions.size}/10 distinct fresh passing market sessions.`);
+      if (!status.blockers.length && !routerGate.selectedFresh) status.blockers.push(`${market.toUpperCase()} needs a fresh, unexpired selected evaluation.`);
+      if (passingSessions.size < 10) status.blockers.push(`${market.toUpperCase()} has ${passingSessions.size}/10 passing market sessions for the latest exact tuple.`);
       status.nextAction = status.lifecycle === "ready_for_review"
         ? "Review flagged divergences and prepare a separate market-local activation decision."
         : "Repair failing coverage/quality dimensions and continue daily cohort proofs.";

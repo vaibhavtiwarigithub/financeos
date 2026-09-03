@@ -34,8 +34,12 @@ proposals, brokers, or orders.
 ### 3.1 `collecting`
 
 Fewer than six independent market-wide windows exist. Windows use the latest
-snapshot for each `window_end` and must be at least five calendar days apart, so
-manual reruns and provider corrections do not inflate progress.
+snapshot for each `window_end`. Policy `edge-readiness.v2-horizon-spaced` requires
+at least `ceil(horizon_sessions × 7 / 5)` calendar days between selected windows
+(7/14/28 days at h5/h10/h20), so manual reruns, provider corrections, and
+overlapping forward-return periods do not inflate progress. The earlier flat
+five-day rule is retained only as historical policy context; projections may
+demote when reevaluated under v2, while immutable IC history remains untouched.
 
 ### 3.2 `needs_stability`
 
@@ -144,7 +148,7 @@ unavailable, never as zero evidence or ready.
 
 - US and India are never combined.
 - Sector rows are diagnostic and never satisfy market readiness.
-- Same-window reruns cannot increase the weekly-window count.
+- Same-window reruns and horizon-overlapping windows cannot increase the independent-window count.
 - Legacy/unverified rows may count only as retrospective diagnostics, never as
   validation windows.
 - Null/NaN metrics fail their gate.

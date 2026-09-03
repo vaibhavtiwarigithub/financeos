@@ -32,6 +32,7 @@ export type RunFindingCode =
   | "reconciliation_mismatch"
   | "failed_units"
   | "blocked_run"
+  | "partial_unavailable"
   | "negative_counts";
 
 export interface RunFinding {
@@ -106,10 +107,10 @@ function counts(a: RunAccounting): string {
  *  1. any failed unit
  *  2. an impossible reconciliation (the eligible equation does not balance,
  *     or a count is negative)
- *  3. eligible > 0 && succeeded === 0 while any unit is deferred,
- *     unavailable, or failed — reported WITH the blocker reason so the alert
- *     says why, not just that. A run whose eligible units are ALL legitimate
- *     expected skips is healthy `no_action`, not blocked.
+ *  3. eligible > 0 && succeeded === 0 with no legitimate expected skips while
+ *     any unit is deferred, unavailable, or failed — reported WITH the blocker
+ *     reason. Expected skips mixed with unavailable/deferred work are `partial`,
+ *     not a false claim that the entire run was blocked.
  *
  * Never alerts on: zero eligible units (that is `no_work`, the healthy weekend
  * / empty-backlog case), or on any business metric being zero.
@@ -149,7 +150,7 @@ export function evaluateRunAccounting(a: RunAccounting): RunVerdict {
     });
   }
 
-  const blocked = a.eligible > 0 && a.succeeded === 0
+  const blocked = a.eligible > 0 && a.succeeded === 0 && a.expectedSkip === 0
     && (a.deferred > 0 || a.unavailable > 0 || a.failed > 0);
   if (blocked) {
     const why = a.blockers?.length
@@ -167,11 +168,29 @@ export function evaluateRunAccounting(a: RunAccounting): RunVerdict {
     });
   }
 
+  const partialUnavailable = a.eligible > 0 && a.succeeded === 0 && a.expectedSkip > 0
+    && (a.deferred > 0 || a.unavailable > 0) && a.failed === 0;
+  if (partialUnavailable) {
+    const affected = a.deferred + a.unavailable;
+    const why = a.blockers?.length
+      ? a.blockers.join("; ")
+      : a.skipReasons && Object.keys(a.skipReasons).length
+        ? Object.entries(a.skipReasons).map(([reason, count]) => `${reason}=${count}`).join(", ")
+        : "the run did not name the unavailable/deferred inputs";
+    findings.push({
+      code: "partial_unavailable",
+      severity: "warn",
+      title: `${label(a)}: ${affected} unit(s) unavailable or deferred`,
+      detail: `${counts(a)}. ${a.expectedSkip} unit(s) were legitimate no-action decisions; ${affected} still need attention. Reason: ${why}.`,
+    });
+  }
+
   let state: RunState;
   if (a.failed > 0 && a.succeeded === 0) state = "failed";
   else if (a.failed > 0) state = "partial";
   else if (a.eligible === 0) state = "no_work";
   else if (a.succeeded === 0 && a.expectedSkip === a.eligible) state = "no_action";
+  else if (partialUnavailable) state = "partial";
   else if (a.succeeded === 0) state = "blocked";
   else if (a.deferred + a.unavailable > 0) state = "partial";
   else state = "completed";

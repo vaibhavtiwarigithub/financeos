@@ -39,6 +39,21 @@ export interface BulkQuote {
   volume: number | null;
   lowerCircuit: number | null;
   upperCircuit: number | null;
+  /** Exchange timestamp for the last trade, not the time Kairos fetched it. */
+  retrievedAt: string | null;
+  /** Best executable prices from the exchange order book when published. */
+  bid: number | null;
+  ask: number | null;
+}
+
+/** Convert Upstox's millisecond epoch or ISO timestamp without inventing a session. */
+export function normalizeUpstoxTimestamp(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  const numeric = typeof value === "number" ? value : /^\d+$/.test(String(value)) ? Number(value) : NaN;
+  const ms = Number.isFinite(numeric) ? numeric : Date.parse(String(value));
+  if (!Number.isFinite(ms)) return null;
+  const date = new Date(ms);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 export interface PrefilterConfig {
@@ -192,6 +207,12 @@ export async function fetchUpstoxBulkQuotes(symbols?: string[]): Promise<Map<str
           volume: num(entry?.volume),
           lowerCircuit: num(entry?.lower_circuit_limit),
           upperCircuit: num(entry?.upper_circuit_limit),
+          // `timestamp` is the snapshot fetch/update time, not proof that this
+          // symbol traded in that session. Only last_trade_time can identify the
+          // session represented by last_price; missing remains unknown.
+          retrievedAt: normalizeUpstoxTimestamp(entry?.last_trade_time),
+          bid: (num(entry?.depth?.buy?.[0]?.price) ?? 0) > 0 ? num(entry?.depth?.buy?.[0]?.price) : null,
+          ask: (num(entry?.depth?.sell?.[0]?.price) ?? 0) > 0 ? num(entry?.depth?.sell?.[0]?.price) : null,
         });
       }
 

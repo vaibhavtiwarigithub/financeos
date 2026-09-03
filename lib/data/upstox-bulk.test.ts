@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   screenQuote, applyPrefilter, DEFAULT_PREFILTER,
+  normalizeUpstoxTimestamp,
   type BulkQuote, type PrefilterConfig,
 } from "@/lib/data/upstox-bulk";
 
@@ -10,7 +11,22 @@ const q = (over: Partial<BulkQuote>): BulkQuote => ({
   volume: 100_000,          // turnover ₹5cr — clears the ₹1cr floor
   lowerCircuit: 400,
   upperCircuit: 600,
+  retrievedAt: null,
+  bid: null,
+  ask: null,
   ...over,
+});
+
+describe("Upstox quote timestamps", () => {
+  it("preserves the exchange last-trade instant from epoch milliseconds", () => {
+    expect(normalizeUpstoxTimestamp("1788256800000")).toBe("2026-09-01T10:00:00.000Z");
+  });
+
+  it("accepts ISO timestamps and refuses unknown values", () => {
+    expect(normalizeUpstoxTimestamp("2026-09-01T15:30:00+05:30")).toBe("2026-09-01T10:00:00.000Z");
+    expect(normalizeUpstoxTimestamp("not-a-timestamp")).toBeNull();
+    expect(normalizeUpstoxTimestamp(null)).toBeNull();
+  });
 });
 
 describe("screenQuote", () => {

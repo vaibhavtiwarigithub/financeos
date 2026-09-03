@@ -768,7 +768,7 @@ healthy response. A check that alerts on it trains the operator to ignore the ch
 A run reports counts over the units it owned, not a boolean:
 
 ```
-state    = no_work | completed | partial | blocked | failed
+state    = no_work | no_action | completed | partial | blocked | failed
 eligible = succeeded + expected_skip + deferred + unavailable + failed
 ```
 
@@ -782,8 +782,15 @@ Alerts fire on, and only on:
 1. any failed unit (critical) — regardless of how many succeeded alongside it;
 2. an impossible reconciliation — the equation not balancing, or a negative count. The
    job lost track of its own work;
-3. `eligible > 0 && succeeded == 0`, reported **with** the blocker reason so the alert
-   says *why*. A run that can name no blocker says so explicitly.
+3. `eligible > 0 && succeeded == 0` with no legitimate expected skips, reported
+   **with** the blocker reason so the alert says *why*. A run that can name no
+   blocker says so explicitly.
+
+A mixed run with legitimate `expected_skip` units plus unavailable/deferred units is
+`partial`, not `blocked`: the no-action decisions were completed correctly while the
+unavailable tail still raises a warning. This distinction prevents a full-book
+PaperTrader run (for example 13 legitimate skips plus 3 stale quotes) from claiming
+the whole trader was blocked without hiding the actual quote-coverage problem.
 
 `eligible == 0` is `no_work` and is healthy. **Business metrics (`trades_filled`,
 `positions_closed`, `labels_written`) are telemetry and are NEVER health criteria** — a
@@ -1322,3 +1329,20 @@ calling providers. ZIP/PIN/locality and Bengaluru-local coverage remains
 or valuation. A future LLM narrator receives only a sealed typed envelope and
 cannot modify a number, rank, policy, cash transfer, payment, or trade. Capital
 learning remains shadow-only until timestamped owner outcomes mature.
+
+## Time-review exit shadow (2026-09-03)
+
+The unconditional paper time stop remains active. Before that branch runs,
+PositionMonitor now writes an idempotent observation only when an alpha position
+is at its exact resolved horizon. The versioned `time-review-v1` classifier can
+qualify only a profitable position with a fresh long score at or above the hold
+threshold and drawdown no larger than its initial stop distance. It predeclares
+only +5 and +10 market-session candidates and retains the position's effective
+mechanical stop. Missing evidence fails closed.
+
+The observer writes only `time_review_exit_observations`; the daily horizon
+shadow job matures `time_review_exit_outcomes`. Both ledgers are append-only and
+owner-readable. No position, trade, cash, stop, target, proposal, broker order,
+score, mandate, or exit reads either ledger. The older daily
+`horizon_extension_shadow` rows remain frozen historical context and are
+excluded from readiness.
