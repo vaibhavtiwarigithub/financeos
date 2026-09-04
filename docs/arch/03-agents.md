@@ -1,4 +1,13 @@
 # Kairos — Agents
+> 2026-09-04 crypto basket Stage 2b: ResearchAgent now always feeds BTC-USD/ETH-USD/SOL-USD
+> via `crypto_basket` discovery source (parallel to `metals_basket`). `scoreMode="measure_only"` —
+> no paper trades, no order path. Evidence accumulates in `instrument_family_observations` with
+> technical+macro+sentiment features. Trading page shows a "Crypto Watch" section (US-only)
+> with per-coin evidence progress toward MIN_PREDICTIVE_DATES=20. Stage 3 (paper pool) unlocks
+> after 20 qualifying sessions. No `market` CHECK constraint changed — crypto is `market="us"`,
+> `InstrumentFamily="crypto"`. `CRYPTO_SESSION_CUTOFF_UTC=0` (UTC midnight) is the declared
+> aggregation convention, not a real market close. India has no crypto path.
+>
 > 2026-08-24 instrument-family measurement: ResearchAgent now stamps a versioned
 > market/family/exposure classification on every decision, records dated metals
 > drivers in a separate append-only measurement ledger, and writes an uncapped

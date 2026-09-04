@@ -1,10 +1,16 @@
 # Robinhood Crypto — Feature Architecture
 
-> Status: **DRAFT — architecture only. Awaiting Vaibhav's approval before Builder work.**
-> Author: Claude (Sonnet 5), Architect role. 2026-09-04.
-> Reopens `PROJECT_DECISIONS.md` Decision 2's crypto exclusion — see §0 and the paired decision
-> entry below. Scope: PAPER trading only. No live order, no migration applied, no scoring change
-> is authorized by this document.
+> Status: **Stage 2b LIVE** — measure_only composite + crypto_basket + Trading UI watch section.
+> Author: Claude (Sonnet 4.6), 2026-09-04. Approved by Vaibhav 2026-09-04.
+> Stage 3 (paper pool + legacy_v1 scoring) requires MIN_PREDICTIVE_DATES (20) evidence sessions.
+> Scope: PAPER trading only. No live order authorized.
+>
+> **Implementation log:**
+> - Stage 0 (db57bfd1): RH capability probe — onboarded, 58 pairs, BTC/ETH/SOL selected
+> - Stage 1 (120935f4): `InstrumentFamily="crypto"`, `CRYPTO_SESSION_CUTOFF_UTC`, session guards, 14 tests
+> - Stage 2 (be9b1b9b): `scoreMode="measure_only"`, IFE composite (technical+macro+sentiment), AV DIGITAL_CURRENCY_DAILY
+> - Stage 2b (f29e0ee6): `crypto_basket` always-feeds BTC/ETH/SOL into research runs (parallel to metals_basket)
+> - Stage 2c (pending): Trading page "Crypto Watch" section — shows evidence progress, coin scores (US-only)
 
 ## 0. What this reopens, and what it doesn't
 

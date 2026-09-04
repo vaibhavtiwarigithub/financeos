@@ -676,6 +676,22 @@
       "addReason": "The per-dimension findings were computed daily and discarded at the UI layer - DimensionDiagnosticsSummary rendered run counts and two prose findings and never rendered subject_type 'dimension' at all.",
       "status": "active",
       "changedAt": null
+    },
+    "CRYPTOWATCH": {
+      "label": "Crypto Watch (Stage 2 — measure only)",
+      "description": "BTC-USD / ETH-USD / SOL-USD are always injected into US research runs via the crypto_basket discovery source (parallel to metals_basket). InstrumentFamily='crypto', market='us', scoreMode='measure_only'. Evidence records technical+macro+sentiment features in instrument_family_observations. No paper pool, no order path. Stage 3 (paper trading) unlocks after MIN_PREDICTIVE_DATES=20 qualifying sessions. Trading page shows a Crypto Watch section (US-only) with per-coin score progress. CRYPTO_SESSION_CUTOFF_UTC=0 is the declared aggregation convention — not a real market close.",
+      "addedAt": "2026-09-04",
+      "inputs": [
+        "ResearchAgent (crypto_basket injection)",
+        "Alpha Vantage DIGITAL_CURRENCY_DAILY",
+        "AV NEWS_SENTIMENT CRYPTO:BTC/ETH/SOL",
+        "FRED DFII10 / DTWEXBGS"
+      ],
+      "outputs": [
+        "instrument_family_observations (append-only evidence)"
+      ],
+      "schedule": "daily (part of ResearchAgent US run)",
+      "autonomyLevel": "measure_only — no paper or live trades authorized"
     }
   },
   "history": [
@@ -1626,6 +1642,13 @@
       "nodeId": "DIMDIAG",
       "label": "Dimension diagnostics node, its ledger, and the Learning-page IC panel",
       "reason": "The agent ran daily from 2026-08-06 but was missing from this map, and its per-dimension rank IC was computed and then dropped at the UI layer. Added sd_session_rank_ic, t_stat and a per-session IC series so the numbers can be read and charted honestly. The per-session series exists because mean_session_rank_ic is an EXPANDING window: plotting it across daily runs draws a converging cumulative mean, not a changing signal. Measured on real US h5 rows, technical read +0.1394 frozen for nine days, then oscillated non-monotonically (qualifying sessions 17 -> 15 -> 17 -> 14 -> 13) while the truncated loader reshuffled its sample, then settled near -0.13 - a line that reads as decay but is 82be100a (cohort) and 3aa3753f (pagination) landing hours apart on 2026-08-28. No plan-version bump: mean_session_rank_ic is unchanged and the new fields are additive."
+    },
+    {
+      "date": "2026-09-04",
+      "event": "added",
+      "nodeId": "CRYPTOWATCH",
+      "label": "Crypto Watch Stage 2 — BTC/ETH/SOL measure-only evidence accumulation",
+      "reason": "Stages 0-2b shipped: RH crypto onboarding verified, InstrumentFamily='crypto' + CRYPTO_SESSION_CUTOFF_UTC declared, scoreMode=measure_only composite (technical+macro+sentiment) via instrument_family_observations, crypto_basket always-feeds 3 coins into US research runs, Trading page Crypto Watch section shows per-coin scores and evidence progress. No paper pool, no trades. Stage 3 gates on MIN_PREDICTIVE_DATES=20."
     }
   ]
 }
