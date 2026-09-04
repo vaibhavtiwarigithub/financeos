@@ -193,6 +193,13 @@ export async function getKiteHoldings(svc?: any) {
   return kiteGet("/portfolio/holdings", svc);
 }
 
+// Coin mutual-fund holdings use the same authenticated Kite session but are a
+// distinct instrument family and endpoint. Read-only by design: no Coin order,
+// redemption, or SIP helper exists in Kairos.
+export async function getKiteMutualFundHoldings(svc?: any) {
+  return kiteGet("/mf/holdings", svc);
+}
+
 export function buildKiteGttBody(opts: {
   tradingsymbol: string;
   exchange?: string;

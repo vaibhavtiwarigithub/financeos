@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
-import { getKiteHoldings, getKiteMargins } from "@/lib/kite";
+import { getKiteHoldings, getKiteMargins, getKiteMutualFundHoldings } from "@/lib/kite";
+import { buildCoinPortfolio } from "@/lib/brokers/coin";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,11 @@ export async function GET() {
   const ownerGate = await requireOwner();
   if (ownerGate) return ownerGate;
 
-  const res = await getKiteHoldings();
+  const [res, marg, coinRes] = await Promise.all([
+    getKiteHoldings(),
+    getKiteMargins(),
+    getKiteMutualFundHoldings(),
+  ]);
   if (!res.ok) return NextResponse.json({ holdings: [], connected: false, error: res.error });
 
   const holdings = (res.data ?? []).map((h: any) => ({
@@ -27,10 +32,37 @@ export async function GET() {
   }));
 
   // Liquid cash (buying power) — best-effort; a margins hiccup must not blank holdings.
-  const marg = await getKiteMargins();
   const cash = marg.ok ? (marg.equityNet ?? null) : null;
   const holdingsValue = holdings.reduce((s: number, h: { value: number }) => s + (h.value ?? 0), 0);
   const nav = cash != null ? cash + holdingsValue : null;
 
-  return NextResponse.json({ holdings, connected: true, currency: "INR", cash, nav });
+  // Coin is independent from the equity portfolio. A Coin failure must not
+  // blank NSE holdings; a successful empty response is still available=true.
+  const normalizedCoin = coinRes.ok ? buildCoinPortfolio(coinRes.data ?? []) : null;
+  const coin = normalizedCoin
+    ? {
+        available: true,
+        holdings: normalizedCoin.holdings,
+        holding_count: normalizedCoin.holdingCount,
+        valuation_complete: normalizedCoin.valuationComplete,
+        total_invested: normalizedCoin.totalInvested,
+        total_value: normalizedCoin.totalValue,
+        total_pnl: normalizedCoin.totalPnl,
+        error: null,
+      }
+    : {
+        available: false,
+        holdings: [],
+        holding_count: 0,
+        valuation_complete: false,
+        total_invested: null,
+        total_value: null,
+        total_pnl: null,
+        error: coinRes.error ?? "Coin holdings unavailable",
+      };
+  const combinedNav = nav != null && coin.available && coin.valuation_complete && coin.total_value != null
+    ? nav + coin.total_value
+    : null;
+
+  return NextResponse.json({ holdings, connected: true, currency: "INR", cash, nav, combined_nav: combinedNav, coin });
 }

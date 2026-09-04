@@ -43,12 +43,39 @@ type Holding = {
   value: number;
 };
 
+type CoinHolding = {
+  isin: string;
+  fund: string;
+  folio: string | null;
+  quantity: number;
+  averageNav: number | null;
+  latestNav: number | null;
+  latestNavDate: string | null;
+  investedValue: number | null;
+  currentValue: number | null;
+  pnl: number | null;
+  pnlPct: number | null;
+};
+
+type CoinPortfolio = {
+  available: boolean;
+  holdings: CoinHolding[];
+  holding_count: number;
+  valuation_complete: boolean;
+  total_invested: number | null;
+  total_value: number | null;
+  total_pnl: number | null;
+  error?: string | null;
+};
+
 type Portfolio = {
   holdings: Holding[];
   connected: boolean;
   currency?: string;
   cash?: number | null;
   nav?: number | null;
+  combined_nav?: number | null;
+  coin?: CoinPortfolio;
   error?: string;
 };
 
@@ -188,11 +215,22 @@ export default function IndiaLivePanel() {
   const totalValue = holdings.reduce((a, h) => a + (h.value ?? 0), 0);
 
   // Stat-card aggregates (parity with the US Live view) — all INR.
-  const invested = holdings.reduce((a, h) => a + (h.avg_price ?? 0) * (h.qty ?? 0), 0);
-  const totalPnl = holdings.reduce((a, h) => a + (h.pnl ?? 0), 0);
+  const equityInvested = holdings.reduce((a, h) => a + (h.avg_price ?? 0) * (h.qty ?? 0), 0);
+  const equityPnl = holdings.reduce((a, h) => a + (h.pnl ?? 0), 0);
+  const coin = portfolio?.coin;
+  const coinAvailable = coin?.available === true;
+  const coinValued = coinAvailable && coin.valuation_complete && coin.total_value != null && coin.total_invested != null && coin.total_pnl != null;
+  const invested = equityInvested + (coinValued ? coin.total_invested! : 0);
+  const totalPnl = equityPnl + (coinValued ? coin.total_pnl! : 0);
   const totalPnlPct = invested > 0 ? (totalPnl / invested) * 100 : 0;
   const cash = portfolio?.cash ?? null;
-  const nav = portfolio?.nav ?? (cash != null ? cash + totalValue : totalValue);
+  const equityNav = portfolio?.nav ?? (cash != null ? cash + totalValue : totalValue);
+  const nav = portfolio?.combined_nav ?? equityNav;
+  const positionCount = holdings.length + (coinAvailable ? (coin?.holding_count ?? 0) : 0);
+  const investedAssetsValue = totalValue + (coinValued ? coin.total_value! : 0);
+  const coinAllocationPct = coinValued && investedAssetsValue > 0
+    ? (coin.total_value! / investedAssetsValue) * 100
+    : null;
 
   // ── Status bar content ──────────────────────────────────────────────────────
   function StatusBar() {
@@ -231,17 +269,17 @@ export default function IndiaLivePanel() {
   return (
     <LivePortfolioShell
       title="India · Zerodha Kite"
-      subtitle="NSE stocks scored on free data · real orders via Kite"
+      subtitle="NSE equities via Kite · Coin mutual funds read-only"
       cadence="daily"
       toolbar={<EyeToggle masked={masked} onToggle={() => setRevealed(r => !r)} />}
       help={{
-        whatItDoes: "Live NSE holdings from your Zerodha Kite account, plus AI-scored Indian stocks (NIFTY names) you can buy or sell with real orders. Kite issues a fresh access token each day — reconnect when it expires.",
+        whatItDoes: "Live NSE holdings and read-only Coin mutual funds from your Zerodha account, plus AI-scored Indian stocks you can buy or sell with explicit real-order confirmation. Kite issues a fresh access token each day — reconnect when it expires.",
         whatToLookFor: [
-          "Live NAV comes straight from your broker — your Zerodha Kite holdings value + cash (India, ₹). It updates on each sync, not live-by-the-second.",
+          "Total Equity includes Kite cash, NSE holdings, and Coin funds only when every Coin holding has a usable latest NAV; otherwise it stays equity-only and the Coin section says why.",
           "Green status = token valid today; amber = reconnect before trading or reading holdings.",
+          "Coin is read-only and uses last-available NAV, not an intraday market price. It never enters stock scores, stops, targets, ladders, or order controls.",
           "Scored signals: score ≥ 70 green (strong), 50–69 amber (moderate), < 50 red.",
           "Only LONG, entry-eligible signals can open the Kite order panel; a second explicit confirmation is still required.",
-          "Total value row sums your live NSE holdings in ₹.",
         ],
       }}
     >
@@ -260,18 +298,99 @@ export default function IndiaLivePanel() {
             market="india"
             equity={nav}
             buyingPower={cash}
-            positions={holdings.length}
+            positions={positionCount}
             invested={invested}
             totalPnl={totalPnl}
             totalPnlPct={totalPnlPct}
             dayPnl={null}
-            brokerLabel="Zerodha Kite"
+            brokerLabel={coinValued ? "Zerodha Kite + Coin" : coinAvailable ? "Zerodha Kite · Coin NAV incomplete" : "Zerodha Kite · Coin unavailable"}
             masked={masked}
           />
         )}
 
         {/* ── Performance vs NIFTY 50 (shared, market-aware) ── */}
         <LivePerformanceChart market="india" />
+
+        {/* Coin is a separate read-only sleeve. It never shares equity order or score controls. */}
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start", flexWrap: "wrap", marginBottom: "14px" }}>
+            <div>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "4px" }}>
+                Zerodha Coin · Mutual Funds
+              </div>
+              <div style={{ fontSize: "11px", color: T.muted, lineHeight: 1.5 }}>
+                Read-only · last available NAV · excluded from equity research, stops, targets and the performance chart below
+              </div>
+            </div>
+            <span style={{ fontSize: "10px", fontWeight: 700, color: T.blue, background: T.blueBg, border: `1px solid ${T.blue}44`, borderRadius: "999px", padding: "4px 9px", whiteSpace: "nowrap" }}>
+              NO ORDER ACCESS
+            </span>
+          </div>
+
+          {portfolioLoading ? (
+            <div style={{ color: T.muted, fontSize: "13px", padding: "8px 0" }}>Loading Coin holdings…</div>
+          ) : !holdingsConnected ? (
+            <div style={{ color: T.muted, fontSize: "13px", padding: "8px 0" }}>Reconnect Kite to read Coin holdings from the same Zerodha account.</div>
+          ) : !coinAvailable ? (
+            <div style={{ color: T.amber, background: T.amberBg, border: `1px solid ${T.amber}33`, borderRadius: "8px", padding: "10px 12px", fontSize: "12px", lineHeight: 1.5 }}>
+              Coin data is unavailable. NSE holdings remain valid and unchanged.{coin?.error ? ` ${coin.error}` : ""}
+            </div>
+          ) : coin.holdings.length === 0 ? (
+            <div style={{ color: T.muted, fontSize: "13px", padding: "8px 0" }}>No Coin mutual-fund holdings in this Zerodha account.</div>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
+                <div style={{ background: T.surface, borderRadius: "8px", padding: "9px 12px", minWidth: "150px" }}>
+                  <div style={{ color: T.muted, fontSize: "10px", textTransform: "uppercase", marginBottom: "3px" }}>Coin value</div>
+                  <div style={{ fontWeight: 700 }}>{coin.total_value != null ? maskText(inr(coin.total_value), masked) : "NAV incomplete"}</div>
+                </div>
+                <div style={{ background: T.surface, borderRadius: "8px", padding: "9px 12px", minWidth: "150px" }}>
+                  <div style={{ color: T.muted, fontSize: "10px", textTransform: "uppercase", marginBottom: "3px" }}>Coin P&amp;L</div>
+                  <div style={{ fontWeight: 700, color: (coin.total_pnl ?? 0) >= 0 ? T.green : T.red }}>
+                    {coin.total_pnl != null ? maskText(`${coin.total_pnl >= 0 ? "+" : ""}${inr(coin.total_pnl)}`, masked) : "—"}
+                  </div>
+                </div>
+                <div style={{ background: T.surface, borderRadius: "8px", padding: "9px 12px", minWidth: "150px" }}>
+                  <div style={{ color: T.muted, fontSize: "10px", textTransform: "uppercase", marginBottom: "3px" }}>Invested-asset share</div>
+                  <div style={{ fontWeight: 700 }}>{coinAllocationPct != null ? maskText(`${coinAllocationPct.toFixed(1)}%`, masked) : "—"}</div>
+                </div>
+              </div>
+              {!coin.valuation_complete && (
+                <div style={{ color: T.amber, fontSize: "11px", marginBottom: "10px" }}>
+                  At least one fund has no usable NAV or cost. Combined totals are withheld rather than treating missing values as zero.
+                </div>
+              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {coin.holdings.map(fund => (
+                  <div key={`${fund.isin}:${fund.folio ?? ""}`} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "12px 14px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", marginBottom: "8px" }}>
+                      <div style={{ minWidth: "220px", flex: 1 }}>
+                        <div style={{ color: T.text, fontSize: "13px", fontWeight: 650, lineHeight: 1.4 }}>{fund.fund}</div>
+                        <div style={{ color: T.muted, fontSize: "10px", marginTop: "2px" }}>{fund.isin}{fund.latestNavDate ? ` · NAV ${fund.latestNavDate}` : " · NAV date unavailable"}</div>
+                      </div>
+                      <div style={{ color: (fund.pnl ?? 0) >= 0 ? T.green : T.red, fontWeight: 700, fontSize: "13px" }}>
+                        {fund.pnl != null ? maskText(`${fund.pnl >= 0 ? "+" : ""}${inr(fund.pnl)}${fund.pnlPct != null ? ` (${fund.pnlPct >= 0 ? "+" : ""}${fund.pnlPct.toFixed(2)}%)` : ""}`, masked) : "P&L —"}
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: "8px", fontSize: "11px" }}>
+                      {[
+                        ["Units", fund.quantity.toFixed(3)],
+                        ["Average NAV", fund.averageNav != null ? inr(fund.averageNav) : "—"],
+                        ["Latest NAV", fund.latestNav != null ? inr(fund.latestNav) : "—"],
+                        ["Current value", fund.currentValue != null ? inr(fund.currentValue) : "—"],
+                      ].map(([label, value]) => (
+                        <div key={label}>
+                          <div style={{ color: T.muted, marginBottom: "2px" }}>{label}</div>
+                          <div style={{ color: T.textSub, fontFamily: "monospace" }}>{maskText(value, masked)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
 
         {/* ── b) Real holdings table ── */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "16px" }}>

@@ -135,6 +135,13 @@ retry the control flow prevented.
 | Robinhood | US | OAuth PKCE S256 loopback; token in `api_key_vault` | Read-only account (monitoring) + agentic account (orders only) |
 | Zerodha Kite | India | Daily re-login; SHA256 checksum exchange; `KITE_ACCESS_TOKEN` in vault | Real NSE/BSE portfolio read + order placement |
 
+The same authenticated Kite session also reads Zerodha Coin mutual-fund holdings
+through `GET /mf/holdings`. Coin is a separate, read-only portfolio sleeve:
+last-available NAV, units, invested value and P&L are shown on India Live Portfolio,
+but no mutual fund enters equity research, scoring, stops, targets, ladders, performance
+history or order execution. A missing Coin NAV withholds combined totals rather than
+being treated as zero; Coin endpoint failure does not blank valid Kite equity holdings.
+
 ### Broker adapter layer
 
 **Location:** `lib/brokers/adapters/`, `lib/brokers/registry.ts`
