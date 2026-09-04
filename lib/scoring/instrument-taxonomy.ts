@@ -19,6 +19,9 @@ export type InstrumentFamily =
   | "royalty_streaming_equity"
   | "india_etf"
   | "leveraged_or_inverse_etf"
+  // Stage 1 (2026-09-04): paper-only, scoreMode=blocked until Stage 2 evidence clears.
+  // Uses CRYPTO_SESSION_CUTOFF_UTC, NOT America/New_York — see lib/data/crypto-session.ts.
+  | "crypto"
   | "unknown";
 
 export type InstrumentPolicy = {
@@ -32,6 +35,10 @@ export type InstrumentPolicy = {
   version: typeof INSTRUMENT_TAXONOMY_VERSION;
   scoreMode: "legacy_v1" | "measure_only" | "blocked";
 };
+
+// Stage 1 (2026-09-04): BTC+ETH+SOL approved. scoreMode=blocked; paper pool $10k separate.
+// Expand after Stage 2 evidence clears. Symbols are RH's hyphenated format.
+const CRYPTO_SYMBOLS = new Set(["BTC-USD", "ETH-USD", "SOL-USD"]);
 
 const GOLD_BULLION = new Set(["GLD", "IAU"]);
 const SILVER_BULLION = new Set(["SLV"]);
@@ -68,7 +75,7 @@ function policy(
   return {
     market, symbol, family, exposureId, benchmarkSymbol, source, confidence,
     version: INSTRUMENT_TAXONOMY_VERSION,
-    scoreMode: family === "leveraged_or_inverse_etf" || family === "unknown"
+    scoreMode: family === "leveraged_or_inverse_etf" || family === "unknown" || family === "crypto"
       ? "blocked"
       : ["gold_bullion_fund", "silver_bullion_fund", "gold_miners_fund", "india_etf"].includes(family)
         ? "measure_only"
@@ -88,6 +95,10 @@ export function classifyInstrumentPolicy(input: {
   const industry = normalized(input.industry);
 
   if (!symbol) return policy(input.market, symbol, "unknown", "unknown", null, "unknown", "unknown");
+
+  // Crypto: market stays "us" (RH USD settlement), family="crypto", always blocked.
+  // Uses CRYPTO_SESSION_CUTOFF_UTC — never America/New_York session logic.
+  if (CRYPTO_SYMBOLS.has(symbol)) return policy("us", symbol, "crypto", `crypto:${symbol}`, null, "curated", "curated");
 
   if (input.market === "india") {
     const fund = INDIA_ETFS.get(symbol);

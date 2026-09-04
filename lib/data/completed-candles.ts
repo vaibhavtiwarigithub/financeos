@@ -1,5 +1,7 @@
 import type { Candle } from "@/lib/data/technicals";
 import { isMarketHoliday, lastCompletedMarketSession } from "@/lib/trading/market-calendar";
+import { assertNotCryptoFamily } from "@/lib/data/crypto-session";
+import type { InstrumentFamily } from "@/lib/scoring/instrument-taxonomy";
 
 type Market = "us" | "india";
 
@@ -36,12 +38,17 @@ function isValidYmd(value: string): boolean {
 /**
  * Daily scoring may only consume settled regular-session bars. Provider adapters
  * remain free to return an intraday daily bar for chart/quote consumers.
+ *
+ * `instrumentFamily` is optional. When provided, throws if family="crypto" —
+ * crypto instruments must use cryptoCompletedCandles() from lib/data/crypto-session.ts.
  */
 export function completedSessionCandles<T extends Candle>(
   candles: readonly T[],
   market: Market,
   now: Date = new Date(),
+  instrumentFamily?: InstrumentFamily,
 ): T[] {
+  assertNotCryptoFamily(instrumentFamily, "completedSessionCandles");
   const local = localClock(market, now);
   const todayComplete = local.minutes >= SESSION[market].closeMinutes;
   return candles.filter((candle) => {
@@ -67,7 +74,11 @@ export function completedSessionCandles<T extends Candle>(
  * Callers compare with `>=` so a provisional bar for the running session still
  * passes — this tightens the post-close case only.
  */
-export function expectedNewestSession(market: Market, now: Date = new Date()): string {
+/**
+ * `instrumentFamily` is optional. When provided, throws if family="crypto".
+ */
+export function expectedNewestSession(market: Market, now: Date = new Date(), instrumentFamily?: InstrumentFamily): string {
+  assertNotCryptoFamily(instrumentFamily, "expectedNewestSession");
   const local = localClock(market, now);
   const dow = new Date(`${local.ymd}T12:00:00Z`).getUTCDay();
   const todayIsTradingDay = dow !== 0 && dow !== 6 && !isMarketHoliday(market, local.ymd);
