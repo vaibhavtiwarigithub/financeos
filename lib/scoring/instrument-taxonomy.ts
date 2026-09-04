@@ -36,9 +36,10 @@ export type InstrumentPolicy = {
   scoreMode: "legacy_v1" | "measure_only" | "blocked";
 };
 
-// Stage 1 (2026-09-04): BTC+ETH+SOL approved. scoreMode=blocked; paper pool $10k separate.
-// Expand after Stage 2 evidence clears. Symbols are RH's hyphenated format.
-const CRYPTO_SYMBOLS = new Set(["BTC-USD", "ETH-USD", "SOL-USD"]);
+// Stage 1 (2026-09-04): BTC+ETH+SOL approved. Paper pool $10k separate.
+// Stage 2 (2026-09-04): scoreMode=measure_only. Expand after evidence clears.
+// Symbols are RH's hyphenated format.
+export const CRYPTO_SYMBOLS = new Set(["BTC-USD", "ETH-USD", "SOL-USD"]);
 
 const GOLD_BULLION = new Set(["GLD", "IAU"]);
 const SILVER_BULLION = new Set(["SLV"]);
@@ -75,9 +76,9 @@ function policy(
   return {
     market, symbol, family, exposureId, benchmarkSymbol, source, confidence,
     version: INSTRUMENT_TAXONOMY_VERSION,
-    scoreMode: family === "leveraged_or_inverse_etf" || family === "unknown" || family === "crypto"
+    scoreMode: family === "leveraged_or_inverse_etf" || family === "unknown"
       ? "blocked"
-      : ["gold_bullion_fund", "silver_bullion_fund", "gold_miners_fund", "india_etf"].includes(family)
+      : ["gold_bullion_fund", "silver_bullion_fund", "gold_miners_fund", "india_etf", "crypto"].includes(family)
         ? "measure_only"
         : "legacy_v1",
   };

@@ -23,6 +23,8 @@ import { ETF_SCORE_CAP, routeToArchetypes, computeArchetypeScore } from "@/lib/s
 import { classifyInstrument, persistInstrumentClassification } from "@/lib/scoring/instrument-registry";
 import { classifyInstrumentPolicy } from "@/lib/scoring/instrument-taxonomy";
 import { loadInstrumentFamilyEvidence } from "@/lib/scoring/instrument-family-evidence";
+import { CRYPTO_SYMBOLS } from "@/lib/scoring/instrument-taxonomy";
+import { cryptoCompletedCandles } from "@/lib/data/crypto-session";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
@@ -198,6 +200,13 @@ export type Dimension = "fundamental" | "technical" | "sentiment" | "macro" | "i
 export function applicableDimensions(entry: SymbolEntry): Set<Dimension> {
   const india = isIndia(entry.symbol);
   const dims = new Set<Dimension>(["technical"]); // every tradable symbol has price evidence
+  // Crypto: 24/7, no company fundamentals/insider/options/analyst.
+  // Matches ETF precedent (sentiment + macro) but without fundamental neutral baseline.
+  if (CRYPTO_SYMBOLS.has(entry.symbol)) {
+    dims.add("macro");
+    dims.add("sentiment");
+    return dims;
+  }
   if (india) {
     dims.add("fundamental"); // Yahoo/Upstox fundamentals; no US-style insider/options/analyst
     // India news evidence is collected in a separate shadow. It is deliberately
@@ -1079,6 +1088,34 @@ async function fetchAVOverview(symbol: string, avKey: string, maxAgeDays = 7): P
 
 // Fetch daily OHLCV candles from Alpha Vantage TIME_SERIES_DAILY_ADJUSTED (100 days compact)
 // Used for deterministic RSI(14) / EMA(20,50) computation — no LLM involved
+// Crypto OHLCV via AV DIGITAL_CURRENCY_DAILY. Field names identical to
+// TIME_SERIES_DAILY (confirmed Stage 0, 2026-09-04). Oldest-first for EMA.
+// Cache key AV_CRYPTO_DAILY:BTC separate from equity AV_DAILY/DAILY_ADJ keys.
+async function fetchCryptoCandles(symbol: string, avKey: string): Promise<{ candles: Candle[]; source: string }> {
+  if (!avKey) return { candles: [], source: "unavailable" };
+  // Strip -USD suffix: "BTC-USD" → "BTC"
+  const coin = symbol.replace(/-USD$/i, "");
+  try {
+    const json = await avCachedFetch(
+      `AV_CRYPTO_DAILY:${coin}`,
+      `https://www.alphavantage.co/query?function=DIGITAL_CURRENCY_DAILY&symbol=${coin}&market=USD&apikey=${avKey}`,
+    );
+    const series = json?.["Time Series (Digital Currency Daily)"];
+    if (!series || typeof series !== "object") return { candles: [], source: "unavailable" };
+    const candles = Object.entries(series as Record<string, Record<string, string>>)
+      .sort(([a], [b]) => a.localeCompare(b)) // oldest first — required for EMA
+      .map(([date, d]) => ({
+        date,
+        open:   parseFloat(d["1. open"]  ?? "0"),
+        high:   parseFloat(d["2. high"]  ?? "0"),
+        low:    parseFloat(d["3. low"]   ?? "0"),
+        close:  parseFloat(d["4. close"] ?? "0"),
+        volume: parseFloat(d["5. volume"] ?? "0"),
+      }));
+    return { candles, source: "alpha_vantage" };
+  } catch { return { candles: [], source: "unavailable" }; }
+}
+
 async function fetchAVCandles(symbol: string, avKey: string): Promise<Candle[]> {
   if (!avKey) return [];
   try {
@@ -1407,6 +1444,7 @@ export async function processSymbol(
   // options/insider (US-only sources) are skipped for India → those dimensions
   // fall to their neutral baseline, which the score-detail panel flags honestly.
   const india = isIndia(symbol);
+  const isCrypto = CRYPTO_SYMBOLS.has(symbol);
   // Structural capability map — a dimension a symbol can't have is never fetched
   // (ETF fundamentals, ADR insider, India US-only sources). Missing dimensions
   // are already excluded from the weighted score via the availability mask.
@@ -1441,7 +1479,12 @@ export async function processSymbol(
     // The resolved candle SOURCE is carried alongside the bars now (it was
     // previously discarded) so the return-observation contract can record the
     // provider its evidence came from. Same fetches, same fallback order.
-    india
+    isCrypto
+      // Crypto candles: AV DIGITAL_CURRENCY_DAILY. Same field names as
+      // TIME_SERIES_DAILY (confirmed Stage 0, 2026-09-04). Filtered via
+      // cryptoCompletedCandles (CRYPTO_SESSION_CUTOFF_UTC, not NYSE session).
+      ? fetchCryptoCandles(symbol, avKey).catch(() => ({ candles: [] as Candle[], source: "unavailable" as string }))
+      : india
       // India candles: Upstox (official, analytics token) primary → Yahoo
       // chart (unofficial) fallback. Upstox is more reliable than the Yahoo
       // endpoint that can change shape / anti-bot without notice.
@@ -1465,10 +1508,10 @@ export async function processSymbol(
     india ? fetchFiiDiiFlows().catch(() => null) : Promise.resolve(null),
   ]);
   const avOverview = fundamentalResult.overview;
-  const candles: Candle[] = completedSessionCandles(
-    candleResult.candles,
-    india ? "india" : "us",
-  );
+  const candles: Candle[] = isCrypto
+    // Crypto session: CRYPTO_SESSION_CUTOFF_UTC (midnight UTC), not NYSE/BSE close.
+    ? cryptoCompletedCandles(candleResult.candles)
+    : completedSessionCandles(candleResult.candles, india ? "india" : "us");
   const indiaMacroLine = india ? fiiDiiMacroLine(fiiDii) : null;
 
   // Return-observation capture (features/correlation-aware-construction §0 item 1).

@@ -102,9 +102,32 @@ export async function loadInstrumentFamilyEvidence(
 ): Promise<InstrumentFamilyEvidence | null> {
   const relevant = new Set([
     "gold_bullion_fund", "silver_bullion_fund", "gold_miners_fund",
-    "metal_producer_equity", "royalty_streaming_equity",
+    "metal_producer_equity", "royalty_streaming_equity", "crypto",
   ]);
   if (!relevant.has(policy.family)) return null;
+
+  // Crypto: technical + macro features only. No metals-specific price ratios.
+  // Stage 2 (2026-09-04) — see features/robinhood-crypto/FEATURE_ARCHITECTURE.md.
+  if (policy.family === "crypto") {
+    const inputs = await loadShared(supabase);
+    const realYield = seriesChange(inputs.realYield);
+    const dollar = seriesChange(inputs.broadDollar);
+    return {
+      version: INSTRUMENT_FEATURE_VERSION,
+      lifecycle: "measure_only",
+      family: "crypto",
+      exposure_id: policy.exposureId,
+      benchmark_symbol: null,
+      features: {
+        technical_score_v1: feature(finite(technicalScore), today(), "decision_observation", 1),
+        real_yield_10y_change_20obs_pp: feature(realYield.value, realYield.asOf, "FRED:DFII10", 7),
+        broad_dollar_change_20obs_index_points: feature(dollar.value, dollar.asOf, "FRED:DTWEXBGS", 7),
+      },
+      composite_score: null,
+      actionability: "none",
+      note: "Crypto family — measure_only. Technical + macro only; no fundamental/insider/analyst. No trade authorization.",
+    };
+  }
 
   const inputs = await loadShared(supabase);
   const realYield = seriesChange(inputs.realYield);
