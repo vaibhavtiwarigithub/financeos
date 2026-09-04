@@ -1509,3 +1509,47 @@ or broker behavior changes. No schema change.
 US `624b3c85-965d-4e89-8bee-b06729a89160`; India
 `d9de3886-b4f8-4ecc-a54c-c9333dc83144`. Both are `collect_more`, with
 `influence=none` and no money-path change.
+
+## Decision 72: Amend Decision 2's Crypto Exclusion — PAPER Only (2026-09-04)
+
+**Status:** DRAFT / PROPOSED — not approved, not shipped. Awaiting Vaibhav's review of
+`features/robinhood-crypto/FEATURE_ARCHITECTURE.md`.
+
+**Decision.** Amend Decision 2 (2026-06-27)'s exclusion of crypto from Kairos's trading scope,
+for **paper trading only**. Robinhood cryptocurrency, scored via its own technical+sentiment+macro
+composite (no fundamental/insider dimension — matches the existing ETF precedent), traded in a
+dedicated paper pool separate from the US equity pool, using the existing `InstrumentFamily`
+registry (`market` stays `"us"`, a new family `"crypto"` is added — NOT a third `market` value).
+Live crypto trading remains excluded and requires its own separate future decision, exactly like
+equities' own L3/L4 autonomy-ladder gate.
+
+**Why.** Vaibhav asked directly ("We need coin, crypto as well for sure," 2026-09-04) after a
+research pass confirmed: Zerodha Coin order placement is blocked by Zerodha's own API (Kite
+Connect's mutual-fund endpoints are read-only by the provider's own design — see
+`docs/audits/2026-09-04-broker-capability-expansion-plan.md` §1 — not something Kairos can build
+around), while Robinhood crypto is genuinely buildable — the MCP server exposes real order tools
+Kairos has simply never called. Amending Decision 2 for paper-only crypto follows the same
+starting point every other asset class in this codebase got.
+
+**Who.** The single Kairos owner/operator.
+
+**Alternatives considered.** Leaving Decision 2 as-is and declining crypto entirely (rejected —
+Vaibhav's direct instruction); jumping straight to live crypto (rejected — no other asset class in
+this codebase has ever started anywhere but paper, and crypto's higher realized volatility is a
+worse first case to skip that discipline on, not a better one); folding crypto into the existing US
+equity paper pool (rejected — would let crypto volatility contaminate the exact champion/challenger
+and Alpha Diagnostic comparisons that assume one consistent equity book, the same contamination
+reason India got its own ₹ pool).
+
+**Expected return.** A genuinely new, currently-absent information axis (crypto price action) with
+an honestly measured predictive composite before any capital (even paper) is put behind it — not a
+promise of outperformance.
+
+**Safety boundary.** Paper only. No live crypto order in any stage this decision authorizes. No
+`market` schema change. No score/genome/sizing change for any existing asset class or market.
+
+**Architecture:** `features/robinhood-crypto/FEATURE_ARCHITECTURE.md`.
+
+**Not shipped.** No migration applied, no code written, no scoring change made. This decision
+record exists because the architecture review is complete and on record — it converts to
+"Approved" only on Vaibhav's explicit sign-off, matching Decision 63's own pattern.

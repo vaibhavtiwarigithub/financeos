@@ -127,6 +127,14 @@ Identity is the immutable version/genome hash plus a deterministic diff label su
 `technical_weight: 0.25→0.30`. LLM-created names are prohibited. Generation initially remains
 one bounded weight change at a time.
 
+**Forward reference (2026-09-04).** `features/robinhood-crypto/FEATURE_ARCHITECTURE.md` raises
+the question of a genome that differs by instrument family (crypto/ETF/equity), not just by
+market. This document's position is unchanged: not now. One market's genome population isn't even
+proven with a single real shadow yet (§0a); splitting further by instrument family multiplies the
+same sample-starvation problem this whole feature exists to respect. Revisit only after (a) this
+feature's own P1 has demonstrated a working population and (b) crypto (or another family) has
+enough real paper history of its own to support a separate genome without starving it.
+
 ## 3. Staged implementation
 
 ### P0 — repair and prove one shadow (separate approval required)
