@@ -3,6 +3,12 @@
 
 import { fetchAllRows } from "@/lib/supabase/paginate";
 
+// Keep PostgREST `.in(...)` URLs bounded. Passing the full observation corpus
+// (~6k ids in production) exceeded the request limit, and the old loader then
+// collapsed that read error to an empty dataset. Five hundred numeric ids stays
+// comfortably below typical proxy/request-line limits while keeping calls low.
+export const LABEL_ID_BATCH_SIZE = 500;
+
 export interface LabeledObservation {
   id: number;
   ts: string; // decision timestamp
@@ -61,12 +67,18 @@ export async function loadLabeledDataset(
   if (!obsRows.length) return [];
 
   const ids = obsRows.map((r: any) => r.id);
-  const { data: labelRows, error: labErr } = await supabase
-    .from("observation_labels")
-    .select("observation_id, horizon_days, fwd_return, benchmark_return, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion")
-    .eq("horizon_days", horizonDays)
-    .in("observation_id", ids);
-  if (labErr || !labelRows?.length) return [];
+  const labelRows: any[] = [];
+  for (let start = 0; start < ids.length; start += LABEL_ID_BATCH_SIZE) {
+    const batch = ids.slice(start, start + LABEL_ID_BATCH_SIZE);
+    const { data, error } = await supabase
+      .from("observation_labels")
+      .select("observation_id, horizon_days, fwd_return, benchmark_return, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion")
+      .eq("horizon_days", horizonDays)
+      .in("observation_id", batch);
+    if (error) throw new Error(`observation_labels batch ${Math.floor(start / LABEL_ID_BATCH_SIZE) + 1} failed: ${error.message}`);
+    labelRows.push(...(data ?? []));
+  }
+  if (!labelRows.length) return [];
 
   const labelByObs = new Map<number, any>(labelRows.map((l: any) => [l.observation_id, l]));
   const out: LabeledObservation[] = [];

@@ -10,7 +10,7 @@ import { validateFeatureInputs } from "@/lib/validation/feature-compiler";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
 import { applyLearningTaintFilter } from "@/lib/learning/taint-filter";
-import { formatLearnerRunSummary } from "@/lib/learning/run-summary";
+import { formatLearnerFallbackMermaid, formatLearnerRunSummary } from "@/lib/learning/run-summary";
 import { runAutomatedValidation } from "@/lib/validation/automation";
 import { fetchIndiaQuote } from "@/lib/india-data";
 
@@ -842,7 +842,19 @@ REASONING APPROACH:
           .map(c => c.args);
         const reasoningChain = loopResult.toolCalls.map((c, i) => ({ step: i + 1, tool: c.name, args: c.args, result: c.result }));
 
-        const mermaid = finishArgs.mermaid ?? `flowchart TD\n  INPUTS["📥 Inputs\\n• ${signalCount ?? 0} signals\\n• ${totalClosedTrades ?? 0} closed trades\\n• macro: not checked\\n• priors: not loaded"]\n  ANALYSIS["🔍 Analysis\\n• ${outcomes.length} trades closed this run"]\n  HYPOTHESES["💡 Hypotheses\\n• ${hypotheses.length} saved"]\n  MUTATIONS["⚡ Weight Changes\\n• none (insufficient data)"]\n  INPUTS --> ANALYSIS --> HYPOTHESES --> MUTATIONS`;
+        // `outcomes` is the orphan-reconciliation batch, NOT newly closed
+        // positions. Keep that operational count distinct from the full closed
+        // learning corpus; the old "trades closed this run" wording caused a
+        // real false diagnosis when four trades had closed between cycles.
+        const mermaid = finishArgs.mermaid ?? formatLearnerFallbackMermaid({
+          signals: signalCount ?? 0,
+          totalClosed: totalClosedTrades ?? 0,
+          reconciledOrphans: outcomes.length,
+          hypotheses: hypotheses.length,
+          macroChecked: loopResult.toolCalls.some(call => call.name === "query_macro_context"),
+          priorsLoaded: loopResult.toolCalls.some(call => call.name === "read_priors"),
+          steps: loopResult.steps,
+        });
 
         const winRateSnapshot = outcomes.length > 0 ? Math.round((outcomes.filter((o: any) => o.outcome === "win").length / outcomes.length) * 100) : null;
 
