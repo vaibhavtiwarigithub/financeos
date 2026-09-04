@@ -234,6 +234,7 @@ export type DiscoverySource =
   | "screener_momentum" // dual-bucket screener — momentum leg
   | "screener_value"    // dual-bucket screener — value leg
   | "metals_basket"   // always-on GLD/SLV/GDX/IAU basket
+  | "crypto_basket"  // always-on BTC-USD/ETH-USD/SOL-USD measure-only basket (Stage 2)
   | "region_etf"      // region ETF added for non-US market focus
   | "india_holding"   // live Kite India position
   | "india_screener"  // india_screen_cache candidate
@@ -273,6 +274,9 @@ const BUCKET_CRITERIA: Record<"momentum" | "value", string[]> = {
 
 const METAL_ETF_SYMBOLS = new Set(["GLD","SLV","GDX","GDXJ","IAU","UGL","GLL"]);
 const METALS_BASKET = ["GLD","SLV","GDX","IAU"];
+// Stage 2 (2026-09-04): always-on measure-only basket, parallel to metals_basket.
+// scoreMode=measure_only — no trades. Stage 3 gate: MIN_PREDICTIVE_DATES.
+const CRYPTO_BASKET = [...CRYPTO_SYMBOLS];
 
 export function isEtfSymbol(s: string): boolean {
   return canonicalIsEtfSymbol(s);
@@ -887,9 +891,19 @@ export async function gatherSymbols(
     }
   }
 
+  // Crypto basket — always appended after metals (measure-only, no orders).
+  // US-only: crypto is market="us", RH account, USD settlement. No India path.
+  const cryptoBasket: SymbolEntry[] = [];
+  const allWithMetals = new Set([...allNonMetalSyms, ...metals.map(m => m.symbol)]);
+  for (const sym of includeUs ? CRYPTO_BASKET : []) {
+    if (!allWithMetals.has(sym)) {
+      cryptoBasket.push({ symbol: sym, isHeld: false, isEtf: false, assetClass: "crypto", discovery_source: "crypto_basket" });
+    }
+  }
+
   // Region ETFs — appended for each non-US focus in profile.market_focus (max 3 per region)
   const regionEtfs: SymbolEntry[] = [];
-  const seenAll = new Set([...allNonMetalSyms, ...metals.map(m => m.symbol)]);
+  const seenAll = new Set([...allWithMetals, ...cryptoBasket.map(c => c.symbol)]);
   for (const region of includeUs ? focusRegions : []) {
     if (region === "US") continue;
     const basket = REGION_ETFS[region] ?? [];
@@ -947,7 +961,7 @@ export async function gatherSymbols(
   }
 
   return annotateFundamentalFreshness(
-    [...nonMetals, ...metals, ...regionEtfs, ...indiaSymbols],
+    [...nonMetals, ...metals, ...cryptoBasket, ...regionEtfs, ...indiaSymbols],
     supabase,
   );
 }
