@@ -22,6 +22,7 @@ export default async function Page() {
     { data: highScoreSignals },
     { data: positions },
     { data: liveOrders },
+    { data: cryptoEvidence },
   ] = await Promise.all([
     supabase.from("agent_signals").select("*, research_packets(*)").eq("market", market).eq("status", "pending").order("created_at", { ascending: false }).limit(20),
     supabase.from("paper_trades").select("*").eq("market", market).order("executed_at", { ascending: false }).limit(30),
@@ -42,6 +43,17 @@ export default async function Page() {
       .in("status", ["pending_submit", "submitted", "partially_filled", "unknown_needs_reconcile", "filled", "error"])
       .order("created_at", { ascending: false })
       .limit(20),
+    // Crypto measure-only evidence (US only — no India crypto path). Fetches the
+    // last 90 rows (≈30 per coin × 3 coins) so the component can count distinct
+    // dates and show evidence-accumulation progress toward MIN_PREDICTIVE_DATES.
+    market === "india"
+      ? Promise.resolve({ data: [] as any[] })
+      : supabase
+          .from("instrument_family_observations")
+          .select("symbol, created_at, features")
+          .eq("instrument_family", "crypto")
+          .order("created_at", { ascending: false })
+          .limit(90),
   ]);
 
   return (
@@ -54,6 +66,7 @@ export default async function Page() {
       positions={positions ?? []}
       market={market}
       liveOrders={liveOrders ?? []}
+      cryptoEvidence={cryptoEvidence ?? []}
     />
   );
 }

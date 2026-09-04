@@ -650,11 +650,108 @@ function LiveOrdersSection({ liveOrders }: { liveOrders: BrokerOrder[] }) {
   );
 }
 
+// ── Crypto Watch Section (Stage 2 — measure only, US-only) ───────────────────
+// Shows BTC/ETH/SOL evidence accumulation. No paper pool, no trades. Just score
+// logging progress toward the MIN_PREDICTIVE_DATES=20 gate to Stage 3.
+
+const CRYPTO_COINS = ["BTC-USD", "ETH-USD", "SOL-USD"] as const;
+const MIN_PREDICTIVE_DATES = 20; // Stage 3 gate — see FEATURE_ARCHITECTURE.md
+
+type CryptoEvidenceRow = { symbol: string; created_at: string; features: Record<string, { value: number | null; asOf: string | null; source: string; status: string }> };
+
+function CryptoWatchSection({ rows }: { rows: CryptoEvidenceRow[] }) {
+  // Group by symbol: latest features + count distinct calendar dates
+  const bySymbol = Object.fromEntries(
+    CRYPTO_COINS.map(sym => {
+      const mine = rows.filter(r => r.symbol === sym).sort((a, b) => b.created_at.localeCompare(a.created_at));
+      const latest = mine[0];
+      const datesSet = new Set(mine.map(r => r.created_at.slice(0, 10)));
+      return [sym, { latest, dateCount: datesSet.size }];
+    }),
+  );
+
+  const totalDates = Math.max(...CRYPTO_COINS.map(s => bySymbol[s]?.dateCount ?? 0));
+  const pct = Math.min(100, Math.round((totalDates / MIN_PREDICTIVE_DATES) * 100));
+
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "clamp(16px,4vw,20px)", marginBottom: "20px" }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: "13px", fontWeight: 700, color: T.text }}>
+            🔬 Crypto Watch · Stage 2 — Measure Only
+          </div>
+          <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>
+            BTC · ETH · SOL · no paper trades · evidence accumulation toward Stage 3 gate
+          </div>
+        </div>
+        <div style={{ background: "#1a1020", border: `1px solid #7c3aed55`, borderRadius: "8px", padding: "6px 12px", fontSize: "11px", color: "#a78bfa", fontWeight: 600, whiteSpace: "nowrap" }}>
+          ⛔ Not trading
+        </div>
+      </div>
+
+      {/* Progress toward gate */}
+      <div style={{ marginBottom: "16px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: T.muted, marginBottom: "5px" }}>
+          <span>Evidence sessions recorded</span>
+          <span style={{ color: totalDates >= MIN_PREDICTIVE_DATES ? T.green : T.textSub, fontWeight: 600 }}>
+            {totalDates} / {MIN_PREDICTIVE_DATES} sessions {totalDates >= MIN_PREDICTIVE_DATES ? "✅" : ""}
+          </span>
+        </div>
+        <div style={{ background: T.surface, borderRadius: "4px", height: "6px", overflow: "hidden" }}>
+          <div style={{ width: `${pct}%`, height: "100%", background: totalDates >= MIN_PREDICTIVE_DATES ? T.green : T.accent, borderRadius: "4px", transition: "width 0.4s" }} />
+        </div>
+        <div style={{ fontSize: "10px", color: T.muted, marginTop: "4px" }}>
+          {totalDates >= MIN_PREDICTIVE_DATES
+            ? "Gate met — Stage 3 (paper pool + scoring) can be considered."
+            : `Need ${MIN_PREDICTIVE_DATES - totalDates} more daily research runs to qualify for Stage 3.`}
+        </div>
+      </div>
+
+      {/* Coin cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
+        {CRYPTO_COINS.map(sym => {
+          const { latest, dateCount } = bySymbol[sym] ?? { latest: undefined, dateCount: 0 };
+          const f = latest?.features ?? {};
+          const techScore = f.technical_score_v1?.value;
+          const realYield = f.real_yield_10y_change_20obs_pp?.value;
+          const dollar = f.broad_dollar_change_20obs_index_points?.value;
+          const coin = sym.replace("-USD", "");
+          return (
+            <div key={sym} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "14px 16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                <div style={{ fontSize: "13px", fontWeight: 700, color: T.text }}>{coin}</div>
+                <div style={{ fontSize: "10px", color: T.muted }}>{dateCount} session{dateCount !== 1 ? "s" : ""}</div>
+              </div>
+              {[
+                { label: "Tech score", value: techScore != null ? techScore.toFixed(1) : "—", color: techScore != null ? (techScore >= 60 ? T.green : techScore >= 40 ? T.amber : T.red) : T.muted },
+                { label: "Real yield Δ20obs (pp)", value: realYield != null ? (realYield >= 0 ? "+" : "") + realYield.toFixed(2) : "—", color: realYield != null ? (realYield < 0 ? T.green : T.red) : T.muted },
+                { label: "DXY Δ20obs", value: dollar != null ? (dollar >= 0 ? "+" : "") + dollar.toFixed(2) : "—", color: dollar != null ? (dollar < 0 ? T.green : T.red) : T.muted },
+              ].map(row => (
+                <div key={row.label} style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: "5px" }}>
+                  <span style={{ color: T.muted }}>{row.label}</span>
+                  <span style={{ color: row.color, fontWeight: 600, fontFamily: "monospace" }}>{row.value}</span>
+                </div>
+              ))}
+              {!latest && (
+                <div style={{ fontSize: "10px", color: T.muted, marginTop: "6px", fontStyle: "italic" }}>
+                  No evidence yet — run ResearchAgent to seed.
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function TradingPage({ pendingSignals, tradeLog, strategy, portfolio, queue, positions, market, liveOrders }: {
+export default function TradingPage({ pendingSignals, tradeLog, strategy, portfolio, queue, positions, market, liveOrders, cryptoEvidence }: {
   pendingSignals: any[]; tradeLog: any[]; strategy: any; portfolio: any; queue: any[]; positions: any[];
   liveOrders: BrokerOrder[];
+  cryptoEvidence: CryptoEvidenceRow[];
   // Resolved from the `mkt` cookie by the server component. Every row here is
   // already scoped to this market and every amount renders in its currency —
   // US ($) and India (₹) NAV are never blended.
@@ -838,6 +935,9 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
 
       {/* Live broker orders */}
       <LiveOrdersSection liveOrders={liveOrders} />
+
+      {/* Crypto Watch — US only, Stage 2 measure-only. No India crypto path. */}
+      {!isIndia && <CryptoWatchSection rows={cryptoEvidence} />}
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: "4px", marginBottom: "16px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>
