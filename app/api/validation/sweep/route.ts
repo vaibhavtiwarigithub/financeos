@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadValidationAutomationPolicy, runAutomatedValidation } from "@/lib/validation/automation";
+import { STRATEGY_STATE } from "@/lib/validation/strategy-states";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
         continue;
       }
       const { data, error } = await svc.from("strategy_versions")
-        .select("id").eq("market", market).eq("state", "challenger")
+        .select("id").eq("market", market).eq("state", STRATEGY_STATE.CHALLENGER)
         .is("validation_experiment_id", null).order("created_at", { ascending: true }).limit(5);
       if (error) {
         results[market].push({ error: error.message });

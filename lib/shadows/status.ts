@@ -5,6 +5,7 @@ import {
   type ShadowLifecycle,
   type ShadowProgramDefinition,
 } from "@/lib/shadows/registry";
+import { STRATEGY_STATE } from "@/lib/validation/strategy-states";
 import {
   bindingCoverage,
   coverageBlockers,
@@ -378,7 +379,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("strategy_validation_automation")
       .select("market,enabled,auto_shadow_enabled,max_active_shadows,updated_at").eq("market", market),
     svc.from("strategy_versions")
-      .select("id,market,state,created_at").eq("market", market).eq("state", "shadow_paper").limit(20),
+      .select("id,market,state,created_at").eq("market", market).eq("state", STRATEGY_STATE.SHADOW_PAPER).limit(20),
     svc.from("downside_hedge_config")
       .select("market,enabled,paper_execute_enabled,updated_at").eq("market", market).limit(10),
     svc.from("downside_hedge_events")

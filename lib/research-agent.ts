@@ -83,6 +83,7 @@ import { getBenchmarkSeries } from "@/lib/data/benchmark-series";
 import { captureReturnObservation } from "@/lib/data/return-observations";
 import { writeEvidence, type SourceName } from "@/lib/data/evidence";
 import { isReviewedAdr } from "@/lib/instruments/adrs";
+import { STRATEGY_STATE } from "@/lib/validation/strategy-states";
 import {
   annotateFundamentalFreshness,
   DEFAULT_FUNDAMENTAL_MAX_AGE_DAYS,
@@ -2450,7 +2451,7 @@ export async function processSymbol(
       try {
         const { data: shadowVersions } = await supabase
           .from("strategy_versions").select("id, weights_snapshot")
-          .eq("market", market).eq("state", "shadow_paper").limit(3);
+          .eq("market", market).eq("state", STRATEGY_STATE.SHADOW_PAPER).limit(3);
         for (const sv of (shadowVersions ?? []) as any[]) {
           const wsnap = sv.weights_snapshot ?? {};
           const cwShadow = (short: string, full: string) => {

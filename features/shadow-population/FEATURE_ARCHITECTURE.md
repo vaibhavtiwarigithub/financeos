@@ -1,10 +1,42 @@
 # Shadow-Population Strategy Search — Feature Architecture
 
-> Status: **DRAFT v2 — RESHAPE. Architecture only; not approved for implementation.**
+> Status: **DRAFT v2 — RESHAPE. P0 IN PROGRESS (Vaibhav approved P0 only, 2026-09-04).**
 > Original author: Claude (Sonnet 5), 2026-09-04.
 > Adversarial review: Codex (GPT-5), 2026-09-04.
-> No migration, capacity change, automatic eviction, ranking, scoring, sizing,
-> exit, order, or live-capital change is authorized by this document.
+> P0 implementation: Claude (Sonnet 5), 2026-09-04 — see `docs/arch/04-database-schema.md`'s
+> `strategy_versions` entry for the applied migration. P1/P2/P3 remain unauthorized: no capacity
+> change, automatic eviction, ranking, scoring, sizing, exit, order, or live-capital change.
+
+## 0a. P0 progress (2026-09-04, this session)
+
+Steps 1–2 of §3's P0 list are done and verified live in production; steps 3–5 are partial:
+
+1. ✅ `challenger` added to `strategy_versions_state_check` — migration
+   `20260904120000_shadow_population_p0_challenger_state.sql`, additive, applied.
+2. ✅ Partial unique index `strategy_versions_one_champion_per_market (market) where
+   is_champion = true` — same migration, applied. Production held exactly one champion per
+   market before the change (verified), so it applied with zero conflict.
+3. **Partial.** Structural proof done: a rolled-back production transaction confirmed a
+   `state='challenger'` row now persists and confirmed the new index correctly rejects a
+   synthetic duplicate champion. **Not yet done:** verifying the first *genuine, scheduled*
+   challenger reaches `shadow_paper` with recorded non-executing observations — that requires
+   either the Friday `kairos-validation-sweep` or a real LearnerAgent weight-mutation proposal to
+   actually fire against the repaired schema, and is a future event to check for, not something
+   forceable synchronously.
+4. **Done, structurally.** The learner's challenger-insert path already checked `insErr` and
+   returned an explicit `challenger_created: false` error before this change — that half of
+   "explicit failure states" predates P0. What P0 adds: `lib/validation/strategy-states.ts` as a
+   single shared TS source of truth for the `"challenger"`/`"shadow_paper"` literals, wired into
+   all 4 existing call sites (`app/api/agents/learner/route.ts`,
+   `app/api/validation/sweep/route.ts`, `lib/research-agent.ts`, `lib/shadows/status.ts`) — this
+   closes the actual defect class (independent literals that can silently drift from the DB
+   constraint and from each other) rather than only the one symptom already fixed in `2e5021ba`.
+5. ✅ Capacity left at `max_active_shadows = 1` for both markets — unchanged, per P0's own
+   instruction not to widen it yet.
+
+**What "P0 complete" still requires**: acceptance criterion #1 in §5 — a real scheduled run, not
+a synthetic proof. Check `validation_experiments` and `strategy_versions.state='shadow_paper'`
+counts again after the next Friday sweep or the next LearnerAgent run that proposes a mutation.
 
 ## 0. Decision
 

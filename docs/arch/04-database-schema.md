@@ -195,14 +195,27 @@ Champion/Challenger governance table.
 |---|---|---|
 | `id` | uuid PK | |
 | `market` | text | `us` \| `india` |
-| `is_champion` | bool | True for the one active champion per market |
+| `state` | text | Checked (migration `20260904120000_shadow_population_p0_challenger_state`): `draft, testing, rejected, paper_candidate, paper_active, paper_paused, eligible, approved_live, live_paused, retired, shadow_paper, measure_only, live_review_eligible, live_approved, challenger`. TS source of truth: `lib/validation/strategy-states.ts` (`STRATEGY_VERSION_STATES`/`STRATEGY_STATE`) — every call site imports from there rather than repeating the literal. |
+| `is_champion` | bool | True for the one active champion per market. `strategy_versions_one_champion_per_market` (same migration) is a `unique index ... where is_champion = true`, partitioned by `market` — the DB itself now refuses a second champion row per market on any write path, not only through the promotion RPC's advisory lock. |
 | `weights_snapshot` | jsonb | 5-dim weights: `{fundamental, technical, sentiment, macro, insider}` |
-| `genome` | jsonb | `{entry_threshold, exit_stop_pct, exit_target_pct, horizon_days, position_size_pct, sizing_mode}` |
+| `genome` | jsonb | `{entry_threshold, exit_stop_pct, exit_target_pct, horizon_days, position_size_pct, sizing_mode}`. **Not yet a live replay contract** — validation and ResearchAgent's shadow replay both read only `weights_snapshot` today; `genomeDiffCount()` (`lib/validation/genome.ts`) has no runtime consumer. Do not treat horizon/exit/sizing/universe genome fields as an executable coordinate-search space until that replay path exists. |
 | `proposed_by` | text | `learner` \| `user` |
 | `backtest_result` | jsonb | Sharpe, Sortino, win_rate, max_dd from Validation Engine |
 | `promoted_at` | timestamptz | Null until promoted |
 | `retired_at` | timestamptz | |
 | `created_at` | timestamptz | |
+
+**2026-09-04 — P0 shadow-population repair (`features/shadow-population/FEATURE_ARCHITECTURE.md`).**
+`state = 'challenger'` was never in this table's CHECK constraint even though LearnerAgent has
+always inserted it and the Friday validation sweep has always queried it — every challenger
+insert failed silently at the DB layer, so `validation_experiments` held 0 rows and no
+`shadow_paper` row had ever existed. Fixed by adding `'challenger'` to the constraint (additive,
+no existing state removed or any row rewritten) and adding the `is_champion` partial-unique index
+above. Verified live in production via a rolled-back transaction: a `state='challenger'` insert
+now persists, and a synthetic second `is_champion=true` row for the same market is correctly
+rejected. A genuine scheduled challenger reaching `shadow_paper` with recorded non-executing
+observations — this table's own P0 acceptance criterion — has not yet happened and is not
+claimed here.
 
 ### `strategy_validation_automation` (migration 170)
 Per-market, owner-controlled policy for **automatic** deterministic challenger validation + shadow routing. Fail-closed: a missing row / read error is treated as fully disabled. Owner-email SELECT RLS; writes only via the service client (Settings PATCH) — `authenticated` cannot write. Seeded `us`/`india` both enabled.

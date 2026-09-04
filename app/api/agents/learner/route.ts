@@ -5,6 +5,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { fetchQuote } from "@/lib/market-data";
 import { runAgentLoop, ToolCall } from "@/lib/llm-router";
 import { loadLabeledDataset } from "@/lib/learning/dataset";
+import { STRATEGY_STATE } from "@/lib/validation/strategy-states";
 import { loadPlanCalibration } from "@/lib/learning/plan-calibration";
 import { validateFeatureInputs } from "@/lib/validation/feature-compiler";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -537,7 +538,7 @@ export async function POST(req: NextRequest) {
               version:           nextVersion,
               name:              `Challenger — ${dimension} ${currentVal.toFixed(3)}→${clamped.toFixed(3)}`,
               description:       `LearnerAgent proposed weight change. Reason: ${reason}`,
-              state:             "challenger",
+              state:             STRATEGY_STATE.CHALLENGER,
               parent_version_id: (champion as any)?.id ?? null,
               is_champion:       false,
               weights_snapshot:  proposedWeights,
