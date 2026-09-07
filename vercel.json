@@ -4,6 +4,11 @@
   "framework": "nextjs",
   "installCommand": "npm install",
   "regions": ["iad1"],
+  "git": {
+    "deploymentEnabled": {
+      "worktree-agent-*": false
+    }
+  },
   "functions": {
     "api/py/*.py": {
       "memory": 1024,
