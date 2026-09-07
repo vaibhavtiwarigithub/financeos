@@ -3,6 +3,7 @@
   "outputDirectory": ".next",
   "framework": "nextjs",
   "installCommand": "npm install",
+  "ignoreCommand": "if [ \"$VERCEL_ENV\" = \"production\" ] || [ \"$VERCEL_GIT_COMMIT_REF\" = \"main\" ]; then exit 1; else exit 0; fi",
   "regions": ["iad1"],
   "functions": {
     "api/py/*.py": {
