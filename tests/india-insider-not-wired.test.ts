@@ -60,7 +60,10 @@ describe("India insider — structurally excluded from scoring", () => {
     // graph. The India branch of applicableDimensions() must return BEFORE the
     // US block that adds the insider dimension.
     const src = source();
-    const indiaBranch = src.slice(src.indexOf("const india = isIndia"), src.indexOf("if (entry.isEtf)"));
+    // Anchor on the branch itself, not on `const india = isIndia` — the crypto
+    // early-return sits between the two, so anchoring on the declaration slices
+    // in a block that belongs to a different asset class.
+    const indiaBranch = src.slice(src.indexOf("if (india) {"), src.indexOf("if (entry.isEtf)"));
     expect(indiaBranch).not.toContain('dims.add("insider")');
     // ...and it must actually return early rather than fall through.
     expect(indiaBranch).toMatch(/return dims;/);
@@ -68,11 +71,14 @@ describe("India insider — structurally excluded from scoring", () => {
 
   it("treats US-only macro as structurally inapplicable to India", () => {
     const src = source();
-    const branchStart = src.indexOf("const india = isIndia");
+    const branchStart = src.indexOf("if (india) {");
     const branchEnd = src.indexOf("return dims;", branchStart) + "return dims;".length;
     const indiaBranch = src.slice(branchStart, branchEnd);
     expect(indiaBranch).not.toContain('dims.add("macro")');
-    expect(src.indexOf('dims.add("macro")')).toBeGreaterThan(branchEnd);
+    // lastIndexOf, not indexOf: crypto is macro-applicable and returns before
+    // this branch, so the FIRST `dims.add("macro")` is the crypto one. The US
+    // block is the last, and it is what must sit after India's early return.
+    expect(src.lastIndexOf('dims.add("macro")')).toBeGreaterThan(branchEnd);
   });
 });
 
