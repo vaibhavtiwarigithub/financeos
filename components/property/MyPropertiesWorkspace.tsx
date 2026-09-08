@@ -90,7 +90,7 @@ type PropertyFieldProps = {
 // picker: the native picker belongs to the input node, and that node was
 // replaced the moment any state changed. Every field on the form had the same
 // defect; the date input is just where it is impossible to miss.
-function PropertyField({ name, label, placeholder, hint, numeric = false, type = "text", value, onChange }: PropertyFieldProps) {
+export function PropertyField({ name, label, placeholder, hint, numeric = false, type = "text", value, onChange }: PropertyFieldProps) {
   return (
     <FieldLabel label={label} hint={hint}>
       <input
