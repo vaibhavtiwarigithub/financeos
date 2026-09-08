@@ -217,3 +217,83 @@ export class HudFmrAdapter implements PropertySourceAdapter {
 }
 
 export const ACTIVE_PROPERTY_ADAPTERS: PropertySourceAdapter[] = [new FhfaHpiAdapter(), new FredMortgageAdapter(), new BlsLausAdapter(), new HudFmrAdapter()];
+
+const ZILLOW_ZHVI_ZIP_CSV = "https://files.zillowstatic.com/research/public_csvs/zhvi/Zip_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv";
+// ponytail: keep 13 trailing monthly columns (enough for a 12-month trend plus
+// "current"), not the full ~300-column history. Row growth stays bounded per
+// run; widen if a longer chart is ever requested.
+const ZILLOW_ZIP_MONTHS_KEPT = 13;
+const ZILLOW_METRO_MATCH: Record<Exclude<PropertyMarketId, "bengaluru">, RegExp> = {
+  austin: /Austin-Round Rock/i,
+  phoenix: /Phoenix-Mesa/i,
+};
+
+export type PropertyZipObservation = {
+  sourceKey: "zillow-zhvi-zip";
+  market: Exclude<PropertyMarketId, "bengaluru">;
+  zip: string;
+  metric: "zhvi_all_homes";
+  nativeUnit: "USD";
+  value: number;
+  asOf: string;
+  sourceVersion: string;
+};
+
+/**
+ * Zillow Research ZHVI at ZIP grain. Per Zillow's own ZHVI User Guide this is
+ * a smoothed, seasonally-adjusted weighted average of the MIDDLE THIRD of
+ * homes in a ZIP — a published area index, never this property's value, an
+ * AVM, or a Zestimate substitute. Kept in its own table/type at ZIP grain,
+ * deliberately separate from the metro-grain property_market_observations.
+ *
+ * ponytail: the national CSV covers every US ZIP (~120MB). This fetches it
+ * once per collection run (via the shared per-invocation fetchText cache, so
+ * Austin and Phoenix share one download) and keeps only rows whose Metro
+ * column matches a tracked market. Upgrade to a streaming line-filter if this
+ * ever times out or exceeds function memory in production.
+ */
+export class ZillowZhviZipAdapter {
+  readonly sourceKey = "zillow-zhvi-zip" as const;
+  supportsMarket(market: PropertyMarketId): market is Exclude<PropertyMarketId, "bengaluru"> {
+    return market === "austin" || market === "phoenix";
+  }
+  async fetch(input: {
+    market: Exclude<PropertyMarketId, "bengaluru">;
+    fetchText: (url: string, init?: RequestInit) => Promise<{ body: string; lastModified: string | null }>;
+  }): Promise<PropertyZipObservation[]> {
+    if (!this.supportsMarket(input.market)) return [];
+    let body: string; let lastModified: string | null;
+    try {
+      ({ body, lastModified } = await input.fetchText(ZILLOW_ZHVI_ZIP_CSV, { signal: AbortSignal.timeout(50_000) }));
+    } catch {
+      throw new PropertySourceUnavailableError("zillow_zhvi_transport_unavailable", "Zillow ZHVI ZIP data is temporarily unavailable");
+    }
+    const rows = parseSimpleCsv(body);
+    if (rows.length < 2) throw new PropertySourceUnavailableError("zillow_zhvi_invalid_response", "Zillow ZHVI ZIP file returned no data");
+    const header = rows[0];
+    const zipCol = header.indexOf("RegionName");
+    const metroCol = header.indexOf("Metro");
+    if (zipCol < 0 || metroCol < 0) throw new PropertySourceUnavailableError("zillow_zhvi_invalid_response", "Zillow ZHVI ZIP file is missing required columns");
+    const dateColumns = header
+      .map((name, index) => ({ name, index }))
+      .filter(({ name }) => /^\d{4}-\d{2}-\d{2}$/.test(name))
+      .slice(-ZILLOW_ZIP_MONTHS_KEPT);
+    if (!dateColumns.length) throw new PropertySourceUnavailableError("zillow_zhvi_invalid_response", "Zillow ZHVI ZIP file has no monthly columns");
+    const matcher = ZILLOW_METRO_MATCH[input.market];
+    const sourceVersion = lastModified ?? `zhvi:${dateColumns[dateColumns.length - 1].name}`;
+    const results: PropertyZipObservation[] = [];
+    for (const row of rows.slice(1)) {
+      if (!matcher.test(row[metroCol] ?? "")) continue;
+      const zip = (row[zipCol] ?? "").trim();
+      if (!/^\d{5}$/.test(zip)) continue;
+      for (const { name, index } of dateColumns) {
+        const value = Number(row[index]);
+        if (!Number.isFinite(value) || value <= 0) continue;
+        results.push({ sourceKey: this.sourceKey, market: input.market, zip, metric: "zhvi_all_homes", nativeUnit: "USD", value, asOf: name, sourceVersion });
+      }
+    }
+    return results;
+  }
+}
+
+export const ZIP_PROPERTY_ADAPTERS = [new ZillowZhviZipAdapter()];
