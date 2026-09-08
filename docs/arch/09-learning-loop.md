@@ -1,4 +1,49 @@
 # Kairos — Learning Loop
+> 2026-09-08: **Score-return IC drift detector shipped (Stage A, detection only).**
+> Owner asked how to know which shipped feature made the score/return
+> correlation better or worse. `lib/learning/code-version-ic.ts` groups
+> `decision_observations` x `observation_labels` by `code_version` and calls
+> the EXISTING `buildDimensionFindings()` once per group — no second
+> correlation implementation, so it cannot drift from what the Dimension Rank
+> IC panel or the learner report on the same rows. `benchmark_neutral_return`
+> falls back to `fwd_return` per row (production has real fwd_return-only
+> rows: US h10 11/2633, India h5 64/934, h10 53/786, h20 91/515 — measured
+> 2026-09-08).
+>
+> **This is DETECTION, not causal attribution — and never claims otherwise.**
+> Every surface (alert text, UI copy) states a dimension's IC "changed AFTER"
+> a code_version shipped, never that the version "caused" it: deploys ship
+> weeks apart and the market regime moves between them, so a before/after
+> split on code_version is confounded by construction. A real causal claim
+> needs a paired replay (Stage B, not built here).
+>
+> `lib/learning/ic-regression-alert.ts::detectRegressions` flags the latest
+> code_version only when it has >=5 prior `measured_descriptive` versions to
+> compare against AND its mean IC sits more than 2 (warn) / 3 (critical)
+> **historical standard deviations** of those prior versions below their
+> mean — the threshold is derived from each dimension's own observed
+> variance, never a picked absolute IC constant. Fires via the existing
+> `lib/system-health.ts` `reportIssue`/`reconcileIssues` into `agent_alerts`
+> (no migration needed).
+>
+> `applyMultipleComparisonsControl` (Benjamini-Hochberg) runs only over cells
+> that already cleared their own n/CI floor; up to ~50 code_versions x 6
+> dimensions is ~300 comparisons, and uncontrolled that would manufacture
+> roughly 15 "significant" cells by chance alone — the same trap that parked
+> "Systematic Pattern Discovery" (WORK_LOG.md 2026-09-05). ~33-37% of
+> `decision_observations` carry no `code_version` (US 2355/6298, India
+> 599/1788, measured 2026-09-08); those rows are bucketed under
+> `UNKNOWN_CODE_VERSION` and never anchor a regression boundary.
+>
+> `app/api/agents/ic-regression-ledger/route.ts` (GET read-only, POST
+> cron/owner-triggered reconcile) and `components/dashboard/IcRegressionPanel.tsx`
+> (mounted on `/dashboard/learning`, below Dimension Rank IC) are new. No new
+> table: the ledger computes on read from existing evidence. The POST route
+> was NOT wired into an actual external cron trigger — this repo's dispatch
+> mechanism for `dimension-diagnostics`'s identical contract was not located
+> in `vercel.json` or `.github/workflows/` during this change; see
+> `features/score-correlation-drift/FEATURE_ARCHITECTURE.md`.
+>
 > 2026-09-01: **`walkForwardFolds` purged in CALENDAR days while claiming market-horizon purge — labels leaked.** `lib/learning/dataset.ts` computed `purgeCutoffMs = testStart - horizonDays * 86400_000`. The horizon is a MARKET-session count (h2/h5/h10/h20/h60/h120), so a nominal 10-day purge spanned only ~6-7 trading sessions and training rows whose label windows still reached into the test window survived it. Every walk-forward result computed with it was optimistically biased.
 >
 > Now indexed by SESSION, using the observed trading calendar derived from the distinct decision dates in the data — holidays handled without a separate calendar source. Legacy `testDays`/`horizonDays`/`embargoDays` option names are kept as aliases because they always MEANT sessions; only the arithmetic was wrong. Callers updated to the explicit `*Sessions` names.

@@ -16,7 +16,10 @@ function rank(values: number[]): number[] {
 }
 
 // Standard normal CDF via the Abramowitz-Stegun erf approximation.
-function normalCdf(z: number): number {
+// Exported for other significance transforms (e.g. converting a t-stat built
+// from an already-computed mean/SD/nEff into a two-sided p-value) that want
+// the same approximation rather than a second one.
+export function normalCdf(z: number): number {
   const t = 1 / (1 + 0.3275911 * Math.abs(z));
   const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z);
   const erf = z >= 0 ? y : -y;
