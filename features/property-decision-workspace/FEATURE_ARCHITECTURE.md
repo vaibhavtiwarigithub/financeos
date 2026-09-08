@@ -21,6 +21,21 @@ charts use 1M/6M/YTD/1Y/5Y/10Y/20Y/All. See
 Initial market packs: Austin Central Texas, Phoenix Metro Arizona, and Bengaluru
 Karnataka. They are independent markets, never a blended property universe.
 
+Update (2026-09-08): Amortization & Refi (Stage 1) adds a pure-math page that
+rebuilds a loan's full amortization schedule (`lib/property/amortization.ts`,
+wrapping the existing `buildAmortizationSchedule`/`evaluateRefinance` in
+`lib/property/scenarios.ts` rather than a second implementation) from
+owner-entered original principal, rate, term, and start date, splits it at
+today into paid-to-date and remaining, and compares the current rate against
+today's FRED 30-yr average for a refinance breakeven. "Today's rate" reads the
+`mortgage_rate` observation the existing `GET /api/property/overview` already
+returns — no second FRED client, no new API route, and no `property_scenarios`
+row is written; everything computes client-side and nothing is persisted.
+Closing costs are a required, editable input defaulted to 2% of the current
+balance, never a hidden constant. US-only, matching `FredMortgageAdapter`
+coverage: Bengaluru gets the amortization split but not the refinance
+comparison, with an explicit reason shown rather than a blank section.
+
 ## Product Boundary
 
 Kairos Property is a top-level workspace for personal property, market, and
@@ -58,6 +73,7 @@ Property navigation:
 | My Properties | Owner-entered homes, land, and rentals. |
 | Opportunities | Buy, sell, rent, and land scenarios. |
 | Financing | Mortgage, refinance, HELOC, and loan-against-property scenarios. |
+| Amortization & Refi | Full amortization schedule split into paid-to-date and remaining; refinance breakeven vs. today's FRED 30-yr rate. |
 | Forecasts and Learning | Forecasts, actuals, calibration, and confidence. |
 | Data Sources | Source definitions, freshness, coverage, licenses, and health. |
 

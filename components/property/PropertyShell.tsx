@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, Database, LayoutDashboard, Map, ArrowLeftRight, Home, Search, Landmark, ChartNoAxesCombined, Scale, Menu, X, FileText } from "lucide-react";
+import { Building2, Database, LayoutDashboard, Map, ArrowLeftRight, Home, Search, Landmark, ChartNoAxesCombined, Scale, Menu, X, FileText, CalendarClock } from "lucide-react";
 import { PROPERTY_MARKETS } from "@/lib/property/registry";
 import { usePropertyMarket } from "@/lib/property/market-context";
 
@@ -20,6 +20,7 @@ const nav = [
   { href: "/property/imports", label: "Tax & Insurance Evidence", icon: FileText },
   { href: "/property/opportunities", label: "Opportunities", icon: Search },
   { href: "/property/financing", label: "Financing", icon: Landmark },
+  { href: "/property/amortization", label: "Amortization & Refi", icon: CalendarClock },
   { href: "/property/forecasts", label: "Forecasts & Learning", icon: ChartNoAxesCombined },
   { href: "/property/sources", label: "Data Sources", icon: Database },
 ];
