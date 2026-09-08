@@ -63,6 +63,8 @@ ResearchAgent. That feedback arrow is the whole point.
 | RAG trade memory | Semantic recall of past setups at scoring time |
 | Performance Truth | Mandate-aware Sharpe/Sortino/alpha/drawdown evaluation ledger |
 | Coaching & briefings | MentorAgent coaching notes + daily email briefings (email-only; no dashboard card) |
+| Property workspace | Owner-recorded property ledger + equity/carrying cost, plus weekly keyless official-source market context (FHFA HPI, FRED, BLS LAUS, HUD FMR). Not an AVM |
+| Capital workspace | Capital allocation profile and decision runs; CapitalRotation shadow evaluates blocked candidates on the investing side |
 | System Health | Funnel of open issues → dashboard card + brief section |
 | Multi-LLM routing | Claude / DeepSeek / Groq / Gemini; per-agent assignments; paper P&L per model |
 | India parity | Full NSE scoring, ₹ paper pool, Kite execution, NSE insider+options feeds |
@@ -124,9 +126,15 @@ Step by step:
 
 ---
 
-## 7. Dashboard navigation map
+## 7. Navigation map
 
-All pages under `app/dashboard/`. All require auth (Supabase middleware).
+Kairos is THREE workspaces, each with its own layout and left navigation:
+Investing (`app/dashboard/`, `DashboardShell`), Property (`app/property/`,
+`PropertyShell`), and Capital (`app/capital-plan/`, `CapitalShell`). All three
+require auth (Supabase middleware) and are reachable from each other through the
+workspace switcher in every shell.
+
+### 7.1 Investing — `app/dashboard/`
 
 | Path | Page name | What's on it |
 |---|---|---|
@@ -147,3 +155,32 @@ All pages under `app/dashboard/`. All require auth (Supabase middleware).
 | `/dashboard/settings` | Settings | Account preferences and access, trading controls, AI/provider keys, automation, data routing/capacity, and system maintenance |
 | `/dashboard/admin` | Legacy redirect | Redirects to Settings → System so old links continue to work |
 | `/dashboard/admin/vault` | API Vault | Runtime API key management, linked from Settings → System |
+
+### 7.2 Property — `app/property/`
+
+Separate workspace with its own 236px sidebar (`components/property/PropertyShell.tsx`).
+Owner-recorded ledger plus keyless official-source market context — it is deliberately
+NOT an automated per-address valuation.
+
+| Path | Page name | What's on it |
+|---|---|---|
+| `/property` | Overview | Portfolio-level property summary |
+| `/property/my-properties` | My properties | Owner-recorded property ledger, equity, carrying cost, append-only history snapshots |
+| `/property/valuation` | Valuation | Stage-one valuation workspace and evidence scopes |
+| `/property/markets` | Markets | County/market observations from the collected official sources |
+| `/property/forecasts` | Forecasts | Shadow forecasts + calibration (`property_forecasts`) |
+| `/property/financing` | Financing | Financing accounts and terms |
+| `/property/opportunities` | Opportunities | Candidate screening surface |
+| `/property/imports` | Evidence imports | Owner evidence import + bulk snapshots |
+| `/property/sources` | Sources | Source-run health for the collection adapters |
+
+### 7.3 Capital — `app/capital-plan/`
+
+| Path | Page name | What's on it |
+|---|---|---|
+| `/capital-plan` | Capital plan | Capital allocation profile and decision runs (`capital_profiles`, `capital_decision_runs`) |
+
+Capital currently has NO sidebar — `CapitalShell` is a header with the workspace
+switcher only, because the workspace is a single page. If Capital gains more pages
+it should adopt the `PropertyShell` sidebar pattern rather than growing a second
+navigation idiom.
