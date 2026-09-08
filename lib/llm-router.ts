@@ -955,12 +955,21 @@ async function runDeepSeekAgentLoop(
   let totalIn = 0, totalOut = 0, steps = 0
   const callLog: AgentLoopResult["toolCalls"] = []
 
+  // Same budget rule as callLLM's pre-call floor, applied here because the tool
+  // loop does NOT go through callLLM and so never inherited it. A reasoning
+  // model emits chain-of-thought before any answer or tool call, so 2048 can be
+  // spent entirely on reasoning — the turn comes back with finish_reason=length,
+  // no tool_calls and empty content, which this loop treats as a clean "model is
+  // done" and returns "". The caller then sees an empty result, not an error.
+  // Non-thinking models keep the original 2048: they answer directly.
+  const maxTokens = isReasoningModel(model) ? REASONING_MIN_TOKENS : 2048
+
   for (let i = 0; i < maxIter; i++) {
     const resp = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model, messages, tools: openAITools, tool_choice: "auto", max_tokens: 2048,
+        model, messages, tools: openAITools, tool_choice: "auto", max_tokens: maxTokens,
         ...deepSeekThinkingConfig(model),
       }),
       signal: AbortSignal.timeout(AGENT_LOOP_TIMEOUT_MS),

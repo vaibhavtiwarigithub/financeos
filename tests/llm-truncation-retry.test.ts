@@ -196,3 +196,39 @@ describe("routes that call a reasoning model allow time to collect the answer", 
     expect(Number(match![1])).toBeGreaterThanOrEqual(120);
   });
 });
+
+// The tool loop bypasses callLLM, so it never inherited callLLM's pre-call
+// budget floor. runDeepSeekAgentLoop hardcoded max_tokens 2048 for EVERY model,
+// thinking config included — so a reasoning model could spend the whole budget
+// on chain-of-thought and return a turn with finish_reason=length, no
+// tool_calls and empty content. The loop reads "no tool_calls" as "the model is
+// finished" and returns "", so the failure surfaces as an empty result rather
+// than an error. mentor, learner and trader all run tool loops on the
+// reasoning tier through this one line.
+describe("the DeepSeek tool loop budgets reasoning models like callLLM does", () => {
+  const loopStart = router.indexOf("async function runDeepSeekAgentLoop(");
+  const loopEnd = router.indexOf("// ── End tool-use loop", loopStart);
+  // A missing anchor makes indexOf return -1, and slice(start, -1) silently
+  // widens to the rest of the file — the assertions below would then pass
+  // without ever reading this function. Fail loudly instead.
+  it("brackets the function it claims to test", () => {
+    expect(loopStart).toBeGreaterThan(-1);
+    expect(loopEnd).toBeGreaterThan(loopStart);
+  });
+  const loop = router.slice(loopStart, loopEnd);
+
+  it("no longer sends a flat 2048 to every model", () => {
+    expect(loop).not.toContain("max_tokens: 2048");
+  });
+
+  it("derives the budget from whether the model reasons", () => {
+    expect(loop).toContain("isReasoningModel(model) ? REASONING_MIN_TOKENS : 2048");
+    expect(loop).toContain("max_tokens: maxTokens");
+  });
+
+  it("reuses the same floor constant as the single-shot path", () => {
+    // Not a second hardcoded number that can drift from the callLLM floor.
+    expect(router).toContain("export const REASONING_MIN_TOKENS = 16000");
+    expect(loop).not.toMatch(/max_tokens:\s*\d/);
+  });
+});
