@@ -297,3 +297,15 @@ callers never know which concrete provider runs.
 > the returned ZIP/county resolution state. Census geography is not a parcel
 > match, valuation, tax lookup, or insurance quote. Bengaluru address/locality
 > remains encrypted owner input with no automated resolver.
+
+> 2026-09-08: **Property address verification (USPS).** A second, separate
+> provider answers "is this address real": the official USPS Addresses API v3
+> (`lib/property/address-verify.ts`), OAuth2 client-credentials via
+> `USPS_CONSUMER_KEY`/`USPS_CONSUMER_SECRET`, free developer account at
+> developers.usps.com. Keyless until configured: with no credential the adapter
+> makes no network call and returns `not_configured` — never a pass and never a
+> false failure. A USPS 200 without a standardized street and ZIP is treated as
+> `not_found` (fail closed). US only; Bengaluru returns `no_validator` because no
+> free Indian address validator has been vetted. An unverified address is flagged
+> on the record, never blocked from saving. Persistent outages open the single
+> System Health key `property-address-verify:usps`.

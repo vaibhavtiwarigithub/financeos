@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { decryptPropertyPayload, encryptPropertyPayload, propertyEncryptionReady } from "@/lib/property/crypto";
 import { PROPERTY_MARKETS } from "@/lib/property/registry";
 import { geocodeUsPropertyAddress, type PropertyAddress } from "@/lib/property/geocode";
+import { verifyPropertyAddress, type AddressVerification } from "@/lib/property/address-verify";
 
 export const dynamic = "force-dynamic";
 const TYPES = new Set(["home", "rental", "land"]);
@@ -72,11 +73,19 @@ function historySnapshot(market: string, details: ReturnType<typeof sanitizedDet
   };
 }
 
+// The verification result is persisted WITH the record (and its checkedAt
+// timestamp) so a stale or failed check stays visible instead of silently
+// looking like a pass.
+type PropertyDetailsPayload = ReturnType<typeof sanitizedDetails> & {
+  geocode?: Awaited<ReturnType<typeof geocodeUsPropertyAddress>>;
+  addressVerification?: AddressVerification;
+};
+
 type AssetMutation = {
   label: string;
   market: string;
   assetType: string;
-  details: ReturnType<typeof sanitizedDetails> & { geocode?: Awaited<ReturnType<typeof geocodeUsPropertyAddress>> };
+  details: PropertyDetailsPayload;
   asOf?: string;
 };
 
@@ -86,7 +95,7 @@ async function prepareAssetMutation(body: Record<string, any>): Promise<AssetMut
     throw new RangeError("Invalid property asset");
   }
   if (body.details.status !== "Owned" && body.details.status !== "Watching") throw new RangeError("Invalid property status");
-  const details: ReturnType<typeof sanitizedDetails> & { geocode?: Awaited<ReturnType<typeof geocodeUsPropertyAddress>> } = sanitizedDetails(body.details);
+  const details: PropertyDetailsPayload = sanitizedDetails(body.details);
   if (details.remainingTermMonths != null && (!Number.isInteger(details.remainingTermMonths) || details.remainingTermMonths < 1)) {
     throw new RangeError("Remaining term must be a positive whole number of months");
   }
@@ -97,6 +106,12 @@ async function prepareAssetMutation(body: Record<string, any>): Promise<AssetMut
   }
   if (address.addressLine && address.city && address.region && address.postalCode && body.market !== "bengaluru") {
     details.geocode = await geocodeUsPropertyAddress(address as PropertyAddress);
+  }
+  // Fail closed: an address that cannot be confirmed real is FLAGGED, never
+  // rejected — the owner may know a property USPS does not. Absent a USPS
+  // credential this records "not_configured", not a pass and not a failure.
+  if (address.addressLine) {
+    details.addressVerification = await verifyPropertyAddress(address, body.market);
   }
   return { label, market: body.market, assetType: body.assetType, details, asOf: historyAsOf(body.asOf) };
 }

@@ -1,5 +1,5 @@
 # Kairos — Environment Variables
-> Last updated: 2026-07-10
+> Last updated: 2026-09-08
 > Update this file when: a new env var is added, an existing var is removed, a var moves to/from the vault, or default values change.
 
 All secrets live in `.env.local` (gitignored) + Vercel environment variables for production.
@@ -65,7 +65,24 @@ SMTP_HOST=
 SMTP_PORT=
 SMTP_USER=
 SMTP_PASS=
+
+# USPS Address Standardization — property address verification (US only)
+# Free developer account: https://developers.usps.com (create an app, enable the
+# Addresses API). Both values are required; either one alone counts as absent.
+USPS_CONSUMER_KEY=
+USPS_CONSUMER_SECRET=
 ```
+
+### USPS address verification behaviour without the credential
+
+`lib/property/address-verify.ts` is **inert and honest** when `USPS_CONSUMER_KEY`
+or `USPS_CONSUMER_SECRET` is missing: it makes no network call and returns
+`not_configured` with the exact enable steps. The property UI shows
+"Address verification is not configured" — never a green check and never a false
+failure. An address that cannot be verified is flagged, never blocked from being
+saved. India (`bengaluru`) is outside USPS coverage and returns `no_validator`;
+no Indian address validator is wired. Persistent USPS outages open a single
+System Health alert under `property-address-verify:usps`.
 
 ---
 
