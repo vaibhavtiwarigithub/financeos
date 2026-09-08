@@ -752,11 +752,11 @@ MENTOR PROGRESS: ${mentorLine}
   // The rich data (market table, portfolio cards, signals, movers) is rendered
   // deterministically as HTML blocks below. The LLM writes ONLY a short editor's
   // note — the human voice/takeaway — so we never regurgitate numbers as prose.
-  // Structured 4-section format so the dashboard BriefingSection renders real
-  // section cards (Today's Focus / Portfolio Status / Risk Watch / One Thing)
-  // instead of one bare paragraph. Grounded HARD in the real-data block above —
-  // the LLM composes/prioritizes prose, it does NOT invent numbers or events.
-  // Section headers MUST be exactly `**N. NAME**` (BriefingSection parses that).
+  // Structured 4-section format (Today's Focus / Portfolio Status / Risk Watch /
+  // One Thing) so the emailed briefing reads as sections, not one bare paragraph.
+  // Grounded HARD in the real-data block above — the LLM composes/prioritizes
+  // prose, it does NOT invent numbers or events. The dashboard card that used to
+  // parse `**N. NAME**` headers was removed 2026-09-08; email is the only consumer.
   const morningPrompt = `You are the editor of a personal markets briefing. Below is today's real data.
 
 ${contextBlock}

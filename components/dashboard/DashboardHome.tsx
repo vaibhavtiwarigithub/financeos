@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
 import WatchlistPanel from "@/components/dashboard/WatchlistPanel";
-import BriefingSection from "@/components/dashboard/BriefingSection";
 import GoalCard from "@/components/dashboard/GoalCard";
 import AgentCalendar from "@/components/dashboard/AgentCalendar";
 import SystemHealthCard from "@/components/dashboard/SystemHealthCard";
@@ -132,7 +131,7 @@ function nextFridayLabel(): string {
   return next.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + " 5:00 PM ET";
 }
 
-export default function DashboardHome({ profile, paperPortfolio, positions, recentTrades, recentRuns, recentSignals, pendingSignals, recentLog, liveSnap, latestBriefing, mkt = "us", tradingMandate, livePolicy }: {
+export default function DashboardHome({ profile, paperPortfolio, positions, recentTrades, recentRuns, recentSignals, pendingSignals, recentLog, liveSnap, mkt = "us", tradingMandate, livePolicy }: {
   profile: any;
   paperPortfolio: any;
   positions: any[];
@@ -142,7 +141,6 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
   pendingSignals: any[];
   recentLog: any[];
   liveSnap: any | null;
-  latestBriefing: any | null;
   mkt?: "us" | "india";
   tradingMandate: TradingMandate;
   livePolicy: { trading_enabled?: boolean; robinhood_mcp_enabled?: boolean; autonomy_level?: string; active_account_us?: string | null } | null;
@@ -237,13 +235,6 @@ export default function DashboardHome({ profile, paperPortfolio, positions, rece
 
   return (
     <div style={{ padding: "clamp(12px, 4vw, 28px)", color: T.text, fontFamily: "'Inter', sans-serif" }}>
-
-      {/* Daily Briefing — moved to the TOP: it's the "start your day" summary and
-          was previously buried below the 30-day agent calendar, System Health, the
-          NAV hero and the goal tracker, so it was easy to miss entirely. */}
-      <div style={{ marginBottom: "16px" }}>
-        <BriefingSection initialBriefing={latestBriefing} />
-      </div>
 
       <AgentCalendar />
 

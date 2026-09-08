@@ -1,5 +1,5 @@
 # Kairos — What Is This?
-> Last updated: 2026-07-10
+> Last updated: 2026-09-08
 > Update this file when: product direction changes, new feature areas are added, core principles change, or the top-level pitch changes.
 
 ---
@@ -62,7 +62,7 @@ ResearchAgent. That feedback arrow is the whole point.
 | Evolution loop | Turns closed outcomes into challengers, validates and shadows them automatically; owner-approved activation is the separate protected switch to Champion |
 | RAG trade memory | Semantic recall of past setups at scoring time |
 | Performance Truth | Mandate-aware Sharpe/Sortino/alpha/drawdown evaluation ledger |
-| Coaching & briefings | MentorAgent coaching notes + daily email briefings |
+| Coaching & briefings | MentorAgent coaching notes + daily email briefings (email-only; no dashboard card) |
 | System Health | Funnel of open issues → dashboard card + brief section |
 | Multi-LLM routing | Claude / DeepSeek / Groq / Gemini; per-agent assignments; paper P&L per model |
 | India parity | Full NSE scoring, ₹ paper pool, Kite execution, NSE insider+options feeds |
@@ -141,7 +141,7 @@ All pages under `app/dashboard/`. All require auth (Supabase middleware).
 | `/dashboard/live-portfolio` | Live Portfolio | All Robinhood account positions, CSV import, trade enrichment, performance chart |
 | `/dashboard/journal` | Decision Journal | Trade decision log, signal→fill→outcome linking |
 | `/dashboard/mentor` | Mentor | MentorAgent coaching insights |
-| `/dashboard/briefing` | Briefing | Latest briefing, send history |
+| `/dashboard/briefing` | Legacy redirect | Redirects to `/dashboard`. Briefings are email-only since 2026-09-08 — the dashboard card was removed |
 | `/dashboard/backtest` | Backtest | Validation Engine replay, results |
 | `/dashboard/scanner` | Scanner | US + India universe scan, NIFTY-100 live fallback |
 | `/dashboard/settings` | Settings | Account preferences and access, trading controls, AI/provider keys, automation, data routing/capacity, and system maintenance |
