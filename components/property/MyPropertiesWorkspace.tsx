@@ -8,6 +8,7 @@ import { PROPERTY_MARKETS, type PropertyMarketId } from "@/lib/property/registry
 import { usePropertyMarket } from "@/lib/property/market-context";
 import { calculateOwnershipCost } from "@/lib/property/ownership-cost";
 import ValueIntelligencePanel from "./ValueIntelligencePanel";
+import { ADDRESS_VERIFICATION_LABEL, type AddressVerification } from "@/lib/property/address-verify";
 
 type PropertyDetails = {
   status?: "Owned" | "Watching";
@@ -22,6 +23,7 @@ type PropertyDetails = {
   monthlyOther?: number;
   address?: { addressLine?: string; city?: string; region?: string; postalCode?: string };
   geocode?: { state?: "resolved" | "no_match" | "ambiguous" | "unavailable"; postalCode?: string };
+  addressVerification?: AddressVerification;
 };
 
 type PropertyRecord = {
@@ -45,6 +47,18 @@ const marketLabel = (market: PropertyMarketId) => PROPERTY_MARKETS.find((entry) 
 const today = () => new Date().toISOString().slice(0, 10);
 const numeric = (value: unknown) => { const result = Number(value); return Number.isFinite(result) && result >= 0 ? result : 0; };
 const stringValue = (value: unknown) => value == null ? "" : String(value);
+
+// Only a USPS match is green. Everything else is amber, because "we did not
+// check" and "we checked and failed" must never look like a pass.
+const verificationTone = (state: AddressVerification["state"] | undefined) => state === "verified" ? PT.accent : state ? PT.amber : PT.muted;
+const VERIFICATION_STALE_DAYS = 180;
+function verificationAge(verification: AddressVerification | undefined): string {
+  if (!verification?.checkedAt) return "";
+  const days = Math.floor((Date.now() - new Date(verification.checkedAt).getTime()) / 86_400_000);
+  if (!Number.isFinite(days) || days < 0) return "";
+  const checkedOn = verification.checkedAt.slice(0, 10);
+  return days >= VERIFICATION_STALE_DAYS ? `Checked ${checkedOn} (${days} days ago — stale, re-check).` : `Checked ${checkedOn}.`;
+}
 
 function carryingCost(details: PropertyDetails): number | null {
   const hasRecordedCostInput = [details.loan, details.annualPropertyTax, details.annualInsurance, details.annualMaintenance, details.monthlyHoa, details.monthlyOther].some((value) => value != null);
@@ -109,6 +123,8 @@ export function PropertyField({ name, label, placeholder, hint, numeric = false,
   );
 }
 
+const ADDRESS_KEYS = new Set(["address", "city", "region", "postal"]);
+
 export default function MyPropertiesWorkspace() {
   const { market, setMarket } = usePropertyMarket();
   const [items, setItems] = useState<PropertyRecord[]>([]);
@@ -121,8 +137,16 @@ export default function MyPropertiesWorkspace() {
   const [fields, setFields] = useState<Record<string, string>>({ asOf: today() });
   const [encryptionReady, setEncryptionReady] = useState<boolean | null>(null);
   const [message, setMessage] = useState("");
+  // Verification of the address currently typed in the form. Seeded from the
+  // saved record when editing, and dropped the moment any address field changes
+  // so a result never describes an address other than the one on screen.
+  const [addressCheck, setAddressCheck] = useState<AddressVerification | null>(null);
+  const [checkingAddress, setCheckingAddress] = useState(false);
   const field = (key: string) => fields[key] ?? "";
-  const change = (key: string, value: string) => setFields((current) => ({ ...current, [key]: value }));
+  const change = (key: string, value: string) => {
+    if (ADDRESS_KEYS.has(key)) setAddressCheck(null);
+    setFields((current) => ({ ...current, [key]: value }));
+  };
 
   const loadRecords = useCallback(async () => {
     const response = await fetch("/api/property/assets", { cache: "no-store" });
@@ -163,6 +187,7 @@ export default function MyPropertiesWorkspace() {
     setUse("Home");
     setStatus("Owned");
     setFields({ asOf: today() });
+    setAddressCheck(null);
     setMessage("");
   }
 
@@ -180,6 +205,7 @@ export default function MyPropertiesWorkspace() {
       insurance: stringValue(details.annualInsurance), maintenance: stringValue(details.annualMaintenance), hoa: stringValue(details.monthlyHoa), other: stringValue(details.monthlyOther),
       address: details.address?.addressLine ?? "", city: details.address?.city ?? "", region: details.address?.region ?? "", postal: details.address?.postalCode ?? "",
     });
+    setAddressCheck(details.addressVerification ?? null);
     setMessage("");
   }
 
@@ -191,6 +217,30 @@ export default function MyPropertiesWorkspace() {
       annualMaintenance: field("maintenance") || undefined, monthlyHoa: field("hoa") || undefined, monthlyOther: field("other") || undefined,
       address: { addressLine: field("address"), city: field("city"), region: field("region"), postalCode: field("postal") },
     };
+  }
+
+  // Pre-save check. Saving re-verifies server-side regardless, so this is a
+  // preview, not a gate — an unverified address still saves.
+  async function checkAddress() {
+    setCheckingAddress(true);
+    setAddressCheck(null);
+    try {
+      const response = await fetch("/api/property/address-verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ market, addressLine: field("address"), city: field("city"), region: field("region"), postalCode: field("postal") }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.verification) {
+        setMessage(payload.error ?? "The address check could not run. Next: retry, or save anyway — the property is saved with an unverified address.");
+        return;
+      }
+      setAddressCheck(payload.verification as AddressVerification);
+    } catch {
+      setMessage("The address check could not reach the server. Next: retry, or save anyway — the property is saved with an unverified address.");
+    } finally {
+      setCheckingAddress(false);
+    }
   }
 
   async function saveProperty() {
@@ -244,6 +294,16 @@ export default function MyPropertiesWorkspace() {
           <PropertyField name="address" label={market === "bengaluru" ? "Exact address or locality" : "Exact property address"} placeholder={market === "bengaluru" ? "Street/locality (optional)" : "Street and unit"} hint="Encrypted at rest; never sent to an LLM." value={field("address")} onChange={change} />
           <div className="property-two-column" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}><PropertyField name="city" label="City" placeholder={marketLabel(market)} value={field("city")} onChange={change} /><PropertyField name="region" label="State" placeholder={market === "bengaluru" ? "Karnataka" : market === "phoenix" ? "AZ" : "TX"} value={field("region")} onChange={change} /><PropertyField name="postal" label={market === "bengaluru" ? "PIN" : "ZIP"} placeholder={market === "bengaluru" ? "560001" : "78701"} numeric value={field("postal")} onChange={change} /></div>
           <div style={{ color: PT.muted, fontSize: "9px", lineHeight: 1.5 }}>ZIP/PIN is enough for market exploration. Exact address is optional for an owned property; US county geography is resolved in the background.</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+            <button type="button" onClick={checkAddress} disabled={checkingAddress || !field("address").trim()} style={{ ...buttonStyle, width: "auto", padding: "7px 12px", opacity: checkingAddress || !field("address").trim() ? .45 : 1 }}>{checkingAddress ? "Checking address…" : "Check this address is real"}</button>
+            <span style={{ color: PT.muted, fontSize: "9px" }}>Optional. Saving always re-checks.</span>
+          </div>
+          {addressCheck ? <div role="status" style={{ border: `1px solid ${PT.border}`, borderRadius: "6px", padding: "9px 10px", display: "grid", gap: "4px" }}>
+            <strong style={{ color: verificationTone(addressCheck.state), fontSize: "10px" }}>{ADDRESS_VERIFICATION_LABEL[addressCheck.state]}</strong>
+            {addressCheck.standardized ? <span style={{ color: PT.textSub, fontSize: "10px" }}>USPS standardized form: {addressCheck.standardized}</span> : null}
+            <span style={{ color: PT.textSub, fontSize: "9px", lineHeight: 1.55 }}>{addressCheck.reason}</span>
+            {verificationAge(addressCheck) ? <span style={{ color: PT.muted, fontSize: "9px" }}>{verificationAge(addressCheck)}</span> : null}
+          </div> : null}
           <div style={{ borderTop: `1px solid ${PT.border}`, paddingTop: "12px", color: PT.text, fontSize: "11px", fontWeight: 700 }}>Monthly carrying cost</div>
           <div className="property-two-column" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}><PropertyField name="rate" label="Mortgage rate %" placeholder="Statement" numeric value={field("rate")} onChange={change} /><PropertyField name="years" label="Years remaining" placeholder="30" numeric value={field("years")} onChange={change} /><PropertyField name="tax" label={`Annual property tax (${currencyFor(market)})`} placeholder="Tax bill/estimate" numeric value={field("tax")} onChange={change} /><PropertyField name="insurance" label={`Annual insurance (${currencyFor(market)})`} placeholder="Quote/policy" numeric value={field("insurance")} onChange={change} /><PropertyField name="maintenance" label={`Annual maintenance (${currencyFor(market)})`} placeholder="Planning assumption" numeric value={field("maintenance")} onChange={change} /><PropertyField name="hoa" label={`Monthly HOA (${currencyFor(market)})`} placeholder="0" numeric value={field("hoa")} onChange={change} /><PropertyField name="other" label={`Other monthly (${currencyFor(market)})`} placeholder="Utilities/fees" numeric value={field("other")} onChange={change} /></div>
           <button type="button" onClick={saveProperty} disabled={!name.trim()} style={{ ...buttonStyle, opacity: name.trim() ? 1 : .45 }}>{editingId ? "Save and record history" : "Add property"}</button>
@@ -256,8 +316,9 @@ export default function MyPropertiesWorkspace() {
           <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "13px 15px", borderBottom: `1px solid ${PT.border}`, background: PT.surface }}><Building2 size={15} color={PT.accent} /><h2 style={{ color: PT.text, fontSize: "13px", margin: 0 }}>Tracked properties</h2></div>
           {items.length === 0 ? <EmptyState title="No property records" detail="Add a property to track its private address, equity, and carrying costs." /> : <div>
             <div className="property-table-header" style={{ display: "grid", gridTemplateColumns: "1.3fr .8fr .7fr .8fr .8fr .9fr 62px", gap: "10px", padding: "9px 13px", borderBottom: `1px solid ${PT.border}`, color: PT.muted, fontSize: "9px", fontWeight: 800 }}><span>PROPERTY</span><span>MARKET</span><span>USE</span><span>STATUS</span><span>EQUITY</span><span>MONTHLY COST</span><span /></div>
-            {items.map((item) => { const equity = item.details.value == null ? null : Math.max(0, item.details.value - numeric(item.details.loan)); const monthlyCost = carryingCost(item.details); const geocodeState = item.details.geocode?.state; const postalCode = item.details.geocode?.postalCode ?? item.details.address?.postalCode; return <div className="property-table-row" key={item.id} style={{ display: "grid", gridTemplateColumns: "1.3fr .8fr .7fr .8fr .8fr .9fr 62px", gap: "10px", alignItems: "center", padding: "12px 13px", borderBottom: `1px solid ${PT.border}`, color: PT.textSub, fontSize: "11px" }}>
-              <strong data-label="PROPERTY" style={{ color: PT.text }}>{item.name}<small style={{ display: "block", color: geocodeState === "resolved" ? PT.accent : PT.muted, fontSize: "9px", marginTop: "3px" }}>{postalCode ? `${postalCode} · ` : ""}{geocodeState === "resolved" ? "address resolved" : geocodeState ? `address ${geocodeState.replace("_", " ")}` : "address not linked"}</small></strong>
+            {items.map((item) => { const equity = item.details.value == null ? null : Math.max(0, item.details.value - numeric(item.details.loan)); const monthlyCost = carryingCost(item.details); const geocodeState = item.details.geocode?.state; const verification = item.details.addressVerification; const postalCode = item.details.geocode?.postalCode ?? item.details.address?.postalCode; return <div className="property-table-row" key={item.id} style={{ display: "grid", gridTemplateColumns: "1.3fr .8fr .7fr .8fr .8fr .9fr 62px", gap: "10px", alignItems: "center", padding: "12px 13px", borderBottom: `1px solid ${PT.border}`, color: PT.textSub, fontSize: "11px" }}>
+              <strong data-label="PROPERTY" style={{ color: PT.text }}>{item.name}<small style={{ display: "block", color: geocodeState === "resolved" ? PT.accent : PT.muted, fontSize: "9px", marginTop: "3px" }}>{postalCode ? `${postalCode} · ` : ""}{geocodeState === "resolved" ? "county geography resolved" : geocodeState ? `county geography ${geocodeState.replace("_", " ")}` : "address not linked"}</small>
+              <small title={verification ? `${verification.reason} ${verificationAge(verification)}`.trim() : undefined} style={{ display: "block", color: verificationTone(verification?.state), fontSize: "9px", marginTop: "2px", fontWeight: 400 }}>{verification ? ADDRESS_VERIFICATION_LABEL[verification.state] : "Address never checked — open the property and run the address check."}</small></strong>
               <span data-label="MARKET">{marketLabel(item.market)}</span><span data-label="USE">{item.use}</span><span data-label="STATUS">{item.status}</span><span data-label="EQUITY">{equity == null ? "—" : `${currencyFor(item.market)} ${equity.toLocaleString()}`}</span><span data-label="MONTHLY COST">{monthlyCost == null ? "Incomplete" : `${currencyFor(item.market)} ${monthlyCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}</span><span style={{ display: "flex", justifyContent: "flex-end", gap: "2px" }}><button type="button" title="Edit property" aria-label={`Edit ${item.name}`} onClick={() => beginEdit(item)} style={{ border: 0, background: "transparent", color: PT.accent, padding: "7px", cursor: "pointer" }}><Pencil size={13} /></button><button type="button" title="Archive property" aria-label={`Archive ${item.name}`} onClick={() => archiveProperty(item.id)} style={{ border: 0, background: "transparent", color: PT.muted, padding: "7px", cursor: "pointer" }}><Archive size={13} /></button></span>
             </div>; })}
           </div>}

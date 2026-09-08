@@ -34,6 +34,44 @@ For US addresses the resolver is the Census Geocoding Services API. It can retur
 
 Bengaluru stores owner-entered address/locality/PIN encrypted but has no automated parcel resolver in this phase.
 
+## Address Verification — Is This A Real Address? (2026-09-08)
+
+Geography resolution and address *existence* are two different questions and are
+stored as two different fields. Census answers "which county". USPS answers "is
+this deliverable". They can disagree; both are kept.
+
+`lib/property/address-verify.ts` returns exactly one of five states, persisted
+with the property as `details.addressVerification` inside the same AES-256-GCM
+encrypted payload (no new column, no migration) together with `checkedAt` so a
+stale check is visible:
+
+| State | Meaning | Owner-facing consequence |
+|---|---|---|
+| `verified` | USPS returned a standardized deliverable address | Only state shown in accent colour; standardized form displayed |
+| `not_found` | USPS was reached and found no such address | Flagged amber; the property still saves |
+| `not_configured` | No `USPS_CONSUMER_KEY`/`USPS_CONSUMER_SECRET` | "Address verification is not configured" + exact enable steps |
+| `no_validator` | India — outside USPS coverage, nothing free wired | "Unverified — no free validator for this market" |
+| `unavailable` | USPS configured but erroring, timing out, or rejecting the credential | Flagged amber; opens System Health `property-address-verify:usps` |
+
+**Fail closed.** A USPS `200` that carries no standardized street *and* ZIP is
+`not_found`, not a pass — USPS echoes input on partial matches and treating that
+as verified would defeat the feature. Nothing but a real USPS match ever renders
+as verified.
+
+**Flag, do not forbid.** An unverified address never blocks a save. The owner may
+know a property the postal database does not; the record simply carries an honest
+unverified flag.
+
+Two entry points: `POST /api/property/address-verify` is an optional owner-gated
+pre-save preview that writes nothing, and `/api/property/assets` re-verifies on
+every save so the persisted flag can never drift from the persisted address. The
+address itself is never logged, echoed in a URL path, or sent to an LLM; only the
+verification state travels.
+
+Non-goals: no Indian address validator (deferred until a free, licence-clean one
+exists), no parcel identity, no address autocomplete, and no bulk re-verification
+sweep of existing records — a record is re-checked when it is next saved.
+
 ## Carrying-Cost Contract
 
 The monthly total is deterministic:
