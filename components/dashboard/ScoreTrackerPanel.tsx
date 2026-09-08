@@ -379,12 +379,22 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
         // India's live holdings live on a separate page/broker). Watchlist now
         // follows the global US/India switcher so the candidate pool (and thus
         // the chart) matches whichever market's tab the switcher shows elsewhere.
-        const [wRes, pRes] = await Promise.all([
+        // Scored symbols come FIRST and are the primary source. The watchlist is
+        // not where scores come from: an auto-added screener row expires, the
+        // symbol drops out of the watchlist, and its whole score history became
+        // unchartable even though every point is still in the table. Measured
+        // 2026-09-08: 167 US symbols had score history, 82 were offered here,
+        // so 128 researched symbols could not be selected at all.
+        const [sRes, wRes, pRes] = await Promise.all([
+          fetch(`/api/charts/score-history?list=symbols&market=${market}`).then(r => r.json()).catch(() => ({})),
           fetch(`/api/watchlist?market=${market}`).then(r => r.json()).catch(() => ({})),
           market === "us"
             ? fetch("/api/live-portfolio").then(r => r.json()).catch(() => ({}))
             : Promise.resolve({}),
         ]);
+        for (const sym of (sRes.symbols ?? [])) {
+          if (sym) collected.add(String(sym).toUpperCase());
+        }
         for (const it of (wRes.items ?? [])) {
           if (it.symbol) collected.add(String(it.symbol).toUpperCase());
         }

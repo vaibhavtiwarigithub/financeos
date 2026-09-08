@@ -4,6 +4,11 @@ import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 
+// PostgREST caps any response at 1000 rows, so the symbol list is paged rather
+// than asking for one oversized page and silently getting a truncated universe.
+const SYMBOL_LIST_PAGE = 1000;
+const SYMBOL_LIST_MAX_ROWS = 50000;
+
 // Period → cutoff date (null = ALL). YTD handled specially.
 function periodCutoff(period: string | null): string | null {
   const now = Date.now();
@@ -52,20 +57,51 @@ export async function GET(req: NextRequest) {
   // Accept ?symbol=X (single) or ?symbols=X,Y,Z (multi, for the Score Tracker).
   const raw = (p.get("symbols") ?? p.get("symbol") ?? "").toUpperCase();
   const symbols = raw.split(",").map(s => s.trim()).filter(Boolean);
+
+  const cutoff = periodCutoff(p.get("period"));
+  // Optional additive filters (all default to no-op = fully back-compatible).
+  // These map 1:1 to real signal_score_history columns; "all"/absent means
+  // "don't constrain this column".
+  const norm = (v: string | null) => {
+    const s = (v ?? "").trim().toLowerCase();
+    return s && s !== "all" ? s : null;
+  };
+
+  // ?list=symbols — every symbol this market has actually scored, newest first.
+  //
+  // WHY THIS EXISTS. The Score Tracker built its candidate list from watchlist
+  // + live holdings, which is not where scores come from. Measured 2026-09-08:
+  // 167 US symbols had score history, only 82 were offered, so 128 researched
+  // symbols could not be charted at all — screener names get scored for weeks,
+  // their auto-added watchlist row expires, and they vanish from the UI while
+  // every point stays in the table. The picker now asks the score table itself.
+  if ((p.get("list") ?? "").toLowerCase() === "symbols") {
+    const svc = createServiceClient();
+    const marketList = norm(p.get("market"));
+    const seen = new Set<string>();
+    for (let from = 0; from < SYMBOL_LIST_MAX_ROWS; from += SYMBOL_LIST_PAGE) {
+      let q = svc.from("signal_score_history").select("symbol")
+        .order("created_at", { ascending: false })
+        .range(from, from + SYMBOL_LIST_PAGE - 1);
+      if (marketList) q = q.eq("market", marketList);
+      if (cutoff) q = q.gte("created_at", cutoff);
+      const { data, error } = await q;
+      // Fail loud rather than returning a silently short list the picker would
+      // present as "everything that was researched".
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      for (const row of (data ?? []) as { symbol: string }[]) {
+        if (row.symbol) seen.add(String(row.symbol).toUpperCase());
+      }
+      if (!data || data.length < SYMBOL_LIST_PAGE) break;
+    }
+    return NextResponse.json({ symbols: [...seen] });
+  }
+
   if (symbols.length === 0) return NextResponse.json({ history: [], bySymbol: {} });
   if (symbols.length > 50 || symbols.some(symbol => !/^[A-Z0-9^&.-]{1,24}$/.test(symbol))) {
     return NextResponse.json({ error: "invalid symbol list" }, { status: 400 });
   }
 
-  const cutoff = periodCutoff(p.get("period"));
-
-  // ── Optional additive filters (all default to no-op = fully back-compatible) ──
-  // These map 1:1 to real signal_score_history columns; a value of "all"/absent
-  // means "don't constrain this column".
-  const norm = (v: string | null) => {
-    const s = (v ?? "").trim().toLowerCase();
-    return s && s !== "all" ? s : null;
-  };
   const marketF = norm(p.get("market"));       // us | india
   const directionF = norm(p.get("direction")); // long | short | neutral
   const sourceF = norm(p.get("source"));       // holding | watchlist | screener

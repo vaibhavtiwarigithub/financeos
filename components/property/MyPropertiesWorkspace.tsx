@@ -68,6 +68,47 @@ function historyPoints(history: PropertyHistory[]) {
   }));
 }
 
+type PropertyFieldProps = {
+  name: string;
+  label: string;
+  placeholder?: string;
+  hint?: string;
+  numeric?: boolean;
+  type?: "text" | "date";
+  value: string;
+  onChange: (key: string, value: string) => void;
+};
+
+// Defined at MODULE scope, not inside the workspace component.
+//
+// THE BUG THIS FIXES. This lived inside MyPropertiesWorkspace, so every render
+// produced a NEW function identity. React compares element types by reference:
+// a new type means unmount + remount, not update. Each keystroke called
+// change() -> setFields -> re-render -> brand-new <Input>, so the DOM node was
+// destroyed and rebuilt on every character. The focused element vanished mid-
+// interaction, which is why "Value and cost as of" appeared not to open a date
+// picker: the native picker belongs to the input node, and that node was
+// replaced the moment any state changed. Every field on the form had the same
+// defect; the date input is just where it is impossible to miss.
+function PropertyField({ name, label, placeholder, hint, numeric = false, type = "text", value, onChange }: PropertyFieldProps) {
+  return (
+    <FieldLabel label={label} hint={hint}>
+      <input
+        aria-label={label}
+        type={type}
+        inputMode={numeric ? "decimal" : undefined}
+        value={value}
+        onChange={(event) => onChange(name, event.target.value)}
+        placeholder={placeholder}
+        // colorScheme tells the browser to paint its native calendar widget and
+        // spinners for a dark surface. Without it the date field's picker icon
+        // renders near-black on this background and reads as "no picker here".
+        style={{ ...fieldStyle, colorScheme: "dark" }}
+      />
+    </FieldLabel>
+  );
+}
+
 export default function MyPropertiesWorkspace() {
   const { market, setMarket } = usePropertyMarket();
   const [items, setItems] = useState<PropertyRecord[]>([]);
@@ -178,9 +219,6 @@ export default function MyPropertiesWorkspace() {
     await loadRecords();
   }
 
-  const Input = ({ name: key, label, placeholder, hint, numeric: isNumeric = false, type = "text" }: { name: string; label: string; placeholder?: string; hint?: string; numeric?: boolean; type?: "text" | "date" }) => (
-    <FieldLabel label={label} hint={hint}><input aria-label={label} type={type} inputMode={isNumeric ? "decimal" : undefined} value={field(key)} onChange={(event) => change(key, event.target.value)} placeholder={placeholder} style={fieldStyle} /></FieldLabel>
-  );
 
   return <PropertyPageFrame eyebrow="Private workspace" title="My properties" description="Track an exact property, its equity, and an append-only owner-recorded history without mixing currencies." help={{ whatItDoes: "Stores the property details, values, loan balance, and carrying costs you enter. Every save records an immutable encrypted snapshot; it does not create an automated home valuation.", whatToLookFor: ["Use the as-of date that matches the value or cost information you are recording.", "Known equity is value minus recorded loan balance, not a broker or lender figure.", "An incomplete monthly cost means an input is missing, not zero."] }}>
     <div className="property-stat-row" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", borderBottom: `1px solid ${PT.border}` }}>
@@ -201,13 +239,13 @@ export default function MyPropertiesWorkspace() {
             <FieldLabel label="Use"><select value={use} onChange={(event) => setUse(event.target.value as PropertyRecord["use"])} style={fieldStyle}><option>Home</option><option>Rental</option><option>Land</option></select></FieldLabel>
           </div>
           <FieldLabel label="Status"><select value={status} onChange={(event) => setStatus(event.target.value as PropertyRecord["status"])} style={fieldStyle}><option>Owned</option><option>Watching</option></select></FieldLabel>
-          <Input name="asOf" type="date" label="Value and cost as of" hint="Every save creates an immutable history point." />
-          <div className="property-two-column" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}><Input name="value" label={`Current owner estimate (${currencyFor(market)})`} hint="Your own current estimate, not a market appraisal. Add dated purchase, appraisal, or comparable evidence below." placeholder="Optional" numeric /><Input name="loan" label={`Loan balance (${currencyFor(market)})`} placeholder="Optional" numeric /></div>
-          <Input name="address" label={market === "bengaluru" ? "Exact address or locality" : "Exact property address"} placeholder={market === "bengaluru" ? "Street/locality (optional)" : "Street and unit"} hint="Encrypted at rest; never sent to an LLM." />
-          <div className="property-two-column" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}><Input name="city" label="City" placeholder={marketLabel(market)} /><Input name="region" label="State" placeholder={market === "bengaluru" ? "Karnataka" : market === "phoenix" ? "AZ" : "TX"} /><Input name="postal" label={market === "bengaluru" ? "PIN" : "ZIP"} placeholder={market === "bengaluru" ? "560001" : "78701"} numeric /></div>
+          <PropertyField name="asOf" type="date" label="Value and cost as of" hint="Every save creates an immutable history point." value={field("asOf")} onChange={change} />
+          <div className="property-two-column" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}><PropertyField name="value" label={`Current owner estimate (${currencyFor(market)})`} hint="Your own current estimate, not a market appraisal. Add dated purchase, appraisal, or comparable evidence below." placeholder="Optional" numeric value={field("value")} onChange={change} /><PropertyField name="loan" label={`Loan balance (${currencyFor(market)})`} placeholder="Optional" numeric value={field("loan")} onChange={change} /></div>
+          <PropertyField name="address" label={market === "bengaluru" ? "Exact address or locality" : "Exact property address"} placeholder={market === "bengaluru" ? "Street/locality (optional)" : "Street and unit"} hint="Encrypted at rest; never sent to an LLM." value={field("address")} onChange={change} />
+          <div className="property-two-column" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}><PropertyField name="city" label="City" placeholder={marketLabel(market)} value={field("city")} onChange={change} /><PropertyField name="region" label="State" placeholder={market === "bengaluru" ? "Karnataka" : market === "phoenix" ? "AZ" : "TX"} value={field("region")} onChange={change} /><PropertyField name="postal" label={market === "bengaluru" ? "PIN" : "ZIP"} placeholder={market === "bengaluru" ? "560001" : "78701"} numeric value={field("postal")} onChange={change} /></div>
           <div style={{ color: PT.muted, fontSize: "9px", lineHeight: 1.5 }}>ZIP/PIN is enough for market exploration. Exact address is optional for an owned property; US county geography is resolved in the background.</div>
           <div style={{ borderTop: `1px solid ${PT.border}`, paddingTop: "12px", color: PT.text, fontSize: "11px", fontWeight: 700 }}>Monthly carrying cost</div>
-          <div className="property-two-column" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}><Input name="rate" label="Mortgage rate %" placeholder="Statement" numeric /><Input name="years" label="Years remaining" placeholder="30" numeric /><Input name="tax" label={`Annual property tax (${currencyFor(market)})`} placeholder="Tax bill/estimate" numeric /><Input name="insurance" label={`Annual insurance (${currencyFor(market)})`} placeholder="Quote/policy" numeric /><Input name="maintenance" label={`Annual maintenance (${currencyFor(market)})`} placeholder="Planning assumption" numeric /><Input name="hoa" label={`Monthly HOA (${currencyFor(market)})`} placeholder="0" numeric /><Input name="other" label={`Other monthly (${currencyFor(market)})`} placeholder="Utilities/fees" numeric /></div>
+          <div className="property-two-column" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}><PropertyField name="rate" label="Mortgage rate %" placeholder="Statement" numeric value={field("rate")} onChange={change} /><PropertyField name="years" label="Years remaining" placeholder="30" numeric value={field("years")} onChange={change} /><PropertyField name="tax" label={`Annual property tax (${currencyFor(market)})`} placeholder="Tax bill/estimate" numeric value={field("tax")} onChange={change} /><PropertyField name="insurance" label={`Annual insurance (${currencyFor(market)})`} placeholder="Quote/policy" numeric value={field("insurance")} onChange={change} /><PropertyField name="maintenance" label={`Annual maintenance (${currencyFor(market)})`} placeholder="Planning assumption" numeric value={field("maintenance")} onChange={change} /><PropertyField name="hoa" label={`Monthly HOA (${currencyFor(market)})`} placeholder="0" numeric value={field("hoa")} onChange={change} /><PropertyField name="other" label={`Other monthly (${currencyFor(market)})`} placeholder="Utilities/fees" numeric value={field("other")} onChange={change} /></div>
           <button type="button" onClick={saveProperty} disabled={!name.trim()} style={{ ...buttonStyle, opacity: name.trim() ? 1 : .45 }}>{editingId ? "Save and record history" : "Add property"}</button>
           {message ? <div role="alert" style={{ color: PT.amber, fontSize: "10px" }}>{message}</div> : null}
           <LocalOnlyNotice>Private fields are encrypted before database storage. Saving changes updates the current record and appends a separate encrypted value/cost snapshot. Archive hides a record but never erases its history.</LocalOnlyNotice>
