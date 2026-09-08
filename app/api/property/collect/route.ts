@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
-import { ACTIVE_PROPERTY_ADAPTERS, createPropertyCollectionRun, PropertySourceUnavailableError } from "@/lib/property/sources";
+import { ACTIVE_PROPERTY_ADAPTERS, createPropertyCollectionRun, PropertySourceUnavailableError, ZIP_PROPERTY_ADAPTERS } from "@/lib/property/sources";
 import { COUNTY_PROPERTY_ADAPTERS } from "@/lib/property/county-sources";
 import { PROPERTY_MARKETS, type PropertyMarketId } from "@/lib/property/registry";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// The Zillow ZHVI ZIP CSV is a ~120MB national file (see lib/property/sources.ts);
+// 60s was tight even before it, per the FHFA/FRED/BLS/HUD sweep across 2 markets.
+export const maxDuration = 120;
 
 export async function POST(req: NextRequest) {
   if (!verifyCronSecret(req)) { const gate = await requireOwner(); if (gate) return gate; }
@@ -81,6 +83,31 @@ export async function POST(req: NextRequest) {
       if (error) throw error;
       await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: "success", rows_written: data?.length ?? 0, request_count: collectionRun.fetchCount() - fetchesBefore });
       results.push({ market, source: adapter.sourceKey, outcome: "success", rowsWritten: data?.length ?? 0, scope: "all_declared_metro_counties" });
+    } catch (error) {
+      const unavailable = error instanceof PropertySourceUnavailableError;
+      await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: unavailable ? "partial" : "failed", rows_written: 0, request_count: collectionRun.fetchCount() - fetchesBefore, error_code: unavailable ? error.code : error instanceof Error ? error.name : "collection_error", detail: error instanceof Error ? error.message.slice(0, 300) : "Unknown collection error" });
+      results.push({ market, source: adapter.sourceKey, outcome: unavailable ? "unavailable" : "failed", reason: unavailable ? error.code : "collection_error" });
+    }
+  }
+  // ZIP-level area context (Zillow ZHVI). A distinct table/grain from
+  // property_market_observations — see lib/property/sources.ts for the
+  // separation and the middle-third-of-homes honesty constraint.
+  for (const market of markets) for (const adapter of ZIP_PROPERTY_ADAPTERS) {
+    if (!active.has(adapter.sourceKey)) { results.push({ market, source: adapter.sourceKey, outcome: "skipped", reason: "source_not_active" }); continue; }
+    if (!adapter.supportsMarket(market)) {
+      const at = new Date().toISOString();
+      await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: at, completed_at: at, outcome: "not_applicable", rows_written: 0, request_count: 0, detail: `${adapter.sourceKey} does not publish ZIP data for ${market}` });
+      results.push({ market, source: adapter.sourceKey, outcome: "not_applicable", reason: "source_does_not_cover_market" });
+      continue;
+    }
+    const startedAt = new Date().toISOString(); const fetchesBefore = collectionRun.fetchCount();
+    try {
+      const observations = await adapter.fetch({ market, fetchText: collectionRun.fetchText });
+      const payload = observations.map((item) => ({ source_key: item.sourceKey, market_slug: item.market, zip: item.zip, metric_key: item.metric, native_unit: item.nativeUnit, value: item.value, as_of: item.asOf, source_version: item.sourceVersion }));
+      const { data, error } = payload.length ? await svc.from("property_zip_observations").upsert(payload, { onConflict: "source_key,market_slug,zip,metric_key,as_of,source_version", ignoreDuplicates: true }).select("id") : { data: [], error: null };
+      if (error) throw error;
+      await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: "success", rows_written: data?.length ?? 0, request_count: collectionRun.fetchCount() - fetchesBefore });
+      results.push({ market, source: adapter.sourceKey, outcome: "success", rowsWritten: data?.length ?? 0, scope: "zip_within_metro" });
     } catch (error) {
       const unavailable = error instanceof PropertySourceUnavailableError;
       await svc.from("property_source_runs").insert({ source_key: adapter.sourceKey, geography_slug: market, started_at: startedAt, completed_at: new Date().toISOString(), outcome: unavailable ? "partial" : "failed", rows_written: 0, request_count: collectionRun.fetchCount() - fetchesBefore, error_code: unavailable ? error.code : error instanceof Error ? error.name : "collection_error", detail: error instanceof Error ? error.message.slice(0, 300) : "Unknown collection error" });

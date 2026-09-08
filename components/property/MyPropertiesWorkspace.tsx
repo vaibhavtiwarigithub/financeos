@@ -8,6 +8,7 @@ import { PROPERTY_MARKETS, type PropertyMarketId } from "@/lib/property/registry
 import { usePropertyMarket } from "@/lib/property/market-context";
 import { calculateOwnershipCost } from "@/lib/property/ownership-cost";
 import ValueIntelligencePanel from "./ValueIntelligencePanel";
+import ZipAreaTrend from "./ZipAreaTrend";
 
 type PropertyDetails = {
   status?: "Owned" | "Watching";
@@ -256,9 +257,12 @@ export default function MyPropertiesWorkspace() {
           <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "13px 15px", borderBottom: `1px solid ${PT.border}`, background: PT.surface }}><Building2 size={15} color={PT.accent} /><h2 style={{ color: PT.text, fontSize: "13px", margin: 0 }}>Tracked properties</h2></div>
           {items.length === 0 ? <EmptyState title="No property records" detail="Add a property to track its private address, equity, and carrying costs." /> : <div>
             <div className="property-table-header" style={{ display: "grid", gridTemplateColumns: "1.3fr .8fr .7fr .8fr .8fr .9fr 62px", gap: "10px", padding: "9px 13px", borderBottom: `1px solid ${PT.border}`, color: PT.muted, fontSize: "9px", fontWeight: 800 }}><span>PROPERTY</span><span>MARKET</span><span>USE</span><span>STATUS</span><span>EQUITY</span><span>MONTHLY COST</span><span /></div>
-            {items.map((item) => { const equity = item.details.value == null ? null : Math.max(0, item.details.value - numeric(item.details.loan)); const monthlyCost = carryingCost(item.details); const geocodeState = item.details.geocode?.state; const postalCode = item.details.geocode?.postalCode ?? item.details.address?.postalCode; return <div className="property-table-row" key={item.id} style={{ display: "grid", gridTemplateColumns: "1.3fr .8fr .7fr .8fr .8fr .9fr 62px", gap: "10px", alignItems: "center", padding: "12px 13px", borderBottom: `1px solid ${PT.border}`, color: PT.textSub, fontSize: "11px" }}>
+            {items.map((item) => { const equity = item.details.value == null ? null : Math.max(0, item.details.value - numeric(item.details.loan)); const monthlyCost = carryingCost(item.details); const geocodeState = item.details.geocode?.state; const postalCode = item.details.geocode?.postalCode ?? item.details.address?.postalCode; return <div key={item.id} style={{ borderBottom: `1px solid ${PT.border}` }}>
+              <div className="property-table-row" style={{ display: "grid", gridTemplateColumns: "1.3fr .8fr .7fr .8fr .8fr .9fr 62px", gap: "10px", alignItems: "center", padding: "12px 13px", color: PT.textSub, fontSize: "11px" }}>
               <strong data-label="PROPERTY" style={{ color: PT.text }}>{item.name}<small style={{ display: "block", color: geocodeState === "resolved" ? PT.accent : PT.muted, fontSize: "9px", marginTop: "3px" }}>{postalCode ? `${postalCode} · ` : ""}{geocodeState === "resolved" ? "address resolved" : geocodeState ? `address ${geocodeState.replace("_", " ")}` : "address not linked"}</small></strong>
               <span data-label="MARKET">{marketLabel(item.market)}</span><span data-label="USE">{item.use}</span><span data-label="STATUS">{item.status}</span><span data-label="EQUITY">{equity == null ? "—" : `${currencyFor(item.market)} ${equity.toLocaleString()}`}</span><span data-label="MONTHLY COST">{monthlyCost == null ? "Incomplete" : `${currencyFor(item.market)} ${monthlyCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}</span><span style={{ display: "flex", justifyContent: "flex-end", gap: "2px" }}><button type="button" title="Edit property" aria-label={`Edit ${item.name}`} onClick={() => beginEdit(item)} style={{ border: 0, background: "transparent", color: PT.accent, padding: "7px", cursor: "pointer" }}><Pencil size={13} /></button><button type="button" title="Archive property" aria-label={`Archive ${item.name}`} onClick={() => archiveProperty(item.id)} style={{ border: 0, background: "transparent", color: PT.muted, padding: "7px", cursor: "pointer" }}><Archive size={13} /></button></span>
+              </div>
+              {postalCode ? <div style={{ padding: "0 13px 12px" }}><ZipAreaTrend market={item.market} zip={postalCode} /></div> : null}
             </div>; })}
           </div>}
         </div>
