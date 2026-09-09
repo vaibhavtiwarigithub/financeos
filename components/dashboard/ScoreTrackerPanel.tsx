@@ -124,6 +124,33 @@ type ScoreRow = {
   created_at: string;
 };
 
+type DecisionChartPoint = {
+  observation_id: number;
+  symbol: string;
+  market: string;
+  session: string;
+  session_source: "technical_as_of" | "observation_date_fallback";
+  created_at: string;
+  price_at_decision: number;
+  analyst_score: number;
+  fundamental_score: number | null;
+  technical_score: number | null;
+  sentiment_score: number | null;
+  macro_score: number | null;
+  insider_score: number | null;
+  score_source: string | null;
+  scoring_version: string | null;
+};
+
+const DETAIL_SERIES = [
+  { key: "analyst_score", label: "Composite", color: T.accent },
+  { key: "fundamental_score", label: "Fundamental", color: T.green },
+  { key: "technical_score", label: "Technical", color: T.blue },
+  { key: "sentiment_score", label: "Sentiment", color: T.amber },
+  { key: "macro_score", label: "Macro", color: T.purple },
+  { key: "insider_score", label: "Insider", color: T.red },
+] as const;
+
 type StrategyVersion = {
   id: number;
   name: string;
@@ -346,6 +373,8 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
   const [period, setPeriod] = useState<Period>("1M");
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [bySymbol, setBySymbol] = useState<Record<string, ScoreRow[]>>({});
+  const [decisionHistoryBySymbol, setDecisionHistoryBySymbol] = useState<Record<string, DecisionChartPoint[]>>({});
+  const [visibleDetailSeries, setVisibleDetailSeries] = useState<string[]>(DETAIL_SERIES.map(s => s.key));
   const [loading, setLoading] = useState(false);
   const [versions, setVersions] = useState<StrategyVersion[]>([]);
   const [selected, setSelected] = useState<Selected>(null);
@@ -496,7 +525,7 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
   // ── Fetch score history when symbols or period change ───────────────────────
   const loadHistory = useCallback(async () => {
     const sequence = ++historySequence.current;
-    if (selectedSymbols.length === 0) { setBySymbol({}); return; }
+    if (selectedSymbols.length === 0) { setBySymbol({}); setDecisionHistoryBySymbol({}); return; }
     setLoading(true);
     try {
       // Market always comes from the global switcher — the chart is never allowed
@@ -504,9 +533,12 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
       const qs = buildHistoryParams(selectedSymbols);
       const r = await fetch(`/api/charts/score-history?${qs.toString()}`);
       const d = await r.json();
-      if (sequence === historySequence.current) setBySymbol(d.bySymbol ?? {});
+      if (sequence === historySequence.current) {
+        setBySymbol(d.bySymbol ?? {});
+        setDecisionHistoryBySymbol(d.decisionHistoryBySymbol ?? {});
+      }
     } catch {
-      if (sequence === historySequence.current) setBySymbol({});
+      if (sequence === historySequence.current) { setBySymbol({}); setDecisionHistoryBySymbol({}); }
     } finally {
       if (sequence === historySequence.current) setLoading(false);
     }
@@ -542,6 +574,17 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
 
   // ── Merge bySymbol into unified chart rows keyed by created_at ──────────────
   const chartData = useMemo(() => {
+    if (selectedSymbols.length === 1) {
+      const symbol = selectedSymbols[0];
+      const decisionPoints = decisionHistoryBySymbol[symbol] ?? [];
+      if (decisionPoints.length === 0) {
+        return (bySymbol[symbol] ?? []).map(row => ({ ...row, label: fmtShort(row.created_at) }));
+      }
+      return decisionPoints.map(point => ({
+        ...point,
+        label: new Date(`${point.session}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+      }));
+    }
     const byTime: Record<string, any> = {};
     for (const sym of selectedSymbols) {
       for (const row of (bySymbol[sym] ?? [])) {
@@ -553,9 +596,24 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     return Object.values(byTime).sort(
       (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     );
-  }, [bySymbol, selectedSymbols]);
+  }, [bySymbol, decisionHistoryBySymbol, selectedSymbols]);
 
-  const hasHistory = selectedSymbols.some(s => (bySymbol[s] ?? []).length > 0);
+  const singleSymbolDetail = selectedSymbols.length === 1;
+  const hasDecisionPriceHistory = singleSymbolDetail && (decisionHistoryBySymbol[selectedSymbols[0]] ?? []).length > 0;
+  const hasHistory = singleSymbolDetail
+    ? hasDecisionPriceHistory || (bySymbol[selectedSymbols[0]] ?? []).length > 0
+    : selectedSymbols.some(s => (bySymbol[s] ?? []).length > 0);
+
+  const selectDecisionPoint = useCallback((symbol: string, createdAt: string) => {
+    const rows = bySymbol[symbol] ?? [];
+    if (!rows.length) return;
+    const target = Date.parse(createdAt);
+    let best = 0;
+    for (let i = 1; i < rows.length; i++) {
+      if (Math.abs(Date.parse(rows[i].created_at) - target) < Math.abs(Date.parse(rows[best].created_at) - target)) best = i;
+    }
+    setSelected({ symbol, row: rows[best], index: best });
+  }, [bySymbol]);
 
   // ── Drill-down computations ─────────────────────────────────────────────────
   const drill = useMemo(() => {
@@ -675,9 +733,9 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
       {!embedded && (
         <PageHeader
           title="Score Tracker"
-          subtitle="AI conviction score over time — per stock, with drill-down"
+          subtitle="Actual decision price and AI conviction over time — with per-dimension drill-down"
           cadence="daily"
-          whatItDoes="Plots the ResearchAgent's analyst_score (0-100) for each tracked symbol over time. Each research run writes one point per symbol; click a point to see what moved the score."
+          whatItDoes="Select one symbol to overlay its recorded decision price with composite, fundamental, technical, sentiment, macro and insider scores. Select several symbols to compare composite conviction."
           whatToLookFor={[
             "A score crossing 60 = signal-worthy conviction",
             "Click a point to see the per-dimension breakdown and biggest driver",
@@ -847,10 +905,10 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
 
         {/* ── Chart card ── */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "16px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", marginBottom: "16px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-                Analyst Score
+                {singleSymbolDetail ? `${selectedSymbols[0]} · Price vs scores` : "Composite score comparison"}
               </div>
               {loading && <span style={{ fontSize: "11px", color: T.muted }}>Loading…</span>}
             </div>
@@ -871,9 +929,29 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
             </div>
           </div>
 
+          {singleSymbolDetail && (
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "14px" }}>
+              <span style={{ fontSize: "10px", color: T.muted, alignSelf: "center", marginRight: "4px" }}>Score lines:</span>
+              {DETAIL_SERIES.map(series => {
+                const active = visibleDetailSeries.includes(series.key);
+                return (
+                  <button
+                    key={series.key}
+                    onClick={() => setVisibleDetailSeries(current => active ? current.filter(key => key !== series.key) : [...current, series.key])}
+                    aria-pressed={active}
+                    style={{ background: active ? `${series.color}22` : "none", border: `1px solid ${active ? series.color : T.border}`, color: active ? series.color : T.muted, borderRadius: "999px", padding: "4px 9px", fontSize: "10px", fontWeight: 700, cursor: "pointer" }}
+                  >
+                    {series.label}
+                  </button>
+                );
+              })}
+              <span style={{ fontSize: "10px", color: T.textSub, alignSelf: "center", marginLeft: "4px" }}>{hasDecisionPriceHistory ? "Price is always shown." : "Price was not captured for these older points."}</span>
+            </div>
+          )}
+
           {selectedSymbols.length === 0 ? (
             <div style={{ height: "260px", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: "13px" }}>
-              Pick one or more symbols above to plot their score history.
+              Pick one symbol for price + dimension history, or several to compare composite scores.
             </div>
           ) : !hasHistory && !loading ? (
             <div style={{ height: "260px", display: "flex", flexDirection: "column", gap: "8px", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: "13px", textAlign: "center", padding: "0 20px" }}>
@@ -899,26 +977,84 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={chartData} margin={{ top: 6, right: 8, left: -12, bottom: 0 }}>
+              <LineChart data={chartData} margin={{ top: 6, right: singleSymbolDetail ? 18 : 8, left: -12, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={T.border} />
                 <XAxis dataKey="label" tick={{ fontSize: 10, fill: T.muted }} tickLine={false} axisLine={false} />
                 <YAxis
+                  yAxisId="scores"
                   domain={[0, 100]}
                   tick={{ fontSize: 10, fill: T.muted }}
                   tickLine={false}
                   axisLine={false}
                 />
-                <ReferenceLine y={50} stroke={T.muted} strokeDasharray="4 3" strokeOpacity={0.5} />
-                <ReferenceLine y={60} stroke={T.green} strokeDasharray="4 3" strokeOpacity={0.5} />
+                {hasDecisionPriceHistory && (
+                  <YAxis
+                    yAxisId="price"
+                    orientation="right"
+                    domain={["auto", "auto"]}
+                    tick={{ fontSize: 10, fill: T.textSub }}
+                    tickFormatter={(v: number) => fmtMoney(v, market, 0)}
+                    tickLine={false}
+                    axisLine={false}
+                    width={58}
+                  />
+                )}
+                <ReferenceLine yAxisId="scores" y={50} stroke={T.muted} strokeDasharray="4 3" strokeOpacity={0.5} />
+                <ReferenceLine yAxisId="scores" y={60} stroke={T.green} strokeDasharray="4 3" strokeOpacity={0.5} />
                 <Tooltip
                   contentStyle={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", fontSize: "12px" }}
                   labelStyle={{ color: T.textSub }}
-                  formatter={(v: any, name: any) => [v, name]}
+                  formatter={(v: any, name: any) => [name === "Decision price" ? fmtMoney(Number(v), market, 2) : Number(v).toFixed(1), name]}
                 />
                 <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }} />
-                {selectedSymbols.map(sym => (
+                {singleSymbolDetail ? (
+                  <>
+                    {hasDecisionPriceHistory && (
+                      <Line
+                        yAxisId="price"
+                        type="monotone"
+                        dataKey="price_at_decision"
+                        name="Decision price"
+                        stroke={T.text}
+                        strokeWidth={3}
+                        connectNulls
+                        dot={{ r: 3, cursor: "pointer" }}
+                        activeDot={{
+                          r: 6,
+                          cursor: "pointer",
+                          onClick: (_e: any, payload: any) => {
+                            const createdAt = payload?.payload?.created_at;
+                            if (createdAt) selectDecisionPoint(selectedSymbols[0], createdAt);
+                          },
+                        }}
+                      />
+                    )}
+                    {DETAIL_SERIES.filter(series => visibleDetailSeries.includes(series.key)).map(series => (
+                      <Line
+                        key={series.key}
+                        yAxisId="scores"
+                        type="monotone"
+                        dataKey={series.key}
+                        name={series.label}
+                        stroke={series.color}
+                        strokeWidth={series.key === "analyst_score" ? 3 : 1.7}
+                        connectNulls={false}
+                        dot={{ r: series.key === "analyst_score" ? 3 : 2, cursor: "pointer" }}
+                        activeDot={{
+                          r: 5,
+                          cursor: "pointer",
+                          onClick: (_e: any, payload: any) => {
+                            const createdAt = payload?.payload?.created_at;
+                            if (createdAt) selectDecisionPoint(selectedSymbols[0], createdAt);
+                          },
+                        }}
+                      />
+                    ))}
+                  </>
+                ) : selectedSymbols.map(sym => (
                   <Line
                     key={sym}
+                    yAxisId="scores"
                     type="monotone"
                     dataKey={sym}
                     stroke={colorFor(sym, selectedSymbols)}
@@ -943,7 +1079,11 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
           )}
           {hasHistory && (
             <div style={{ fontSize: "10px", color: T.muted, marginTop: "8px" }}>
-              Click a point to inspect the score and what drove it. Dashed lines: 50 (neutral) · 60 (signal threshold).
+              {singleSymbolDetail && hasDecisionPriceHistory
+                ? "Price is the immutable price captured at each research decision (right axis), not today’s quote. Click any point for score evidence. Dashed score lines: 50 neutral · 60 signal threshold."
+                : singleSymbolDetail
+                  ? "This symbol predates decision-price capture, so score dimensions remain visible but the price line is unavailable. Click any point for score evidence."
+                  : "Select one symbol to reveal its decision-price and dimension overlays. Click a composite point for evidence. Dashed lines: 50 neutral · 60 signal threshold."}
             </div>
           )}
         </div>

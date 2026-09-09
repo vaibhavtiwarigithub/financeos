@@ -328,6 +328,9 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     exitStopRunRes,
     archetypeIcRes,
     alphaDiagnosticRes,
+    scorePriceRunRes,
+    scorePriceEventRes,
+    scorePriceOutcomeRes,
   ] = await Promise.all([
     svc.rpc("get_shadow_cron_status"),
     svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
@@ -438,6 +441,16 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("backtest_experiments")
       .select("market,started_at,completed_at,created_at,experiment_type,result_summary")
       .eq("market", market).eq("experiment_type", "alpha_diagnostic").gte("created_at", since90).order("created_at", { ascending: false }).limit(100),
+    svc.from("score_price_divergence_runs")
+      .select("market,run_session,input_observations,canonical_sessions,events_detected,primary_events_detected,created_at")
+      .eq("market", market).gte("created_at", since90).order("created_at", { ascending: false }).limit(100),
+    svc.from("score_price_divergence_events")
+      .select("id,market,end_session,direction,is_primary,created_at")
+      .eq("market", market).eq("is_primary", true).gte("created_at", since90).order("created_at", { ascending: false }).limit(10000),
+    svc.from("score_price_divergence_outcomes")
+      .select("event_id,horizon_days,matured_at,score_price_divergence_events!inner(market,is_primary,end_session)")
+      .eq("score_price_divergence_events.market", market).eq("score_price_divergence_events.is_primary", true)
+      .gte("matured_at", since90).order("matured_at", { ascending: false }).limit(10000),
   ]) as Array<QueryResult<any>>;
 
   const cronRows = cronRes.data ?? [];
@@ -473,6 +486,9 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const exitStopRuns = exitStopRunRes.data ?? [];
   const archetypeRuns = archetypeIcRes.data ?? [];
   const alphaDiagnosticRuns = alphaDiagnosticRes.data ?? [];
+  const scorePriceRuns = scorePriceRunRes.data ?? [];
+  const scorePriceEvents = scorePriceEventRes.data ?? [];
+  const scorePriceOutcomes = scorePriceOutcomeRes.data ?? [];
 
   const labelRows: LabelRow[] = (labelCoverageRes.data ?? [])
     .map((row: any) => {
@@ -502,6 +518,36 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.nextAction = "No action. This program is intentionally market-specific.";
       status.details = [];
       status.available = true;
+      return status;
+    }
+
+    if (program.id === "score-price-divergence") {
+      const outcomeHorizons = new Map<string, Set<number>>();
+      for (const row of scorePriceOutcomes) {
+        const set = outcomeHorizons.get(String(row.event_id)) ?? new Set<number>();
+        set.add(Number(row.horizon_days)); outcomeHorizons.set(String(row.event_id), set);
+      }
+      const fullyMatured = scorePriceEvents.filter((row: any) => outcomeHorizons.get(String(row.id))?.has(5) && outcomeHorizons.get(String(row.id))?.has(10));
+      const sessions = new Set(fullyMatured.map((row: any) => String(row.end_session))).size;
+      const ready = fullyMatured.length >= 30 && sessions >= 20;
+      const latest = scorePriceRuns[0]?.created_at ?? scorePriceEvents[0]?.created_at ?? null;
+      status.lifecycle = scorePriceRuns.length ? (ready ? "ready_for_review" : "collecting") : "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${scorePriceEvents.length} primary five-session divergence event(s); ${fullyMatured.length} have matched h5+h10 outcomes across ${sessions} independent end session(s).`;
+      status.progress = progress(fullyMatured.length, 30, "primary events with h5+h10 outcomes", 90, { completed: sessions, target: 20, unit: "distinct end sessions" });
+      status.calls = calls("zero_incremental", "Uses immutable decision observations and labels already collected by research and maturation.");
+      status.latestAt = latest;
+      status.blockers = [];
+      if (fullyMatured.length < 30) status.blockers.push(`${fullyMatured.length}/30 primary events have both h5 and h10 outcomes.`);
+      if (sessions < 20) status.blockers.push(`${sessions}/20 independent end sessions are represented.`);
+      if (ready) status.blockers.push("A predeclared challenger, sealed validation and owner approval are still required; divergence is not causation.");
+      status.nextAction = ready ? "Review direction-specific benchmark-neutral outcomes and dimension attribution; create a separate candidate only if the effect survives." : "Continue daily market-local collection. Do not override a score because price disagrees.";
+      status.details = [
+        "Primary event: five research sessions, |score change| ≥5 and opposing |price move| ≥2%.",
+        "Three-session events are diagnostic context and never count toward readiness.",
+        "Scoring source, version, availability mask and applied weights must match at both endpoints.",
+      ];
+      status.available = !scorePriceRunRes.error && !scorePriceEventRes.error && !scorePriceOutcomeRes.error;
       return status;
     }
 

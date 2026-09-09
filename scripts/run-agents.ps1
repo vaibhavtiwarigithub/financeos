@@ -62,7 +62,9 @@ $endpoints = @{
   "stale-check"      = @{ method="POST"; url="$BASE/api/alerts/stale-check";           headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "embed"            = @{ method="POST"; url="$BASE/api/live-portfolio/embed";         headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body='{"limit":200}'; timeoutSec=300 }
   "proposal-reminder"= @{ method="POST"; url="$BASE/api/alerts/proposal-reminder";     headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
-  "rescore"          = @{ method="POST"; url="$BASE/api/agents/rescore-check";          headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
+  "rescore"          = @{ method="POST"; url="$BASE/api/agents/score-price-divergence?market=us"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
+  "score-price-divergence-us" = @{ method="POST"; url="$BASE/api/agents/score-price-divergence?market=us"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
+  "score-price-divergence-india" = @{ method="POST"; url="$BASE/api/agents/score-price-divergence?market=india"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "mentor-coach"     = @{ method="POST"; url="$BASE/api/agents/mentor-coach";           headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}"; timeoutSec=180 }
 }
 

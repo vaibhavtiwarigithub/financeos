@@ -281,15 +281,27 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: null,
   },
   {
-    name: "rescore",
-    agent: "rescore",
-    time: "4:45 PM ET",
+    name: "score-price-divergence-us",
+    agent: "score-price-divergence-us",
+    time: "22:20 UTC",
     days: "Weekdays",
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "Scoring calibration check. Re-scores recent signals against realized outcomes to detect drift between the scoring model and what actually worked.",
-    handoff: null,
+      "US measure-only score/price divergence shadow. Uses immutable research sessions and matured labels; it cannot change scores or trades.",
+    handoff: "→ Upgrade Path + Learner evidence (read-only)",
+    agentRunsType: null,
+  },
+  {
+    name: "score-price-divergence-india",
+    agent: "score-price-divergence-india",
+    time: "22:25 UTC",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description:
+      "India measure-only score/price divergence shadow. Uses immutable research sessions and matured labels; it cannot change scores or trades.",
+    handoff: "→ Upgrade Path + Learner evidence (read-only)",
     agentRunsType: null,
   },
   {

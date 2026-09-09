@@ -59,6 +59,25 @@ export interface ShadowProgramDefinition {
 
 export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
   {
+    id: "score-price-divergence",
+    name: "Score / price divergence",
+    category: "Scoring",
+    markets: ["us", "india"],
+    purpose: "Measure when composite conviction and the decision-time price move persistently in opposite directions under one unchanged scoring methodology.",
+    productBenefit: "Makes score drift visible on the symbol chart and turns repeated disagreement with price into structured, outcome-labelled evidence.",
+    traderBenefit: "Distinguishes a useful early warning from a lagging or miscalibrated score before any score or exit rule is changed.",
+    evidenceSource: "decision_observations x observation_labels, recorded in score_price_divergence_runs/events/outcomes",
+    currentInfluence: "Measure-only. LearnerAgent may summarize the evidence but cannot mutate a score, weight, threshold, position or order from it.",
+    maximumInfluence: "A separately predeclared market-local scoring challenger after independent validation and owner approval.",
+    activationGate: "At least 30 primary five-session events across 20 distinct end sessions with matched h5 and h10 outcomes, then sealed validation and owner approval.",
+    safetyBoundary: "Stable score source/version/mask/weights are mandatory; no scoring, eligibility, sizing, exit, paper/live or broker path reads this ledger.",
+    cronJobs: ["kairos-score-price-divergence-us", "kairos-score-price-divergence-india"],
+    callAccounting: "zero_incremental",
+    owner: "Scoring / Evidence",
+    architectureRef: "features/score-price-divergence/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "00000000", enteredAt: "2026-09-08", implementationScope: "measure_only", reason: "Replace a market-blind latest-signal heuristic with immutable session-based divergence evidence and owner-visible price/score context." },
+  },
+  {
     id: "dimension-diagnostics",
     name: "Dimension and agent diagnostics",
     category: "Learning",

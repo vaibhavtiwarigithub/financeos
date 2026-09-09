@@ -97,7 +97,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ symbols: [...seen] });
   }
 
-  if (symbols.length === 0) return NextResponse.json({ history: [], bySymbol: {} });
+  if (symbols.length === 0) return NextResponse.json({ history: [], bySymbol: {}, decisionHistoryBySymbol: {} });
   if (symbols.length > 50 || symbols.some(symbol => !/^[A-Z0-9^&.-]{1,24}$/.test(symbol))) {
     return NextResponse.json({ error: "invalid symbol list" }, { status: 400 });
   }
@@ -149,8 +149,69 @@ export async function GET(req: NextRequest) {
     for (const r of rows as any[]) {
       (bySymbol[r.symbol] ??= []).push(r);
     }
-    return NextResponse.json({ history: rows, bySymbol });
+    // A score-history row does not contain the price used by that decision.
+    // Pull the immutable decision ledger separately and return canonical
+    // research-session points. The client uses these only in single-symbol mode.
+    // This is intentionally market-scoped and never joins a ticker across books.
+    const decisionRows: any[] = [];
+    const pageSize = 1000;
+    for (let from = 0; from < 20_000; from += pageSize) {
+      let q = svc.from("decision_observations")
+        .select("id,ts,market,symbol,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,price_at_decision,features,score_source,scoring_version")
+        .in("symbol", symbols)
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (marketF) q = q.eq("market", marketF);
+      if (cutoff) q = q.gte("ts", cutoff);
+      if (fromISO) q = q.gte("ts", fromISO);
+      if (toISO) q = q.lte("ts", toISO);
+      const page = await q;
+      if (page.error) {
+        return NextResponse.json({ history: rows, bySymbol, decisionHistoryBySymbol: {}, priceHistoryError: page.error.message });
+      }
+      decisionRows.push(...(page.data ?? []));
+      if (!page.data || page.data.length < pageSize) break;
+    }
+
+    const canonical = new Map<string, any>();
+    for (const row of decisionRows) {
+      const price = Number(row.price_at_decision);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      const technical = row.features?.technical;
+      const technicalSession = typeof technical?.as_of === "string" && /^\d{4}-\d{2}-\d{2}$/.test(technical.as_of)
+        ? technical.as_of
+        : null;
+      const session = technicalSession ?? String(row.ts).slice(0, 10);
+      const key = `${row.market}:${row.symbol}:${session}`;
+      // Rows arrive by ascending id, so a retry/research rerun in one session
+      // deterministically replaces the earlier point in the read model only.
+      canonical.set(key, {
+        observation_id: row.id,
+        symbol: row.symbol,
+        market: row.market,
+        session,
+        session_source: technicalSession ? "technical_as_of" : "observation_date_fallback",
+        created_at: row.ts,
+        price_at_decision: price,
+        analyst_score: row.analyst_score,
+        fundamental_score: row.fundamental_score,
+        technical_score: row.technical_score,
+        sentiment_score: row.sentiment_score,
+        macro_score: row.macro_score,
+        insider_score: row.insider_score,
+        score_source: row.score_source,
+        scoring_version: row.scoring_version,
+      });
+    }
+    const decisionHistoryBySymbol: Record<string, any[]> = {};
+    for (const point of canonical.values()) {
+      (decisionHistoryBySymbol[point.symbol] ??= []).push(point);
+    }
+    for (const points of Object.values(decisionHistoryBySymbol)) {
+      points.sort((a, b) => String(a.session).localeCompare(String(b.session)) || Number(a.observation_id) - Number(b.observation_id));
+    }
+    return NextResponse.json({ history: rows, bySymbol, decisionHistoryBySymbol });
   } catch {
-    return NextResponse.json({ history: [], bySymbol: {} });
+    return NextResponse.json({ history: [], bySymbol: {}, decisionHistoryBySymbol: {} });
   }
 }

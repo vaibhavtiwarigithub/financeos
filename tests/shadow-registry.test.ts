@@ -40,6 +40,7 @@ describe("shadow registry governance contract", () => {
     expect(ids.has("exit-stop-shadow")).toBe(true);
     expect(ids.has("archetype-ic")).toBe(true);
     expect(ids.has("alpha-diagnostics")).toBe(true);
+    expect(ids.has("score-price-divergence")).toBe(true);
   });
 
   it("maps every known shadow and evidence cron to a registry program", () => {
@@ -69,6 +70,8 @@ describe("shadow registry governance contract", () => {
       "kairos-archetype-ic-india",
       "kairos-alpha-diagnostics-us",
       "kairos-alpha-diagnostics-india",
+      "kairos-score-price-divergence-us",
+      "kairos-score-price-divergence-india",
     ].forEach((job) => expect(jobs.has(job), `${job} is not registered`).toBe(true));
   });
 

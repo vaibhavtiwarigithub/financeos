@@ -1553,3 +1553,12 @@ promise of outperformance.
 **Not shipped.** No migration applied, no code written, no scoring change made. This decision
 record exists because the architecture review is complete and on record — it converts to
 "Approved" only on Vaibhav's explicit sign-off, matching Decision 63's own pattern.
+### Decision 73: Price-versus-score chart and measure-only divergence shadow
+
+**Status:** Approved and shipped (2026-09-08)
+
+**Decision:** Extend the existing Research Journal Score Tracker, rather than add a duplicate page, so one selected market-local symbol overlays the price captured at each immutable decision with composite and five dimension scores. Replace the legacy latest-signal/global-prose rescore heuristic with an append-only, market-local score/price divergence shadow using fixed 3/5-session windows, stable score-methodology fingerprints, and existing benchmark-neutral outcome labels. Register it in Upgrade Path and expose read-only summaries to LearnerAgent. It has no automatic score, exit, sizing, ladder, paper/live, or broker authority.
+
+**Reason:** The app already stores both sides of the question but hides them in separate ledgers, while the old daily rescore job can perpetually skip frequently rescored symbols and hard-codes the US calendar. A visible, version-safe measurement is necessary before deciding whether a falling score amid rising price is a correct warning, a lagging feature, or a systematic scoring defect.
+
+**Architecture:** `features/score-price-divergence/FEATURE_ARCHITECTURE.md`

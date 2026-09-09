@@ -221,31 +221,29 @@ describe("benchmark series — a stale SPY is reported stale, not silently used"
 // What IS worth pinning is that the two specific defects cannot come back — the
 // same "architectural detector" pattern used by tests/risk-research-annotation.
 
-describe("rescore-check cannot publish learner feedback off a fossil close", () => {
+describe("rescore-check no longer publishes learner feedback from mutable price cache", () => {
   const source = () => {
     const { readFileSync } = require("node:fs") as typeof import("node:fs");
     const { resolve } = require("node:path") as typeof import("node:path");
     return readFileSync(resolve(process.cwd(), "app/api/agents/rescore-check/route.ts"), "utf8");
   };
 
-  it("validates the newest bar's as-of date through the shared rule", () => {
+  it("delegates to the immutable market-local divergence route", () => {
     const s = source();
-    expect(s).toContain('from "@/lib/data/price-cache-freshness"');
-    expect(s).toContain("isFreshSessionDate(currentRow.date");
-    expect(s).toContain("stale_price_cache");
+    expect(s).toContain('from "@/app/api/agents/score-price-divergence/route"');
+    expect(s).toContain("requires explicit market scope");
+    expect(s).not.toContain("price_cache");
   });
 
   it("REGRESSION GUARD: never anchors on the oldest row when the signal date has no bar", () => {
     // `rows.find(r => r.date <= sigDay) ?? rows[rows.length - 1]` measured a window
     // that was not the signal's window, and published the result as feedback.
     expect(source()).not.toMatch(/\?\?\s*rows\[rows\.length\s*-\s*1\]/);
-    expect(source()).toContain("no_bar_at_signal_date");
+    expect(source()).not.toContain("learning_log");
   });
 
-  it("reports why nothing was evaluated instead of returning an empty all-clear", () => {
-    const s = source();
-    expect(s).toContain("skipped");
-    expect(s).toContain("degraded");
+  it("does not retain a global unscoped fallback", () => {
+    expect(source()).toContain("?market=us or ?market=india");
   });
 });
 

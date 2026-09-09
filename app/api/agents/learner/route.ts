@@ -15,6 +15,7 @@ import { formatLearnerFallbackMermaid, formatLearnerRunSummary } from "@/lib/lea
 import { runAutomatedValidation } from "@/lib/validation/automation";
 import { reportIssue } from "@/lib/system-health";
 import { fetchIndiaQuote } from "@/lib/india-data";
+import { summarizeDivergenceOutcomes } from "@/lib/learning/score-price-divergence";
 
 export const dynamic = "force-dynamic";
 // The weekly tool loop can legitimately take several provider round-trips.
@@ -385,6 +386,27 @@ export async function POST(req: NextRequest) {
               summaries: result.summaries,
               mutation_authority: "none",
               guidance: "Use reviewable cohorts to write hypotheses. Stop/target admission remains deterministic and requires the separate 60-label same-market/same-horizon gate.",
+            });
+          }
+
+          case "query_score_price_divergence": {
+            const { data, error } = await svc.from("score_price_divergence_outcomes")
+              .select("horizon_days,benchmark_neutral_return,score_price_divergence_events!inner(direction,end_session,market,is_primary)")
+              .eq("score_price_divergence_events.market", LEARN_MARKET)
+              .eq("score_price_divergence_events.is_primary", true)
+              .in("horizon_days", [5, 10, 20])
+              .limit(10000);
+            if (error) return JSON.stringify({ error: error.message, market: LEARN_MARKET, mutation_authority: "none" });
+            const rows = (data ?? []).flatMap((row: any) => {
+              const event = Array.isArray(row.score_price_divergence_events) ? row.score_price_divergence_events[0] : row.score_price_divergence_events;
+              return event ? [{ direction: event.direction, end_session: event.end_session, horizon_days: row.horizon_days, benchmark_neutral_return: row.benchmark_neutral_return }] : [];
+            });
+            return JSON.stringify({
+              market: LEARN_MARKET,
+              primary_definition: "5 research sessions; opposing score move >=5 points and price move >=2%",
+              summaries: summarizeDivergenceOutcomes(rows),
+              mutation_authority: "none",
+              guidance: "Use as hypothesis evidence only. Price disagreement can be a correct valuation warning or a lagging score; this tool cannot justify a weight mutation alone.",
             });
           }
 
@@ -792,7 +814,8 @@ AVAILABLE TOOLS:
 3. query_signals_with_outcomes — signals + their trade outcomes (filter by days, min_score, asset_class)
 4. query_score_correlation — Pearson correlation between a score dimension and P&L (respects learner_config)
 5. query_plan_calibration — deterministic original stop/objective/horizon versus matured path cohorts. Read-only; cannot mutate risk settings.
-6. query_macro_context — recent macro signals and geopolitical/economic data from MacroSentinel
+6. query_score_price_divergence — market-local score-vs-price disagreement with matured benchmark-neutral outcomes. Hypothesis evidence only.
+7. query_macro_context — recent macro signals and geopolitical/economic data from MacroSentinel
 7. read_past_learnings — your previous hypotheses and weight changes
 8. query_trade_decisions — REAL historical trades (10 years of CSV history + Robinhood MCP). Returns outcome_score per decision, regime breakdown, behavioral win/loss patterns. Use this to find what the user does right/wrong across market regimes.
 9. write_hypothesis — save a finding (include category: "fundamental"|"technical"|"macro"|"insider"|"general")
@@ -818,7 +841,8 @@ REASONING APPROACH:
 3. Query signals_with_outcomes for recent paper trade performance
 4. Run query_score_correlation for each ENABLED dimension
 5. Query plan calibration; treat an individual target hit/miss as illustrative and use only aggregate cohorts for hypotheses.
-6. Check query_macro_context — does macro explain wins/losses?
+6. Query score/price divergence. Never mutate from divergence alone; distinguish lag, valuation repricing and technical failure.
+7. Check query_macro_context — does macro explain wins/losses?
 7. Call query_trade_decisions — analyze real historical trade patterns across ALL regimes. Look for: regime-specific win rates, buy vs sell accuracy, stocks the user consistently loses on, macro periods where decisions were best/worst.
 7b. Use semantic_search_decisions for drill-down: if you see a pattern (e.g. losses during rate hikes), run semantic_search to find semantically similar past decisions and check if they share a common failure mode.
 8. Read past learnings to avoid repeating old hypotheses
@@ -826,7 +850,7 @@ REASONING APPROACH:
 10. Mutate weights only if: N≥10 trades + confidence ≥ dim_min_confidence + not auto-guarded
 11. Call finish with complete structured Mermaid`;
 
-      const initialMessage = `Run your weekly ${LEARN_MARKET.toUpperCase()} learning analysis under this immutable user Trading Mandate: ${JSON.stringify(tradingMandate)}. You may propose challengers but cannot change the mandate; any proposed horizon must remain inside ${tradingMandate.min_hold_days}-${tradingMandate.max_hold_days} market days. Start with read_priors to load background context, then check learner_config for current state. Query all enabled signal dimensions for correlation with P&L and query the deterministic plan calibration. Check macro context to understand if external factors explain performance. Form grounded hypotheses. Only mutate weights if evidence is sufficient. Finish with a complete Mermaid diagram showing ALL inputs consumed this run.`;
+      const initialMessage = `Run your weekly ${LEARN_MARKET.toUpperCase()} learning analysis under this immutable user Trading Mandate: ${JSON.stringify(tradingMandate)}. You may propose challengers but cannot change the mandate; any proposed horizon must remain inside ${tradingMandate.min_hold_days}-${tradingMandate.max_hold_days} market days. Start with read_priors to load background context, then check learner_config for current state. Query all enabled signal dimensions for correlation with P&L, the deterministic plan calibration, and score/price divergence evidence. Check macro context to understand if external factors explain performance. Divergence has no mutation authority by itself. Form grounded hypotheses. Only mutate weights if evidence is sufficient. Finish with a complete Mermaid diagram showing ALL inputs consumed this run.`;
 
       const LEARNER_TOOLS = [
         { name: "read_priors", description: "Read human-written Bayesian market principles as background context", parameters: { type: "object", properties: { category: { type: "string", enum: ["fundamental", "technical", "macro", "insider", "general"] } } } },
@@ -834,6 +858,7 @@ REASONING APPROACH:
         { name: "query_signals_with_outcomes", description: "Get signals joined with trade outcomes. Filter by days, min score, or asset_class", parameters: { type: "object", properties: { days: { type: "number" }, min_analyst_score: { type: "number" }, asset_class: { type: "string", enum: ["us_equity", "adr", "etf", "metal"] } } } },
         { name: "query_score_correlation", description: "Pearson correlation between a score dimension and P&L. Skipped if dimension disabled in config.", parameters: { type: "object", properties: { dimension: { type: "string", enum: ["fundamental_score", "technical_score", "sentiment_score", "macro_score", "insider_score", "analyst_score"] }, days: { type: "number" } }, required: ["dimension"] } },
         { name: "query_plan_calibration", description: "Read deterministic same-market stop/objective/horizon versus matured-path cohorts. The objective is a policy level, not a terminal-price prediction. Read-only: this tool cannot change weights, risk settings, or positions.", parameters: { type: "object", properties: {} } },
+        { name: "query_score_price_divergence", description: "Read market-local primary score/price divergence events and matured benchmark-neutral outcomes. Hypothesis evidence only; has no mutation authority.", parameters: { type: "object", properties: {} } },
         { name: "query_macro_context", description: "Get recent macro signals (rates, geopolitical events, sector rotations) from MacroSentinel", parameters: { type: "object", properties: { days: { type: "number" } } } },
         { name: "read_past_learnings", description: "Read past learning log and previous learner run summaries", parameters: { type: "object", properties: { limit: { type: "number" } } } },
         { name: "write_hypothesis", description: "Save a finding or hypothesis", parameters: { type: "object", properties: { claim: { type: "string" }, evidence: { type: "string" }, confidence: { type: "number" }, action_taken: { type: "string" }, category: { type: "string", enum: ["fundamental", "technical", "macro", "insider", "general"] } }, required: ["claim", "evidence", "confidence"] } },

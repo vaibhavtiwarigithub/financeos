@@ -1380,3 +1380,21 @@ until the server `CENSUS_API_KEY` is configured and the source is explicitly
 activated; missing credentials are recorded as source unavailability, never as
 zero county coverage.
 
+## Score / price divergence evidence (2026-09-08)
+
+`score_price_divergence_runs` is the daily market-local heartbeat for the
+measure-only divergence job. It records input/canonical counts and exclusions,
+including a zero-event run, so silence cannot be mistaken for a clean result.
+
+`score_price_divergence_events` stores immutable three- and five-research-session
+windows where score and price moved in opposing directions. The primary cohort
+is fixed at five sessions, at least five score points, and at least a two-percent
+opposing price move. Each row carries the score source/version plus availability
+and applied-weight fingerprints; a methodology change breaks the window.
+
+`score_price_divergence_outcomes` copies h5/h10/h20 forward outcomes only after
+they exist in `observation_labels`. All three tables have owner-read RLS,
+explicit Data API grants, service-role insert only, and update/delete/truncate
+guards. No scoring, eligibility, sizing, exit, order, or broker path reads them.
+See `features/score-price-divergence/FEATURE_ARCHITECTURE.md`.
+

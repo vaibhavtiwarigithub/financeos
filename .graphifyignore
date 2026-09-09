@@ -8,5 +8,6 @@ graphify-out/
 output/
 tmp/
 .next/
+.next-*/
 node_modules/
 scripts/python/__pycache__/
