@@ -75,7 +75,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "tracked",
     owner: "Execution safety",
     architectureRef: "features/broker-symbol-tradability/FEATURE_ARCHITECTURE.md",
-    mainline: { commit: "00000000", enteredAt: "2026-09-09", implementationScope: "measure_only", reason: "Collect broker-authoritative symbol/side evidence before adding a new live-order refusal boundary." },
+    mainline: { commit: "a77e64f2", enteredAt: "2026-09-09", implementationScope: "measure_only", reason: "Collect broker-authoritative symbol/side evidence before adding a new live-order refusal boundary." },
   },
   {
     id: "score-price-divergence",
