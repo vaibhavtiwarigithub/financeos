@@ -114,6 +114,32 @@ export function resolveSectorPeBenchmark(sector: string | undefined, taxonomy?: 
     : { norm, normalizedSector: key, mappingStatus: "direct" };
 }
 
+// A REIT's net income is structurally suppressed by mandatory real-estate
+// depreciation — the industry's own standard metric is FFO/AFFO, not P/E or
+// EPS. Verified in production 2026-09-09: the ONLY REIT ever scored (O,
+// pe=47.15) hit `mappingStatus: "unmapped"` — Finnhub's raw industry string
+// ("REIT - ...", "Real Estate Services", etc, e.g. p.finnhubIndustry via
+// lib/data/fundamentals.ts) never matched FINNHUB_INDUSTRY_TO_SECTOR's exact
+// keys, so P/E silently went unscored (harmless by accident, not by design).
+// Fixing the crosswalk alone would make this WORSE: SECTOR_PE_NORM["real
+// estate"] = 30 is a tech-level norm, and REIT P/E commonly runs 40-60x+ for
+// a healthy REIT purely from the depreciation distortion — every real REIT
+// would then read as "rich" and get penalized on a number that doesn't mean
+// what it means for a normal company.
+//
+// No fix to that norm is applied here: n=1 production observation is nowhere
+// near enough to derive or validate a REIT-appropriate number (this
+// project's Scoring Data-Truth protocol requires real distributions before
+// changing a live formula, not a single point). Detected via a substring
+// match, not an exact crosswalk key, because Finnhub's REIT sub-industry
+// strings vary ("REIT - Retail", "REIT - Diversified", "Real Estate
+// Services", ...) and an exact-match table would keep missing variants the
+// same way the current crosswalk already does.
+export function isReitSector(sector: string | undefined): boolean {
+  const key = sector?.trim().toLowerCase() ?? "";
+  return key.includes("reit") || key.includes("real estate");
+}
+
 function isScorablePe(pe: number): boolean {
   return Number.isFinite(pe) && pe > 0 && pe <= MAX_SCORABLE_PE;
 }
@@ -122,6 +148,17 @@ export function scoreFundamentals(overview: Record<string, string>, isEtf: boole
   if (isEtf) {
     // ETFs have no P/E/earnings — use a neutral baseline (momentum drives the score elsewhere).
     return { score: 55, evidence: { note: "ETF — no company fundamentals; neutral 55 baseline" } };
+  }
+  if (isReitSector(overview?.Sector)) {
+    // See isReitSector's comment: every component this function scores
+    // (P/E, profit margin, ROE, EPS sign) is net-income-derived, and a
+    // REIT's net income is structurally suppressed by mandatory real-estate
+    // depreciation — none of them mean for a REIT what they mean for a
+    // normal company. Same treatment as the ETF branch above: an honest
+    // neutral baseline instead of scoring on a distorted number. Revisit
+    // once a real FFO/AFFO data source exists and production evidence
+    // (currently n=1) is enough to derive a validated REIT-specific formula.
+    return { score: 55, evidence: { note: "REIT — P/E, profit margin, ROE, and EPS are distorted by mandatory real-estate depreciation; neutral 55 baseline pending an FFO/AFFO data source", sector_raw: overview?.Sector ?? null } };
   }
   if (!overview?.Symbol) {
     // A real stock whose fundamentals just weren't fetched (rate limit / no key).

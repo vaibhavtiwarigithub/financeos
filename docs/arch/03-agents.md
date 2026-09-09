@@ -1,4 +1,24 @@
 # Kairos — Agents
+> 2026-09-09: **`scoreFundamentals` gained REIT awareness (`lib/data/scores.ts`,
+> `isReitSector`).** A REIT's net income is structurally suppressed by mandatory
+> real-estate depreciation, so P/E, profit margin, ROE, and EPS-sign all mean
+> something different for a REIT than a normal company. Verified in production:
+> the one REIT ever scored (`O`) fell through `FINNHUB_INDUSTRY_TO_SECTOR`'s
+> exact-key crosswalk (Finnhub's raw industry string, e.g. "REIT - Retail",
+> never matches the generic "real estate" key) and landed unscored by accident.
+> Fixing only the crosswalk would have been worse — it would then hit
+> `SECTOR_PE_NORM["real estate"] = 30`, a tech-level norm that flags a normal
+> ~45-50x REIT P/E as "rich". `isReitSector` matches by substring
+> (`"reit"`/`"real estate"`) rather than an exact key, since Finnhub's REIT
+> sub-industry strings vary. Same treatment as the existing ETF branch: an
+> honest neutral 55 baseline instead of scoring on a distorted number. No
+> corrected numeric norm was derived or applied — only n=1 production
+> observation exists, nowhere near enough evidence per this project's Scoring
+> Data-Truth protocol to validate a formula. Revisit once a real FFO/AFFO data
+> source exists. Enabled research on 4 REITs this session (`AMT DLR EQIX
+> INVH`) — they will now score with this honest baseline instead of a
+> distorted one.
+>
 > 2026-09-04 crypto basket Stage 2b: ResearchAgent now always feeds BTC-USD/ETH-USD/SOL-USD
 > via `crypto_basket` discovery source (parallel to `metals_basket`). `scoreMode="measure_only"` —
 > no paper trades, no order path. Evidence accumulates in `instrument_family_observations` with
