@@ -77,6 +77,17 @@ Risk: Look-ahead bias, misleading breadth/coverage, provider bypass, supply-chai
 Decision status: Proposed
 Notes: Codex corrected all four designs without implementation. PEAD is now a US-first data-feasibility study because Kairos does not store the required actual/consensus vintages; each definition is a separately counted trial. India Markets is a server-side hardening project because sectors and a ten-name sample already exist but call Yahoo from the client; the sample cannot be labeled full breadth. External research now uses trusted acquisition plus immutable snapshots and explicit `docker run --network none`; self-sourcing untrusted repos, secrets, direct candidate influence, and parallel provenance are prohibited. Router cutover now requires frozen same-input cohort evaluation before activation plus a separate runtime degradation guard, immutable policy activation, one market/intent family at a time, and a proven warm legacy rollback path.
 
+### Entry 9 - 2026-09-09
+
+Instruction: Adversarially review the two-session implementation, improve the architecture, and ensure every live buy/sell is permitted for the exact symbol by the selected broker.
+Classification: Safety review / Architecture upgrade
+Affected area: Manual Trade Guardian, Learner evidence gates, IC drift, property sources, system map, broker execution gateway, Kite direct and protective-order paths
+Impact: Critical for future live-order safety; no live behavior changed in this review
+Architecture impact: Major. Broker tradability becomes a mandatory, side-specific, broker/account-authoritative preflight rather than an assumption inherited from the research universe.
+Risk: False Guardian alerts, incomplete or misattributed position transitions, erasable audit evidence, proxy order counts unlocking learning, and broker rejection or wrong-instrument submission.
+Decision status: Review complete; remediation and broker-symbol architecture proposed, not approved or implemented
+Notes: Full tests, typecheck, and isolated build passed, but production/schema inspection found substantive semantic and security defects. The proposed design uses immutable preflight evidence, short TTLs, atomic fingerprint binding, gateway plus last-mile enforcement, and explicit coverage of direct Kite/GTT paths. It distinguishes BUY permission from risk-reducing SELL permission and fails closed to owner action when broker capability cannot be proven.
+
 ### Format
 
 ```

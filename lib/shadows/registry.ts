@@ -75,7 +75,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "zero_incremental",
     owner: "Scoring / Evidence",
     architectureRef: "features/score-price-divergence/FEATURE_ARCHITECTURE.md",
-    mainline: { commit: "00000000", enteredAt: "2026-09-08", implementationScope: "measure_only", reason: "Replace a market-blind latest-signal heuristic with immutable session-based divergence evidence and owner-visible price/score context." },
+    mainline: { commit: "d46d2d9b", enteredAt: "2026-09-08", implementationScope: "measure_only", reason: "Replace a market-blind latest-signal heuristic with immutable session-based divergence evidence and owner-visible price/score context." },
   },
   {
     id: "dimension-diagnostics",
