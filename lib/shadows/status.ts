@@ -332,6 +332,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     scorePriceEventRes,
     scorePriceOutcomeRes,
     brokerPreflightRes,
+    listingCandidateRes,
   ] = await Promise.all([
     svc.rpc("get_shadow_cron_status"),
     svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
@@ -454,7 +455,12 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       .gte("matured_at", since90).order("matured_at", { ascending: false }).limit(10000),
     svc.from("broker_instrument_preflights")
       .select("market,broker,allowed,reason_code,checked_at,enforcement_mode")
-      .eq("market", market).gte("checked_at", since90).order("checked_at", { ascending: false }).limit(5000),
+      // Candidate discovery probes are intentionally excluded: counting them
+      // here would let a scheduled scanner satisfy an execution-gateway gate.
+      .eq("market", market).eq("purpose", "execution_attempt").gte("checked_at", since90).order("checked_at", { ascending: false }).limit(5000),
+    svc.from("listing_candidates")
+      .select("id,state,first_seen_at,last_seen_at,first_trade_date,latest_preflight_id")
+      .eq("market", market).order("last_seen_at", { ascending: false }).limit(5000),
   ]) as Array<QueryResult<any>>;
 
   const cronRows = cronRes.data ?? [];
@@ -494,6 +500,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const scorePriceEvents = scorePriceEventRes.data ?? [];
   const scorePriceOutcomes = scorePriceOutcomeRes.data ?? [];
   const brokerPreflights = brokerPreflightRes.data ?? [];
+  const listingCandidates = listingCandidateRes.data ?? [];
 
   const labelRows: LabelRow[] = (labelCoverageRes.data ?? [])
     .map((row: any) => {
@@ -573,6 +580,27 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.nextAction = ready ? "Review every verdict and broker outcome; do not enforce without a separate owner approval." : "Keep collecting on real owner-approved attempts and investigate every denial.";
       status.details = ["BUY and SELL permissions are independent.", "Kite direct orders and the canonical execution gateway both record evidence."];
       status.available = !brokerPreflightRes.error;
+      return status;
+    }
+
+    if (program.id === "new-listing-discovery") {
+      const observed = listingCandidates.filter((row: any) => row.state === "listed_observing");
+      const unresolvedDates = listingCandidates.filter((row: any) => row.state === "announced" && !row.first_trade_date);
+      const latest = latestIso(listingCandidates, "last_seen_at");
+      status.lifecycle = listingCandidates.length ? "collecting" : "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${listingCandidates.length} US candidate issuer(s), ${observed.length} listing-observation candidate(s), and ${unresolvedDates.length} announced candidate(s) without an authoritative first-trade date.`;
+      status.progress = progress(0, 30, "matured distinct listings required before any future admission inference", 90);
+      status.calls = calls("unmetered", "SEC EDGAR daily-index metadata only; no paid provider calls and no broker polling.");
+      status.latestAt = latest;
+      status.blockers = [
+        "An authoritative exchange listing-event source has not yet been approved or connected.",
+        "No candidate has a trusted first-trade date, so 20/40/60-session admission assessments are intentionally absent.",
+        "Candidate broker probes are not collected until a stable listed symbol and account-specific adapter are available.",
+      ];
+      status.nextAction = "Continue filing discovery. Do not add candidates to the watchlist or use them in scoring/trading until the separate listing-event and admission-shadow gates are approved.";
+      status.details = ["SEC S-1/F-1 and prospectus filings are issuer evidence, not proof of a tradable listing.", "This program is deliberately US-only; India requires separately verified NSE/BSE source provenance."];
+      status.available = !listingCandidateRes.error;
       return status;
     }
 

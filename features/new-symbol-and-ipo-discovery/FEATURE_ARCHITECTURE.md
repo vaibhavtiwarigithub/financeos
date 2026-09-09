@@ -1,6 +1,6 @@
 # New Symbol, Listing, and Pre-IPO Discovery
 
-> Status: DRAFT / PROPOSED — corrected architecture; not approved and not built.
+> Status: PARTIALLY IMPLEMENTED — P0 plus the filing-discovery slice of P1 shipped 2026-09-09. Exchange-listing events, identity reconciliation, broker candidate probes, 20/40/60 admission shadows, and every money-path effect remain unimplemented and separately gated.
 > Last revised: 2026-09-09 by Codex after code-path and source review.
 > Money-path influence: none until a later, separately approved promotion.
 
@@ -30,7 +30,7 @@ positions, or place live orders during this release.
 - **Who:** the single Kairos owner.
 - **Expected value:** broader, broker-relevant research coverage and a measurable
   answer to whether newly listed instruments add benchmark-relative return.
-- **Shipped at:** not shipped.
+- **Shipped at:** 2026-09-09 (evidence-only SEC daily-index filing discovery, candidate/event/filing registry, Research and Upgrade Path read surfaces).
 
 ## 1. Verified baseline
 
@@ -439,11 +439,24 @@ promotion readiness. “Working” must never be shown merely because prices ros
 - Build rolled-back schema/RLS/immutability tests.
 - No scheduled writes, scoring or trading.
 
+**Implemented 2026-09-09:** append-only candidate/event/filing tables with RLS and
+immutable evidence triggers; a separate `candidate_probe` preflight purpose that
+cannot advance the existing execution-enforcement gate; migration and active cron
+verification. The source comparison and Robinhood-schema corroboration remain open.
+
 ### P1 — evidence-only US collectors
 
 - Filing, listing, identity and broker-capability collection.
 - Candidate detail and Research UI.
 - Mainline remains abstain.
+
+**Implemented slice:** the weekday `kairos-listing-discovery-us` job reads bounded
+SEC daily master indexes for S-1/S-1-A/F-1/F-1-A/424B4 metadata and persists issuer
+filing lineage. The Research Journal's New Listings tab and Upgrade Path show that
+evidence and the unresolved state. This is explicitly *not* an exchange-listing
+event collector: SEC filing metadata does not set `first_trade_date`, ticker,
+exchange, or broker capability. Those remaining P1 collectors must not be claimed
+as shipped until an approved authoritative source passes the source contract.
 
 ### P2 — shadow admission study
 

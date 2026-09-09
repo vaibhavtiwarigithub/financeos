@@ -44,6 +44,17 @@ export interface ScheduledJob {
  */
 export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
   {
+    name: "listing-discovery-us",
+    agent: "listing-discovery-us",
+    time: "23:35 UTC",
+    days: "Weekdays",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description: "US evidence-only SEC filing discovery. It records registration/prospectus provenance in the separate new-listing registry; it never adds a symbol to the watchlist or changes scoring/trading.",
+    handoff: "→ Research Journal New Listings + Upgrade Path evidence",
+    agentRunsType: "listing_discovery",
+  },
+  {
     name: "international-allocation-shadow",
     agent: "international-allocation-shadow",
     time: "Sunday 10:30 PM CT (Monday 03:30 UTC)",

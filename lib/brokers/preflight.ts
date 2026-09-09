@@ -38,13 +38,22 @@ export function capabilityUsable(c: BrokerInstrumentCapability, input: BrokerPre
   return { ok: true };
 }
 
-export function preflightRow(c: BrokerInstrumentCapability, proposalId: number | null) {
+/**
+ * `candidate_probe` is discovery evidence only.  It must never be mixed with
+ * the last-mile execution observations that can eventually qualify the broker
+ * enforcement shadow.  Defaulting preserves every existing order-path caller.
+ */
+export function preflightRow(
+  c: BrokerInstrumentCapability,
+  proposalId: number | null,
+  purpose: "execution_attempt" | "candidate_probe" = "execution_attempt",
+) {
   return {
     proposal_id: proposalId, broker: c.broker, broker_account_id: c.accountId, broker_env: c.env, market: c.market,
     requested_symbol: c.requestedSymbol, canonical_symbol: c.canonicalSymbol, instrument_id: c.instrumentId,
     side: c.side, order_type: c.orderType, allowed: c.allowed, active: c.active, buy_allowed: c.buyAllowed,
     sell_allowed: c.sellAllowed, close_only: c.closeOnly, fractional_allowed: c.fractionalAllowed,
     lot_size: c.lotSize, tick_size: c.tickSize, checked_at: c.checkedAt, expires_at: c.expiresAt,
-    source: c.source, reason_code: c.reasonCode, raw_fingerprint: c.rawFingerprint, enforcement_mode: "shadow",
+    source: c.source, reason_code: c.reasonCode, raw_fingerprint: c.rawFingerprint, enforcement_mode: "shadow", purpose,
   };
 }

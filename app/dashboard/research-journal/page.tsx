@@ -5,6 +5,7 @@ import ResearchFunnel from "@/components/dashboard/ResearchFunnel";
 import ScoreTrackerPanel from "@/components/dashboard/ScoreTrackerPanel";
 import DecisionReviewPanel from "@/components/dashboard/DecisionReviewPanel";
 import PipelineHealthTab from "@/components/dashboard/PipelineHealthTab";
+import NewListingsPanel from "@/components/dashboard/NewListingsPanel";
 import { useMarket, type Market } from "@/lib/market-context";
 import { useSearchParams } from "next/navigation";
 
@@ -145,8 +146,8 @@ function EvolutionTab() {
 export default function ResearchJournalPage() {
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get("tab");
-  const [tab, setTab] = useState<"funnel" | "evolution" | "scores" | "review" | "pipeline">(
-    requestedTab === "evolution" || requestedTab === "scores" || requestedTab === "review" || requestedTab === "pipeline" ? requestedTab : "funnel"
+  const [tab, setTab] = useState<"funnel" | "evolution" | "scores" | "review" | "pipeline" | "listings">(
+    requestedTab === "evolution" || requestedTab === "scores" || requestedTab === "review" || requestedTab === "pipeline" || requestedTab === "listings" ? requestedTab : "funnel"
   );
 
   // ── Deep link: /dashboard/research-journal?symbol=<SYM>&market=<us|india> ────
@@ -194,21 +195,22 @@ export default function ResearchJournalPage() {
           "Evolution: longer-horizon trends — learner weight changes, feature-registry promotions, calibration drift, shadow-decision agreement — and it's honest about thin history (no trend from 1-2 points).",
           "Score Tracker: pick a stock to see its AI score move over time, then drill down into what drove each change.",
           "Decision Review: the counterfactual — what we scored vs how the stock actually moved afterward. Per-symbol rows are illustrative (n=1); the aggregate cohorts are actionable only above the 20-matured-outcome floor.",
+          "New Listings: filing evidence for potential US listings, deliberately separated from your watchlist and trading path.",
         ]}
       />
       <div style={{ padding: "0 28px 32px" }}>
         <div style={{ display: "flex", gap: "8px", marginBottom: "20px", flexWrap: "wrap" }}>
-          {(["funnel", "evolution", "scores", "review", "pipeline"] as const).map(t => (
+          {(["funnel", "evolution", "scores", "review", "pipeline", "listings"] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: "8px 18px", borderRadius: "8px", cursor: "pointer", fontSize: "13px", fontWeight: 600,
               background: tab === t ? T.accentBg : T.surface, border: `1px solid ${tab === t ? T.accent : T.border}`,
               color: tab === t ? T.accent : T.textSub,
             }}>
-              {t === "funnel" ? "Daily Funnel" : t === "evolution" ? "Evolution" : t === "scores" ? "Score Tracker" : t === "review" ? "Decision Review" : "Pipeline Health"}
+              {t === "funnel" ? "Daily Funnel" : t === "evolution" ? "Evolution" : t === "scores" ? "Score Tracker" : t === "review" ? "Decision Review" : t === "pipeline" ? "Pipeline Health" : "New Listings"}
             </button>
           ))}
         </div>
-        {tab === "funnel" ? <ResearchFunnel focusSymbol={focusSymbol} /> : tab === "evolution" ? <EvolutionTab /> : tab === "scores" ? <ScoreTrackerPanel embedded /> : tab === "review" ? <DecisionReviewPanel /> : <PipelineHealthTab />}
+        {tab === "funnel" ? <ResearchFunnel focusSymbol={focusSymbol} /> : tab === "evolution" ? <EvolutionTab /> : tab === "scores" ? <ScoreTrackerPanel embedded /> : tab === "review" ? <DecisionReviewPanel /> : tab === "pipeline" ? <PipelineHealthTab /> : <NewListingsPanel />}
       </div>
     </div>
   );

@@ -59,6 +59,25 @@ export interface ShadowProgramDefinition {
 
 export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
   {
+    id: "new-listing-discovery",
+    name: "New listing discovery",
+    category: "Data",
+    markets: ["us"],
+    purpose: "Collect SEC registration and prospectus evidence into a separate candidate registry without adding symbols to research or trading.",
+    productBenefit: "Makes newly filing issuers visible with immutable provenance instead of silently losing them in a watchlist.",
+    traderBenefit: "Builds the evidence needed to later test when a new listing is investable; it does not create a day-one entry path.",
+    evidenceSource: "listing_candidates, listing_candidate_events and issuer_filings (SEC EDGAR daily-index metadata)",
+    currentInfluence: "Evidence only. No watchlist, score, eligibility, paper-position, order, exit or broker-enforcement reader consumes it.",
+    maximumInfluence: "A separately approved 20/40/60-session admission shadow, then forward paper evidence and another owner approval.",
+    activationGate: "Authoritative listing-event source, exact broker/account candidate probes, frozen admission policy and sufficient matured cohort evidence.",
+    safetyBoundary: "A prospectus is not a first-trade date; unknown ticker and broker capability remain unresolved rather than guessed.",
+    cronJobs: ["kairos-listing-discovery-us"],
+    callAccounting: "unmetered",
+    owner: "Research / Evidence",
+    architectureRef: "features/new-symbol-and-ipo-discovery/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "46a25283", enteredAt: "2026-09-09", implementationScope: "measure_only", reason: "Separate pre-listing issuer evidence from tradeable-symbol and strategy decisions." },
+  },
+  {
     id: "broker-symbol-tradability",
     name: "Broker symbol tradability",
     category: "Trading",
