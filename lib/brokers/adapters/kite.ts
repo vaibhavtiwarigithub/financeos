@@ -1,5 +1,6 @@
 import { BrokerAdapter, BrokerOrderResult, BrokerOrderState } from "@/lib/brokers/adapter-types";
-import { placeEquityOrder, kiteGet, kiteDelete, getKiteCreds, getAccessToken } from "@/lib/kite";
+import { placeEquityOrder, kiteGet, kiteDelete, getKiteCreds, getAccessToken, getKiteEquityInstrument } from "@/lib/kite";
+import { capability } from "@/lib/brokers/preflight";
 
 // Kite has no paper/sandbox environment — live only.
 const STATUS_MAP: Record<string, BrokerOrderState["status"]> = {
@@ -21,6 +22,25 @@ export function kiteAdapter(): BrokerAdapter {
         const { fresh } = await getAccessToken();
         return fresh;
       } catch { return false; }
+    },
+    async preflightOrder(o) {
+      if (o.env !== "live") return capability(o, { broker: "kite", market: "india", source: "kite_instruments", allowed: false, reasonCode: "unsupported_environment" });
+      const instrument = await getKiteEquityInstrument(o.symbol);
+      if (!instrument.ok) return capability(o, { broker: "kite", market: "india", source: "kite_instruments", allowed: false, reasonCode: "instrument_not_found", raw: instrument.error });
+      const bare = String(instrument.data.symbol).toUpperCase();
+      const exchange = String(instrument.data.exchange);
+      const quoteKey = `${exchange}:${bare}`;
+      const quote = await kiteGet(`/quote?i=${encodeURIComponent(quoteKey)}`);
+      const quotePresent = quote.ok && !!quote.data?.[quoteKey];
+      const lotSize = Number(instrument.data.lotSize);
+      const qtyOk = Number.isInteger(o.qty) && lotSize > 0 && o.qty % lotSize === 0;
+      const tick = Number(instrument.data.tickSize);
+      const tickOk = o.type !== "limit" || o.limitPrice == null || (Number.isFinite(tick) && Math.abs(o.limitPrice / tick - Math.round(o.limitPrice / tick)) < 1e-6);
+      return capability(o, { broker: "kite", market: "india", source: "kite_instruments+quote", active: true,
+        buyAllowed: quotePresent, sellAllowed: quotePresent, canonicalSymbol: `${bare}.${exchange === "BSE" ? "BO" : "NS"}`, instrumentId: String(instrument.data.instrumentToken),
+        fractionalAllowed: false, lotSize, tickSize: tick, allowed: quotePresent && qtyOk && tickOk,
+        reasonCode: !quotePresent ? "quote_key_missing" : !qtyOk ? "invalid_lot_size" : !tickOk ? "invalid_tick_size" : null,
+        raw: { instrument: instrument.data, quotePresent } });
     },
     async submitOrder(o): Promise<BrokerOrderResult> {
       if (o.env !== "live") return { ok: false, error: "Kite supports live orders only (no paper env)" };

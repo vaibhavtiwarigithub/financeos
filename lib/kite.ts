@@ -193,6 +193,47 @@ export async function getKiteHoldings(svc?: any) {
   return kiteGet("/portfolio/holdings", svc);
 }
 
+const instrumentCaches = new Map<string, { fetchedAt: number; bySymbol: Map<string, any> }>();
+
+/** Broker-authoritative NSE equity identity. Kite publishes this master daily. */
+export async function getKiteEquityInstrument(symbol: string, svc?: any): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const bare = symbol.replace(/\.(NS|BO)$/i, "").toUpperCase();
+  const exchange = symbol.toUpperCase().endsWith(".BO") ? "BSE" : "NSE";
+  let instrumentCache = instrumentCaches.get(exchange) ?? null;
+  if (!instrumentCache || Date.now() - instrumentCache.fetchedAt > 12 * 60 * 60 * 1000) {
+    const s = svc ?? createServiceClient();
+    const h = await authHeaders(s);
+    if (!h.ok) return { ok: false, error: h.error };
+    try {
+      const res = await fetch(`https://api.kite.trade/instruments/${exchange}`, { headers: h.headers, signal: AbortSignal.timeout(15_000) });
+      if (!res.ok) return { ok: false, error: `Kite instruments ${res.status}` };
+      const declared = Number(res.headers.get("content-length") ?? 0);
+      if (declared > 25_000_000) return { ok: false, error: "Kite instruments response exceeds safety bound" };
+      const text = await res.text();
+      if (text.length > 25_000_000) return { ok: false, error: "Kite instruments response exceeds safety bound" };
+      const lines = text.split(/\r?\n/);
+      const header = (lines.shift() ?? "").split(",");
+      const indexes = Object.fromEntries(header.map((v, i) => [v.trim(), i]));
+      for (const required of ["instrument_token", "tradingsymbol", "tick_size", "lot_size", "instrument_type", "exchange"]) {
+        if (indexes[required] == null) return { ok: false, error: `Kite instruments missing ${required}` };
+      }
+      const bySymbol = new Map<string, any>();
+      for (const line of lines) {
+        const c = line.split(",");
+        if (c[indexes.instrument_type] !== "EQ" || c[indexes.exchange] !== exchange) continue;
+        bySymbol.set(String(c[indexes.tradingsymbol]).toUpperCase(), {
+          instrumentToken: c[indexes.instrument_token], symbol: c[indexes.tradingsymbol],
+          tickSize: Number(c[indexes.tick_size]), lotSize: Number(c[indexes.lot_size]),
+        });
+      }
+      instrumentCache = { fetchedAt: Date.now(), bySymbol };
+      instrumentCaches.set(exchange, instrumentCache);
+    } catch (e) { return { ok: false, error: String(e) }; }
+  }
+  const data = instrumentCache.bySymbol.get(bare);
+  return data ? { ok: true, data: { ...data, exchange } } : { ok: false, error: `No tradable ${exchange} equity instrument for ${bare}` };
+}
+
 // Coin mutual-fund holdings use the same authenticated Kite session but are a
 // distinct instrument family and endpoint. Read-only by design: no Coin order,
 // redemption, or SIP helper exists in Kairos.
@@ -236,8 +277,11 @@ export async function placeKiteGtt(opts: {
   stopPrice: number;   // trigger price for the stop-loss leg
   targetPrice: number; // trigger + limit price for the take-profit leg
 }, svc?: any): Promise<{ ok: boolean; triggerId?: number; error?: string }> {
+  const s = svc ?? createServiceClient();
+  const identity = await verifyKiteTradingIdentity(s);
+  if (!identity.ok) return { ok: false, error: identity.error };
   const body = buildKiteGttBody(opts);
-  const r = await kitePost("/gtt/triggers", body, svc);
+  const r = await kitePost("/gtt/triggers", body, s);
   if (!r.ok) return { ok: false, error: r.error };
   const triggerId = Number(r.data?.trigger_id);
   if (!Number.isFinite(triggerId)) return { ok: false, error: "GTT placed but no trigger_id returned" };
@@ -255,6 +299,9 @@ export async function placeKiteStopGtt(opts: {
   lastPrice: number;  // reference quote at placement time
   stopPrice: number;  // trigger + limit price (same value — limit child)
 }, svc?: any): Promise<{ ok: true; triggerId: number } | { ok: false; error: string }> {
+  const s = svc ?? createServiceClient();
+  const identity = await verifyKiteTradingIdentity(s);
+  if (!identity.ok) return { ok: false, error: identity.error };
   const sym = opts.tradingsymbol.replace(/\.(NS|BO)$/i, "");
   const exchange = opts.exchange ?? (opts.tradingsymbol.toUpperCase().endsWith(".BO") ? "BSE" : "NSE");
   const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -268,7 +315,7 @@ export async function placeKiteStopGtt(opts: {
       { transaction_type: "SELL", quantity: opts.qty, order_type: "LIMIT", product: "CNC", price: round2(opts.stopPrice) },
     ]),
   };
-  const r = await kitePost("/gtt/triggers", body, svc);
+  const r = await kitePost("/gtt/triggers", body, s);
   if (!r.ok) return { ok: false, error: r.error ?? "Kite GTT place failed" };
   const triggerId = Number(r.data?.trigger_id);
   if (!Number.isFinite(triggerId)) return { ok: false, error: "GTT single-leg placed but no trigger_id returned" };

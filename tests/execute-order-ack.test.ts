@@ -96,6 +96,7 @@ function makeResolver(ackError: (attempt: number) => any) {
       return { count: 0, error: null };
     }
     if (q.table === "broker_orders" && q.op === "update") {
+      if (q.payload?.broker_account_id) return { error: null };
       ackAttempts += 1;
       return { error: ackError(ackAttempts) };
     }
@@ -241,6 +242,7 @@ function makeLiveResolver(ackError: (attempt: number) => any) {
       return { count: 0, error: null }; // rate-limit count
     }
     if (q.table === "broker_orders" && q.op === "update") {
+      if (q.payload?.broker_account_id) return { error: null };
       ackAttempts += 1;
       return { error: ackError(ackAttempts) };
     }
@@ -257,6 +259,13 @@ function makeLiveBroker() {
     market: "us",
     envs: ["paper", "live"],
     isConfigured: vi.fn(async () => true),
+    preflightOrder: vi.fn(async (o: any) => ({
+      broker: "alpaca", accountId: o.accountId, env: o.env, market: "us", requestedSymbol: o.symbol,
+      canonicalSymbol: o.symbol, instrumentId: "asset-1", side: o.side, orderType: o.type,
+      allowed: true, active: true, buyAllowed: true, sellAllowed: true, closeOnly: false,
+      fractionalAllowed: false, lotSize: 1, tickSize: null, checkedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), source: "test", reasonCode: null, rawFingerprint: "test",
+    })),
     submitOrder: vi.fn(async () => ({ ok: true, brokerOrderId: "BRK-LIVE-1", raw: { state: "accepted" } })),
   };
 }

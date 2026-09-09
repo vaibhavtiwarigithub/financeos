@@ -125,7 +125,7 @@ export default function AmortizationWorkspace() {
           <div style={{ border: `1px solid ${PT.border}`, borderRadius: "7px", overflow: "hidden" }}>
             <div style={{ padding: "13px 15px", borderBottom: `1px solid ${PT.border}`, background: PT.surface, color: PT.text, fontSize: "13px" }}>Paid to date vs. remaining · {summary.elapsedMonths} of {summary.elapsedMonths + summary.remainingMonths} payments made</div>
             <div className="property-stat-row" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
-              <StatCell label="CURRENT BALANCE" value={money(summary.currentBalance)} detail="What refinancing would replace" />
+              <StatCell label="SCHEDULED BALANCE ESTIMATE" value={money(summary.currentBalance)} detail="Assumes scheduled payments only; compare with your lender payoff balance" />
               <StatCell label="INTEREST PAID SO FAR" value={money(summary.paidToDate.interest)} tone={PT.amber} detail="Sunk — unaffected by refinancing" />
               <StatCell label="PRINCIPAL PAID SO FAR" value={money(summary.paidToDate.principal)} />
               <StatCell label="INTEREST LEFT AT CURRENT RATE" value={summary.remainingMonths > 0 ? money(summary.remaining.interest) : "0"} detail={summary.remainingMonths > 0 ? `Over ${summary.remainingMonths} remaining months` : "Loan is paid off"} />

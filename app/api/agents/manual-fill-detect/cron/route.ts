@@ -29,6 +29,7 @@ import { fetchRobinhoodBrokerAccounts } from "@/lib/brokers";
 import { loadTradingMandate } from "@/lib/trading-mandate";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { detectManualFills, type RecentOrderInput } from "@/lib/trading/manual-fill-detection";
+import { isMarketOpenLive } from "@/lib/trading/market-calendar";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -44,6 +45,16 @@ export async function POST(req: NextRequest) {
   }
 
   const svc = createServiceClient();
+  const session = await isMarketOpenLive("us");
+  if (!session.open) return NextResponse.json({ ok: true, skipped: true, reason: session.reason });
+
+  const { data: claimRows, error: claimErr } = await svc.rpc("claim_agentic_position_scan", {
+    p_account_id: AGENTIC_ACCOUNT_ID, p_lease_seconds: 180,
+  });
+  if (claimErr) throw new Error(`manual fill scan claim failed: ${claimErr.message}`);
+  const claim = Array.isArray(claimRows) ? claimRows[0] : claimRows;
+  if (!claim?.acquired) return NextResponse.json({ ok: true, skipped: true, reason: "scan already claimed" });
+  const isBootstrap = claim.is_bootstrap === true;
 
   const accounts = await fetchRobinhoodBrokerAccounts();
   const account = accounts.find(a => a.accountId === AGENTIC_ACCOUNT_ID);
@@ -75,14 +86,17 @@ export async function POST(req: NextRequest) {
   // live"). One row per symbol, most recent by detected_at.
   const { data: lastKnownRows, error: ledgerErr } = await svc
     .from("agentic_position_ledger")
-    .select("symbol, qty, detected_at")
+    .select("symbol, qty, detected_at, matched_broker_order_id, matched_broker_order_ids")
     .eq("account_id", AGENTIC_ACCOUNT_ID)
     .order("detected_at", { ascending: false });
   if (ledgerErr) throw new Error(`agentic_position_ledger read failed: ${ledgerErr.message}`);
 
   const lastKnownQty = new Map<string, number>();
-  for (const row of (lastKnownRows ?? []) as { symbol: string; qty: number }[]) {
+  const consumedOrderIds = new Set<number>();
+  for (const row of (lastKnownRows ?? []) as { symbol: string; qty: number; matched_broker_order_id?: number | null; matched_broker_order_ids?: number[] | null }[]) {
     if (!lastKnownQty.has(row.symbol)) lastKnownQty.set(row.symbol, Number(row.qty));
+    if (row.matched_broker_order_id != null) consumedOrderIds.add(Number(row.matched_broker_order_id));
+    for (const id of row.matched_broker_order_ids ?? []) consumedOrderIds.add(Number(id));
   }
 
   // Open Kairos-placed orders in the lookback window — a qty increase
@@ -98,6 +112,7 @@ export async function POST(req: NextRequest) {
     .from("broker_orders")
     .select("id, symbol, side, filled_qty, status, submitted_at")
     .eq("broker", "robinhood")
+    .eq("broker_account_id", AGENTIC_ACCOUNT_ID)
     .eq("market", "us")
     .in("status", ["filled", "partially_filled"])
     .gte("submitted_at", since);
@@ -106,7 +121,7 @@ export async function POST(req: NextRequest) {
   const mandate = await loadTradingMandate(svc, "us");
   const stopLossPct = mandate.stop_loss_pct;
 
-  const recentOrderInputs: RecentOrderInput[] = (recentOrders ?? []).map((o: any) => ({
+  const recentOrderInputs: RecentOrderInput[] = (recentOrders ?? []).filter((o: any) => !consumedOrderIds.has(Number(o.id))).map((o: any) => ({
     id: o.id, symbol: o.symbol, side: o.side, filledQty: Number(o.filled_qty),
   }));
   const { rowsToInsert, manualDetections } = detectManualFills(
@@ -115,12 +130,16 @@ export async function POST(req: NextRequest) {
     lastKnownQty,
     recentOrderInputs,
     stopLossPct,
+    isBootstrap,
   );
 
   if (rowsToInsert.length > 0) {
     const { error: insErr } = await svc.from("agentic_position_ledger").insert(rowsToInsert);
     if (insErr) throw new Error(`agentic_position_ledger insert failed: ${insErr.message}`);
   }
+
+  const { error: finishErr } = await svc.rpc("complete_agentic_position_scan", { p_account_id: AGENTIC_ACCOUNT_ID });
+  if (finishErr) throw new Error(`manual fill scan completion failed: ${finishErr.message}`);
 
   // One alert per manual fill still open, not one per run — each carries its
   // own issueKey so multiple simultaneous manual buys don't collide into a
@@ -129,8 +148,12 @@ export async function POST(req: NextRequest) {
     await reportIssue({
       issueKey: `manual-trade-guardian:${d.symbol}:${AGENTIC_ACCOUNT_ID}`,
       severity: "warn", category: "broker",
-      title: `Manual buy detected: ${d.qty} ${d.symbol} — suggested stop $${d.suggestedStop}`,
-      detail: `A manual Robinhood buy of ${d.symbol} on account ${AGENTIC_ACCOUNT_ID} was not placed by Kairos. Suggested protective stop: $${d.suggestedStop} (${stopLossPct}% below avg cost, per the US trading mandate — the same source PaperTrader uses for a new entry). This is a SUGGESTION ONLY, per Stage 0 of features/manual-trade-guardian/FEATURE_ARCHITECTURE.md — no order has been placed. Robinhood has no native stop order; if you approve this in a future Stage 1 UI, Kairos would watch the price itself and submit a market/limit sell on breach, the same mechanism PositionMonitor already uses for paper positions.`,
+      title: d.suggestedStop == null
+        ? `Manual buy detected: ${d.qty} ${d.symbol} — cost basis unavailable`
+        : `Manual buy detected: ${d.qty} ${d.symbol} — suggested stop $${d.suggestedStop}`,
+      detail: d.suggestedStop == null
+        ? `A manual Robinhood buy of ${d.symbol} was detected, but broker cost basis was unavailable. Kairos did not fabricate a stop and placed no order.`
+        : `A manual Robinhood buy of ${d.symbol} on account ${AGENTIC_ACCOUNT_ID} was not placed by Kairos. Suggested protective stop: $${d.suggestedStop} (${stopLossPct}% below broker cost basis). This is a suggestion only; no order has been placed.`,
       autoExpireAt: new Date(Date.now() + 14 * 24 * 3600_000).toISOString(),
     });
   }
@@ -141,6 +164,7 @@ export async function POST(req: NextRequest) {
     holdingsChecked: account.holdings.length,
     ledgerRowsWritten: rowsToInsert.length,
     manualFillsDetected: manualDetections.length,
+    bootstrap: isBootstrap,
     manualFills: manualDetections,
   });
 }

@@ -1,6 +1,7 @@
 import { BrokerAdapter, BrokerOrderResult, BrokerOrderState } from "@/lib/brokers/adapter-types";
 import { createServiceClient } from "@/lib/supabase/service";
-import { rhPlaceMarketOrder, rhGetOrder, rhCancelOrder, hasRhRestToken } from "@/lib/brokers/robinhood/rest-client";
+import { rhPlaceMarketOrder, rhGetOrder, rhCancelOrder, hasRhRestToken, rhInstrumentCapability } from "@/lib/brokers/robinhood/rest-client";
+import { capability } from "@/lib/brokers/preflight";
 
 // Robinhood via direct REST — US, live-only. SERVERLESS-CAPABLE (unlike the MCP
 // adapter, which needs a live MCP session absent in Vercel route/cron handlers).
@@ -13,6 +14,19 @@ export function robinhoodAdapter(): BrokerAdapter {
     envs: ["live"],
     async isConfigured() {
       return hasRhRestToken(createServiceClient());
+    },
+    async preflightOrder(o) {
+      const svc = createServiceClient();
+      const r = await rhInstrumentCapability(svc, o.symbol);
+      if (!r.ok) return capability(o, { broker: "robinhood", market: "us", source: "robinhood_instruments", allowed: false, reasonCode: "instrument_lookup_failed", raw: r.error });
+      const a = r.data ?? {};
+      const active = String(a.state ?? "").toLowerCase() === "active";
+      const tradable = a.tradeable === true || a.tradable === true;
+      return capability(o, { broker: "robinhood", market: "us", source: "robinhood_instruments", active,
+        buyAllowed: tradable, sellAllowed: tradable, fractionalAllowed: String(a.fractional_tradability ?? "").toLowerCase() === "tradable",
+        lotSize: 1, canonicalSymbol: a.symbol ?? null, instrumentId: a.id ?? a.url ?? null,
+        allowed: active && tradable && Number.isInteger(o.qty),
+        reasonCode: !active ? "instrument_inactive" : !tradable ? "instrument_not_tradable" : !Number.isInteger(o.qty) ? "fractional_not_allowed" : null, raw: a });
     },
     async submitOrder(o): Promise<BrokerOrderResult> {
       if (o.env !== "live") return { ok: false, error: "Robinhood is live-only (no paper env)" };

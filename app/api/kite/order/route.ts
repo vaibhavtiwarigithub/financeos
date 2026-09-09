@@ -9,6 +9,8 @@ import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { checkLivePortfolioLimits } from "@/lib/risk/live-portfolio-gate";
 import { liveOrdersAllowed } from "@/lib/autonomy";
 import { isTradingEnabled } from "@/lib/market-controls";
+import { kiteAdapter } from "@/lib/brokers/adapters/kite";
+import { preflightRow } from "@/lib/brokers/preflight";
 
 export const dynamic = "force-dynamic";
 
@@ -293,6 +295,16 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Stage 0 only: broker-authoritative instrument/side shadow. This direct
+  // route must be observed separately because it bypasses executeApprovedOrder.
+  const pf = await kiteAdapter().preflightOrder({
+    accountId: "kite", symbol: symbol.toUpperCase(), side: transaction_type.toLowerCase() as "buy" | "sell",
+    qty: quantity as number, type: order_type === "LIMIT" ? "limit" : "market", limitPrice: price, env: "live",
+  });
+  const { error: pfErr } = await svc.from("broker_instrument_preflights").insert(preflightRow(pf, null));
+  if (pfErr) await reportIssue({ issueKey: "broker-preflight-shadow-write:kite", severity: "warn", category: "trading",
+    title: "Kite tradability shadow could not record", detail: `${symbol} ${transaction_type}: ${pfErr.message}` }, svc);
+
   const res = await placeEquityOrder({
     tradingsymbol: symbol,
     transaction_type,
@@ -372,6 +384,13 @@ export async function POST(req: NextRequest) {
     if (Number.isFinite(stopPct) && stopPct > 0 && Number.isFinite(targetPct) && targetPct > 0) {
       const stopPrice = refPrice * (1 - stopPct / 100);
       const targetPrice = refPrice * (1 + targetPct / 100);
+      for (const [type, limitPrice] of [["protective_stop", stopPrice], ["protective_target", targetPrice]] as const) {
+        const protectivePf = await kiteAdapter().preflightOrder({ accountId: "kite", symbol: symbol.toUpperCase(), side: "sell",
+          qty: quantity as number, type, limitPrice, env: "live" });
+        const { error } = await svc.from("broker_instrument_preflights").insert(preflightRow(protectivePf, null));
+        if (error) await reportIssue({ issueKey: `broker-preflight-shadow-write:kite-${type}`, severity: "warn", category: "trading",
+          title: `Kite ${type} tradability shadow could not record`, detail: `${symbol}: ${error.message}` }, svc);
+      }
       const gttResult = await placeKiteGtt({ tradingsymbol: symbol, qty: quantity as number, lastPrice: refPrice, stopPrice, targetPrice }, svc)
         .catch(() => ({ ok: false, error: "exception" } as const));
       if (gttResult.ok && gttResult.triggerId) {

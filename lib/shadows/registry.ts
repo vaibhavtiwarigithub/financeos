@@ -59,6 +59,25 @@ export interface ShadowProgramDefinition {
 
 export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
   {
+    id: "broker-symbol-tradability",
+    name: "Broker symbol tradability",
+    category: "Trading",
+    markets: ["us", "india"],
+    purpose: "Compare every attempted live order with the exact broker/account instrument and side capability before enforcement is allowed.",
+    productBenefit: "Shows whether researched and approved symbols can actually be traded through the selected account without trusting a generic universe list.",
+    traderBenefit: "Prevents future broker rejections, wrong-instrument aliases, invalid lots/ticks, and buy-disabled or sell-disabled submissions.",
+    evidenceSource: "broker_instrument_preflights (immutable broker-authoritative shadow verdicts)",
+    currentInfluence: "Shadow only. Verdicts are recorded but do not block or enable an order during the evidence window.",
+    maximumInfluence: "Fail-closed gateway and last-mile enforcement after ten market sessions, disagreement review, and separate owner approval.",
+    activationGate: "Ten distinct market sessions with every disagreement reconciled against broker acceptance/rejection, then explicit owner approval.",
+    safetyBoundary: "Research membership never substitutes for broker truth; no enforcement flag exists in Stage 0.",
+    cronJobs: [],
+    callAccounting: "tracked",
+    owner: "Execution safety",
+    architectureRef: "features/broker-symbol-tradability/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: "00000000", enteredAt: "2026-09-09", implementationScope: "measure_only", reason: "Collect broker-authoritative symbol/side evidence before adding a new live-order refusal boundary." },
+  },
+  {
     id: "score-price-divergence",
     name: "Score / price divergence",
     category: "Scoring",

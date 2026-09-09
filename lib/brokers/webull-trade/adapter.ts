@@ -20,6 +20,7 @@ import {
   webullTradeOrdersEnabled,
 } from "./config";
 import { getWebullTradeCredential, supabaseVaultReader } from "./credentials";
+import { unsupportedCapability } from "@/lib/brokers/preflight";
 
 // The BrokerAdapter interface carries no stopPrice/clientOrderId/accountId, so the
 // generic submit path supports only MARKET/LIMIT entries. The GTC STOP_LOSS
@@ -37,6 +38,9 @@ export function webullTradeAdapter(): BrokerAdapter {
     // provisions them after entitlement + sandbox proof.
     async isConfigured() {
       return false;
+    },
+    async preflightOrder(o) {
+      return unsupportedCapability("webull_trade", "us", o, "live_execution_not_enabled");
     },
 
     async submitOrder(o): Promise<BrokerOrderResult> {

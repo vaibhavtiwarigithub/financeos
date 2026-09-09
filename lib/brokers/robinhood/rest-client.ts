@@ -32,7 +32,7 @@ export async function hasRhRestToken(svc: SupabaseClient): Promise<boolean> {
   try { await getRhToken(svc); return true; } catch { return false; }
 }
 
-async function rhInstrumentUrl(token: string, symbol: string): Promise<string> {
+async function rhInstrument(token: string, symbol: string): Promise<any> {
   const res = await fetch(
     `${RH_API}/instruments/?symbol=${encodeURIComponent(symbol)}`,
     { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
@@ -41,9 +41,14 @@ async function rhInstrumentUrl(token: string, symbol: string): Promise<string> {
     throw new Error(`RH instruments lookup ${res.status} for ${symbol}: ${await res.text()}`);
   }
   const body = await res.json();
-  const url: string | undefined = body?.results?.[0]?.url;
-  if (!url) throw new Error(`No Robinhood instrument found for symbol: ${symbol}`);
-  return url;
+  const instrument = body?.results?.find((x: any) => String(x?.symbol ?? "").toUpperCase() === symbol.toUpperCase());
+  if (!instrument?.url) throw new Error(`No exact Robinhood instrument found for symbol: ${symbol}`);
+  return instrument;
+}
+
+export async function rhInstrumentCapability(svc: SupabaseClient, symbol: string): Promise<{ ok: boolean; data?: any; error?: string }> {
+  try { return { ok: true, data: await rhInstrument(await getRhToken(svc), symbol) }; }
+  catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
 }
 
 export interface RhOrderResult {
@@ -73,7 +78,7 @@ export async function rhPlaceMarketOrder(
   let instrumentUrl: string;
   try {
     token = await getRhToken(svc);
-    instrumentUrl = await rhInstrumentUrl(token, opts.symbol);
+    instrumentUrl = (await rhInstrument(token, opts.symbol)).url;
   } catch (e: any) {
     return { ok: false, error: e?.message ?? String(e) };
   }

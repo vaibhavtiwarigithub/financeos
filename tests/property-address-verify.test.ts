@@ -13,12 +13,20 @@ describe("property address verification", () => {
   it("verifies only a USPS-standardized deliverable address", () => {
     const result = parseUspsAddressResponse(200, {
       address: { streetAddress: "1 MAIN ST", city: "AUSTIN", state: "TX", ZIPCode: "78701", ZIPPlus4: "1234" },
+      additionalInfo: { DPVConfirmation: "Y" }, matches: [{}],
     });
     expect(result.state).toBe("verified");
     expect(result.source).toBe("usps");
     expect(result.standardized).toBe("1 MAIN ST, AUSTIN TX, 78701-1234");
     expect(result.postalCode).toBe("78701");
     expect(Date.parse(result.checkedAt)).not.toBeNaN();
+  });
+
+  it("does not claim deliverability without a positive, unambiguous DPV result", () => {
+    const address = { streetAddress: "1 MAIN ST", city: "AUSTIN", state: "TX", ZIPCode: "78701" };
+    expect(parseUspsAddressResponse(200, { address }).state).toBe("not_found");
+    expect(parseUspsAddressResponse(200, { address, additionalInfo: { DPVConfirmation: "N" } }).state).toBe("not_found");
+    expect(parseUspsAddressResponse(200, { address, additionalInfo: { DPVConfirmation: "Y" }, matches: [{}, {}] }).state).toBe("not_found");
   });
 
   it("fails closed on a 200 that carries no standardized street and ZIP", () => {

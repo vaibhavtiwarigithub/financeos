@@ -20,15 +20,17 @@ export async function GET(req: NextRequest) {
 
   const svc = createServiceClient();
   const { data, error } = await svc.from("property_zip_observations")
-    .select("as_of, value, source_version")
+    .select("as_of, value, source_version, collected_at")
     .eq("market_slug", market as PropertyMarketId)
     .eq("zip", zip)
     .eq("metric_key", "zhvi_all_homes")
-    .order("as_of", { ascending: true })
-    .limit(24);
+    .order("collected_at", { ascending: false })
+    .limit(120);
   if (error) return NextResponse.json({ error: "ZIP area context is temporarily unavailable" }, { status: 503 });
 
-  const rows = data ?? [];
+  const newestByMonth = new Map<string, any>();
+  for (const row of data ?? []) if (!newestByMonth.has(String(row.as_of))) newestByMonth.set(String(row.as_of), row);
+  const rows = [...newestByMonth.values()].sort((a, b) => String(a.as_of).localeCompare(String(b.as_of))).slice(-13);
   const points = rows.map((row: any) => ({ asOf: String(row.as_of), value: Number(row.value) }));
   return NextResponse.json({
     market, zip,

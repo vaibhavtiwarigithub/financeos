@@ -22,7 +22,7 @@ describe("Robinhood REST deterministic lifecycle", () => {
 
   it("submits exactly once to the permitted account and returns the broker id", async () => {
     vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response(JSON.stringify({ results: [{ url: "https://api.robinhood.com/instruments/a/" }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ results: [{ symbol: "AAPL", url: "https://api.robinhood.com/instruments/a/" }] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "order-1" }), { status: 201 }));
     const result = await rhPlaceMarketOrder(svcWithToken(), { symbol: "AAPL", qty: 2, side: "buy", account: RH_ORDER_ACCOUNT_ID });
     expect(result).toMatchObject({ ok: true, order_id: "order-1" });
@@ -33,7 +33,7 @@ describe("Robinhood REST deterministic lifecycle", () => {
 
   it("treats a network failure after submit as ambiguous and never as safe-to-retry", async () => {
     vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response(JSON.stringify({ results: [{ url: "https://api.robinhood.com/instruments/a/" }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ results: [{ symbol: "AAPL", url: "https://api.robinhood.com/instruments/a/" }] }), { status: 200 }))
       .mockRejectedValueOnce(new Error("connection reset"));
     const result = await rhPlaceMarketOrder(svcWithToken(), { symbol: "AAPL", qty: 1, side: "buy" });
     expect(result).toMatchObject({ ok: false, needs_reconcile: true });

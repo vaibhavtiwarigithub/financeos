@@ -25,15 +25,18 @@ export interface LedgerRow {
   symbol: string;
   qty: number;
   avg_cost: number | null;
-  source: "manual" | "agentic";
+  source: "baseline" | "manual" | "agentic" | "unknown";
   matched_broker_order_id: number | null;
   suggested_stop_price: number | null;
+  delta_qty: number;
+  transition_side: "buy" | "sell" | "baseline";
+  matched_broker_order_ids: number[];
 }
 
 export interface ManualDetection {
   symbol: string;
   qty: number;
-  suggestedStop: number;
+  suggestedStop: number | null;
 }
 
 export interface DetectManualFillsResult {
@@ -56,40 +59,47 @@ export function detectManualFills(
   lastKnownQty: Map<string, number>,
   recentOrders: RecentOrderInput[],
   stopLossPct: number,
+  isBootstrap = false,
 ): DetectManualFillsResult {
   const rowsToInsert: LedgerRow[] = [];
   const manualDetections: ManualDetection[] = [];
 
-  for (const holding of holdings) {
-    const prevQty = lastKnownQty.get(holding.symbol) ?? 0;
-    const delta = holding.qty - prevQty;
-    if (delta <= 0) continue;
+  const bySymbol = new Map(holdings.map(h => [h.symbol.toUpperCase(), h]));
+  const symbols = new Set([...lastKnownQty.keys(), ...bySymbol.keys()]);
+  for (const rawSymbol of symbols) {
+    const symbol = rawSymbol.toUpperCase();
+    const holding = bySymbol.get(symbol);
+    const currentQty = holding?.qty ?? 0;
+    const prevQty = lastKnownQty.get(symbol) ?? 0;
+    const delta = currentQty - prevQty;
+    if (!isBootstrap && Math.abs(delta) < QTY_MATCH_EPSILON) continue;
+    if (isBootstrap && !holding) continue;
 
-    const matchedOrder = recentOrders.find(
-      o => o.symbol === holding.symbol && o.side === "buy" && Math.abs(o.filledQty - delta) < QTY_MATCH_EPSILON,
+    const transitionSide: "buy" | "sell" | "baseline" = isBootstrap ? "baseline" : delta > 0 ? "buy" : "sell";
+    const candidates = isBootstrap ? [] : recentOrders.filter(
+      o => o.symbol.toUpperCase() === symbol && o.side === transitionSide && Number.isFinite(o.filledQty) && o.filledQty > 0,
     );
-    const source: "manual" | "agentic" = matchedOrder ? "agentic" : "manual";
-    const avgCost = holding.costBasis != null && holding.qty > 0 ? holding.costBasis / holding.qty : holding.currentPrice;
-    const suggestedStop = source === "manual" ? Number((avgCost * (1 - stopLossPct / 100)).toFixed(2)) : null;
+    const candidateTotal = candidates.reduce((sum, o) => sum + o.filledQty, 0);
+    const exactAggregate = candidates.length > 0 && Math.abs(candidateTotal - Math.abs(delta)) < QTY_MATCH_EPSILON;
+    const source: LedgerRow["source"] = isBootstrap ? "baseline" : exactAggregate ? "agentic" : candidates.length ? "unknown" : "manual";
+    const avgCost = holding?.costBasis != null && currentQty > 0 ? holding.costBasis / currentQty : null;
+    const suggestedStop = source === "manual" && transitionSide === "buy" && avgCost != null
+      ? Number((avgCost * (1 - stopLossPct / 100)).toFixed(2)) : null;
 
     rowsToInsert.push({
       account_id: accountId,
-      symbol: holding.symbol,
-      qty: holding.qty,
+      symbol,
+      qty: currentQty,
       avg_cost: avgCost,
       source,
-      matched_broker_order_id: matchedOrder?.id ?? null,
+      matched_broker_order_id: candidates.length === 1 && exactAggregate ? candidates[0].id : null,
       suggested_stop_price: suggestedStop,
+      delta_qty: isBootstrap ? currentQty : delta,
+      transition_side: transitionSide,
+      matched_broker_order_ids: exactAggregate ? candidates.map(o => o.id) : [],
     });
 
-    if (source === "manual") manualDetections.push({ symbol: holding.symbol, qty: delta, suggestedStop: suggestedStop! });
-  }
-
-  for (const [symbol, prevQty] of lastKnownQty) {
-    const stillHeld = holdings.some(h => h.symbol === symbol);
-    if (!stillHeld && prevQty > 0) {
-      rowsToInsert.push({ account_id: accountId, symbol, qty: 0, avg_cost: null, source: "manual", matched_broker_order_id: null, suggested_stop_price: null });
-    }
+    if (source === "manual" && transitionSide === "buy") manualDetections.push({ symbol, qty: delta, suggestedStop });
   }
 
   return { rowsToInsert, manualDetections };

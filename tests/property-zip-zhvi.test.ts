@@ -36,11 +36,11 @@ describe("ZillowZhviZipAdapter — ZIP-level area context", () => {
     expect(latest?.market).toBe("austin");
   });
 
-  it("returns nothing for a market with no matching ZIPs in the file (missing-data path), without throwing", async () => {
+  it("raises typed unavailable when the target market silently disappears", async () => {
     const body = csv([HEADER, ["3", "10001", "New York-Newark-Jersey City, NY-NJ-PA", "900000", "905000", "910000"]]);
     const adapter = new ZillowZhviZipAdapter();
-    const observations = await adapter.fetch({ market: "phoenix", fetchText: async () => ({ body, lastModified: null }) });
-    expect(observations).toEqual([]);
+    await expect(adapter.fetch({ market: "phoenix", fetchText: async () => ({ body, lastModified: null }) }))
+      .rejects.toMatchObject({ code: "zillow_zhvi_target_market_empty" });
   });
 
   it("raises a typed unavailable error on transport failure rather than reporting an empty success", async () => {

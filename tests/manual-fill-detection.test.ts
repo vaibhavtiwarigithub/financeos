@@ -70,8 +70,7 @@ describe("detectManualFills", () => {
     expect(manualDetections).toHaveLength(0);
   });
 
-  it("a decrease (partial or full exit) is out of scope — no stop, ledger row records it if fully closed", () => {
-    // Partial exit: still held, smaller qty. Not this route's job (Section 2.5) — no row.
+  it("records partial and full exits so the observed baseline cannot drift", () => {
     const partial = detectManualFills(
       ACCOUNT,
       [{ symbol: "AAPL", qty: 4, currentPrice: 200, costBasis: 800 }],
@@ -79,7 +78,8 @@ describe("detectManualFills", () => {
       [],
       10,
     );
-    expect(partial.rowsToInsert).toHaveLength(0);
+    expect(partial.rowsToInsert).toHaveLength(1);
+    expect(partial.rowsToInsert[0]).toMatchObject({ symbol: "AAPL", qty: 4, delta_qty: -6, transition_side: "sell", source: "manual", suggested_stop_price: null });
 
     // Full exit: symbol no longer held at all.
     const full = detectManualFills(ACCOUNT, [], new Map([["AAPL", 10]]), [], 10);
@@ -88,7 +88,7 @@ describe("detectManualFills", () => {
     expect(full.manualDetections).toHaveLength(0); // exits never suggest a stop
   });
 
-  it("falls back to currentPrice as avg cost when costBasis is missing", () => {
+  it("does not fabricate cost basis or a stop when broker cost basis is missing", () => {
     const { rowsToInsert } = detectManualFills(
       ACCOUNT,
       [{ symbol: "INTC", qty: 50, currentPrice: 24.10, costBasis: null }],
@@ -96,8 +96,8 @@ describe("detectManualFills", () => {
       [],
       10,
     );
-    expect(rowsToInsert[0].avg_cost).toBe(24.10);
-    expect(rowsToInsert[0].suggested_stop_price).toBeCloseTo(24.10 * 0.9, 2);
+    expect(rowsToInsert[0].avg_cost).toBeNull();
+    expect(rowsToInsert[0].suggested_stop_price).toBeNull();
   });
 
   it("handles multiple simultaneous manual fills independently", () => {
@@ -112,5 +112,32 @@ describe("detectManualFills", () => {
       10,
     );
     expect(manualDetections.map(d => d.symbol).sort()).toEqual(["AMD", "INTC"]);
+  });
+
+  it("bootstraps existing holdings without calling them manual fills", () => {
+    const r = detectManualFills(
+      ACCOUNT,
+      [{ symbol: "INTC", qty: 50, currentPrice: 24, costBasis: 1200 }],
+      new Map(), [], 10, true,
+    );
+    expect(r.rowsToInsert).toHaveLength(1);
+    expect(r.rowsToInsert[0]).toMatchObject({ source: "baseline", transition_side: "baseline", delta_qty: 50 });
+    expect(r.manualDetections).toHaveLength(0);
+  });
+
+  it("matches several Kairos fills only when their aggregate equals the transition", () => {
+    const orders: RecentOrderInput[] = [
+      { id: 7, symbol: "AAPL", side: "buy", filledQty: 4 },
+      { id: 8, symbol: "AAPL", side: "buy", filledQty: 6 },
+    ];
+    const r = detectManualFills(ACCOUNT, [{ symbol: "AAPL", qty: 15, currentPrice: 200, costBasis: 3000 }], new Map([["AAPL", 5]]), orders, 10);
+    expect(r.rowsToInsert[0]).toMatchObject({ source: "agentic", matched_broker_order_id: null, matched_broker_order_ids: [7, 8] });
+  });
+
+  it("refuses to guess attribution when recent fills do not equal the transition", () => {
+    const orders: RecentOrderInput[] = [{ id: 7, symbol: "AAPL", side: "buy", filledQty: 4 }];
+    const r = detectManualFills(ACCOUNT, [{ symbol: "AAPL", qty: 15, currentPrice: 200, costBasis: 3000 }], new Map([["AAPL", 5]]), orders, 10);
+    expect(r.rowsToInsert[0].source).toBe("unknown");
+    expect(r.manualDetections).toHaveLength(0);
   });
 });

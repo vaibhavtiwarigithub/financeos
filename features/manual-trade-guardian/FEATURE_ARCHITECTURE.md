@@ -5,12 +5,21 @@
 > `live_win_rate`). Cron `kairos-manual-fill-detect` registered (`*/15 13-21
 > * * 1-5`). Route: `app/api/agents/manual-fill-detect/cron/route.ts`. Pure
 > core: `lib/trading/manual-fill-detection.ts`, tested
-> (`tests/manual-fill-detection.test.ts`, 8 cases). Stage 1 (the
+> (`tests/manual-fill-detection.test.ts`, 11 cases). Stage 1 (the
 > approval-card UI that lets a suggested stop actually be placed) remains
 > unbuilt — see Section 6.
 > Owner ask (2026-09-08): "if I buy manually in the agentic account, add the
 > right stop loss ASAP; I'll sell manually myself; track manual vs app-placed."
 > This document is the architecture gate required before any code is written.
+
+> **2026-09-09 remediation:** the initial implementation did not satisfy its
+> own position-ledger contract. The first snapshot had no baseline state,
+> partial sells were skipped, full exits were hard-coded manual, missing cost
+> basis became current price, and client roles retained TRUNCATE. The approved
+> repair adds lease-backed bootstrap state, records every quantity transition,
+> supports aggregate order attribution plus explicit unknown, preserves null
+> cost basis, adds the market-calendar gate, and reconciles the schema/grants
+> through `20260909153000_guardian_and_broker_preflight_safety.sql`.
 
 ---
 

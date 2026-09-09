@@ -62,7 +62,7 @@ export function uspsCredentials(env: NodeJS.ProcessEnv = process.env): { key: st
  * would let a nonexistent address through, which is the whole bug being fixed.
  */
 export function parseUspsAddressResponse(status: number, payload: unknown): AddressVerification {
-  const body = (payload ?? {}) as { address?: Record<string, unknown>; error?: { message?: string } };
+  const body = (payload ?? {}) as { address?: Record<string, unknown>; additionalInfo?: Record<string, unknown>; matches?: unknown[]; error?: { message?: string } };
   const uspsMessage = typeof body.error?.message === "string" ? body.error.message.trim().slice(0, 160) : "";
 
   if (status === 200) {
@@ -71,7 +71,9 @@ export function parseUspsAddressResponse(status: number, payload: unknown): Addr
     const zip = typeof address.ZIPCode === "string" ? address.ZIPCode.trim() : "";
     const city = typeof address.city === "string" ? address.city.trim() : "";
     const state = typeof address.state === "string" ? address.state.trim() : "";
-    if (!street || !zip) {
+    const dpv = String(body.additionalInfo?.DPVConfirmation ?? "").toUpperCase();
+    const ambiguous = Array.isArray(body.matches) && body.matches.length > 1;
+    if (!street || !zip || dpv !== "Y" || ambiguous) {
       return result("not_found", "USPS answered but returned no standardized street and ZIP for this address, so it is not confirmed deliverable. Next: re-check the street number, unit, and ZIP, or save anyway if you know the property is real.");
     }
     const plus4 = typeof address.ZIPPlus4 === "string" && address.ZIPPlus4.trim() ? `-${address.ZIPPlus4.trim()}` : "";

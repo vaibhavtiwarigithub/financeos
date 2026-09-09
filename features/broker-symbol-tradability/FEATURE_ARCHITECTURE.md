@@ -1,8 +1,8 @@
 # Broker Symbol Tradability Gate — Feature Architecture
 
-**Status:** DRAFT — architecture review required before implementation or migration
+**Status:** Stage 0 approved 2026-09-09; shadow implementation and production schema deployed, enforcement remains gated
 **Scope:** Every live BUY, SELL, and broker-side protective order
-**Behavior today:** No broker-authoritative symbol/side preflight exists
+**Behavior today:** Broker-authoritative symbol/side preflights are recorded in shadow mode; they do not yet block or enable orders
 
 ## Decision
 

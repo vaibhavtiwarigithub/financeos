@@ -180,7 +180,10 @@ export async function POST(req: NextRequest) {
     // Filled SELL orders are a closed-position PROXY, not a paired round-trip
     // count (no buy/sell matching exists yet — see live_win_rate below). Good
     // enough for a readiness gate; not good enough for a win/loss figure.
-    const totalClosedTradesAll = (totalClosedTrades ?? 0) + (liveTradesClosed ?? 0);
+    // Filled SELL orders are an operational proxy, not paired realized outcomes:
+    // partial exits and multiple fills can over-count them. Keep the count for
+    // display, but never let it unlock evidence-gated learning.
+    const totalClosedTradesAll = totalClosedTrades ?? 0;
 
     // Fallback must be a model this app can actually route. `claude-opus-4-8` was
     // left here after execClaude was deleted — nothing can serve an Anthropic id

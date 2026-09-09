@@ -1,6 +1,7 @@
 import { BrokerAdapter, BrokerOrderResult, BrokerOrderState } from "@/lib/brokers/adapter-types";
 import { hasRobinhoodToken, submitRobinhoodOrder, queryRobinhoodOrder, cancelRobinhoodOrder } from "@/lib/robinhood-mcp";
 import { createServiceClient } from "@/lib/supabase/service";
+import { unsupportedCapability } from "@/lib/brokers/preflight";
 
 // Robinhood via its remote MCP server — US, live-only. Deterministic write path
 // (no LLM, per R1). isConfigured() is false until the OAuth flow (blocked on
@@ -68,6 +69,9 @@ export function robinhoodMcpAdapter(): BrokerAdapter {
       if (!acct.ok) return { ok: false, error: acct.error };
       const r = await cancelRobinhoodOrder(brokerOrderId, acct.account);
       return { ok: r.ok, error: r.error, raw: r.raw };
+    },
+    async preflightOrder(o) {
+      return unsupportedCapability("robinhood_mcp", "us", o, "mcp_has_no_instrument_capability_tool");
     },
   };
 }

@@ -292,6 +292,7 @@ export class ZillowZhviZipAdapter {
         results.push({ sourceKey: this.sourceKey, market: input.market, zip, metric: "zhvi_all_homes", nativeUnit: "USD", value, asOf: name, sourceVersion });
       }
     }
+    if (results.length === 0) throw new PropertySourceUnavailableError("zillow_zhvi_target_market_empty", `Zillow ZHVI returned no usable ${input.market} ZIP observations`);
     return results;
   }
 }

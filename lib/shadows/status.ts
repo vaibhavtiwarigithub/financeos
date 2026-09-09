@@ -331,6 +331,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     scorePriceRunRes,
     scorePriceEventRes,
     scorePriceOutcomeRes,
+    brokerPreflightRes,
   ] = await Promise.all([
     svc.rpc("get_shadow_cron_status"),
     svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
@@ -451,6 +452,9 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       .select("event_id,horizon_days,matured_at,score_price_divergence_events!inner(market,is_primary,end_session)")
       .eq("score_price_divergence_events.market", market).eq("score_price_divergence_events.is_primary", true)
       .gte("matured_at", since90).order("matured_at", { ascending: false }).limit(10000),
+    svc.from("broker_instrument_preflights")
+      .select("market,broker,allowed,reason_code,checked_at,enforcement_mode")
+      .eq("market", market).gte("checked_at", since90).order("checked_at", { ascending: false }).limit(5000),
   ]) as Array<QueryResult<any>>;
 
   const cronRows = cronRes.data ?? [];
@@ -489,6 +493,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const scorePriceRuns = scorePriceRunRes.data ?? [];
   const scorePriceEvents = scorePriceEventRes.data ?? [];
   const scorePriceOutcomes = scorePriceOutcomeRes.data ?? [];
+  const brokerPreflights = brokerPreflightRes.data ?? [];
 
   const labelRows: LabelRow[] = (labelCoverageRes.data ?? [])
     .map((row: any) => {
@@ -548,6 +553,26 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         "Scoring source, version, availability mask and applied weights must match at both endpoints.",
       ];
       status.available = !scorePriceRunRes.error && !scorePriceEventRes.error && !scorePriceOutcomeRes.error;
+      return status;
+    }
+
+    if (program.id === "broker-symbol-tradability") {
+      const sessions = new Set(brokerPreflights.map((row: any) => String(row.checked_at).slice(0, 10))).size;
+      const denied = brokerPreflights.filter((row: any) => row.allowed !== true);
+      const ready = sessions >= 10 && denied.length === 0;
+      status.lifecycle = brokerPreflights.length ? (ready ? "ready_for_review" : "collecting") : "idle";
+      status.benefitVerdict = "operational_only";
+      status.benefitEvidence = `${brokerPreflights.length} broker-authoritative preflight(s) across ${sessions}/10 session date(s); ${denied.length} denial/disagreement(s).`;
+      status.progress = progress(sessions, 10, "distinct preflight session dates", 90);
+      status.calls = calls("tracked", "One broker capability request per live order attempt; no standalone polling cron.", brokerPreflights.length, brokerPreflights.length, 0);
+      status.latestAt = latestIso(brokerPreflights, "checked_at");
+      status.blockers = [];
+      if (sessions < 10) status.blockers.push(`${sessions}/10 session dates collected.`);
+      if (denied.length) status.blockers.push(`${denied.length} denied or unsupported verdict(s) require reconciliation.`);
+      status.blockers.push("Enforcement requires a separate owner approval after the shadow review.");
+      status.nextAction = ready ? "Review every verdict and broker outcome; do not enforce without a separate owner approval." : "Keep collecting on real owner-approved attempts and investigate every denial.";
+      status.details = ["BUY and SELL permissions are independent.", "Kite direct orders and the canonical execution gateway both record evidence."];
+      status.available = !brokerPreflightRes.error;
       return status;
     }
 

@@ -21,6 +21,7 @@ import { isSymbolBlocked } from "@/lib/trading/symbol-policy";
 import { isEtfSymbol } from "@/lib/asset-classification";
 import { isTradingEnabled } from "@/lib/market-controls";
 import { placeProtectiveStop } from "@/lib/protective/placement-worker";
+import { preflightRow } from "@/lib/brokers/preflight";
 
 // Fraction of live equity used as the default per-order notional ceiling when
 // strategy_config.max_order_notional is null.
@@ -432,6 +433,30 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
     return { ok: false, status: 400, error: `${broker.id} has no API keys configured — add them in Settings → System → API Vault` };
   }
 
+  // Stage 0 broker-authoritative instrument check: persist the exact broker /
+  // account / symbol / side verdict, but do not enforce it until the approved
+  // 10-session shadow has been reviewed. Persistence failure is visible rather
+  // than silently turning the shadow into no data.
+  if (orderEnv === "live" && tradingAccount) {
+    try {
+      const capability = await broker.preflightOrder({ accountId: tradingAccount, symbol, side, qty, type: "market", env: orderEnv });
+      const { error: pfErr } = await supabase.from("broker_instrument_preflights").insert(preflightRow(capability, proposal_id));
+      if (pfErr) await reportIssue({
+        issueKey: `broker-preflight-shadow-write:${broker.id}`,
+        severity: "warn", category: "trading",
+        title: `Broker tradability shadow could not record ${broker.id}`,
+        detail: `No execution behavior changed, but the ${symbol} ${side} preflight evidence was not persisted: ${pfErr.message}`,
+      }, supabase);
+    } catch (e) {
+      await reportIssue({
+        issueKey: `broker-preflight-shadow-run:${broker.id}`,
+        severity: "warn", category: "trading",
+        title: `Broker tradability shadow failed for ${broker.id}`,
+        detail: `${symbol} ${side}: ${String(e)}`,
+      }, supabase);
+    }
+  }
+
   // Rate limit — rolling 10-minute window across all proposals.
   const ORDER_RATE_LIMIT = Number(process.env.ORDER_RATE_LIMIT_10MIN ?? 12);
   const { count: recentOrders } = await supabase
@@ -463,6 +488,14 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
     return { ok: false, status: 500, error: `Could not reserve order budget: ${m}` };
   }
   const orderId = reservedId as unknown as number;
+
+  if (orderEnv === "live" && tradingAccount) {
+    const { error: acctPersistErr } = await supabase.from("broker_orders").update({ broker_account_id: tradingAccount }).eq("id", orderId);
+    if (acctPersistErr) {
+      await supabase.from("broker_orders").update({ status: "error", error: `broker account provenance write failed: ${acctPersistErr.message}` }).eq("id", orderId);
+      return { ok: false, status: 500, error: "Broker account provenance could not be persisted — order was not submitted" };
+    }
+  }
 
   const result = await broker.submitOrder({ symbol, side, qty, env: orderEnv });
   if (!result.ok) {

@@ -17,11 +17,31 @@ export interface BrokerOrderState {
   filledQty?: number; avgFillPrice?: number; raw?: any; error?: string;
 }
 
+export interface BrokerPreflightInput {
+  accountId: string;
+  symbol: string;
+  side: "buy" | "sell";
+  qty: number;
+  type: "market" | "limit" | "protective_stop" | "protective_target";
+  limitPrice?: number;
+  env: "paper" | "live";
+}
+
+export interface BrokerInstrumentCapability {
+  broker: string; accountId: string; env: "paper" | "live"; market: "us" | "india";
+  requestedSymbol: string; canonicalSymbol: string | null; instrumentId: string | null;
+  side: "buy" | "sell"; orderType: BrokerPreflightInput["type"];
+  allowed: boolean; active: boolean; buyAllowed: boolean; sellAllowed: boolean; closeOnly: boolean;
+  fractionalAllowed: boolean; lotSize: number | null; tickSize: number | null;
+  checkedAt: string; expiresAt: string; source: string; reasonCode: string | null; rawFingerprint: string;
+}
+
 export interface BrokerAdapter {
   id: string;                 // "alpaca" | "kite" | ...
   market: "us" | "india";
   envs: ("paper" | "live")[]; // which environments this broker supports
   isConfigured(): Promise<boolean>;
+  preflightOrder(o: BrokerPreflightInput): Promise<BrokerInstrumentCapability>;
   submitOrder(o: { symbol: string; side: "buy" | "sell"; qty: number; type?: "market" | "limit"; limitPrice?: number; env: "paper" | "live" }): Promise<BrokerOrderResult>;
   getOrder(brokerOrderId: string, env: "paper" | "live"): Promise<BrokerOrderState>;
   cancelOrder(brokerOrderId: string, env: "paper" | "live"): Promise<{ ok: boolean; error?: string }>;

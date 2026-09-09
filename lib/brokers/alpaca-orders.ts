@@ -40,6 +40,10 @@ async function alpacaFetch(path: string, env: "paper" | "live", init?: RequestIn
   }
 }
 
+export async function getAlpacaAsset(symbol: string, env: "paper" | "live") {
+  return alpacaFetch(`/v2/assets/${encodeURIComponent(symbol)}`, env);
+}
+
 export async function submitAlpacaOrder(o: {
   symbol: string; side: "buy" | "sell"; qty: number; type?: "market" | "limit"; limitPrice?: number; env: "paper" | "live";
 }): Promise<{ ok: boolean; brokerOrderId?: string; raw?: any; error?: string }> {

@@ -222,6 +222,19 @@ Notes: Fixed the Agents page's surviving $10k India baseline, blocked US proposa
 
 ---
 
+### Entry 10 - 2026-09-09
+
+Instruction: Approve and implement the broker-symbol tradability shadow and safety remediation identified by the two-session review.
+Classification: Approved implementation / Live-money safety shadow
+Affected area: Manual Trade Guardian, Learner evidence gate, broker adapters/gateway, Kite direct and GTT paths, Upgrade Path, property evidence semantics
+Impact: High safety and evidence correctness; broker preflight remains measure-only
+Architecture impact: Establishes a mandatory adapter capability contract and immutable preflight ledger without enforcing the result during the ten-session shadow.
+Risk: Additional broker metadata calls may be unavailable; unsupported adapters record explicit denials instead of inventing tradability. No automatic promotion or enforcement exists.
+Decision status: Stage 0 implemented and production schema verified; live enforcement awaits evidence plus a separate owner approval
+Notes: Guardian now bootstraps without alerts, records partial/full transitions, aggregates unconsumed fills, preserves unknown attribution and null cost basis, and uses a market-calendar/lease gate. Learner no longer counts SELL orders as realized outcomes. Alpaca, direct Robinhood, and Kite have broker-authoritative checks; Robinhood MCP and dormant Webull fail visibly as unsupported. Upgrade Path reports sessions and denials. Property fixes tighten USPS DPV semantics, select the newest ZIP vintage per month, reject silent empty ZHVI markets, and label amortization as an estimate.
+
+---
+
 ## Drift Warnings
 
 - Current prototype routes use LLM-generated prices and direct weight mutation, which conflict with the approved architecture.
