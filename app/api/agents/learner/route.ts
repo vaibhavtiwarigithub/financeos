@@ -161,13 +161,26 @@ export async function POST(req: NextRequest) {
       { data: closedTradeOutcomes, count: totalClosedTrades },
       { data: learnerConfig },
       { data: recentRuns },
+      { count: liveTradesClosed },
     ] = await Promise.all([
       svc.from("agent_config").select("model, enabled").eq("agent_name", "learner").single(),
       svc.from("learner_runs").select("id").eq("run_date", new Date().toISOString().slice(0, 10)).eq("market", LEARN_MARKET).maybeSingle(),
       scopeMkt(svc.from("paper_trades").select("outcome", { count: "exact" }).not("closed_at", "is", null)),
       svc.from("learner_config").select("*"),
       svc.from("learner_runs").select("win_rate_snapshot, mutations_paused, run_date").eq("market", LEARN_MARKET).order("run_date", { ascending: false }).limit(5),
+      // Live closed trades, US only (605420660 is the only order-permitted
+      // account; broker_orders has no account column, so broker='robinhood'
+      // is the correct filter). Owner-approved 2026-09-09: paper stays the
+      // primary evidence base, ALWAYS — this is additive visibility, not a
+      // replacement. India has no agentic order path yet, so this is null there.
+      LEARN_MARKET === "us"
+        ? svc.from("broker_orders").select("id", { count: "exact", head: true }).eq("broker", "robinhood").eq("side", "sell").eq("status", "filled")
+        : Promise.resolve({ count: null }),
     ]);
+    // Filled SELL orders are a closed-position PROXY, not a paired round-trip
+    // count (no buy/sell matching exists yet — see live_win_rate below). Good
+    // enough for a readiness gate; not good enough for a win/loss figure.
+    const totalClosedTradesAll = (totalClosedTrades ?? 0) + (liveTradesClosed ?? 0);
 
     // Fallback must be a model this app can actually route. `claude-opus-4-8` was
     // left here after execClaude was deleted — nothing can serve an Anthropic id
@@ -504,7 +517,7 @@ export async function POST(req: NextRequest) {
             if (!Number.isFinite(newWeight)) return JSON.stringify({ error: "new_weight must be a finite number" });
 
             if (autoGuardTripped) return JSON.stringify({ error: `AUTO-GUARD (champion health): ${autoGuardReason}. Weight mutations paused. Review strategy before re-enabling.` });
-            if ((totalClosedTrades ?? 0) < 10) return JSON.stringify({ error: `Phase 0 gate: ${totalClosedTrades} closed trades. Need 10+.` });
+            if (totalClosedTradesAll < 10) return JSON.stringify({ error: `Phase 0 gate: ${totalClosedTradesAll} closed trades (paper ${totalClosedTrades ?? 0} + live ${liveTradesClosed ?? 0}). Need 10+.` });
 
             // Server-side evidence binding: recompute the SAME correlation
             // query_score_correlation would return for this dimension, right
@@ -798,7 +811,7 @@ export async function POST(req: NextRequest) {
       const systemPrompt = `You are the LearnerAgent for a US equity paper trading system. You are a TRUE AI AGENT — you have tools, you call them, you reason about the results, and you evolve the signal scoring strategy over time.
 
 CURRENT DATE: ${today}
-TOTAL CLOSED TRADES ALL TIME: ${totalClosedTrades ?? 0}
+TOTAL CLOSED TRADES ALL TIME: ${totalClosedTradesAll} (paper ${totalClosedTrades ?? 0}${LEARN_MARKET === "us" ? ` + live ${liveTradesClosed ?? 0} — live count is a filled-sell PROXY, not a paired win/loss` : ""})
 TRADES CLOSED THIS RUN: ${outcomes.length}
 TOTAL SIGNALS IN DB: ${signalCount ?? 0}
 AUTO-GUARD STATUS: ${autoGuardTripped ? `TRIPPED — ${autoGuardReason}. Weight mutations BLOCKED until manual review.` : "OK"}
@@ -931,6 +944,11 @@ REASONING APPROACH:
           tokens_out: loopResult.tokensOut,
           mutations_paused: autoGuardTripped,
           pause_reason: autoGuardTripped ? `Auto-guard (champion health): ${autoGuardReason}` : null,
+          // Owner-approved 2026-09-09: visible, never blended into win_rate_snapshot
+          // (that stays paper-only) — live_win_rate stays null until real buy/sell
+          // pairing exists rather than fabricate one from an unpaired proxy count.
+          live_trades_closed: LEARN_MARKET === "us" ? (liveTradesClosed ?? 0) : null,
+          live_win_rate: null,
         }, { onConflict: "run_date,market" });
 
         learnerResult = { summary: finishArgs.summary, hypotheses, weightMutations, steps: loopResult.steps, tokensIn: loopResult.tokensIn, tokensOut: loopResult.tokensOut, autoGuardTripped };
