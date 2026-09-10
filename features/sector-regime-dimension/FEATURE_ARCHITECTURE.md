@@ -78,6 +78,76 @@ reporting a sector-partitioned design.
 That is worth verifying independently before Stage 3 is enabled, and it is a
 second reason to fix the taxonomy first.
 
+### 3.2 RE-MEASURED 2026-09-09 — the taxonomy fix shipped; the blocker moved
+
+The taxonomy defect described above **is fixed.** `normalizeSector` in
+`lib/scoring/rank.ts` now delegates to `canonicalSectorKey`
+(`lib/scoring/sector-taxonomy.ts`), which maps provider labels to canonical
+GICS sectors and returns `null` for unmapped labels so they take the honest
+fallback rather than a wrong peer group. The §3 text above describing
+`normalizeSector` as "lowercase and trim only" is historical — kept for the
+record, no longer true.
+
+Coverage also improved materially:
+
+| fact | 2026-09-02 | 2026-09-09 |
+|---|---|---|
+| US symbols with a decision observation | 162 | 167 |
+| of those, carrying a sector in `symbol_profiles` | 68 (42%) | **117 (70%)** |
+| distinct RAW sector labels | 23 | 30 |
+
+**But the blocker is still real, and its cause has moved from code to
+universe breadth.** Applying the now-live crosswalk to current production
+labels, all-time distinct US symbols per canonical sector:
+
+| canonical sector | members | vs. `RANK_MIN_GROUP_EQUITY_US = 20` |
+|---|---|---|
+| Technology (17 `Technology` + 15 `Semiconductors`) | **32** | clears |
+| Financials (12 `Financial Services` + 2 `Banking`) | 14 | below |
+| Consumer Discretionary (9 `Retail` + 4 `Hotels, Restaurants & Leisure`) | 13 | below |
+| Energy | 11 | below |
+| Communication Services (`Media`) | 6 | below |
+| Health Care (3 `Biotechnology` + 2 `Life Sciences Tools & Services`) | 5 | below |
+| Materials (`Metals & Mining`) | 5 | below |
+| Real Estate | 3 | below |
+| Utilities | 3 | below |
+| Industrials (`Electrical Equipment`) | 3 | below |
+| Consumer Staples (`Beverages`) | 2 | below |
+
+**One sector of eleven clears the floor.** The other ten still collapse into
+`market:assetType:all`, exactly as §3.1 describes — but now because the
+universe is too small and too tech-concentrated, not because the mapping is
+broken.
+
+This count is also the OPTIMISTIC case: it is all-time distinct symbols with
+any observation. `rank.ts` partitions on **per-session eligible** counts,
+which are strictly smaller, so on a given session even Technology may not
+clear.
+
+Consequence for this feature: sector-relative ranking cannot be meaningfully
+evaluated today for ten of eleven sectors, regardless of the taxonomy fix.
+The remaining options are a materially wider universe, a lower floor for thin
+sectors (which trades away the statistical protection the floor exists to
+provide, and would need its own justification), or accepting that the
+dimension only ever applies to Technology. None of these is a code defect to
+fix.
+
+### 3.3 The shadow has never run and cannot be surfaced today
+
+Verified 2026-09-09:
+
+- **No schedule.** No `cron.job` entry, nothing in `vercel.json`, nothing in
+  `lib/schedule.ts`.
+- **No persistence.** `app/api/agents/sector-regime-shadow/route.ts` only
+  reads (`observation_labels`, `symbol_profiles`, `price_cache`). It writes
+  nothing; its IC report is returned in the HTTP response and discarded.
+- **No results table** exists for it.
+
+So "run the shadow and surface it on Upgrade Path" requires adding
+persistence and a schedule first — it is not merely a matter of invoking the
+route. Given §3.2, doing so before the breadth problem is resolved would
+persist an IC computed over one usable sector.
+
 ## 4. Staged plan
 
 **Stage 0 — mapping (prerequisite, no scoring change).** One canonical sector
