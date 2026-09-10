@@ -6,8 +6,10 @@
 > * * 1-5`). Route: `app/api/agents/manual-fill-detect/cron/route.ts`. Pure
 > core: `lib/trading/manual-fill-detection.ts`, tested
 > (`tests/manual-fill-detection.test.ts`, 11 cases). Stage 1 (the
-> approval-card UI that lets a suggested stop actually be placed) remains
-> unbuilt — see Section 6.
+> Stage 1 is implemented 2026-09-09: an owner-armed software-stop plan,
+> immutable plan-event ledger, owner panel on Live Portfolio, and a gated
+> monitor. It is deliberately **not** a `trade_proposals` approval card: that
+> existing control executes a SELL immediately, which is unsafe for arming.
 > Owner ask (2026-09-08): "if I buy manually in the agentic account, add the
 > right stop loss ASAP; I'll sell manually myself; track manual vs app-placed."
 > This document is the architecture gate required before any code is written.
@@ -95,25 +97,23 @@ On detecting a manual fill: call the same stop-loss function
 `stop_loss_pct` and the fill's entry price. Output: one suggested stop price,
 nothing else. No new stop-sizing model.
 
-### 2.3 Approval — proposal, never silent placement
+### 2.3 Approval — arm a plan, never submit on approval
 
-**This is the load-bearing decision in this document.** A stop is not placed
-automatically. A `trade_proposals` row is created:
+**This is the load-bearing decision in this document.** The first draft said a
+`trade_proposals` SELL could be used for this approval. That was wrong: its
+existing approval handler executes the SELL at once. Guardian instead creates
+a dedicated `guardian_protection_plans` record in `pending_approval`:
 
 ```
-side: sell, order_type: limit (or market, TBD by risk profile)
-thesis: "Manual buy detected: <qty> <symbol> @ <entry> — suggested protective
-         stop at <price> (<pct>% below entry, per your mandate's stop_loss_pct)"
-account_number: 605420660
-status: pending
-approval_expires_at: <mandate-consistent window>
+account_id: 605420660
+symbol, qty, entry_price, stop_price
+status: pending_approval → armed
 ```
 
-The owner sees it exactly where every other pending proposal already
-surfaces, taps approve, and the **existing** approval → order-placement path
-executes it — no new placement code, no new gate. `protective_orders_enabled`
-continues to gate whatever it already gates; this feature adds no new
-unattended write path to a live account.
+The owner sees it in the dedicated Live Portfolio **Manual Trade Guardian**
+panel and taps **Arm stop**. This records owner attribution plus an immutable
+`armed` event. It submits no broker order. The UI states plainly that this is
+a Kairos software stop, not a broker-resident stop.
 
 **Why not auto-place:** the project's own push-back mandate flags "Running
 real TraderAgent orders without approval_required mode." An unattended stop
@@ -122,14 +122,18 @@ rule exists to catch, even though the intent here is protective. If the owner
 later wants it fully automatic, that is a separate, explicit decision —
 Section 4.
 
-### 2.4 Once a stop is approved and placed — who watches it?
+### 2.4 Once a stop is armed — who watches it?
 
-Because Robinhood has no broker-native stop, "placed" means: the SELL order
-sits as a `trade_proposals`/`broker_orders` row, and `PositionMonitor` (or a
-sibling using its logic) must be extended to watch this position's live price
-and submit the SELL when breached — the same trailing-stop mechanism paper
-positions already get, applied to a live position for the first time. This is
-new scope inside PositionMonitor, not a new engine.
+Because Robinhood has no broker-native stop, a sibling monitor reads an armed
+plan only after **both** `AUTONOMOUS_LIVE_ENABLED` and
+`strategy_config.live_auto_enabled` are on, the app is not paused/locked, the
+active US account is exactly `605420660`, and the US market is open. It then
+requires a fresh quote at or below the committed stop, atomically claims the
+plan, creates one `autonomous_live` market SELL proposal, and calls the same
+hardened execution gateway used by the live exit monitor. The gateway still
+re-verifies held quantity, broker allowlist, autonomy level, market controls,
+and kill switches. Any failed/ambiguous submission becomes
+`trigger_needs_reconcile`; it never silently retries another SELL.
 
 ### 2.5 Manual sell — explicitly out of scope for automation
 
@@ -137,8 +141,7 @@ The owner said they'll sell manually themselves. Nothing here watches for or
 reacts to a manual sell beyond recording it in the position ledger
 (`source: manual`) when qty drops with no matching Kairos sell order.
 
-## 3. Schema (proposed — NOT applied; needs the owner's DB-apply step before
-any code ships, per this project's schema-verification rule)
+## 3. Schema (applied and verified 2026-09-09)
 
 ```sql
 create table agentic_position_ledger (
@@ -158,6 +161,11 @@ create table agentic_position_ledger (
 -- RLS: service-role write, owner read, same posture as broker_orders.
 ```
 
+Stage 1 adds `guardian_protection_plans` (the current state, one per detected
+manual-buy ledger entry) and append-only `guardian_protection_events`. The
+database function `create_guardian_protection_plan` inserts both atomically:
+there can be no armed/visible plan without its `created` evidence event.
+
 ## 4. Explicitly NOT in this proposal
 
 - **Does not touch `strategy_config.live_auto_enabled` or `autonomy_level`.**
@@ -174,26 +182,19 @@ create table agentic_position_ledger (
   placement already exists on a separate, more mature path
   (`lib/protective/`); extending detection there is a future, separate ask.
 
-## 5. Open questions before implementation starts
+## 5. Decisions implemented
 
-1. **Poll cadence** — 15 min during market hours is a proposal, not a
-   decision. Tighter costs more cron budget; looser makes "ASAP" less true.
-2. **Sell order type on stop breach** — market (certain fill, worse price) or
-   limit (better price, may not fill in a fast drop)? Paper positions default
-   to whichever `PositionMonitor` already uses; confirm that's the right
-   default for real capital.
-3. **Does the owner want a stop suggested even for a very small manual buy**
-   (e.g., a $50 test position), or should this have a minimum-notional floor
-   to avoid alert noise?
+1. **Poll cadence:** existing 15-minute US-market-hours Guardian cron. This is
+   monitoring latency, not a real-time or broker-native guarantee.
+2. **Sell order on breach:** market. A stop-loss's safety objective is to
+   reduce exposure; a limit could remain unfilled during a fast fall.
+3. **No minimum notional floor:** every detected manual buy with a real cost
+   basis receives a suggestion. Noise is cheaper than leaving a small test
+   position falsely unprotected.
 
 ## 6. Sequencing
 
-Stage 0 (this document) → owner approval → build detection + ledger (no UI
-yet, alert-only via `agent_alerts`) → verify against a real manual fill in
-production → build the approval-card UI + source filter on My
-Trades/Live Portfolio → verify end-to-end with the owner approving a real
-suggested stop.
-
-Nothing in Stage 0 is reversible-cost: it is read-only detection plus
-proposal rows. The first live-money action (an actual stop placement) only
-happens on explicit owner tap, same as every other live order today.
+Detection + ledger → pending Guardian plan → owner arms the plan → later
+verified breach → gateway-gated market SELL. The user has not enabled the
+existing live switch, so the deployed monitor presently refuses before quote
+or broker work. No external order was sent while implementing this feature.

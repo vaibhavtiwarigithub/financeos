@@ -17,10 +17,9 @@
 //      stop_loss_pct off the live avg cost — the same source paper entries use)
 //      and raises a warn-level agent_alerts row naming it.
 //
-// THIS ROUTE PLACES NO ORDER. Suggesting a stop is not placing one — Stage 0
-// is alert-only by design (see the doc's Section 2.3: approval, never silent
-// placement). Stage 1 (the approval-card UI wired to the existing
-// trade_proposals approve→place path) is separate, unbuilt work.
+// Stage 1 creates an owner-approval protection plan. It still places NO order:
+// the owner must arm the plan in the dedicated Guardian UI, then the separate
+// monitor can act only after a price breach and every live execution gate.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -30,9 +29,13 @@ import { loadTradingMandate } from "@/lib/trading-mandate";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { detectManualFills, type RecentOrderInput } from "@/lib/trading/manual-fill-detection";
 import { isMarketOpenLive } from "@/lib/trading/market-calendar";
+import { runGuardianProtectionMonitor } from "@/lib/trading/guardian-protection-monitor";
+import { randomUUID } from "crypto";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// Detection plus an armed-stop breach may need the hardened broker gateway;
+// keep the route's deadline aligned with the dedicated live-exit monitor.
+export const maxDuration = 120;
 
 // The ONLY account this route ever looks at or writes for. Hard-coded, not
 // read from config — matches the CHECK constraint on agentic_position_ledger
@@ -133,9 +136,32 @@ export async function POST(req: NextRequest) {
     isBootstrap,
   );
 
+  let insertedRows: any[] = [];
   if (rowsToInsert.length > 0) {
-    const { error: insErr } = await svc.from("agentic_position_ledger").insert(rowsToInsert);
+    const { data, error: insErr } = await svc.from("agentic_position_ledger").insert(rowsToInsert)
+      .select("id,symbol,qty,avg_cost,source,suggested_stop_price,transition_side,delta_qty");
     if (insErr) throw new Error(`agentic_position_ledger insert failed: ${insErr.message}`);
+    insertedRows = data ?? [];
+  }
+
+  // A plan is created only for a detected manual BUY with a real cost basis.
+  // It is not a trade proposal and has no broker side effect until the owner
+  // explicitly arms it in the Guardian panel.
+  const plansToCreate = insertedRows
+    .filter((row: any) => row.source === "manual" && row.transition_side === "buy" && Number(row.suggested_stop_price) > 0)
+    .map((row: any) => ({
+      ledger_entry_id: row.id, account_id: AGENTIC_ACCOUNT_ID, market: "us", symbol: row.symbol,
+      qty: Number(row.delta_qty), entry_price: row.avg_cost, stop_price: row.suggested_stop_price,
+    }));
+  if (plansToCreate.length > 0) {
+    for (const plan of plansToCreate) {
+      const { error: planErr } = await svc.rpc("create_guardian_protection_plan", {
+        p_ledger_entry_id: plan.ledger_entry_id, p_account_id: plan.account_id,
+        p_symbol: plan.symbol, p_qty: plan.qty, p_entry_price: plan.entry_price,
+        p_stop_price: plan.stop_price,
+      });
+      if (planErr) throw new Error(`Guardian protection plan creation failed: ${planErr.message}`);
+    }
   }
 
   const { error: finishErr } = await svc.rpc("complete_agentic_position_scan", { p_account_id: AGENTIC_ACCOUNT_ID });
@@ -158,6 +184,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  const guardian = await runGuardianProtectionMonitor(svc, randomUUID());
   return NextResponse.json({
     ok: true,
     accountId: AGENTIC_ACCOUNT_ID,
@@ -166,5 +193,6 @@ export async function POST(req: NextRequest) {
     manualFillsDetected: manualDetections.length,
     bootstrap: isBootstrap,
     manualFills: manualDetections,
+    guardian,
   });
 }
