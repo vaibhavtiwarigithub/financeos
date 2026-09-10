@@ -14,6 +14,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { isEligibleLong } from "@/lib/learning/entry-cohort";
 import { runStopShadow, type StopShadowPoint } from "@/lib/trading/exit-stop-shadow";
+import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -86,8 +87,25 @@ async function run(req: NextRequest, persist: boolean) {
 
   const asOfDate = new Date().toISOString().slice(0, 10);
   const codeVersion = process.env.VERCEL_GIT_COMMIT_SHA ?? null;
+
+  // The baseline arm must be the geometry that is ACTUALLY DEPLOYED for this
+  // market, read per market from trading_mandates. It used to be a hardcoded
+  // 7.5%/19.2% labelled "the live configuration, exactly as deployed" — but the
+  // owner set the mandate to 7%/8% on 2026-08-03, so neither arm reflected
+  // production and the measured effect could not transfer to the live book.
+  const mandates = new Map<string, { stopLossPct: number; targetPct: number }>();
+  for (const market of byMarket.keys()) {
+    try {
+      const m = await loadTradingMandateStrict(svc, market as TradingMarket);
+      mandates.set(market, { stopLossPct: m.stop_loss_pct, targetPct: m.target_pct });
+    } catch {
+      // Leave unset: runStopShadow falls back and stamps matchesLiveMandate=false
+      // on the row rather than silently passing a stale baseline off as live.
+    }
+  }
+
   const results = [...byMarket.entries()]
-    .map(([market, points]) => runStopShadow(market, horizonDays, points))
+    .map(([market, points]) => runStopShadow(market, horizonDays, points, mandates.get(market)))
     // US and India are never pooled: different benchmarks, sessions, currency.
     .sort((a, b) => a.market.localeCompare(b.market));
 
@@ -105,6 +123,10 @@ async function run(req: NextRequest, persist: boolean) {
         mean_paired_diff: r.meanPairedDiff, paired_diff_t: r.pairedDiffT,
         candidate_worst_return: r.candidateWorstReturn, baseline_worst_return: r.baselineWorstReturn,
         trials_considered: r.trialsConsidered, sidak_alpha: r.sidakAlpha,
+        // Stamp the geometry actually measured, so "this reflects the deployed
+        // book" is checkable on the row rather than asserted in a comment.
+        baseline_stop_pct: r.baselineStopPct, baseline_target_pct: r.baselineTargetPct,
+        candidate_stop_atr: r.candidateStopAtr, matches_live_mandate: r.matchesLiveMandate,
         status: r.status, reason: r.reason, code_version: codeVersion,
       }, { onConflict: "as_of_date,market,horizon_days" });
       if (error) return NextResponse.json({ error: `write failed: ${error.message}` }, { status: 500 });

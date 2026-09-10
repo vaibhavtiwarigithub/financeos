@@ -18,11 +18,44 @@
 import { classifyExit, type Geometry, type LabelPoint } from "./exit-geometry-shadow";
 import { effectiveObservations, MIN_EFFECTIVE_OBSERVATIONS } from "@/lib/learning/dimension-diagnostics";
 
-/** The live configuration, exactly as deployed. */
-export const BASELINE_STOP_GEOMETRY: Geometry = { stopPct: 0.075, targetPct: 0.192 };
+/**
+ * Fallback geometry, used ONLY when the caller cannot supply the live mandate.
+ *
+ * THE DEFECT THIS FIXES. These were hardcoded and commented "the live
+ * configuration, exactly as deployed". They were not. The owner set
+ * trading_mandates to stop 7% / target 8% on 2026-08-03; this module was written
+ * a month later and still carried 7.5% / 19.2%, so NEITHER arm reflected
+ * production. The target is the damaging half: at 19.2% against a real 8%,
+ * almost every simulated trade resolves by stop or timeout instead of target —
+ * exactly the regime in which changing the stop looks most consequential. A
+ * result measured there does not transfer to the deployed book.
+ *
+ * The stop is the only term that may differ between arms; the target is held
+ * identical in both so any difference is attributable to the stop. That design
+ * is unchanged — only the source of the numbers is.
+ */
+export const FALLBACK_STOP_GEOMETRY: Geometry = { stopPct: 0.075, targetPct: 0.192 };
 
-/** ATR stop, LIVE target. Mixed by design — the stop is the only difference. */
-export const CANDIDATE_STOP_GEOMETRY: Geometry = { stopAtr: 2.8, targetPct: 0.192 };
+/** The ATR multiple under test. */
+export const CANDIDATE_STOP_ATR = 2.8;
+
+/** Baseline = the mandate's own stop and target. */
+export function baselineGeometry(mandate?: { stopLossPct?: number | null; targetPct?: number | null } | null): Geometry {
+  const stop = Number(mandate?.stopLossPct);
+  const target = Number(mandate?.targetPct);
+  if (!Number.isFinite(stop) || stop <= 0 || !Number.isFinite(target) || target <= 0) return FALLBACK_STOP_GEOMETRY;
+  return { stopPct: stop / 100, targetPct: target / 100 };
+}
+
+/** Candidate = ATR stop, with the SAME target as the baseline it is paired to. */
+export function candidateGeometry(baseline: Geometry): Geometry {
+  return { stopAtr: CANDIDATE_STOP_ATR, targetPct: baseline.targetPct };
+}
+
+/** @deprecated Kept for the existing tests; prefer baselineGeometry(mandate). */
+export const BASELINE_STOP_GEOMETRY: Geometry = FALLBACK_STOP_GEOMETRY;
+/** @deprecated Kept for the existing tests; prefer candidateGeometry(baseline). */
+export const CANDIDATE_STOP_GEOMETRY: Geometry = { stopAtr: CANDIDATE_STOP_ATR, targetPct: FALLBACK_STOP_GEOMETRY.targetPct };
 
 /**
  * Arms in the grid this hypothesis was SELECTED from.
@@ -97,6 +130,17 @@ export interface StopShadowResult {
   baselineWorstReturn: number | null;
   trialsConsidered: number;
   sidakAlpha: number;
+  /**
+   * The geometry this run actually measured, so a reader can tell whether it
+   * reflects the deployed mandate. Runs before 2026-09-10 were computed against
+   * a hardcoded 7.5%/19.2% while the mandate had been 7%/8% since 2026-08-03,
+   * and nothing on the row said so.
+   */
+  baselineStopPct: number | null;
+  baselineTargetPct: number;
+  candidateStopAtr: number;
+  /** False when no mandate was supplied and the stale fallback was used. */
+  matchesLiveMandate: boolean;
   status: "insufficient_evidence" | "measured";
   reason: string;
 }
@@ -120,7 +164,15 @@ export function runStopShadow(
   market: string,
   horizonDays: number,
   points: readonly StopShadowPoint[],
+  /**
+   * The live mandate for this market. Omitting it falls back to the historical
+   * hardcoded geometry and makes the run non-transferable to production — the
+   * caller should always pass it.
+   */
+  mandate?: { stopLossPct?: number | null; targetPct?: number | null } | null,
 ): StopShadowResult {
+  const baselineGeom = baselineGeometry(mandate);
+  const candidateGeom = candidateGeometry(baselineGeom);
   const byDate = new Map<string, number[]>();
   const baseRets: number[] = [];
   const candRets: number[] = [];
@@ -133,8 +185,8 @@ export function runStopShadow(
 
   for (const p of points) {
     if (p.atrPct > 0) withAtr++;
-    const b = classifyExit(p, BASELINE_STOP_GEOMETRY);
-    const c = classifyExit(p, CANDIDATE_STOP_GEOMETRY);
+    const b = classifyExit(p, baselineGeom);
+    const c = classifyExit(p, candidateGeom);
     if (b.ret == null || c.ret == null) { pairsDropped++; continue; }
 
     if (b.outcome === "stop") baselineStops++;
@@ -187,6 +239,10 @@ export function runStopShadow(
     baselineWorstReturn: baseRets.length ? Math.min(...baseRets) : null,
     trialsConsidered: TRIALS_CONSIDERED,
     sidakAlpha: alpha,
+    baselineStopPct: baselineGeom.stopPct ?? null,
+    baselineTargetPct: baselineGeom.targetPct ?? FALLBACK_STOP_GEOMETRY.targetPct!,
+    candidateStopAtr: CANDIDATE_STOP_ATR,
+    matchesLiveMandate: baselineGeom !== FALLBACK_STOP_GEOMETRY,
     status: insufficient ? "insufficient_evidence" : "measured",
     reason: insufficient
       ? `${nDates} date(s) at a ${horizonDays}-day horizon overlap to ${nEff.toFixed(2)} independent observations (need ${MIN_EFFECTIVE_OBSERVATIONS}). No weighting or exit conclusion is permitted.`

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   runStopShadow, sidakAlpha, criticalT, TRIALS_CONSIDERED,
   BASELINE_STOP_GEOMETRY, CANDIDATE_STOP_GEOMETRY,
+  baselineGeometry, candidateGeometry, CANDIDATE_STOP_ATR, FALLBACK_STOP_GEOMETRY,
   type StopShadowPoint,
 } from "@/lib/trading/exit-stop-shadow";
 import { resolveLevels, classifyExit } from "@/lib/trading/exit-geometry-shadow";
@@ -127,5 +128,48 @@ describe("multiplicity control", () => {
     const r = runStopShadow("us", 10, [pt()]);
     expect(r.trialsConsidered).toBe(14);
     expect(r.sidakAlpha).toBeCloseTo(1 - Math.pow(0.95, 1 / 14), 12);
+  });
+});
+
+// THE DEFECT THESE GUARD.
+//
+// The baseline arm was hardcoded { stopPct: 0.075, targetPct: 0.192 } and
+// commented "the live configuration, exactly as deployed". It was not: the
+// owner set trading_mandates to stop 7% / target 8% on 2026-08-03, a month
+// before this module was written, so NEITHER arm reflected production. At a
+// 19.2% target against a real 8%, almost every simulated trade resolves by stop
+// or timeout instead of target -- the regime that most flatters a stop change.
+describe("baseline geometry comes from the live mandate", () => {
+  it("builds the baseline from the mandate's own stop and target", () => {
+    const g = baselineGeometry({ stopLossPct: 7, targetPct: 8 });
+    expect(g.stopPct).toBeCloseTo(0.07, 6);
+    expect(g.targetPct).toBeCloseTo(0.08, 6);
+  });
+
+  it("holds the target IDENTICAL across arms so only the stop varies", () => {
+    const b = baselineGeometry({ stopLossPct: 7, targetPct: 8 });
+    const c = candidateGeometry(b);
+    expect(c.targetPct).toBe(b.targetPct);
+    expect(c.stopAtr).toBe(CANDIDATE_STOP_ATR);
+    expect(c.stopPct).toBeUndefined();
+  });
+
+  it("falls back only when the mandate is missing or unusable", () => {
+    expect(baselineGeometry(null)).toBe(FALLBACK_STOP_GEOMETRY);
+    expect(baselineGeometry({ stopLossPct: 0, targetPct: 8 })).toBe(FALLBACK_STOP_GEOMETRY);
+    expect(baselineGeometry({ stopLossPct: 7, targetPct: null })).toBe(FALLBACK_STOP_GEOMETRY);
+  });
+
+  it("marks a run non-transferable when it fell back", () => {
+    const pts = [pt(), pt({ symbol: "B" }), pt({ symbol: "C" })];
+    expect(runStopShadow("us", 10, pts).matchesLiveMandate).toBe(false);
+    expect(runStopShadow("us", 10, pts, { stopLossPct: 7, targetPct: 8 }).matchesLiveMandate).toBe(true);
+  });
+
+  it("stamps the measured geometry on the result", () => {
+    const r = runStopShadow("us", 10, [pt()], { stopLossPct: 7, targetPct: 8 });
+    expect(r.baselineStopPct).toBeCloseTo(0.07, 6);
+    expect(r.baselineTargetPct).toBeCloseTo(0.08, 6);
+    expect(r.candidateStopAtr).toBe(CANDIDATE_STOP_ATR);
   });
 });
