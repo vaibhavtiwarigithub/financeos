@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types";
+import { RISK_PROFILES as CANONICAL_RISK_PROFILES, type RiskProfileDials } from "@/lib/risk-profiles";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { usePrivacySetting } from "@/components/dashboard/PrivacyMask";
 import LLMConfigPanel from "@/components/dashboard/LLMConfigPanel";
@@ -36,28 +37,39 @@ const T = {
   amber: "#F59E0B", amberBg: "#2D2000",
 };
 
-const RISK_PROFILES = {
+// Presentation only. The NUMBERS come from lib/risk-profiles.ts, which exists
+// precisely to stop this: its header records that these dials were once
+// "hand-duplicated in 3 places ... three independent copies of the same numbers
+// that could silently drift out of sync". This page was a fourth copy, and it
+// carried only 5 of the 9 dials — which is why selecting a profile never applied
+// its kill-switch brakes or exit hysteresis. Spread the canonical dials in so a
+// change to lib/risk-profiles.ts cannot leave this page behind.
+const RISK_PROFILE_CHROME = {
   conservative: {
     label: "Conservative", icon: "🛡️",
-    desc: "Lower risk, tighter stops, higher conviction required · max 2 positions/sector",
-    score_threshold: 72, position_size_pct: 7, stop_loss_pct: 5, target_pct: 12, max_positions_per_sector: 2,
+    desc: "Lower risk, tighter stops, higher conviction required",
     activeBg: "#0D2410", activeBorder: "#34D399", activeText: "#34D399",
   },
   balanced: {
     label: "Balanced", icon: "⚖️",
-    desc: "Default — mix of growth and safety · max 3 positions/sector",
-    score_threshold: 60, position_size_pct: 10, stop_loss_pct: 7, target_pct: 20, max_positions_per_sector: 3,
+    desc: "Default — mix of growth and safety",
     activeBg: "#1E1F3A", activeBorder: "#6366F1", activeText: "#6366F1",
   },
   aggressive: {
     label: "Aggressive", icon: "🚀",
-    desc: "Higher risk, wider stops, momentum-first · max 4 positions/sector",
-    score_threshold: 52, position_size_pct: 15, stop_loss_pct: 10, target_pct: 35, max_positions_per_sector: 4,
+    desc: "Higher risk, wider stops, momentum-first",
     activeBg: "#2D1800", activeBorder: "#F59E0B", activeText: "#F59E0B",
   },
 } as const;
 
-type RiskProfileKey = keyof typeof RISK_PROFILES;
+type RiskProfileKey = keyof typeof RISK_PROFILE_CHROME;
+
+const RISK_PROFILES = Object.fromEntries(
+  (Object.keys(RISK_PROFILE_CHROME) as RiskProfileKey[]).map(k => [
+    k,
+    { ...RISK_PROFILE_CHROME[k], ...CANONICAL_RISK_PROFILES[k] },
+  ]),
+) as Record<RiskProfileKey, (typeof RISK_PROFILE_CHROME)[RiskProfileKey] & RiskProfileDials>;
 
 // Trading Style presets (Swing / Position / Long-term). Presets the holding
 // horizon + threshold/target/stop knobs — this is a once-daily swing/position
@@ -331,13 +343,12 @@ export default function SettingsPage() {
   async function saveBrokerRegistry() {
     setSavingBroker(true);
     try {
-      await fetch("/api/settings/risk-profile", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ active_broker_us: activeBrokerUs, active_broker_india: activeBrokerIndia }),
-      });
-      setToast("Broker selection saved!");
-      setTimeout(() => setToast(""), 2500);
+      // The route validates each id against listBrokers(market) and 400s on an
+      // unknown broker — this used to claim success on that rejection.
+      await patchRiskToast(
+        { active_broker_us: activeBrokerUs, active_broker_india: activeBrokerIndia },
+        "Broker selection saved",
+      );
     } finally { setSavingBroker(false); }
   }
 
@@ -384,6 +395,41 @@ export default function SettingsPage() {
     }
   }
 
+  // Save to the risk-profile route and REPORT WHAT ACTUALLY HAPPENED.
+  //
+  // THE DEFECT THIS FIXES. Seven handlers on this page did a bare
+  // `await fetch(...)` with no res.ok check and then set an unconditional
+  // success toast. /api/settings/risk-profile validates hard and returns 400 on
+  // out-of-range input, so a rejected save showed "Risk profile saved!" while
+  // strategy_config was untouched. The values behind those handlers drive
+  // position sizing, stops, targets, live notional caps and the order-permitted
+  // account, so a silent no-op is a money-path defect, not a cosmetic one.
+  //
+  // Reproducible case: the Position size % control allowed up to 30 while the
+  // route rejects anything above 25.
+  //
+  // Returns true only when the server confirmed. Callers must gate any local
+  // state update on the return value.
+  async function patchRiskToast(payload: Record<string, any>, okMsg: string): Promise<boolean> {
+    const res = await fetch("/api/settings/risk-profile", {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    }).catch(() => null);
+    if (!res) {
+      setToast("Not saved — request failed. Check your connection and try again.");
+      setTimeout(() => setToast(""), 5000);
+      return false;
+    }
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setToast(`Not saved — ${d.error ?? `HTTP ${res.status}`}`);
+      setTimeout(() => setToast(""), 6000);
+      return false;
+    }
+    setToast(okMsg);
+    setTimeout(() => setToast(""), 2500);
+    return true;
+  }
+
   async function patchRisk(payload: Record<string, any>, okMsg: string) {
     const res = await fetch("/api/settings/risk-profile", {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
@@ -405,9 +451,14 @@ export default function SettingsPage() {
     if (ok) setRhMcp(m => m ? { ...m, live_account_source: src } : m);
   }
 
+  // The order-permitted account. Showing a selection the server rejected would
+  // misrepresent which account can place orders, so the dropdown reverts on
+  // failure instead of keeping the optimistic value.
   async function setActiveAccount(market: "us" | "india", account: string) {
+    const prevUs = activeAccountUs, prevIndia = activeAccountIndia;
     if (market === "us") setActiveAccountUs(account); else setActiveAccountIndia(account);
-    await patchRisk(market === "us" ? { active_account_us: account } : { active_account_india: account }, "Active trading account saved");
+    const ok = await patchRisk(market === "us" ? { active_account_us: account } : { active_account_india: account }, "Active trading account saved");
+    if (!ok) { setActiveAccountUs(prevUs); setActiveAccountIndia(prevIndia); }
   }
 
   async function disconnectRhMcp() {
@@ -454,15 +505,17 @@ export default function SettingsPage() {
     const num = (s: string) => (s.trim() === "" ? null : Number(s));
     setSavingCaps(true);
     try {
-      await patchRisk({
+      // These are the live per-order and daily notional ceilings. The
+      // unconditional "Order limits saved" toast that used to follow this call
+      // fired even when the route rejected the payload, contradicting the error
+      // patchRisk had already surfaced.
+      await patchRiskToast({
         max_order_notional_usd: num(usdCap), max_order_notional_inr: num(inrCap),
         max_daily_notional_usd: num(dailyUsd), max_daily_notional_inr: num(dailyInr),
         max_daily_trades: num(maxDailyTrades),
         max_order_notional_usd_paper: num(paperUsd), max_order_notional_inr_paper: num(paperInr),
         max_daily_notional_usd_paper: num(dailyPaperUsd), max_daily_notional_inr_paper: num(dailyPaperInr),
       }, "Order limits saved");
-      setToast("Order limits saved");
-      setTimeout(() => setToast(""), 2500);
     } finally { setSavingCaps(false); }
   }
 
@@ -477,12 +530,19 @@ export default function SettingsPage() {
   async function applyPosture() {
     setSavingPosture(true);
     try {
+      // The route 400s on an invalid posture or a posture_days outside 1-90.
+      // This used to report the posture as applied regardless.
       const res = await fetch("/api/settings/risk-profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ posture: postureSelect, posture_days: postureDays }),
-      });
-      const d = await res.json();
+      }).catch(() => null);
+      const d = res ? await res.json().catch(() => ({})) : {};
+      if (!res || !res.ok) {
+        setToast(`Posture NOT applied — ${d.error ?? (res ? `HTTP ${res.status}` : "request failed")}`);
+        setTimeout(() => setToast(""), 6000);
+        return;
+      }
       if (d.posture) { setPosture(d.posture); setPostureExpiresAt(d.posture_expires_at); setBaseRiskProfile(d.base_risk_profile); setRiskProfile(d.posture); }
       setToast(`Posture ${postureSelect} applied for ${postureDays}d`);
       setTimeout(() => setToast(""), 2500);
@@ -496,8 +556,15 @@ export default function SettingsPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ posture: null }),
-      });
-      const d = await res.json();
+      }).catch(() => null);
+      const d = res ? await res.json().catch(() => ({})) : {};
+      if (!res || !res.ok) {
+        // Clearing the local posture on a failed cancel would show the base
+        // profile as active while the timed posture is still in force.
+        setToast(`Posture NOT canceled — ${d.error ?? (res ? `HTTP ${res.status}` : "request failed")}`);
+        setTimeout(() => setToast(""), 6000);
+        return;
+      }
       setPosture(null); setPostureExpiresAt(null); setBaseRiskProfile(null);
       if (d.risk_profile) setRiskProfile(d.risk_profile);
       setToast("Posture canceled — reverted to base profile");
@@ -533,13 +600,7 @@ export default function SettingsPage() {
   async function saveTradingConfig() {
     setSavingTrading(true);
     try {
-      await fetch("/api/settings/risk-profile", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trading_mode: tradingMode }),
-      });
-      setToast("Trading config saved!");
-      setTimeout(() => setToast(""), 2500);
+      await patchRiskToast({ trading_mode: tradingMode }, "Proposal mode saved");
     } finally { setSavingTrading(false); }
   }
 
@@ -547,13 +608,37 @@ export default function SettingsPage() {
     setSavingRisk(true);
     try {
       const etfCap = etfCapPct.trim() === "" ? null : Number(etfCapPct);
-      await fetch("/api/settings/risk-profile", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ risk_profile: riskProfile, score_threshold: scoreThreshold, position_size_pct: positionSizePct, stop_loss_pct: stopLossPct, target_pct: targetPct, etf_allocation_cap_pct: etfCap }),
-      });
-      setToast("Risk profile saved!");
-      setTimeout(() => setToast(""), 2500);
+      // The first four drive real sizing and exits. The route enforces
+      // score_threshold 0-100, position_size_pct 1-25, stop_loss_pct 1-30 and
+      // target_pct 1-100, and 400s outside them; the old unconditional toast
+      // reported those rejections as saved.
+      //
+      // THE SECOND DEFECT THIS FIXES. RiskProfileDials is documented as "the
+      // risk profile governs conviction + sizing + KILL-SWITCH DIALS", and the
+      // route accepts all nine, but this page only ever sent four. The sector
+      // cap and the three kill-switch thresholds were seeded once and then
+      // frozen, so picking "Conservative" gave conservative sizing with whatever
+      // circuit breakers happened to be stored — production was on the
+      // aggressive dials (-7% daily loss, 25% drawdown, 4 per sector) regardless
+      // of the chip shown as selected. These five have no manual override
+      // control, so they follow the profile exactly as documented.
+      const dials = RISK_PROFILES[riskProfile];
+      await patchRiskToast(
+        {
+          risk_profile: riskProfile,
+          score_threshold: scoreThreshold,
+          position_size_pct: positionSizePct,
+          stop_loss_pct: stopLossPct,
+          target_pct: targetPct,
+          etf_allocation_cap_pct: etfCap,
+          max_positions_per_sector: dials.max_positions_per_sector,
+          ks_daily_loss_pct: dials.ks_daily_loss_pct,
+          ks_drawdown_pct: dials.ks_drawdown_pct,
+          ks_accuracy_pct: dials.ks_accuracy_pct,
+          exit_hysteresis: dials.exit_hysteresis,
+        },
+        "Risk profile saved",
+      );
     } finally {
       setSavingRisk(false);
     }
@@ -574,19 +659,13 @@ export default function SettingsPage() {
     setSavingStyle(true);
     try {
       const s = TRADING_STYLES[tradingStyle];
-      await fetch("/api/settings/risk-profile", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          trading_style: tradingStyle,
-          score_threshold: s.score_threshold,
-          stop_loss_pct: s.stop_loss_pct,
-          target_pct: s.target_pct,
-          target_hold_days: s.target_hold_days,
-        }),
-      });
-      setToast("Trading style saved!");
-      setTimeout(() => setToast(""), 2500);
+      await patchRiskToast({
+        trading_style: tradingStyle,
+        score_threshold: s.score_threshold,
+        stop_loss_pct: s.stop_loss_pct,
+        target_pct: s.target_pct,
+        target_hold_days: s.target_hold_days,
+      }, "Trading style saved");
     } finally { setSavingStyle(false); }
   }
 
@@ -1170,6 +1249,9 @@ export default function SettingsPage() {
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>
             <div style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", color: T.muted, textTransform: "uppercase", marginBottom: "6px" }}>Global risk baseline</div>
             <div style={{ fontSize: "14px", color: T.textSub, marginBottom: "20px" }}>Fallback scoring weights, the flat position-size cap, and time-bound risk posture. Entry score, stop, target, and holding horizon are market-local and controlled by the Trading Mandate below.</div>
+            <div style={{ fontSize: "12px", color: T.textSub, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px" }}>
+              Selecting a profile and saving also applies that profile&apos;s <strong>sector cap, kill-switch brakes and exit hysteresis</strong> — the four numbers below are the only ones you can override by hand. Brakes are enforced in <code>lib/kill-switches.ts</code>; the sector cap bounds new paper entries.
+            </div>
 
             {championMarkets.length > 0 && (
               <div style={{ background: T.amberBg, border: `1px solid ${T.amber}44`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.amber }}>
@@ -1226,7 +1308,7 @@ export default function SettingsPage() {
                   <div key={key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: `1px solid ${T.border}`, color: isActive ? T.text : T.muted, fontWeight: isActive ? 600 : 400 }}>
                     <span>{p.icon} {p.label}</span>
                     <span style={{ color: T.textSub, fontFamily: "monospace" }}>
-                      Fallback baseline &nbsp;|&nbsp; flat size cap {p.position_size_pct}%
+                      size {p.position_size_pct}% &nbsp;|&nbsp; sector max {p.max_positions_per_sector} &nbsp;|&nbsp; brakes {p.ks_daily_loss_pct}% day &middot; {p.ks_drawdown_pct}% DD &middot; {p.ks_accuracy_pct}% acc &nbsp;|&nbsp; hyst {p.exit_hysteresis}
                     </span>
                   </div>
                 );
@@ -1239,7 +1321,11 @@ export default function SettingsPage() {
               <div style={{ fontSize: "11px", color: T.muted, marginBottom: "14px" }}>Used by paper and live execution as the cap before any learned sizing reduction. Per-market thresholds, exits, and horizons are configured in Trading Mandate.</div>
               <div style={{ display: "grid", gap: "12px" }}>
                 {[
-                  { label: "Position size %", value: positionSizePct, set: (v: number) => setPositionSizePct(v), step: 0.5, min: 1, max: 30 },
+                  // max is 25, NOT 30: /api/settings/risk-profile enforces
+                  // "position_size_pct must be 1-25" and 400s above it. The
+                  // control used to allow 30, so 25.5-30 was silently
+                  // unsaveable while the page reported success.
+                  { label: "Position size %", value: positionSizePct, set: (v: number) => setPositionSizePct(v), step: 0.5, min: 1, max: 25 },
                 ].map(({ label, value, set, step, min, max }) => (
                   <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <label style={{ fontSize: "13px", color: T.textSub }}>{label}</label>
