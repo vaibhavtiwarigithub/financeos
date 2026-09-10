@@ -16,6 +16,13 @@ import { loadTradingMandateStrict, tradingWeekdaysBetween } from "@/lib/trading-
 import { reconstructAccountLivePositions } from "@/lib/trading/live-position-ledger";
 import { cancelProtectiveStop } from "@/lib/protective/placement-worker";
 import { managedLivePositionId } from "@/lib/protective/coverage";
+import { decideExitLadder } from "@/lib/trading/exit-ladder";
+
+/** Supabase numerics arrive as string|number|null; a bad value must not become 0. */
+function numberOrNull(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 const MARKET_CFG: Record<string, { brokers: string[]; accountCol: string }> = {
   us:    { brokers: ["robinhood", "robinhood_mcp"], accountCol: "active_account_us" },
@@ -47,7 +54,18 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
   if (cfgError) throw new Error(`live-exit config read failed: ${cfgError.message}`);
   if (!cfg) return early("no_config");
   if ((cfg as any).app_paused || (cfg as any).security_locked) return early("paused_or_locked");
-  if (!(cfg as any).live_auto_enabled) return early("db_toggle_off");
+
+  // SHADOW MODE (features/live-exit-ladder-parity, owner-approved 2026-09-09).
+  //
+  // This used to `return early("db_toggle_off")` here, which made the exit
+  // engine completely unobservable until live_auto_enabled was flipped — the
+  // wrong way round, since the whole point of building ladder parity is to
+  // have it proven BEFORE enabling anything. With the toggle off we now run
+  // the full evaluation and write what we WOULD have done to
+  // live_exit_ladder_shadow, submitting nothing. app_paused and
+  // security_locked remain hard stops above: those mean "do not run", not
+  // "run without acting".
+  const shadowMode = !(cfg as any).live_auto_enabled;
 
   const results: LiveExitResult["results"] = [];
   let exitsSubmitted = 0;
@@ -87,6 +105,17 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       },
     });
 
+    // Ladder state for this account, loaded once per market rather than per
+    // position (the loop below can run for every open name).
+    const ladderState = new Map<string, any>();
+    if (positions.length) {
+      const { data: stateRows, error: stateErr } = await svc.from("live_position_state")
+        .select("symbol, highest_price, trailing_stop, partial_taken_at, partial_qty, opened_at")
+        .eq("account_id", account).eq("market", market);
+      if (stateErr) throw new Error(`live-exit ${market} ladder state read failed: ${stateErr.message}`);
+      for (const row of (stateRows ?? []) as any[]) ladderState.set(String(row.symbol), row);
+    }
+
     for (const p of positions) {
       const symbol = p.symbol;
       if (p.qty < 1) continue;
@@ -96,16 +125,70 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       if (!pr.ok) continue;
       const price = pr.price;
 
-      let reason: string | null = null;
-      if (price <= p.stopPrice) reason = `stop: ${price.toFixed(2)} <= ${p.stopPrice.toFixed(2)} (entry ${p.avgEntry.toFixed(2)})`;
-      else if (price >= p.targetPrice) reason = `target: ${price.toFixed(2)} >= ${p.targetPrice.toFixed(2)}`;
-      else {
-        const ageDays = tradingWeekdaysBetween(new Date(p.firstBuyAt), new Date());
-        if (ageDays > p.horizonDays) reason = `time stop: age ${ageDays} market days > ${p.horizonDays}d`;
-      }
-      if (!reason) continue;
+      // Shared ladder core — the SAME function the paper monitor calls, so
+      // partial-target and trailing behavior cannot diverge between the two.
+      // Live-only state (high-water mark, trailing stop, whether the partial
+      // already fired) comes from live_position_state, because live positions
+      // are reconstructed statelessly from fills and remember nothing.
+      const stateRow = ladderState.get(`${symbol}`);
+      const positionOpenedAt = new Date(p.firstBuyAt).toISOString();
+      // Re-entry guard: a state row older than this position's first buy
+      // belongs to a CLOSED position. Inheriting it would start a fresh
+      // position believing profit was already taken.
+      const stateIsCurrent = stateRow != null && stateRow.opened_at != null
+        && Date.parse(stateRow.opened_at) >= Date.parse(positionOpenedAt) - 1000;
 
-      const qty = Math.floor(p.qty);
+      const ageDays = tradingWeekdaysBetween(new Date(p.firstBuyAt), new Date());
+      const decision = decideExitLadder({
+        market,
+        qty: p.qty,
+        avgEntry: p.avgEntry,
+        price,
+        priceTarget: p.targetPrice,
+        initialStopLoss: p.stopPrice,
+        currentStop: stateIsCurrent ? numberOrNull(stateRow!.trailing_stop) : p.stopPrice,
+        highestPrice: stateIsCurrent ? numberOrNull(stateRow!.highest_price) : p.avgEntry,
+        ageDays,
+        horizonDays: p.horizonDays,
+        partialTaken: stateIsCurrent && stateRow!.partial_taken_at != null,
+      });
+
+      // Persist the ratchet every run, exit or not — this is what gives live
+      // positions the memory paper gets from its mutable row.
+      await svc.from("live_position_state").upsert({
+        account_id: account, symbol, market,
+        highest_price: decision.highestPrice,
+        trailing_stop: decision.action === "partial_target" ? decision.runnerStop : decision.trailingStop,
+        opened_at: positionOpenedAt,
+        updated_at: new Date().toISOString(),
+        ...(stateIsCurrent ? {} : { partial_taken_at: null, partial_qty: null }),
+      }, { onConflict: "account_id,symbol" });
+
+      if (shadowMode) {
+        // Log the intent, submit nothing. This is the whole point of shadow
+        // mode: parity is observable on real positions before the live toggle.
+        await svc.from("live_exit_ladder_shadow").insert({
+          account_id: account, market, symbol,
+          action: decision.action, reason: decision.reason,
+          price, qty_held: p.qty, qty_would_exit: decision.exitQty ?? null,
+          trailing_stop: decision.trailingStop, runner_stop: decision.runnerStop ?? null,
+          highest_price: decision.highestPrice,
+          shadow_mode: true,
+        });
+        if (decision.action !== "none") {
+          results.push({ market, symbol, qty: decision.exitQty ?? 0, reason: decision.reason ?? decision.action, status: "shadow_logged" });
+        }
+        continue;
+      }
+
+      if (decision.action === "none" || decision.action === "runner_hold") continue;
+      const reason = decision.reason ?? decision.action;
+
+      // India trades whole shares; US allows fractional. Never round a partial
+      // UP — that would sell more of the runner than the ladder decided.
+      const rawExitQty = decision.exitQty ?? p.qty;
+      const qty = market === "india" ? Math.floor(rawExitQty) : rawExitQty;
+      if (!(qty > 0)) continue;
 
       // Idempotency: skip if a pending or queued autonomous SELL already exists
       // for this symbol, or if a live SELL order is already resting at the broker.
@@ -184,6 +267,23 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       const status = exec.ok ? "submitted" : (exec.needs_reconcile ? "needs_reconcile" : "blocked");
       if (exec.ok) exitsSubmitted++;
       await svc.from("trade_proposals").update({ status: exec.ok ? "queued_auto" : "manual_review_required" }).eq("id", (prop as any).id);
+
+      // Stamp "partial taken" ONLY on a submitted partial. A rejected or
+      // blocked partial must NOT set this — doing so would permanently disable
+      // this position's target branch and the runner would never bank profit.
+      // The stamp is confirmed against the observed fill on a later run; this
+      // is the optimistic half, deliberately gated on exec.ok.
+      if (exec.ok && decision.action === "partial_target") {
+        await svc.from("live_position_state").upsert({
+          account_id: account, symbol, market,
+          highest_price: decision.highestPrice,
+          trailing_stop: decision.runnerStop ?? decision.trailingStop,
+          partial_taken_at: new Date().toISOString(),
+          partial_qty: qty,
+          opened_at: positionOpenedAt,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "account_id,symbol" });
+      }
       results.push({ market, symbol, qty, reason, status, error: exec.ok ? undefined : exec.error });
     }
   }
