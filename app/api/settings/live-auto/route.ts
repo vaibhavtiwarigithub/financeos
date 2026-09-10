@@ -120,30 +120,51 @@ export async function PATCH(req: NextRequest) {
         update[field] = val === null ? null : Number(val);
       }
     }
+    // null means "leave this cap unset", exactly as the two USD caps above treat
+    // it. The Settings form sends `field || null` for an empty input, so WITHOUT
+    // the null guard `Number(null)` coerced to 0 and every blank field was
+    // rejected — a blank confidence box failed the 0.6 floor and a blank
+    // positions/orders box failed the 1..N range. Save Caps was unusable unless
+    // all three were filled, and the error text blamed a value the owner had
+    // never entered. The kernel already reads these as nullable
+    // (`live_auto_min_evidence_confidence ?? 0.6`, and `!= null` guards on both
+    // count caps), so null is a value it understands.
     if (live_auto_min_evidence_confidence !== undefined) {
-      const c = Number(live_auto_min_evidence_confidence);
-      if (!Number.isFinite(c) || c < 0 || c > 1) {
-        return NextResponse.json({ error: "live_auto_min_evidence_confidence must be 0–1" }, { status: 400 });
+      if (live_auto_min_evidence_confidence === null) {
+        update.live_auto_min_evidence_confidence = null;
+      } else {
+        const c = Number(live_auto_min_evidence_confidence);
+        if (!Number.isFinite(c) || c < 0 || c > 1) {
+          return NextResponse.json({ error: "live_auto_min_evidence_confidence must be 0–1" }, { status: 400 });
+        }
+        // Auto path has no acceptLowQuality override — enforce minimum floor.
+        if (c < 0.6) {
+          return NextResponse.json({ error: "live_auto_min_evidence_confidence cannot be below 0.6 for autonomous path" }, { status: 400 });
+        }
+        update.live_auto_min_evidence_confidence = c;
       }
-      // Auto path has no acceptLowQuality override — enforce minimum floor.
-      if (c < 0.6) {
-        return NextResponse.json({ error: "live_auto_min_evidence_confidence cannot be below 0.6 for autonomous path" }, { status: 400 });
-      }
-      update.live_auto_min_evidence_confidence = c;
     }
     if (live_auto_max_open_positions !== undefined) {
-      const p = Number(live_auto_max_open_positions);
-      if (!Number.isInteger(p) || p < 1 || p > 20) {
-        return NextResponse.json({ error: "live_auto_max_open_positions must be 1–20" }, { status: 400 });
+      if (live_auto_max_open_positions === null) {
+        update.live_auto_max_open_positions = null;
+      } else {
+        const p = Number(live_auto_max_open_positions);
+        if (!Number.isInteger(p) || p < 1 || p > 20) {
+          return NextResponse.json({ error: "live_auto_max_open_positions must be 1–20" }, { status: 400 });
+        }
+        update.live_auto_max_open_positions = p;
       }
-      update.live_auto_max_open_positions = p;
     }
     if (live_auto_max_orders_per_day !== undefined) {
-      const o = Number(live_auto_max_orders_per_day);
-      if (!Number.isInteger(o) || o < 1 || o > 10) {
-        return NextResponse.json({ error: "live_auto_max_orders_per_day must be 1–10" }, { status: 400 });
+      if (live_auto_max_orders_per_day === null) {
+        update.live_auto_max_orders_per_day = null;
+      } else {
+        const o = Number(live_auto_max_orders_per_day);
+        if (!Number.isInteger(o) || o < 1 || o > 10) {
+          return NextResponse.json({ error: "live_auto_max_orders_per_day must be 1–10" }, { status: 400 });
+        }
+        update.live_auto_max_orders_per_day = o;
       }
-      update.live_auto_max_orders_per_day = o;
     }
     if (action === "update_caps") {
       journalSummary = `Autonomous trading caps updated: ${JSON.stringify(Object.fromEntries(Object.entries(update).filter(([k]) => k.startsWith("live_auto_"))))}`;
