@@ -48,11 +48,23 @@ describe("a failed ledger read cannot masquerade as an empty cohort", () => {
   });
 
   it("returns the reason to both callers rather than dropping it", () => {
-    expect(fn).toContain('return { source: "insufficient_data", n: pairs.length, correlation: 0, ledgerSkipReason }');
-    expect(fn).toContain('return { source: "paper_trades_fallback", n, correlation, ledgerSkipReason }');
+    expect(fn).toContain('return { source: "insufficient_data", n: 0, correlation: 0, ledgerSkipReason }');
     // the read-only diagnostic tool
     expect(learner).toContain("ledger_skip_reason: result.ledgerSkipReason");
     // the gate that actually refuses the weight change
     expect(learner).toContain("reason=${evidence.ledgerSkipReason");
+  });
+
+  // REMOVED 2026-09-09. The legacy paper_trades fallback read the 100 NEWEST
+  // agent_signals and joined them to closed paper_trades — at a 10-day horizon
+  // those signals cannot have matured, so it returned n<=1 by construction
+  // (measured: 0 usable pairs). update_signal_weight always refused it as a
+  // mutation source anyway, so its only effect was to dress a broken ledger
+  // read as "insufficient data". A skipped ledger now says so directly.
+  it("no longer has a paper_trades fallback that can mask a broken ledger read", () => {
+    expect(fn).not.toContain("paper_trades_fallback");
+    expect(fn).not.toContain("applyLearningTaintFilter");
+    // insufficient_data is now the ONLY non-ledger outcome
+    expect(fn).not.toMatch(/source:\s*"(?!observation_ledger|insufficient_data)/);
   });
 });

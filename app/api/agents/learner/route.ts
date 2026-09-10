@@ -266,8 +266,17 @@ export async function POST(req: NextRequest) {
       // the fallback for n=1 — while 2,338 matured US h10 labels existed. The
       // read itself was fixed 33 minutes later in 2e5021ba; this seam, which
       // hid it for the whole run, was not. Every skip now names itself.
-      async function computeScoreCorrelation(dimension: string, days = 60): Promise<{ source: "observation_ledger" | "paper_trades_fallback" | "insufficient_data"; n: number; correlation: number; ledgerSkipReason?: string }> {
-        const since = new Date(Date.now() - days * 86400_000).toISOString();
+      // REMOVED 2026-09-09 — the legacy paper_trades fallback. It read the 100
+      // NEWEST agent_signals and joined them to closed paper_trades: at a
+      // 10-day horizon those signals cannot have matured, so it returned n<=1
+      // by construction (measured: 0 usable pairs). update_signal_weight has
+      // always refused any source but the observation ledger, so the fallback
+      // could never qualify a weight change either. Its only effect was to
+      // dress a broken ledger read as "insufficient data" — a misleading
+      // diagnostic with no upside. A skipped ledger now returns
+      // insufficient_data with the reason attached, which is the honest answer.
+      async function computeScoreCorrelation(dimension: string, days?: number): Promise<{ source: "observation_ledger" | "insufficient_data"; n: number; correlation: number; ledgerSkipReason?: string }> {
+        void days; // accepted for call-site compatibility; the ledger read is not windowed
         let ledgerSkipReason: string | undefined;
         try {
           const ledgerRows = await loadLabeledDataset(svc, LEARN_MARKET, 10);
@@ -298,36 +307,13 @@ export async function POST(req: NextRequest) {
           await reportIssue({
             issueKey: `learner-ledger-read-failed:${LEARN_MARKET}`,
             severity: "critical", category: "data",
-            title: `LearnerAgent (${LEARN_MARKET.toUpperCase()}) fell back to the dead paper_trades path — no weight change can be proposed`,
-            detail: `${ledgerSkipReason}. update_signal_weight refuses any source other than the observation ledger, so this run cannot produce a challenger no matter what the LLM concludes. The legacy fallback reads the 100 NEWEST signals, which by construction have no matured trade at a 10-day horizon, so it reports n<=1 and the run looks like "no evidence" instead of "the read broke".`,
+            title: `LearnerAgent (${LEARN_MARKET.toUpperCase()}) could not read the observation ledger — no weight change can be proposed`,
+            detail: `${ledgerSkipReason}. update_signal_weight requires the observation ledger, so this run cannot produce a challenger no matter what the LLM concludes.`,
             autoExpireAt: new Date(Date.now() + 14 * 24 * 3600_000).toISOString(),
           }).catch(() => {});
         }
 
-        const { data: signals } = await scopeMkt(svc.from("agent_signals")
-          .select(`id, ${dimension}, created_at`)
-          .gte("created_at", since).not(dimension, "is", null).limit(100));
-        const { data: trades } = await scopeMkt(applyLearningTaintFilter(svc.from("paper_trades")
-          .select("signal_id, pnl_pct, executed_at")
-          .not("closed_at", "is", null).gte("executed_at", since)));
-
-        const tradeMap = new Map<any, number | null>((trades ?? []).map((t: any) => [t.signal_id, t.pnl_pct as number | null]));
-        const pairs: { score: number; pnl: number }[] = [];
-        for (const s of signals ?? []) {
-          const pnl = tradeMap.get((s as any).id);
-          const score = (s as any)[dimension];
-          if (pnl != null && score != null) pairs.push({ score, pnl: pnl as number });
-        }
-        if (pairs.length < 3) return { source: "insufficient_data", n: pairs.length, correlation: 0, ledgerSkipReason };
-
-        const n = pairs.length;
-        const meanScore = pairs.reduce((a, b) => a + b.score, 0) / n;
-        const meanPnl = pairs.reduce((a, b) => a + b.pnl, 0) / n;
-        const num = pairs.reduce((a, b) => a + (b.score - meanScore) * (b.pnl - meanPnl), 0);
-        const denScore = Math.sqrt(pairs.reduce((a, b) => a + Math.pow(b.score - meanScore, 2), 0));
-        const denPnl = Math.sqrt(pairs.reduce((a, b) => a + Math.pow(b.pnl - meanPnl, 2), 0));
-        const correlation = denScore * denPnl === 0 ? 0 : parseFloat((num / (denScore * denPnl)).toFixed(3));
-        return { source: "paper_trades_fallback", n, correlation, ledgerSkipReason };
+        return { source: "insufficient_data", n: 0, correlation: 0, ledgerSkipReason };
       }
 
       async function toolExecutor(call: ToolCall): Promise<string> {
@@ -380,17 +366,18 @@ export async function POST(req: NextRequest) {
               // genuinely thin cohort from a broken read, and neither can you.
               return JSON.stringify({ error: "Insufficient data", n: result.n, dimension, ledger_skip_reason: result.ledgerSkipReason ?? "unknown" });
             }
+            // Past the early return above, the only remaining source is the
+            // observation ledger — the paper_trades fallback was removed
+            // 2026-09-09, so there is no second source to branch on.
             const interpretation = result.correlation > 0.3
-              ? `positive — higher score = better ${result.source === "observation_ledger" ? "benchmark-neutral return" : "P&L"}`
+              ? "positive — higher score = better benchmark-neutral return"
               : result.correlation < -0.3
-              ? `negative — higher score = worse ${result.source === "observation_ledger" ? "benchmark-neutral return" : "P&L"} (consider reducing weight)`
+              ? "negative — higher score = worse benchmark-neutral return (consider reducing weight)"
               : "weak/no correlation";
             return JSON.stringify({
               source: result.source, dimension, n: result.n, correlation: result.correlation, interpretation,
               ledger_skip_reason: result.ledgerSkipReason,
-              caveat: result.source === "observation_ledger"
-                ? "INTERIM: univariate correlation on all scored candidates (incl. rejected). Phase 2 replaces this with a regularized multivariate walk-forward fit + validation gate before any weight change is trusted."
-                : "Legacy paper_trades fallback — filled trades only, smaller sample than the observation ledger. NOTE: update_signal_weight refuses to mutate on this source; the ledger (10+ matured observations) is required for an actual weight change.",
+              caveat: "INTERIM: univariate correlation on all scored candidates (incl. rejected). Phase 2 replaces this with a regularized multivariate walk-forward fit + validation gate before any weight change is trusted.",
             });
           }
 
@@ -529,11 +516,11 @@ export async function POST(req: NextRequest) {
             const evidence = await computeScoreCorrelation(scoreCol, 60);
             if (evidence.source !== "observation_ledger") {
               // Fail closed: the decision-observation ledger (10+ matured,
-              // horizon-labeled rows) is the only source trusted to justify an
-              // actual weight mutation. The paper_trades fallback remains
-              // available for read-only diagnosis via query_score_correlation,
-              // but a weaker/smaller sample must not move live scoring weights.
-              return JSON.stringify({ error: `Ledger unavailable for ${scoreCol} (source=${evidence.source}, n=${evidence.n}, reason=${evidence.ledgerSkipReason ?? "unknown"}) — weight mutations require the observation ledger (10+ matured rows), not the paper_trades fallback. Use query_score_correlation for read-only diagnosis only.` });
+              // horizon-labeled rows) is the ONLY source that can justify a
+              // weight mutation. Since the paper_trades fallback was removed
+              // (2026-09-09) this means the ledger read failed or was too
+              // thin — the reason says which.
+              return JSON.stringify({ error: `Ledger unavailable for ${scoreCol} (source=${evidence.source}, n=${evidence.n}, reason=${evidence.ledgerSkipReason ?? "unknown"}) — weight mutations require the observation ledger (10+ matured rows).` });
             }
             if (evidence.n < 10) return JSON.stringify({ error: `Insufficient ledger evidence for ${scoreCol} (N=${evidence.n}). Need N≥10.` });
 
