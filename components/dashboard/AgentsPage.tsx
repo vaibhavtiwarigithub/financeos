@@ -1,7 +1,6 @@
 "use client";
 import { useState, lazy, Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import AgentComparisonCard from "@/components/dashboard/AgentComparisonCard";
 import PageHeader from "@/components/dashboard/PageHeader";
 import AgentDiagram from "@/components/dashboard/AgentDiagram";
@@ -61,7 +60,10 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
   market?: "us" | "india";
 }) {
   const currency = market === "india" ? "₹" : "$";
-  const supabase = createClient();
+  // No browser-side supabase client here any more. Every mutation this page
+  // performs goes through an owner-gated API route: RLS grants `authenticated`
+  // SELECT-only on strategy_config, so a direct client write was always silently
+  // rejected while the UI reported success.
   const router = useRouter();
   const [tradingEnabled, setTradingEnabled] = useState(strategy?.trading_enabled ?? true);
   const [saving, setSaving] = useState(false);
@@ -75,8 +77,6 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
     return t && valid.includes(t) ? t : "paper";
   })();
   const [tab, setTab] = useState<"signals" | "paper" | "capacity" | "rotation" | "weights" | "log" | "architecture" | "backtest" | "brain" | "learner-ctrl" | "weight-history" | "experiments" | "proposals" | "history" | "edges">(initialTab as any);
-  const [minScore, setMinScore] = useState<number>(strategy?.min_analyst_score ?? 70);
-  const [maxPos, setMaxPos] = useState<number>(strategy?.max_position_pct ?? 5);
   const [maxTrades, setMaxTrades] = useState<number>(strategy?.max_daily_trades ?? 3);
   const [configSaving, setConfigSaving] = useState(false);
   const [configToast, setConfigToast] = useState("");
@@ -154,25 +154,75 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
     } catch {}
   }
 
+  // Same silent-RLS-rejection defect as toggleTrading: this wrote
+  // strategy_config from the browser, which `authenticated` may only SELECT, and
+  // then showed "Saved!" unconditionally. It now goes through the owner-only
+  // risk-profile route and reports what actually happened.
+  //
+  // Only max_daily_trades survives here. The other two fields were removed
+  // because nothing consumes them:
+  //   - max_position_pct  — read by NO code path in the repo. The enforced cap
+  //                         is position_size_pct (Settings -> Trading).
+  //   - min_analyst_score — selected in lib/research-agent.ts but never used;
+  //                         only strategy.risk_profile is read off that row, and
+  //                         entry thresholds come from the Trading Mandate.
+  // Editing either changed nothing about how the system trades, so offering them
+  // as controls was misleading regardless of whether the write succeeded.
   async function saveStrategyConfig() {
-    if (!strategy?.id) return;
     setConfigSaving(true);
-    await supabase.from("strategy_config").update({
-      min_analyst_score: minScore,
-      max_position_pct: maxPos,
-      max_daily_trades: maxTrades,
-    } as any).eq("id", strategy.id);
+    try {
+      const r = await fetch("/api/settings/risk-profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ max_daily_trades: maxTrades }),
+      });
+      const d = await r.json().catch(() => ({}));
+      setConfigToast(r.ok ? "Saved." : `Not saved — ${d.error ?? `HTTP ${r.status}`}`);
+      if (r.ok) router.refresh();
+    } catch (e) {
+      setConfigToast(`Not saved — ${String(e)}`);
+    }
     setConfigSaving(false);
-    setConfigToast("Saved!");
-    setTimeout(() => setConfigToast(""), 2000);
-    router.refresh();
+    setTimeout(() => setConfigToast(""), 4000);
   }
 
+  // THE DEFECT THIS FIXES. This button is documented on this very page as
+  // "Kill Switch (top-right) disables live trading immediately — use if agent
+  // behavior looks wrong." It used to write strategy_config from the BROWSER
+  // client. RLS on strategy_config grants `authenticated` SELECT only; writes
+  // are service_role. So the update was silently rejected, the error was never
+  // read, and setTradingEnabled(next) flipped the label anyway — the UI showed
+  // the kill switch as ENGAGED while trading stayed on. A safety control that
+  // reports success without acting is worse than no control at all.
+  //
+  // It now goes through the owner-only /api/settings/risk-profile route (service
+  // role + validation + MONEY_COLS audit) and writes the per-market flags that
+  // are actually enforced. Bare `trading_enabled` is legacy: it survives only as
+  // a fallback in the trader route, while every live gate reads
+  // trading_enabled_us / trading_enabled_india. The local state flips ONLY after
+  // the server confirms, so the button can no longer lie about the result.
   async function toggleTrading() {
     setSaving(true);
     const next = !tradingEnabled;
-    await supabase.from("strategy_config").update({ trading_enabled: next }).eq("id", strategy?.id);
-    setTradingEnabled(next);
+    try {
+      const r = await fetch("/api/settings/risk-profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trading_enabled_us: next, trading_enabled_india: next }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setRunResult(`Error: trading state unchanged — ${d.error ?? `HTTP ${r.status}`}. Live trading is still ${tradingEnabled ? "ENABLED" : "disabled"}.`);
+      } else {
+        setTradingEnabled(next);
+        setRunResult(next
+          ? "Trading enabled for US and India (trading_enabled_us/india = true)."
+          : "Kill switch engaged — live trading disabled for US and India. Paper trading is unaffected.");
+        router.refresh();
+      }
+    } catch (e) {
+      setRunResult(`Error: trading state unchanged — ${String(e)}. Live trading is still ${tradingEnabled ? "ENABLED" : "disabled"}.`);
+    }
     setSaving(false);
   }
 
@@ -746,9 +796,12 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                   <span style={{ fontWeight: 500 }}>{strategy.mode}</span>
                 </div>
                 {[
-                  { label: "Min score to trade", val: minScore, set: setMinScore, min: 0, max: 100 },
-                  { label: "Max position %", val: maxPos, set: setMaxPos, min: 1, max: 25 },
-                  { label: "Max trades/day", val: maxTrades, set: setMaxTrades, min: 1, max: 10 },
+                  // "Min score to trade" and "Max position %" were removed here:
+                  // min_analyst_score and max_position_pct are not read by any
+                  // decision path. Entry threshold and position cap live in
+                  // Settings -> Trading (score_threshold / position_size_pct)
+                  // and the per-market Trading Mandate.
+                  { label: "Max live trades/day (per market)", val: maxTrades, set: setMaxTrades, min: 1, max: 10 },
                 ].map(f => (
                   <div key={f.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "13px" }}>
                     <span style={{ color: T.textSub }}>{f.label}</span>

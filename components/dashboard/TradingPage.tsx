@@ -109,16 +109,34 @@ function PaperPerformancePanel({ strategy, market }: { strategy: any; market: Mk
     setSnapshotting(false);
   }
 
+  // THE DEFECT THIS FIXES. "Enable Real Trading" wrote strategy_config from the
+  // BROWSER client and swallowed the result in `catch { /* silently ignore */ }`.
+  // RLS grants `authenticated` SELECT only on strategy_config; writes are
+  // service_role. So the update was always rejected, the rejection was discarded,
+  // and the button simply refreshed and appeared to have worked.
+  //
+  // It now goes through the owner-only /api/settings/risk-profile route (service
+  // role + validation + MONEY_COLS audit) and writes the per-market flags the
+  // live gates actually read — bare `trading_enabled` survives only as a legacy
+  // fallback in the trader route. Failures are surfaced, never swallowed.
   async function enableLiveTrading() {
-    if (!strategy?.id) return;
     setEnablingLive(true);
+    setSnapshotMsg(null);
     try {
-      const { createClient } = await import("@/lib/supabase/client");
-      const supabase = createClient();
-      await supabase.from("strategy_config").update({ trading_enabled: true }).eq("id", strategy.id);
-      router.refresh();
-    } catch {
-      // silently ignore
+      const r = await fetch("/api/settings/risk-profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trading_enabled_us: true, trading_enabled_india: true }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setSnapshotMsg(`Error: live trading NOT enabled — ${d.error ?? `HTTP ${r.status}`}`);
+      } else {
+        setSnapshotMsg("Live trading enabled for US and India.");
+        router.refresh();
+      }
+    } catch (e: any) {
+      setSnapshotMsg(`Error: live trading NOT enabled — ${e?.message ?? String(e)}`);
     }
     setEnablingLive(false);
   }
