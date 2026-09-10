@@ -126,6 +126,45 @@ because the only retry path used to be gated on `isModelUnavailable`, the error 
 nothing and propagated — while both the error text and the comment beside it promised a
 retry the control flow prevented.
 
+**Outcome (measured 2026-09-09).** The floor worked. `research` ran 116 calls over the six
+sessions from 2026-09-03 to 2026-09-09 with **zero** truncation failures, against 24/51 on
+2026-09-01 immediately before it landed. Any future 30-day failure rate quoted for these
+flows must be windowed on the fix date or it re-reports cured history as live waste.
+
+### DeepSeek cost accounting: off-peak base + peak multiplier (2026-09-09)
+
+`PRICING` holds DeepSeek's **off-peak, cache-miss** rate. `deepSeekPeakMultiplier()` applies
+the surcharge, and it is the only place the surcharge exists.
+
+| model | input (off-peak) | output (off-peak) |
+|---|---|---|
+| `deepseek-v4-pro` | $0.66 / 1M | $1.98 / 1M |
+| `deepseek-v4-flash` | $0.22 / 1M | $0.66 / 1M |
+| `deepseek-v4-flash-vision-exp` | $0.22 / 1M | $0.66 / 1M |
+
+Peak is **exactly 2x** off-peak, Monday–Friday **01:00–04:00 and 06:00–10:00 UTC** (effective
+2026-08-16 16:00 UTC). All other hours, and all weekend hours, are off-peak. The 04:00–06:00
+gap between the two windows is off-peak — merging them into one range silently doubles the
+ledger for two hours a day.
+
+**The defect this fixed.** The table carried `[0.14, 0.28]` for flash and `[0.435, 0.87]` for
+pro, understating **output** by 2.4x–4.7x. Output dominates on a thinking model because
+chain-of-thought bills as completion tokens. Over the 30 days to 2026-09-09 the ledger read
+**$1.47** while DeepSeek billed **$5.65**; repricing the *same logged tokens* at the corrected
+rates yields $3.00 all-off-peak to $6.00 all-peak, bracketing the real bill. The tokens were
+never missing — the constants were wrong. Two earlier hypotheses were investigated and
+disproved: the `deepseek-research`/`learner-agent` Edge Functions do call DeepSeek directly
+outside `logCall`, but no `cron.job` invokes them (migration 052 unscheduled them), and the
+truncation failures that log zero tokens were pre-floor history, not ongoing spend.
+
+**V4 Pro retirement (2026-09-14).** DeepSeek retires V4 Pro and routes its requests to the
+V4.1 Flash pool, billed at V4.1 Flash prices. Calls keep succeeding — this is a silent
+*re*pricing, not a break — so from that date the Pro rate above OVERstates cost. V4.1 Flash
+has no published API model id yet, so no rate is guessed: `applyDeepSeekPeak` raises a warn
+alert instead. On resolving it, update `PRICING` **and** `TIER_MODELS["reasoning"]`; note
+`isReasoningModel()` derives from that alias, so the 16000-token floor follows whatever is
+set there.
+
 ---
 
 ## 4. External brokers

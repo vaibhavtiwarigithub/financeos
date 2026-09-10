@@ -196,13 +196,23 @@ const PRICING: Record<string, [number, number]> = {
   "claude-haiku-4-5":          [0.25,   1.25],
   "claude-haiku-4-5-20251001": [0.25,   1.25],
   "claude-opus-4-8":           [5.00,  25.00],
-  // Legacy keys stay for historical llm_call_log rows. V4 rates are official
-  // cache-miss input/output prices as of 2026-07-20; cache-hit usage is not
-  // separated by the current logger, so using miss-rate is conservative.
+  // Legacy keys stay for historical llm_call_log rows.
   "deepseek-chat":             [0.07,   0.28],
   "deepseek-reasoner":         [0.55,   2.19],
-  "deepseek-v4-flash":         [0.14,   0.28],
-  "deepseek-v4-pro":           [0.435,  0.87],
+  // DeepSeek V4 — OFF-PEAK cache-miss input / output, per api-docs.deepseek.com
+  // pricing table, verified 2026-09-09. Peak rates are exactly 2x these and are
+  // applied by deepSeekPeakMultiplier below, NOT baked in here.
+  //
+  // THE DEFECT THIS FIXES. These were [0.14, 0.28] (flash) and [0.435, 0.87]
+  // (pro) — understating OUTPUT by 2.4x-4.7x, which is the dominant cost for a
+  // thinking model whose chain-of-thought bills as completion tokens. Measured
+  // 2026-09-09 over 30 days: the ledger read $1.47 while the DeepSeek dashboard
+  // billed $5.65. Repricing the SAME logged tokens at these rates yields $3.00
+  // all-off-peak to $6.00 all-peak, bracketing the real bill. The tokens were
+  // never missing; the constants were wrong.
+  "deepseek-v4-flash":         [0.22,   0.66],
+  "deepseek-v4-pro":           [0.66,   1.98],
+  "deepseek-v4-flash-vision-exp": [0.22, 0.66],
   "gemini-2.5-flash":          [0.075,  0.30],
   "gemini-2.5-pro":            [1.25,  10.00],
   // xAI Grok — verify against x.ai pricing page; estimates below.
@@ -229,11 +239,50 @@ const GROQ_MODELS = new Set([
   "deepseek-r1-distill-llama-70b",
 ])
 
+/**
+ * DeepSeek peak-hour surcharge. Peak is exactly 2x off-peak.
+ *
+ * Effective 2026-08-16 16:00 UTC, DeepSeek bills peak and off-peak differently.
+ * Peak is Monday-Friday 01:00-04:00 and 06:00-10:00 UTC; everything else —
+ * including all weekend hours — is off-peak. PRICING holds the off-peak rate,
+ * so this is the only place the surcharge is applied.
+ *
+ * Applies to DeepSeek models ONLY. No other provider in PRICING does time-of-day
+ * pricing, so multiplying their rates here would invent a cost that never existed.
+ */
+export function deepSeekPeakMultiplier(at: Date = new Date()): 1 | 2 {
+  const day = at.getUTCDay()
+  if (day === 0 || day === 6) return 1
+  const h = at.getUTCHours()
+  return (h >= 1 && h < 4) || (h >= 6 && h < 10) ? 2 : 1
+}
+
+/** V4 Pro is retired on this date; DeepSeek reroutes its traffic and rebills it. */
+const V4_PRO_RETIREMENT = Date.UTC(2026, 8, 14) // 2026-09-14
+
+function applyDeepSeekPeak(model: string, rate: [number, number]): [number, number] {
+  if (!model.startsWith("deepseek-v4")) return rate
+  // After retirement DeepSeek routes deepseek-v4-pro to the V4.1 Flash pool and
+  // bills at V4.1 Flash prices, so the Pro rate below becomes an OVERstatement.
+  // V4.1 Flash has no API model id yet, so the rate is not guessed here — the
+  // owner is told to re-verify instead of the ledger silently drifting again.
+  if (model === "deepseek-v4-pro" && Date.now() >= V4_PRO_RETIREMENT) {
+    reportIssue({
+      issueKey: "deepseek-v4-pro-retired",
+      severity: "warn", category: "models",
+      title: "deepseek-v4-pro is retired — its logged cost is now an overstatement",
+      detail: "DeepSeek retired V4 Pro on 2026-09-14 and routes its requests to the V4.1 Flash pool, billed at V4.1 Flash prices. Calls still succeed, but PRICING still holds the old Pro rate, so llm_call_log now OVERstates cost. Verify the V4.1 Flash rate and model id at api-docs.deepseek.com, then update PRICING and TIER_MODELS['reasoning'] in lib/llm-router.ts. Note isReasoningModel() derives from TIER_MODELS, so the 16000-token floor follows whatever is set there.",
+    }).catch(() => {})
+  }
+  const m = deepSeekPeakMultiplier()
+  return m === 1 ? rate : [rate[0] * m, rate[1] * m]
+}
+
 // Price a model, falling back to its same-tier sibling's price when a new model
 // has no PRICING entry yet — so cost logging never silently records $0 for a real
 // call. Flags the gap once (dedup'd) so the price gets verified. Never throws.
 function priceFor(model: string): [number, number] {
-  if (PRICING[model]) return PRICING[model]
+  if (PRICING[model]) return applyDeepSeekPeak(model, PRICING[model])
   const sib = SAME_TIER_FALLBACK[model]
   if (sib && PRICING[sib]) {
     reportIssue({
@@ -242,7 +291,7 @@ function priceFor(model: string): [number, number] {
       title: `No pricing for ${model} — logging cost at ${sib}'s rate`,
       detail: `${model} has no PRICING entry, so llm_call_log is using ${sib}'s rate as an estimate. Add ${model} to PRICING in lib/llm-router.ts to make cost exact.`,
     }).catch(() => {})
-    return PRICING[sib]
+    return applyDeepSeekPeak(model, PRICING[sib])
   }
   reportIssue({
     issueKey: `pricing-unverified:${model}`,
