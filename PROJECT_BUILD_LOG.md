@@ -22,6 +22,17 @@ Claude should update this summary periodically with:
 
 *Log meaningful instructions below. Skip tiny wording changes and obvious bug fixes.*
 
+### Entry 12 - 2026-09-11
+
+Instruction: Independently validate the proposed US technical-score diagnosis, size the no-time-stop indefinite-hold gap, state the correct fix, and repair any confirmed data defect.
+Classification: Evidence audit / Mechanical correctness fix
+Affected area: Dimension diagnostics, technical scoring evidence, paper exit ledger, future live-readiness decision.
+Impact: High
+Architecture impact: Moderate
+Risk: Overfitting a live weight change to overlapping forward windows and a post-entry holding population.
+Decision status: Stage 0 complete; ledger migration written and rollback-verified but not deployed.
+Notes: The negative US medium-horizon direction reproduced, but the prior t-stat did not survive the app's overlap contract: h10 technical IC is -0.199 across 29 sessions but only 2.9 effective observations, adjusted t=-1.56. Holdings make up 82.5% of the cohort, so the result cannot establish that technical weight caused entry selection; no score or weight changed and US autonomous live stays off. The concrete `paper_trades.highest_price` loss was fixed atomically in migration `20260911153405`, exercised through the real production RPC inside a rolled-back transaction, and left zero residue. Deployment is blocked until migration history is reconciled.
+
 ### Entry 5 - 2026-07-13
 
 Instruction: Review the benchmark-alpha scorecard architecture for multi-horizon paper/live alpha vs configurable benchmarks, fix design flaws, and keep implementation code out of this design pass.
