@@ -6,6 +6,8 @@ export interface LiveFillOrder {
   qty?: unknown;
   avg_fill_price?: unknown;
   created_at?: string | null;
+  /** A partially filled order contributes only the broker-confirmed fill. */
+  status?: string | null;
 }
 
 export interface LiveProposalLineage {
@@ -81,7 +83,12 @@ export function reconstructAccountLivePositions(args: {
     const proposal = order.proposal_id == null ? null : proposalById.get(String(order.proposal_id));
     if (!proposal || proposal.account_number !== args.activeAccount) continue;
     const symbol = String(order.symbol ?? "").trim().toUpperCase();
-    const qty = positive(order.filled_qty) ?? positive(order.qty);
+    // Never treat the requested quantity as filled for an in-flight partial.
+    // Doing so would invent inventory, letting a later exit sell shares the
+    // broker has not actually bought (or double-count a partial SELL).
+    const qty = order.status === "partially_filled"
+      ? positive(order.filled_qty)
+      : positive(order.filled_qty) ?? positive(order.qty);
     if (!symbol || qty == null) continue;
     const lots = lotsBySymbol.get(symbol) ?? [];
 

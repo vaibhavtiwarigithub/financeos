@@ -22,6 +22,14 @@ export interface GuardianMonitorResult {
   results: Array<{ plan_id: number; symbol: string; status: string; error?: string }>;
 }
 
+/** US Robinhood exit quantity: preserve eligible fractional holdings, never round up. */
+export function guardianUsExitQuantity(value: unknown): number | null {
+  const raw = Number(value);
+  if (!Number.isFinite(raw) || !(raw > 0)) return null;
+  const qty = Math.floor(raw * 1_000_000) / 1_000_000;
+  return qty > 0 ? qty : null;
+}
+
 export async function runGuardianProtectionMonitor(svc: SupabaseClient, runId: string): Promise<GuardianMonitorResult> {
   const base = { checked: 0, submitted: 0, results: [] as GuardianMonitorResult["results"] };
   // Both gates are intentionally checked before quote reads or any execution
@@ -69,7 +77,15 @@ export async function runGuardianProtectionMonitor(svc: SupabaseClient, runId: s
       payload: { run_id: runId, quote_price: price, stop_price: plan.stop_price },
     });
 
-    const qty = Math.floor(Number(plan.qty));
+    // The broker execution preflight remains authoritative for the individual
+    // symbol. Do not silently leave a legitimate fractional Robinhood holding
+    // unprotected merely because it is smaller than one whole share.
+    const qty = guardianUsExitQuantity(plan.qty);
+    if (qty == null) {
+      await svc.from("guardian_protection_plans").update({ status: "armed", terminal_reason: "invalid_exit_quantity" }).eq("id", plan.id);
+      result.results.push({ plan_id: plan.id, symbol: plan.symbol, status: "blocked", error: "invalid_exit_quantity" });
+      continue;
+    }
     const { data: proposal, error: proposalError } = await svc.from("trade_proposals").insert({
       symbol: plan.symbol, market: "us", side: "sell", order_type: "market", qty,
       status: "pending_review", execution_mode: "autonomous_live", auto_run_id: runId,

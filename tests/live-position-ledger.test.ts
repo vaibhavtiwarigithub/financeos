@@ -38,6 +38,34 @@ describe("live position ledger", () => {
     expect(positions[0].avgEntry).toBe(200);
   });
 
+  it("uses only a broker-confirmed fractional partial fill", () => {
+    const positions = reconstructAccountLivePositions({
+      activeAccount: "acct-a",
+      fallbackPolicy: fallback,
+      proposals: [{ id: 1, account_number: "acct-a" }, { id: 2, account_number: "acct-a" }],
+      orders: [
+        { proposal_id: 1, symbol: "AAPL", side: "buy", filled_qty: 0.75, avg_fill_price: 100, created_at: "2026-07-01T00:00:00Z", status: "filled" },
+        // The broker accepted a 0.5-share SELL but has filled only 0.25. The
+        // ledger must retain 0.5, not falsely consume the requested 0.5.
+        { proposal_id: 2, symbol: "AAPL", side: "sell", qty: 0.5, filled_qty: 0.25, avg_fill_price: 110, created_at: "2026-07-02T00:00:00Z", status: "partially_filled" },
+      ],
+    });
+    expect(positions).toHaveLength(1);
+    expect(positions[0].qty).toBeCloseTo(0.5, 8);
+  });
+
+  it("does not invent a fill when a partial order lacks confirmed quantity", () => {
+    const positions = reconstructAccountLivePositions({
+      activeAccount: "acct-a", fallbackPolicy: fallback,
+      proposals: [{ id: 1, account_number: "acct-a" }, { id: 2, account_number: "acct-a" }],
+      orders: [
+        { proposal_id: 1, symbol: "AAPL", side: "buy", filled_qty: 0.75, avg_fill_price: 100, created_at: "2026-07-01T00:00:00Z", status: "filled" },
+        { proposal_id: 2, symbol: "AAPL", side: "sell", qty: 0.5, created_at: "2026-07-02T00:00:00Z", status: "partially_filled" },
+      ],
+    });
+    expect(positions[0].qty).toBeCloseTo(0.75, 8);
+  });
+
   it("uses recorded per-fill policy and marks legacy fallback honestly", () => {
     const recorded = reconstructAccountLivePositions({
       activeAccount: "acct-a",

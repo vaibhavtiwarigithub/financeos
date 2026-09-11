@@ -1,5 +1,11 @@
 # Work Log
 
+| 2026-09-10 review completion — screening/discovery + evidence audit | Codex / GPT-5 | completed | 2026-09-11 | Production re-derivation and code audit complete. The common sizing-inversion conclusion did not survive same-session market-local h10 controls. Live-ladder work remains release-blocked by fractional exits, fill reconciliation, missing score/flip parity, shadow-state isolation and checked persistence; findings recorded in `docs/audits/2026-09-11-codex-review-result.md`. Existing uncommitted ladder work was preserved. |
+
+| Live-exit ladder release-blocker remediation | Codex / GPT-5 | completed | 2026-09-11 | Owner approved remediation. Corrected US fractional sizing/Guardian exits, partial-fill reconstruction, fill-confirmed partial state, shadow/executable isolation, live score/flip parity and checked state writes; 66 focused tests + tsc pass. Production migration is intentionally unapplied because linked migration history diverges from this checkout; see `docs/audits/2026-09-11-codex-review-result.md`. `live_auto_enabled` remains false. |
+
+| Broker-compatible broad US research universe — architecture only | Codex / GPT-5 | completed | 2026-09-09 | Proposed a point-in-time, liquid, sector-balanced measurement universe; deterministic-wide/AI-narrow pipeline; and family-specific candidate-router shadows. No code, schema, schedule, score, eligibility, paper, or live-order change. Graphify incremental refresh was attempted but blocked by the local graphify runtime lacking an LLM extraction key for changed documentation. |
+
 | Manual Trade Guardian Stage 1 | Codex / GPT-5 | completed | 2026-09-09 | Owner-armed software-stop plans, append-only events, Live Portfolio approval panel, and hardened breach monitor implemented. The monitor remains inert behind the existing deployment + `live_auto_enabled` gates; no external order was submitted. |
 | Live readiness follow-up: exit parity and learner fallback | Codex / GPT-5 | planned | 2026-09-09 | Guardian is complete. Live partial-target parity and removal of the unreachable learner fallback remain separate follow-up work; preserve `live_auto_enabled=false` throughout. |
 

@@ -149,7 +149,7 @@ describe("Test 8 — exit monitor is idempotent: a partial fill + rerun cannot o
         return { data: { market: "us", stop_loss_pct: 8, target_pct: 20, target_hold_days: 10, max_hold_days: 15, version: 1 }, error: null };
       }
       if (q.table === "broker_orders") {
-        if (eqOf(q, "status") === "filled") return { data: DEFAULT_FILLS, error: null };      // position reconstruction
+        if (inOf(q, "status")?.includes("filled")) return { data: DEFAULT_FILLS, error: null }; // confirmed + partial-fill reconstruction
         if (eqOf(q, "side") === "sell") return { data: opts.activeSell ?? null, error: null }; // active-SELL-order guard
         return { data: null, error: null };
       }

@@ -1614,9 +1614,24 @@ would have triggered a score exit:
 
 Owner selected **< 60**: exit the moment a holding would no longer be bought.
 
-**Nothing is held indefinitely.** Whatever does not score-exit rides its
-ratcheting trailing stop, which only ever moves up. A stalled winner is closed by
-its own trail — a price-driven exit, not a calendar one.
+**CORRECTION 2026-09-11 (Codex audit).** The original text of this decision
+claimed "nothing is held indefinitely" because a stalled position rides its
+ratcheting trail. **That claim is false and is withdrawn.** The trail is anchored
+to `highest_price`. A position whose price NEVER exceeds its entry never advances
+`highest_price`, so its stop never ratchets above the entry-day level. Such a
+position stays open indefinitely while its score holds above the entry threshold,
+its direction stays long, and price stays above the initial stop.
+
+This is a real gap, not a reason to restore a clock — a calendar exit remains
+rejected. The correct fix is a named, evidence-driven review rule, proposed
+separately and shadowed before it can exit anything; the existing time-review
+shadow is where that evidence belongs. Until then, this gap is OPEN and the
+backtest must be aligned to the no-clock live policy so backtests stop
+describing a system that no longer exists.
+
+What IS true: no position is closed by the passage of time. Exits are the
+ratcheting trail, the price target, a score below the entry threshold, and a
+confirmed direction flip.
 
 **Non-goals.** No change to entry, sizing, stop distance, target distance, score
 weights or broker gates in this decision. Hysteresis is retained in

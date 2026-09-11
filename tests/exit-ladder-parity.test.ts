@@ -68,6 +68,12 @@ describe("the trail ratchets and never loosens", () => {
 });
 
 describe("partial target — the behavior live never had", () => {
+  it("supports a fractional US holding rather than silently skipping it", () => {
+    const d = decideExitLadder({ ...base, qty: 0.75, price: 111 });
+    expect(d.action).toBe("partial_target");
+    expect(d.exitQty).toBeCloseTo(0.375, 8);
+  });
+
   it("banks half and protects the runner at breakeven-or-better", () => {
     const d = decideExitLadder({ ...base, price: 111 });
     expect(d.action).toBe("partial_target");

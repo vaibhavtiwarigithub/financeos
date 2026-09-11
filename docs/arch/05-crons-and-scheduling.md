@@ -59,7 +59,7 @@ Defined in `vercel.json`. Fire against the Vercel deployment URL regardless of l
 | `/api/agents/evaluation/p1-gate/cron` | Sundays 02:00 UTC | Count closed evaluable trades per market; fire System Health info alert when ≥ 20 |
 | `/api/agents/autonomous-live/cron?market=us` | Weekdays 15:00 UTC (~10–11 AM ET, in US session) | Per-market run: 9-gate kernel + fresh kill-switch + session-window guard + per-market USD NAV + Kelly; submit live US orders via Robinhood REST; no-op when `AUTONOMOUS_LIVE_ENABLED=false`, market not autonomous, or session closed |
 | `/api/agents/autonomous-live/cron?market=india` | Weekdays 06:00 UTC (11:30 AM IST, in NSE session) | Same, India: INR NAV from Kite margins+holdings; Kite REST |
-| `/api/agents/live-exit-monitor/cron` | Hourly at :00, 03:00–20:00 UTC weekdays (pg_cron `kairos-live-exit-monitor`, `0 3-20 * * 1-5`) | Protective exits for LIVE positions: reconstructs open live positions from filled broker_orders, then calls the **shared** `decideExitLadder` core (`lib/trading/exit-ladder.ts`) — the same one PositionMonitor uses — for stop / partial target / trailing runner / time. **Runs even when `live_auto_enabled` is false**: in that state it is shadow-only, writing one `live_exit_ladder_shadow` row and persisting `live_position_state` (trail, high-water mark, partial-taken flag) and submitting no order. `app_paused` / `security_locked` are hard stops in both modes |
+| `/api/agents/live-exit-monitor/cron` | Hourly at :00, 03:00–20:00 UTC weekdays (pg_cron `kairos-live-exit-monitor`, `0 3-20 * * 1-5`) | Protective exits for LIVE positions: reconstructs positions from confirmed full/partial broker fills, then uses the shared `decideExitLadder` core plus paper's fresh-score/confirmed direction-flip policy. No time exit. Shadow and executable state are isolated, and a runner is protected only after a non-zero broker-confirmed partial fill. `app_paused` / `security_locked` are hard stops in both modes. |
 | `/api/agents/db-cleanup` | 1st of month 03:00 UTC | Prune 15 safe tables (llm_call_log >90d, agent_runs >60d, etc.); never touches ledgers |
 
 ---
@@ -77,7 +77,7 @@ All triggered by `scripts/run-agents.ps1 -Agent <name>`. PC must be on for these
 | `scan-india-refresh` | Weekdays 5:30 AM | `/api/scan/india/refresh` | Refresh up to 600 NSE equities oldest-first; scanner reports fresh/stale rotating coverage |
 | `research-india` | Weekdays 6:15 AM | `/api/agents/research/cron?market=india` | India signal generation post-NSE-close |
 | `paper-trade-india` | Legacy local task; disable when pg_cron is active | `/api/agents/paper-trade?market=india` | Route is session-gated; production authority is pg_cron |
-| `position-monitor` | Weekdays 4:15 PM | `/api/agents/position-monitor?market=us` | US stop/target/time-stop/partial-profit checks |
+| `position-monitor` | Weekdays 4:15 PM | `/api/agents/position-monitor?market=us` | US trailing-stop, target/partial-profit, fresh-score and direction-flip checks; no time exit |
 | `position-monitor-india` | Weekdays 6:35 AM | `/api/agents/position-monitor?market=india` | India position exits |
 | `brief-evening` | Weekdays 4:30 PM | `/api/briefing/generate` | Evening email recap |
 | `nav-snapshot` | Weekdays 5:00 PM | `/api/agents/performance` | Daily NAV + alpha snapshot |

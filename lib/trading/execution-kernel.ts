@@ -238,9 +238,16 @@ export function computeAutonomousSizing(input: SizingInput): SizingResult {
   }
 
   const notional = input.nav * size_pct;
-  const qty = Math.floor(notional / input.current_price);
+  // US broker preflight decides whether THIS symbol accepts fractional shares.
+  // Size to six decimals here so an eligible high-priced US name is not
+  // discarded solely because the budget buys less than one share. India is
+  // deliberately whole-share until its own broker capability says otherwise.
+  const rawQty = notional / input.current_price;
+  const qty = isIndiaMarket
+    ? Math.floor(rawQty)
+    : Math.floor(rawQty * 1_000_000) / 1_000_000;
 
-  if (qty < 1) {
+  if (!(qty > 0)) {
     return noSize("qty_rounds_to_zero");
   }
 

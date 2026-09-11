@@ -235,6 +235,17 @@ Notes: Guardian now bootstraps without alerts, records partial/full transitions,
 
 ---
 
+### Entry 11 - 2026-09-11 (Evidence review and live-ladder release gate)
+
+Instruction: Review the 2026-09-10 implementation brief, re-derive the sizing claim from production using market-local same-session controls, and assess live-ladder readiness without enabling live execution.
+Classification: Money-path review, live-exit safety, and measurement integrity
+Affected area: PositionMonitor, live-exit ladder worktree, Alpha Diagnostic sizing evidence, provider model configuration
+Impact: High safety; no live order, schema, configuration, or trade mutation
+Decision status: Review complete; implementation blocked pending the documented live-ladder corrections
+Notes: The audit found fractional-US exit skipping, submission-versus-fill partial state, incomplete partial reconciliation, missing score/direction exits, shadow-state leakage, and unchecked state writes in the uncommitted ladder work. The common sizing-inversion claim did not survive market-local same-session h10 controls. `deepseek-v4-pro` retirement claimed in the brief was not supported by current official DeepSeek documentation. Full findings: `docs/audits/2026-09-11-codex-review-result.md`.
+
+---
+
 ## Drift Warnings
 
 - Current prototype routes use LLM-generated prices and direct weight mutation, which conflict with the approved architecture.

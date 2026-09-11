@@ -57,9 +57,15 @@ describe("computeAutonomousSizing — fail-closed on stale/absent inputs (Test 1
     expect(computeAutonomousSizing(sizing({ current_price: NaN })).ok).toBe(false);
   });
 
-  it("refuses when the computed quantity rounds below one share", () => {
-    // nav 10k * 10% = $1000 notional, price $2000 -> 0 shares
-    const r = computeAutonomousSizing(sizing({ current_price: 2000 }));
+  it("keeps an eligible US fractional quantity instead of discarding it", () => {
+    // nav 10k * 10% = $1000 notional, price $2000 -> 0.5 share.
+    const r = computeAutonomousSizing(sizing({ current_price: 2000, market: "us" }));
+    expect(r.ok).toBe(true);
+    expect(r.proposed_qty).toBe(0.5);
+  });
+
+  it("still refuses an India quantity that rounds below one whole share", () => {
+    const r = computeAutonomousSizing(sizing({ current_price: 2000, market: "india" }));
     expect(r.ok).toBe(false);
     expect(r.reject_reason).toBe("qty_rounds_to_zero");
   });

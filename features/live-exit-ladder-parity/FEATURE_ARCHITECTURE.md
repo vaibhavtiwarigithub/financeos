@@ -1,6 +1,7 @@
 # Live Exit Ladder Parity — Architecture Proposal
 
-> Status: DRAFT / PROPOSED — not approved, not built.
+> Status: **Approved by owner; implementation complete pending migration apply and
+> production shadow verification** (2026-09-11). `live_auto_enabled` remains off.
 > Owner-directed 2026-09-09, sequenced ahead of Guardian Stage 1 and any live
 > enablement: "before any live enablement, build live partial-exit/ladder
 > parity and test it against the paper behavior."
@@ -18,7 +19,7 @@
 | trailing stop | `max(prev stop, highest × anchorPct)` | none — stop never moves |
 | trail distance | position's own `initial_stop_loss / avg_cost` | n/a |
 | highest-price tracking | persisted `highest_price` | none |
-| time stop | yes | yes |
+| time stop | no — Decision 74 | no — Decision 74 |
 
 So a live winner that reaches target is fully closed; the paper equivalent
 banks half and lets the rest run behind a breakeven-or-better stop. A live
@@ -73,11 +74,15 @@ what reconstruction cannot derive:
 create table live_position_state (
   account_id   text not null,
   symbol       text not null,
+  market       text not null check (market in ('us', 'india')),
+  state_mode   text not null default 'legacy'
+    check (state_mode in ('legacy', 'shadow', 'executable')),
   highest_price      numeric,      -- trailing anchor since entry
   trailing_stop      numeric,      -- last computed stop; never lowered
-  partial_taken_at   timestamptz,  -- non-null = partial target already fired
+  partial_taken_at   timestamptz,  -- non-null = broker-confirmed partial target fill
   partial_qty        numeric,      -- what was sold at partial, for audit
   opened_at          timestamptz not null,  -- guards stale rows across re-entries
+  direction_flip_armed_session timestamptz, -- first fresh held-short score session
   updated_at         timestamptz not null default now(),
   primary key (account_id, symbol)
 );
@@ -92,12 +97,14 @@ already taken.
 ### 3.3 Exit precedence — identical to paper, in the same order
 
 1. **Stop** (trailing, never lowered) → full close.
-2. **Target** and no `partial_taken_at` → sell `paperPartialTargetQuantity`,
-   set stop to `paperRunnerStopPrice(entry, trailingStop)`, stamp
-   `partial_taken_at`.
+2. **Target** and no `partial_taken_at` → submit `paperPartialTargetQuantity`.
+   Only a broker-confirmed non-zero fill may set `partial_taken_at` and move the
+   runner stop to `paperRunnerStopPrice(entry, trailingStop)`.
 3. **Target** and `partial_taken_at` already set → no action (the runner is
    managed by the trailing stop from here, same as paper).
-4. **Time stop** → full close.
+4. **Fresh score below entry threshold** → full close immediately; a confirmed
+   two-session held-short direction flip → full close. Both share paper's
+   freshness and debounce policy.
 
 Trailing stop is recomputed every run as
 `max(stored trailing_stop, highest_price × anchorPct)` where `anchorPct`
@@ -111,8 +118,9 @@ SELL can fill partially or not at all. The stamp must therefore be written
 **from the observed fill**, not at submission — otherwise a rejected partial
 marks the position as "profit taken" and permanently disables its target
 branch. Proposal: stamp `partial_taken_at`/`partial_qty` only after the SELL
-appears as `filled`/`partially_filled` in `broker_orders`, reconciled on the
-following run.
+appears with non-zero `filled_qty` as `filled`/`partially_filled` in
+`broker_orders`, reconciled on the following run. Requested quantity is never
+substituted for an unconfirmed partial fill.
 
 ## 4. Testing parity — the actual acceptance bar
 
@@ -144,14 +152,9 @@ from its route. That extraction is part of this work, not a prerequisite.
 
 ## 6. Open questions
 
-1. **Should the partial fire when `live_auto_enabled` is false?** Today
-   `live-exit-monitor` no-ops entirely when the flag is off, so parity work is
-   unobservable until it flips. Options: leave it gated (safe, untestable in
-   production until enablement) or add a shadow mode that logs what it *would*
-   do without submitting. The shadow option is strongly preferable — it makes
-   the parity test observable on real positions before any live behavior
-   change, consistent with how every other risky change in this codebase has
-   been validated.
+1. **Shadow state isolation (resolved):** shadow rows use `state_mode=shadow`;
+   executable runs read only `state_mode=executable`, so a hypothetical trail
+   or partial cannot affect an order after enablement.
 2. **Reconciliation cadence for §3.4.** The next run is 15 minutes later;
    whether that is tight enough for a partially-filled protective sell needs a
    decision.
