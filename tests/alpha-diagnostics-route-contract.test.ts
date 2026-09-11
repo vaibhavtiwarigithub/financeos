@@ -11,7 +11,7 @@ describe("Alpha Diagnostic Lab route integrity contract", () => {
   });
 
   it("queries entry eligibility, excursions, initial stops, and persisted mark quantity", () => {
-    expect(route).toContain("analyst_score, entry_eligible, direction");
+    expect(route).toContain("analyst_score, entry_eligible, direction, decision_context, discovery_source");
     expect(route).toContain("max_adverse_excursion, max_favorable_excursion");
     expect(route).toContain('.select("session_date, symbol, qty, mark_price")');
     expect(route).toContain("initial_stop_loss, stop_loss, price_target");

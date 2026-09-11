@@ -1,7 +1,8 @@
-// Direction-flip exit decision (pure).
+// Persisted holding-conviction exit decision (pure).
 //
-// A "direction flip" = a position held long whose FRESH research signal now
-// points short below the exit threshold. Historically the monitor force-sold on
+// The legacy storage name says "direction flip", but the current predicate is
+// broader and deliberate: a position held long whose FRESH holding-review
+// score is below the exit threshold. Historically the monitor force-sold on
 // the FIRST such session, which produced whipsaw: 13 of 22 closed paper trades
 // (2026-07) exited on a same-week flip for a ~1% loss before any thesis played
 // out — one India name flipped 1.3 days after entry.
@@ -26,7 +27,7 @@ export type FlipAction =
   | "hold";      // nothing to do (no flip, or armed and waiting for a new session)
 
 export interface FlipDecisionInput {
-  /** Fresh signal is a held short below the exit threshold (the raw flip test). */
+  /** A fresh holding-review signal has lost conviction below the exit threshold. */
   flipped: boolean;
   /** Market days the position has been held, or null if the open time is unknown. */
   ageDays: number | null;
@@ -54,7 +55,7 @@ export function decideDirectionFlip(i: FlipDecisionInput): FlipAction {
 /** Default min-hold floor (market days) before a flip may arm. */
 export const MIN_FLIP_HOLD_DAYS = 2;
 
-/** Staged-flag prefix stored in paper_positions.exit_reason while a flip is armed. */
+/** Legacy-compatible staged prefix stored while a conviction exit is armed. */
 export const FLIP_ARMED_PREFIX = "direction_flip_armed";
 
 /** Build the armed flag carrying the arming session. */

@@ -8,7 +8,7 @@ import {
   type Bar, type SectorScoredRow,
 } from "@/lib/learning/sector-regime";
 import { quantileDiagnostics } from "@/lib/learning/factor-quantiles";
-import { isEligibleLong } from "@/lib/learning/entry-cohort";
+import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
     for (let offset = 0; ; offset += PAGE) {
       const { data, error } = await svc
         .from("observation_labels")
-        .select("observation_id,benchmark_neutral_return,horizon_days,decision_observations!inner(symbol,ts,market,entry_eligible,direction,technical_score)")
+        .select("observation_id,benchmark_neutral_return,horizon_days,decision_observations!inner(symbol,ts,market,entry_eligible,direction,technical_score,decision_context,discovery_source)")
         .eq("horizon_days", horizonDays)
         .eq("decision_observations.market", "us")
         .not("benchmark_neutral_return", "is", null)
@@ -120,7 +120,7 @@ export async function GET(request: NextRequest) {
     for (const row of observations) {
       const decision = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
       if (!decision?.symbol || !decision.ts) continue;
-      if (!isEligibleLong(decision.entry_eligible, decision.direction)) continue;
+      if (!isEntryCandidateLong({ entryEligible: decision.entry_eligible, direction: decision.direction, decisionContext: decision.decision_context, discoverySource: decision.discovery_source })) continue;
       const symbol = String(decision.symbol).toUpperCase();
       const session = String(decision.ts).slice(0, 10);
       // One row per (symbol, session): research writes 2-3x daily.

@@ -14,7 +14,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { computeArchetypeIc, emptyArchetypeResult, type ArchetypeScoreRow } from "@/lib/learning/archetype-ic";
-import { isEligibleLong } from "@/lib/learning/entry-cohort";
+import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +46,7 @@ async function loadRows(svc: any, market: "us" | "india", horizonDays: number): 
   for (let offset = 0; ; offset += PAGE) {
     const { data, error } = await svc
       .from("shadow_decisions")
-      .select("setup_type, symbol, ts, score, observation_id, decision_observations!inner(analyst_score, ts, entry_eligible, direction, observation_labels!inner(horizon_days, benchmark_neutral_return))")
+      .select("setup_type, symbol, ts, score, observation_id, decision_observations!inner(analyst_score, ts, entry_eligible, direction, decision_context, discovery_source, observation_labels!inner(horizon_days, benchmark_neutral_return))")
       .eq("market", market)
       .not("setup_type", "is", null)
       .not("score", "is", null)
@@ -64,7 +64,12 @@ async function loadRows(svc: any, market: "us" | "india", horizonDays: number): 
       const score = Number(r.score);
       if (!Number.isFinite(champion) || !Number.isFinite(fwd) || !Number.isFinite(score)) continue;
       rows.push({
-        entryEligible: isEligibleLong(obs.entry_eligible, obs.direction),
+        entryEligible: isEntryCandidateLong({
+          entryEligible: obs.entry_eligible,
+          direction: obs.direction,
+          decisionContext: obs.decision_context,
+          discoverySource: obs.discovery_source,
+        }),
         market,
         setupType: String(r.setup_type),
         symbol: String(r.symbol),

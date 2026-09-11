@@ -28,7 +28,7 @@ function observations(dates: number, codeVersion: string, opts: { invert?: boole
         scores: { fundamental: 50 + i * 5, technical: null, sentiment: null, macro: null, insider: null },
         availabilityMask: { fundamental: true },
         benchmarkNeutralReturn: outcome,
-        entryEligible: true, direction: "long", action: "scored", agentLabel: "",
+        entryEligible: true, decisionContext: "entry_candidate", direction: "long", action: "scored", agentLabel: "",
       });
     }
   }

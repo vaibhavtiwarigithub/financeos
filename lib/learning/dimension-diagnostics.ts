@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { computeSpearmanIC } from "@/lib/validation/feature-check";
-import { ALL_SCORED_COHORT_KEY, ENTRY_COHORT_KEY, isEligibleLong } from "./entry-cohort";
+import { ALL_SCORED_COHORT_KEY, ENTRY_COHORT_KEY, isEntryCandidateLong } from "./entry-cohort";
 import { quantileDiagnostics, type FactorRow } from "./factor-quantiles";
 
 // v3 adds forward-written decision code versions. v1/v2 remain immutable in
@@ -16,7 +16,7 @@ import { quantileDiagnostics, type FactorRow } from "./factor-quantiles";
 // half the dates. That is a different dataset, not a refinement of the same one,
 // so v4 rows are kept as recorded and superseded rather than deleted or rerun in
 // place. India was under the cap and its v4 numbers are unaffected.
-export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v5";
+export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v6";
 // 2/5/10/20 rank signal quality at or near the mandate holding period (5-15
 // sessions). 60/120 measure EXIT TIMING — "are we exiting too early" — which
 // the short labels structurally cannot answer, because a 20-day label can never
@@ -75,6 +75,8 @@ export type DiagnosticObservation = {
   availabilityMask: Partial<Record<DiagnosticDimension, boolean>> | null;
   benchmarkNeutralReturn: number | null;
   entryEligible: boolean;
+  decisionContext?: string | null;
+  discoverySource?: string | null;
   /** Decision direction. Required for the cohort predicate; see ./entry-cohort.ts. */
   direction: string | null;
   action: string;
@@ -221,7 +223,12 @@ export function buildDimensionFindings(observations: DiagnosticObservation[], ho
     // HEADLINE = the cohort that can actually be entered. The all-scored number
     // ranks names the system would never buy, which is how a +0.105 "edge" was
     // published and retracted; it survives only as labelled context.
-    const eligible = available.filter((row) => isEligibleLong(row.entryEligible, row.direction));
+    const eligible = available.filter((row) => isEntryCandidateLong({
+      entryEligible: row.entryEligible,
+      direction: row.direction,
+      decisionContext: row.decisionContext,
+      discoverySource: row.discoverySource,
+    }));
     const predictive = predictiveMetrics(toRows(eligible), horizonDays);
     const context = predictiveMetrics(toRows(available), horizonDays);
     findings.push({
@@ -280,7 +287,12 @@ export function buildAgentFindings(observations: DiagnosticObservation[], horizo
       const outcome = finite(row.benchmarkNeutralReturn);
       return score == null || outcome == null ? [] : [{ value: score, outcome, ts: row.ts }];
     });
-    const eligibleRows = rows.filter((row) => isEligibleLong(row.entryEligible, row.direction));
+    const eligibleRows = rows.filter((row) => isEntryCandidateLong({
+      entryEligible: row.entryEligible,
+      direction: row.direction,
+      decisionContext: row.decisionContext,
+      discoverySource: row.discoverySource,
+    }));
     const predictive = predictiveMetrics(toRows(eligibleRows), horizonDays);
     const context = predictiveMetrics(toRows(rows), horizonDays);
     const eligibleReturns = eligibleRows.flatMap((row) => finite(row.benchmarkNeutralReturn) != null
@@ -334,7 +346,7 @@ export function buildAgentFindings(observations: DiagnosticObservation[], horizo
 
 export function diagnosticFingerprint(market: string, horizonDays: number, observations: DiagnosticObservation[]): string {
   const material = observations
-    .map((row) => `${row.id}:${row.ts}:${row.symbol}:${row.agentLabel}:${row.codeVersion}:${row.benchmarkNeutralReturn}:${isEligibleLong(row.entryEligible, row.direction) ? 1 : 0}`)
+    .map((row) => `${row.id}:${row.ts}:${row.symbol}:${row.agentLabel}:${row.codeVersion}:${row.benchmarkNeutralReturn}:${isEntryCandidateLong({ entryEligible: row.entryEligible, direction: row.direction, decisionContext: row.decisionContext, discoverySource: row.discoverySource }) ? 1 : 0}`)
     .sort()
     .join("|");
   return crypto.createHash("sha256").update(`${DIMENSION_DIAGNOSTIC_PLAN_VERSION}|${market}|${horizonDays}|${material}`).digest("hex");

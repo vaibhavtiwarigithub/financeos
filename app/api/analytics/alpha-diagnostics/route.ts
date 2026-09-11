@@ -32,6 +32,7 @@ import {
   ALPHA_DIAGNOSTIC_METRIC_VERSION, fingerprint, fingerprintDataset, resolveVerdict, MIN_REVIEW_DATES,
   type DiagnosticFinding, type DiagnosticMarket,
 } from "@/lib/analytics/alpha-diagnostic-contract";
+import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -188,7 +189,7 @@ export async function POST(req: NextRequest) {
       // A2 inputs: scored decisions joined to their matured benchmark-neutral
       // label. Read-only join over persisted ledgers, no provider call.
       loadAllRows<any>((from, to) => svc.from("decision_observations")
-        .select("id, symbol, ts, analyst_score, entry_eligible, direction, observation_labels!inner(horizon_days, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion)")
+        .select("id, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source, observation_labels!inner(horizon_days, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion)")
         .eq("market", market)
         .not("analyst_score", "is", null)
         .order("ts", { ascending: true })
@@ -480,7 +481,7 @@ type Excursion = { mfe: number | null; mae: number | null };
 function buildExcursionLookup(rows: any[], horizonDays: number): Map<string, Excursion> {
   const out = new Map<string, Excursion>();
   const eligible = [...rows]
-    .filter(r => r.entry_eligible === true && r.direction === "long")
+    .filter(r => isEntryCandidateLong({ entryEligible: r.entry_eligible, direction: r.direction, decisionContext: r.decision_context, discoverySource: r.discovery_source }))
     .sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
   for (const r of eligible) {
     const key = `${String(r.symbol)}|${String(r.ts).slice(0, 10)}`;

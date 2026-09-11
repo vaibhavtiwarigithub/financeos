@@ -4,6 +4,9 @@
 // a per-symbol cut needs far more data than exists yet; global is the
 // documented fallback and, for now, the only tier built).
 
+import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+
 export interface MaeMfePercentiles { stopMaePctile: number; targetMfePctile: number; n: number }
 export interface MaeMfeReadiness { n: number; required: 60; ready: boolean; available: boolean }
 
@@ -11,6 +14,22 @@ function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
   const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(p * sorted.length)));
   return sorted[idx];
+}
+
+async function entryCandidateObservationIds(supabase: any, market: "us" | "india"): Promise<number[]> {
+  const rows = await fetchAllRows<any>((from, to) => supabase.from("decision_observations")
+    .select("id,entry_eligible,direction,decision_context,discovery_source")
+    .eq("market", market)
+    .eq("entry_eligible", true)
+    .eq("direction", "long")
+    .order("id", { ascending: true })
+    .range(from, to), "MAE/MFE entry observations");
+  return rows.filter((row) => isEntryCandidateLong({
+    entryEligible: row.entry_eligible,
+    direction: row.direction,
+    decisionContext: row.decision_context,
+    discoverySource: row.discovery_source,
+  })).map((row) => Number(row.id)).filter(Number.isFinite);
 }
 
 export async function getGlobalMaeMfePercentiles(
@@ -22,9 +41,7 @@ export async function getGlobalMaeMfePercentiles(
     // Exit-policy samples must represent trades the long-entry policy could
     // actually have taken. Mixing rejected/neutral/short observations changes
     // the path distribution and can manufacture inappropriate stop/target levels.
-    const { data: obsIds } = await supabase.from("decision_observations").select("id")
-      .eq("market", market).eq("entry_eligible", true).eq("direction", "long").limit(5000);
-    const ids = (obsIds ?? []).map((r: any) => r.id);
+    const ids = await entryCandidateObservationIds(supabase, market);
     if (ids.length === 0) return null;
     const { data: labels } = await supabase
       .from("observation_labels")
@@ -70,10 +87,7 @@ export async function getMaeMfeReadinessByHorizons(
   const result = Object.fromEntries(horizonDays.map(day => [day, { n: 0, required: 60, ready: false, available: false }])) as Record<number, MaeMfeReadiness>;
   if (!requested.length) return result;
   try {
-    const { data: obsRows, error: obsError } = await supabase.from("decision_observations").select("id")
-      .eq("market", market).eq("entry_eligible", true).eq("direction", "long").limit(5000);
-    if (obsError) return result;
-    const ids = (obsRows ?? []).map((row: any) => row.id);
+    const ids = await entryCandidateObservationIds(supabase, market);
     if (!ids.length) {
       for (const day of requested) result[day] = { n: 0, required: 60, ready: false, available: true };
       return result;

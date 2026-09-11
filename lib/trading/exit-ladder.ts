@@ -46,8 +46,9 @@ export type ExitAction =
 //   - score falling below the entry threshold — "would not be bought today"
 //   - direction flip
 //
-// Nothing is held "forever" without a rule: a stalled winner is exited by its
-// own ratcheting trail, which is a price-driven exit rather than a calendar one.
+// A position that never makes a new high can retain its original stop for a long
+// time. PositionMonitor surfaces that condition after 20 sessions; it does not
+// invent a calendar exit while evidence for a data-driven alternative matures.
 
 export interface ExitLadderInput {
   market: PaperQuantityMarket;

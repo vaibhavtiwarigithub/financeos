@@ -83,7 +83,7 @@ export async function loadCodeVersionObservations(
     const { data, error } = await svc
       .from("observation_labels")
       .select(
-        "id,observation_id,horizon_days,benchmark_neutral_return,fwd_return,decision_observations!inner(id,ts,symbol,market,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,direction,action)",
+        "id,observation_id,horizon_days,benchmark_neutral_return,fwd_return,decision_observations!inner(id,ts,symbol,market,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,direction,action,decision_context,discovery_source)",
       )
       .eq("horizon_days", horizonDays)
       .eq("decision_observations.market", market)
@@ -115,6 +115,8 @@ export async function loadCodeVersionObservations(
       availabilityMask: decision.availability_mask ?? null,
       benchmarkNeutralReturn: Number(returnValue),
       entryEligible: decision.entry_eligible === true,
+      decisionContext: decision.decision_context ?? null,
+      discoverySource: decision.discovery_source ?? null,
       direction: decision.direction == null ? null : String(decision.direction),
       action: String(decision.action ?? "scored"),
       // Unused by buildDimensionFindings' dimension path (agentLabel only

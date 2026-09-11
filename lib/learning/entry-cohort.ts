@@ -22,6 +22,57 @@
 export const ENTRY_COHORT_KEY = "eligible_long";
 export const ALL_SCORED_COHORT_KEY = "all_scored";
 
+export type DecisionContext = "entry_candidate" | "holding_review" | "unknown";
+
+const HOLDING_SOURCES = new Set(["holding", "india_holding"]);
+const ENTRY_SOURCES = new Set([
+  "watchlist",
+  "carry_forward",
+  "screener_momentum",
+  "screener_value",
+  "metals_basket",
+  "crypto_basket",
+  "region_etf",
+  "india_screener",
+  "edge_relative_strength",
+  "manual",
+]);
+
+/**
+ * Resolve immutable decision intent. New rows must carry decisionContext.
+ * discoverySource is accepted only to make frozen legacy evidence usable and
+ * never turns an unknown source into an entry observation.
+ */
+export function resolveDecisionContext(
+  decisionContext: unknown,
+  discoverySource?: unknown,
+): DecisionContext {
+  if (decisionContext === "entry_candidate" || decisionContext === "holding_review") {
+    return decisionContext;
+  }
+  if (typeof discoverySource !== "string") return "unknown";
+  if (HOLDING_SOURCES.has(discoverySource)) return "holding_review";
+  if (ENTRY_SOURCES.has(discoverySource)) return "entry_candidate";
+  return "unknown";
+}
+
 export function isEligibleLong(entryEligible: unknown, direction: unknown): boolean {
   return entryEligible === true && direction === "long";
+}
+
+export function isEntryCandidateLong(input: {
+  entryEligible: unknown;
+  direction: unknown;
+  decisionContext?: unknown;
+  discoverySource?: unknown;
+}): boolean {
+  return resolveDecisionContext(input.decisionContext, input.discoverySource) === "entry_candidate"
+    && isEligibleLong(input.entryEligible, input.direction);
+}
+
+export function isHoldingReview(input: {
+  decisionContext?: unknown;
+  discoverySource?: unknown;
+}): boolean {
+  return resolveDecisionContext(input.decisionContext, input.discoverySource) === "holding_review";
 }

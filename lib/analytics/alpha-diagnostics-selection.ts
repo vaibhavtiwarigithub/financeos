@@ -4,17 +4,16 @@
 // score RANK forward returns at all? If it does not, no downstream repair to
 // sizing, exits or costs can create an edge — it can only stop destroying one.
 //
-// Measured 2026-08-25 on this book: US composite rank IC +0.051 (t=0.93),
-// indistinguishable from luck, while US fundamental alone reached +0.076
-// (t=2.40). Both composites ranked WORSE than their own best single dimension.
-// A2 exists to keep that measurement running rather than to be re-derived by
-// hand each time.
+// Historical headlines produced before decision_context existed mixed entry
+// candidates with daily holding reviews and are not evidence about selection.
+// A2 exists to keep the correctly scoped measurement running rather than to
+// re-derive a contaminated cohort by hand each time.
 //
 // READ-ONLY. Composes the existing Spearman authority rather than adding a
 // second implementation of rank correlation.
 
 import { spearman } from "@/lib/learning/archetype-ic";
-import { isEligibleLong } from "@/lib/learning/entry-cohort";
+import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { quintileSpread, type SelectionRow } from "./alpha-diagnostics";
 import {
   ALPHA_DIAGNOSTIC_METRIC_VERSION,
@@ -53,7 +52,12 @@ export function selectionRowsFromObservations(
   cohort: "eligible_long" | "all_scored",
 ): Array<SelectionRow & { ts: string }> {
   return rows
-    .filter(r => cohort === "all_scored" || isEligibleLong(r.entry_eligible, r.direction))
+    .filter(r => cohort === "all_scored" || isEntryCandidateLong({
+      entryEligible: r.entry_eligible,
+      direction: r.direction,
+      decisionContext: r.decision_context,
+      discoverySource: r.discovery_source,
+    }))
     .flatMap(r => {
       const labels: any[] = Array.isArray(r.observation_labels) ? r.observation_labels : [r.observation_labels];
       const label = labels.find(l => l && Number(l.horizon_days) === horizonDays);

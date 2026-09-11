@@ -30,6 +30,8 @@ function shadowRow(date: string, i: number, eligible: boolean) {
       ts: `${date}T13:00:00Z`,
       entry_eligible: eligible,
       direction: eligible ? "long" : "neutral",
+      decision_context: eligible ? "entry_candidate" : "holding_review",
+      discovery_source: eligible ? "watchlist" : "holding",
       observation_labels: [{
         horizon_days: 10,
         // eligible: higher score -> WORSE return. ineligible: the reverse.

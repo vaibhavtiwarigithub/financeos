@@ -9,6 +9,7 @@
  * the former is not promotion evidence for overlapping forward windows.
  */
 import { createClient } from "@supabase/supabase-js";
+import { isEntryCandidateLong } from "../lib/learning/entry-cohort";
 
 type Market = "us" | "india";
 type Row = {
@@ -24,6 +25,7 @@ type Row = {
   direction: string | null;
   technicalAvailable: boolean;
   discoverySource: string;
+  decisionContext: string | null;
   instrumentFamily: string;
 };
 
@@ -159,7 +161,7 @@ async function loadRows(client: any, market: Market, horizon: number): Promise<R
   for (let offset = 0; ; offset += pageSize) {
     const { data, error } = await client
       .from("observation_labels")
-      .select("id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,analyst_score,technical_score,features,availability_mask,entry_eligible,direction,discovery_source)")
+      .select("id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,analyst_score,technical_score,features,availability_mask,entry_eligible,direction,decision_context,discovery_source)")
       .eq("horizon_days", horizon)
       .eq("decision_observations.market", market)
       .not("benchmark_neutral_return", "is", null)
@@ -181,6 +183,7 @@ async function loadRows(client: any, market: Market, horizon: number): Promise<R
         direction: decision.direction == null ? null : String(decision.direction),
         technicalAvailable: decision.availability_mask?.technical === true,
         discoverySource: String(decision.discovery_source ?? "unknown"),
+        decisionContext: decision.decision_context == null ? null : String(decision.decision_context),
         instrumentFamily: String(decision.features?.instrument?.family ?? decision.features?.instrument?.kind ?? "unknown"),
       });
     }
@@ -196,7 +199,7 @@ async function main() {
   const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
   const report: Record<string, unknown> = {
     generated_at: new Date().toISOString(),
-    cohort: "entry_eligible=true AND direction=long AND technical available",
+    cohort: "decision_context=entry_candidate AND entry_eligible=true AND direction=long AND technical available (explicit legacy source mapping only)",
     note: "Read-only diagnostic. Overlap-adjusted t uses nEffective=session_count/horizon. Sub-features are exploratory and are not multiple-testing-cleared.",
     markets: {},
   };
@@ -204,7 +207,10 @@ async function main() {
     const horizons: Record<string, unknown> = {};
     for (const horizon of HORIZONS) {
       const loaded = await loadRows(client, market, horizon);
-      const rows = loaded.filter((row) => row.eligible && row.direction === "long" && row.technicalAvailable);
+      const rows = loaded.filter((row) => isEntryCandidateLong({
+        entryEligible: row.eligible, direction: row.direction,
+        decisionContext: row.decisionContext, discoverySource: row.discoverySource,
+      }) && row.technicalAvailable);
       horizons[`h${horizon}`] = {
         loaded_rows: loaded.length,
         cohort_rows: rows.length,

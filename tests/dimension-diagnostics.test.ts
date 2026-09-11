@@ -13,6 +13,7 @@ function observation(id: number, date: string, available = true): DiagnosticObse
     scores: { fundamental: 45 + id, technical: 50 + id, sentiment: 55, macro: 50, insider: 50 },
     availabilityMask: { fundamental: available, technical: available, sentiment: false, macro: available, insider: available },
     benchmarkNeutralReturn: id % 2 ? 0.02 : -0.01, entryEligible: id % 2 === 0,
+    decisionContext: id % 2 === 0 ? "entry_candidate" : "holding_review",
     direction: id % 2 === 0 ? "long" : "neutral",
     action: id % 2 === 0 ? "signal_written" : "scored", agentLabel: "research",
   };
@@ -61,7 +62,7 @@ describe("dimension diagnostics P0", () => {
         analystScore: 50 + i,
         scores: { fundamental: 50 + i, technical: 50, sentiment: 50, macro: 50, insider: 50 },
         availabilityMask: { fundamental: true, technical: true, sentiment: true, macro: true, insider: true },
-        benchmarkNeutralReturn: -i, entryEligible: true, direction: "long",
+        benchmarkNeutralReturn: -i, entryEligible: true, direction: "long", decisionContext: "entry_candidate",
         action: "signal_written", agentLabel: "research",
       });
       // 5 ineligible names: higher score -> better return, and a wider spread,
@@ -71,7 +72,7 @@ describe("dimension diagnostics P0", () => {
         analystScore: 70 + i,
         scores: { fundamental: 70 + i, technical: 50, sentiment: 50, macro: 50, insider: 50 },
         availabilityMask: { fundamental: true, technical: true, sentiment: true, macro: true, insider: true },
-        benchmarkNeutralReturn: 10 + i, entryEligible: false, direction: "neutral",
+        benchmarkNeutralReturn: 10 + i, entryEligible: false, direction: "neutral", decisionContext: "holding_review",
         action: "scored", agentLabel: "research",
       });
     }
@@ -95,7 +96,7 @@ describe("dimension diagnostics P0", () => {
         analystScore: 50 + i,
         scores: { fundamental: 50, technical: 50, sentiment: 50, macro: 50, insider: 50 },
         availabilityMask: { fundamental: true, technical: true, sentiment: true, macro: true, insider: true },
-        benchmarkNeutralReturn: -i, entryEligible: true, direction: "long",
+        benchmarkNeutralReturn: -i, entryEligible: true, direction: "long", decisionContext: "entry_candidate",
         action: "signal_written", agentLabel: "research",
       });
       for (let i = 0; i < 5; i++) rows.push({
@@ -103,7 +104,7 @@ describe("dimension diagnostics P0", () => {
         analystScore: 70 + i,
         scores: { fundamental: 50, technical: 50, sentiment: 50, macro: 50, insider: 50 },
         availabilityMask: { fundamental: true, technical: true, sentiment: true, macro: true, insider: true },
-        benchmarkNeutralReturn: 10 + i, entryEligible: false, direction: "neutral",
+        benchmarkNeutralReturn: 10 + i, entryEligible: false, direction: "neutral", decisionContext: "holding_review",
         action: "scored", agentLabel: "research",
       });
     }

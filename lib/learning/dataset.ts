@@ -22,6 +22,8 @@ export interface LabeledObservation {
   insider_score: number | null;
   direction: string | null;
   entry_eligible: boolean;
+  decision_context: string | null;
+  discovery_source: string | null;
   score_threshold: number | null;
   // The availability_mask ResearchAgent actually used to weight this
   // observation live (lib/scoring/weighted-score.ts) — required so the
@@ -60,7 +62,7 @@ export async function loadLabeledDataset(
   // so a broken query trained the learner on nothing and looked like a quiet day.
   const obsRows = await fetchAllRows((from, to) => supabase
     .from("decision_observations")
-    .select("id, ts, market, symbol, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, direction, entry_eligible, score_threshold, availability_mask")
+    .select("id, ts, market, symbol, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, direction, entry_eligible, decision_context, discovery_source, score_threshold, availability_mask")
     .eq("market", market)
     .order("id", { ascending: true })
     .range(from, to), "decision_observations");
@@ -94,6 +96,8 @@ export async function loadLabeledDataset(
       macro_score: o.macro_score != null ? Number(o.macro_score) : null,
       insider_score: o.insider_score != null ? Number(o.insider_score) : null,
       direction: o.direction, entry_eligible: !!o.entry_eligible,
+      decision_context: o.decision_context ?? null,
+      discovery_source: o.discovery_source ?? null,
       score_threshold: o.score_threshold != null ? Number(o.score_threshold) : null,
       availability_mask: o.availability_mask ?? null,
       horizon_days: horizonDays,

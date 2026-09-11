@@ -604,12 +604,12 @@ function ExitPlanColumn({ plan, market, entryPrice, heldQty }: { plan: PaperExit
 
   const stateLabel: Record<PaperExitPlan["state"], string> = {
     hold: "Hold",
-    time_exit_due: "Time exit due",
+    score_exit_armed: "Score exit armed · waiting for confirmation",
     score_exit_due: "Score exit due",
     stop_exit_due: "Stop reached",
     target_exit_due: "Target reached",
   };
-  const due = plan.state !== "hold";
+  const due = plan.state !== "hold" && plan.state !== "score_exit_armed";
   const scoreLine = plan.isHedge
     ? "Score exit not used for hedge"
     : plan.score == null

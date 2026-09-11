@@ -66,3 +66,14 @@ export function isPaperScoreFresh(createdAt: string | null | undefined, now: Dat
 export function paperPositionOpenedAt(position: { opened_at?: string | null; created_at?: string | null }): string | null {
   return position.opened_at ?? position.created_at ?? null;
 }
+
+export function isHoldingExitSignal(input: {
+  isHolding: unknown;
+  createdAt: string | null | undefined;
+  positionOpenedAt: string | null | undefined;
+}): boolean {
+  if (input.isHolding !== true || !input.createdAt || !input.positionOpenedAt) return false;
+  const signalAt = Date.parse(input.createdAt);
+  const openedAt = Date.parse(input.positionOpenedAt);
+  return Number.isFinite(signalAt) && Number.isFinite(openedAt) && signalAt >= openedAt;
+}

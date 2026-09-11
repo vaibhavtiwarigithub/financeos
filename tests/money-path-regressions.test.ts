@@ -36,7 +36,8 @@ describe("research holding and market contracts", () => {
     const monitor = readFileSync("app/api/agents/position-monitor/route.ts", "utf8");
     expect(research).toContain("is_holding: isHeld");
     expect(research).toContain('.eq("research_enabled", true)');
-    expect(monitor).toContain('sc?.isHolding === true');
+    expect(monitor).toContain('.eq("is_holding", true)');
+    expect(monitor).toContain("isHoldingExitSignal({");
     expect(monitor).toContain('sc.score < exitThreshold');
     expect(monitor).not.toContain('sc.direction !== "long"');
   });

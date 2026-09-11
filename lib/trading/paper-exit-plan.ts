@@ -1,9 +1,10 @@
-import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
+import { isHoldingExitSignal, isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { tradingWeekdaysBetween } from "@/lib/trading-mandate";
+import { decideDirectionFlip, MIN_FLIP_HOLD_DAYS, parseArmedSession } from "@/lib/trading/direction-flip";
 
 export type PaperExitPlanState =
   | "hold"
-  | "time_exit_due"
+  | "score_exit_armed"
   | "score_exit_due"
   | "stop_exit_due"
   | "target_exit_due";
@@ -39,10 +40,12 @@ export interface ProjectPaperExitPlanInput {
     opened_at?: string | null;
     created_at?: string | null;
     position_role?: string | null;
+    exit_reason?: string | null;
   };
   signal?: {
     analyst_score?: unknown;
     created_at?: string | null;
+    is_holding?: unknown;
   } | null;
   entryThreshold: number;
   hysteresis: number;
@@ -91,12 +94,13 @@ export function projectPaperExitPlan(input: ProjectPaperExitPlanInput): PaperExi
   const maxScoreAgeSessions = Number.isInteger(input.maxScoreAgeSessions) && input.maxScoreAgeSessions >= 0
     ? input.maxScoreAgeSessions
     : 2;
+  const openedAt = paperPositionOpenedAt(position);
   const scoreFresh = !isHedge && score != null
+    && isHoldingExitSignal({ isHolding: signal?.is_holding, createdAt: scoreCreatedAt, positionOpenedAt: openedAt })
     && isPaperScoreFresh(scoreCreatedAt, now, market, maxScoreAgeSessions);
   const rawScoreAge = scoreCreatedAt ? marketSessionsSince(scoreCreatedAt, now, market) : Number.POSITIVE_INFINITY;
   const scoreAgeSessions = Number.isFinite(rawScoreAge) ? rawScoreAge : null;
   const scoreExitThreshold = resolvePaperExitThreshold(input.entryThreshold, input.hysteresis);
-  const openedAt = paperPositionOpenedAt(position);
   const ageWeekdays = openedAt ? tradingWeekdaysBetween(new Date(openedAt), now) : null;
   const horizonDays = Number.isFinite(input.horizonDays) && input.horizonDays >= 1
     ? Math.round(input.horizonDays)
@@ -105,10 +109,19 @@ export function projectPaperExitPlan(input: ProjectPaperExitPlanInput): PaperExi
   // Match PositionMonitor's current exit precedence. This is a read-only
   // projection over persisted state; PositionMonitor remains execution authority.
   let state: PaperExitPlanState = "hold";
-  if (ageWeekdays != null && ageWeekdays > horizonDays) state = "time_exit_due";
-  else if (scoreFresh && score != null && score < scoreExitThreshold) state = "score_exit_due";
-  else if (currentPrice != null && stopPrice != null && currentPrice <= stopPrice) state = "stop_exit_due";
+  if (currentPrice != null && stopPrice != null && currentPrice <= stopPrice) state = "stop_exit_due";
   else if (!isHedge && currentPrice != null && targetPrice != null && currentPrice >= targetPrice) state = "target_exit_due";
+  else if (!isHedge) {
+    const action = decideDirectionFlip({
+      flipped: scoreFresh && score != null && score < scoreExitThreshold,
+      ageDays: ageWeekdays,
+      minHoldDays: MIN_FLIP_HOLD_DAYS,
+      armedSession: parseArmedSession(position.exit_reason),
+      currentSession: scoreCreatedAt,
+    });
+    if (action === "confirm") state = "score_exit_due";
+    else if (action === "arm" || (action === "hold" && parseArmedSession(position.exit_reason) != null)) state = "score_exit_armed";
+  }
 
   return {
     positionId: String(position.id ?? `${market}:${position.symbol}`),

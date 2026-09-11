@@ -1,39 +1,7 @@
--- Rolled-back production-safe verification for migration
--- 20260911153405_capture_closed_trade_high_water.sql.
--- This file deliberately repeats the guarded migration body because the
--- Management API SQL runner does not support psql \ir includes.
+-- Rolled-back production-safe verification for migrations
+-- 20260911153405 and 20260911194022. Run after both migrations are applied.
 
 begin;
-
-do $migration$
-declare
-  v_signature regprocedure := to_regprocedure('public.execute_paper_exit(uuid,numeric,text,numeric,numeric)');
-  v_source text;
-  v_full_old text := 'take_profit = coalesce(take_profit, v_pos.price_target),' || chr(10) ||
-    '        closed_at = v_now, exit_at = v_now';
-  v_full_new text := 'take_profit = coalesce(take_profit, v_pos.price_target),' || chr(10) ||
-    '        highest_price = greatest(coalesce(highest_price, v_pos.highest_price, p_exit_price),' || chr(10) ||
-    '          coalesce(v_pos.highest_price, p_exit_price), p_exit_price),' || chr(10) ||
-    '        closed_at = v_now, exit_at = v_now';
-  v_residual_old text := 'coalesce(v_lot.take_profit, v_pos.price_target), v_lot.highest_price,';
-  v_residual_new text := 'coalesce(v_lot.take_profit, v_pos.price_target),' || chr(10) ||
-    '        greatest(coalesce(v_lot.highest_price, v_pos.highest_price, p_exit_price),' || chr(10) ||
-    '          coalesce(v_pos.highest_price, p_exit_price), p_exit_price),';
-begin
-  select pg_get_functiondef(v_signature) into v_source;
-  if v_signature is null or v_source is null then
-    raise exception 'execute_paper_exit is missing';
-  end if;
-  if (length(v_source) - length(replace(v_source, v_full_old, ''))) /
-      nullif(length(v_full_old), 0) <> 2 then
-    raise exception 'close branches do not match expected high-water patch shape';
-  end if;
-  if position(v_residual_old in v_source) = 0 then
-    raise exception 'residual branch does not match expected high-water patch shape';
-  end if;
-  execute replace(replace(v_source, v_full_old, v_full_new), v_residual_old, v_residual_new);
-end
-$migration$;
 
 do $test$
 declare
@@ -67,5 +35,43 @@ begin
   end if;
 end
 $test$;
+
+do $partial_test$
+declare
+  v_position_id uuid := gen_random_uuid();
+  v_lot_id uuid := gen_random_uuid();
+  v_result jsonb;
+  v_closed_high numeric;
+  v_residual_high numeric;
+begin
+  insert into public.paper_trades
+    (id, symbol, order_side, qty, fill_price, market, currency, executed_at,
+     position_role, learning_scope, partial_exit_lot)
+  values
+    (v_lot_id, 'ZZTEST_HIGH_PARTIAL', 'buy', 2, 100, 'us', 'USD', now(),
+     'alpha', 'full', false);
+  insert into public.paper_positions
+    (id, symbol, market, currency, qty, avg_cost, current_price, stop_loss,
+     price_target, highest_price, opened_at, position_role)
+  values
+    (v_position_id, 'ZZTEST_HIGH_PARTIAL', 'us', 'USD', 2, 100, 110, 93, 120,
+     126, now(), 'alpha');
+
+  v_result := public.execute_paper_exit(v_position_id, 110, 'test_partial_high_water', 1, 100);
+  if v_result->>'ok' <> 'true' then raise exception 'partial high-water RPC failed: %', v_result; end if;
+  select highest_price into v_closed_high from public.paper_trades where id = v_lot_id;
+  select highest_price into v_residual_high from public.paper_trades
+    where symbol = 'ZZTEST_HIGH_PARTIAL' and closed_at is null and partial_exit_lot = true;
+  if v_closed_high is distinct from 126 or v_residual_high is distinct from 126 then
+    raise exception 'partial high-water expected closed/residual 126, got %/%', v_closed_high, v_residual_high;
+  end if;
+
+  v_result := public.execute_paper_exit(v_position_id, 111, 'test_residual_high_water');
+  if v_result->>'ok' <> 'true' then raise exception 'residual close RPC failed: %', v_result; end if;
+  if exists (select 1 from public.paper_trades where symbol = 'ZZTEST_HIGH_PARTIAL' and highest_price is distinct from 126) then
+    raise exception 'final residual close lost the 126 high-water';
+  end if;
+end
+$partial_test$;
 
 rollback;

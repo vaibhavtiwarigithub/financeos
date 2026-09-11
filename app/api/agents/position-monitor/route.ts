@@ -16,7 +16,7 @@ import { setMarketPaused } from "@/lib/market-controls";
 import { computeExitFillPrice, getSettledDailyQuotes } from "@/lib/data/quotes";
 import { expectedNewestSession } from "@/lib/data/completed-candles";
 import { loadTradingMandate, resolveHorizonDays, tradingWeekdaysBetween, type TradingMandate } from "@/lib/trading-mandate";
-import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
+import { isHoldingExitSignal, isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { loadTimeReviewReplacements, recordTimeReviewObservation } from "@/lib/trading/time-review-shadow";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
@@ -427,12 +427,15 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     const scoreMarket = marketOf(pos, hasMarketCol) as "us" | "india";
     const scoreKey = `${scoreMarket}:${sym}`;
     if (latestScore[scoreKey]) continue;
+    const openedAt = paperPositionOpenedAt(pos);
     let q = svc.from("agent_signals").select("analyst_score, direction, created_at, is_holding")
       .eq("symbol", sym).eq("score_source", "deterministic_v1")
       // Weekend-staged scores cannot force a conviction exit. Mechanical
       // stop/target/time exits below remain independent and continue normally.
-      .eq("session_validated", true);
+      .eq("session_validated", true)
+      .eq("is_holding", true);
     if (hasMarketCol) q = q.eq("market", scoreMarket); // don't read a US score for an India position
+    if (openedAt) q = q.gte("created_at", openedAt);
     const { data: sig } = await q.order("created_at", { ascending: false }).limit(1).maybeSingle();
     latestScore[scoreKey] = {
       score: (sig as any)?.analyst_score != null ? Number((sig as any).analyst_score) : null,
@@ -455,6 +458,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   const closed: string[] = [];
   const updated: string[] = [];
   const staleScoresHeld: string[] = [];
+  const stalledPositions: string[] = [];
 
   // Closing a position = deleting the paper_positions row (it only tracks
   // currently-held qty, no closed/open flag) + marking the matching open
@@ -538,7 +542,11 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     const entryThreshold = mandate?.score_threshold ?? 60;
     const exitThreshold = resolvePaperExitThreshold(entryThreshold, hysteresis);
     const maxScoreAge = mandate?.max_signal_age_sessions ?? 2;
-    const scoreFresh = isPaperScoreFresh(sc?.createdAt, new Date(), market, maxScoreAge);
+    const scoreFresh = isHoldingExitSignal({
+      isHolding: sc?.isHolding,
+      createdAt: sc?.createdAt,
+      positionOpenedAt: paperPositionOpenedAt(pos),
+    }) && isPaperScoreFresh(sc?.createdAt, new Date(), market, maxScoreAge);
 
     // Handle reassess-exit flag set by LearnerAgent — close position if flagged and
     // we have a price. "score_reassess_exit" is the current (deterministic,
@@ -608,6 +616,12 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       // never an exit.
     }
 
+    if (ageDays != null && ageDays >= 20
+        && Number(pos.highest_price ?? pos.avg_cost) <= Number(pos.avg_cost)
+        && scoreFresh && sc?.score != null && sc.score >= exitThreshold) {
+      stalledPositions.push(`${pos.symbol} (${market}, ${ageDays} sessions, score ${sc.score})`);
+    }
+
     // Daily score-based exit: hold while the AI score stays above the exit
     // threshold, exit when today's fresh score drops below it (or the signal
     // flipped away from long). This is the primary conviction-driven exit and
@@ -615,59 +629,47 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     // secondary/slower path. Only act when we actually have a recent score;
     // a missing score means research hasn't covered this symbol, so we hold
     // and let the mechanical stop/target below protect it.
-    // Two DISTINCT exit conditions share this branch; label them separately with
-    // structured reason codes so the trade record isn't mislabeled. A direction
-    // flip (held long, fresh signal now points away) is NOT a score comparison —
-    // emitting "68 < 37" for a flip is nonsense. Direction flip takes precedence.
-    const scoreBelowExit = scoreFresh && sc?.score != null && sc.score < exitThreshold;
-    // Only a holding-path short is an exit direction. A candidate-path neutral
-    // means "no entry", not "sell an existing position".
-    // A held signal becomes `short` below the entry threshold. It is not an
-    // independent exit input and must not bypass the lower hysteresis threshold.
-    const directionFlipped = scoreFresh && sc?.isHolding === true
-      && sc.direction === "short" && sc.score != null && sc.score < exitThreshold;
+    // A held `short` is derived from this same threshold comparison. Treating
+    // score and direction as separate exits created a redundant immediate branch
+    // that a candidate-path signal could enter. There is now one persisted,
+    // two-session conviction-loss decision.
+    const convictionLost = scoreFresh && sc?.score != null && sc.score < exitThreshold;
     if (pos.position_role !== "hedge" && sc?.score != null && !scoreFresh
         && pos.exit_reason !== "score_reassess_exit" && pos.exit_reason !== "llm_exit") {
       staleScoresHeld.push(`${pos.symbol} (${marketSessionsSince(sc.createdAt ?? "", new Date(), market)} sessions old; max ${maxScoreAge})`);
     }
 
-    // Pure score-below-exit (direction still long, NOT a flip) stays immediate —
-    // only the direction-flip path is debounced (see below).
-    if (pos.position_role !== "hedge" && scoreBelowExit && !directionFlipped) {
-      const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
-      await closePosition(pos, currentPrice, `score_below_exit_threshold (${sc!.score} < ${exitThreshold})`, outcome);
-      continue;
-    }
-
-    // Direction-flip: two-step, min-hold-gated. A single flipped session ARMS
+    // Research exit: two-step, min-hold-gated. A single low-score session ARMS
     // the exit (staged in exit_reason with the arming session); it only CONFIRMS
     // once a strictly newer research session still flips. A one-session wobble
     // disarms and we hold. This attacks the same-week whipsaw churn (13/22 closed
     // paper trades exited on a flip, min 1.3 days held). See lib/trading/direction-flip.ts.
+    let scoreExitConfirmed = false;
     if (pos.position_role !== "hedge") {
       const armedSession = parseArmedSession(pos.exit_reason);
       const action = decideDirectionFlip({
-        flipped: directionFlipped,
+        flipped: convictionLost,
         ageDays,
         minHoldDays: MIN_FLIP_HOLD_DAYS,
         armedSession,
         currentSession: sc?.createdAt != null ? String(sc.createdAt) : null,
       });
       if (action === "confirm") {
-        const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
-        await closePosition(pos, currentPrice, `direction_flip (confirmed across 2 sessions, now ${sc!.direction})`, outcome);
-        continue;
+        // Defer until after the mechanical stop check. Protective stops have
+        // precedence over every discretionary/score exit.
+        scoreExitConfirmed = true;
       }
       if (action === "arm") {
         await svc.from("paper_positions")
           .update({ exit_reason: armedFlag(sc?.createdAt != null ? String(sc.createdAt) : null), updated_at: new Date().toISOString() })
           .eq("id", pos.id);
-        staleScoresHeld.push(`${pos.symbol} (direction-flip armed: holds until a 2nd flipped session confirms)`);
-        continue;
+        staleScoresHeld.push(`${pos.symbol} (score exit armed: holds until a 2nd low-score session confirms)`);
+        // Still evaluate the stop and target on the arming session. Arming a
+        // score exit must never suppress mechanical protection.
       }
       if (action === "disarm") {
         await svc.from("paper_positions").update({ exit_reason: null, updated_at: new Date().toISOString() }).eq("id", pos.id);
-        staleScoresHeld.push(`${pos.symbol} (direction-flip disarmed: signal no longer flipped)`);
+        staleScoresHeld.push(`${pos.symbol} (score exit disarmed: score recovered)`);
         // fall through — position is healthy; let trailing-stop / target below run.
       } else if (action === "too_young") {
         staleScoresHeld.push(`${pos.symbol} (flip ignored: held ${ageDays}d < ${MIN_FLIP_HOLD_DAYS}d min)`);
@@ -732,6 +734,11 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       }
     }
 
+    if (!exitReason && scoreExitConfirmed) {
+      exitReason = `score_below_exit_threshold_confirmed (${sc!.score} < ${exitThreshold}; 2 sessions)`;
+      outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
+    }
+
     if (exitReason && outcome) {
       // Stop exits: fill at trailingStop (the stop order level), not currentPrice.
       // An intraday or gap stop may have triggered at a price above current close.
@@ -760,6 +767,19 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       reason,
     });
    }
+  }
+
+  const stalledIssueKey = `paper-position-no-new-high:${marketScope ?? "all"}`;
+  if (stalledPositions.length) {
+    await reportIssue({
+      issueKey: stalledIssueKey,
+      severity: "warn", category: "risk",
+      title: `${stalledPositions.length} paper position(s) have made no new high after 20 sessions`,
+      detail: `${stalledPositions.join("; ")}. This is observability only: the time stop remains removed, and no calendar exit is inferred from this alert.`,
+      autoExpireAt: new Date(Date.now() + 2 * 86400_000).toISOString(),
+    }, svc);
+  } else {
+    await resolveIssue(stalledIssueKey, svc);
   }
 
   if (exitFailures.length > 0) {
@@ -1187,6 +1207,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     closedDetails: closed,
     updated: updated.length,
     stale_scores_held: staleScoresHeld,
+    stalled_positions: stalledPositions,
     unpriced: unpricedByMarket,
     nav_write_ok: !navWriteFailed,
     nav_write_errors: navWriteErrors,

@@ -12,6 +12,7 @@ import {
   type LabelPoint,
 } from "@/lib/trading/exit-geometry-shadow";
 import { coverageByHorizon, MIN_DISTINCT_DATES, type LabelRow } from "@/lib/shadows/label-coverage";
+import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +52,7 @@ export async function GET(req: NextRequest) {
   try {
     data = await fetchAllRows((from, to) => svc
       .from("observation_labels")
-      .select("horizon_days,max_favorable_excursion,max_adverse_excursion,fwd_return,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible)")
+      .select("horizon_days,max_favorable_excursion,max_adverse_excursion,fwd_return,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible,direction,decision_context,discovery_source)")
       .eq("horizon_days", HORIZON_DAYS)
       .order("id", { ascending: true })
       .range(from, to), "exit geometry labels");
@@ -66,7 +67,7 @@ export async function GET(req: NextRequest) {
     // Only decisions that were actually eligible to become positions. A cohort
     // that never passed the eligibility gate cannot inform an exit rule — the
     // error that invalidated the first version of the diagnosis.
-    if (decision.entry_eligible !== true) continue;
+    if (!isEntryCandidateLong({ entryEligible: decision.entry_eligible, direction: decision.direction, decisionContext: decision.decision_context, discoverySource: decision.discovery_source })) continue;
     if (marketFilter && decision.market !== marketFilter) continue;
     if (row.max_favorable_excursion == null || row.max_adverse_excursion == null) continue;
     // A missing ATR is kept, NOT filtered. Percentage geometries evaluate fine

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "./paper-exit-policy";
+import { isHoldingExitSignal, isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "./paper-exit-policy";
 
 describe("paper exit policy", () => {
   // THE DEFECT THESE NOW GUARD. This used to return max(35, entry - hysteresis):
@@ -40,5 +40,13 @@ describe("paper exit policy", () => {
     expect(isPaperScoreFresh("2026-07-06T18:00:00Z", now, "us", 2)).toBe(true);
     expect(isPaperScoreFresh("2026-07-02T18:00:00Z", now, "us", 2)).toBe(false);
     expect(isPaperScoreFresh(null, now, "us", 2)).toBe(false);
+  });
+
+  it("accepts only a holding-path signal from the current position episode", () => {
+    const opened = "2026-09-10T14:30:00.000Z";
+    expect(isHoldingExitSignal({ isHolding: true, createdAt: "2026-09-10T15:00:00.000Z", positionOpenedAt: opened })).toBe(true);
+    expect(isHoldingExitSignal({ isHolding: false, createdAt: "2026-09-10T15:00:00.000Z", positionOpenedAt: opened })).toBe(false);
+    expect(isHoldingExitSignal({ isHolding: true, createdAt: "2026-09-10T14:00:00.000Z", positionOpenedAt: opened })).toBe(false);
+    expect(isHoldingExitSignal({ isHolding: true, createdAt: null, positionOpenedAt: opened })).toBe(false);
   });
 });

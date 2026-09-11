@@ -2431,6 +2431,7 @@ export async function processSymbol(
       currency: market === "india" ? "INR" : "USD",
       signal_id: insertedSignalId,
       discovery_source: entry.discovery_source ?? null,
+      decision_context: isHeld ? "holding_review" : "entry_candidate",
       mandate_id: mandateId ?? null,
       score_source: "deterministic_v1",
       scoring_version: "v1.0",

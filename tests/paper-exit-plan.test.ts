@@ -18,6 +18,7 @@ function plan(overrides: Record<string, unknown> = {}) {
     signal: {
       analyst_score: 74,
       created_at: "2026-07-21T14:00:00.000Z",
+      is_holding: true,
       ...((overrides.signal as object | undefined) ?? {}),
     },
     entryThreshold: Number(overrides.entryThreshold ?? 60),
@@ -60,7 +61,7 @@ describe("paper exit-plan projection", () => {
     expect(result.state).toBe("hold");
   });
 
-  it("uses PositionMonitor precedence when several exit conditions are due", () => {
+  it("does not resurrect the removed time stop when several price conditions are due", () => {
     const result = plan({
       position: {
         opened_at: "2026-07-01T14:00:00.000Z",
@@ -71,12 +72,20 @@ describe("paper exit-plan projection", () => {
       signal: { analyst_score: 20, created_at: "2026-07-21T14:00:00.000Z" },
       horizonDays: 5,
     });
-    expect(result.state).toBe("time_exit_due");
+    expect(result.state).toBe("stop_exit_due");
   });
 
-  it("uses a fresh below-threshold score before a reached stop", () => {
+  it("never lets a score exit suppress a reached stop", () => {
     const result = plan({
       position: { current_price: 270, stop_loss: 280 },
+      signal: { analyst_score: 44, created_at: "2026-07-21T14:00:00.000Z" },
+    });
+    expect(result.state).toBe("stop_exit_due");
+  });
+
+  it("shows a score exit as due only after a newer low-score holding session", () => {
+    const result = plan({
+      position: { opened_at: "2026-07-01T14:00:00.000Z", exit_reason: "direction_flip_armed:2026-07-20T14:00:00.000Z" },
       signal: { analyst_score: 44, created_at: "2026-07-21T14:00:00.000Z" },
     });
     expect(result.state).toBe("score_exit_due");
@@ -88,6 +97,12 @@ describe("paper exit-plan projection", () => {
       signal: { analyst_score: 10, created_at: "2026-07-21T14:00:00.000Z" },
     });
     expect(result.isHedge).toBe(true);
+    expect(result.scoreFresh).toBe(false);
+    expect(result.state).toBe("hold");
+  });
+
+  it("never treats an entry-candidate signal as exit authority", () => {
+    const result = plan({ signal: { analyst_score: 20, created_at: "2026-07-21T14:00:00.000Z", is_holding: false } });
     expect(result.scoreFresh).toBe(false);
     expect(result.state).toBe("hold");
   });

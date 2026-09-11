@@ -17,7 +17,7 @@ import { reconstructAccountLivePositions } from "@/lib/trading/live-position-led
 import { cancelProtectiveStop } from "@/lib/protective/placement-worker";
 import { managedLivePositionId } from "@/lib/protective/coverage";
 import { decideExitLadder } from "@/lib/trading/exit-ladder";
-import { isPaperScoreFresh, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
+import { isHoldingExitSignal, isPaperScoreFresh, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { decideDirectionFlip, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
 import { reportIssue } from "@/lib/system-health";
 
@@ -129,6 +129,7 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
         .select("analyst_score,direction,created_at,is_holding")
         .eq("symbol", position.symbol).eq("market", market)
         .eq("score_source", "deterministic_v1").eq("session_validated", true)
+        .eq("is_holding", true).gte("created_at", position.firstBuyAt)
         .order("created_at", { ascending: false }).limit(1).maybeSingle();
       if (signalError) throw new Error(`live-exit ${market} score read failed: ${signalError.message}`);
       latestScores.set(position.symbol, {
@@ -183,26 +184,24 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       const partialTaken = (stateIsCurrent && stateRow!.partial_taken_at != null) || confirmedPartialQty > 0;
       const score = latestScores.get(symbol);
       const entryThreshold = mandate.score_threshold;
-      const scoreFresh = isPaperScoreFresh(score?.createdAt, new Date(), market, mandate.max_signal_age_sessions);
+      const scoreFresh = isHoldingExitSignal({
+        isHolding: score?.isHolding,
+        createdAt: score?.createdAt,
+        positionOpenedAt,
+      }) && isPaperScoreFresh(score?.createdAt, new Date(), market, mandate.max_signal_age_sessions);
       const exitThreshold = resolvePaperExitThreshold(entryThreshold);
-      const scoreBelowExit = scoreFresh && score?.score != null && score.score < exitThreshold;
-      const directionFlipped = scoreFresh && score?.isHolding === true
-        && score.direction === "short" && score.score != null && score.score < exitThreshold;
+      const convictionLost = scoreFresh && score?.score != null && score.score < exitThreshold;
       const flipAction = decideDirectionFlip({
-        flipped: directionFlipped,
+        flipped: convictionLost,
         ageDays: tradingWeekdaysBetween(new Date(p.firstBuyAt), new Date()),
         minHoldDays: MIN_FLIP_HOLD_DAYS,
         armedSession: stateIsCurrent && stateRow!.direction_flip_armed_session != null ? String(stateRow!.direction_flip_armed_session) : null,
         currentSession: score?.createdAt ?? null,
       });
-      const forcedAction = scoreBelowExit && !directionFlipped
-        ? "score_exit"
-        : flipAction === "confirm" ? "direction_flip" : null;
+      const forcedAction = flipAction === "confirm" ? "score_exit" : null;
       const forcedReason = forcedAction === "score_exit"
-        ? `score_below_exit_threshold (${score!.score} < ${exitThreshold})`
-        : forcedAction === "direction_flip"
-          ? `direction_flip (confirmed across 2 sessions, now ${score!.direction})`
-          : null;
+        ? `score_below_exit_threshold_confirmed (${score!.score} < ${exitThreshold}; 2 sessions)`
+        : null;
 
       const ageDays = tradingWeekdaysBetween(new Date(p.firstBuyAt), new Date());
       const decision = decideExitLadder({
@@ -232,7 +231,7 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       // Persist the ratchet every run, exit or not — this is what gives live
       // positions the memory paper gets from its mutable row.
       const nextArmedSession = flipAction === "arm" ? score?.createdAt ?? null
-        : flipAction === "disarm" || forcedAction === "direction_flip" ? null
+        : flipAction === "disarm" || forcedAction === "score_exit" ? null
           : stateIsCurrent ? stateRow!.direction_flip_armed_session ?? null : null;
       const { error: stateWriteError } = await svc.from("live_position_state").upsert({
         account_id: account, symbol, market,
@@ -258,9 +257,12 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
         continue;
       }
 
-      const action = forcedAction ?? decision.action;
-      const actionReason = forcedReason ?? decision.reason;
-      const actionQty = forcedAction ? p.qty : decision.exitQty;
+      // Protective stop always wins. A score confirmation is discretionary and
+      // may not overwrite the ladder's stop-full decision.
+      const stopWins = decision.action === "stop_full";
+      const action = stopWins ? decision.action : forcedAction ?? decision.action;
+      const actionReason = stopWins ? decision.reason : forcedReason ?? decision.reason;
+      const actionQty = stopWins ? decision.exitQty : forcedAction ? p.qty : decision.exitQty;
 
       if (shadowMode) {
         // Log the intent, submit nothing. This is the whole point of shadow

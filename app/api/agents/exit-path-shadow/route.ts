@@ -6,6 +6,8 @@ import { fetchYahooCandles } from "@/lib/data/yahoo-candles";
 import { buildPathCandidates, evaluatePathGeometry, hasRequiredFutureSessions, type MandatePathBaseline, type SimBar } from "@/lib/trading/exit-path-sim";
 import { BENCHMARK_BY_MARKET } from "@/lib/data/benchmark-series";
 import { coverageByHorizon, MIN_DISTINCT_DATES, type LabelRow } from "@/lib/shadows/label-coverage";
+import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -40,17 +42,26 @@ export async function GET(req: NextRequest) {
 
   // Entry-eligible decisions only: a decision that never passed the eligibility
   // gate could not have become a position, so it cannot inform an exit rule.
-  let q = svc.from("decision_observations")
-    .select("ts, symbol, market, price_at_decision, entry_eligible")
-    .eq("entry_eligible", true)
-    .not("price_at_decision", "is", null)
-    .order("ts", { ascending: true })
-    .limit(2000);
-  if (marketFilter) q = q.eq("market", marketFilter);
-  const { data, error } = await q;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-  const decisions = (data ?? []) as Array<{ ts: string; symbol: string; market: string; price_at_decision: number }>;
+  let decisions: Array<{ ts: string; symbol: string; market: string; price_at_decision: number }>;
+  try {
+    const rows = await fetchAllRows<any>((from, to) => {
+      let query = svc.from("decision_observations")
+        .select("id,ts,symbol,market,price_at_decision,entry_eligible,direction,decision_context,discovery_source")
+        .eq("entry_eligible", true)
+        .not("price_at_decision", "is", null)
+        .order("id", { ascending: true });
+      if (marketFilter) query = query.eq("market", marketFilter);
+      return query.range(from, to);
+    }, "exit path entry observations");
+    decisions = rows.filter((row) => isEntryCandidateLong({
+      entryEligible: row.entry_eligible,
+      direction: row.direction,
+      decisionContext: row.decision_context,
+      discoverySource: row.discovery_source,
+    }));
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "decision read failed" }, { status: 500 });
+  }
 
   const { data: mandateRows, error: mandateError } = await svc.from("trading_mandates")
     .select("market,stop_loss_pct,target_pct,target_hold_days");

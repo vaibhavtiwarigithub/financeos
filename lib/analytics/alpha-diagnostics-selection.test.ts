@@ -50,7 +50,7 @@ describe("runA2Selection", () => {
       const date = `2026-07-${String(d + 1).padStart(2, "0")}`;
       for (let i = 0; i < 5; i++) observations.push({
         symbol: `E${i}`, ts: `${date}T10:00:00Z`, analyst_score: i,
-        entry_eligible: true, direction: "long",
+        entry_eligible: true, direction: "long", decision_context: "entry_candidate",
         observation_labels: [{ horizon_days: 2, benchmark_neutral_return: -i }],
       });
       for (let i = 0; i < 20; i++) observations.push({

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -47,7 +48,7 @@ async function loadRows(svc: any, market: Market): Promise<Array<MacroCounterfac
   for (let offset = 0; ; offset += PAGE) {
     const { data, error } = await svc
       .from("decision_observations")
-      .select("id,ts,symbol,discovery_source,weights_used,availability_mask,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,analyst_score,score_threshold,entry_eligible")
+      .select("id,ts,symbol,discovery_source,decision_context,direction,weights_used,availability_mask,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,analyst_score,score_threshold,entry_eligible")
       .eq("market", market)
       .order("id", { ascending: true })
       .range(offset, offset + PAGE - 1);
@@ -69,7 +70,7 @@ async function loadRows(svc: any, market: Market): Promise<Array<MacroCounterfac
         },
         observedScore: Number(r.analyst_score),
         threshold: Number(r.score_threshold ?? 60),
-        observedEligible: r.entry_eligible === true,
+        observedEligible: isEntryCandidateLong({ entryEligible: r.entry_eligible, direction: r.direction, decisionContext: r.decision_context, discoverySource: r.discovery_source }),
         // Mirrors how production decides `isEtf`: the curated symbol list
         // (research-agent.ts:670 `isEtfSymbol(sym)`) plus the metals basket,
         // which is pushed with `isEtf: true` (research-agent.ts:876).

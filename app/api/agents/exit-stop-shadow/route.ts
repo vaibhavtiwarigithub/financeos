@@ -12,7 +12,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
-import { isEligibleLong } from "@/lib/learning/entry-cohort";
+import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { runStopShadow, type StopShadowPoint } from "@/lib/trading/exit-stop-shadow";
 import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
 
@@ -37,7 +37,7 @@ async function loadPoints(svc: any, horizonDays: number, marketFilter: string | 
   // which truncated several readers on this codebase before the sweep.
   const rows = await fetchAllRows((from, to) => svc
     .from("observation_labels")
-    .select("horizon_days,max_favorable_excursion,max_adverse_excursion,fwd_return,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible,direction)")
+    .select("horizon_days,max_favorable_excursion,max_adverse_excursion,fwd_return,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible,direction,decision_context,discovery_source)")
     .eq("horizon_days", horizonDays)
     .order("id", { ascending: true })
     .range(from, to), "exit stop shadow labels");
@@ -48,7 +48,7 @@ async function loadPoints(svc: any, horizonDays: number, marketFilter: string | 
     if (!d) continue;
     // The cohort that could actually become a position. An exit rule cannot be
     // informed by decisions that never passed the entry gate.
-    if (!isEligibleLong(d.entry_eligible, d.direction)) continue;
+    if (!isEntryCandidateLong({ entryEligible: d.entry_eligible, direction: d.direction, decisionContext: d.decision_context, discoverySource: d.discovery_source })) continue;
     if (marketFilter && d.market !== marketFilter) continue;
     if (row.max_favorable_excursion == null || row.max_adverse_excursion == null) continue;
 

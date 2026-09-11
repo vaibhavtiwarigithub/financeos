@@ -60,11 +60,12 @@ export async function loadPaperExitPlans(
 
     let query = supabase
       .from("agent_signals")
-      .select("symbol,analyst_score,created_at")
+      .select("symbol,analyst_score,created_at,is_holding")
       .eq("market", market)
       .in("symbol", symbols)
       .eq("score_source", "deterministic_v1")
       .eq("session_validated", true)
+      .eq("is_holding", true)
       .order("created_at", { ascending: false });
     if (oldestOpen) query = query.gte("created_at", oldestOpen);
     const { data, error } = await query;

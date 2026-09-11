@@ -109,14 +109,14 @@ describe("evaluateCapitalRotationShadow", () => {
     const result = evaluateCapitalRotationShadow({
       candidate,
       holdings: [
-        baseHolding({ id: "exit", exitPlanState: "time_exit_due" }),
+        baseHolding({ id: "exit", exitPlanState: "score_exit_due" }),
         baseHolding({ id: "stale", symbol: "STALE", priceFresh: false }),
       ],
       config,
       now: new Date("2026-07-13T00:00:00.000Z"),
     });
     expect(result.reason).toBe("no_sellable_holding");
-    expect((result.gates.source_reject_counts as any)["position_exit_due:time_exit_due"]).toBe(1);
+    expect((result.gates.source_reject_counts as any)["position_exit_due:score_exit_due"]).toBe(1);
     expect((result.gates.source_reject_counts as any).missing_fresh_price).toBe(1);
   });
 });

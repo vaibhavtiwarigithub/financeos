@@ -1,3 +1,5 @@
+import { isEntryCandidateLong } from "./entry-cohort";
+
 const REVIEW_FLOOR = 20;
 const ADJUSTMENT_FLOOR = 60;
 // 60/120 grade the plan well past the mandate's 5-15 session hold. That is the
@@ -157,14 +159,19 @@ export async function loadPlanCalibration(
   for (let offset = 0; offset < 5000; offset += pageSize) {
     const { data, error } = await supabase
       .from("decision_observations")
-      .select("id,features")
+      .select("id,features,entry_eligible,direction,decision_context,discovery_source")
       .eq("market", market)
       .eq("entry_eligible", true)
       .eq("direction", "long")
       .order("ts", { ascending: false })
       .range(offset, offset + pageSize - 1);
     if (error) throw new Error(`plan_calibration_observations:${error.message}`);
-    rows.push(...(data ?? []));
+    rows.push(...(data ?? []).filter((row: any) => isEntryCandidateLong({
+      entryEligible: row.entry_eligible,
+      direction: row.direction,
+      decisionContext: row.decision_context,
+      discoverySource: row.discovery_source,
+    })));
     if ((data ?? []).length < pageSize) break;
   }
   const ids = rows.map((row: any) => row.id);

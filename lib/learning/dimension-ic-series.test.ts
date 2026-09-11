@@ -35,6 +35,7 @@ function rowsFor(perDateOutcomes: Array<{ date: string; scores: number[]; outcom
         availabilityMask: { fundamental: true },
         benchmarkNeutralReturn: entry.outcomes[i],
         entryEligible: true,
+        decisionContext: "entry_candidate",
         direction: "long",
         action: "scored",
         agentLabel: "research",
