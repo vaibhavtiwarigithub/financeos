@@ -148,8 +148,8 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
         initialStopLoss: p.stopPrice,
         currentStop: stateIsCurrent ? numberOrNull(stateRow!.trailing_stop) : p.stopPrice,
         highestPrice: stateIsCurrent ? numberOrNull(stateRow!.highest_price) : p.avgEntry,
-        ageDays,
-        horizonDays: p.horizonDays,
+        // No ageDays/horizonDays: the time stop was removed 2026-09-10. Live
+        // exits are the trail, the target, and the score falling below entry.
         partialTaken: stateIsCurrent && stateRow!.partial_taken_at != null,
       });
 

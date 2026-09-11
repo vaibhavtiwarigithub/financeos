@@ -608,7 +608,7 @@ Until 2026-07-22 the evaluator was reachable **only** from the `insufficient_cas
 1. Fetch current prices for all open `paper_positions` in the market
 2. Update `highest_price` if today's price is a new high
 3. Run exit checks (in priority order):
-   - **Time stop:** age from `paper_positions.opened_at` > holding horizon → close. The per-market Trading Mandate is authoritative unless its governance explicitly permits a promoted champion horizon within the mandate bounds.
+   - **No time stop (2026-09-10, Decision 74 supersedes 65).** Age NEVER closes a position. The holding horizon survives only as the review-observation window and the learning label horizon. It closed 140 of 203 paper lots (69%) while the score exit closed zero, and in India was cutting winners short (mean minimum score while held 73.0). A position that does not score-exit is closed by its ratcheting trail instead.
    - **Trailing stop:** `stop_loss = max(original_stop, highest_price × 0.93)` → close if breached
    - **Price target:** at target price → **partial profit-taking** (sell half, move stop to
      breakeven on remainder; US paper uses six-decimal fractional quantity, India remains

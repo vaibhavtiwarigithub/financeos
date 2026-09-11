@@ -29,10 +29,25 @@ export type ExitAction =
   | "partial_target"
   /** Target reached but the position cannot be split — close it all. */
   | "target_full"
-  /** Held past its horizon — close the whole position. */
-  | "time_stop"
   /** Target reached and the partial already fired — the runner rides the trail. */
   | "runner_hold";
+
+// NO TIME STOP. Removed 2026-09-10 by owner decision, superseding Decision 65.
+//
+// A clock is not a reason. The old rule closed a position on session eleven of a
+// ten-session horizon regardless of price, trend or score: a name up 18% with a
+// rising score was closed on the same day as one flat at zero. Measured over 203
+// closed paper lots it did 140 of the exits (69%) while the score exit did ZERO,
+// so the horizon — not the research — was the de facto exit policy.
+//
+// Exits are now all deterministic and evidence-driven:
+//   - trailing stop (ratchets with the high-water mark, never loosens)
+//   - price target (partial, then the runner rides the trail)
+//   - score falling below the entry threshold — "would not be bought today"
+//   - direction flip
+//
+// Nothing is held "forever" without a rule: a stalled winner is exited by its
+// own ratcheting trail, which is a price-driven exit rather than a calendar one.
 
 export interface ExitLadderInput {
   market: PaperQuantityMarket;
@@ -60,10 +75,6 @@ export interface ExitLadderInput {
   currentStop: number | null;
   /** Highest price seen since entry. */
   highestPrice: number | null;
-  /** Whole market days held. */
-  ageDays: number;
-  /** Horizon after which the time stop fires. */
-  horizonDays: number;
   /** True once the partial target has fired for THIS position. */
   partialTaken: boolean;
   /** Hedges never take partial profit. */
@@ -94,10 +105,13 @@ export function trailAnchorPct(initialStopLoss: number | null, avgEntry: number)
 /**
  * Decide what an open position does next.
  *
- * Precedence is stop → target → time, matching paper's existing order. Stop
- * wins over target deliberately: if a bar both breached the stop and touched
- * the target, the protective exit is the honest assumption, not the profitable
- * one.
+ * Precedence is stop → target. Stop wins deliberately: if a bar both breached
+ * the stop and touched the target, the protective exit is the honest assumption,
+ * not the profitable one.
+ *
+ * There is no time branch — see the note on ExitAction. A position this returns
+ * "none" for is HELD, and is exited later by its ratcheting trail, its target,
+ * or a score that has fallen below the entry threshold.
  */
 export function decideExitLadder(input: ExitLadderInput): ExitLadderDecision {
   const highestPrice = Math.max(input.highestPrice ?? input.avgEntry, input.price);
@@ -148,16 +162,6 @@ export function decideExitLadder(input: ExitLadderInput): ExitLadderDecision {
       reason: `target: ${input.price.toFixed(2)} >= ${input.priceTarget.toFixed(2)} — position too small to split`,
       exitQty: input.qty,
       outcome: "win",
-    };
-  }
-
-  if (input.ageDays > input.horizonDays) {
-    return {
-      ...base,
-      action: "time_stop",
-      reason: `time stop: age ${input.ageDays} market days > ${input.horizonDays}d`,
-      exitQty: input.qty,
-      outcome: input.price > input.avgEntry ? "win" : "loss",
     };
   }
 

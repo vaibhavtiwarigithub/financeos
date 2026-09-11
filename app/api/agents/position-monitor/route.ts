@@ -561,12 +561,18 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
 
     if (!currentPrice) continue;
 
-    // Time stop: close if position age exceeds champion genome's horizon_days.
-    // Closes slow bleeds that never hit the hard stop but overstay the swing window.
-    // Matches the backtest's max_hold_days assumption so live and backtest are consistent.
+    // NO TIME STOP. Removed 2026-09-10 by owner decision, superseding Decision 65.
+    //
+    // The horizon no longer closes anything. It closed 140 of 203 paper lots
+    // (69%) while the score exit closed ZERO, which made a calendar — not the
+    // research — the de facto exit policy, and in India it was demonstrably
+    // cutting winners short (mean minimum score while held: 73).
+    //
+    // `horizonDays` survives ONLY as the review-observation window below and as
+    // the label horizon for learning. It is no longer an exit.
     const openedAt = paperPositionOpenedAt(pos);
-    // Market days held — shared by the time stop and the direction-flip min-hold
-    // floor. null when the open time is unknown (fail-open: never blocks a flip).
+    // Market days held — used by the review observation and the direction-flip
+    // min-hold floor. null when the open time is unknown (fail-open).
     const ageDays = openedAt ? tradingWeekdaysBetween(new Date(openedAt), new Date()) : null;
     if (openedAt && ageDays != null) {
       const mandate = mandateByMarket.get(market);
@@ -597,11 +603,9 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
           timeReviewShadow[reviewResult]++;
         }
       }
-      if (ageDays > horizonDays) {
-        const outcome = classifyOutcome(pos.avg_cost > 0 ? ((currentPrice - pos.avg_cost) / pos.avg_cost) * 100 : 0);
-        await closePosition(pos, currentPrice, `time_stop (${ageDays} market days > ${horizonDays}d${grandfathered ? ", grandfathered" : ""})`, outcome);
-        continue;
-      }
+      // The horizon comparison that used to close the position here is gone.
+      // Reaching the horizon is a REVIEW POINT that records evidence (above),
+      // never an exit.
     }
 
     // Daily score-based exit: hold while the AI score stays above the exit

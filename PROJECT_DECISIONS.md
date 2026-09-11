@@ -1562,3 +1562,68 @@ record exists because the architecture review is complete and on record — it c
 **Reason:** The app already stores both sides of the question but hides them in separate ledgers, while the old daily rescore job can perpetually skip frequently rescored symbols and hard-codes the US calendar. A visible, version-safe measurement is necessary before deciding whether a falling score amid rising price is a correct warning, a lagging feature, or a systematic scoring defect.
 
 **Architecture:** `features/score-price-divergence/FEATURE_ARCHITECTURE.md`
+
+---
+
+## Decision 74: No Time Stop — Only Scoring And Price Exit A Position (2026-09-10)
+
+**Status:** Approved by owner and implemented. **Supersedes Decision 65.**
+
+**Decision.** Remove the time stop entirely from paper and live. The holding
+horizon no longer closes anything. A position is exited ONLY by:
+
+1. its ratcheting trailing stop,
+2. its price target (partial, then the runner rides the trail),
+3. its score falling below the **entry threshold** — "would this be bought
+   today?",
+4. a direction flip.
+
+`target_hold_days` / `max_hold_days` survive as the review-observation window and
+the label horizon for learning. They are not an exit.
+
+**Reason.** The clock was the de facto exit policy and the research was not.
+Measured over 203 closed paper lots:
+
+| exit | count |
+|---|---|
+| time stop | **140 (69%)** |
+| stop hit | 35 |
+| target | 15 |
+| **score** | **0** |
+
+The score exit had never fired once, because `resolvePaperExitThreshold` returned
+`max(35, entry - hysteresis)` — at the live entry threshold of 60 and the risk
+profile's hysteresis of 15, a position had to collapse below 45 before the score
+could close it. A 15-point dead band made a calendar the real policy.
+
+The clock was also actively harmful in India. On the 140 time-stopped lots, using
+the scores actually observed while each was held, the mean MINIMUM score reached
+was **73.0 in India** against 62.4 in US — India's time stops were closing
+positions whose research had never deteriorated. India time stops averaged
++2.04%; the horizon was cutting winners short.
+
+**Exit-band evidence.** Share of time-stopped lots whose observed minimum score
+would have triggered a score exit:
+
+| band | US (n=62) | India (n=78) |
+|---|---|---|
+| < 60 (entry threshold) | 29 (47%) | 12 (15%) |
+| < 55 | 21 (34%) | 6 (8%) |
+| < 50 | 8 (13%) | 5 (6%) |
+| < 45 (the old band) | **0** | 2 (3%) |
+
+Owner selected **< 60**: exit the moment a holding would no longer be bought.
+
+**Nothing is held indefinitely.** Whatever does not score-exit rides its
+ratcheting trailing stop, which only ever moves up. A stalled winner is closed by
+its own trail — a price-driven exit, not a calendar one.
+
+**Non-goals.** No change to entry, sizing, stop distance, target distance, score
+weights or broker gates in this decision. Hysteresis is retained in
+`strategy_config` for other consumers but is ignored by the score-exit band: any
+non-zero band recreates the dead zone.
+
+**Follow-on work, in order:** (1) the sizing inversion — losers are sized 27-30%
+larger than winners in BOTH markets, which turns a positive per-trade expectancy
+into a negative US total; (2) volatility-scaled exit geometry, staged in
+`features/volatility-scaled-exit-geometry/FEATURE_ARCHITECTURE.md`.

@@ -17,9 +17,15 @@ describe("time-review shadow integration contract", () => {
     expect(migration).not.toContain("grant insert on public.time_review_exit_observations to authenticated");
   });
 
-  it("records before the incumbent time-stop branch and matures from the existing daily job", () => {
+  // The time stop was REMOVED 2026-09-10 by owner decision, superseding
+  // Decision 65. Reaching the horizon is now purely a review point: it records
+  // evidence and closes nothing. This test used to assert the observation was
+  // written BEFORE the `if (ageDays > horizonDays)` exit branch; that branch no
+  // longer exists, so the assertion is inverted — its absence is the contract.
+  it("records the review observation, and no horizon branch closes a position", () => {
     expect(monitor.indexOf("recordTimeReviewObservation(svc")).toBeGreaterThan(0);
-    expect(monitor.indexOf("recordTimeReviewObservation(svc")).toBeLessThan(monitor.indexOf("if (ageDays > horizonDays)"));
+    expect(monitor).not.toContain("if (ageDays > horizonDays)");
+    expect(monitor).not.toContain("time_stop (");
     expect(scheduledRoute).toContain("matureTimeReviewOutcomes(svc");
   });
 

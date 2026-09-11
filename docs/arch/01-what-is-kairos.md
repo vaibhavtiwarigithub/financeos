@@ -98,8 +98,8 @@ flowchart TD
   D --> E{exit trigger?}
   E -- trailing stop breached --> F[Full close: realized_pnl, outcome=win/loss]
   E -- price target hit --> G[Partial: sell half, move stop to breakeven]
-  E -- time stop: age > horizon_days --> F
-  E -- score drops via llm_exit --> F
+  E -- score < entry threshold --> F
+  E -- direction flip --> F
   G --> D
   F --> H[indexClosedTrade: embed setup, store in trade_memories]
   H --> I[Learner training set grows]
@@ -114,10 +114,10 @@ Step by step:
    held recently), checks pyramid gate (not held at all), buys ACME with 10% of pool NAV.
    Records `expected_price = 102.50`, fill at `102.55` (0.05% slip).
 3. **Daily 4:15 PM:** PositionMonitor fetches live ACME price. Updates `highest_price`.
-   Trailing stop = `max(stop_loss, highest_price × 0.93)`. Checks time stop (day 10 max).
+   Trailing stop = `max(stop_loss, highest_price × anchor)`, ratcheting up only. There is NO time stop.
 4. **Day 8:** ACME hits the price target at $123. PositionMonitor sells half (floor(qty/2)),
    moves `stop_loss` to `avg_cost` ($102.55). The remaining half runs.
-5. **Day 12:** Time stop fires (age > 10 days). PositionMonitor closes the remainder.
+5. **Day 26:** ACME's fresh score falls to 57, below the entry threshold of 60 - it would not be bought today - so PositionMonitor closes the remainder. Had the score stayed healthy, the runner would have kept running until its ratcheting trail was breached. Age alone never closes anything (Decision 74).
 6. **Close:** `paper_trades` updated with exit_price, pnl_pct, outcome. Cash returned.
    `indexClosedTrade()` embeds the setup and stores in `trade_memories`.
 7. **Friday 5 PM (after 10+ trades):** LearnerAgent reads the closed cohort, proposes a

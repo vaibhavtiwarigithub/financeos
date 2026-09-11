@@ -2,13 +2,26 @@ import { describe, expect, it } from "vitest";
 import { isPaperScoreFresh, marketSessionsSince, paperPositionOpenedAt, resolvePaperExitThreshold } from "./paper-exit-policy";
 
 describe("paper exit policy", () => {
-  it("derives exit hysteresis from the market mandate threshold", () => {
-    expect(resolvePaperExitThreshold(60, 15)).toBe(45);
-    expect(resolvePaperExitThreshold(52, 15)).toBe(37);
+  // THE DEFECT THESE NOW GUARD. This used to return max(35, entry - hysteresis):
+  // at the live entry threshold of 60 with the profile's hysteresis of 15, a
+  // held position had to collapse below 45 before the score could close it.
+  // Measured over 203 closed paper lots the score exit fired ZERO times while
+  // the time stop fired 140 — the calendar, not the research, was the real exit
+  // policy. With the time stop removed (2026-09-10, superseding Decision 65) the
+  // score exit is the primary non-price exit and must actually be reachable.
+  it("exits at the ENTRY threshold — 'would this be bought today?'", () => {
+    expect(resolvePaperExitThreshold(60, 15)).toBe(60);
+    expect(resolvePaperExitThreshold(52, 15)).toBe(52);
   });
 
-  it("never lowers the exit threshold below the safety floor", () => {
-    expect(resolvePaperExitThreshold(40, 20)).toBe(35);
+  it("ignores hysteresis — any dead band recreates the bug", () => {
+    expect(resolvePaperExitThreshold(60, 0)).toBe(60);
+    expect(resolvePaperExitThreshold(60, 40)).toBe(60);
+    expect(resolvePaperExitThreshold(60)).toBe(60);
+  });
+
+  it("falls back to 60 only when the entry threshold is unusable", () => {
+    expect(resolvePaperExitThreshold(Number.NaN, 15)).toBe(60);
   });
 
   it("uses the paper_positions opened_at column before legacy created_at", () => {

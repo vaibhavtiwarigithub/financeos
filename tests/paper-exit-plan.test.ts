@@ -33,7 +33,10 @@ describe("paper exit-plan projection", () => {
   it("shows a healthy held position with the same score threshold inputs as PositionMonitor", () => {
     const result = plan();
     expect(result.state).toBe("hold");
-    expect(result.scoreExitThreshold).toBe(45);
+    // Exit threshold is the ENTRY threshold: "would this be bought today?".
+    // Was 45 (entry 60 minus 15 hysteresis) — a dead band so wide the score exit
+    // never fired once in 203 closed lots while the time stop fired 140.
+    expect(result.scoreExitThreshold).toBe(60);
     expect(result.scoreFresh).toBe(true);
     expect(result.stopPrice).toBe(280);
     expect(result.targetPrice).toBe(360);

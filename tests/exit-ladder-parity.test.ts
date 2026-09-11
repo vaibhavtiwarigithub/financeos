@@ -23,8 +23,6 @@ const base: ExitLadderInput = {
   initialStopLoss: 93,
   currentStop: 93,
   highestPrice: 100,
-  ageDays: 1,
-  horizonDays: 10,
   partialTaken: false,
 };
 
@@ -97,22 +95,26 @@ describe("partial target — the behavior live never had", () => {
   });
 });
 
-describe("exit precedence — stop beats target beats time", () => {
+describe("exit precedence — stop beats target", () => {
   it("a bar that breaches the stop AND touches the target exits protectively", () => {
     // Honest assumption: if both were touched intrabar, assume the bad one.
     const d = decideExitLadder({ ...base, price: 111, stopCheckPrice: 92 });
     expect(d.action).toBe("stop_full");
   });
 
-  it("target beats an expired horizon", () => {
-    const d = decideExitLadder({ ...base, price: 111, ageDays: 99 });
-    expect(d.action).toBe("partial_target");
+  // NO TIME STOP. Removed 2026-09-10 by owner decision, superseding Decision 65.
+  // A clock is not a reason to exit. Over 203 closed paper lots the horizon did
+  // 140 of the exits while the score exit did ZERO, so the calendar — not the
+  // research — was the real policy, and in India it was cutting winners short.
+  it("holds a position that is merely OLD — age is not an exit", () => {
+    const d = decideExitLadder({ ...base, price: 101 });
+    expect(d.action).toBe("none");
+    expect(d.exitQty).toBeUndefined();
   });
 
-  it("time stop fires when nothing else does", () => {
-    const d = decideExitLadder({ ...base, price: 101, ageDays: 11 });
-    expect(d.action).toBe("time_stop");
-    expect(d.exitQty).toBe(base.qty);
+  it("an old position still exits on its trail, not on its age", () => {
+    const d = decideExitLadder({ ...base, price: 92, stopCheckPrice: 92 });
+    expect(d.action).toBe("stop_full");
   });
 });
 
@@ -141,7 +143,7 @@ describe("full price paths", () => {
     for (const price of prices) {
       const d = decideExitLadder({ ...state, price });
       actions.push(d.action);
-      if (d.action === "stop_full" || d.action === "target_full" || d.action === "time_stop") break;
+      if (d.action === "stop_full" || d.action === "target_full") break;
       state = {
         ...state,
         price,

@@ -1,9 +1,34 @@
 import { isMarketHoliday } from "@/lib/trading/market-calendar";
 
-export function resolvePaperExitThreshold(entryThreshold: number, hysteresis: number): number {
-  const entry = Number.isFinite(entryThreshold) ? entryThreshold : 60;
-  const gap = Number.isFinite(hysteresis) && hysteresis > 0 ? hysteresis : 15;
-  return Math.max(35, entry - gap);
+/**
+ * Score below which a held position is exited: the ENTRY THRESHOLD itself.
+ *
+ * The rule is "would this be bought today?". If the fresh score no longer clears
+ * the bar that admitted it, the research no longer supports holding it, so it is
+ * closed. That is the ONLY score condition, and with the time stop removed
+ * (2026-09-10, superseding Decision 65) it is the primary non-price exit.
+ *
+ * THE DEFECT THIS FIXES. This returned `max(35, entry - hysteresis)` — with the
+ * live entry threshold of 60 and the profile's hysteresis of 15, a position had
+ * to collapse from 60+ to below 45 before the score could close it. Measured
+ * over 203 closed paper lots: the score exit fired ZERO times, while the time
+ * stop fired 140. A 15-point dead band meant the clock, not the research, was
+ * the real exit policy.
+ *
+ * Measured on the 140 time-stopped lots, using the scores actually observed
+ * while each was held, the minimum score reached was below 60 for 29/62 US
+ * (47%) and 12/78 India (15%) — so this band produces a real exit rather than an
+ * inert one, and the India figure being low is the correct result: those
+ * holdings kept scoring well (mean minimum 73) and the clock was cutting winners
+ * short.
+ *
+ * `hysteresis` is accepted for call-compatibility and deliberately ignored: any
+ * non-zero band reintroduces the dead zone this fixes. Churn is bounded instead
+ * by the score-freshness gate (`max_signal_age_sessions`) — a stale score can
+ * never exit a position.
+ */
+export function resolvePaperExitThreshold(entryThreshold: number, _hysteresis?: number): number {
+  return Number.isFinite(entryThreshold) ? entryThreshold : 60;
 }
 
 function marketDate(date: Date, market: "us" | "india"): string | null {
