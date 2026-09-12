@@ -44,4 +44,27 @@ describe("fetchAllRows", () => {
     await expect(fetchAllRows(async () => ({ data: rows(PAGE_SIZE), error: null })))
       .rejects.toThrow(/exceeded 200 pages/);
   });
+
+  it("retries only an explicitly classified transient page error", async () => {
+    let calls = 0;
+    const out = await fetchAllRows(async () => {
+      calls += 1;
+      return calls === 1
+        ? { data: null, error: { message: "Gateway Timeout" } }
+        : { data: [{ id: 7 }], error: null };
+    }, "labels", { retries: 1, retryIf: (message) => message === "Gateway Timeout" });
+
+    expect(out).toEqual([{ id: 7 }]);
+    expect(calls).toBe(2);
+  });
+
+  it("does not retry an unclassified database error", async () => {
+    let calls = 0;
+    await expect(fetchAllRows(async () => {
+      calls += 1;
+      return { data: null, error: { message: "permission denied" } };
+    }, "labels", { retries: 1, retryIf: (message) => message === "Gateway Timeout" }))
+      .rejects.toThrow("permission denied");
+    expect(calls).toBe(1);
+  });
 });

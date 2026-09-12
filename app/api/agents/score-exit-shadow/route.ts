@@ -28,7 +28,10 @@ async function run(req: NextRequest, persist: boolean) {
     .select("id,horizon_days,fwd_return,benchmark_neutral_return,max_adverse_excursion,max_favorable_excursion,decision_observations!inner(id,ts,symbol,market,analyst_score,score_threshold,signal_id,entry_eligible,direction,decision_context,discovery_source)")
     .eq("decision_observations.market", market)
     .in("horizon_days", HORIZONS)
-    .order("id", { ascending: true }).range(from, to), "score exit shadow labels");
+    .order("id", { ascending: true }).range(from, to), "score exit shadow labels", {
+      retries: 1,
+      retryIf: (message) => message.includes("Gateway Timeout"),
+    });
 
   const signalIds = [...new Set(rows.map((row) => {
     const d = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;

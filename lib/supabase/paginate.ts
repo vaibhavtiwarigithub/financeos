@@ -21,6 +21,13 @@
 const MAX_PAGES = 200;
 export const PAGE_SIZE = 1000;
 
+export type PaginatedReadRetry = {
+  /** Bounded retries for one page. Default 0 preserves fail-fast behavior. */
+  retries: number;
+  /** Only errors explicitly classified as transient may be retried. */
+  retryIf: (message: string) => boolean;
+};
+
 /**
  * @param page builds the query for one window; must apply a stable `.order()`.
  *
@@ -34,11 +41,21 @@ export const PAGE_SIZE = 1000;
 export async function fetchAllRows<T = any>(
   page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
   label = "paginated read",
+  retry?: PaginatedReadRetry,
 ): Promise<T[]> {
   const out: T[] = [];
   for (let p = 0; p < MAX_PAGES; p++) {
     const from = p * PAGE_SIZE;
-    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+    let attempt = 0;
+    let response: { data: T[] | null; error: { message: string } | null };
+    while (true) {
+      response = await page(from, from + PAGE_SIZE - 1);
+      if (!response.error) break;
+      const mayRetry = attempt < (retry?.retries ?? 0) && retry?.retryIf(response.error.message) === true;
+      if (!mayRetry) break;
+      attempt += 1;
+    }
+    const { data, error } = response;
     if (error) throw new Error(`${label} failed: ${error.message}`);
     const rows = data ?? [];
     out.push(...rows);
