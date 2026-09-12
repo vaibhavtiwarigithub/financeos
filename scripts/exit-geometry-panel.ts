@@ -59,14 +59,15 @@ function atrPctAt(bars: SimBar[], idx: number): number | null {
 
 type Arm = { label: string; build: (atrPct: number | null) => PathGeometry | null };
 
-// Predeclared arms. The live mandate is 7% stop / 8% target; everything else is
-// a candidate. Naming the family up front is what keeps this from being a grid
-// search dressed up as a hypothesis.
+// Predeclared arms. The current mandate inputs are 7% stop / 8% target, but
+// this simulator liquidates a target arm in full and therefore does NOT model
+// Kairos's partial-target runner. Naming the family up front keeps this from
+// becoming a grid search dressed up as a hypothesis.
 const ARMS: Arm[] = [
-  { label: "live 7%/8% no trail", build: () => ({ stopPct: 0.07, targetPct: 0.08, maxSessions: MAX_SESSIONS }) },
-  { label: "live 7%/8% + 7% trail", build: () => ({ stopPct: 0.07, targetPct: 0.08, trailPct: 0.07, maxSessions: MAX_SESSIONS }) },
+  { label: "full-exit 7%/8% no trail", build: () => ({ stopPct: 0.07, targetPct: 0.08, maxSessions: MAX_SESSIONS }) },
+  { label: "full-exit 7%/8% + trail", build: () => ({ stopPct: 0.07, targetPct: 0.08, trailPct: 0.07, maxSessions: MAX_SESSIONS }) },
   { label: "7% stop, no target, trail", build: () => ({ stopPct: 0.07, trailPct: 0.07, maxSessions: MAX_SESSIONS }) },
-  { label: "7%/16% + 7% trail", build: () => ({ stopPct: 0.07, targetPct: 0.16, trailPct: 0.07, maxSessions: MAX_SESSIONS }) },
+  { label: "full-exit 7%/16% + trail", build: () => ({ stopPct: 0.07, targetPct: 0.16, trailPct: 0.07, maxSessions: MAX_SESSIONS }) },
   { label: "2.8 ATR stop / 8% target", build: a => a == null ? null : ({ stopPct: Math.min(0.30, 2.8 * a), targetPct: 0.08, maxSessions: MAX_SESSIONS }) },
   { label: "2.8 ATR stop+trail / 8%", build: a => a == null ? null : ({ stopPct: Math.min(0.30, 2.8 * a), targetPct: 0.08, trailPct: Math.min(0.30, 2.8 * a), maxSessions: MAX_SESSIONS }) },
   { label: "2.8 ATR stop+trail, no tgt", build: a => a == null ? null : ({ stopPct: Math.min(0.30, 2.8 * a), trailPct: Math.min(0.30, 2.8 * a), maxSessions: MAX_SESSIONS }) },
@@ -153,7 +154,8 @@ async function main() {
 
   console.log("\nExit-geometry panel backtest");
   console.log(`symbols ${bySymbol.size} | non-overlapping entries ${entries} | stride ${STRIDE} sessions | max hold ${MAX_SESSIONS}`);
-  console.log("Universe = currently cached symbols only: SURVIVORSHIP BIASED, flatters all arms equally.\n");
+  console.log("Universe = currently cached symbols only: SURVIVORSHIP BIASED, and longer-hold arms may be flattered more.\n");
+  console.log("Target arms liquidate 100% and are geometry proxies, NOT Kairos's deployed partial-target ladder.\n");
 
   for (const mkt of ["us", "india"] as Market[]) {
     const am = results.get(mkt);

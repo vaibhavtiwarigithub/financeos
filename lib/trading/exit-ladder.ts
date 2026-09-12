@@ -115,29 +115,36 @@ export function trailAnchorPct(initialStopLoss: number | null, avgEntry: number)
  * or a score that has fallen below the entry threshold.
  */
 export function decideExitLadder(input: ExitLadderInput): ExitLadderDecision {
-  const highestPrice = Math.max(input.highestPrice ?? input.avgEntry, input.price);
+  // A daily bar's low can occur before its closing price. Computing the trail
+  // from the current close and then testing the same bar's low would let a close
+  // later in the session create a stop retroactively. Evaluate protection from
+  // the previously persisted high-water mark, then ratchet only for the next run.
+  const priorHighestPrice = input.highestPrice ?? input.avgEntry;
   const anchorPct = trailAnchorPct(input.initialStopLoss, input.avgEntry);
-
-  // Never lower an existing stop. A trail only ratchets up.
-  const trailingStop = Math.max(
+  const priorTrailingStop = Math.max(
     input.currentStop ?? input.avgEntry * anchorPct,
-    highestPrice * anchorPct,
+    priorHighestPrice * anchorPct,
   );
-
-  const base = { trailingStop, highestPrice };
   const stopCheckPrice = input.stopCheckPrice ?? input.price;
 
-  if (stopCheckPrice <= trailingStop) {
+  if (stopCheckPrice <= priorTrailingStop) {
     return {
-      ...base,
+      trailingStop: priorTrailingStop,
+      highestPrice: priorHighestPrice,
       action: "stop_full",
       reason: stopCheckPrice < input.price
-        ? `stop hit intraday: ${stopCheckPrice.toFixed(2)} <= ${trailingStop.toFixed(2)}`
-        : `stop: ${stopCheckPrice.toFixed(2)} <= ${trailingStop.toFixed(2)} (entry ${input.avgEntry.toFixed(2)})`,
+        ? `stop hit intraday: ${stopCheckPrice.toFixed(2)} <= ${priorTrailingStop.toFixed(2)}`
+        : `stop: ${stopCheckPrice.toFixed(2)} <= ${priorTrailingStop.toFixed(2)} (entry ${input.avgEntry.toFixed(2)})`,
       exitQty: input.qty,
-      outcome: trailingStop > input.avgEntry ? "win" : "loss",
+      outcome: priorTrailingStop > input.avgEntry ? "win" : "loss",
     };
   }
+
+  const highestPrice = Math.max(priorHighestPrice, input.price);
+  // Never lower an existing stop. This close may ratchet the stop for the next
+  // observation, but never back into an earlier low on this observation.
+  const trailingStop = Math.max(priorTrailingStop, highestPrice * anchorPct);
+  const base = { trailingStop, highestPrice };
 
   if (!input.isHedge && input.priceTarget != null && input.price >= input.priceTarget) {
     if (input.partialTaken) {

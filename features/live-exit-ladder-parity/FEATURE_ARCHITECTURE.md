@@ -1,7 +1,9 @@
 # Live Exit Ladder Parity — Architecture Proposal
 
-> Status: **Approved by owner; implementation complete pending migration apply and
-> production shadow verification** (2026-09-11). `live_auto_enabled` remains off.
+> Status: **Approved and implemented; production state/shadow tables verified**
+> (2026-09-12). Both monitors now call the same ladder core. The 2026-09-12
+> correction makes the stop use the prior persisted high-water mark before the
+> current observation can ratchet the trail; `live_auto_enabled` remains off.
 > Owner-directed 2026-09-09, sequenced ahead of Guardian Stage 1 and any live
 > enablement: "before any live enablement, build live partial-exit/ladder
 > parity and test it against the paper behavior."

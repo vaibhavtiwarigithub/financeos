@@ -30,7 +30,7 @@ describe("downside hedge safety contract", () => {
 
   it("keeps hedge positions outside conviction and target exits", () => {
     expect(monitor).toContain('pos.position_role !== "hedge" && sc?.score != null');
-    expect(monitor).toContain('pos.position_role !== "hedge" && priceTarget');
+    expect(monitor).toContain('isHedge: pos.position_role === "hedge"');
     expect(monitor).toContain('pos.position_role === "hedge" && pos.exit_reason === "hedge_exit"');
   });
 });

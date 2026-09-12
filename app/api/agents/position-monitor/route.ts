@@ -20,7 +20,7 @@ import { isHoldingExitSignal, isPaperScoreFresh, marketSessionsSince, paperPosit
 import { loadTimeReviewReplacements, recordTimeReviewObservation } from "@/lib/trading/time-review-shadow";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
-import { paperPartialTargetQuantity, paperRunnerStopPrice } from "@/lib/trading/paper-quantity";
+import { decideExitLadder } from "@/lib/trading/exit-ladder";
 import { admitMarketLocalSlot } from "@/lib/trading/market-calendar";
 import {
   buildPositionMark, MARK_CROSSCHECK_TOLERANCE_PCT, MARK_DISPUTE_REFUSE_PCT, markLedgerRow, navFromMarks, reconcilePersistedNav, summariseMarkCoverage,
@@ -677,26 +677,6 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       // "hold" / "too_young" / post-"disarm": fall through to mechanical stops.
     }
 
-    // Update highest_price (trailing stop anchor)
-    const newHighest = Math.max(pos.highest_price ?? pos.avg_cost, currentPrice);
-
-    // Trail at the position's OWN stop distance (the MAE-derived stop
-    // PaperTrader set at fill, preserved immutably as initial_stop_loss), not a
-    // hardcoded 7%. A volatile name whose initial stop sat 12% below cost keeps
-    // a 12% trail; a tight 4% stop trails 4%. This stops the fixed-7% trail from
-    // silently overwriting Phase 2 dynamic R:R. Clamp guards a bad anchor.
-    const anchorPct = pos.initial_stop_loss != null && pos.avg_cost > 0
-      ? Math.min(0.99, Math.max(0.5, pos.initial_stop_loss / pos.avg_cost))
-      : 0.93;
-
-    // Trailing stop: anchorPct of highest price, but never below original stop_loss
-    const trailingStop = Math.max(
-      pos.stop_loss ?? (pos.avg_cost * anchorPct),
-      newHighest * anchorPct
-    );
-
-    const priceTarget = pos.price_target;
-
     let exitReason: string | null = null;
     let outcome: string | null = null;
     let exitQtyOverride: number | undefined = undefined;
@@ -706,32 +686,38 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     // A stop hit mid-session is real even when price recovered by close.
     // Fill price is trailingStop (stop order assumed placed at that level),
     // not the session low — filling at the gap extreme is too pessimistic.
-    const posMarket = marketOf(pos, hasMarketColEarly);
-    const sessionLow = posMarket === "us" ? (dayLowMap[pos.symbol] ?? currentPrice) : currentPrice;
+    const sessionLow = market === "us" ? (dayLowMap[pos.symbol] ?? currentPrice) : currentPrice;
     const priceForStopCheck = Math.min(currentPrice, sessionLow);
-    if (priceForStopCheck <= trailingStop) {
+    const ladderDecision = decideExitLadder({
+      market,
+      qty: Number(pos.qty),
+      avgEntry: Number(pos.avg_cost),
+      price: currentPrice,
+      stopCheckPrice: priceForStopCheck,
+      priceTarget: pos.price_target == null ? null : Number(pos.price_target),
+      initialStopLoss: pos.initial_stop_loss == null ? null : Number(pos.initial_stop_loss),
+      currentStop: pos.stop_loss == null ? null : Number(pos.stop_loss),
+      highestPrice: pos.highest_price == null ? null : Number(pos.highest_price),
+      // Paper clears price_target after the first partial, so a remaining runner
+      // cannot re-fire the target branch and needs no separate mutable flag here.
+      partialTaken: false,
+      isHedge: pos.position_role === "hedge",
+    });
+    const newHighest = ladderDecision.highestPrice;
+    const trailingStop = ladderDecision.trailingStop;
+
+    if (ladderDecision.action === "stop_full") {
       exitReason = priceForStopCheck < currentPrice ? "stop_hit_intraday" : "stop_hit";
       outcome = trailingStop > pos.avg_cost ? "win" : "loss";
-    } else if (pos.position_role !== "hedge" && priceTarget && currentPrice >= priceTarget) {
+    } else if (ladderDecision.action === "partial_target") {
       // W2-full (2026-08-17): partial profit-taking restored.
-      //
-      // Migration 20260817180000 adds partial_exit_lot boolean to paper_trades
-      // and updates execute_paper_exit to mark residual lots with the flag.
-      // The anti-pyramiding trigger and buy-signal unique indexes are updated to
-      // exempt flagged rows, so the residual INSERT no longer aborts the run.
-      const partialQty = paperPartialTargetQuantity(market, pos.qty);
-      if (partialQty !== null && partialQty < Number(pos.qty)) {
-        // Partial: close half at target and protect the runner at least at
-        // breakeven. Never lower a trailing stop that already locks profit.
-        exitReason = "partial_target";
-        outcome = "win";
-        exitQtyOverride = partialQty;
-        partialStopOverride = paperRunnerStopPrice(pos.avg_cost, trailingStop) ?? Number(pos.avg_cost);
-      } else {
-        // Position too small to split or helper returned null → full exit.
-        exitReason = "target_hit";
-        outcome = "win";
-      }
+      exitReason = "partial_target";
+      outcome = "win";
+      exitQtyOverride = ladderDecision.exitQty;
+      partialStopOverride = ladderDecision.runnerStop;
+    } else if (ladderDecision.action === "target_full") {
+      exitReason = "target_hit";
+      outcome = "win";
     }
 
     if (!exitReason && scoreExitConfirmed) {

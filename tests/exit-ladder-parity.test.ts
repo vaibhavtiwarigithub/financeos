@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { decideExitLadder, trailAnchorPct, type ExitLadderInput } from "@/lib/trading/exit-ladder";
 import { paperPartialTargetQuantity, paperRunnerStopPrice } from "@/lib/trading/paper-quantity";
 
@@ -25,6 +27,15 @@ const base: ExitLadderInput = {
   highestPrice: 100,
   partialTaken: false,
 };
+
+describe("shared-core wiring", () => {
+  it("paper and live monitors both call the same ladder decision function", () => {
+    const paper = readFileSync(join(process.cwd(), "app/api/agents/position-monitor/route.ts"), "utf8");
+    const live = readFileSync(join(process.cwd(), "lib/trading/live-exit-monitor.ts"), "utf8");
+    expect(paper).toContain("decideExitLadder({");
+    expect(live).toContain("decideExitLadder({");
+  });
+});
 
 describe("trailAnchorPct — the trail rides the position's OWN stop distance", () => {
   it("a wide initial stop keeps a wide trail", () => {
@@ -102,6 +113,20 @@ describe("partial target — the behavior live never had", () => {
 });
 
 describe("exit precedence — stop beats target", () => {
+  it("does not use today's close to create a stop against today's earlier low", () => {
+    const d = decideExitLadder({
+      ...base,
+      price: 120,
+      stopCheckPrice: 94,
+      highestPrice: 100,
+      currentStop: 93,
+      priceTarget: null,
+    });
+    expect(d.action).toBe("none");
+    expect(d.trailingStop).toBeCloseTo(111.6, 5);
+    expect(d.highestPrice).toBe(120);
+  });
+
   it("a bar that breaches the stop AND touches the target exits protectively", () => {
     // Honest assumption: if both were touched intrabar, assume the bad one.
     const d = decideExitLadder({ ...base, price: 111, stopCheckPrice: 92 });

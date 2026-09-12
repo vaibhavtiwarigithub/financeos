@@ -34,14 +34,14 @@ price-only half.
 
 ## Results
 
-### US (768 entries, 89 dates)
+### US (768 unconditional entries, 89 dates)
 
 | arm | mean% | med% | t_clust | worst% | exit mix |
 |---|---:|---:|---:|---:|---|
-| live 7%/8% no trail | 1.93 | 8.00 | 7.57 | -7.0 | target 55% stop 36% time 9% |
-| **live 7%/8% + 7% trail (deployed)** | **1.94** | 0.29 | **9.09** | **-7.0** | trail 52% target 42% time 5% stop 0% |
+| full-exit 7%/8% no trail proxy | 1.93 | 8.00 | 7.57 | -7.0 | target 55% stop 36% time 9% |
+| full-exit 7%/8% + 7% trail proxy | 1.94 | 0.29 | 9.09 | -7.0 | trail 52% target 42% time 5% stop 0% |
 | **7% stop, no target, 7% trail** | **2.51** | 0.22 | 7.03 | **-7.0** | trail 87% time 13% |
-| 7%/16% + 7% trail | 2.19 | 0.22 | 7.05 | -7.0 | trail 74% target 16% time 10% |
+| full-exit 7%/16% + 7% trail proxy | 2.19 | 0.22 | 7.05 | -7.0 | trail 74% target 16% time 10% |
 | 2.8 ATR stop / 8% target | 2.24 | 8.00 | 7.97 | **-30.0** | target 63% stop 28% time 9% |
 | 2.8 ATR stop+trail / 8% | 1.93 | 8.00 | 8.12 | -28.1 | target 55% trail 41% time 3% |
 | 2.8 ATR stop+trail, no target | 2.43 | -0.50 | 4.33 | -28.1 | trail 79% time 21% |
@@ -50,8 +50,8 @@ price-only half.
 
 | arm | mean% | t_clust | worst% |
 |---|---:|---:|---:|
-| live 7%/8% no trail | -0.31 | -0.52 | -7.0 |
-| live 7%/8% + 7% trail (deployed) | 0.29 | 0.43 | -6.9 |
+| full-exit 7%/8% no trail proxy | -0.31 | -0.52 | -7.0 |
+| full-exit 7%/8% + 7% trail proxy | 0.29 | 0.43 | -6.9 |
 | 7% stop, no target, trail | 0.23 | 0.70 | -6.9 |
 | 7%/16% + 7% trail | 0.38 | 0.81 | -6.9 |
 | 2.8 ATR stop+trail, no target | 0.84 | 1.20 | -20.3 |
@@ -61,11 +61,13 @@ conclusion is drawn.
 
 ## Findings
 
-1. **The 8% target caps winners.** Every target-bearing arm has a median of
-   exactly 8.00% — the target IS the outcome whenever it is reached. Dropping it
-   and letting the trail decide raises the US mean from 1.94% to **2.51%**
-   (+0.57pp per trade) at an identical -7.0% worst case. A 7%/16% target keeps
-   most of that gain (2.19%) while retaining a defined exit.
+1. **The full-liquidation proxy suggests an 8% cap can truncate random-entry
+   paths, but it does not model the deployed ladder.** The prior claim that
+   "every target-bearing arm has a median of exactly 8%" was false: the
+   full-exit 8% + trail row has a 0.29% median. More importantly, Kairos banks
+   only part of a splittable position at target, moves the runner stop to
+   breakeven-or-better, and continues holding the remainder. Calling the
+   full-exit arm "deployed" overstated what this panel established.
 
 2. **The ATR stop is not free.** 2.8 ATR does reduce stop-outs as H1 predicted
    (36% -> 28%), and raises the mean, but the worst case degrades from **-7.0%
@@ -73,9 +75,10 @@ conclusion is drawn.
    the better tail contract, and the mean advantage disappears once the target is
    removed from both (2.51% fixed vs 2.43% ATR).
 
-3. **The trail is doing real work.** Adding the deployed 7% trail to the
-   no-trail geometry converts 36% stop exits into 0% while holding the mean flat
-   and raising t from 7.57 to 9.09. That validates the trail already shipped.
+3. **The proxy trail changes path and variance, not mean return.** Mean return
+   is 1.93% without it and 1.94% with it. The reported t-statistics test each
+   arm against zero, not the paired difference between arms; therefore the
+   7.57 to 9.09 change is not evidence that adding the trail improves returns.
 
 ## Limits on these results
 
@@ -90,6 +93,13 @@ conclusion is drawn.
 - These are descriptive panel results, not a promotion decision. A live target
   change remains a money-path formula change under Architecture-First Mode and
   needs a frozen counterfactual on real decisions before it ships.
+
+## Correction recorded 2026-09-12
+
+The first version mislabeled a 100%-at-target simulator arm as deployed behavior,
+made a median claim contradicted by its own table, and compared per-arm t-stats
+instead of the paired policy delta. The actual-entry, partial-ladder replay in
+`2026-09-12-actual-entry-ladder-replay.md` supersedes the target conclusion.
 
 ## Reproduce
 
