@@ -43,6 +43,8 @@ function makeRow(daysFromEpoch: number, overrides: Partial<LabeledObservation> =
     max_adverse_excursion: -0.02,
     max_favorable_excursion: 0.03,
     ...overrides,
+    decision_context: overrides.decision_context === undefined ? "entry_candidate" : overrides.decision_context,
+    discovery_source: overrides.discovery_source === undefined ? "watchlist" : overrides.discovery_source,
   };
 }
 

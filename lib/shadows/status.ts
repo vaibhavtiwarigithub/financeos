@@ -14,6 +14,7 @@ import {
   PRIMARY_HORIZON_DAYS,
   type LabelRow,
 } from "@/lib/shadows/label-coverage";
+import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 
 export interface ShadowCallMetrics {
   mode: CallAccountingMode;
@@ -251,7 +252,7 @@ async function loadLabelCoverageRows(svc: any, market: ShadowMarket): Promise<Qu
 
   for (let from = 0; from < maxRows; from += pageSize) {
     const { data, error } = await svc.from("observation_labels")
-      .select("horizon_days,fwd_return,decision_observations!inner(ts,symbol,market,entry_eligible)")
+      .select("horizon_days,fwd_return,decision_observations!inner(ts,symbol,market,entry_eligible,direction,decision_context,discovery_source)")
       .eq("decision_observations.market", market)
       .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
@@ -326,6 +327,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     timeReviewObservationRes,
     timeReviewOutcomeRes,
     exitStopRunRes,
+    scoreExitRunRes,
     archetypeIcRes,
     alphaDiagnosticRes,
     scorePriceRunRes,
@@ -437,6 +439,9 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("exit_stop_shadow_runs")
       .select("market,as_of_date,horizon_days,status,created_at,n_rows,n_dates,effective_observations,mean_paired_diff,paired_diff_t")
       .eq("market", market).gte("created_at", since90).order("created_at", { ascending: false }).limit(500),
+    svc.from("score_exit_shadow_runs")
+      .select("market,as_of_date,horizon_days,status,created_at,observation_count,distinct_session_count,effective_observations,results")
+      .eq("market", market).gte("created_at", since90).order("created_at", { ascending: false }).limit(500),
     svc.from("archetype_ic_runs")
       .select("market,created_at,as_of_date,horizon_days,cohort,setup_type")
       .eq("market", market).gte("created_at", since90).order("created_at", { ascending: false }).limit(1000),
@@ -494,6 +499,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const timeReviewObservations = timeReviewObservationRes.data ?? [];
   const timeReviewOutcomes = timeReviewOutcomeRes.data ?? [];
   const exitStopRuns = exitStopRunRes.data ?? [];
+  const scoreExitRuns = scoreExitRunRes.data ?? [];
   const archetypeRuns = archetypeIcRes.data ?? [];
   const alphaDiagnosticRuns = alphaDiagnosticRes.data ?? [];
   const scorePriceRuns = scorePriceRunRes.data ?? [];
@@ -510,7 +516,12 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         date: String(decision.ts).slice(0, 10),
         symbol: String(decision.symbol ?? ""),
         horizonDays: Number(row.horizon_days),
-        entryEligible: decision.entry_eligible === true,
+        entryEligible: isEntryCandidateLong({
+          entryEligible: decision.entry_eligible,
+          direction: decision.direction,
+          decisionContext: decision.decision_context,
+          discoverySource: decision.discovery_source,
+        }),
       };
     })
     .filter((row: LabelRow | null): row is LabelRow => row != null && Number.isFinite(row.horizonDays));
@@ -694,6 +705,25 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.nextAction = "Keep the ATR stop measure-only until paired evidence and the owner gate are complete.";
       status.details = ["Target and time stop are held identical so the paired difference attributes only the stop change."];
       status.available = !exitStopRunRes.error;
+      return status;
+    }
+
+    if (program.id === "score-exit-shadow") {
+      const latestByHorizon = new Map<number, any>();
+      for (const row of scoreExitRuns) if (!latestByHorizon.has(Number(row.horizon_days))) latestByHorizon.set(Number(row.horizon_days), row);
+      const latestRows = [...latestByHorizon.values()];
+      const bestEffective = Math.max(0, ...latestRows.map((row: any) => Number(row.effective_observations) || 0));
+      const ready = bestEffective >= 12;
+      status.lifecycle = scoreExitRuns.length ? (ready ? "ready_for_review" : "collecting") : "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${scoreExitRuns.length} immutable run row(s); best horizon has ${bestEffective.toFixed(1)}/12 effective non-overlapping observations.`;
+      status.progress = progress(bestEffective, 12, "effective non-overlapping observations", 90);
+      status.calls = calls("zero_incremental", "Uses matured holding observations and their already-recorded labels; no provider request.");
+      status.latestAt = scoreExitRuns[0]?.created_at ?? null;
+      status.blockers = ready ? ["Competing exits, costs, execution-faithful replay and owner approval remain required."] : [`${bestEffective.toFixed(1)}/12 effective observations; no score-exit conclusion is authorized.`];
+      status.nextAction = ready ? "Review each predeclared threshold arm; do not promote from a mean alone." : "Continue daily collection while keeping the policy measure-only.";
+      status.details = ["Only session-validated is_holding signals from the current position episode qualify.", "Rows touching stop or target are unresolved because OHLC excursions cannot order competing events."];
+      status.available = !scoreExitRunRes.error;
       return status;
     }
 

@@ -16,7 +16,7 @@ function obs(id: number, ts: string): LabeledObservation {
     id, ts, market: "us", symbol: "MU",
     analyst_score: 60, fundamental_score: 60, technical_score: 60,
     sentiment_score: 60, macro_score: 60, insider_score: 60,
-    direction: "long", entry_eligible: true, score_threshold: 60, availability_mask: null,
+    direction: "long", entry_eligible: true, decision_context: "entry_candidate", discovery_source: "watchlist", score_threshold: 60, availability_mask: null,
     horizon_days: 10, fwd_return: 0.01, benchmark_return: 0,
     benchmark_neutral_return: 0.01, max_adverse_excursion: -0.02, max_favorable_excursion: 0.03,
   };

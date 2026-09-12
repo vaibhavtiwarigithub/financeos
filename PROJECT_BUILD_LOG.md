@@ -257,6 +257,19 @@ Notes: The audit found fractional-US exit skipping, submission-versus-fill parti
 
 ---
 
+### Entry 12 - 2026-09-11 (Decision-intent and holding-exit integrity)
+
+Instruction: Fix the invalid entry/holding cohort analysis, harden score exits, preserve closed-lot high-water, expose the corrected shadow in Upgrade Path, and investigate the unnamed test failures.
+Classification: Money-path safety, immutable evidence provenance, and measure-only exit research
+Affected area: Research observations, dimension/archetype/alpha/geometry diagnostics, paper and live exit monitors, paper portfolio UI, Upgrade Path, Supabase evidence schema and cron
+Impact: High correctness and safety; score-exit policy results remain measure-only and live auto-trading remains disabled
+Architecture impact: `decision_context` is now the canonical intent key. Candidate scores cannot authorize exits; holding conviction requires two distinct fresh sessions. Stops take precedence. A daily market-local score-exit shadow uses overlap-adjusted evidence and cannot feed a money path.
+Risk: Historical intent remains NULL and is resolved only through an explicit legacy source mapping; unknown sources fail closed. A trigger now protects high-water capture even if the exit RPC source changes.
+Decision status: Integrity build complete and production schema applied; future score-exit policy promotion remains separately gated
+Notes: Migrations `20260911193121`, `20260911194022`, and `20260911194147` were applied individually because linked migration history is divergent. Production verification found both crons active and zero synthetic residue. Full/partial/residual exit tests passed under rollback. Two full JSON test runs each passed 970 suites / 2,655 tests with 7 skipped and zero failures; TypeScript and isolated Next.js build passed. Graphify code graph updated; doc/image semantic refresh remains unavailable without a configured LLM key.
+
+---
+
 ## Drift Warnings
 
 - Current prototype routes use LLM-generated prices and direct weight mutation, which conflict with the approved architecture.

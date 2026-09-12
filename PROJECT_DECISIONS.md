@@ -1642,3 +1642,33 @@ non-zero band recreates the dead zone.
 larger than winners in BOTH markets, which turns a positive per-trade expectancy
 into a negative US total; (2) volatility-scaled exit geometry, staged in
 `features/volatility-scaled-exit-geometry/FEATURE_ARCHITECTURE.md`.
+
+---
+
+## Decision 75: Decision Intent Is Mandatory; Score Exit Needs Holding Provenance And Persistence (2026-09-11)
+
+**Status:** Approved by owner and implemented. **Narrows Decision 74's score
+exit authority without restoring a time stop.**
+
+**Decision.** Every new research observation records whether it evaluated an
+entry candidate or an existing holding. Entry analytics use only the former.
+Paper and live score exits use only session-validated holding signals created
+during the current position episode. A first below-threshold holding session
+arms the exit; a strictly newer below-threshold session confirms it. Recovery
+disarms it. A breached protective stop always takes precedence.
+
+**Reason.** The previous cohort mixed daily holding re-scores with actual entry
+candidates and produced an invalid selection claim. The same missing boundary
+allowed a candidate-path score to become exit authority. An immediate one-row
+score exit also made a single-session wobble sufficient to close a position.
+
+**Evidence policy.** The new daily score-exit shadow evaluates predeclared
+thresholds on holding reviews only. It is append-only, market-local, adjusts its
+evidence count for overlapping forward windows, and is visible in Upgrade Path.
+No money path reads its results. Any policy change still requires cost-aware,
+execution-faithful review and explicit owner approval.
+
+**Data integrity.** Historical decision intent stays NULL and is accepted only
+through an explicit legacy source mapping; unknown sources fail closed. A table
+trigger independently guarantees that full, partial, and residual closed paper
+lots retain their verified high-water value.
