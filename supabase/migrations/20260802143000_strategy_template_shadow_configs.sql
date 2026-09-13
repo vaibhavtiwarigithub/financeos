@@ -15,10 +15,11 @@
 --   3. `state` and `retired_at` are MUTABLE state with no history. There is no
 --      record of who retired a config, when, why, or on what evidence.
 --
--- The corrected shape is below. It is committed so the design is reviewable and
--- version-controlled, and deliberately left UNAPPLIED until the feature that
--- needs it is approved -- see features/external-strategy-discovery
--- (Stage 0R, step 1).
+-- The corrected shape is below. The owner-approved contract and its API parser
+-- are committed, but this migration remains UNAPPLIED: on 2026-09-13 the
+-- official Supabase dry run refused because this checkout is missing many
+-- production migration versions. Reconcile that lineage before deployment;
+-- never repair/force history merely to apply this feature.
 --
 -- Verified 2026-09-01: `to_regclass('public.strategy_template_shadow_configs')`
 -- returns NULL in production. Revised for owner approval 2026-09-13; because

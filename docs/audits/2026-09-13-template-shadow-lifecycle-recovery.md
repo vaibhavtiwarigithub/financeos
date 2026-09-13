@@ -1,7 +1,8 @@
 # Template-shadow lifecycle recovery
 
-Status: **blocked pending explicit architecture approval; no schema, configuration,
-shadow, paper, or live action was taken.**
+Status: **local contract repair complete; deployment blocked by migration-history
+reconciliation. No schema has been applied and no configuration, shadow, paper,
+or live action was taken.**
 
 Scope: recover the predeclared external-strategy template/combination shadow
 configuration path. This audit is limited to that path; it does not alter the
@@ -56,11 +57,9 @@ committed but deliberately unapplied. It must not be applied as it stands.
    invokes the validation engine, writes `shadow_decisions`, or retires/pauses a
    config. The config endpoint is not wired to a worker or UI consumer. Creating
    the table alone would create inert rows, not forward shadows.
-8. Capacity differs across documents: the migration enforces three active
-   template configs **plus** one combination; the approved Portfolio Lab says
-   at most three active template shadows per market and at most one combination.
-   The owner must decide whether the absolute cap is three or four before a
-   state-changing RPC is written.
+8. Capacity differed across documents. The owner resolved it on 2026-09-13:
+   the absolute cap is **three active template shadows per market, including
+   combinations**. The repaired database RPC uses that single cap.
 
 ## Recovery contract required before implementation
 
@@ -106,10 +105,17 @@ an isolated database branch:
 - endpoint tests assert typed refusals instead of masking schema failures as
   `409`.
 
-## Decision needed
+## Repair recorded 2026-09-13
 
-The external-strategy-discovery architecture remains marked **DRAFT**. Approve
-the revised P0 lifecycle contract above (including the absolute per-market
-capacity) before building or applying any migration. Until then, the safe,
-already-working work is the measure-only replay seam and its trial ledger; the
-template-shadow endpoint must be treated as dormant and nonfunctional.
+The owner approved the revised P0 contract and the conservative three-total
+per-market cap. Commit `6499f8ae` supplies the repaired migration, a shared
+request parser, typed API refusals, canonical server-side identity, immutable
+config/lifecycle guards, and focused contract tests.
+
+This does **not** make the feature deployed or operational. The official
+Supabase `db push --dry-run --include-all` against the linked production project
+refused because remote migration versions (including `20260911134352`) are
+absent from this checkout. No history repair, migration, configuration, shadow,
+paper action, or live action was performed. The next safe step is recovering
+the authoritative deployment checkout/lineage and reconciling it on an
+isolated database before any migration application.
