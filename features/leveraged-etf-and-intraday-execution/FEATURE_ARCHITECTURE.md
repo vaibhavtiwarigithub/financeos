@@ -1,6 +1,6 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
-**Status:** DRAFT - approval required before implementation
+**Status:** APPROVED 2026-09-13 — L0–L1 implementation only; no paper or live execution
 **Date:** 2026-07-26
 **Scope:** US paper book first. India, live trading, inverse ETFs, options, and extended-hours trading are explicitly out of scope.
 
@@ -299,3 +299,19 @@ ETF cap, expand the live auto lease, or change India logic.
 - No new LLM authority, external GitHub skill runtime, or provider-quota increase.
 - No live leveraged trade, even manually, under this architecture without the L4
   approval and a distinct live safety review.
+
+## 11. Implementation record — 2026-09-13
+
+L0–L1 is implemented locally in commit pending verification: the only accepted
+measurement symbols are long 3x `TQQQ` (underlying `QQQ`) and `SOXL`
+(`SOXX`). `SQQQ` and `SOXS` remain inverse-blocked. The collector records a
+single 11:00–11:14 ET observation with quote/underlying freshness, spread and
+raw volatility/trend/liquidity fields, but its only possible decision is
+`observe_only`. It cannot create a score, candidate, paper fill, broker call,
+or live order.
+
+The schema is deliberately unapplied while the FinanceOS production migration
+lineage is unreconciled. There is also no scheduled collector yet: the current
+quote contract has no verified executable bid/ask provider. A daily job must
+not be enabled until it can supply those inputs rather than substituting a
+daily OHLC cache. L2–L4 remain unimplemented and unapproved.
