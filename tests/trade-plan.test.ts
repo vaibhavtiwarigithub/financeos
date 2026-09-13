@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bindTradePrices, buildIndicativeTradePlan, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
+import { bindTradePrices, buildExecutionRiskPlanProvenance, buildIndicativeTradePlan, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 
 describe("research-time indicative trade plan", () => {
   it("builds native-currency candidate levels from the research reference", () => {
@@ -71,5 +71,33 @@ describe("fill-time risk/return binding", () => {
     const policy = resolveExecutionRiskReward({ mandateStopLossPct: 7, mandateTargetPct: 20 });
     expect(bindTradePrices(0, policy)).toBeNull();
     expect(bindTradePrices(Number.NaN, policy)).toBeNull();
+  });
+
+  it("records the exact ledger inputs rather than a label that cannot be reproduced", () => {
+    const learned = { stopMaePctile: -0.0534, targetMfePctile: 0.0345, n: 134 };
+    const riskReward = resolveExecutionRiskReward({ mandateStopLossPct: 7, mandateTargetPct: 8, learned });
+    const provenance = buildExecutionRiskPlanProvenance({
+      market: "india", observedAt: "2026-09-12T12:00:00.000Z", resolvedHorizonDays: 10,
+      mandate: { version: 3, stopLossPct: 7, targetPct: 8 }, riskReward, learned,
+    });
+    expect(provenance).toMatchObject({
+      version: "v1", market: "india", resolved_horizon_days: 10,
+      resolved: { source: "ledger_percentile", stop_loss_pct: 5.34, target_pct: 3.45, sample_size: 134 },
+      ledger_percentile: { stop_mae_pctile: -0.0534, target_mfe_pctile: 0.0345, stop_percentile: 0.25, target_percentile: 0.75 },
+    });
+  });
+
+  it("does not manufacture ledger provenance after a mandate fallback", () => {
+    const riskReward = resolveExecutionRiskReward({
+      mandateStopLossPct: 7, mandateTargetPct: 8,
+      learned: { stopMaePctile: -0.04, targetMfePctile: 0.03, n: 59 },
+    });
+    const provenance = buildExecutionRiskPlanProvenance({
+      market: "us", observedAt: "2026-09-12T12:00:00.000Z", resolvedHorizonDays: 10,
+      mandate: { version: 4, stopLossPct: 7, targetPct: 8 }, riskReward,
+      learned: { stopMaePctile: -0.04, targetMfePctile: 0.03 },
+    });
+    expect(provenance.resolved.source).toBe("mandate");
+    expect(provenance.ledger_percentile).toBeNull();
   });
 });

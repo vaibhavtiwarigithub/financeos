@@ -4,7 +4,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import {
-  CANDIDATE_GEOMETRIES,
+  buildCandidateGeometries,
   evaluateGeometry,
   geometryLabel,
   isBaseline,
@@ -13,6 +13,7 @@ import {
 } from "@/lib/trading/exit-geometry-shadow";
 import { coverageByHorizon, MIN_DISTINCT_DATES, type LabelRow } from "@/lib/shadows/label-coverage";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
 
 export const dynamic = "force-dynamic";
 
@@ -22,11 +23,9 @@ export const dynamic = "force-dynamic";
 // is derived entirely from `observation_labels`, so there is no new table and no
 // state to keep in sync. Re-run it whenever more labels mature.
 //
-// See features/portfolio-underperformance/DIAGNOSIS.md §12. The configured
-// +19.2% target is beyond the p90 favourable excursion of the 10-day holding
-// window the time stop enforces, so it is unreachable by construction. But
-// shortening it alone drops reward:risk below 1 and makes expectancy worse,
-// which is why this measures before anything moves.
+// The incumbent comes from the current market mandate, not a hard-coded legacy
+// percentage. This endpoint intentionally reports a current-mandate baseline;
+// it does not rewrite or reconstruct the geometry of historic positions.
 
 // The horizon the time stop actually enforces. Overridable via ?horizon= so a
 // thin cohort can be cross-checked against a better-covered one: the 10-day US
@@ -94,13 +93,29 @@ export async function GET(req: NextRequest) {
 
   const markets: any[] = [];
   for (const [market, { points, rows }] of byMarket) {
+    let mandate: Awaited<ReturnType<typeof loadTradingMandateStrict>>;
+    try {
+      mandate = await loadTradingMandateStrict(svc, market as TradingMarket);
+    } catch {
+      // A missing mandate makes the incumbent unknowable. Returning an explicit
+      // refusal is safer than quietly comparing candidates to stale constants.
+      markets.push({
+        market,
+        coverage: { observations: points.length, distinctDates: 0, distinctSymbols: 0, minDistinctDates: MIN_DISTINCT_DATES, sufficient: false, atrCoverage: null },
+        baseline: null,
+        results: [],
+        note: "No current market mandate was available. Refusing to evaluate an unknown incumbent.",
+      });
+      continue;
+    }
+    const baselineGeometry = { stopPct: mandate.stop_loss_pct / 100, targetPct: mandate.target_pct / 100 };
     const coverage = coverageByHorizon(rows)[0];
     const atrCoverage = points.length ? points.filter((p) => p.atrPct > 0).length / points.length : 0;
-    const results = CANDIDATE_GEOMETRIES.map((geometry) => ({
+    const results = buildCandidateGeometries(baselineGeometry).map((geometry) => ({
       ...evaluateGeometry(points, geometry),
       label: geometryLabel(geometry),
       mode: geometry.stopPct != null ? "percent" : "atr",
-      baseline: isBaseline(geometry),
+      baseline: isBaseline(geometry, baselineGeometry),
     }));
     const baseline = results.find((r) => r.baseline) ?? null;
 
@@ -116,6 +131,12 @@ export async function GET(req: NextRequest) {
         atrCoverage,
       },
       baseline,
+      baselineSource: {
+        kind: "current_mandate_not_historical_reconstruction",
+        mandateVersion: mandate.version,
+        stopLossPct: mandate.stop_loss_pct,
+        targetPct: mandate.target_pct,
+      },
       results,
       // US and India are reported separately and never pooled: different
       // benchmarks, sessions and currency.

@@ -23,7 +23,7 @@ import { classifyConstructorSize } from "@/lib/trading/constructor-outcome";
 import { selectBestPaperSignals } from "@/lib/trading/paper-signal-selection";
 import { canOpenPaperName, hasOpenPaperName } from "@/lib/trading/paper-entry-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
-import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
+import { bindTradePrices, buildExecutionRiskPlanProvenance, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-calendar";
 import { paperAllocationSpend, paperEntryQuantity } from "@/lib/trading/paper-quantity";
 import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/earnings-risk";
@@ -570,6 +570,21 @@ export async function POST(req: NextRequest) {
         mandateTargetPct: tradingMandate.target_pct,
         learned: maeMfe,
       });
+      const exitGenome = genomeByMarket.get(market)?.genome.exit;
+      const riskPlanProvenance = buildExecutionRiskPlanProvenance({
+        market: market as "us" | "india",
+        observedAt: new Date().toISOString(),
+        resolvedHorizonDays,
+        mandate: {
+          version: tradingMandate.version,
+          stopLossPct: tradingMandate.stop_loss_pct,
+          targetPct: tradingMandate.target_pct,
+        },
+        riskReward,
+        learned: maeMfe,
+        stopPercentile: exitGenome ? exitGenome.stop_mae_pctile / 100 : undefined,
+        targetPercentile: exitGenome ? exitGenome.target_mfe_pctile / 100 : undefined,
+      });
       if (riskReward.source === "mandate") {
         // Invalid/insufficient learned data falls back to the mandate. Record it so
         // the briefing/Research Journal can tell the user whether sizing used
@@ -596,6 +611,7 @@ export async function POST(req: NextRequest) {
           fill_price: fillPrice,
           stop_loss: stopLoss,
           price_target: priceTarget,
+          execution_plan: riskPlanProvenance,
         },
       });
       // P0 earnings risk is measurement-only. Failure is fail-soft and neither

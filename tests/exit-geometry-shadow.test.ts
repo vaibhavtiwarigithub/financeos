@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  CANDIDATE_GEOMETRIES,
+  buildCandidateGeometries,
   classifyExit,
   evaluateGeometry,
   isBaseline,
@@ -122,23 +122,25 @@ describe("evaluateGeometry", () => {
 });
 
 describe("candidate grid", () => {
-  it("includes the live configuration as an explicit baseline", () => {
+  it("includes the supplied market configuration as an explicit baseline", () => {
     // A comparison with no incumbent is a sales pitch, not a test.
-    expect(isBaseline(CANDIDATE_GEOMETRIES[0])).toBe(true);
-    expect(CANDIDATE_GEOMETRIES.filter(isBaseline)).toHaveLength(1);
-    // The baseline must be the LIVE config, not an ATR approximation of it.
-    expect(CANDIDATE_GEOMETRIES[0].stopPct).toBeCloseTo(0.075);
-    expect(CANDIDATE_GEOMETRIES[0].targetPct).toBeCloseTo(0.192);
+    const baseline = { stopPct: 0.07, targetPct: 0.08 };
+    const grid = buildCandidateGeometries(baseline);
+    expect(isBaseline(grid[0], baseline)).toBe(true);
+    expect(grid.filter((geometry) => isBaseline(geometry, baseline))).toHaveLength(1);
+    expect(grid[0].stopPct).toBeCloseTo(0.07);
+    expect(grid[0].targetPct).toBeCloseTo(0.08);
   });
 
   it("varies stop and target independently so their effects separate", () => {
-    const pct = CANDIDATE_GEOMETRIES.filter((g) => g.stopPct != null);
+    const pct = buildCandidateGeometries({ stopPct: 0.07, targetPct: 0.08 }).filter((g) => g.stopPct != null);
     expect(new Set(pct.map((g) => g.stopPct)).size).toBeGreaterThan(1);
     expect(new Set(pct.map((g) => g.targetPct)).size).toBeGreaterThan(1);
   });
 
   it("carries both a percentage and an ATR grid", () => {
-    expect(CANDIDATE_GEOMETRIES.some((g) => g.stopPct != null)).toBe(true);
-    expect(CANDIDATE_GEOMETRIES.some((g) => g.stopAtr != null)).toBe(true);
+    const grid = buildCandidateGeometries({ stopPct: 0.07, targetPct: 0.08 });
+    expect(grid.some((g) => g.stopPct != null)).toBe(true);
+    expect(grid.some((g) => g.stopAtr != null)).toBe(true);
   });
 });

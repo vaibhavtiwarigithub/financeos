@@ -7,12 +7,10 @@
 // two-date sample.
 //
 // WHY THIS EXISTS
-// `features/portfolio-underperformance/DIAGNOSIS.md` §12 measured that the
-// configured target (+19.2%) sits far beyond even the p90 favourable excursion
-// over the 10-day holding period the time stop enforces, so it is unreachable by
-// construction: 1 of 73 closed trades exited at target, against 47 on the clock.
-// But shortening the target alone drops reward:risk below 1 and makes expectancy
-// WORSE, so the fix cannot be chosen without measuring it first.
+// Earlier measurements were invalid because they compared candidate geometry to
+// a retired hard-coded target. The caller must now provide the market's current
+// mandate baseline. Shortening a target alone can still make expectancy worse,
+// so the fix cannot be chosen without measuring the full pair first.
 //
 // THE PATH-DEPENDENCY TRAP — the reason this module is careful
 // Matured labels store max favourable and max adverse excursion, NOT the price
@@ -40,9 +38,8 @@ export interface LabelPoint {
  *
  * Both modes exist for a measured reason. ATR multiples are the better contract
  * — comparable across markets, adapting to each name's volatility — while fixed
- * percentages are what the system ACTUALLY runs today (-7.5% stop, +19.2%
- * target), so a percentage arm tests the live configuration directly rather than
- * an ATR approximation of it.
+ * percentages are the incumbent supplied by the caller, so a percentage arm
+ * tests the market's current configuration rather than an ATR approximation.
  *
  * COVERAGE NOTE, corrected 2026-09-01. This comment previously stated that
  * `entry_atr_pct` coverage "collapses with horizon (US 10-day: 3 of 74 labels,
@@ -182,19 +179,21 @@ export function evaluateGeometry(points: readonly LabelPoint[], geometry: Geomet
  * Candidate grid. Deliberately includes the CURRENT configured geometry as a
  * baseline — a comparison with no incumbent is a sales pitch, not a test.
  *
- * Current live config is a -7.5% stop and a +19.2% target. At the measured entry
- * ATR (US ~2.9%, India ~2.3%) that is roughly 2.8 ATR and 7.3 ATR, which is why
- * the baseline sits where it does. The alternatives walk the target down toward
- * the excursion actually available inside the holding window while varying the
- * stop independently, so target and stop effects can be separated.
+ * The incumbent must be supplied by the caller from the market's mandate. A
+ * hard-coded "live" baseline caused this shadow to evaluate 7.5%/19.2% after
+ * execution had moved elsewhere, which makes its result non-transferable. The
+ * alternatives walk the target down toward the excursion available inside the
+ * holding window while varying stop and target independently.
  */
-export const CANDIDATE_GEOMETRIES: readonly Geometry[] = [
-  // Percentage grid. The FIRST entry is the live configuration exactly as
-  // deployed, so every comparison has a real incumbent.
-  { stopPct: 0.075, targetPct: 0.192 }, // BASELINE — the live config
-  { stopPct: 0.075, targetPct: 0.100 },
-  { stopPct: 0.075, targetPct: 0.060 },
-  { stopPct: 0.075, targetPct: 0.040 },
+export function buildCandidateGeometries(baseline: Geometry): readonly Geometry[] {
+  if (!(baseline.stopPct && baseline.stopPct > 0 && baseline.targetPct && baseline.targetPct > 0)) return [];
+  const raw: Geometry[] = [
+  // Percentage grid. The FIRST entry is the caller-provided incumbent, so every
+  // comparison has a real, market-local baseline.
+  baseline,
+  { stopPct: baseline.stopPct, targetPct: 0.100 },
+  { stopPct: baseline.stopPct, targetPct: 0.060 },
+  { stopPct: baseline.stopPct, targetPct: 0.040 },
   { stopPct: 0.050, targetPct: 0.100 },
   { stopPct: 0.050, targetPct: 0.060 },
   { stopPct: 0.050, targetPct: 0.040 },
@@ -208,11 +207,18 @@ export const CANDIDATE_GEOMETRIES: readonly Geometry[] = [
   { stopAtr: 2.0, targetAtr: 2.5 },
   { stopAtr: 2.0, targetAtr: 1.5 },
   { stopAtr: 1.5, targetAtr: 1.5 },
-];
+  ];
+  // A mandate can itself equal a predeclared percentage challenger. Report it
+  // once rather than silently doubling its statistical weight in the trial family.
+  const seen = new Set<string>();
+  return raw.filter((geometry) => {
+    const key = JSON.stringify(geometry);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
-export const BASELINE_GEOMETRY: Geometry = CANDIDATE_GEOMETRIES[0];
-
-export function isBaseline(geometry: Geometry): boolean {
-  return geometry.stopPct === BASELINE_GEOMETRY.stopPct
-    && geometry.targetPct === BASELINE_GEOMETRY.targetPct;
+export function isBaseline(geometry: Geometry, baseline: Geometry): boolean {
+  return geometry.stopPct === baseline.stopPct && geometry.targetPct === baseline.targetPct;
 }

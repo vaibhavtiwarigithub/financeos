@@ -2,13 +2,12 @@
 
 > Status: **PROPOSED — architecture only.** No scoring, sizing, stop, target,
 > paper or live-order behavior changes are authorized by this document.
-> Last revised: 2026-09-10.
+> Last revised: 2026-09-12.
 > Money-path influence: **none** until Stage 2 is separately approved.
 
 ## 0. The problem, measured
 
-Every symbol in a market gets the **same** stop and target. Not "a default that
-adapts" — literally one row per market:
+The mandate provides one market-level fallback stop and target:
 
 | market | stop | target | horizon | R:R |
 |---|---|---|---|---|
@@ -18,9 +17,11 @@ adapts" — literally one row per market:
 Source: `trading_mandates`, one row per market, set by the owner 2026-08-03
 (US version 4, India version 3).
 
-`resolveExecutionRiskReward` (`lib/trading/trade-plan.ts:99`) returns
-`source: "mandate"` and `bindTradePrices` multiplies it against the fill price.
-No volatility, ATR, beta, price level, liquidity or sector term enters.
+`resolveExecutionRiskReward` (`lib/trading/trade-plan.ts`) first tries a
+market-local, entry-candidate MAE/MFE percentile rule and otherwise returns the
+mandate; `bindTradePrices` multiplies the selected percentages against the
+actual fill. The rule is deterministic, but still global to a market/horizon:
+no volatility, ATR, beta, price level, liquidity or sector term enters.
 
 ### Why a flat percentage is the wrong shape
 
@@ -47,7 +48,7 @@ setup and a marginal one.
 |---|---|
 | `lib/trading/exit-stop-shadow.ts` | Measure-only. Tests H1: 2.8 ATR stop vs the mandate stop, target held identical. Sidak-adjusted for the 14-arm family it was selected from. **Corrected 2026-09-10** to read the live mandate — it previously hardcoded 7.5%/19.2% and called it "exactly as deployed". |
 | `lib/trading/exit-geometry-shadow.ts` | Barrier resolution + counterfactual replay over matured labels. |
-| `resolveExecutionRiskReward` ledger percentile | Would override the mandate from realized MAE/MFE percentiles — but requires `n >= 60` closed trades and is **portfolio-wide, not per-symbol**. Has never fired. |
+| `resolveExecutionRiskReward` ledger percentile | Overrides the mandate when there are at least 60 labelled entry-candidate observations. It is **market/horizon-wide, not per-symbol**, and has fired: immutable 2026-09-11 risk-plan events show India 3.45% target / 5.34% stop from n=134 and US 7.86% / 6.44% from n=974. |
 | Anything ATR in a live path | **None.** `atr` appears only in the two shadow modules. |
 
 So the machinery to evaluate this exists; the evidence does not yet.
@@ -65,10 +66,11 @@ So the machinery to evaluate this exists; the evidence does not yet.
 
 ## 2. Proposed staging
 
-### Stage 0 — accumulate honest evidence (no code change beyond what shipped)
+### Stage 0 — accumulate honest evidence
 
-The corrected shadow must now run against the deployed geometry and accumulate
-matured labels. Until it does, there is nothing to decide on.
+The shadow baseline must be explicitly stamped. A current-mandate baseline is
+useful only as a current-policy control; it must not be labelled as a historical
+reconstruction of plans that may have used the ledger percentile rule.
 
 Exit criteria:
 - `exit_stop_shadow_runs` rows with `matches_live_mandate = true` and
@@ -127,3 +129,6 @@ architecture propose changing `resolveExecutionRiskReward`. It must state:
 - [ ] US and India reported separately, never pooled.
 - [ ] The multiple-testing family is recounted whenever an arm is added.
 - [ ] A frozen counterfactual exists before any Stage 2 formula change.
+- [x] New entry/proposal evidence records a versioned execution-plan provenance
+      in its append-only journal/policy snapshot (2026-09-12). This improves
+      reproducibility but does not validate or promote a formula.

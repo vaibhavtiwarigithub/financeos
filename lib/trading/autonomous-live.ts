@@ -17,7 +17,7 @@ import { fetchIndiaQuote } from "@/lib/india-data";
 import { loadTradingMandateStrict, resolveHorizonDays } from "@/lib/trading-mandate";
 import { loadChampionGenome } from "@/lib/validation/genome-live";
 import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
-import { bindTradePrices, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
+import { bindTradePrices, buildExecutionRiskPlanProvenance, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 import { reconstructAccountLivePositions } from "@/lib/trading/live-position-ledger";
 import {
   evaluateAutonomousEntryProtection,
@@ -186,6 +186,9 @@ export async function runAutonomousLive(
   const exitPlanByMarket: Record<string, {
     riskReward: ReturnType<typeof resolveExecutionRiskReward>;
     horizonDays: number;
+    learned: Awaited<ReturnType<typeof getGlobalMaeMfePercentiles>>;
+    stopPercentile: number;
+    targetPercentile: number;
   }> = {};
   for (const [market, mandate] of mandates) {
     const genome = await loadChampionGenome(svc, market as "us" | "india");
@@ -202,6 +205,9 @@ export async function runAutonomousLive(
     );
     exitPlanByMarket[market] = {
       horizonDays,
+      learned,
+      stopPercentile: genome.genome.exit.stop_mae_pctile / 100,
+      targetPercentile: genome.genome.exit.target_mfe_pctile / 100,
       riskReward: resolveExecutionRiskReward({
         mandateStopLossPct: mandate.stop_loss_pct,
         mandateTargetPct: mandate.target_pct,
@@ -581,6 +587,20 @@ export async function runAutonomousLive(
       mandate_version: mandate.version,
       source: exitPlan.riskReward.source,
       sample_size: exitPlan.riskReward.sampleSize,
+      provenance: buildExecutionRiskPlanProvenance({
+        market: market as "us" | "india",
+        observedAt: new Date().toISOString(),
+        resolvedHorizonDays: exitPlan.horizonDays,
+        mandate: {
+          version: mandate.version,
+          stopLossPct: mandate.stop_loss_pct,
+          targetPct: mandate.target_pct,
+        },
+        riskReward: exitPlan.riskReward,
+        learned: exitPlan.learned,
+        stopPercentile: exitPlan.stopPercentile,
+        targetPercentile: exitPlan.targetPercentile,
+      }),
       rebound_to_broker_fill: true,
     } as const;
     const { error: proposalUpdateError } = await svc.from("trade_proposals").update({

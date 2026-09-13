@@ -139,11 +139,11 @@ describe("Test 8 — exit monitor is idempotent: a partial fill + rerun cannot o
 
   // A filled BUY of 100 @ 100, current price 50 → a stop trigger fires; whether a
   // SELL is actually submitted then depends purely on the idempotency guards.
-  function exitResolver(opts: { activeSell?: any; pendingSell?: any; insertErr?: any } = {}): Resolver {
+  function exitResolver(opts: { activeSell?: any; pendingSell?: any; insertErr?: any; shadowInsertErr?: any; liveAuto?: boolean } = {}): Resolver {
     return (q) => {
       if (q.op === "rpc") return { data: null, error: null };
       if (q.table === "strategy_config") {
-        return { data: { live_auto_enabled: true, app_paused: false, security_locked: false, active_account_us: "ACCT", active_account_india: null }, error: null };
+        return { data: { live_auto_enabled: opts.liveAuto ?? true, app_paused: false, security_locked: false, active_account_us: "ACCT", active_account_india: null }, error: null };
       }
       if (q.table === "trading_mandates") {
         return { data: { market: "us", stop_loss_pct: 8, target_pct: 20, target_hold_days: 10, max_hold_days: 15, version: 1 }, error: null };
@@ -159,11 +159,14 @@ describe("Test 8 — exit monitor is idempotent: a partial fill + rerun cannot o
         if (inOf(q, "id")) return { data: [{ id: 101, account_number: "ACCT", policy_snapshot: null }], error: null };
         return { data: opts.pendingSell ?? null, error: null };                                // pending-SELL-proposal guard
       }
+      if (q.table === "live_exit_ladder_shadow" && q.op === "insert") {
+        return { data: null, error: opts.shadowInsertErr ?? null };
+      }
       return { data: null, error: null };
     };
   }
 
-  async function runMonitor(opts: { activeSell?: any; pendingSell?: any; insertErr?: any } = {}) {
+  async function runMonitor(opts: { activeSell?: any; pendingSell?: any; insertErr?: any; shadowInsertErr?: any; liveAuto?: boolean } = {}) {
     vi.resetModules();
     vi.stubEnv("AUTONOMOUS_LIVE_ENABLED", "true"); // read at module-eval in @/lib/autonomy
     h.quoteMock.mockResolvedValue({ price: 50, stale: false }); // below the 8% stop band
@@ -205,6 +208,13 @@ describe("Test 8 — exit monitor is idempotent: a partial fill + rerun cannot o
     expect(h.execMock).not.toHaveBeenCalled();
     expect(r.results[0].status).toBe("skipped_duplicate");
     expect(r.results[0].error).toContain("DB constraint");
+  });
+
+  it("fails visibly and submits no order when the append-only shadow ledger rejects an action", async () => {
+    const r = await runMonitor({ liveAuto: false, shadowInsertErr: { message: "action check rejected score_exit" } });
+    expect(h.execMock).not.toHaveBeenCalled();
+    expect(r.exits_submitted).toBe(0);
+    expect(r.results).toContainEqual(expect.objectContaining({ status: "blocked", reason: "shadow_write_failed" }));
   });
 });
 

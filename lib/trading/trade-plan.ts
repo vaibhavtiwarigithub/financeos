@@ -27,6 +27,26 @@ export interface ExecutionRiskReward {
   sampleSize: number | null;
 }
 
+/**
+ * Immutable evidence recorded alongside an entry/proposal. This is deliberately
+ * separate from the executable percentages: the same percentages are not enough
+ * to reproduce whether a mandate or a particular ledger cohort selected them.
+ */
+export interface ExecutionRiskPlanProvenance {
+  version: "v1";
+  observed_at: string;
+  market: "us" | "india";
+  resolved_horizon_days: number;
+  mandate: { version: number; stop_loss_pct: number; target_pct: number };
+  resolved: { source: ExecutionRiskReward["source"]; stop_loss_pct: number; target_pct: number; sample_size: number | null };
+  ledger_percentile: {
+    stop_mae_pctile: number;
+    target_mfe_pctile: number;
+    stop_percentile: number;
+    target_percentile: number;
+  } | null;
+}
+
 function finitePositive(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -119,6 +139,47 @@ export function resolveExecutionRiskReward(args: {
     };
   }
   return { stopLossPct: mandateStop, targetPct: mandateTarget, source: "mandate", sampleSize: null };
+}
+
+export function buildExecutionRiskPlanProvenance(args: {
+  market: "us" | "india";
+  observedAt: string;
+  resolvedHorizonDays: number;
+  mandate: { version: unknown; stopLossPct: unknown; targetPct: unknown };
+  riskReward: ExecutionRiskReward;
+  learned?: { stopMaePctile: unknown; targetMfePctile: unknown } | null;
+  stopPercentile?: number;
+  targetPercentile?: number;
+}): ExecutionRiskPlanProvenance {
+  const mandateStop = boundedPct(args.mandate.stopLossPct, 7, 30);
+  const mandateTarget = boundedPct(args.mandate.targetPct, 8, 100);
+  const mandateVersion = Math.max(1, Math.round(finitePositive(args.mandate.version) ?? 1));
+  const horizon = Math.max(1, Math.min(252, Math.round(finitePositive(args.resolvedHorizonDays) ?? 10)));
+  const mae = Number(args.learned?.stopMaePctile);
+  const mfe = Number(args.learned?.targetMfePctile);
+  const ledger = args.riskReward.source === "ledger_percentile"
+    && Number.isFinite(mae) && mae < 0 && Number.isFinite(mfe) && mfe > 0
+    ? {
+      stop_mae_pctile: mae,
+      target_mfe_pctile: mfe,
+      stop_percentile: finitePositive(args.stopPercentile) ?? 0.25,
+      target_percentile: finitePositive(args.targetPercentile) ?? 0.75,
+    }
+    : null;
+  return {
+    version: "v1",
+    observed_at: args.observedAt,
+    market: args.market,
+    resolved_horizon_days: horizon,
+    mandate: { version: mandateVersion, stop_loss_pct: mandateStop, target_pct: mandateTarget },
+    resolved: {
+      source: args.riskReward.source,
+      stop_loss_pct: args.riskReward.stopLossPct,
+      target_pct: args.riskReward.targetPct,
+      sample_size: args.riskReward.sampleSize,
+    },
+    ledger_percentile: ledger,
+  };
 }
 
 export function bindTradePrices(fillPriceValue: unknown, riskReward: ExecutionRiskReward): {

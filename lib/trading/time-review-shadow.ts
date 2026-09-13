@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { fetchYahooCandles } from "@/lib/india-data";
 import { CandleResolver, forwardWindow, type LabelCandle } from "@/lib/learning/label-window";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { isPaperScoreFresh } from "@/lib/trading/paper-exit-policy";
 import type { TradingMandate } from "@/lib/trading-mandate";
 import {
@@ -17,6 +18,70 @@ import {
 } from "@/lib/trading/time-review-exit";
 
 export type ReviewMarket = "us" | "india";
+
+// A run is deliberately bounded: each candidate pair may fetch two price
+// series, and this route shares a production timeout with its legacy shadow.
+// The bound applies *after* completed outcome pairs have been removed from the
+// worklist. It must never mean "the oldest 500 observations forever".
+export const MAX_TIME_REVIEW_WORKLIST = 500;
+
+export interface TimeReviewMaturationReview {
+  id: string;
+  policy_version: string;
+  review_session: string;
+  market: ReviewMarket;
+  symbol: string;
+  entry_price: number | string;
+  review_price: number | string;
+  effective_stop_price: number | string | null;
+  replacement_candidate_available: boolean | null;
+}
+
+export interface TimeReviewMaturationOutcomeKey {
+  review_id: string;
+  policy_version: string;
+  extension_days: number;
+}
+
+function maturationKey(reviewId: string, policyVersion: string, extensionDays: number): string {
+  return `${reviewId}:${policyVersion}:${extensionDays}`;
+}
+
+/**
+ * Choose a bounded, pending-only outcome worklist.
+ *
+ * Completed review/extension pairs are excluded before the cap is applied.
+ * When more pending reviews exist than a single run can safely mature, rotate
+ * the starting page by UTC day. This prevents a permanently incomplete oldest
+ * price window from monopolising every run while remaining deterministic for a
+ * given day and ledger state.
+ */
+export function selectPendingTimeReviewWorklist(
+  reviews: TimeReviewMaturationReview[],
+  existing: TimeReviewMaturationOutcomeKey[],
+  options: { limit?: number; rotationDay?: number } = {},
+): TimeReviewMaturationReview[] {
+  const limit = options.limit ?? MAX_TIME_REVIEW_WORKLIST;
+  if (!Number.isInteger(limit) || limit < 1) return [];
+  const done = new Set(existing.map((row) => maturationKey(
+    String(row.review_id), String(row.policy_version), Number(row.extension_days),
+  )));
+  const pending = reviews
+    .filter((review) => TIME_REVIEW_EXTENSIONS.some((extensionDays) => !done.has(
+      maturationKey(String(review.id), String(review.policy_version), extensionDays),
+    )))
+    .sort((a, b) => String(a.review_session).localeCompare(String(b.review_session))
+      || String(a.id).localeCompare(String(b.id)));
+  if (pending.length <= limit) return pending;
+
+  const pages = Math.ceil(pending.length / limit);
+  const today = options.rotationDay ?? Math.floor(Date.now() / 86_400_000);
+  const page = ((today % pages) + pages) % pages;
+  const start = page * limit;
+  // Circular slice covers a short final page without wasting the remaining run
+  // budget. A review appears at most once because the two slices do not overlap.
+  return [...pending.slice(start, start + limit), ...pending.slice(0, Math.max(0, start + limit - pending.length))];
+}
 
 export interface ReviewScore {
   score: number | null;
@@ -191,28 +256,42 @@ export async function matureTimeReviewOutcomes(
   svc: any,
   market: ReviewMarket | null = null,
 ): Promise<{ examined: number; inserted: number; skipped: number; providerFetches: number }> {
-  let query = svc.from("time_review_exit_observations")
-    .select("id,policy_version,review_session,market,symbol,entry_price,review_price,effective_stop_price,replacement_candidate_available")
-    .order("review_session", { ascending: true }).limit(500);
-  if (market) query = query.eq("market", market);
-  const { data: reviews, error } = await query;
-  if (error || !reviews?.length) return { examined: 0, inserted: 0, skipped: 0, providerFetches: 0 };
+  // Do not cap the observation read before removing completed pairs. The old
+  // oldest-first `.limit(500)` became permanently inert once those rows had
+  // both outcomes: every later review was invisible to the maturer.
+  const reviews = await fetchAllRows<TimeReviewMaturationReview>((from, to) => {
+    let query = svc.from("time_review_exit_observations")
+      .select("id,policy_version,review_session,market,symbol,entry_price,review_price,effective_stop_price,replacement_candidate_available")
+      // `id` is unique, so range pagination cannot duplicate/skip rows.
+      .order("id", { ascending: true }).range(from, to);
+    if (market) query = query.eq("market", market);
+    return query;
+  }, "time-review outcome observations");
+  if (!reviews.length) return { examined: 0, inserted: 0, skipped: 0, providerFetches: 0 };
 
-  const { data: existing } = await svc.from("time_review_exit_outcomes")
-    .select("review_id,policy_version,extension_days")
-    .in("review_id", reviews.map((row: any) => row.id));
-  const done = new Set((existing ?? []).map((row: any) => `${row.review_id}:${row.policy_version}:${row.extension_days}`));
+  const existing = await fetchAllRows<TimeReviewMaturationOutcomeKey>((from, to) => {
+    let query = svc.from("time_review_exit_outcomes")
+      .select("review_id,policy_version,extension_days,time_review_exit_observations!inner(market)")
+      .order("review_id", { ascending: true }).order("extension_days", { ascending: true }).range(from, to);
+    if (market) query = query.eq("time_review_exit_observations.market", market);
+    return query;
+  }, "time-review existing outcomes");
+  const worklist = selectPendingTimeReviewWorklist(reviews, existing);
+  if (!worklist.length) return { examined: 0, inserted: 0, skipped: 0, providerFetches: 0 };
+  const done = new Set(existing.map((row) => maturationKey(
+    String(row.review_id), String(row.policy_version), Number(row.extension_days),
+  )));
   const resolver = makeResolver(svc);
   let examined = 0, inserted = 0, skipped = 0;
 
-  for (const review of reviews) {
+  for (const review of worklist) {
     const reviewMarket = String(review.market) as ReviewMarket;
     const reviewSession = String(review.review_session);
     const since = new Date(`${reviewSession}T00:00:00Z`);
     since.setUTCDate(since.getUTCDate() - 5);
     const sinceDate = since.toISOString().slice(0, 10);
     for (const extensionDays of TIME_REVIEW_EXTENSIONS) {
-      const key = `${review.id}:${review.policy_version}:${extensionDays}`;
+      const key = maturationKey(String(review.id), String(review.policy_version), extensionDays);
       if (done.has(key)) continue;
       examined++;
       try {

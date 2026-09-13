@@ -267,7 +267,7 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       if (shadowMode) {
         // Log the intent, submit nothing. This is the whole point of shadow
         // mode: parity is observable on real positions before the live toggle.
-        await svc.from("live_exit_ladder_shadow").insert({
+        const { error: shadowWriteError } = await svc.from("live_exit_ladder_shadow").insert({
           account_id: account, market, symbol,
           action, reason: actionReason,
           price, qty_held: p.qty, qty_would_exit: actionQty ?? null,
@@ -275,6 +275,16 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
           highest_price: decision.highestPrice,
           shadow_mode: true,
         });
+        if (shadowWriteError) {
+          await reportIssue({
+            issueKey: `live-exit-shadow-write:${market}:${account}:${symbol}`,
+            severity: "critical", category: "risk",
+            title: `Live exit shadow could not be recorded for ${symbol}`,
+            detail: `${shadowWriteError.message}. No order was submitted; live-ladder evidence is incomplete.`,
+          }, svc);
+          results.push({ market, symbol, qty: 0, reason: "shadow_write_failed", status: "blocked", error: shadowWriteError.message });
+          continue;
+        }
         if (action !== "none") {
           results.push({ market, symbol, qty: actionQty ?? 0, reason: actionReason ?? action, status: "shadow_logged" });
         }
