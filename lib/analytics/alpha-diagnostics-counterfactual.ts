@@ -39,10 +39,18 @@ export type ExitResolution =
  * policy. Those rows are `ambiguous` and get no win/loss attribution.
  */
 export function resolveExitPath(args: {
-  mfe: number | null; mae: number | null; targetPct: number; stopPct: number;
+  mfe: number | null; mae: number | null; targetPct: number | null; stopPct: number | null;
 }): ExitResolution {
   const { mfe, mae, targetPct, stopPct } = args;
-  if (mfe == null || mae == null || !Number.isFinite(mfe) || !Number.isFinite(mae)) return "unavailable";
+  // An absent level is absent evidence. Do not substitute the current mandate
+  // for a historical lot: that would turn a policy change into a fabricated
+  // counterfactual.
+  if (
+    mfe == null || mae == null || targetPct == null || stopPct == null ||
+    !Number.isFinite(mfe) || !Number.isFinite(mae) ||
+    !Number.isFinite(targetPct) || !Number.isFinite(stopPct) ||
+    targetPct <= 0 || stopPct === 0
+  ) return "unavailable";
   const hitTarget = mfe != null && Number.isFinite(mfe) && mfe * 100 >= targetPct;
   const hitStop = mae != null && Number.isFinite(mae) && mae * 100 <= -Math.abs(stopPct);
   if (hitTarget && hitStop) return "ambiguous";
@@ -52,8 +60,9 @@ export function resolveExitPath(args: {
 }
 
 export interface ExitPathLot extends ClosedLot {
-  targetPct: number;
-  stopPct: number;
+  /** Barrier levels captured on this lot, as percentages of its own fill. */
+  targetPct: number | null;
+  stopPct: number | null;
 }
 
 export function runA4ExitPaths(market: DiagnosticMarket, lots: ExitPathLot[]): DiagnosticFinding {
@@ -81,11 +90,16 @@ export function runA4ExitPaths(market: DiagnosticMarket, lots: ExitPathLot[]): D
     status: lots.length === 0 ? "insufficient_evidence" : "descriptive_only",
     reason: lots.length === 0
       ? "No lots with excursion data."
-      : `${tally.unavailable}/${lots.length} lot(s) lack matched excursion data and ${tally.ambiguous}/${lots.length} touched both barriers; neither group receives path attribution.`,
+      : `${tally.unavailable}/${lots.length} lot(s) lack matched excursions or captured barrier levels and ${tally.ambiguous}/${lots.length} touched both barriers; neither group receives path attribution.`,
     metrics: {
       resolutions: tally, byExitReason,
       ambiguousShare: lots.length ? tally.ambiguous / lots.length : null,
       unavailableShare: lots.length ? tally.unavailable / lots.length : null,
+      // Paper-trade levels are captured when a lot closes. They are not
+      // reconstructed from today's mandate and, for trailing/partial exits,
+      // describe the barrier available at exit rather than an invented entry
+      // barrier. This diagnostic therefore remains descriptive-only.
+      barrierLevelSource: "closed_lot_ledger_at_exit",
       dateUnit: "entry_date",
     },
   };

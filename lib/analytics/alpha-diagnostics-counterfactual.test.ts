@@ -33,6 +33,11 @@ describe("A4 resolveExitPath", () => {
     expect(resolveExitPath({ ...base, mfe: null, mae: -0.09 })).toBe("unavailable");
   });
 
+  it("refuses an absent or invalid recorded barrier rather than borrowing a mandate", () => {
+    expect(resolveExitPath({ mfe: 0.10, mae: -0.01, targetPct: null, stopPct: 7 })).toBe("unavailable");
+    expect(resolveExitPath({ mfe: 0.10, mae: -0.01, targetPct: 8, stopPct: 0 })).toBe("unavailable");
+  });
+
   it("uses the magnitude of the stop regardless of sign convention", () => {
     expect(resolveExitPath({ mfe: 0.01, mae: -0.09, targetPct: 8, stopPct: -7 })).toBe("stop_first");
   });
@@ -52,6 +57,13 @@ describe("A4 runA4ExitPaths", () => {
     expect((f.metrics.resolutions as any).ambiguous).toBe(1);
     expect(f.coverage).toBeCloseTo(0.5, 6);
     expect(f.reason).toContain("touched both barriers");
+  });
+
+  it("reports missing captured barriers as unavailable", () => {
+    const f = runA4ExitPaths("us", [lot({ targetPct: null })]);
+    expect((f.metrics.resolutions as any).unavailable).toBe(1);
+    expect(f.reason).toContain("captured barrier levels");
+    expect(f.metrics.barrierLevelSource).toBe("closed_lot_ledger_at_exit");
   });
 });
 

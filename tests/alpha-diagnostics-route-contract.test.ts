@@ -15,6 +15,14 @@ describe("Alpha Diagnostic Lab route integrity contract", () => {
     expect(route).toContain("max_adverse_excursion, max_favorable_excursion");
     expect(route).toContain('.select("session_date, symbol, qty, mark_price")');
     expect(route).toContain("initial_stop_loss, stop_loss, price_target");
+    expect(route).toContain("stop_loss, take_profit, tainted");
+  });
+
+  it("does not fabricate A4 barrier levels from a fixed or current mandate", () => {
+    expect(route).toContain("function pctFromFill");
+    expect(route).toContain("targetPct: pctFromFill(r.take_profit, r.fill_price, \"target\")");
+    expect(route).toContain("stopPct: pctFromFill(r.stop_loss, r.fill_price, \"stop\")");
+    expect(route).not.toContain("return { ...l, targetPct: 8, stopPct: 7 }");
   });
 
   it("paginates the observation ledger instead of trusting PostgREST's row cap", () => {

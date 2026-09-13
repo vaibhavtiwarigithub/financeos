@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
       // A6 additionally needs OPEN lots, because a calendar replay treats an
       // open position as an entry with no exit yet.
       svc.from("paper_trades")
-        .select("symbol, market, realized_pnl, pnl_pct, exit_reason, fill_price, qty, executed_at, exit_price, tainted, excluded_from_learning, closed_at")
+        .select("symbol, market, realized_pnl, pnl_pct, exit_reason, fill_price, qty, executed_at, exit_price, stop_loss, take_profit, tainted, excluded_from_learning, closed_at")
         .eq("market", market).not("fill_price", "is", null),
       // A2 inputs: scored decisions joined to their matured benchmark-neutral
       // label. Read-only join over persisted ledgers, no provider call.
@@ -244,8 +244,12 @@ export async function POST(req: NextRequest) {
       r,
       excursionByEntry.get(`${String(r.symbol)}|${String(r.executed_at ?? "").slice(0, 10)}`) ?? null,
     ));
-    const learningLots = accountingLots.filter((_, i) =>
-      tradeRows[i].tainted !== true && tradeRows[i].excluded_from_learning !== true);
+    // Keep the source row paired with its normalized lot. A4 needs the
+    // captured barriers from the source ledger, while A3/A7 need the normalized
+    // realized-outcome view; one paired cohort prevents index drift between them.
+    const learningLotPairs = tradeRows.map((trade, index) => ({ trade, lot: accountingLots[index] }))
+      .filter(({ trade }) => trade.tainted !== true && trade.excluded_from_learning !== true);
+    const learningLots = learningLotPairs.map(({ lot }) => lot);
 
     const findings: DiagnosticFinding[] = [];
 
@@ -272,7 +276,7 @@ export async function POST(req: NextRequest) {
       allScored.metrics = { ...allScored.metrics, cohortDefinition: "all_scored_context" };
       findings.push(allScored);
       findings.push(runA3Payoff(market, learningLots));
-      findings.push(runA4ExitPaths(market, learningLots.map(toExitPathLot)));
+      findings.push(runA4ExitPaths(market, learningLotPairs.map(({ trade, lot }) => toExitPathLot(trade, lot))));
       findings.push(runA5Sizing(market, tradeRows
         .filter(r => r.tainted !== true && r.excluded_from_learning !== true)
         .map(toSizedLot)
@@ -520,9 +524,24 @@ function toClosedLot(r: any, excursion: Excursion | null): ClosedLot {
   };
 }
 
-function toExitPathLot(l: ClosedLot): ExitPathLot {
-  // Mandate levels for the window; A4 reports missing excursions as unavailable.
-  return { ...l, targetPct: 8, stopPct: 7 };
+function pctFromFill(level: unknown, fill: unknown, direction: "target" | "stop"): number | null {
+  const price = num(level);
+  const entry = num(fill);
+  if (price == null || entry == null || entry <= 0) return null;
+  const pct = (price / entry - 1) * 100;
+  if (!Number.isFinite(pct)) return null;
+  if (direction === "target") return pct > 0 ? pct : null;
+  return pct < 0 ? -pct : null;
+}
+
+function toExitPathLot(r: any, l: ClosedLot): ExitPathLot {
+  // A4 must use the levels recorded on this lot. Historical rows without them
+  // are unavailable; using today's mandate would falsify the counterfactual.
+  return {
+    ...l,
+    targetPct: pctFromFill(r.take_profit, r.fill_price, "target"),
+    stopPct: pctFromFill(r.stop_loss, r.fill_price, "stop"),
+  };
 }
 
 function toSizedLot(r: any): SizedLot {

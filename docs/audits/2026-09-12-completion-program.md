@@ -74,6 +74,12 @@ activation.
      stop from 134 labels; US used 7.86% target / 6.44% stop from 974 labels.
      Completed `paper_trades` stop values may have been trailed or partially
      exited and must not be treated as initial geometry.
+   - 2026-09-13 correction: Alpha Diagnostic A4 previously replaced every
+     closed lot's barrier levels with fixed 8%/7% values. It now reads the
+     levels captured on that closed lot and reports a row as unavailable when
+     either barrier is absent. The captured values are exit-time evidence, not
+     a substitute for the required immutable entry plan; A4 remains
+     descriptive-only.
    - Required proof: an immutable per-entry `ExitGeometryPlan` snapshot with
      as-of cutoff, cohort/sample/version, input values, source and absolute
      levels; paired (not independently optimized) baseline-versus-volatility
