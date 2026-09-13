@@ -1,6 +1,8 @@
 # Strategy Portfolio Lab
 
-> Status: Approved for P0 implementation; no score, paper, live, exit, sizing, or broker activation.
+> Status: Approved for P0 implementation. Owner reconfirmed the shared
+> paper/live evidence requirement on 2026-09-13; this remains non-executing:
+> no score, paper fill, live proposal, exit, sizing, or broker activation.
 > Date: 2026-08-02
 
 ## Decision
@@ -12,8 +14,10 @@ champion. Templates remain reference material until explicitly admitted to this 
 ## Boundaries
 
 - US and India versions, evidence, limits, and comparisons never mix.
-- At most three active template shadows per market; at most one predeclared
-  combination challenger per market.
+- At most **three total** active template shadows per market; a predeclared
+  combination challenger counts as one of the three. This conservative capacity
+  decision prevents sample starvation and supersedes the earlier ambiguous
+  “three plus one” wording.
 - A combination is declared before its first validation run and increments the
   market trial-family count. No search across arbitrary template combinations.
 - The canonical scorer, PaperTrader, PositionMonitor, cash, positions, exits,
